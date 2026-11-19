@@ -280,10 +280,10 @@ describe("Creator Toolset as a remote MCP server", () => {
     const asked = await callWith(waiting, "editor_create", { sources: ["v_a"] });
     expect(asked.value).toEqual({ action_needed: { kind: "downloads", libraryId: "lib_t", workspace: "ws_t" }, stop: expect.any(String) });
 
-    // voice_make saves into the Media Library: a library not set up answers the setup card before anything is posted
-    const voice = fakeSite({ "POST /api/editor/voice": () => ({ versionId: "v_x" }) });
-    expect((await callWith(voice, "voice_make", { text: "Hello" })).value).toEqual({ action_needed: { kind: "setup", workspace: "", workspaceName: "", owner: true, href: "/library?setup=1" }, stop: expect.any(String) });
-    expect(voice.hits).toEqual([]);
+    // voice_make saves into the Media Library, which this account has set up (the gate passes; a library not set up is media-ready.test.ts)
+    const voice = fakeSite({ "POST /api/editor/voice": () => ({ versionId: "v_x", name: "Tiny voice", voice: { name: "Tiny" }, libraryId: "lib_mcp", assetId: "a_x" }) });
+    expect((await callWith(voice, "voice_make", { text: "Hello" })).value).toMatchObject({ version_id: "v_x", voice: "Tiny" });
+    expect(voice.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor/voice"]);
 
     const made = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }) });
     const kept = await callWith(made, "editor_create", { sources: ["v_a"], start: false });

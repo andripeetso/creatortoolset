@@ -180,6 +180,7 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     serverWork(false);
     const edit = (await json<{ id: string }>(app.request("/api/editor", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ name: "Downloads off", sources: ["ver_r2"] }) }))).id;
     const job = { kind: "reach-render", version_id: `${edit}:v1`, actor: "maker" };
+    libraryDb().exec("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_r2', 'proxy', 'libraries/lib_r/ver_r2/proxy.mp4', 1)");
     expect(downloadsAsk(job)).toBeUndefined();   // Downloads on by default: the server's copy is fetched, nothing to ask
     const put = (mode: string) => app.request("/api/library/offline/downloads", { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ library: libraryDb().prepare("SELECT a.library_id AS id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = 'ver_r2'").get()!.id, mode }) });
     expect((await put("none")).status).toBe(200);
