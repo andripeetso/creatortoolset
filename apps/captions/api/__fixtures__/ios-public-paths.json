@@ -74,5 +74,10 @@
   { "id": "editor.draft-review", "method": "POST", "path": "/api/editor/:id/drafts/:name/review", "probe": "route" },
   { "id": "workshop.workspace", "method": "GET", "path": "/api/workshop/workspace", "probe": "route" },
   { "id": "workshop.own-post", "method": "POST", "path": "/api/workshop/own-post", "probe": "route" },
-  { "id": "instagram.share", "method": "POST", "path": "/api/instagram/share", "probe": "route" }
+  { "id": "instagram.share", "method": "POST", "path": "/api/instagram/share", "probe": "route" },
+  { "id": "card.browse", "method": "GET", "path": "/api/devices/:id/browse", "probe": "route" },
+  { "id": "card.quick-setup", "method": "POST", "path": "/api/library/:id/setup/quick", "probe": "route" },
+  { "id": "card.retry", "method": "GET", "path": "/api/assistant/action/:id", "probe": "route" },
+  { "id": "card.turn-on", "method": "PUT", "path": "/api/library/offline/downloads", "probe": "route" },
+  { "id": "card.folder", "method": "POST", "path": "/api/devices/storage/folders", "probe": "route" }
 ]
