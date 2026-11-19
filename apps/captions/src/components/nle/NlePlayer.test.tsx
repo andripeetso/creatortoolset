@@ -51,7 +51,7 @@ describe("a picture not ready yet", () => {
     vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(0);
     vi.spyOn(HTMLMediaElement.prototype, "src", "set").mockImplementation(() => {});
     // the frames run by hand: 30 of them, half a second at 60 Hz
-    let next: FrameRequestCallback | null = null;
+    let next = null as FrameRequestCallback | null;
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => ((next = cb), 1));
     vi.stubGlobal("cancelAnimationFrame", () => void (next = null));
     const urlOf = (): NleFile => ({ url: "/tiny/opening.mp4" });
