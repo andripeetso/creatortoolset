@@ -31,7 +31,7 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
 import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
-import { ensureLibrary } from "./library/access";
+import { ensureLibrary, servedByPlugin } from "./library/access";
 import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
 import { enqueueJob } from "./library/jobs";
 import { probe as probeSummary } from "./library/media/probe";
@@ -148,6 +148,11 @@ interface Version {
   local?: string;
   /** Its sound in parts (v<n>/stems/, see attachStems): the player's voice controls. */
   stems?: StemSet;
+  /** Its cut plays footage nobody has blurred yet, faces as filmed (whoever files it sets it: an editor, a plug-in). Only its
+   *  owner may approve it, as filmed; in a workspace a plug-in serves, no share link or download is turned on for it. */
+  notBlurred?: boolean;
+  /** Its owner approved it with the faces as filmed. */
+  approvedAsFilmed?: { by: string; at: number };
   /** When its video files were deleted to save space (a later version went on
    *  to Caption Studio); its comments and thumbnail stay. */
   removed?: number;
@@ -155,6 +160,17 @@ interface Version {
 }
 
 type Share = { token: string; enabled: boolean; download: boolean };
+
+/** The newest version (the one an approval is about) shows faces nobody has blurred, and its owner has not approved them as filmed. */
+const waitsOnBlur = (m: Meta) => {
+  const top = m.versions.at(-1);
+  return !!top?.notBlurred && !top.approvedAsFilmed;
+};
+/** A version with its files plays faces nobody has blurred: a share link shows every version. */
+const showsUnblurred = (m: Meta) => m.versions.some((v) => v.notBlurred && !v.removed);
+const NOT_BLURRED_SHARE = "Blur the faces first: this cut uses clips the catalog hasn't blurred";
+const AS_FILMED_ASK = "The faces in this cut aren't blurred. Approve it as filmed?";
+const AS_FILMED_OWNER = "Only the owner can approve a cut whose faces aren't blurred";
 
 /** A version's link back to what made it: a plug-in's own page (href), shown to managers. */
 export type VersionSource = { kind: string; id: string; label: string; href: string };
@@ -943,6 +959,8 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(manage && v.source ? { source: v.source } : {}),
       ...(manage && v.local && !v.removed ? { local: v.local } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
+      ...(v.notBlurred ? { notBlurred: true } : {}),
+      ...(v.approvedAsFilmed ? { approvedAsFilmed: v.approvedAsFilmed } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
       bytes: v.bytes,
       removed: !!v.removed,
@@ -1069,7 +1087,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1113,6 +1131,7 @@ export async function addVersion(
       ...(v.draft ? { draft: v.draft } : {}),
       ...(v.source ? { source: v.source } : {}),
       ...(v.local && path.isAbsolute(v.local) ? { local: v.local } : {}),
+      ...(v.notBlurred ? { notBlurred: true } : {}),
       createdAt: now,
     });
   });
@@ -1516,6 +1535,10 @@ reviewApp.patch("/assets/:id", async (c) => {
   const projectId = body?.projectId;
   if (projectId != null && !(await ownsProject(v.meta.owner, projectId))) {
     return c.json({ error: "Project not found" }, 404);
+  }
+  // an existing link stays on (Review warns on it); only turning a link or its download on is refused
+  if ((share?.enabled === true || share?.download === true) && showsUnblurred(v.meta) && (await servedByPlugin(v.meta.owner, v.meta.workspace))) {
+    return c.json({ error: NOT_BLURRED_SHARE }, 409);
   }
   let oldToken: string | undefined;
   const ws = typeof projectId === "string" ? await folderWorkspace(projectId) : undefined;
@@ -1995,6 +2018,12 @@ reviewApp.patch("/projects/:pid", async (c) => {
   } | null;
   const name = cleanText(body?.name, 160);
   const user = c.get("user");
+  const pid = c.req.param("pid");
+  if (body?.share?.enabled === true || body?.share?.download === true) {
+    const p = (await readProjects()).find((x) => x.id === pid && x.owner === user.username);
+    const unblurred = p && (await allMetas()).some((m) => m.projectId === pid && m.owner === user.username && showsUnblurred(m));
+    if (unblurred && (await servedByPlugin(user.username, p.workspace))) return c.json({ error: NOT_BLURRED_SHARE }, 409);
+  }
   let oldToken: string | undefined;
   const project = await updateProjects((list) => {
     const p = list.find((x) => x.id === c.req.param("pid") && x.owner === user.username);
@@ -2540,10 +2569,18 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (!status || (!v.manage && !REVIEWER_APPROVALS.includes(status)) || !by) {
       return c.json({ error: "Invalid status" }, 400);
     }
-    // a person's own choice, so any status from any other: APPROVAL_MOVES holds back only what the app sets by itself (setApproval)
+    // a person's own choice, so any status from any other: APPROVAL_MOVES holds back only what the app sets by itself (setApproval);
+    // a cut with unblurred faces is approved only by its owner, as filmed (asFilmed: the page asked AS_FILMED_ASK)
+    let refused: [string, 403 | 409] | undefined;
     const meta = await updateMeta(v.meta.id, (m) => {
+      if (status === "approved" && waitsOnBlur(m)) {
+        if (!v.user || v.user !== m.owner) return void (refused = [AS_FILMED_OWNER, 403]);
+        if (body?.asFilmed !== true) return void (refused = [AS_FILMED_ASK, 409]);
+        m.versions.at(-1)!.approvedAsFilmed = { by: v.user, at: Date.now() };
+      }
       m.approval = { status, by, at: Date.now() };
     });
+    if (refused) return c.json({ error: refused[0] }, refused[1]);
     if (!meta) return c.json({ error: "Not found" }, 404);
     if (status === "approved") {
       const turn = jobTurn(c.req.header("authorization"));

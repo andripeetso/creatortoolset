@@ -57,6 +57,10 @@ export interface ReviewVersion {
   local?: string;
   /** Its sound in parts (v<n>/stems/): the player's voice controls. */
   stems?: StemSet;
+  /** Its cut plays footage nobody has blurred yet: only its owner approves it, as filmed. */
+  notBlurred?: boolean;
+  /** Its owner approved it with the faces as filmed. */
+  approvedAsFilmed?: { by: string; at: number };
   createdAt: number;
 }
 
@@ -475,8 +479,8 @@ export function reviewApi(base: string) {
     editComment: (id: string, patch: { text?: string; resolved?: boolean }) =>
       call<ReviewComment>(`${base}/comments/${id}`, send("PATCH", patch)),
     deleteComment: (id: string) => call<{ ok: true }>(`${base}/comments/${id}`, send("DELETE")),
-    approve: (status: Approval, author?: string) =>
-      call<ReviewAsset>(`${base}/approval`, send("POST", { status, author })),
+    approve: (status: Approval, author?: string, asFilmed?: boolean) =>
+      call<ReviewAsset>(`${base}/approval`, send("POST", { status, author, ...(asFilmed ? { asFilmed } : {}) })),
   };
 }
 
