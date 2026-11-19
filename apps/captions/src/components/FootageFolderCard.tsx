@@ -94,7 +94,7 @@ export function FootageFolderCard({
   };
 
   // where its files are kept, and for a big folder what importing it takes; a size the server can't read adds the folder as before
-  const check = (folder: string) => big.check(folder, (copyTo) => add(folder, copyTo), { libraryId, offerCopy: true, ...(onOffer ? { organize: { offer, answer: onOffer } } : {}) });
+  const check = (folder: string) => big.check(folder, (copyTo) => add(folder, copyTo), { libraryId, ...(onOffer ? { organize: { offer, answer: onOffer } } : {}) });
 
   const choose = async () => {
     const picked = await chooseFolderOnMac();

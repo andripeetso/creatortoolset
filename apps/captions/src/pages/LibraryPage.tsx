@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Activity, MoreHorizontal, Music, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
+import { hostsOriginals, hostsProxies } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
@@ -367,7 +368,7 @@ export default function LibraryPage() {
   const upload = useRef(library?.settings.upload ?? "none");
   upload.current = library?.settings.upload ?? "none";
   const macRemote = !!thisMacBridge() && !watch?.allowed;
-  const onMac = macRemote && upload.current === "none";
+  const onMac = macRemote && !hostsOriginals(upload.current) && !hostsProxies(upload.current);
   // `retry`: Retry sends a cancelled file; its key stays in `cancelled`, so the queue below never starts it a second time
   const send = async (u: UploadItem, retry = false) => {
     if (!libId || (cancelled.current.has(u.key) && !retry)) return;
@@ -378,7 +379,7 @@ export default function LibraryPage() {
     // a cancelled run still finishing never writes over the Retry that came after it
     const mine = () => controllers.current.get(u.key) === ctl;
     try {
-      const mac = macRemote && upload.current === "none";
+      const mac = macRemote && !hostsOriginals(upload.current) && !hostsProxies(upload.current);
       let here = u.path ?? (await pathOnMac(u.file));
       // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks
       // too). Indexed on the Mac it is matched there by its first and last MiB, so no gigabytes are hashed here; one to
@@ -444,11 +445,11 @@ export default function LibraryPage() {
     // indexed on this Mac: nothing uploads either
     const here = onMac || (look.paths ? look.paths.size === all.length : false);
     // the first upload also asks how the library sorts files
-    if (all.length >= BIG_DROP || organize.offer || (look.ask && look.ask.kind !== "upload")) {
+    if (all.length >= BIG_DROP || organize.offer) {
       askingLook.current = look;
       setAskingHere(here);
       setAsking(all);
-    } else void importQ.answer(look, all).then((a) => start(all, here, look.paths, a.copies));
+    } else void importQ.answer(look, all).then((copies) => copies && start(all, here, look.paths, copies));
   };
 
   // one file after another: the server's disk and the phone's data are both easier on that
@@ -469,8 +470,8 @@ export default function LibraryPage() {
     setFolders: folderList.set,
     onError: setError,
   });
-  const importQ = useImportQuestion({ library, serverHere: !!watch?.allowed, owner: !!watch, onSaved: saved, onError: setError });
-  const drop = useLibraryDrop({ library, ignore: DRAG, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onSaved: saved, onError: setError });
+  const importQ = useImportQuestion({ library, serverHere: !!watch?.allowed, onError: setError });
+  const drop = useLibraryDrop({ library, ignore: DRAG, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onError: setError });
 
   const create = async () => {
     try {
@@ -896,12 +897,10 @@ export default function LibraryPage() {
             setAsking(null);
             if (o) await organize.answerOffer(o); // before the files: each is filed as it comes in
             const look = askingLook.current!;
-            const a = await importQ.answer(look, asking);
-            if (a.library) upload.current = a.library.settings.upload;
-            start(asking, askingHere, look.paths, a.copies);
+            const copies = await importQ.answer(look, asking);
+            if (copies) start(asking, askingHere, look.paths, copies);
           }}
         >
-          {importQ.body}
         </BigUploadDialog>
       )}
       <input
@@ -1183,7 +1182,7 @@ export default function LibraryPage() {
               libraryId={libId}
               asset={preview}
               startAt={startAt}
-              serverPlays={!library || library.settings.upload !== "none" || !!library.shared || !!preview.finished}
+              serverPlays={!library || hostsOriginals(library.settings.upload) || hostsProxies(library.settings.upload) || !!library.shared || !!preview.finished}
               inTrash={trash}
               readOnly={readOnly}
               moveTo={moveOptions(collections, into)}

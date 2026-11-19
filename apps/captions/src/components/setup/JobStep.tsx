@@ -54,7 +54,7 @@ function FootageRow({ lib, status, reload }: { lib: string; status: WatchStatus;
     setBusy(true);
     setError(null);
     try {
-      await big.check(folder, (copyTo) => add(folder, copyTo), { libraryId: lib, offerCopy: true });
+      await big.check(folder, (copyTo) => add(folder, copyTo), { libraryId: lib });
     } finally {
       setBusy(false);
     }

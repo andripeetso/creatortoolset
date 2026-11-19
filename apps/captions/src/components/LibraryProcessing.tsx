@@ -1,16 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { NEEDS, waitingLine, type AssetCard, type ImportMode, type LibraryEstimate, type LibraryProgress, type LibraryStatus, type LibrarySummary, type Organize, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { NEEDS, waitingLine, type AssetCard, type LibraryEstimate, type LibraryProgress, type LibraryStatus, type LibrarySummary, type Organize, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { getEstimate, getProgress, getStatus, getWatch, type Drop, listLibraries, updateLibrary } from "@/lib/library";
 import { OrganizePicker, offerAnswer, offersOrganize } from "@/pages/library/Organize";
-import { ImportCards } from "@/pages/library/Import";
 import { useCachedLoad } from "@/lib/local-cache";
-import { chooseFolderOnMac } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
 import { ownMacLine } from "@/lib/wording";
 import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
@@ -398,60 +395,6 @@ export function BigUploadDialog({
 
 export const gbOf = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
 
-/**
- * Where a chosen folder's files are kept, in the import question's words (pages/library/Import.tsx): used where they
- * are, or copied into the library's folder on this computer (`to`, the Library's Footage), with Change. Copying can be
- * chosen when there is room for it; `mode` is the library's own answer, else copying is the choice when it fits.
- * `onChange` gets the folder to copy into, or undefined to use them where they are. `short`: a new place's question.
- */
-export function KeepChoice({ libraryId, folder, bytes, to, free, mode, short, legend = "Import", onChange }: { libraryId: string; folder: string; bytes: number; to: string; free?: number; mode?: ImportMode; short?: boolean; legend?: string; onChange: (copyTo: string | undefined) => void }) {
-  const [dest, setDest] = useState(to);
-  const [room, setRoom] = useState(free);
-  const [typing, setTyping] = useState(false);
-  const fits = room === undefined || room >= bytes;
-  const [copy, setCopy] = useState(mode ? mode === "copy" : fits);
-  useEffect(() => {
-    onChange(copy && fits ? dest : undefined);
-  }, [copy, fits, dest]); // eslint-disable-line react-hooks/exhaustive-deps
-  // the room in another folder (another drive)
-  const look = async (next: string) => {
-    setDest(next);
-    const r = await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(folder)}&to=${encodeURIComponent(next)}`).catch(() => null);
-    const size = r?.ok ? ((await r.json()) as FolderSize) : null;
-    setRoom(size?.free);
-    if (size?.free === undefined || size.free >= bytes) setCopy(true);
-  };
-  const change = async () => {
-    const picked = await chooseFolderOnMac();
-    if (picked === undefined) setTyping(true); // a browser: the path is typed
-    else if (picked) await look(picked);
-  };
-  const where = typing ? (
-    <Input
-      autoFocus
-      defaultValue={dest}
-      aria-label="Folder to copy into"
-      className="h-8 font-mono text-xs"
-      onBlur={(e) => {
-        setTyping(false);
-        if (e.target.value.trim() && e.target.value.trim() !== dest) void look(e.target.value.trim());
-      }}
-      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-    />
-  ) : (
-    <CopyTo path={dest} onChange={() => void change()} />
-  );
-  return (
-    <ImportCards
-      legend={legend}
-      short={short}
-      value={copy && fits ? "copy" : "in-place"}
-      onChange={(m) => setCopy(m === "copy")}
-      copy={{ to: where, off: !fits && room !== undefined ? `Not enough space there: ${gbOf(room)} free` : undefined }}
-    />
-  );
-}
-
 /** Where copies go, with Change. */
 export function CopyTo({ path, onChange }: { path: string; onChange?: () => void }) {
   return (
@@ -477,15 +420,11 @@ export interface OrganizeOffer {
 /**
  * A folder on this computer about to join the account's own Library (or `libraryId`'s), in one dialog: `check(path, add)`
  * adds a small folder at once, and for a big one (BIG_DROP files or more) shows the dialog first, where Add folder runs
- * `add` and Cancel adds nothing. `offerCopy`: the dialog always opens, and asks whether the files are copied into the
- * Library's Footage folder or kept where they are (KeepChoice); `add` gets the folder to copy into. A big folder into a
- * library the AI does not organize yet is offered it in the same dialog, once, saved before `add` runs: by `organize`
- * where the page has its own, else here, `onOrganized` getting the library saved with the answer. A folder the server
- * can't size (not on this computer, not a folder) goes to `add` as before, which says why. `dialog` is rendered by the caller.
- * `keep`: what the library knows of the folder's place (pages/library/Import.tsx): `known`, a place it took before, is
- * not asked again (copied or not as then); `mode`, the library's answer, is the choice a new place's short question starts on.
+ * `add` and Cancel adds nothing. A big folder into a library the AI does not organize yet is offered it in the same dialog,
+ * once, saved before `add` runs: by `organize` where the page has its own, else here, `onOrganized` getting the library
+ * saved with the answer. A folder the server can't size goes to `add` as before. `dialog` is rendered by the caller.
  */
-type CheckOpts = { libraryId?: string; offerCopy?: boolean; organize?: OrganizeOffer; keep?: { known?: ImportMode; mode?: ImportMode } };
+type CheckOpts = { libraryId?: string; organize?: OrganizeOffer };
 
 export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
   check: (path: string, add: (copyTo?: string) => unknown, opts?: CheckOpts) => Promise<void>;
@@ -493,17 +432,15 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
   after: (then: () => void) => void;
   dialog: ReactNode;
 } {
-  type Asking = { libraryId: string; path: string; files: number; drop: Drop; big: boolean; to?: string; free?: number; add: (copyTo?: string) => unknown; offer?: OrganizeOffer; known?: ImportMode; mode?: ImportMode };
+  type Asking = { libraryId: string; path: string; files: number; drop: Drop; big: boolean; add: () => unknown; offer?: OrganizeOffer };
   // folders dropped together are asked one after another, each in its own dialog
   const [queue, setQueue] = useState<Asking[]>([]);
   const asking = queue[0];
-  const [copyTo, setCopyTo] = useState<string | undefined>();
   // the dialogs asked and not yet answered, counted at once (the queue's state comes a render later), and what waits on them
   const open = useRef(0);
   const waiting = useRef<(() => void)[]>([]);
   const after = (then: () => void) => (open.current ? waiting.current.push(then) : then());
   const next = () => {
-    setCopyTo(undefined);
     setQueue((q) => q.slice(1));
     if (open.current > 0 && --open.current === 0) waiting.current.splice(0).forEach((f) => f());
   };
@@ -511,21 +448,16 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
     // the account's own library is the first of its own (api/library/watch.ts addWatchFolder takes the same one)
     const library = opts.libraryId && opts.organize ? undefined : (await listLibraries().catch(() => []))?.find((l) => !opts.libraryId || l.id === opts.libraryId);
     const libraryId = opts.libraryId ?? library?.id;
-    // a copy is offered where the server can make one on this computer (it says where: WatchStatus.copyTo)
-    const to = libraryId && opts.offerCopy ? (await getWatch(libraryId).catch(() => null))?.copyTo : undefined;
-    const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}${to ? `&to=${encodeURIComponent(to)}` : ""}`).catch(() => null) : null;
+    const r = libraryId ? await fetch(`/api/library/${libraryId}/watch/size?path=${encodeURIComponent(path)}`).catch(() => null) : null;
     const size = r?.ok ? ((await r.json()) as FolderSize) : null;
     const big = !!size && size.files >= BIG_DROP;
     const own: OrganizeOffer | undefined = library && offersOrganize(library) ? { offer: true, answer: async (o) => void (await updateLibrary(library.id, offerAnswer(o)).then(onOrganized, () => {})) } : undefined;
     const organize = opts.organize ?? own;
     const offer = organize?.offer ? organize : undefined;
-    const known = opts.keep?.known;
-    // a place the library took before goes in as then
-    const keptAs = known === "copy" ? to : undefined;
-    if (libraryId && size && (big || (to && !known) || offer)) {
+    if (libraryId && size && (big || offer)) {
       open.current++;
-      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size), big, to, free: size.free, add, offer, known, mode: opts.keep?.mode }]);
-    } else await add(keptAs);
+      setQueue((q) => [...q, { libraryId, path, files: size.files, drop: dropOf(size), big, add: () => add(), offer }]);
+    } else await add();
   };
   const dialog = asking && (
     <BigUploadDialog
@@ -541,23 +473,9 @@ export function useBigFolder(onOrganized?: (l: LibrarySummary) => void): {
         next();
         // before the folder: its files are filed as they come in; a failed save never stops the folder
         if (asking.offer && o) await asking.offer.answer(o).catch(() => {});
-        void asking.add(asking.known ? (asking.known === "copy" ? asking.to : undefined) : copyTo);
+        void asking.add();
       }}
-    >
-      {asking.to && !asking.known && (
-        <KeepChoice
-          libraryId={asking.libraryId}
-          folder={asking.path}
-          bytes={asking.drop.bytes}
-          to={asking.to}
-          free={asking.free}
-          mode={asking.mode}
-          short={!!asking.mode}
-          legend={asking.mode ? `Files from ${folderName(asking.path)}` : undefined}
-          onChange={setCopyTo}
-        />
-      )}
-    </BigUploadDialog>
+    />
   );
   return { check, after, dialog };
 }

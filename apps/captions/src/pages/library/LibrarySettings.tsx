@@ -17,7 +17,7 @@ import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
 import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
-import { addFrom, CantRead, copyAvailable, copyRoot, lookedLine, lookForNew } from "./Import";
+import { addFrom, CantRead, copyAvailable, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
 import { LibraryCopies } from "./Copies";
 
@@ -183,7 +183,7 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
       {mode === "copy" && copyOk && !inSettings && (
         <Row
           title="Library folder"
-          description={<CopyTo path={from === "here" && watch.copyTo ? watch.copyTo : copyRoot(library)} />}
+          description={from === "here" && watch.copyTo ? <CopyTo path={watch.copyTo} /> : undefined}
           control={
             from === "here" ? (
               <Button size="sm" variant="outline" asChild>
