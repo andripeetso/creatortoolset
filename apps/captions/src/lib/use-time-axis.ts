@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { clampZoom, fitPps, maxZoomOf, scrollForZoom, scrollToFollow } from "./time-axis";
 
 /**
@@ -85,17 +86,29 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    // the wheel events of one frame zoom once, drawn in that same frame: the render runs in the frame's own callback
+    // (flushSync), not in a task React schedules for later, which could land after the frame was painted
+    let factor = 1;
+    let frame = 0;
     const wheel = (e: WheelEvent) => {
       if (e.altKey || (e.ctrlKey && !e.metaKey)) { // ⌥ + scroll, or a pinch (the browser sends it as Ctrl)
         e.preventDefault();
-        zoomRef.current(Math.exp(-Math.max(-60, Math.min(60, e.deltaY)) * 0.006));
+        factor *= Math.exp(-Math.max(-60, Math.min(60, e.deltaY)) * 0.006);
+        frame ||= requestAnimationFrame(() => {
+          const f = factor;
+          [factor, frame] = [1, 0];
+          flushSync(() => zoomRef.current(f));
+        });
       } else if (e.metaKey) { // ⌘ + scroll: left and right
         e.preventDefault();
         el.scrollLeft += e.deltaY + e.deltaX;
       }
     };
     el.addEventListener("wheel", wheel, { passive: false });
-    return () => el.removeEventListener("wheel", wheel);
+    return () => {
+      el.removeEventListener("wheel", wheel);
+      cancelAnimationFrame(frame);
+    };
   }, [scroller]);
 
   /** Brings `time` back into view when it has left it (the playhead while it plays). */

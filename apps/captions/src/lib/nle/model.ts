@@ -644,3 +644,126 @@ export function editTracks(tl: NleTimeline, picked: string[]): { picture: string
   const on = picked.map((k) => find(tl, k)?.track).filter((t): t is string => !!t);
   return { picture: on.find(isVideo) ?? "V1", sound: on.find((t) => !isVideo(t)) ?? "A1" };
 }
+
+// Round 3: a clip's look kept across tracks, the track menu (add, move, delete), box select and where a drop lands.
+
+// eslint-disable-next-line import/first -- the renderer's cover/fit rule, read only when called (picture.ts imports this file)
+import { covers } from "./picture";
+
+/**
+ * The clip as it would be on picture track `to`, looking as it did on `from`: the renderer scales a source to cover the
+ * frame on some tracks and to fit inside it on the others, so its zoom takes the difference and its size on screen stays.
+ * The clip as it is when that doesn't differ or the source's size isn't known.
+ */
+export function lookOn(tl: NleTimeline, it: NleItem, from: string, to: string): NleItem {
+  const s = tl.sources[it.src];
+  const W = tl.timeline.width || 1080;
+  const H = tl.timeline.height || 1920;
+  if (!isVideo(from) || !isVideo(to) || covers(from) === covers(to) || !s?.w || !s?.h) return it;
+  const cover = Math.max(W / s.w, H / s.h);
+  const fit = Math.min(W / s.w, H / s.h);
+  const zoom = r3((it.zoom ?? 1) * (covers(from) ? cover / fit : fit / cover));
+  const { zoom: _, ...rest } = it;
+  return zoom === 1 ? rest : { ...rest, zoom };
+}
+
+/** `after` with every clip that went to another picture track since `before` looking as it did there (lookOn). */
+export function keepLooks(before: NleTimeline, after: NleTimeline): NleTimeline {
+  const was = new Map<string, string>();
+  for (const [id, t] of Object.entries(before.tracks)) for (const i of t.items) if (i._k) was.set(i._k, id);
+  let out: NleTimeline | null = null;
+  for (const [id, t] of Object.entries(after.tracks)) {
+    t.items.forEach((i, n) => {
+      const from = i._k ? was.get(i._k) : undefined;
+      const next = from && from !== id ? lookOn(after, i, from, id) : i;
+      if (next === i) return;
+      out ??= clone(after);
+      out.tracks[id].items[n] = next;
+    });
+  }
+  return out ?? after;
+}
+
+/** The tracks of a kind from number 1 up, in number order (V0, which the renderer doesn't draw, stays out of it). */
+const kindOrder = (tl: NleTimeline, kind: "V" | "A") =>
+  Object.keys(tl.tracks).filter((t) => t[0] === kind && trackNo(t) >= 1).sort((a, b) => trackNo(a) - trackNo(b));
+
+/** The tracks of a kind numbered again in this order from 1 (null: a new empty one there), as Resolve keeps them. A
+ *  name that was only its id goes with the number; the clips keep their look (lookOn). */
+function renumber(tl: NleTimeline, kind: "V" | "A", order: (string | null)[]): NleTimeline {
+  const out = clone(tl);
+  for (const id of kindOrder(tl, kind)) delete out.tracks[id];
+  order.forEach((old, n) => {
+    const id = `${kind}${n + 1}`;
+    if (old === null) return void (out.tracks[id] = { name: id, items: [] });
+    const t = clone(tl.tracks[old]);
+    if (t.name === old) t.name = id;
+    if (old !== id) t.items = t.items.map((i) => lookOn(tl, i, old, id));
+    out.tracks[id] = t;
+  });
+  return out;
+}
+
+/** A new empty track of a kind that takes number `at` (1 = V1 / A1); the ones from there on move up a number. */
+export function insertTrack(tl: NleTimeline, kind: "V" | "A", at: number): { tl: NleTimeline; id: string } {
+  const order: (string | null)[] = kindOrder(tl, kind);
+  const n = Math.max(1, Math.min(order.length + 1, Math.round(at)));
+  order.splice(n - 1, 0, null);
+  return { tl: renumber(tl, kind, order), id: `${kind}${n}` };
+}
+
+/** Where a track can go one place up or down on screen among its kind (video tracks count up the screen, sound tracks
+ *  down it): null at the end, or when it or the one it would swap with is locked. */
+function swapWith(tl: NleTimeline, id: string, up: boolean): string | null {
+  const order = kindOrder(tl, id[0] as "V" | "A");
+  const i = order.indexOf(id);
+  const other = order[i + ((id[0] === "V") === up ? 1 : -1)];
+  return i >= 0 && other && !tl.tracks[id].locked && !tl.tracks[other].locked ? other : null;
+}
+export const canMoveTrack = (tl: NleTimeline, id: string, up: boolean) => swapWith(tl, id, up) !== null;
+
+/** A track moved one place up or down on screen among its kind, with its clips. */
+export function moveTrack(tl: NleTimeline, id: string, up: boolean): NleTimeline {
+  const other = swapWith(tl, id, up);
+  if (!other) return tl;
+  return renumber(tl, id[0] as "V" | "A", kindOrder(tl, id[0] as "V" | "A").map((t) => (t === id ? other : t === other ? id : t)));
+}
+
+/** A track can go: not locked, and not the last of its kind (Resolve always keeps a video and an audio track). */
+export const canDeleteTrack = (tl: NleTimeline, id: string) =>
+  !!tl.tracks[id] && !tl.tracks[id].locked && trackNo(id) >= 1 && kindOrder(tl, id[0] as "V" | "A").length > 1;
+
+/** A track taken off with its clips; the ones after it move down a number. */
+export function deleteTrack(tl: NleTimeline, id: string): NleTimeline {
+  if (!canDeleteTrack(tl, id)) return tl;
+  return renumber(tl, id[0] as "V" | "A", kindOrder(tl, id[0] as "V" | "A").filter((t) => t !== id));
+}
+
+/** Every empty track taken off (not locked ones), each kind keeping at least its first; the rest numbered again. */
+export function deleteEmptyTracks(tl: NleTimeline): NleTimeline {
+  let out = tl;
+  for (const kind of ["V", "A"] as const) {
+    const order = kindOrder(tl, kind);
+    let keep = order.filter((t) => tl.tracks[t].items.length || tl.tracks[t].locked);
+    if (!keep.length) keep = order.slice(0, 1);
+    if (keep.length < order.length) out = renumber(out, kind, keep);
+  }
+  return out;
+}
+
+/** The clips on `tracks` (locked tracks left out) that a box from frame `a` to frame `b` touches. */
+export function boxPick(tl: NleTimeline, tracks: string[], a: number, b: number): string[] {
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  return tracks.flatMap((id) => {
+    const t = tl.tracks[id];
+    return !t || t.locked ? [] : t.items.filter((i) => i.rec <= hi && endOf(i) > lo).map((i) => i._k!);
+  });
+}
+
+/** Where a drop of `len` frames at `frame` on `track` lands, as the editor lays it: on that track, and a picture's sound
+ *  with it on the first free sound track (from A1 under V1, from A2 under the others). */
+export function dropPlan(tl: NleTimeline, track: string, frame: number, len: number, sound: boolean): { track: string; rec: number; len: number }[] {
+  const out = [{ track, rec: frame, len }];
+  if (isVideo(track) && sound) out.push({ track: freeTrack(tl, "A", frame, frame + len, track === "V1" ? 1 : 2).id, rec: frame, len });
+  return out;
+}

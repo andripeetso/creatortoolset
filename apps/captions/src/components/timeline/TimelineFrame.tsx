@@ -15,7 +15,7 @@ const AHEAD = 512;
  * `labelWidth` is a column of lane names inside the content, before 0:00 (the frame keeps the ruler's part of it in
  * place while the content scrolls; `rulerLabel` goes in it); `right` is the room after the end.
  */
-export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, right = 0, rulerHeight, stickyRuler, className, content, ruler, rulerLabel, rulerChildren, children }: {
+export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, right = 0, rulerHeight, stickyRuler, className, content, ruler, rulerLabel, rulerChildren, noMarks, children }: {
   scroller: RefObject<HTMLDivElement | null>;
   inner: RefObject<HTMLDivElement | null>;
   seconds: number;
@@ -33,6 +33,8 @@ export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, r
   rulerLabel?: ReactNode;
   /** what else stands on the ruler: markers, flags */
   rulerChildren?: ReactNode;
+  /** the tool draws its own ruler marks in `rulerChildren` */
+  noMarks?: boolean;
   children: ReactNode;
 }) {
   // how far the view has moved, in steps of AHEAD: the marks are drawn again only when it changes
@@ -50,7 +52,7 @@ export function TimelineFrame({ scroller, inner, seconds, pps, labelWidth = 0, r
             <div className={cn("sticky left-0 z-40 flex shrink-0 items-center px-1", stickyRuler ? "bg-inherit" : "bg-zinc-950")} style={{ width: labelWidth }}>{rulerLabel}</div>
           )}
           <div {...ruler} className={cn("relative flex-1 overflow-hidden", ruler?.className)}>
-            {marks.at.map((t) => (
+            {!noMarks && marks.at.map((t) => (
               <span key={t} className="absolute top-0 h-2 border-l border-zinc-700 pl-0.5 text-[9px] leading-none tabular-nums text-zinc-600"
                 style={{ left: t * pps }}>{clock(t, marks.step < 1)}</span>
             ))}
