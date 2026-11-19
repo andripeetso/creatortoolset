@@ -75,6 +75,10 @@ describe("buildPackage", () => {
   });
 
   it("lists the files the step reads, with this computer's own path and the proxy", async () => {
+    // replaced (UNIFIED-PRD §4.7): the server is on in every test file (vitest.server-work.ts), and while it runs a step no
+    // computer gets a server copy; the proxy goes to a computer only where the person's server weight is 0 (its own work)
+    mkdirSync(path.join(dir, "balance"), { recursive: true });
+    writeFileSync(path.join(dir, "balance", "maker.json"), JSON.stringify({ on: true, weights: { server: 0 } }));
     const preview = await buildPackage(held(EDIT, "v1", "preview"), me);
     expect(preview.files).toEqual([
       { id: "ver_a1", title: "Take 1", bytes: 100, quick: "q1", path: "/Users/maker/Footage/take1.mov" },

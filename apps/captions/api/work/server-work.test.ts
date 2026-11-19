@@ -9,6 +9,10 @@ import type { JobRow } from "../library/jobs";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "server-work-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "server-work-test-secret";
+// the studio run sets CT_MODE=hosted for every file; each test here sets the mode it needs, so this file starts with none
+const modeWas = { CT_MODE: process.env.CT_MODE, CT_LOCAL: process.env.CT_LOCAL };
+delete process.env.CT_MODE;
+delete process.env.CT_LOCAL;
 
 // every ffmpeg this server starts asks for its command first: counted here, and none really runs
 const ffmpegRuns = vi.hoisted(() => ({ n: 0 }));
@@ -112,8 +116,7 @@ async function serverTick(): Promise<{ took: boolean; read: string[] }> {
 
 afterAll(async () => {
   await devicesSaved();
-  delete process.env.CT_LOCAL;
-  delete process.env.CT_MODE;
+  for (const [k, v] of Object.entries(modeWas)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   rmSync(dir, { recursive: true, force: true });
 });
 

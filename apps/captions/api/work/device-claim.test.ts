@@ -68,6 +68,12 @@ let laptop: ReturnType<typeof pairDevice>;
 let pc: ReturnType<typeof pairDevice>;
 
 beforeAll(async () => {
+  // replaced (UNIFIED-PRD §4.7): the server is on in every test file (vitest.server-work.ts), and while it runs a step a
+  // computer that lacks the files never gets it. These cases are the computers' own: maker's server weight is 0, so a
+  // computer with no copy of the files can take the step through the server's proxy (rank 2), as the person set it.
+  // The same for solo and fresh, who only upload.
+  mkdirSync(path.join(dir, "balance"), { recursive: true });
+  for (const u of ["maker", "solo", "fresh"]) writeFileSync(path.join(dir, "balance", `${u}.json`), JSON.stringify({ on: true, weights: { server: 0 } }));
   for (const u of ["maker", "other", "solo", "old", "loop", "fresh"]) await login(u);
   laptop = pairDevice("maker", "Laptop");
   pc = pairDevice("maker", "Big PC");
@@ -132,12 +138,12 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
 
   it("a computer set to Off takes nothing while the other can", async () => {
     mkdirSync(path.join(dir, "balance"), { recursive: true });
-    writeFileSync(path.join(dir, "balance", "maker.json"), JSON.stringify({ on: true, weights: { [pc.device.id]: 0 } }));
+    writeFileSync(path.join(dir, "balance", "maker.json"), JSON.stringify({ on: true, weights: { [pc.device.id]: 0, server: 0 } }));
     const e = await newEdit("maker", ["ver_up"]);
     queue("maker", e, "v1");
     expect((await claim(pc.token)).pkg).toBeNull();
     expect((await claim(laptop.token)).pkg?.job.id).toBe(row(e, "v1").id);
-    rmSync(path.join(dir, "balance", "maker.json"));
+    writeFileSync(path.join(dir, "balance", "maker.json"), JSON.stringify({ on: true, weights: { server: 0 } }));
   });
 
   it("never another account's step", async () => {
@@ -247,6 +253,7 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
 });
 
 describe.skipIf(rootReplaced)("the server's own loop", () => {
+  // replaced (UNIFIED-PRD §4.7): the file is on the Mac, not only a server proxy; a computer with the server's copy alone does not take a step while the server runs
   it("takes a step no computer of the asker can take, and leaves one to a computer that is online", async () => {
     settle();
     const ran: string[] = [];
@@ -255,7 +262,8 @@ describe.skipIf(rootReplaced)("the server's own loop", () => {
     try {
       const mac = pairDevice("loop", "Loop Mac");
       setDeviceWork(mac.device.id, { v: WORK_V, steps: [] }); // has a worker, but is not online
-      file("loop", "ver_loop", { uploaded: true });
+      // the Mac holds the file: with the server on, a computer with only a copy of it never takes the step (UNIFIED-PRD §4.7)
+      file("loop", "ver_loop", { on: mac.device.id, uploaded: true });
       const e = await newEdit("loop", ["ver_loop"]);
       queue("loop", e, "v1");
       expect(await tick()).toBe(true);
