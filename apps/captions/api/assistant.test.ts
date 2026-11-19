@@ -26,6 +26,8 @@ const pluggedLibrary = !!(await import("./library/sources")).mainSource();
 const ana = createUser("ana", "password1");
 const noAi = createUser("nico", "password1");
 const fullKey = `Bearer ${newApiKey(ana, "full")}`;
+// ana's Media Library is set up (setupAt): use_file to the library answers the setup card until it is (UNIFIED-PRD 4.8)
+(await import("./library/db")).libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_ana', 'ana', 'Library', 'local', ?, 0)").run(JSON.stringify({ setupAt: "2026-11-01T00:00:00.000Z" }));
 
 const cookieOf = async (username: string) => {
   const r = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password: "password1" }) });
