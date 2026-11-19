@@ -877,6 +877,7 @@ libraryApp.patch("/:id", async (c) => {
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
   // the setup dialog's last answer (UNIFIED-PRD §4.8): the owner's, once; a setup done is never undone here
   if (typeof s.setupAt === "string" && s.setupAt.length < 40) put("setupAt", s.setupAt);
+  if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
   // (All clips → Shot descriptions), or an edit asks for its files
   if (LOOK_LEVELS.some((l) => l.value === s.lookLevel)) put("lookLevel", s.lookLevel);
