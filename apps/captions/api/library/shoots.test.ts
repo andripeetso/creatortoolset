@@ -147,6 +147,9 @@ describe("Smart folders by shoot", () => {
     // the same day after a long gap is another shoot, with a name of its own
     organizeOnProbe(d, clip("lib_two", "d1-late", { capturedAt: DAY1 + SHOOT_GAP_MS + 1, tz: -360, country: "CR" }), null);
     expect(inFolder("d1-late")).toEqual(["12 Nov · Costa Rica 2"]);
+    // a camera's unset clock (1970) is no date: the clip is filed by when it was added
+    organizeOnProbe(d, clip("lib_two", "unset-clock", { capturedAt: 1000 }), null);
+    expect(inFolder("unset-clock")).toEqual([dayLabel(Date.now())]);
     // the day is the one where it was filmed: 20:00 in Costa Rica is the next day in UTC
     expect(dayLabel(Date.UTC(YEAR, 10, 13, 2, 0), -360)).toBe("12 Nov");
     expect(dayLabel(Date.UTC(YEAR - 1, 10, 13, 2, 0), -360)).toBe(`12 Nov ${YEAR - 1}`);
@@ -207,8 +210,15 @@ describe("Smart folders by shoot", () => {
     clip("lib_old", "old-logo", { camera: false, pixFmt: "rgba" }, undefined, "image");
     put("col_graphics", "old-photo");
     put("col_graphics", "old-logo");
+    // a glasses photo uploaded before 11-19: its probe never read its camera; the refile reads its EXIF once
+    const jpg = path.join(dir, "old-glasses.jpg");
+    glassesPhoto(jpg, `${YEAR}:11:12 09:30:00`);
+    await blobs.put("libraries/lib_old/v/v-old-glasses/source", jpg);
+    clip("lib_old", "old-glasses", { duration: 0, pixFmt: "yuvj420p" }, undefined, "image");
+    put("col_graphics", "old-glasses");
 
-    expect(await refileShoots(d, "lib_old")).toBe(4);
+    expect(await refileShoots(d, "lib_old")).toBe(5);
+    expect(inFolder("old-glasses")).toEqual(["12 Nov · Costa Rica"]);
     const after = { folders: foldersOf("lib_old"), drv0: inFolder("drv0"), drv2: inFolder("drv2"), drv3: inFolder("drv3"), photo: inFolder("old-photo"), logo: inFolder("old-logo") };
     expect(after).toEqual({
       folders: ["12 Nov · Costa Rica", "14 Nov · Costa Rica", "Cars I like", "Graphics"],

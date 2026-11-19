@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { SOUNDS, type Organize, type Sound } from "../../contracts/library";
 import type { SessionUser } from "../users";
-import { libraryDb, librarySetting } from "./db";
+import { blobs, libraryDb, librarySetting } from "./db";
 import { workspaceOf } from "./describe";
 import { indexAsset } from "./query";
 import { lookBudgetWaits } from "./shots";
@@ -188,17 +188,24 @@ export async function refileShoots(d: DatabaseSync, libraryId: string): Promise<
       d.prepare("DELETE FROM folder_out WHERE collection_id = ?").run(t.id);
       d.prepare("DELETE FROM collections WHERE id = ?").run(t.id);
     }
-    for (const p of photos) if (!graphic(d, p.version)) d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?").run(p.folder, p.asset);
   });
-  const rows = unfiled(d, libraryId);
-  // a file indexed on this very Mac whose header was never read here: when it was filmed, before it is filed
-  const macs = d.prepare("SELECT id, mac_path FROM asset_versions WHERE id = ? AND mac_path IS NOT NULL AND json_type(probe, '$.camera') IS NULL");
-  for (const r of rows) {
-    const m = macs.get(r.version) as { id: string; mac_path: string } | undefined;
-    if (m) await readHere(d, m.id, m.mac_path, r.kind);
+  // a file whose header was never read for its camera and time (probed before 11-19, or indexed on a Mac): read once
+  // where it is, on this very Mac or this server's own disk (a bucket's would be downloaded whole), before it is filed
+  const unread = d.prepare(
+    `SELECT v.mac_path, v.source_key, l.storage_kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id
+     WHERE v.id = ? AND json_type(v.probe, '$.camera') IS NULL`,
+  );
+  const files = d.prepare("SELECT a.kind FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?");
+  for (const version of new Set([...photos.map((p) => p.version), ...unfiled(d, libraryId).map((r) => r.version)])) {
+    const u = unread.get(version) as { mac_path: string | null; source_key: string; storage_kind: string } | undefined;
+    if (!u) continue;
+    const { kind } = files.get(version) as { kind: string };
+    const file = u.mac_path ?? (u.storage_kind === "local" && !u.source_key.startsWith("mac:") ? await blobs.localCopy(u.source_key).catch(() => null) : null);
+    if (file) await readHere(d, version, file, kind);
   }
   let n = 0;
   inTx(d, () => {
+    for (const p of photos) if (!graphic(d, p.version)) d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?").run(p.folder, p.asset);
     for (const r of unfiled(d, libraryId)) {
       organizeOnProbe(d, r.version, soundOf(r.sound));
       n += toFile(d, r.version) ? 0 : 1;

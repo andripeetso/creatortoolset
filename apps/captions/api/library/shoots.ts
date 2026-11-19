@@ -31,8 +31,11 @@ interface Shoot {
   name: string;
 }
 
-/** When a version was filmed: its file's capture time, else the earliest modified time a computer reported for it, else when it was added. */
-export const FILMED = `COALESCE(json_extract(v.probe, '$.capturedAt'), (SELECT MIN(p.mtime) FROM version_places p WHERE p.version_id = v.id AND p.mtime > 0), a.created_at)`;
+/**
+ * When a version was filmed: its file's capture time, else the earliest modified time a computer reported for it, else
+ * when it was added. A time before 1990 is a camera's unset clock (1904, 1970), never a date.
+ */
+export const FILMED = `COALESCE((SELECT t FROM (SELECT json_extract(v.probe, '$.capturedAt') AS t) WHERE t > 631152000000), (SELECT MIN(p.mtime) FROM version_places p WHERE p.version_id = v.id AND p.mtime > 631152000000), a.created_at)`;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -77,7 +80,7 @@ const folderId = () => `col_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
  */
 export function fileShoot(d: DatabaseSync, a: Asset): boolean {
   const me = d
-    .prepare(`SELECT ${FILMED} AS at, json_extract(v.probe, '$.tz') AS tz, COALESCE(json_extract(v.probe, '$.country'), '') AS country FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?`)
+    .prepare(`SELECT ${FILMED} AS at, CASE WHEN json_extract(v.probe, '$.capturedAt') > 631152000000 THEN json_extract(v.probe, '$.tz') END AS tz, COALESCE(json_extract(v.probe, '$.country'), '') AS country FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?`)
     .get(a.id) as { at: number; tz: number | null; country: string } | undefined;
   if (!me) return false;
   // the nearest clip in time already in a shoot of no other country (ponytail: reads every shoot clip of the library per
