@@ -62,7 +62,7 @@ export function ActionCard({ action, ask, onContinue }: { action?: ActionNeeded;
     const r = await fetch("/api/library/offline/downloads", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ libraryId: action.libraryId, mode: "needed" }),
+      body: JSON.stringify({ library: action.libraryId, mode: "needed" }),
     }).catch(() => null);
     if (!r?.ok) return setTurned("failed");
     setTurned("on");

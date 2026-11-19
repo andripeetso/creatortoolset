@@ -255,7 +255,7 @@ describe("Creator Toolset as a remote MCP server", () => {
   });
 
   it("editor_create makes the edit from the takes and starts it at analyze; start=false only makes it", async () => {
-    const site = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }), "POST /api/editor/edit_tiny/run": () => ({ ok: true }) });
+    const site = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }), "POST /api/editor/edit_tiny/run": () => ({ ok: true }), "GET /api/editor/edit_tiny": () => ({ jobs: [] }) });
     const out = await callWith(site, "editor_create", {
       sources: ["v_a", "v_b"],
       name: "Tiny Acrobatics cut",

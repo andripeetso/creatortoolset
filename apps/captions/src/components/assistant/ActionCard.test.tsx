@@ -76,7 +76,7 @@ describe("ActionCard resume (happy-dom)", () => {
     await act(async () => undefined);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/library/offline/downloads");
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("PUT");
-    expect(bodies).toEqual([{ libraryId: "lib_p", mode: "needed" }]);
+    expect(bodies).toEqual([{ library: "lib_p", mode: "needed" }]);
     expect(calls).toEqual([LIBRARY_WORDS.downloadsDone("make a reel")]);
     act(() => root.unmount());
     host.remove();
