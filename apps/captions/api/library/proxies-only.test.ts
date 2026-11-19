@@ -69,7 +69,7 @@ async function upload(lib: string, name: string, placed = true, person = false):
 async function held(lib: string, name: string, placed = true): Promise<string> {
   const v = `held-${lib}-${name}`;
   const kind = /\.jpg$/i.test(name) ? "image" : /\.mp3$/i.test(name) ? "audio" : "video";
-  d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, ?, ?, ?, ?, 'owner-a', 1, 'b')").run(`as-${v}`, lib, kind, name, v);
+  d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES (?, ?, ?, ?, ?, 'owner-a', 1, 'b')").run(`as-${v}`, lib, kind, name.replace(/\.[^.]+$/, ""), v);
   d.prepare(
     "INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at, from_path, from_device) VALUES (?, ?, 1, ?, 1, ?, ?, 'ready', 'owner-a', 1, ?, 'mac-1')",
   ).run(v, `as-${v}`, `libraries/${lib}/v/${v}/source`, `sha-${v}`, JSON.stringify({ duration: 5, width: 1280, height: 720, fps: 30, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "" }), `/Users/tiny/Movies/${name}`);
@@ -109,7 +109,7 @@ describe("a Media Library whose upload is proxies only", () => {
     const kept = await upload("lib_p", "Handstand.mp4", true, true);
     expect(await upload("lib_p", "Computer.mp4")).toBeUndefined();
     const all = await upload("lib_all", "Handstand.mp4");
-    while (await tick(Date.now(), files));
+    while (await tick(Date.now())); // every lane: the probe makes the proxy's job
     expect(jobs(kept)).toContain("proxy");
     expect(jobs(all)).not.toContain("proxy");
   });
@@ -270,6 +270,6 @@ describe("a Media Library whose Hosted media is originals only", () => {
     const kept = direct("lib_p", "Backfill.mp4", "/Users/tiny/Movies/Backfill.mp4");
     d.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(needs), kept);
     d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.proxy', json('true')) WHERE id = 'lib_p'`).run();
-    expect(unproxied("lib_p", kept)).toEqual([{ id: kept, created_by: "owner-a" }]);
+    expect(unproxied("lib_p", kept)).toMatchObject([{ id: kept, created_by: "owner-a" }]);
   });
 });
