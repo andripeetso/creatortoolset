@@ -205,7 +205,7 @@ export function shadesOf(hex: string): Record<(typeof SHADES)[number], string> {
  * The CSS that makes a picked colour the app's accent in both themes: the same variables tailwind.config.js writes for
  * each project colour, under data-tint="custom". Kept as text so index.html can paint it before the app loads.
  */
-export function customTintCss(hex: string, on = '[data-tint="custom"]', inside = ""): string {
+export function customTintCss(hex: string): string {
   const s = shadesOf(hex);
   const vars = (dark: boolean) =>
     [
@@ -213,7 +213,7 @@ export function customTintCss(hex: string, on = '[data-tint="custom"]', inside =
       ...([50, 100, 200, 300, 400] as const).map((n) => `--t-violet-${n}:${s[dark ? n : MIRROR[n]]}`),
       ...([800, 900, 950] as const).map((n) => `--s-violet-${n}:${s[dark ? n : MIRROR[n]]}`),
     ].join(";");
-  return `:root${on}${inside}{${vars(false)}}.dark${on}${inside}{${vars(true)}}`;
+  return `:root[data-tint="custom"]{${vars(false)}}.dark[data-tint="custom"]{${vars(true)}}`;
 }
 
 /** The two tones Home's tiles take from the accent, each as "r g b": the filled one (600) and the pale one (400). */
@@ -258,20 +258,4 @@ export function useRootTint(on: boolean, own = "violet"): void {
       /* private mode: the colour holds for this visit */
     }
   }, [color]);
-  // the chat side in chat mode keeps the person's own colour, whatever the workspace (tailwind.config.js CHAT_SIDE)
-  const mine = accentFor(false, own, null);
-  useEffect(() => {
-    const el = document.documentElement;
-    const css = isHexColour(mine) ? customTintCss(mine, '[data-own-tint="custom"]', " :is([data-chat-side], [data-chat-panel])") : null;
-    let style = document.getElementById("ct-own-tint");
-    if (css) {
-      if (!style) {
-        style = document.createElement("style");
-        style.id = "ct-own-tint";
-        document.head.appendChild(style);
-      }
-      style.textContent = css;
-    } else style?.remove();
-    el.dataset.ownTint = css ? "custom" : mine;
-  }, [mine]);
 }
