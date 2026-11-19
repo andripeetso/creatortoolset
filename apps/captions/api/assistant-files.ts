@@ -12,7 +12,8 @@ import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
-import { ensureLibrary } from "./library/access";
+import { ensureLibrary, librariesHere } from "./library/access";
+import { mayReceive } from "./library/upload-gate";
 import { libraryDb } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { watchAllowed } from "./library/watch";
@@ -310,7 +311,11 @@ export async function useFile(
     if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
     // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
     await ensureLibrary(user.username);
-    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, !sound, sound);
+    // the library saveToLibrary would pick, asked first: a chat file is a person's original, as on the library's own upload
+    const lib = (await librariesHere(user.username))[0]?.id;
+    const gate = lib ? mayReceive("original", { id: lib }, "person") : null;
+    if (gate && !gate.ok) throw new Error(gate.body.message);
+    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], lib, !sound, sound);
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;

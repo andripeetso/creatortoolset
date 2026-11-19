@@ -281,6 +281,9 @@ describe("a file dropped for the Media Library", () => {
     (await import("./mcp")).SORT_WAIT_S.added = 0; // the line as it is the moment the file is in, without waiting for the sorting
     const cookie = await cookieOf("ana");
     const t = await turn(cookie, "Put this in my library");
+    // the library takes a person's files (Upload all); under none a chat's save is refused (upload-hardening.test.ts)
+    await (await import("./library/access")).ensureLibrary("ana");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all')`).run();
     const count = () => (libraryDb().prepare("SELECT COUNT(*) AS n FROM assets").get() as { n: number }).n;
     // an extra source beside the app's own library changes nothing: the file goes in
     registerLibrarySlot("tiny", { source: { id: "extras", label: "Extras" } });

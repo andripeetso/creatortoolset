@@ -92,8 +92,9 @@ export function mayReceive(
     if (upload === "proxies") return provesProxies(opts.sender) ? refuse(REFUSED_PROXIES) : { ok: true };
     return origin === "phone" ? { ok: true } : refuse(REFUSED_NONE);
   }
-  // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs the setting
-  if (origin === "computer" && upload === "none" && !opts.team) return refuse(REFUSED_NONE);
+  // the phone's 720p copy is less than the original it could send; a computer's needs the setting. A browser's "proxy" is
+  // only its word (any bytes can claim it), so under none it is refused as its original would be
+  if (upload === "none" && (origin === "person" || (origin === "computer" && !opts.team))) return refuse(REFUSED_NONE);
   const p = opts.proof;
   if (!p) return { ok: true };
   if (p.sha256 !== undefined && !HEX.test(p.sha256)) return refuse(REFUSED_PROOF);
