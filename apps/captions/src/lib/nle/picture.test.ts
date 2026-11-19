@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { withKeys, type NleItem, type NleTimeline } from "./model";
-import { picturesAt, placement, soundPieces, sourceTime } from "./picture";
+import { drawScale, picturesAt, placement, soundPieces, sourceTime, steer } from "./picture";
 
 type Case = { name: string; timeline: [number, number]; track: string; source: [number, number]; item: object; place: { matrix: number[]; crop: number[]; opacity: number } };
 // the renderer's own answers for these clips (its geometry check writes them)
@@ -40,5 +40,24 @@ describe("nle picture", () => {
     expect(s[0].gain).toBeCloseTo(0.501, 3);
     // 50 fps source on a 25 fps timeline: a timeline second is 50 source frames
     expect(sourceTime(tl, tl.tracks.V2.items[0], 1)).toBeCloseTo(0.6);
+  });
+});
+
+describe("the viewer's draw size", () => {
+  it("draws a 2160 px frame at its size on screen in device px, never above the timeline's", () => {
+    expect(drawScale(270, 2, 2160)).toBe(0.25);
+    expect(drawScale(2160, 2, 2160)).toBe(1);
+    expect(drawScale(540, 1, 1080)).toBe(0.5);
+    expect(drawScale(0, 2, 2160)).toBe(1); // not laid out yet
+  });
+});
+
+describe("a playing video kept to the clock", () => {
+  it("leaves it within 2 frames, bends its speed further off, moves it only far off", () => {
+    expect(steer(0.06, 1, 25)).toEqual({ rate: 1, seek: false });
+    expect(steer(-0.3, 1, 25)).toEqual({ rate: 1.25, seek: false }); // a slow start catches up
+    expect(steer(0.1, 2, 25).rate).toBeCloseTo(1.8);
+    expect(steer(0.4, 1, 25)).toEqual({ rate: 0.75, seek: false });
+    expect(steer(-0.7, 1, 25).seek).toBe(true);
   });
 });

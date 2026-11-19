@@ -38,3 +38,22 @@ describe("a shot whose file doesn't play here", () => {
     expect(await whyNot("/api/library/media/v1/play")).toBeUndefined();
   });
 });
+
+describe("a picture not ready yet", () => {
+  it("keeps the frame drawn last on screen, never paints black over it while the file opens", async () => {
+    let fills = 0;
+    const ctx = new Proxy({} as Record<string | symbol, unknown>, {
+      get: (t, k) => (k === "fillRect" ? () => void fills++ : k in t ? t[k] : () => {}),
+      set: (t, k, v) => ((t[k] = v), true),
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    // never loads here: the <video> stays without a frame
+    vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(0);
+    const urlOf = (): NleFile => ({ url: "/tiny/opening.mp4" });
+    const root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => root.render(<NlePlayer tl={tl} time={0} playing={false} rate={1} urlOf={urlOf} nameOf={() => "opening.mp4"} />));
+    await act(() => new Promise((done) => setTimeout(done, 150)));
+    expect(fills).toBe(1); // the first frame only (nothing to keep yet)
+    act(() => root.unmount());
+  });
+});
