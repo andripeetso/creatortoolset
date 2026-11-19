@@ -28,7 +28,7 @@ import {
   type ProxyQuality,
   type WatchModel,
 } from "@contracts/library";
-import { EXPORTS_NAME, LIBRARY_NAME, LIBRARY_SUBFOLDERS, PROJECTS_NAME, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
+import { EXPORTS_NAME, FOLDER_LABELS, LIBRARY_NAME, LIBRARY_SUBFOLDERS, PROJECTS_NAME, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
 
 /**
  * The owner's Media Library setup (UNIFIED-PRD §3.3, SCREENS-COPY §4): one fixed-size sheet, the steps in dependency
@@ -87,24 +87,16 @@ const START: Answers = {
 const stepsFor = (kind: Kind): Step[] => (kind === "mac" ? ["start", "folders", "proxy", "analysis"] : ["start", "folders", "proxy", "analysis", "hosted"]);
 
 const TITLE: Record<Step, string> = {
-  start: "Let's set up the Media Library",
-  folders: "Folders",
-  proxy: "Proxy workflow",
-  analysis: "Analysis and organization",
-  hosted: "Hosted media",
+  start: LIBRARY_WORDS.setupTitle,
+  folders: LIBRARY_WORDS.foldersTitle,
+  proxy: LIBRARY_WORDS.proxyTitle,
+  analysis: LIBRARY_WORDS.analysisStep,
+  hosted: LIBRARY_WORDS.hostedTitle,
 };
 
 const ICON: Record<Step, LucideIcon> = { start: FolderOpen, folders: FolderOpen, proxy: Gauge, analysis: ScanSearch, hosted: Cloud };
 
-// the words only this sheet shows (the folder labels and their tips are not on any other surface yet)
-const SOURCE_TIP = "Where your media is kept, with all its subfolders. Files you add in the app are saved to the first folder.";
-const PROJECTS_TIP = "Where project work is saved: edits, renders and test renders.";
-const EXPORTS_TIP = "Where finished, clean exports are saved.";
 const NEXT_TO_SOURCE = "Project files and Final exports are made next to your first Source media folder.";
-const BUDGET_TIP = "Analysis waits until next month once this workspace's library has spent this.";
-const DESCRIPTIONS_TIP = "Writes what each clip and each shot shows, with tags. Your choice, in every workspace.";
-const VIDEO_TIP = "Watches each video with its sound and lists what happens, with times. Set for this workspace.";
-const TRANSCRIPTS_TIP = "Turns speech into text, with times. Your choice, in every workspace.";
 const MAC_DOWNLOAD = "https://creatortoolset.com/download";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -352,9 +344,9 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
         <div className="space-y-5">
           {!hasThisMac() ? (
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Folders are added in the Mac app.</p>
+              <p className="text-sm text-muted-foreground">{LIBRARY_WORDS.folderInMacApp}</p>
               <Button variant="outline" onClick={() => window.open(MAC_DOWNLOAD, "_blank", "noopener")}>
-                Download the Mac app
+                {LIBRARY_WORDS.downloadMacApp}
               </Button>
             </div>
           ) : a.start === "scratch" ? (
@@ -362,23 +354,23 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
               <Row title={LIBRARY_WORDS.defaultFolders.label} tip={LIBRARY_WORDS.defaultFolders.tip} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
               {!a.defaults && (
                 <>
-                  <FolderRow title="Source media" tip={SOURCE_TIP} paths={a.sources} button="Set…" submit="Set" onAdd={(p) => set({ sources: [p] })} />
-                  <FolderRow title="Project files" tip={PROJECTS_TIP} paths={a.projects ? [a.projects] : []} button="Set…" submit="Set" onAdd={(p) => set({ projects: p })} />
-                  <FolderRow title="Final exports" tip={EXPORTS_TIP} paths={a.exports ? [a.exports] : []} button="Set…" submit="Set" onAdd={(p) => set({ exports: p })} />
+                  <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} paths={a.sources} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ sources: [p] })} />
+                  <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} paths={a.projects ? [a.projects] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ projects: p })} />
+                  <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} paths={a.exports ? [a.exports] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ exports: p })} />
                 </>
               )}
             </Card>
           ) : (
             <>
               <Card>
-                <FolderRow title="Source media" tip={SOURCE_TIP} paths={a.sources} button="Add folder…" submit="Add" onAdd={(p) => set({ sources: [...a.sources, p] })} />
+                <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} paths={a.sources} button={LIBRARY_WORDS.addFolder} submit="Add" onAdd={(p) => set({ sources: [...a.sources, p] })} />
               </Card>
               <Card>
-                <Row title="Project files and Final exports" tip={NEXT_TO_SOURCE} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
+                <Row title={`${PROJECTS_NAME} and ${EXPORTS_NAME}`} tip={NEXT_TO_SOURCE} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
                 {!a.defaults && (
                   <>
-                    <FolderRow title="Project files" tip={PROJECTS_TIP} paths={a.projects ? [a.projects] : []} button="Set…" submit="Set" onAdd={(p) => set({ projects: p })} />
-                    <FolderRow title="Final exports" tip={EXPORTS_TIP} paths={a.exports ? [a.exports] : []} button="Set…" submit="Set" onAdd={(p) => set({ exports: p })} />
+                    <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} paths={a.projects ? [a.projects] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ projects: p })} />
+                    <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} paths={a.exports ? [a.exports] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ exports: p })} />
                   </>
                 )}
               </Card>
@@ -402,7 +394,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
           <Row
             title={LIBRARY_WORDS.generateProxies.label}
             tip={LIBRARY_WORDS.generateProxies.tip}
-            status={hosted ? "On while proxies are hosted" : undefined}
+            status={hosted ? LIBRARY_WORDS.proxiesHostedOn : undefined}
             control={<Switch aria-label={LIBRARY_WORDS.generateProxies.label} checked={a.proxy || hosted} disabled={hosted} onCheckedChange={(v) => set({ proxy: v })} />}
           />
           {(a.proxy || hosted) && (
@@ -437,7 +429,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 {ANALYSIS_LEVELS.map((l) => (
                   <span key={l.value}>
                     {l.label}
-                    {l.value === ANALYSIS_DEFAULT && <span className="block text-[10px]">Recommended</span>}
+                    {l.value === ANALYSIS_DEFAULT && <span className="block text-[10px]">{LIBRARY_WORDS.recommended}</span>}
                   </span>
                 ))}
               </div>
@@ -446,12 +438,12 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
           <div className="text-center">
             <Popover>
               <PopoverTrigger className="text-sm text-muted-foreground underline-offset-4 outline-none hover:underline focus-visible:underline">
-                {a.budget === null ? "Monthly budget: No limit" : `Monthly budget: $${a.budget}`}
+                {`${LIBRARY_WORDS.budget.label}: ${a.budget === null ? LIBRARY_WORDS.budget.noLimit : `$${a.budget}`}`}
               </PopoverTrigger>
               <PopoverContent className="w-72 space-y-3">
                 <p className="flex items-center gap-2 text-sm font-medium">
-                  Monthly budget
-                  <InfoTip text={BUDGET_TIP} label="Monthly budget" />
+                  {LIBRARY_WORDS.budget.label}
+                  <InfoTip text={LIBRARY_WORDS.budget.tip} label={LIBRARY_WORDS.budget.label} />
                 </p>
                 <div className="flex items-center gap-2 text-sm">
                   $
@@ -464,11 +456,11 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                     onChange={(e) => set({ budget: Math.max(0, Number(e.target.value) || 0) })}
                     className="w-24"
                   />
-                  a month
+                  {LIBRARY_WORDS.budget.amount}
                 </div>
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" aria-label="No limit" checked={a.budget === null} onChange={(e) => set({ budget: e.target.checked ? null : LOOK_BUDGET_DEFAULT })} />
-                  No limit
+                  <input type="checkbox" aria-label={LIBRARY_WORDS.budget.noLimit} checked={a.budget === null} onChange={(e) => set({ budget: e.target.checked ? null : LOOK_BUDGET_DEFAULT })} />
+                  {LIBRARY_WORDS.budget.noLimit}
                 </label>
               </PopoverContent>
             </Popover>
@@ -477,17 +469,17 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
             <div className="space-y-2">
               <p className="text-sm font-medium">{LIBRARY_WORDS.modelsTitle}</p>
               <Card>
-                <ModelRow title="Descriptions" tip={DESCRIPTIONS_TIP} value="Set in Settings → AI" />
+                <ModelRow title={LIBRARY_WORDS.descriptions} tip={LIBRARY_WORDS.descriptionsTip} value="Set in Settings → AI" />
                 {videoLevel && (
                   <ModelRow
-                    title="Video breakdown"
-                    tip={VIDEO_TIP}
+                    title={LIBRARY_WORDS.videoBreakdown}
+                    tip={LIBRARY_WORDS.videoBreakdownTip}
                     value={WATCH_MODELS.find((m) => m.value === a.watchModel)?.label ?? ""}
                     options={WATCH_MODELS.map((m) => ({ value: m.value, label: m.label, note: m.note }))}
                     onPick={(v) => set({ watchModel: v })}
                   />
                 )}
-                <ModelRow title="Transcripts" tip={TRANSCRIPTS_TIP} value="Set in Settings → Voice" />
+                <ModelRow title={LIBRARY_WORDS.transcripts} tip={LIBRARY_WORDS.transcriptsTip} value="Set in Settings → Voice" />
               </Card>
             </div>
           )}
@@ -499,7 +491,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 disabled={a.effort === "off"}
                 label={LIBRARY_WORDS.smartFolders.label}
                 tip={LIBRARY_WORDS.smartFolders.tip}
-                status={a.effort === "off" ? "Analysis is Off" : "Clips filed into folders by what they show."}
+                status={a.effort === "off" ? LIBRARY_WORDS.analysisOff : LIBRARY_WORDS.smartFoldersStatus}
                 art={<OrganizeArt smart />}
                 onPick={() => set({ organize: "ai" })}
               />
@@ -507,7 +499,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 on={a.organize === "own"}
                 label={LIBRARY_WORDS.organizeYourself.label}
                 tip={LIBRARY_WORDS.organizeYourself.tip}
-                status="Every clip in one list, newest first."
+                status={LIBRARY_WORDS.organizeYourselfStatus}
                 art={<OrganizeArt smart={false} />}
                 onPick={() => set({ organize: "own" })}
               />
