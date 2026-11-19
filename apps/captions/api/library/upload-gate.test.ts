@@ -579,6 +579,7 @@ const STREAMS: Record<string, string> = {
   "apps/captions/api/library/locate.ts": "OPEN P3: the server's own backfill of a copy it holds (processing, not a viewer's stream)",
   "apps/captions/api/library/worker.ts": "OPEN P3: the server's derivative workers read a held original (processing)",
   "apps/captions/api/library/media/probe.ts": "OPEN P3: the server probes a held file (processing)",
+  "apps/captions/api/library/organize.ts": "OPEN P3: Smart folders read a held photo's EXIF once to file it by shoot (processing)",
   "apps/captions/api/designs.ts": "OPEN P3: a design's video frame cut on the server (processing)",
   "apps/captions/api/editor/preview.ts": "OPEN P3d: the editor's preview and measure read a held copy on the server (processing)",
 };
