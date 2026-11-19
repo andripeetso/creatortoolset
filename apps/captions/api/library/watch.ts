@@ -102,7 +102,6 @@ async function footageOf(username: string, make: boolean): Promise<Map<string, W
 /** Every account's Source media rows on this server's computer, by library: what the scan reads. */
 async function footageByLibrary(make: boolean): Promise<Map<string, WatchFolder[]>> {
   const out = new Map<string, WatchFolder[]>();
-  if (!watchAllowed()) return out;
   const files = await readdir(path.join(env.dataDir, "storage")).catch(() => [] as string[]);
   for (const file of files.filter((n) => n.endsWith(".json"))) {
     for (const [id, list] of await footageOf(file.slice(0, -".json".length), make)) out.set(id, [...(out.get(id) ?? []), ...list]);

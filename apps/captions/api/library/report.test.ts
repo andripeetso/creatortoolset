@@ -134,7 +134,7 @@ describe("location agents: the computers report, the server records", () => {
     expect(r.index).toEqual([{ folder, path: footage.path }]);
     const ix = await app.request("/api/devices/relay/index", { method: "POST", headers: auth, body: JSON.stringify({ folder, name: "final.mp4", path: kept.path, size: kept.bytes, quick: kept.quick, frames: [] }) });
     expect(ix.status).toBe(400);
-    expect(((await ix.json()) as { error: string }).error).toMatch(/not footage/);
+    expect(((await ix.json()) as { error: string }).error).toBe("Inside Source media: not imported as footage");
   });
 
   it("keeps an old pairing's id and its places when an app from before pairs again", async () => {
