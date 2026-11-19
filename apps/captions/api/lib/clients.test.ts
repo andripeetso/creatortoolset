@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "clients-"));
 const c = await import("./clients");
@@ -122,5 +122,53 @@ describe("client sessions", () => {
     c.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "mobile" } });
     off();
     expect(got).toEqual(["true:pairingLinkUpserted", "true:pairingLinkRemoved", "true:clientUpserted"]);
+  });
+});
+
+describe("two servers on one file (the no-downtime swap)", () => {
+  it("see each other's revokes and issues, and spend a code once", async () => {
+    vi.resetModules();
+    const b = await import("./clients"); // a second store, as the other process holds it
+    const one = c.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "mobile" } });
+    expect(b.resolveToken(one.token).ok).toBe(true);
+    c.revokeSession(one.row.id, all);
+    expect(b.resolveToken(one.token)).toEqual({ ok: false, code: "SESSION_REVOKED" });
+    // a later write by B keeps A's revoke
+    b.createGrant({ kind: "pairing", subject: "admin", scopes: ["read"] });
+    expect(c.resolveToken(one.token)).toEqual({ ok: false, code: "SESSION_REVOKED" });
+    // one code, redeemed by both: it works once
+    const { credential } = b.createGrant({ kind: "pairing", subject: "admin", scopes: ["read"] });
+    c.resolveToken(one.token); // A has read the file with the code in it
+    const results = [c.redeemGrant(credential, {}), b.redeemGrant(credential, {})];
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    // a session issued by B is kept through a write by A
+    const two = b.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "mobile" } });
+    c.createGrant({ kind: "pairing", subject: "admin", scopes: ["read"] });
+    expect(b.resolveToken(two.token).ok).toBe(true);
+    expect(c.resolveToken(two.token).ok).toBe(true);
+  });
+
+  it("a lock left by a server that died is cleared; the file is never written without it", () => {
+    const file = path.join(process.env.DATA_DIR!, "clients.json");
+    const lock = `${file}.lock`;
+    writeFileSync(lock, "");
+    const old = (Date.now() - c.LOCK_STALE_MS - 1000) / 1000;
+    utimesSync(lock, old, old);
+    c.createGrant({ kind: "pairing", subject: "admin", scopes: ["read"] });
+    expect(existsSync(lock)).toBe(false);
+    expect(JSON.parse(readFileSync(file, "utf8")).grants.length).toBeGreaterThan(0);
+  });
+
+  it("an account's password change, sign-out or deletion signs out all its devices and drops its codes", () => {
+    const mine = c.issueSession({ subject: "tiny-only", scopes: ["read"], client: { deviceType: "mobile" } });
+    const other = c.issueSession({ subject: "admin", scopes: ["read"], client: { deviceType: "mobile" } });
+    const { credential } = c.createGrant({ kind: "pairing", subject: "tiny-only", scopes: ["read"] });
+    let ended = 0;
+    c.holdLine(mine.row.id, () => ended++);
+    expect(c.revokeAccount("tiny-only")).toBe(1);
+    expect(ended).toBe(1);
+    expect(c.resolveToken(mine.token)).toEqual({ ok: false, code: "SESSION_REVOKED" });
+    expect(c.resolveToken(other.token).ok).toBe(true);
+    expect(c.redeemGrant(credential, {})).toEqual({ ok: false, error: "invalid_grant" });
   });
 });
