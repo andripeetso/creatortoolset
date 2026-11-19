@@ -68,7 +68,7 @@ final class Shell: NSObject, ObservableObject {
         didSet { if accountComputers != oldValue { syncRunners() } }
     }
     /// Reach from anywhere's state for the page (Connect.swift refreshReach), and when the link was last tried by itself.
-    internal(set) var reach: Reach = .signedOut
+    var reach: Reach = .signedOut
     var lastReachTry: Date?
 
     private let noteCenter = NoteCenter()
