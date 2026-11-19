@@ -138,4 +138,45 @@ final class PhoneIntegrateTests: XCTestCase {
         XCTAssertEqual(MediaTicket.add("t", to: URL(string: "https://mac.example/api/x?v=2")!).absoluteString,
                        "https://mac.example/api/x?v=2&ct_ticket=t")
     }
+
+    // MARK: what a 401 says
+
+    func testA401sCodeDecidesBetweenTryAgainAndSignedOut() {
+        let paired = Route.paired(URL(string: "http://10.0.0.20:43190/")!)
+        let account = Route.account(URL(string: "https://mac.connect.example/")!)
+        XCTAssertFalse(ConnectionFailure.status(401, route: paired, code: "INVALID_DPOP").blocked)      // a fresh proof next time
+        XCTAssertFalse(ConnectionFailure.status(401, route: account, code: "SESSION_EXPIRED").blocked)  // minted again
+        XCTAssertTrue(ConnectionFailure.status(401, route: account, code: "SESSION_REVOKED").blocked)   // waits for the person
+        XCTAssertTrue(ConnectionFailure.status(401, route: paired, code: "SESSION_REVOKED").blocked)
+        XCTAssertTrue(ConnectionFailure.status(401, route: paired, code: "INVALID_TOKEN").blocked)
+        XCTAssertEqual(ConnectionFailure.status(401, route: paired, code: "SESSION_REVOKED").detail,
+                       "This device was signed out on the computer. Pair it again.")
+    }
+
+    func testARevokedAccountComputerIsSwitchedOffAndItsSessionDropped() {
+        let url = URL(string: "https://mac-r.connect.example/")!
+        let mac = ServerEntry(serverId: "mac-revoked", label: "Mac", routes: [.account(url)], home: url)
+        let connections = Connections(saved: ServerRegistry.Saved(servers: [mac], currentKey: mac.key), live: false)
+        ServerRegistry.setCredential(mac.serverId, routeId: Route.accountId, Credential(kind: .dpop, token: "cts_r"))
+        defer { ServerRegistry.forgetCredentials(mac) }
+        connections.lineRefused(mac.serverId, route: mac.routes[0], status: 401, code: "INVALID_DPOP")
+        XCTAssertNotNil(ServerRegistry.credential(mac.serverId, route: mac.routes[0]))   // only the proof was off
+        connections.lineRefused(mac.serverId, route: mac.routes[0], status: 401, code: "SESSION_REVOKED")
+        XCTAssertNil(ServerRegistry.credential(mac.serverId, route: mac.routes[0]))
+        XCTAssertEqual(connections.entry(mac.serverId)?.enabled, false)
+    }
+
+    func testAnInvalidProofIsSentOnceMoreWithAFreshOneThenGivenUp() async {
+        StubServer.reset()
+        StubServer.answers["/api/review"] = (401, #"{"error":"This device's signature didn't match. Try again.","code":"INVALID_DPOP"}"#)
+        var api = API(server: URL(string: "https://other.example/")!, cookie: nil)
+        api.credential = Credential(kind: .dpop, token: "cts_d")
+        do {
+            _ = try await api.data(api.request("/api/review"), session: StubServer.session)
+            XCTFail("a second refusal is thrown")
+        } catch {
+            XCTAssertEqual(error as? APIError, .signedOut)
+        }
+        XCTAssertEqual(StubServer.asked, ["/api/review", "/api/review"])
+    }
 }

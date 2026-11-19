@@ -55,10 +55,16 @@ final class Servers: ObservableObject {
         if let entry = Connections.shared.entry(key: id) { Connections.shared.remove(entry.serverId) }
     }
 
-    /// The server in use turned `refused` away. A sign-in made since (a request still on its way with the old one) stays.
-    func sessionExpired(_ refused: String?) {
+    /// The server in use turned `refused` away (`code`: the 401's own). A sign-in made since (a request still on its way
+    /// with the old one) stays.
+    func sessionExpired(_ refused: String?, code: String? = nil) {
         guard let entry = Connections.shared.current, let route = entry.activeRoute,
               ServerRegistry.credential(entry.serverId, route: route)?.token == refused else { return }
+        if code == "SESSION_REVOKED" {
+            Connections.shared.lineRefused(entry.serverId, route: route, status: 401, code: code)
+            signedOut = true
+            return
+        }
         if route.authorization == .account {
             Connections.shared.refused(entry)   // a new session is minted through the account
             return
@@ -170,8 +176,10 @@ struct API {
         try decoder.decode(T.self, from: try await data(request(path)))
     }
 
-    /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled.
-    func data(_ request: URLRequest, session: URLSession = API.session) async throws -> Data {
+    /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled. A
+    /// DPoP proof the server couldn't check this time (`INVALID_DPOP`, its replay cache full) is sent once more with a
+    /// fresh proof.
+    func data(_ request: URLRequest, session: URLSession = API.session, again: Bool = true) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -181,8 +189,14 @@ struct API {
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
+            let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["code"] as? String
+            if code == "INVALID_DPOP", again, let credential, credential.kind == .dpop, let url = request.url {
+                var fresh = request
+                for (k, v) in credential.headers(method: request.httpMethod ?? "GET", url: url) { fresh.setValue(v, forHTTPHeaderField: k) }
+                return try await self.data(fresh, session: session, again: false)
+            }
             // only the server in use: an upload to another server failing must not sign this one out
-            await MainActor.run { if Servers.shared.currentId == key ?? server.absoluteString { Servers.shared.sessionExpired(credential?.token ?? cookie) } }
+            await MainActor.run { if Servers.shared.currentId == key ?? server.absoluteString { Servers.shared.sessionExpired(credential?.token ?? cookie, code: code) } }
             throw APIError.signedOut
         }
         guard (200..<300).contains(status) else {

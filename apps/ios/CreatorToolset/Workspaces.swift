@@ -423,12 +423,9 @@ extension View {
     /// state has lasted 800 ms (nothing while every computer is connected).
     func workspaceSwitcher() -> some View {
         toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                VStack(alignment: .leading, spacing: 0) {
-                    WorkspaceSwitcherButton()
-                    ConnectionHeaderStatus()
-                }
-            }
+            ToolbarItem(placement: .topBarLeading) { WorkspaceSwitcherButton() }
+            // the connection's line in the bar's middle: a second line under the switcher doesn't fit the bar
+            ToolbarItem(placement: .principal) { ConnectionHeaderStatus() }
         }
     }
 }

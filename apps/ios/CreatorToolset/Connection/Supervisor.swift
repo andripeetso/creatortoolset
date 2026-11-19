@@ -84,9 +84,18 @@ struct ConnectionFailure: Error, Equatable, LocalizedError {
     }
 
     /// A server's answer that wasn't the line.
-    static func status(_ status: Int, route: Route) -> ConnectionFailure {
+    /// `code`: the 401's own (`api/connect/contract.md`): a proof the server couldn't check this time (`INVALID_DPOP`)
+    /// is tried again with a fresh one, and an account session that ended is minted again; a revoked session waits
+    /// for the person, as does a paired token the server no longer knows.
+    static func status(_ status: Int, route: Route, code: String? = nil) -> ConnectionFailure {
         let via: Via = route.kind == .account ? .account : .direct
         switch status {
+        case 401 where code == "INVALID_DPOP" || (route.authorization == .account && code != "SESSION_REVOKED"):
+            return ConnectionFailure(reason: .transport, detail: "The computer asked this device to sign in again.", hop: .server, via: via,
+                                     cause: code, httpStatus: status)
+        case 401 where code == "SESSION_REVOKED":
+            return ConnectionFailure(reason: .authentication, detail: "This device was signed out on the computer. Pair it again.", hop: .server,
+                                     via: via, cause: code, httpStatus: status)
         case 401: return ConnectionFailure(reason: .authentication, detail: "The server credential is invalid.", hop: .server, via: via, httpStatus: status)
         case 403: return ConnectionFailure(reason: .permission, detail: "The server rejected the authentication request.", hop: .server, via: via, httpStatus: status)
         default: return ConnectionFailure(reason: .remoteUnavailable, detail: "The server answered \(status).", hop: .server, via: via,
@@ -467,7 +476,13 @@ final class ServerSupervisor {
             do {
                 let (bytes, response) = try await API.slow.bytes(for: request)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                guard status == 200 else { return post(.lineEnded(generation: generation, .status(status, route: route))) }
+                guard status == 200 else {
+                    var body = Data()
+                    for try await byte in bytes { body.append(byte); if body.count >= 2048 { break } }
+                    let code = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["code"] as? String
+                    Task { @MainActor in owner?.lineRefused(serverId, route: route, status: status, code: code) }
+                    return post(.lineEnded(generation: generation, .status(status, route: route, code: code)))
+                }
                 var parser = ServerEvents.Parser()
                 for try await text in bytes.lines {
                     guard let event = parser.take(text) else { continue }
@@ -782,6 +797,19 @@ final class Connections: ObservableObject {
 
     /// The server turned the credential of a request away: the next request asks the supervisor again.
     func refused(_ entry: ServerEntry) { supervisors[entry.serverId]?.post(.retry) }
+
+    /// A 401 on a server's line or a request, by its code. Revoked: signed out of that computer, never retried by
+    /// itself (a paired token is dropped; a computer on the account is switched off until the person turns it on,
+    /// which mints a new session). An account session that ended otherwise is dropped so the next try mints one.
+    func lineRefused(_ serverId: String, route: Route, status: Int, code: String?) {
+        guard status == 401, code != "INVALID_DPOP", let entry = entry(serverId) else { return }
+        if code == "SESSION_REVOKED" {
+            ServerRegistry.setCredential(serverId, routeId: route.authorization == .account ? Route.accountId : route.id, nil)
+            if route.authorization == .account { setEnabled(serverId, false) }
+            return
+        }
+        if route.authorization == .account { ServerRegistry.setCredential(entry.serverId, routeId: Route.accountId, nil) }
+    }
 
     // MARK: for the supervisors
 
