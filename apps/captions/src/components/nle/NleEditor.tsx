@@ -43,7 +43,7 @@ export interface NleControl {
 let clipboard: { track: string; item: NleItem }[] = [];
 
 
-export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink }: {
+export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -62,6 +62,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   readOnly?: boolean;
   /** Relink… on a clip in the Media Pool: look for the files not found here */
   onRelink?: () => void;
+  /** in the middle of the Viewer's bar, in place of the timeline's name: a way to the edit's other timelines */
+  picker?: ReactNode;
 }) {
   const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(withKeys(initial)));
   const [saved, setSaved] = useState<NleTimeline>(hist.now);
@@ -316,7 +318,9 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
             onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
         }
         viewer={
-          <Panel title="Viewer" className="flex-1" bar={<span className="min-w-0 truncate text-zinc-500">{tl.timeline.name}</span>}>
+          <Panel title="Viewer" className="flex-1" bar={picker
+            ? <div className="pointer-events-none absolute inset-x-0 flex justify-center"><div className="pointer-events-auto max-w-[60%]">{picker}</div></div>
+            : <span className="min-w-0 truncate text-zinc-500">{tl.timeline.name}</span>}>
             <NleViewer tl={shown} time={time} playing={playing} rate={rate} urlOf={urlFor} nameOf={nameOfSrc} onClick={() => play(!playing)}
               clock={
                 <span className="font-mono tabular-nums">
