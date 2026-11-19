@@ -306,6 +306,8 @@ async function readersOf(user: string, of: ((own?: string) => string) | null, fo
 /** Puts a folder on the watch list of one workspace's Library ("" = the account has no workspace). The refusal, or null. */
 async function watchIn(user: string, folderPath: string, workspace: string): Promise<string | null> {
   if (!workspace) return addWatchFolder(user, folderPath);
+  // a workspace a plug-in serves has no library to read it into (a folder for every workspace skips it)
+  if (await anyServed(user, [workspace])) return null;
   const library = await ensureLibrary(user, workspace);
   return library ? addWatchFolder(user, folderPath, library) : null;
 }
