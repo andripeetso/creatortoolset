@@ -163,4 +163,28 @@ final class MediaFilesGateTests: XCTestCase {
         XCTAssertEqual(MediaFiles.granted(server: s, workspace: nil), [footage])
         XCTAssertEqual(try JSONDecoder().decode([String: [String]].self, from: XCTUnwrap(MediaFiles.defaults.data(forKey: "allowedFolders"))), [s: ["cd303bbd"]])
     }
+
+    /// placeState and serving take one grant list (granted(server:workspace:) and the root grants) and answer alike: a
+    /// file inside a root grant on its share mounted again elsewhere, and a file in another workspace's folder.
+    func testPlaceStateAndServingAgree() throws {
+        let s = "studio.example:443"
+        let mount = try XCTUnwrap(MediaFiles.realPath(root.path))
+        let file = mount + "/Footage/a.mov"
+        let places = Places(diskList: { [PlaceDisk(path: "/", key: "system"), PlaceDisk(path: mount, key: "smb://office-nas/footage")] }, lookup: { _ in true })
+        let served = { (workspace: String?, roots: [MediaFiles.RootGrant]) -> Bool in
+            if case .file = MediaFiles.gate(file, granted: MediaFiles.granted(server: s, workspace: workspace), roots: roots, places: places, firstRead: true) { return true }
+            return false
+        }
+        // granted on the share when it was mounted at /Volumes/footage; it is at `mount` now
+        let rootGrant = [MediaFiles.RootGrant(path: "/Volumes/footage/Footage", root: "smb://office-nas/footage", rel: "Footage")]
+        XCTAssertTrue(served(nil, rootGrant))
+        XCTAssertEqual(MediaFiles.placeState(file, server: s, roots: rootGrant, places: places).state, "here")
+        // a folder allowed on this Mac for workspace B: here and served in B, in neither for a clip of A
+        MediaFiles.setServerFolders([.init(id: "f1", path: mount + "/Footage", workspaces: ["B"], use: "media")], server: s)
+        XCTAssertTrue(MediaFiles.allow(mount + "/Footage", server: s))
+        XCTAssertTrue(served("B", []))
+        XCTAssertEqual(MediaFiles.placeState(file, server: s, workspace: "B", roots: [], places: places).state, "here")
+        XCTAssertFalse(served("A", []))
+        XCTAssertEqual(MediaFiles.placeState(file, server: s, workspace: "A", roots: [], places: places).state, "not_granted")
+    }
 }
