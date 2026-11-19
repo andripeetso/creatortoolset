@@ -573,7 +573,7 @@ async function uploadsWorkspace(username: string, uploadIds: string[]): Promise<
   let ws: string | null = null;
   for (const id of uploadIds) {
     const row = libraryDb()
-      .prepare("SELECT u.library_id, l.workspace_id FROM uploads u JOIN libraries l ON l.id = u.library_id WHERE u.id = ? AND u.created_by = ? AND u.state = 'open'")
+      .prepare("SELECT u.library_id, l.workspace_id FROM uploads u JOIN libraries l ON l.id = u.library_id WHERE u.id = ? AND u.created_by = ? AND u.state IN ('open', 'finishing')")
       .get(id, username) as { library_id: string; workspace_id: string } | undefined;
     if (!row || (ws && ws !== row.workspace_id)) return null;
     if (!libraryRole(username, row.library_id) && !(await givenLibrary(username, row.library_id))) return null;

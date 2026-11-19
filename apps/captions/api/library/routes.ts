@@ -72,7 +72,7 @@ const OPEN_PER_USER = 4;
 const active = () => Date.now() + STAGE_DAYS * 86_400_000 - 3_600_000;
 const GiB = 1024 ** 3;
 const stagingDir = () => path.join(env.dataDir, "library", "staging");
-// ponytail: one writer per upload, in-process only; a second server process would need a DB lock
+// one writer per upload in this process; the finish also claims it in the database (state finishing), across processes
 const busy = new Set<string>();
 
 /** Read per call (AGENTS: process.env at the point of use). */
@@ -365,7 +365,7 @@ const stagedBytes = (file: string) => stat(file).then((s) => s.size, () => -1);
 /** Uploads nobody resumed within STAGE_DAYS: staging file removed, row marked failed. Runs when a new upload starts. */
 async function sweepStale(): Promise<void> {
   const stale = db()
-    .prepare("SELECT id, library_id, staging_path, direct_upload_id FROM uploads WHERE state = 'open' AND expires_at < ?")
+    .prepare("SELECT id, library_id, staging_path, direct_upload_id FROM uploads WHERE state IN ('open', 'finishing') AND expires_at < ?")
     .all(Date.now()) as { id: string; library_id: string; staging_path: string; direct_upload_id: string | null }[];
   for (const r of stale) if (!busy.has(r.id)) await dropUpload(r);
 }
@@ -729,10 +729,16 @@ libraryApp.patch("/uploads/:uploadId", async (c) => {
 libraryApp.post("/uploads/:uploadId/finish", async (c) => {
   const row = await ownUpload(c);
   if (!row) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (row.state !== "open") return c.json({ error: "Already finished", code: "conflict" }, 409);
+  if (row.state !== "open" && row.state !== "finishing") return c.json({ error: "Already finished", code: "conflict" }, 409);
   if (busy.has(row.id)) return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
   const gate = receives(row);
   if (!gate.ok) return c.json(gate.body, gate.status);
+  // claimed in the database, so a second server process (the no-downtime swap) never finishes it a second time; a claim
+  // an hour old is a process that stopped mid-finish, and is taken over
+  const claim = "UPDATE uploads SET state = 'finishing', expires_at = ? WHERE id = ? AND (state = 'open' OR (state = 'finishing' AND expires_at < ?))";
+  if (!db().prepare(claim).run(Date.now() + STAGE_DAYS * 86_400_000, row.id, active()).changes) {
+    return c.json({ error: "Upload in progress", code: "conflict", offset: await stagedBytes(row.staging_path) }, 409);
+  }
   busy.add(row.id);
   try {
     if (row.direct_upload_id) return await finishDirect(c, row);
@@ -784,10 +790,12 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
     uploadDone(row.id, versionId);
     return c.json({ assetId, versionId });
   } catch (e) {
-    // only one still open: an upload whose file is already in the library stays done
-    db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ? AND state = 'open'").run(row.id);
+    // only one still finishing: an upload whose file is already in the library stays done
+    db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ? AND state = 'finishing'").run(row.id);
     return c.json({ error: e instanceof Error ? e.message : String(e), code: "conflict" }, 500);
   } finally {
+    // not done nor failed (the upload is incomplete): open again, to be resumed and finished
+    db().prepare("UPDATE uploads SET state = 'open' WHERE id = ? AND state = 'finishing'").run(row.id);
     busy.delete(row.id);
   }
 });
