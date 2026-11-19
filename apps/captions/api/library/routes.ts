@@ -1095,7 +1095,8 @@ function setUp(c: Context<{ Variables: AuthVars }>, libraryId: string): void {
 // POST /api/library/:id/setup/quick { device, base? } → LibrarySummary: the setup card's defaults (contracts/library.ts
 // QuickSetup), the owner's, through the same rows and settings as the setup on the page: Source media, Project files and
 // Final exports under `base` (default ~/Movies/Creator Toolset/<workspace>) on that computer, which makes them (`make`),
-// then the settings with setupAt. 409 when the computer can't be reached now.
+// then the settings with setupAt. 409 when the computer can't be reached now. In a workspace a plug-in serves, Source
+// media is skipped (its footage is the plug-in's catalog) and the answer carries `note`, that line.
 libraryApp.post("/:id/setup/quick", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
@@ -1108,12 +1109,19 @@ libraryApp.post("/:id/setup/quick", async (c) => {
   if (d && !isOnline(d.id)) return c.json({ error: cantFind(d.name) }, 409);
   const ws = await currentWorkspaceId(user);
   const base = (typeof b?.base === "string" && b.base.trim()) || libraryBase((ws && workspaceById(ws)?.name) || "Media Library");
+  let note: string | undefined;
   for (const use of ["footage", "projects", "library"] as const) {
     const r = await addFolder(c, { role: use, host: device, path: `${base.replace(/\/+$/, "")}/${FOLDER_LABELS[use]}`, make: true });
-    const said = r.ok ? null : ((await r.json().catch(() => ({}))) as { error?: string }).error ?? "";
+    const j = r.ok ? null : ((await r.json().catch(() => ({}))) as { error?: string; code?: string });
+    // a workspace a plug-in serves keeps its footage in the plug-in's catalog: no Source media, the rest is set up
+    if (j?.code === "catalog_workspace") {
+      note = j.error;
+      continue;
+    }
+    const said = j ? (j.error ?? "") : null;
     if (said !== null && !/already/i.test(said)) return c.json({ error: `${FOLDER_LABELS[use]}: ${said}` }, r.status as 400);
   }
-  return patchLibrary(c, libraryId, {
+  const res = await patchLibrary(c, libraryId, {
     settings: {
       importMode: "copy", proxy: true, proxyQuality: "standard", ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value, lookBudget: null,
       defaultFolders: !b?.base, setupAt: new Date().toISOString(),
@@ -1121,6 +1129,7 @@ libraryApp.post("/:id/setup/quick", async (c) => {
       ...(watchAllowed(user.username) ? {} : hostedSettings(HOSTED_DEFAULT)),
     },
   });
+  return note && res.ok ? c.json({ ...((await res.json()) as LibrarySummary), note }) : res;
 });
 
 // POST /api/library { name } → a local library of the caller's own, in the workspace this request works in

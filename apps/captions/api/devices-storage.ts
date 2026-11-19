@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { EVERY_WORKSPACE, EXPORTS_NAME, FOLDER_LABELS, PROJECTS_NAME, libraryBase, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import { actionCard, type FolderAsk } from "../contracts/library";
+import { LIBRARY_WORDS, actionCard, type FolderAsk } from "../contracts/library";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
@@ -18,7 +18,7 @@ import { repointFolders } from "./library/place-rows";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf, projectOf } from "./lib/project-of";
 import { ownedProjects, sharedProjects } from "./lib/workshop/workspace";
-import { ensureLibrary } from "./library/access";
+import { anyServed, ensureLibrary } from "./library/access";
 import { actionDone } from "./lib/action-done";
 
 /**
@@ -392,6 +392,7 @@ export async function addFolder(c: C, b: Record<string, unknown> | null): Promis
   const local = asked === THIS_COMPUTER || isThisMachine(host);
   const p = (local && (raw === "~" || raw.startsWith("~/")) ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
   const [{ mine: here, workspace, named }, of] = await Promise.all([scopeOf(c), projectOf(u)]);
+  if (role === "footage" && workspace && (await anyServed(user, [workspace]))) return c.json({ error: LIBRARY_WORDS.catalogWorkspace, code: "catalog_workspace" }, 400);
   // a folder inside one of this workspace's Media folders is in the Media Library already
   const outer = role === "footage" && (await readStorage(user)).folders.find((f) => here(f) && f.role === "footage" && f.origin.host === host && !!inside(p, f.origin.path));
   if (outer) return c.json({ error: `That folder is already in ${outer.name}` }, 400);
@@ -459,6 +460,8 @@ storageApp.patch("/folders/:id", async (c) => {
   const f = before.find((x) => x.id === id);
   if (!f) return c.json({ error: "Not found" }, 404);
   if (f.role === "finals") return c.json({ error: "Finals is one folder per workspace" }, 400);
+  // every workspace (null) stays allowed: the indexer leaves out the ones a plug-in serves (library/report.ts librariesOf)
+  if (f.role === "footage" && to && (await anyServed(user, to))) return c.json({ error: LIBRARY_WORDS.catalogWorkspace, code: "catalog_workspace" }, 400);
   const moved = (list: StorageFolder[]) => {
     const out = list.map((x) => (x.id === id ? placedIn(x, to) : x));
     return f.role === "library" ? exportsTakeOver(out, id, to, of) : out;

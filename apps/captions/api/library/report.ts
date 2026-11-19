@@ -8,7 +8,7 @@ import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
 import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
-import { ensureLibrary, librariesHere, libraryChanged } from "./access";
+import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
@@ -77,6 +77,8 @@ export async function librariesOf(owner: string, f: StorageFolder, make = true):
     if (!out.some((l) => l.id === id)) out.push({ id, locate });
   };
   for (const id of ids) {
+    // a workspace a plug-in serves keeps its footage in the plug-in's catalog: never indexed here, "*" folders too
+    if (await servedByPlugin(owner, id)) continue;
     const from = given.get(id);
     if (from) {
       const lib = (await librariesHere(from, id))[0]?.id;

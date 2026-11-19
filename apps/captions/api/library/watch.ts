@@ -8,7 +8,7 @@ import type { AuthVars } from "../auth";
 import { LIBRARY_WORDS, RAW_FILE, type WatchFolder, type WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
-import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
+import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole, servedLibrary } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
@@ -296,6 +296,7 @@ watchApp.put("/:id/watch", async (c) => {
     if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
     if (!want.some((g) => g.path === f.path)) want.push(f);
   }
+  if (want.some((g) => !current.some((o) => o.path === g.path)) && (await servedLibrary(user.username, libraryId))) return c.json({ error: LIBRARY_WORDS.catalogWorkspace, code: "catalog_workspace" }, 400);
   for (const g of want) if (!current.some((o) => o.path === g.path)) await addSourceRow(user.username, g.path, libraryId);
   await dropRows(user.username, current.filter((g) => !want.some((w) => w.path === g.path)).map((g) => g.path), (ids) => ids.some((id) => id !== libraryId));
   scanSoon();
@@ -386,6 +387,7 @@ watchApp.post("/import-folder", async (c) => {
   const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; since?: unknown; libraryId?: unknown; collectionId?: unknown };
   const libraryId = typeof body.libraryId === "string" ? body.libraryId : await ensureLibrary(user.username);
   if (!libraryId || !libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (await servedLibrary(user.username, libraryId)) return c.json({ error: LIBRARY_WORDS.catalogWorkspace, code: "catalog_workspace" }, 400);
   const f = await checkFolder(libraryId, { path: expandHome(typeof body.path === "string" ? body.path.trim() : ""), mode: "reference", collectionId: body.collectionId }, user.username);
   if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
   if (await wholeDisk(f.path)) {
@@ -506,6 +508,7 @@ export async function addWatchFolder(username: string, folderPath: string, libra
   const target = libraryId ?? (await ensureLibrary(username));
   if (!target) return "No library: try again later";
   if (!libraryRole(username, target)) return "Only the library's owner can add a folder";
+  if (await servedLibrary(username, target)) return LIBRARY_WORDS.catalogWorkspace;
   if (copyTo) return IN_PLACE_ONLY;
   const f = await checkFolder(target, { path: expandHome(folderPath), mode: "reference" }, username);
   if (typeof f === "string") return f;

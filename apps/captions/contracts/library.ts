@@ -797,6 +797,8 @@ export interface WhereAnswer {
  */
 export const LIBRARY_WORDS = {
   notFootage: "Inside Source media: not imported as footage",
+  // a Media folder in a workspace a plug-in serves (its footage catalog): refused, its files never indexed here
+  catalogWorkspace: "This workspace's footage is the catalog: add clips to it from the Media Library",
   importTitle: "How should imported media behave?",
   importCopy: { label: "Copy into Source media", tip: "Imported files are copied into your Source media folder. The file you imported stays where it was." },
   importInPlace: { label: "Use files where they are", tip: "Imported files stay where you imported them from. Import from Downloads, and the clip keeps using that file." },

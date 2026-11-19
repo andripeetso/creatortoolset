@@ -224,6 +224,18 @@ export async function servedByPlugin(username: string, projectId?: string): Prom
   }
 }
 
+/** Whether a plug-in serves any of these workspaces (servedByPlugin): a Media folder there is refused (LIBRARY_WORDS.catalogWorkspace). */
+export async function anyServed(username: string, workspaces: readonly string[]): Promise<boolean> {
+  for (const w of workspaces) if (await servedByPlugin(username, w)) return true;
+  return false;
+}
+
+/** Whether a plug-in serves the workspace this library is for (its settings.projectId): nothing is indexed into it. */
+export async function servedLibrary(username: string, libraryId: string): Promise<boolean> {
+  const ws = (libraryDb().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined)?.ws;
+  return !!ws && (await servedByPlugin(username, ws));
+}
+
 /**
  * The plug-in source that is this workspace's Media Library (LibrarySource.main): only in a workspace its plug-in serves
  * itself (its uploadsTo, as servedByPlugin asks), undefined in every other one, whose Media Library is its own. With no
