@@ -33,3 +33,15 @@ describe("the setup card over a tool", () => {
     expect(opensCard({ ...editor, path: "/editor/p/f1" })).toBe(true);
   });
 });
+
+describe("the Media Library banner", () => {
+  const media = { ...base, tool: "media" as const, view: { tools: null, have: [] as never[] } };
+  it("is not drawn over the Library page, where its own setup sheet and the empty Library's Set up are", () => {
+    expect(opensCard({ ...media, path: "/library" })).toBe(false);
+    expect(opensCard({ ...media, path: "/library/clip/abc" })).toBe(false);
+  });
+  it("is still drawn for the Media Library tool elsewhere", () => {
+    expect(opensCard({ ...media, path: "/editor" })).toBe(true);
+    expect(opensCard({ ...media, path: "/settings/library" })).toBe(true);
+  });
+});

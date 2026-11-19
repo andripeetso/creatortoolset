@@ -39,6 +39,8 @@ vi.mock("@/lib/auth", () => ({
   useAuth: (sel: (s: { hosted: boolean }) => unknown) => sel({ hosted: h.hosted }),
   useMe: () => ({ username: "tiny", name: "Tiny" }),
 }));
+// the Models rows show the model in use, the same source as the owner page (settings/Models.tsx)
+vi.mock("./settings/Models", async (orig) => ({ ...(await orig<typeof import("./settings/Models")>()), useModelsInUse: () => ({ descriptions: "Gemini 3.8 Flash", transcripts: "Whisper Base" }) }));
 vi.mock("@/lib/workspace", () => ({
   currentProject: () => ({ id: "ws_1", name: "Tiny Acrobatics" }),
   useWorkspace: (sel: (s: object) => unknown) => sel({}),
@@ -331,6 +333,9 @@ describe("Media Library setup: proxies, analysis and organization details", () =
     for (let i = 0; i < 3; i++) await next();
     expect(document.body.textContent).toContain("Descriptions");
     expect(document.body.textContent).toContain("Transcripts");
+    expect(document.body.textContent).toContain("Gemini 3.8 Flash");
+    expect(document.body.textContent).toContain("Whisper Base");
+    expect(document.body.textContent).not.toContain("Set in Settings");
     await press([...document.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((b) => b.textContent?.includes("Video breakdown")));
     await press([...document.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent?.includes("Gemini 3.5 Flash-Lite")));
     await press(button("Done"));

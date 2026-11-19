@@ -131,10 +131,13 @@ export function FirstOpen() {
  */
 /** A draft's timeline (/editor/<edit>/<draft>, a plug-in's page): editing by hand there uses none of what the card asks for. */
 const HAND_EDITING = /^\/editor\/(?!p\/|design\/)[^/]+\/[^/]+/;
+const LIBRARY_PAGE = /^\/library(\/|$)/;
 
 export function opensCard(s: { real: boolean; inSetup: boolean; tool: Tool | null; view: { tools: Tool[] | null; have: Iterable<Have> } | null; dismissed: Tool | null; path?: string }): s is typeof s & { tool: Tool } {
   if (!s.real || s.inSetup || !s.tool || !s.view || s.dismissed === s.tool) return false;
   if (s.path && HAND_EDITING.test(s.path)) return false;
+  // the Library page has its own setup sheet and an empty Library that offers Set up: no Media Library banner there
+  if (s.tool === "media" && s.path && LIBRARY_PAGE.test(s.path)) return false;
   if (s.view.tools && !s.view.tools.includes(s.tool)) return false;
   return !readiness(s.tool, s.view.have).ready;
 }
