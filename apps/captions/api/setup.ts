@@ -15,6 +15,7 @@ import { agyProgress, removeAgy } from "./lib/antigravity";
 import { addMcp, connectCli, installCli, localAiView, planOf, setsUp, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, mediaReady } from "./library/access";
+import { currentWorkspaceId } from "./lib/workspace-scope";
 import { keyFor } from "./my-keys";
 import { pluginNeeds } from "./lib/plugin";
 import {
@@ -97,8 +98,9 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
     have.push("instagram");
   if (publicApifyStatus(await readApify(u)).configured) have.push("apify");
   await ensureLibrary(u);
-  // the Media Library counts once it is set up (setupAt), not merely made (UNIFIED-PRD 4.8)
-  if ((await mediaReady(u)).ready) have.push("library");
+  // the Media Library counts once it is set up (setupAt), not merely made (UNIFIED-PRD 4.8): THIS workspace's library, the
+  // one the request works in (11-19: the account's oldest one answered, so a new workspace never showed Home's setup dot)
+  if ((await mediaReady(u, await currentWorkspaceId(user))).ready) have.push("library");
   const full = (() => {
     const rec = findUser(u);
     return rec ? apiKeysOf(rec).full : null;
