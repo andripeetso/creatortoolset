@@ -1,3 +1,4 @@
+import type { DraggedClip } from "@/lib/chat-clips";
 import type { AssistantImage, AssistantPaste } from "@contracts/assistant";
 import { PASTE_AS_FILE, fileBase64, shrinkImage } from "@/lib/workshop";
 import { chunkedUpload } from "@/lib/uploads";
@@ -74,10 +75,10 @@ export async function droppedFiles(
  * the path.
  */
 export type DraftFile = { key: string; name: string; size: number; pct: number; id?: string; done?: boolean; error?: string; path?: string; file?: File };
-/** What's in the box: the words, pictures, long pastes (sent as files beside the words) and videos. */
-export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[]; folders: string[] };
-export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [], folders: [] };
-export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length && !d.files.length && !d.folders.length;
+/** What's in the box: the words, pictures, long pastes (sent as files beside the words), videos, and library clips (by id, never uploaded). */
+export type Draft = { text: string; images: AssistantImage[]; pasted: AssistantPaste[]; files: DraftFile[]; folders: string[]; clips: DraggedClip[] };
+export const EMPTY_DRAFT: Draft = { text: "", images: [], pasted: [], files: [], folders: [], clips: [] };
+export const draftEmpty = (d: Draft) => !d.text.trim() && !d.images.length && !d.pasted.length && !d.files.length && !d.folders.length && !d.clips.length;
 /** A folder's last name, for its chip. */
 export const folderName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 /** An upload started on Send but not made yet, or one failed: the message can't go yet (one not sent yet, or still uploading, can). */

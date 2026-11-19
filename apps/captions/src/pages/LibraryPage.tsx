@@ -72,6 +72,7 @@ import type { LibraryFilters } from "@/lib/library";
 import { restoreFolder, tabCounts, type TabCounts } from "./library/api";
 import { GalleryGrid, GalleryTile } from "./library/Gallery";
 import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll } from "./library/moves";
+import { CLIP_CARDS, type DraggedClip } from "@/lib/chat-clips";
 import { LibrarySidebar, SidebarSheet, sidebarPicked } from "./library/Sidebar";
 import { ListHeader, SORT_IDS, SortControls } from "./library/SortControls";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
@@ -720,7 +721,10 @@ export default function LibraryPage() {
           draggable: true,
           onDragStart: (e: React.DragEvent) => {
             e.dataTransfer.setData(DRAG, carried(a).map((x) => x.id).join(","));
-            e.dataTransfer.effectAllowed = "move";
+            // the same clips for the chat: a drop there makes a chip each (lib/chat-clips.ts)
+            const cards: DraggedClip[] = carried(a).flatMap((x) => (x.versionId ? [{ id: x.id, versionId: x.versionId, title: x.title, ...(x.thumbUrl ? { thumbUrl: x.thumbUrl } : {}) }] : []));
+            if (cards.length) e.dataTransfer.setData(CLIP_CARDS, JSON.stringify(cards));
+            e.dataTransfer.effectAllowed = "copyMove";
           },
         };
 

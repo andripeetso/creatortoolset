@@ -28,13 +28,14 @@ import { deviceOf, isThisMachine } from "./lib/devices";
 import { storageOf } from "./devices-storage";
 import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac } from "./lib/folder-list";
 import { watchAllowed } from "./library/watch";
+import { clipsHere } from "./library/access";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { exportsOf, FOLDER_LABELS, folderIn, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
 import { RETRY, type ActionNeeded } from "../contracts/library";
 import { onActionDone, publicOrigin } from "./lib/action-done";
-import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
+import type { AssistantApproval, AssistantChat, AssistantClip, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
  * The in-app assistant (the dock, src/components/assistant): an account's chats (the dock's open one and the earlier
@@ -288,6 +289,15 @@ const MAX_PASTES = 5;
 const MAX_PASTED = 200_000;
 // a shoot's worth of clips; the AI Editor takes up to 50 chat videos in one edit
 const MAX_FILES = 50;
+/** Library clips one message may carry (editor_create takes up to 50 sources). */
+const MAX_CLIPS = 50;
+export const CLIP_ELSEWHERE = "Those clips are in another workspace's Media Library: drag them from this chat's workspace";
+/**
+ * The line that tells the AI which library clips came with the message: their version_id is what the tools take
+ * (editor_create sources), so "these" in the words means them, and they are already in the library (nothing to send).
+ */
+export const clipsSaid = (clips: AssistantClip[]) =>
+  `The user added ${clips.length === 1 ? "a clip" : `${clips.length} clips`} from their Media Library (already in it: nothing to upload or import): ${clips.map((k) => `"${k.title}" (version_id ${k.versionId})`).join(", ")}. "This", "these" or "them" in their words means ${clips.length === 1 ? "this clip" : "these clips"}: pass the version_id where a tool takes footage (editor_create sources).`;
 const MAX_PATHS = 5;
 const CONTEXT_CAPS = { path: 300, title: 200, selection: 4000, visible: 2000 } as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -340,6 +350,9 @@ interface TurnInput {
   paths: string[];
   /** Videos dropped in the Mac app: their paths, read where they are (nothing uploads). */
   local: string[];
+  /** Media Library clips dragged in: version ids from the body, then (sendTurn) the clips in the chat's workspace. */
+  clipIds: string[];
+  clips: AssistantClip[];
   /** Where its pictures and pastes go in the Mac's assistant folder, which every reply shares: "" or "place-<n>/" (placeOf). */
   dir?: string;
   context?: AssistantContext;
@@ -395,7 +408,10 @@ function parseTurn(raw: unknown): TurnInput {
   if (b.localFiles !== undefined && (!Array.isArray(b.localFiles) || b.localFiles.length > MAX_FILES || b.localFiles.some((x) => typeof x !== "string" || !x.startsWith("/") || x.length > 1000 || /[\n\r\0]/.test(x))))
     throw new Error(`Send up to ${MAX_FILES} videos at a time.`);
   const local = (b.localFiles ?? []) as string[];
-  if (!text && !images.length && !pasted.length && !fileIds.length && !paths.length && !local.length) throw new Error("Write a message, or add a picture or pasted text.");
+  if (b.clips !== undefined && (!Array.isArray(b.clips) || b.clips.length > MAX_CLIPS || b.clips.some((x) => typeof x !== "string" || !x || x.length > 100)))
+    throw new Error(`Add up to ${MAX_CLIPS} library clips at a time.`);
+  const clipIds = [...new Set((b.clips ?? []) as string[])];
+  if (!text && !images.length && !pasted.length && !fileIds.length && !paths.length && !local.length && !clipIds.length) throw new Error("Write a message, or add a picture or pasted text.");
   const c = (b.context && typeof b.context === "object" ? b.context : null) as Record<string, unknown> | null;
   const where = c && capped(c.path, CONTEXT_CAPS.path);
   const context: AssistantContext | undefined = c && where
@@ -409,7 +425,7 @@ function parseTurn(raw: unknown): TurnInput {
       }
     : undefined;
   const ai = b.ai === null ? null : b.ai === undefined ? undefined : readSelection(b.ai);
-  return { text, images, pasted, fileIds, files: [], paths, local, context, ...(ai !== undefined ? { ai } : {}), ...(b.later === true ? { later: true as const } : {}), ...(typeof b.workspace === "string" && b.workspace ? { workspace: b.workspace.slice(0, 100) } : {}) };
+  return { text, images, pasted, fileIds, files: [], paths, local, clipIds, clips: [], context, ...(ai !== undefined ? { ai } : {}), ...(b.later === true ? { later: true as const } : {}), ...(typeof b.workspace === "string" && b.workspace ? { workspace: b.workspace.slice(0, 100) } : {}) };
 }
 
 /** A turn's `ai`, checked for shape (its model goes to the AI program as an argument); whose AI it is, sendTurn checks. */
@@ -1125,7 +1141,7 @@ const pictures = (username: string, m: AssistantMessage, folder: boolean): strin
 
 /** An earlier message's attachments: its pictures (where they are, or names only), pastes, videos and folders. */
 const marks = (username: string, m: AssistantMessage, folder: boolean) =>
-  [...cards(m), ...asked(m), pictures(username, m, folder), ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`), ...(m.localFiles ?? []).map((p) => `[video on their computer: ${p}]`)].filter(Boolean).join(" ");
+  [...cards(m), ...asked(m), pictures(username, m, folder), ...(m.pasted ?? []).map((n) => `[pasted: ${n}]`), ...(m.files ?? []).map((f) => `[video: ${f.name}, file id ${f.id}]`), ...(m.folders ?? []).map((p) => `[folder: ${p}]`), ...(m.localFiles ?? []).map((p) => `[video on their computer: ${p}]`), ...(m.clips ?? []).map((k) => `[library clip: ${k.title}, version_id ${k.versionId}]`)].filter(Boolean).join(" ");
 
 /** What came with the newest message, as facts: its files in the folder, the page it was sent from, what was highlighted. */
 function newestFacts(input: TurnInput, msgId: string): string[] {
@@ -1137,6 +1153,7 @@ function newestFacts(input: TurnInput, msgId: string): string[] {
     out.push(`The user attached a video still uploading from their phone: "${f.name}", file id ${f.id}. Go on with it now: use_file waits for it (and says when to call again), and a tool whose description says it takes videos still uploading takes it at once. Never wait for it yourself or ask the user to.`);
   for (const p of input.paths) out.push(`The user dropped a folder from their computer: ${JSON.stringify(p)} (its path there).`);
   for (const p of input.local) out.push(`The user dropped a video from their computer: ${JSON.stringify(p)} (its path there; nothing was uploaded).`);
+  if (input.clips.length) out.push(clipsSaid(input.clips));
   if (input.note) out.push(input.note);
   for (const [i, p] of input.pasted.entries()) out.push(`The user pasted "${p.name}" (${p.text.length.toLocaleString("en-US")} characters), in ${pastedName(p.name, i, input.dir)}.`);
   const c = input.context;
@@ -1662,7 +1679,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   });
   const sent = h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
   const uploading = (asked.files ?? []).filter((f) => f.uploading).map(({ id, name }) => ({ id, name }));
-  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], clipIds: [], clips: asked.clips ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
   if (h.context?.mac) fromMac.add(reply.id);
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
   const knows = turnKnows(username, reply.id);
@@ -1997,6 +2014,12 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const old = !!target()?.messages.length;
   const ws = (await workspaceNow(u.username, target)) ?? (old ? await workspaceOf(u.username) : await resolveProjectId(u, input.workspace));
   const inWs = <T,>(fn: () => Promise<T>) => (ws ? workspaceScope.run({ id: ws }, fn) : fn());
+  // library clips dragged in: only the chat's workspace's, never one from another brand (nothing of them uploads)
+  if (input.clipIds.length) {
+    const clips = await inWs(() => clipsHere(u.username, input.clipIds));
+    if (!clips) return c.json({ error: CLIP_ELSEWHERE }, 400);
+    input.clips = clips;
+  }
   // "Don't ask again" pressed under the fit question turns it off (only under that offer: the same words elsewhere don't)
   const lastReply = [...(target()?.messages ?? [])].reverse().find((m) => m.role === "assistant");
   const fitOff = input.text === FIT_OFF && !!lastReply?.choices?.includes(FIT_OFF) && lastReply.choices.includes(FIT_NEW);
@@ -2033,6 +2056,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
     ...(files.length ? { files } : {}),
     ...(input.paths.length ? { folders: input.paths } : {}),
     ...(input.local.length ? { localFiles: input.local } : {}),
+    ...(input.clips.length ? { clips: input.clips } : {}),
     ...(input.context?.selection ? { quote: input.context.selection } : {}),
   };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
