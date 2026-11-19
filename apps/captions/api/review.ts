@@ -2111,6 +2111,9 @@ export async function notifyWorkshopOwner(owner: string, note: { kind: "producin
   await updateInbox(owner, (list) => {
     list.unshift({ id: randomUUID(), kind: note.kind, by: note.by, assetId: note.ref, name: note.name, ...(note.text ? { text: note.text.slice(0, 140) } : {}), href: note.href, at: Date.now(), ...(note.workspace ? { workspace: note.workspace } : {}) });
   }).catch(() => {});
+  // the notes that wait on the owner (a job failed, an edit waits, a final came in) reach their phones too
+  const kind = note.kind === "failed" ? "failed" : note.kind === "waiting" ? "go" : note.kind === "delivered" ? "final" : null;
+  if (kind) emitEvent("waiting", { owner, kind, title: note.name, headline: note.text || (kind === "final" ? `${note.by} delivered` : "Failed"), path: note.href, ...(note.workspace ? { workspace: note.workspace } : {}) });
 }
 
 /** Sets a video's approval. With `only`, the move happens only when the video is in that status now. */

@@ -9,6 +9,7 @@ import { computerStatus, connectComputer, dpopCaller, issueDpopToken, type Conne
 import type { LimitFor } from './limits.ts';
 import { publicKeyB64 } from './keys.ts';
 import { ACCOUNT_TTL, checkAccountToken, mintAccountToken, TokenError } from './tickets.ts';
+import { publishActivity, registerDevice, unregisterDevice, type Apns } from './push.ts';
 import { aiStats, approveAuthorize, authorizeInfo, computerCallback, exchangeCode, forwardMcp, grantFromComputer, metadata, openPage, registerClient, relayMedia, startAuthorize, type GatewayDeps } from './gateway.ts';
 
 export interface Deps {
@@ -27,6 +28,8 @@ export interface Deps {
   originOf?: (hostname: string) => string;
   /** AI apps through this broker (gateway.ts). Unset = every route of it answers 404. */
   gateway?: Pick<GatewayDeps, 'secret' | 'fetch' | 'originOf' | 'openaiChallenge' | 'selfUrl'>;
+  /** Apple push (push.ts). Unset = phones still register, and a computer's activity answers 503. */
+  apns?: Apns;
 }
 
 const MAX_BODY = 16 * 1024;
@@ -183,6 +186,20 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
     if (m && req.method === 'POST' && m[2] === '/connect') {
       const caller = dpopCaller(cn, req, 'connect');
       return json(200, await connectComputer(cn, caller, m[1], await body(req)));
+    }
+    // Push to the account's phones (push.ts): a phone registers with its DPoP token, a computer publishes signed.
+    if (req.method === 'POST' && path === '/v1/mobile/devices') {
+      const account = dpopCaller(cn, req, 'mobile').account;
+      return json(200, registerDevice({ db: d.db, now: d.now, self, apns: d.apns }, account, await body(req)));
+    }
+    const device = /^\/v1\/mobile\/devices\/([A-Za-z0-9._:-]{1,128})$/.exec(path);
+    if (device && req.method === 'DELETE') {
+      unregisterDevice({ db: d.db, now: d.now, self }, dpopCaller(cn, req, 'mobile').account, device[1]);
+      return empty(204);
+    }
+    const activity = /^\/v1\/computers\/([0-9a-f]{32})\/activity$/.exec(path);
+    if (activity && req.method === 'POST') {
+      return json(200, await publishActivity({ db: d.db, now: d.now, self, apns: d.apns }, activity[1], await body(req)));
     }
     throw new HttpError(404, 'not_found');
   } catch (e) {
