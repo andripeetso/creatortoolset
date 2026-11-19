@@ -90,27 +90,33 @@ describe("saving a chat file to the Media Library asks the upload gate", () => {
   });
 });
 
-describe("the disk reserve: one person's empty starts never hold another's", () => {
+describe("the disk reserve: one person's uploads never hold everyone else's", () => {
   const GiB = 1024 ** 3;
-  it("ten empty 8 GB starts: four are taken and the rest told why; none of them blocks another person; bytes sent this hour count", async () => {
-    // a reserve that leaves room for one 8 GB upload and 2 GB more, on whatever disk the test runs
+  const reserve = (free: number, room: number) => void (process.env.LIBRARY_DISK_RESERVE_GB = String((free - 8 * GiB - room * GiB) / GiB));
+  it("ten empty 8 GB starts hold nothing; sent to, only that person's four largest count; an hour without a byte, none", async () => {
     const free = await freeBytes(dir);
-    process.env.LIBRARY_DISK_RESERVE_GB = String((free - 10 * GiB) / GiB);
+    if (free < 60 * GiB) return; // the test reserves around 40 GB of what is free
     const big = { size: 8 * GiB };
-    const answers = [];
-    for (let i = 0; i < 10; i++) answers.push(await start("ana", "lib_ana", big));
-    expect(answers.map((r) => r.status)).toEqual([201, 201, 201, 201, 429, 429, 429, 429, 429, 429]);
-    expect(await answers[4]!.json()).toMatchObject({ error: "You have 4 uploads open. Finish or cancel one first." });
-    // 32 GB declared, none of it sent: another person's start is taken
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = await start("ana", "lib_ana", big);
+      expect(r.status).toBe(201);
+      ids.push(((await r.json()) as { id: string }).id);
+    }
+    // room for ben's 8 GB and 2 GB more: ana's 80 GB declared, none of it sent, holds none of it
+    reserve(free, 2);
     expect((await start("ben", "lib_ben", big)).status).toBe(201);
-    // one of ana's has a byte now: what it may still write is held
-    const { id } = (await answers[0]!.json()) as { id: string };
-    expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "x-user": "ana", "upload-offset": "0", "content-length": "1" }, body: "w" })).status).toBe(204);
+    // a byte to each of ana's ten: still only four of them count (32 GB), not all ten (80 GB)
+    for (const id of ids) {
+      expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "x-user": "ana", "upload-offset": "0", "content-length": "1" }, body: "w" })).status).toBe(204);
+    }
     expect((await start("ben", "lib_ben", big)).status).toBe(507);
-    // an hour without a byte: abandoned, it holds nothing, and ana may start again
+    reserve(free, 34);
+    expect((await start("ben", "lib_ben", big)).status).toBe(201);
+    // an hour without a byte: abandoned, they hold nothing
+    reserve(free, 2);
     d.prepare("UPDATE uploads SET expires_at = ? WHERE created_by = 'ana'").run(Date.now() + 7 * 86_400_000 - 2 * 3_600_000);
     expect((await start("ben", "lib_ben", big)).status).toBe(201);
-    expect((await start("ana", "lib_ana", big)).status).toBe(201);
     delete process.env.LIBRARY_DISK_RESERVE_GB;
   });
 });

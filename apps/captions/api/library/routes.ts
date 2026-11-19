@@ -553,9 +553,6 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     ? mayReceive("proxy", into, origin, { sender, proof: { ...(made.proxy.sha256 ? { sha256: made.proxy.sha256 } : {}), bytes: size, original: made.proxy.size } })
     : mayReceive("original", into, origin, { sender });
   if (!gate.ok) return c.json(gate.body, gate.status);
-  // one person can't hold the disk reserve with empty starts: at most OPEN_PER_USER under way at once
-  const mine = (db().prepare("SELECT COUNT(*) AS n FROM uploads WHERE created_by = ? AND state = 'open' AND expires_at > ?").get(user.username, active()) as { n: number }).n;
-  if (mine >= OPEN_PER_USER) return c.json({ error: `You have ${OPEN_PER_USER} uploads open. Finish or cancel one first.`, code: "too_many" }, 429);
   await sweepStale();
   const staging = path.join(stagingDir(), id);
   // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes
@@ -564,8 +561,12 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   if (!started) {
     await mkdir(stagingDir(), { recursive: true });
     // bytes the open uploads may still write count too, or several large uploads would each pass alone; only those sent
-    // to in the last hour (expires_at moves on with each part): empty or abandoned ones hold no space
-    const pending = (db().prepare("SELECT COALESCE(SUM(size - received), 0) AS n FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?").get(active()) as { n: number }).n;
+    // to in the last hour (expires_at moves on with each part), so empty or abandoned ones hold no space, and of each
+    // person's only the OPEN_PER_USER largest, so one person's many uploads never hold everyone else's
+    const pending = (db().prepare(
+      `SELECT COALESCE(SUM(n), 0) AS n FROM (SELECT size - received AS n, ROW_NUMBER() OVER (PARTITION BY created_by ORDER BY size - received DESC) AS k
+       FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?) WHERE k <= ?`,
+    ).get(active(), OPEN_PER_USER) as { n: number }).n;
     if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
       return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
     }
