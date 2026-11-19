@@ -219,6 +219,9 @@ export const editorTools: ToolModule = {
     voice_make: async (a, ctx) => {
       if (!a.text) throw new ToolError("Give text: what the voice says.");
       const v = await ctx.json("/api/editor/voice", "POST", pick(a, ["text", "voice", "name"]));
+      // Upload none and their computer offline: it goes into the Media Library once that computer is back, as use_file's
+      // save does; its card runs until then (library-save.ts ends it)
+      if (v.waiting) return { said: v.waiting, save: v.save, note: "Not saved yet: say the line. There is no version_id to make a video from until it is in the library." };
       return {
         version_id: v.versionId,
         name: v.name,
@@ -242,7 +245,9 @@ export const editorTools: ToolModule = {
   },
   // a retry starts work again: its card opens the edit, and ends when the run does (api/editor/ended.ts)
   work: (name, _a, r) =>
-    (name === "editor_retry" || (name === "editor_feedback" && r.queued === true)) && r.id
+    name === "voice_make" && r.save
+      ? { card: { id: `library-save:${String(r.save)}`, kind: "link", title: "Media Library", href: "/library", status: "running", detail: String(r.said) } }
+      : (name === "editor_retry" || (name === "editor_feedback" && r.queued === true)) && r.id
       ? { card: { id: `edit:${String(r.id)}:retry`, kind: "edit", title: String(r.name ?? "Edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: "running", detail: "The Editor is working on it" } }
       // a cut made from timeline edits: its card opens the cut in Review, and ends when the new version is filed
       : name === "editor_cut" && r.id && r.from_version

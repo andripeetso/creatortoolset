@@ -288,7 +288,7 @@ export type SavedTo =
 /** What a save that waited for a computer does once the file is there (work/tasks/library-save.ts runs it): link it to its
  *  Finals piece (and the Workshop project it was sent from), tag a sound effect, or start the edit made from a voice. */
 export type SaveAfter =
-  | { finals: import("./finals").FinalsAdd; session?: string }
+  | { finals: import("./finals").FinalsAdd; session?: string; export?: string }
   | { sfx: { type: string; source: string; license: string; author: string } }
   | { edit: Record<string, unknown>; projectId?: string };
 

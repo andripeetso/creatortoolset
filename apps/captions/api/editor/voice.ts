@@ -131,12 +131,9 @@ export async function makeVoice(
     const saved = await saveToLibrary(user.username, file, `${title}.mp3`, [], undefined, true, undefined, input.edit ? { after: { edit: input.edit, ...(input.projectId ? { projectId: input.projectId } : {}) } } : {});
     if (!saved) throw new VoiceError("Needs a Media Library this account can add to");
     if ("error" in saved) throw new VoiceError(saved.error, 502);
-    // Upload none and their computer offline: the voice is saved there once it is back, and the edit asked for is made
-    // from it then; with none asked for there is no version to use yet
-    if ("waiting" in saved) {
-      if (input.edit) return { waiting: saved.waiting };
-      throw new VoiceError(saved.waiting);
-    }
+    // Upload none and their computer offline: the voice is saved there once it is back, and the edit asked for (if any)
+    // is made from it then; `save` names the chat's card for it (library-save:<save>)
+    if ("waiting" in saved) return { waiting: saved.waiting, save: saved.save };
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
     const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };
     change(user.username, (f) => void (f.voice = voice.id));
@@ -149,6 +146,7 @@ export async function makeVoice(
 /** A voice whose save waits for a computer: the line to show; its edit starts once it is there (editFromVoice). */
 export interface VoiceWaits {
   waiting: string;
+  save: string;
 }
 
 /** The edit asked for with a voice, made from it once its save landed on a computer, and started. Its id, or null. */

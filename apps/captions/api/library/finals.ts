@@ -37,8 +37,9 @@ export interface FinalsAdd {
 /** Where the version comes from: a library version already (linked), a file to store once, or a source's own item (a ref). */
 export type FinalsSource =
   | { versionId: string }
-  /** session: the Workshop project the file was sent from, linked to its piece once a save that waited lands */
-  | { file: string; filename: string; session?: string }
+  /** once a save that waited lands: `session`, the Workshop project it was sent from, is linked to its piece; `export`,
+   *  the export whose Finals state then says it is sent */
+  | { file: string; filename: string; session?: string; export?: string }
   | { external: { source: string; kind: string; externalId: string; title: string } };
 
 export type FinalsOutcome =
@@ -102,7 +103,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
     } else {
       const saved = await saveToLibrary(input.owner, source.file, source.filename, [], input.libraryId, false, undefined, {
         finals: true,
-        after: { finals: input, ...(source.session ? { session: source.session } : {}) },
+        after: { finals: input, ...(source.session ? { session: source.session } : {}), ...(source.export ? { export: source.export } : {}) },
       });
       if (!saved) return { ok: false, code: "no_access", error: "Not allowed" };
       if ("error" in saved) return { ok: false, code: "failed", error: saved.error };

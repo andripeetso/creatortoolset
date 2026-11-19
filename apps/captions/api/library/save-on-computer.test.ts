@@ -44,6 +44,15 @@ writeFileSync(
   JSON.stringify({ id: exportId, owner: "tina", status: "done", kind: "burn", engine: "native", format: "h264", ext: "mp4", filename: "Tiny reel.mp4", progress: 1, createdAt: Date.now(), finishedAt: Date.now(), params: { duration: 10, width: 1080, height: 1920 } }),
 );
 
+// a finished 1080p export of eve's, not yet sent to Finals
+const eveExport = "00000000-0000-4000-8000-000000000002";
+mkdirSync(path.join(dataDir, "exports", eveExport), { recursive: true });
+writeFileSync(path.join(dataDir, "exports", eveExport, "out.mp4"), "tiny acrobatics eve's final");
+writeFileSync(
+  path.join(dataDir, "exports", eveExport, "job.json"),
+  JSON.stringify({ id: eveExport, owner: "eve", status: "done", kind: "burn", engine: "native", format: "h264", ext: "mp4", filename: "Eve reel.mp4", progress: 1, createdAt: Date.now(), finishedAt: Date.now(), params: { duration: 10, width: 1080, height: 1920 } }),
+);
+
 const app = (await import("../boot")).default;
 const { createUser, findUser, setOff } = await import("../users");
 const { pairDevice, setDeviceWork, touchDevice } = await import("../lib/devices");
@@ -71,8 +80,8 @@ writeServerWork({ on: true });
 const d = libraryDb();
 const cookies: Record<string, string> = {};
 /** An account, its library at `upload` (set up), its Mac with a Source media and a Final exports folder. */
-async function account(name: string, upload: string) {
-  setOff(createUser(name, "password1", { role: "user" }), []);
+async function account(name: string, upload: string, role: "user" | "admin" = "user") {
+  setOff(createUser(name, "password1", { role }), []);
   const r = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: name, password: "password1" }) });
   cookies[name] = r.headers.get("set-cookie")!.split(";")[0]!;
   const lib = (await ensureLibrary(name))!;
@@ -359,7 +368,7 @@ describe("what a waiting save was for happens once it lands", () => {
     saveMyKey("vo", "ELEVENLABS_API_KEY", "vos-own");
     await elevenLabs("tiny acrobatics spoken script", async () => {
       const made = await makeVoice(findUser("vo") as never, { text: "Roll, then reach", voice: "Sam", name: "Roll", edit: { name: "Tiny voice edit", versions: 1, targetS: 0 } });
-      expect(made).toEqual({ waiting: expect.stringMatching(/^Vo's Mac is offline/) });
+      expect(made).toEqual({ waiting: expect.stringMatching(/^Vo's Mac is offline/), save: expect.any(String) });
     });
     expect(allEdits().some((e) => e.name === "Tiny voice edit")).toBe(false);
     vo.online();
@@ -368,6 +377,59 @@ describe("what a waiting save was for happens once it lands", () => {
     const edit = allEdits().find((e) => e.name === "Tiny voice edit");
     expect(edit?.sources).toEqual([v.id]);
     expect(d.prepare("SELECT kind, state FROM edit_jobs WHERE edit_id = ?").get(edit!.id)).toMatchObject({ kind: "analyze" });
+  });
+});
+
+describe("the rest of a waiting save", () => {
+  it("voice_make in a chat waits as use_file does: a running card and the line, then Saved when it lands, Not saved past 7 days", async () => {
+    const chu = await account("chu", "none");
+    saveMyKey("chu", "ELEVENLABS_API_KEY", "chus-own");
+    // the computer that runs the chat's AI (the relay), apart from the Mac that holds the folders
+    const runner = pairDevice("chu", "Runner");
+    const { saveSettings } = await import("../lib/providers");
+    const { DEFAULT_SETTINGS } = await import("../../contracts/providers");
+    await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: runner.device.id }] }, "chu");
+    const post = (url: string, body: unknown, headers: Record<string, string>) => app.request(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    expect((await post("/api/assistant/turn", { text: "Make two voices" }, { cookie: cookies.chu! })).status).toBe(202);
+    const job = (await (await post("/api/devices/relay/wait", {}, { authorization: `Bearer ${runner.token}` })).json()) as { id: string; mcp: { token: string } };
+    const tool = async (args: Record<string, unknown>) => {
+      const r = (await (await post("/api/mcp", { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "voice_make", arguments: args } }, { authorization: `Bearer ${job.mcp.token}` })).json()) as { result: { isError?: boolean; content: Array<{ text: string }> } };
+      expect(r.result.isError ?? false).toBe(false);
+      return JSON.parse(r.result.content[0]!.text) as { said: string; save: string };
+    };
+    let kept = { said: "", save: "" };
+    let dropped = { said: "", save: "" };
+    await elevenLabs("tiny acrobatics chat voice one", async () => void (kept = await tool({ text: "One", voice: "Sam", name: "Kept" })));
+    await elevenLabs("tiny acrobatics chat voice two", async () => void (dropped = await tool({ text: "Two", voice: "Sam", name: "Dropped" })));
+    expect(kept.said).toMatch(/^Chu's Mac is offline\. I'll save it to Source media/);
+    await post(`/api/devices/relay/${job.id}/done`, { text: "Waiting for your Mac." }, { authorization: `Bearer ${runner.token}` });
+    const cards = async () => ((await (await app.request("/api/assistant", { headers: { cookie: cookies.chu! } })).json()) as { messages: Array<{ work?: Array<{ id: string; status: string; detail?: string }> }> }).messages.flatMap((m) => m.work ?? []);
+    const card = async (save: string) => (await cards()).find((w) => w.id === `library-save:${save}`);
+    expect(await card(kept.save)).toMatchObject({ status: "running" });
+    expect(await card(dropped.save)).toMatchObject({ status: "running" });
+    // one waits past 7 days: its card ends Not saved
+    d.prepare("UPDATE computer_tasks SET created_at = ? WHERE ref = ?").run(Date.now() - 8 * 86_400_000, dropped.save);
+    await taskTick();
+    await vi.waitFor(async () => expect(await card(dropped.save)).toMatchObject({ status: "failed", detail: "Not saved" }), { timeout: 5000 });
+    // the other lands once the Mac is back: its card ends Saved, and the voice is in Source media
+    chu.online();
+    expect(await chu.takes()).toBe("done");
+    expect(await card(kept.save)).toMatchObject({ status: "done", detail: "Saved" });
+    expect(readFileSync(path.join(chu.media, "Kept.mp3"), "utf8")).toBe("tiny acrobatics chat voice one");
+  });
+
+  it("the Export tray's Finals state: waiting while the computer is offline, sent once the final lands in its piece", async () => {
+    const eve = await account("eve", "none", "admin");
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.finalsUpload', 'none') WHERE id = ?").run(eve.lib);
+    const send = await app.request(`/api/exports/${eveExport}/content`, { method: "POST", headers: { cookie: cookies.eve!, "content-type": "application/json" }, body: "{}" });
+    expect(await send.json()).toMatchObject({ finals: { status: "waiting", error: expect.stringMatching(/^Eve's Mac is offline\. I'll save it to Final exports/) } });
+    const tray = async () =>
+      ((await (await app.request("/api/exports", { headers: { cookie: cookies.eve! } })).json()) as Array<{ id: string; finals?: { status: string; pieceId?: string } }>).find((j) => j.id === eveExport)?.finals;
+    expect(await tray()).toMatchObject({ status: "waiting" });
+    eve.online();
+    expect(await eve.takes()).toBe("done");
+    const piece = d.prepare("SELECT p.id FROM pieces p JOIN piece_items i ON i.piece_id = p.id WHERE p.library_id = ?").get(eve.lib) as { id: string };
+    expect(await tray()).toEqual({ status: "sent", pieceId: piece.id });
   });
 });
 

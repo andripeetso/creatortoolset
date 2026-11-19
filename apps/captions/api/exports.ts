@@ -396,7 +396,7 @@ async function sendToFinals(job: Job): Promise<void> {
         width: job.params.width ?? 0,
         height: job.params.height ?? 0,
       },
-      { file: outPath(job), filename: job.filename },
+      { file: outPath(job), filename: job.filename, export: job.id },
     );
   } catch (e) {
     out = { ok: false, code: "failed", error: e instanceof Error ? e.message : String(e) };
@@ -405,6 +405,16 @@ async function sendToFinals(job: Job): Promise<void> {
   job.finals = out.ok
     ? { status: "sent", pieceId: out.pieceId }
     : { status: out.code === "refused" ? "refused" : out.code === "waiting" ? "waiting" : "error", error: out.error };
+  await jobPersist(job);
+}
+
+/** A final that waited for an offline computer is in its Finals piece now (work/tasks/library-save.ts): the job's
+ *  Finals state says so, and the tray follows (jobPersist announces it). */
+export async function finalsLanded(id: string, pieceId: string): Promise<void> {
+  await loaded;
+  const job = jobs.get(id);
+  if (!job || job.finals?.status !== "waiting") return;
+  job.finals = { status: "sent", pieceId };
   await jobPersist(job);
 }
 

@@ -111,6 +111,7 @@ async function followUp(actor: string, input: LibrarySaveInput, assetId: string,
     const { addToFinals, linkFinalsPiece } = await import("../../library/finals");
     const out = await addToFinals(a.finals, { versionId });
     if (out.ok && a.session) linkFinalsPiece(out.pieceId, a.session, undefined, a.finals.owner);
+    if (out.ok && a.export) await (await import("../../exports")).finalsLanded(a.export, out.pieceId);
     if (!out.ok) console.warn(`[library-save] ${input.filename} not put in Finals: ${out.error}`);
   } else if ("sfx" in a) {
     const { libraryDb } = await import("../../library/db");
