@@ -48,6 +48,9 @@ writeFileSync(
   }),
 );
 
+// the owner's account: hasMembers finds the workspace's owner through it
+const { createUser } = await import("../users");
+createUser("tinyacrobatics", "fixture-password-only");
 const { libraryDb } = await import("./db");
 const { migrateOnce, migrateLibraries, under } = await import("./migrate");
 const d = libraryDb();
