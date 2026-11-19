@@ -137,6 +137,32 @@ describe("a folder added in setup", () => {
       process.env.LIBRARY_WATCH_FOLDERS = "1";
     }
   });
+
+  it("setup's scratch folder is made under ~/Movies/Creator Toolset before its row is checked, and nowhere else", async () => {
+    const { existsSync } = await import("node:fs");
+    const home = process.env.HOME;
+    process.env.HOME = dir;
+    try {
+      const made = `${dir}/Movies/Creator Toolset/Tiny/Source media`;
+      const ok = await app.request("/api/devices/storage/folders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "footage", host: "this-computer", path: made, make: true }),
+      });
+      expect(ok.status).toBe(200);
+      expect(existsSync(made)).toBe(true);
+      const elsewhere = `${dir}/Elsewhere/Source media`;
+      const no = await app.request("/api/devices/storage/folders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "footage", host: "this-computer", path: elsewhere, make: true }),
+      });
+      expect(no.status).toBe(400);
+      expect(existsSync(elsewhere)).toBe(false);
+    } finally {
+      process.env.HOME = home;
+    }
+  });
 });
 
 // Settings → Storage picks a computer. When that computer is the machine this server runs on (the Mac app's own
