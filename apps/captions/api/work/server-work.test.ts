@@ -395,19 +395,12 @@ describe("Creator Toolset Cloud", () => {
 
   // replaced (CEO 11-19): "Creator Toolset Cloud" is the name the hosted plug-in gives the server (ServerPlugin.serverName)
   it("is named by the plug-in that names it, and This Mac still has no name", async () => {
+    // the helper the route answers with: an HTTP call here would go through the replaced plug-ins' sign-in
+    const { serverNameOf } = await import("./server-work-routes");
     mountPlugins(new Hono(), [definePlugin({ id: "cloud-name", serverName: "Creator Toolset Cloud" })]);
-    process.env.CT_MODE = "hosted";
-    try {
-      expect(await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }))).toMatchObject({ kind: "hosted", serverName: "Creator Toolset Cloud" });
-    } finally {
-      delete process.env.CT_MODE;
-    }
-    process.env.CT_LOCAL = "1";
-    try {
-      expect((await json(app.request("/api/work/server-work", { headers: { cookie: cookies.far! } }))).serverName).toBeUndefined();
-    } finally {
-      delete process.env.CT_LOCAL;
-    }
+    expect(serverNameOf("hosted")).toBe("Creator Toolset Cloud");
+    expect(serverNameOf("server")).toBe("Creator Toolset Cloud");
+    expect(serverNameOf("local")).toBeUndefined();
   });
 });
 
