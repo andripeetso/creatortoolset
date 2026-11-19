@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -433,16 +433,19 @@ app.use("/api/*", inRequestWorkspace);
 // live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs
 app.use("/api/*", announceWrites);
 app.route("/api/sync", syncApp);
-// who has access is changed by a browser's cookie in every mode, so a page from another site never reaches it: the
-// browser must say it came from here and send JSON (which no plain form can). A device's own token is exempt.
-const ACCESS_WRITE = /^\/api\/auth\/(?:pairing-links|clients)(?:\/|$)/;
-app.use("/api/auth/*", async (c, next) => {
+// who has access, and how this computer is reached, are changed by a browser's cookie in every mode, so a page from
+// another site never reaches them: the browser must say it came from here and send JSON (which no plain form can).
+// A device's own token is exempt; the connect service's signed calls carry JSON and no Origin, so they pass.
+const ACCESS_WRITE = /^\/api\/(?:auth\/(?:pairing-links|clients)|connect)(?:\/|$)/;
+const sameSiteWrites: MiddlewareHandler = async (c, next) => {
   if (c.req.method !== "POST" || !ACCESS_WRITE.test(c.req.path) || c.req.header("authorization")) return next();
   if (crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), undefined) || !/^application\/json\b/i.test(c.req.header("content-type") ?? "")) {
     return c.json({ error: "Sent from another site" }, 403);
   }
   return next();
-});
+};
+app.use("/api/auth/*", sameSiteWrites);
+app.use("/api/connect/*", sameSiteWrites);
 app.route("/api/auth", authClientsApp);
 app.route("/api/auth", authApp);
 app.route("/api/server", endpointsApp);

@@ -112,7 +112,8 @@ deletion do the same to every session of that account, and drop its unused links
 
 These three routes and `POST /api/auth/pairing-links`, sent with a cookie (no `Authorization`), are refused 403 `"Sent from
 another site"` in every mode unless the body is `application/json` and an `Origin`, when sent, is this server's (or
-`PUBLIC_ORIGIN`). A device's own Bearer or DPoP token is exempt.
+`PUBLIC_ORIGIN`). A device's own Bearer or DPoP token is exempt. The same rule covers every `POST /api/connect/*`
+(link-proof, relay-config, notifications, ai, …): the connect service's signed calls carry JSON and no Origin, so they pass.
 
 ### `POST /oauth/token` (form-encoded, no sign-in)
 

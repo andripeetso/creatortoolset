@@ -170,6 +170,16 @@ describe("the access routes refuse a page from another site", () => {
       expect(plain.status).not.toBe(403);
     });
   }
+  // the connect routes may still refuse for their own reasons (owner only, this computer only); only the site check is asked
+  for (const route of ["/api/connect/notifications", "/api/connect/ai", "/api/connect/link-proof", "/api/connect/relay-config"]) {
+    it(`${route}: a cookie POST from another site or without JSON is refused; its own origin is not`, async () => {
+      const said = async (r: Response) => ((await r.json().catch(() => ({}))) as { error?: string }).error;
+      expect(await said(await call("POST", route, { cookie: adminCookie, body: {}, headers: { origin: "https://evil.example" } }))).toBe("Sent from another site");
+      expect(await said(await call("POST", route, { cookie: adminCookie, raw: "{}", headers: { "content-type": "text/plain" } }))).toBe("Sent from another site");
+      expect(await said(await call("POST", route, { cookie: adminCookie, body: {}, headers: { origin: "https://ct.test.example" } }))).not.toBe("Sent from another site");
+      expect(await said(await call("POST", route, { body: {} }))).not.toBe("Sent from another site"); // the connect service: JSON, no Origin, no cookie
+    });
+  }
   it("a device's token is exempt, and the form-encoded /oauth/token still works", async () => {
     const token = await pair(adminCookie); // /oauth/token is form-encoded, with no cookie
     const r = await call("POST", "/api/auth/clients/revoke-others", { token, headers: { origin: "https://evil.example" } });
