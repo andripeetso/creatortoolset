@@ -332,7 +332,12 @@ struct PairingLinkPresenter: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onOpenURL { links.open($0) }
+            .onOpenURL { url in
+                let opened = links.open(url)
+                #if DEBUG
+                NSLog("pairing link opened: %@", opened ? "yes" : "no")
+                #endif
+            }
             .sheet(item: Binding(get: { links.pending.map(PendingLink.init) }, set: { if $0 == nil { links.pending = nil } })) { pending in
                 NavigationStack { AddServerView(link: pending.target) }
             }

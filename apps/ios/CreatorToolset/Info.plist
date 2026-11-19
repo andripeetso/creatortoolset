@@ -26,7 +26,7 @@
 	<string>Creator Toolset reaches your computer directly on your home network, which is faster than going through the internet.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsLocalNetworking</key>
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
 </dict>

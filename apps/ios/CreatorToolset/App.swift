@@ -247,6 +247,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                 try? image.pngData()?.write(to: url)
             }
         }
+        // what an opened pairing link does, for a run with no taps: -OpenLink '<link>' (the same path as onOpenURL)
+        if let raw = debugArg("OpenLink"), let url = URL(string: raw) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { PairingLinks.shared.open(url) }
+        }
         // an end-to-end run pairs the simulator with no taps: -PairNow '<pairing link>' (a launch argument, never a link)
         if let raw = debugArg("PairNow"), let target = PairingTarget.parse(raw) {
             Task { @MainActor in
