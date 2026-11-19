@@ -4,7 +4,7 @@ import type { Cloudflare } from './cloudflare.ts';
 import { HttpError } from './errors.ts';
 import type { LimitFor } from './limits.ts';
 import { keyId, parsePublicKey, publicKeyB64 } from './keys.ts';
-import { issueTicket } from './tickets.ts';
+import { computerName, TYP, verifyJwt } from './connect.ts';
 import type { KeyObject } from 'node:crypto';
 
 export const CHALLENGE_TTL = 120; // seconds
@@ -16,6 +16,8 @@ export interface LinkDeps {
   limitFor: LimitFor;
   tunnelDomain: string; // computers get <id>.<tunnelDomain>
   signing: { privateKey: KeyObject; publicKey: KeyObject; kid: string };
+  /** This broker's origin: a link proof must be addressed to it. */
+  self: string;
 }
 
 const ORIGIN = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/; // a computer's local server, and only that
@@ -67,9 +69,31 @@ export function signedBody(body: Record<string, unknown>): { key: KeyObject; p: 
   return { key, p };
 }
 
-// The link: a signed payload of { nonce, name, origin }.
+/**
+ * The proof a computer's /api/connect/link-proof makes for the Mac app to pass on: { proof, publicKey, … }, the proof a
+ * JWS signed by that key, addressed to this broker, naming the challenge. Read into the same { nonce, name, origin }.
+ */
+function linkProof(d: LinkDeps, body: Record<string, unknown>): { key: KeyObject; p: Record<string, unknown> } {
+  let key: KeyObject;
+  try {
+    key = parsePublicKey(String(body.publicKey));
+  } catch {
+    throw new HttpError(400, 'bad_key');
+  }
+  const id = keyId(key);
+  const c = verifyJwt(body.proof, key, TYP.linkProof);
+  if (!c || c.iss !== computerName(id) || c.sub !== id || c.aud !== d.self || c.publicKey !== body.publicKey) throw new HttpError(401, 'bad_signature');
+  const now = d.now();
+  if (typeof c.iat !== 'number' || typeof c.exp !== 'number' || c.exp <= now || c.iat > now + 60 || c.exp - c.iat > 300) {
+    throw new HttpError(401, 'stale_proof');
+  }
+  return { key, p: { nonce: c.challenge, name: c.name, origin: c.origin } };
+}
+
+// The link: the computer's proof of the challenge (linkProof), or, from a computer that links by itself after a device
+// grant (api/connect/broker.ts), a signed payload of { nonce, name, origin }.
 export async function linkComputer(d: LinkDeps, accountId: string, body: Record<string, unknown>) {
-  const { key, p } = signedBody(body);
+  const { key, p } = typeof body.proof === 'string' ? linkProof(d, body) : signedBody(body);
   const name = typeof p.name === 'string' ? p.name.trim() : '';
   const origin = typeof p.origin === 'string' ? p.origin : '';
   if (typeof p.nonce !== 'string' || !name || name.length > 64 || !ORIGIN.test(origin)) {
@@ -92,9 +116,9 @@ export async function linkComputer(d: LinkDeps, accountId: string, body: Record<
 
   // Reserve the row before any Cloudflare call, so a racing link counts it against the limit.
   d.db
-    .prepare(`INSERT INTO computers (id, account_id, name, origin, hostname, tunnel_id, dns_id, idle_since, created_at)
-              VALUES (?, ?, ?, ?, ?, '', '', NULL, ?)`)
-    .run(id, accountId, name, origin, hostname, now);
+    .prepare(`INSERT INTO computers (id, account_id, name, origin, hostname, tunnel_id, dns_id, idle_since, created_at, public_key)
+              VALUES (?, ?, ?, ?, ?, '', '', NULL, ?, ?)`)
+    .run(id, accountId, name, origin, hostname, now, publicKeyB64(key));
 
   const row = { tunnel: '', dns: '' };
   try {
@@ -104,12 +128,21 @@ export async function linkComputer(d: LinkDeps, accountId: string, body: Record<
     row.dns = await d.cf.createDns(hostname, row.tunnel);
     d.db.prepare('UPDATE computers SET dns_id = ? WHERE id = ?').run(row.dns, id);
     const tunnelToken = await d.cf.tunnelToken(row.tunnel);
+    const brokerKey = publicKeyB64(d.signing.publicKey);
     return {
-      computer_id: id,
+      // what the computer hands its own /api/connect/relay-config (the Mac app passes it on)
+      computerId: id,
+      owner: accountId,
       hostname,
+      endpoint: `https://${hostname}`,
+      tunnelToken,
+      brokerKey,
+      brokerKid: d.signing.kid,
+      // the same, as computers from before account-token linking read it (api/connect/broker.ts linkThisComputer)
+      computer_id: id,
       tunnel_token: tunnelToken,
       relay_kid: d.signing.kid,
-      relay_public_key: publicKeyB64(d.signing.publicKey),
+      relay_public_key: brokerKey,
     };
   } catch (e) {
     // Undo what was created. If Cloudflare refuses the undo, keep the row: the reaper removes it later.
@@ -150,6 +183,8 @@ export async function renewTunnel(d: LinkDeps, computerId: string, body: Record<
     | undefined;
   if (!row) throw new HttpError(404, 'unknown_computer');
   d.db.prepare('UPDATE computers SET recovers = 1 WHERE id = ? AND recovers = 0').run(computerId);
+  // a computer linked before keys were kept: its signed ask proves the key (its id is the key's id)
+  d.db.prepare('UPDATE computers SET public_key = ? WHERE id = ? AND public_key IS NULL').run(publicKeyB64(key), computerId);
   if (row.released_at === null) return { unchanged: true };
 
   let tunnel = '';
@@ -188,19 +223,6 @@ export async function releaseTunnel(
   d.db
     .prepare("UPDATE computers SET tunnel_id = '', released_at = ?, idle_since = NULL WHERE id = ? AND tunnel_id = ?")
     .run(d.now(), row.id, row.tunnel_id);
-}
-
-// The owner's ticket for one of their computers. Another account's computer is "not found", never "forbidden".
-export function ticketFor(d: LinkDeps, accountId: string, computerId: string) {
-  const row = d.db.prepare('SELECT hostname FROM computers WHERE id = ? AND account_id = ?').get(computerId, accountId) as
-    | { hostname: string }
-    | undefined;
-  if (!row) throw new HttpError(404, 'not_found');
-  return {
-    ticket: issueTicket(d.signing.privateKey, { sub: accountId, env: computerId, aud: row.hostname }, d.now()),
-    hostname: row.hostname,
-    expires_in: 120,
-  };
 }
 
 // Removes a computer's tunnel and DNS record, then its row. Used by unlink and the reaper. Cloudflare 404s are

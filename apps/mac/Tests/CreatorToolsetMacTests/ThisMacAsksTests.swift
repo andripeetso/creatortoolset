@@ -6,10 +6,13 @@ final class ThisMacAsksTests: XCTestCase {
     func testThePageMayAskOnlyTheQuestionsItNeeds() {
         // the Access button sends "access"; the AI questions stay as they were; anything else is answered as off
         XCTAssertTrue(thisMacAsks.contains("access"))
+        XCTAssertTrue(thisMacAsks.contains("access:off"))   // Settings → Computers → Network access off
         XCTAssertTrue(thisMacAsks.contains("start"))
         XCTAssertTrue(thisMacAsks.contains("state"))
         XCTAssertTrue(thisMacAsks.contains("pair"))   // Settings → Folders adds this Mac to a server with the AI left off
         XCTAssertTrue(thisMacAsks.contains("connect"))
+        XCTAssertTrue(thisMacAsks.contains("connect.link"))     // Settings → Computers → Reach from anywhere
+        XCTAssertTrue(thisMacAsks.contains("connect.unlink"))
         XCTAssertFalse(thisMacAsks.contains("forget"))
         XCTAssertFalse(thisMacAsks.contains("ai:on"))
     }

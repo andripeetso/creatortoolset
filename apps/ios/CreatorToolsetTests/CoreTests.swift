@@ -38,11 +38,12 @@ final class CoreTests: XCTestCase {
         let server = Server(url: URL(string: "https://stale.example.test/")!, username: "sam")
         Servers.shared.add(server, cookie: "new")
         defer { Servers.shared.remove(server.id) }
+        let saved = { ServerRegistry.read().servers.first { $0.key == server.id }.flatMap { e in ServerRegistry.credential(e.serverId, route: e.routes[0]) } }
         Servers.shared.sessionExpired("old")
-        XCTAssertEqual(Keychain.get(server.id), "new")
+        XCTAssertEqual(saved()?.token, "new")
         XCTAssertFalse(Servers.shared.signedOut)
         Servers.shared.sessionExpired("new")
-        XCTAssertNil(Keychain.get(server.id))
+        XCTAssertNil(saved())
         XCTAssertTrue(Servers.shared.signedOut)
     }
 
@@ -64,22 +65,31 @@ final class CoreTests: XCTestCase {
     func testTheTabsFollowTheAccount() {
         let admin = ToolsetAccess.Me(username: "sam", role: "admin", off: ["finals"])
         let helper = ToolsetAccess.Me(username: "kim", role: "user", off: ["finals", "media"])
-        XCTAssertTrue(ToolsetAccess.shows(.finals, me: admin))
-        XCTAssertFalse(ToolsetAccess.shows(.finals, me: helper))
-        // Scripts, a tile in More, needs the Workshop; Edits needs the AI Editor or Review, and is gone with neither
-        XCTAssertTrue(ToolsetAccess.showsScripts(me: helper))
-        XCTAssertFalse(ToolsetAccess.showsScripts(me: ToolsetAccess.Me(username: "lee", role: "user", off: ["workshop"])))
-        XCTAssertTrue(ToolsetAccess.shows(.edits, me: helper))
-        XCTAssertTrue(ToolsetAccess.shows(.edits, me: ToolsetAccess.Me(username: "lee", role: "user", off: ["review"])))
-        XCTAssertFalse(ToolsetAccess.shows(.edits, me: ToolsetAccess.Me(username: "lee", role: "user", off: ["editor", "review"])))
-        XCTAssertTrue(ToolsetAccess.shows(.edits, me: ToolsetAccess.Me(username: "sam", role: "admin", off: ["editor", "review"])))
+        XCTAssertTrue(ToolsetAccess.uses(.distribute, me: admin))
+        XCTAssertFalse(ToolsetAccess.uses(.distribute, me: helper))
+        // Plan needs the Workshop; Make's edits need the AI Editor or Review (the tab shows either way and says why)
+        XCTAssertTrue(ToolsetAccess.uses(.plan, me: helper))
+        XCTAssertFalse(ToolsetAccess.uses(.plan, me: ToolsetAccess.Me(username: "lee", role: "user", off: ["workshop"])))
+        XCTAssertTrue(ToolsetAccess.uses(.make, me: helper))
+        XCTAssertTrue(ToolsetAccess.uses(.make, me: ToolsetAccess.Me(username: "lee", role: "user", off: ["review"])))
+        XCTAssertFalse(ToolsetAccess.uses(.make, me: ToolsetAccess.Me(username: "lee", role: "user", off: ["editor", "review"])))
+        XCTAssertTrue(ToolsetAccess.uses(.make, me: ToolsetAccess.Me(username: "sam", role: "admin", off: ["editor", "review"])))
         XCTAssertFalse(ToolsetAccess.allows("media", me: helper))
         XCTAssertFalse(ToolsetAccess.allows(nil, me: helper))   // admins only
-        // before the account is known: no Edits or Finals tab, no Scripts in More, and the tools ask for the sign-in themselves
-        XCTAssertFalse(ToolsetAccess.shows(.edits, me: nil))
-        XCTAssertFalse(ToolsetAccess.shows(.finals, me: nil))
-        XCTAssertFalse(ToolsetAccess.showsScripts(me: nil))
-        XCTAssertTrue(ToolsetAccess.shows(.upload, me: nil))
+        // before the account is known: Make's edits, Distribute and Plan wait for it; Chats and Tools ask for the sign-in themselves
+        XCTAssertFalse(ToolsetAccess.uses(.make, me: nil))
+        XCTAssertFalse(ToolsetAccess.uses(.distribute, me: nil))
+        XCTAssertFalse(ToolsetAccess.uses(.plan, me: nil))
+        XCTAssertTrue(ToolsetAccess.uses(.tools, me: nil))
+        XCTAssertTrue(ToolsetAccess.uses(.chats, me: nil))
+        // the five tabs, by their names and the older ones a saved start tab may still say
+        XCTAssertEqual(AppTab.allCases, [.chats, .plan, .make, .distribute, .tools])
+        XCTAssertEqual(AppTab(named: "edits"), .make)
+        XCTAssertEqual(AppTab(named: "upload"), .make)
+        XCTAssertEqual(AppTab(named: "finals"), .distribute)
+        XCTAssertEqual(AppTab(named: "more"), .tools)
+        XCTAssertEqual(AppTab(named: "plan"), .plan)
+        XCTAssertNil(AppTab(named: "nope"))
         XCTAssertTrue(ToolsetAccess.allows("stories", me: nil))
         // the server's own answer reads
         let check = #"{"username":"local","name":"local","role":"admin","cloud":true,"off":[],"logins":null,"picture":null}"#

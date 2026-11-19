@@ -10,9 +10,6 @@ struct ThisMacView: View {
     @State private var port = ""
     @AppStorage(limitsReadingKey) private var readLimits = false
     @AppStorage(pluginsPausedKey) private var pluginsPaused = false
-    @State private var password = ""
-    @State private var again = ""
-    @State private var askPassword = false
     @State private var dataMessage: String?
     @State private var accessMessage: String?
     @State private var busy = false
@@ -174,39 +171,16 @@ struct ThisMacView: View {
         .onAppear { measure(server) }
     }
 
-    /// Network access: a password of the owner's own first, then the server listens beyond this Mac.
+    /// Network access: the server listens beyond this Mac (phones on this network pair with a link, no password).
     @ViewBuilder private func accessSection(_ server: LocalServer) -> some View {
         Section {
             Toggle("Network access", isOn: Binding(get: { server.otherDevices }, set: { on in
-                if on && !server.hasOwnerPassword {
-                    askPassword = true
-                } else {
-                    Task { accessMessage = await shell.setOtherDevices(on) }
-                }
+                Task { accessMessage = await shell.setOtherDevices(on) }
             }))
             Text("Phones and other computers on this network can open this Mac's server.")
                 .font(.caption).foregroundStyle(.secondary)
             if server.otherDevices {
                 LabeledContent("Address", value: "http://\(macHostName()):\(server.port)")
-                LabeledContent("Sign-in name", value: LocalServer.ownerName)
-            }
-            if askPassword {
-                SecureField("This computer's password (10 characters or more)", text: $password)
-                SecureField("Type it again", text: $again)
-                HStack {
-                    Button("Cancel") { askPassword = false; password = ""; again = "" }
-                    Button("Set password and turn on") {
-                        guard !busy else { return }   // a second press while the first is with the server
-                        guard password == again else { accessMessage = "The two passwords differ."; return }
-                        busy = true
-                        Task {
-                            accessMessage = await shell.setOtherDevices(true, password: password)
-                            busy = false
-                            if accessMessage == nil { askPassword = false; password = ""; again = "" }
-                        }
-                    }
-                    .disabled(password.count < 10 || busy)
-                }
             }
             if let accessMessage {
                 Text(accessMessage).font(.caption).foregroundStyle(.red)

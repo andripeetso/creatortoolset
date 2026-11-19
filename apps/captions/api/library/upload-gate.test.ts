@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -41,6 +41,10 @@ const { acceptLibraryFile } = await import("../work/library-package");
 const { pairDevice, setDeviceWork } = await import("../lib/devices");
 const { createUser } = await import("../users");
 const { Readable } = await import("node:stream");
+const { callerOf } = await import("../auth-clients");
+const { createGrant, issueSession } = await import("../lib/clients");
+const { oauthTokenApp } = await import("../auth-clients");
+const { jwkThumbprint, tokenHash } = await import("../lib/dpop");
 
 createUser("tinyacrobatics", "secret-tiny-acrobatics");
 createUser("sam", "secret-sam-acrobatics");
@@ -54,9 +58,14 @@ afterAll(() => {
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {
   c.set("user", { username: "tinyacrobatics", role: "user" } as never);
+  // a client session's token, read as the account gate in boot.ts reads it
+  const k = callerOf(c);
+  if (k.kind === "error") return c.json({ code: k.code }, 401);
+  if (k.kind === "token") c.set("clientSession", k.row.id);
   return next();
 });
 app.route("/api/library", libraryApp);
+app.route("/", oauthTokenApp);
 
 const d = libraryDb();
 for (const [id, upload] of [["lib_none", '"none"'], ["lib_unset", "null"], ["lib_p", '"proxies"'], ["lib_orig", '"originals"'], ["lib_all", '"all"']] as const) {
@@ -196,6 +205,74 @@ describe("the library upload routes ask it", () => {
     // the marker is the server's: a cookie with the app's shape and another signature is a browser's
     const forgedMarker = `${browserCookie}.${"0".repeat(64)}`;
     expect((await phone("lib_none", forgedMarker)).status).toBe(409);
+  });
+
+  it("a client session's token counts as the iPhone app only when it was paired as a phone; a Mac's, a tablet's or a bot's is refused under none", async () => {
+    const url = "http://localhost/api/library/lib_none/uploads";
+    const send = (headers: Record<string, string>) =>
+      app.request(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ filename: "IMG 0002.MOV", size: 4 }) });
+    const bearer = (deviceType: "desktop" | "mobile" | "tablet" | "bot" | "unknown") =>
+      `Bearer ${issueSession({ subject: "tinyacrobatics", scopes: ["read", "write"], client: { deviceType } }).token}`;
+    // the phone's own DPoP session: its key signs each request
+    const k = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const j = k.publicKey.export({ format: "jwk" }) as { kty: "EC"; crv: "P-256"; x: string; y: string };
+    const jwk = { kty: j.kty, crv: j.crv, x: j.x, y: j.y };
+    const { token } = issueSession({ subject: "tinyacrobatics", scopes: ["read", "write"], jkt: jwkThumbprint(jwk), client: { deviceType: "mobile", label: "Tiny's iPhone" } });
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const proof = () => {
+      const h = b64({ typ: "dpop+jwt", alg: "ES256", jwk });
+      const p = b64({ iat: Math.floor(Date.now() / 1000), jti: randomUUID(), htm: "POST", htu: url, ath: tokenHash(token) });
+      return `${h}.${p}.${sign("sha256", Buffer.from(`${h}.${p}`), { key: k.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
+    };
+    const dpopPhone = await send({ authorization: `DPoP ${token}`, dpop: proof(), "x-ct-origin": "phone" });
+    expect(dpopPhone.status).toBe(201);
+    const { id } = (await dpopPhone.json()) as { id: string };
+    expect(d.prepare("SELECT origin FROM uploads WHERE id = ?").get(id)).toEqual({ origin: "phone" });
+    expect((await send({ authorization: bearer("mobile"), "x-ct-origin": "phone" })).status).toBe(201);
+    // the iPhone app on an iPad is the phone too
+    expect((await send({ authorization: bearer("tablet"), "x-ct-origin": "phone" })).status).toBe(201);
+    // every other kind of device, header or not
+    for (const kind of ["desktop", "bot", "unknown"] as const) {
+      const r = await send({ authorization: bearer(kind), "x-ct-origin": "phone" });
+      expect(r.status, kind).toBe(409);
+      expect(await r.json()).toMatchObject({ error: REFUSED_NONE, code: "upload_refused" });
+    }
+    // a Mac's token decides alone: the iPhone app's cookie beside it does not make it the phone
+    expect((await send({ authorization: bearer("desktop"), cookie: sessionCookieFor("tinyacrobatics", true)!, "x-ct-origin": "phone" })).status).toBe(409);
+    // the header still names the phone's own send: a phone's token without it is a person's upload, refused under none
+    expect((await send({ authorization: bearer("mobile") })).status).toBe(409);
+    // a browser's cookie with the header stays refused, and the app's own cookie is still taken
+    expect((await send({ cookie: sessionCookieFor("tinyacrobatics", false)!, "x-ct-origin": "phone" })).status).toBe(409);
+    expect((await send({ cookie: sessionCookieFor("tinyacrobatics", true)!, "x-ct-origin": "phone" })).status).toBe(201);
+  });
+
+  it("the kind comes from the link: a link made for a Mac stays a Mac's though the device says phone, and a phone's link is the phone", async () => {
+    const redeem = async (deviceType: "desktop" | "mobile") => {
+      const { credential } = createGrant({ kind: "pairing", subject: "tinyacrobatics", scopes: ["read", "write"], deviceType });
+      const r = await app.request("/oauth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token: credential,
+          subject_token_type: "urn:creatortoolset:params:oauth:token-type:server-bootstrap",
+          requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          client_device_type: "mobile",
+        }).toString(),
+      });
+      expect(r.status).toBe(200);
+      return ((await r.json()) as { access_token: string }).access_token;
+    };
+    const send = (token: string) =>
+      app.request("/api/library/lib_none/uploads", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-ct-origin": "phone" },
+        body: JSON.stringify({ filename: "IMG 0003.MOV", size: 4 }),
+      });
+    const mac = await send(await redeem("desktop"));
+    expect(mac.status).toBe(409);
+    expect(await mac.json()).toMatchObject({ error: REFUSED_NONE, code: "upload_refused" });
+    expect((await send(await redeem("mobile"))).status).toBe(201);
   });
 
   it("a part and the finish ask again: switched to none mid-upload, they are refused and what arrived stays", async () => {

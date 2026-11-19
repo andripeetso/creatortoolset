@@ -14,8 +14,8 @@ struct Server: Codable, Identifiable, Hashable {
     var name: String { label ?? (url.host(percentEncoded: false) ?? url.absoluteString) + (url.port.map { ":\($0)" } ?? "") }
 }
 
-/// The servers and the one in use, as the app last saved them. The app keeps its own copy in its settings; this one
-/// is in the Keychain so the Share extension, which can't read the app's settings, knows them too.
+/// The servers and the one in use, as an app from before routes saved them. Read once, by the move to
+/// `ServerRegistry` (servers keyed by their own id, with routes); nothing writes it any more.
 struct SavedServers: Codable, Equatable {
     var list: [Server]
     var currentId: String?
@@ -26,13 +26,17 @@ struct SavedServers: Codable, Equatable {
         Keychain.get(account).flatMap { try? JSONDecoder().decode(SavedServers.self, from: Data($0.utf8)) }
     }
 
-    func write() {
-        Keychain.set(Self.account, (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) })
+    /// What an app from before the Keychain copy kept in its settings.
+    static func fromDefaults(_ defaults: UserDefaults = .standard) -> SavedServers? {
+        guard let data = defaults.data(forKey: "servers"), let list = try? JSONDecoder().decode([Server].self, from: data) else { return nil }
+        return SavedServers(list: list, currentId: defaults.string(forKey: "currentServer"))
     }
 
-    /// The server in use and its sign-in cookie (nil cookie: a server without sign-in, or signed out).
-    var current: (server: Server, cookie: String?)? {
-        list.first { $0.id == currentId }.map { ($0, Keychain.get($0.id)) }
+    /// After the move: neither copy is read again.
+    static func forget(_ defaults: UserDefaults = .standard) {
+        Keychain.set(account, nil)
+        defaults.removeObject(forKey: "servers")
+        defaults.removeObject(forKey: "currentServer")
     }
 }
 
@@ -55,11 +59,16 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Saves (nil deletes). False when the Keychain refused it.
+    /// Saves (nil deletes), in place when the item exists, so a refused write never leaves it deleted. False when the
+    /// Keychain refused it.
     @discardableResult
     static func set(_ account: String, _ value: String?) -> Bool {
-        SecItemDelete(query(account) as CFDictionary)
-        guard let value else { return true }
+        guard let value else {
+            SecItemDelete(query(account) as CFDictionary)
+            return true
+        }
+        let update = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
+        if update != errSecItemNotFound { return update == errSecSuccess }
         var q = query(account)
         q[kSecValueData as String] = Data(value.utf8)
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly

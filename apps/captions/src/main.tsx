@@ -14,6 +14,8 @@ import { AuthGate } from "@/components/AuthGate";
 import { RootBoundary } from "@/components/StaleBuild";
 import { ShareThemeProvider } from "@/components/ShareTheme";
 import { loadFolderPlugins, reloadForFolderPlugins } from "@/lib/folder-plugins";
+import { takePairingToken } from "@/lib/pairing";
+import { PairingLanding } from "@/pages/PairingLanding";
 import App from "./App.tsx";
 
 // ⌘S / Ctrl+S never opens the browser's "Save page" dialog: everything autosaves,
@@ -27,6 +29,9 @@ window.addEventListener(
 );
 
 async function bootstrap() {
+  // a pairing link opened in a browser: its own page, with no sign-in and nothing started (the code is the app's)
+  const pairing = takePairingToken();
+  if (pairing) return void createRoot(document.getElementById("root")!).render(<PairingLanding token={pairing} />);
   initPersistence();
   tagWrites();
   // every screen's saved copy into memory before the first render (lib/local-cache.ts), then live while signed in

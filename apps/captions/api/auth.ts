@@ -8,6 +8,7 @@ import { env, hostedMode, keepsOverRestart } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
+import { sessionById } from "./lib/clients";
 import {
   LOCAL_USER,
   type SessionUser,
@@ -44,6 +45,7 @@ import { consumeJti, connectState, tunnelHostname } from "./connect/state";
 import { TicketError, verifyTicket } from "./connect/ticket";
 import { originOf } from "./sign-in";
 import { inviteTarget } from "./lib/workshop/workspace";
+import { ticketUser } from "./media-ticket";
 import { checkCode, clearTries, codeRequired, confirmSecret, mintStep, newSecret, spendStep, stepFor, waitFor, wrongTry } from "./lib/sign-in-code";
 
 /**
@@ -58,7 +60,8 @@ import { checkCode, clearTries, codeRequired, confirmSecret, mintStep, newSecret
 export const authApp = new Hono();
 
 /** Hono context vars set by the auth middleware in boot.ts. */
-export type AuthVars = { user: SessionUser };
+/** `clientSession`: the client session id when the request came with a phone's token (auth-clients.ts). */
+export type AuthVars = { user: SessionUser; clientSession?: string };
 
 const COOKIE = "cap_auth";
 const MAX_AGE = 180 * 24 * 3600; // ~6 months
@@ -253,7 +256,8 @@ const withLogins = (u: SessionUser) => ({
 // hosted: says whether this server is a hosted one (the web shows team, admin and join screens only then). While a
 // platform admin is viewing as an account (view-as, admin.ts), `user` is that account and `viewedBy` the admin.
 authApp.get("/check", (c) => {
-  const session = getSessionUser(c.req.header("cookie"));
+  // a phone's web view is signed in by its session's media ticket (media-ticket.ts), never by a cookie of its own
+  const session = getSessionUser(c.req.header("cookie")) ?? ticketUser(c);
   const viewed = hostedMode() && session?.role === "admin" ? viewAsTarget(c.req.header("cookie")) : null;
   const user = viewed ? sessionOf(viewed) : session;
   return c.json({
@@ -372,6 +376,18 @@ export const isAppSession = (cookieHeader: string | undefined, username: string)
 };
 
 /**
+ * Whether the request is the iPhone app's own: a client session whose link was made for a phone or a tablet (the
+ * link's kind, auth-clients.ts), or else the app's marked cookie. A request with a client session is decided by it
+ * alone, as the account gate answers it, so a Mac's, a bot's or an unknown device's token never counts, whatever cookie it sends.
+ */
+export const isPhoneSession = (c: Context<{ Variables: AuthVars }>, username: string): boolean => {
+  const id = c.get("clientSession");
+  if (!id) return isAppSession(c.req.header("cookie"), username);
+  const row = sessionById(id);
+  return row?.subject === username && (row.client.deviceType === "mobile" || row.client.deviceType === "tablet");
+};
+
+/**
  * A server on this Mac (CT_LOCAL=1) signs in from another device (a phone, the LAN) only once its owner chose a
  * password: until then the account's password is APP_SECRET, which only the Mac app knows, and that account signs in
  * from this Mac alone. The socket's address decides, never a header (a LAN client writes those itself).
@@ -474,7 +490,7 @@ export async function phoneOrigin(c: Context): Promise<string | null> {
  * virtual adapter may come first. A UDP socket connects without sending a packet, so the system picks the address.
  * Null when there is no route.
  */
-function routeAddress(): Promise<string | null> {
+export function routeAddress(): Promise<string | null> {
   return new Promise((resolve) => {
     const s = createSocket("udp4");
     const done = (a: string | null) => {
@@ -488,6 +504,7 @@ function routeAddress(): Promise<string | null> {
 const LINK_TTL = 60_000;
 const links = new Map<string, { username: string; hash: string; expiresAt: number }>();
 
+// deprecated (connect/contract.md): pairing links and /oauth/token replace it; removed once the phone app has switched
 authApp.post("/link", async (c) => {
   // no sign-in on this server: anyone who can reach it is in, so the address alone is the code
   if (!env.appSecret) return c.json({ url: await phoneOrigin(c), path: null, expiresAt: null });
@@ -564,6 +581,8 @@ authApp.post("/app", async (c) => {
  * proves the account and the computer; the computer's own password is still asked, once per browser. A ticket
  * works once: it is spent before the password is checked, so a wrong password needs a new ticket.
  */
+// deprecated (connect/contract.md): /api/connect/mint and /oauth/token with DPoP replace it; removed once the phone and
+// the connect service have switched
 authApp.post("/ticket", async (c) => {
   const s = connectState();
   if (!s || hostOf(c) !== s.hostname.toLowerCase()) {

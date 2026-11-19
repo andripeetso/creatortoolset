@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AuthVars } from "../auth";
+import { holdLine } from "./clients";
 
 /**
  * Live change notices: the app keeps a saved copy of every list it shows (src/lib/local-cache.ts) and this stream tells
@@ -99,8 +100,12 @@ syncApp.get("/events", (c) => {
         clearInterval(ping);
         set.delete(send);
         off();
+        release();
         done();
       };
+      // a phone's session: listed as connected while this is open, and a revoke ends it at once
+      const sid = c.get("clientSession");
+      const release = sid ? holdLine(sid, () => void stream.close().finally(end)) : () => {};
       // a reload: the stream ends cleanly and the browser opens it again within 250 ms (retry), on the next process,
       // well before the page's "Reconnecting" (2 s); its hello's new boot id has every list refetch
       const off = onLeave(() => void stream.writeSSE({ event: "bye", data: "", retry: 250 }).finally(end));

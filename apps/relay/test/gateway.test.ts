@@ -296,7 +296,7 @@ test("a computer that has not allowed the app: on to its own Allow page, and its
   assert.equal((await fetch(`${base}/oauth/computer/callback?${new URLSearchParams({ code: 'good-code', state })}`, { redirect: 'manual' })).status, 400);
 
   // Cancel on the computer's page, and a code the computer does not take: the AI app is told it was refused
-  for (const q of [{ error: 'access_denied' }, { code: 'wrong-code' }]) {
+  for (const q of [{ error: 'access_denied' }, { code: 'wrong-code' }] as Record<string, string>[]) {
     // ChatGPT is allowed by now, so a second app asks
     const s3 = await startSignIn('https://claude.ai/api/mcp/auth_callback');
     const a3 = await approve(s3.req, c.id);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPublicKey, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import type { Server } from 'node:http';
 import { createCloudflare } from '../src/cloudflare.ts';
 import { openDb } from '../src/db.ts';
@@ -8,7 +8,7 @@ import { loadSigningKey, publicKeyB64 } from '../src/keys.ts';
 import { freeLimit } from '../src/limits.ts';
 import { reap } from '../src/reaper.ts';
 import { startServer, type Deps } from '../src/server.ts';
-import { checkAccountToken, mintAccountToken, verifyTicket } from '../src/tickets.ts';
+import { checkAccountToken, mintAccountToken } from '../src/tickets.ts';
 import { fakeCloudflare, type FakeCloudflare } from './fake-cloudflare.ts';
 
 // Each test gets a fresh in-memory database, a fake Cloudflare, and a clock the test moves by hand.
@@ -62,12 +62,6 @@ async function api(method: string, path: string, opts: { token?: string; body?: 
 }
 
 const acct = (id = 'acct-1') => mintAccountToken(SECRET, id, clock);
-
-// The relay's public key, as a computer pins it.
-async function relayKey() {
-  const r = await api('GET', '/v1/keys');
-  return createPublicKey({ key: Buffer.from(r.json.keys[0].publicKey, 'base64'), format: 'der', type: 'spki' });
-}
 
 // A computer: its own Ed25519 key, which signs the link payload.
 function computer() {
@@ -252,41 +246,11 @@ test('limit: a limit given by a plug-in replaces the free number', async () => {
   assert.equal(fake.tunnels.size, 4);
 });
 
-// --- tickets and the computer's side of them ---
+// --- the old ticket route ---
 
-test('ticket: the owner gets one a computer can verify; another account gets not found', async () => {
-  const { id, hostname } = await linkOne();
-  const relayPub = await relayKey();
-  const r = await api('POST', `/v1/computers/${id}/ticket`, { token: acct() });
-  assert.equal(r.status, 200);
-  assert.equal(r.json.expires_in, 120);
-  const seen = new Set<string>();
-  const check = (t: string) =>
-    verifyTicket(t, {
-      relayPublicKey: relayPub,
-      hostname,
-      computerId: id,
-      owner: 'acct-1',
-      now: clock,
-      consume: (jti) => (seen.has(jti) ? false : (seen.add(jti), true)),
-    });
-  assert.equal(check(r.json.ticket).sub, 'acct-1');
-  assert.throws(() => check(r.json.ticket), /already used/);
-
-  const stranger = await api('POST', `/v1/computers/${id}/ticket`, { token: acct('acct-2') });
-  assert.equal(stranger.status, 404);
-  assert.equal((await api('POST', `/v1/computers/${id}/ticket`)).status, 401);
-});
-
-test('ticket: past 120 s the same ticket is refused by the computer', async () => {
-  const { id, hostname } = await linkOne();
-  const r = await api('POST', `/v1/computers/${id}/ticket`, { token: acct() });
-  const relayPub = await relayKey();
-  clock += 120;
-  assert.throws(
-    () => verifyTicket(r.json.ticket, { relayPublicKey: relayPub, hostname, computerId: id, owner: 'acct-1', now: clock, consume: () => true }),
-    /expired/,
-  );
+test('ticket: the broker no longer signs tickets; phones connect through the computer instead (connect.test.ts)', async () => {
+  const { id } = await linkOne();
+  assert.equal((await api('POST', `/v1/computers/${id}/ticket`, { token: acct() })).status, 404);
 });
 
 // --- listing and unlinking ---
@@ -406,10 +370,9 @@ test('reaper: a computer down past the window loses only its tunnel, and gets a 
   assert.equal(fake.tunnels.has(oldTunnel), false);
   assert.equal(fake.records.size, 2, 'the DNS record stays');
 
-  // still on the account, shown as down, still gets tickets; later sweeps leave it alone
+  // still on the account, shown as down; later sweeps leave it alone
   const list = (await api('GET', '/v1/computers', { token: acct() })).json.computers;
   assert.deepEqual(list.map((x: { id: string; status: string }) => [x.id, x.status]), [[id, 'down'], [live.id, 'healthy']]);
-  assert.equal((await api('POST', `/v1/computers/${id}/ticket`, { token: acct() })).status, 200);
   assert.equal((await reap(deps, { afterSeconds: 1800, dryRun: false })).find((o) => o.id === id)!.action, 'kept');
 
   // back: a new tunnel, routed to the same origin, and the same DNS record now points at it

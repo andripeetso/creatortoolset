@@ -555,14 +555,32 @@ struct UploadView: View {
 struct UploadSegments: View {
     @Binding var segment: UploadView.Segment
     let shown: Bool
+    /// Hosted on Make's Media side, where the Media Library is a side of its own and Upload a button.
+    @Environment(\.hidesUploadSegments) private var hidden
 
     var body: some View {
-        if shown {
+        if shown, !hidden {
             Picker("Show", selection: $segment) {
                 ForEach(UploadView.Segment.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
         }
+    }
+}
+
+private struct HidesUploadSegments: EnvironmentKey { static let defaultValue = false }
+/// The words searched for in the Media Library grid (Make's Media side).
+private struct LibraryQuery: EnvironmentKey { static let defaultValue = "" }
+
+extension EnvironmentValues {
+    var hidesUploadSegments: Bool {
+        get { self[HidesUploadSegments.self] }
+        set { self[HidesUploadSegments.self] = newValue }
+    }
+
+    var libraryQuery: String {
+        get { self[LibraryQuery.self] }
+        set { self[LibraryQuery.self] = newValue }
     }
 }
 

@@ -4,10 +4,12 @@ import type { KeyObject } from 'node:crypto';
 import type { Cloudflare } from './cloudflare.ts';
 import { HttpError } from './errors.ts';
 import { DEVICE_GRANT, decideDevice, pollDeviceGrant, startDeviceGrant } from './device.ts';
-import { connectStats, createChallenge, linkComputer, listComputers, renewTunnel, STATS_ACCOUNT, ticketFor, unlinkComputer, type LinkDeps } from './link.ts';
+import { connectStats, createChallenge, linkComputer, listComputers, renewTunnel, STATS_ACCOUNT, unlinkComputer, type LinkDeps } from './link.ts';
+import { computerStatus, connectComputer, dpopCaller, issueDpopToken, type ConnectDeps } from './connect.ts';
 import type { LimitFor } from './limits.ts';
 import { publicKeyB64 } from './keys.ts';
 import { ACCOUNT_TTL, checkAccountToken, mintAccountToken, TokenError } from './tickets.ts';
+import { publishActivity, registerDevice, unregisterDevice, type Apns } from './push.ts';
 import { aiStats, approveAuthorize, authorizeInfo, computerCallback, exchangeCode, forwardMcp, grantFromComputer, metadata, openPage, registerClient, relayMedia, startAuthorize, type GatewayDeps } from './gateway.ts';
 
 export interface Deps {
@@ -19,8 +21,15 @@ export interface Deps {
   publicUrl: string; // where the approve page lives: <publicUrl>/connect
   accountSecret: Buffer;
   signing: { privateKey: KeyObject; publicKey: KeyObject; kid: string };
+  /** This broker's own public address (RELAY_SELF_URL), when it differs from publicUrl: phones sign their requests to it. */
+  selfUrl?: string;
+  /** How a computer's tunnel is reached for status and connect (connect.ts); tests point these at a local server. */
+  fetch?: typeof fetch;
+  originOf?: (hostname: string) => string;
   /** AI apps through this broker (gateway.ts). Unset = every route of it answers 404. */
   gateway?: Pick<GatewayDeps, 'secret' | 'fetch' | 'originOf' | 'openaiChallenge' | 'selfUrl'>;
+  /** Apple push (push.ts). Unset = phones still register, and a computer's activity answers 503. */
+  apns?: Apns;
 }
 
 const MAX_BODY = 16 * 1024;
@@ -67,7 +76,9 @@ async function body(req: Request): Promise<Record<string, unknown>> {
 export async function handle(d: Deps, req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
-  const link: LinkDeps = { db: d.db, cf: d.cf, now: d.now, limitFor: d.limitFor, tunnelDomain: d.tunnelDomain, signing: d.signing };
+  const self = new URL(d.selfUrl || d.publicUrl).origin;
+  const link: LinkDeps = { db: d.db, cf: d.cf, now: d.now, limitFor: d.limitFor, tunnelDomain: d.tunnelDomain, signing: d.signing, self };
+  const cn: ConnectDeps = { db: d.db, now: d.now, signing: d.signing, accountSecret: d.accountSecret, self, fetch: d.fetch, originOf: d.originOf };
   const gw: GatewayDeps | null = d.gateway ? { db: d.db, now: d.now, publicUrl: d.publicUrl, ...d.gateway } : null;
   try {
     if (req.method === 'GET' && path === '/healthz') return new Response('ok');
@@ -125,7 +136,8 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
       return json(200, await linkComputer(link, accountOf(d, req), await body(req)));
     }
     if (req.method === 'GET' && path === '/v1/computers') {
-      const account = accountOf(d, req);
+      // a phone lists with its DPoP token, the site and the Mac app with an account token
+      const account = (req.headers.get('authorization') ?? '').startsWith('DPoP ') ? dpopCaller(cn, req, 'status').account : accountOf(d, req);
       const rows = listComputers(link, account);
       const computers = [];
       for (const r of rows) {
@@ -147,12 +159,9 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
       // the AI app counts only where that part is on
       return json(200, { ...connectStats(d.db, d.now()), ...(gw ? { ai: aiStats(d.db, d.now()) } : {}) });
     }
-    const m = /^\/v1\/computers\/([0-9a-f]{32})(\/ticket|\/tunnel|\/ai-grant)?$/.exec(path);
+    const m = /^\/v1\/computers\/([0-9a-f]{32})(\/tunnel|\/ai-grant|\/status|\/connect)?$/.exec(path);
     if (m && req.method === 'POST' && m[2] === '/ai-grant' && gw) {
       return json(200, grantFromComputer(gw, m[1], await body(req)));
-    }
-    if (m && req.method === 'POST' && m[2] === '/ticket') {
-      return json(200, ticketFor(link, accountOf(d, req), m[1]));
     }
     if (m && req.method === 'POST' && m[2] === '/tunnel') {
       return json(200, await renewTunnel(link, m[1], await body(req)));
@@ -160,6 +169,37 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
     if (m && req.method === 'DELETE' && !m[2]) {
       await unlinkComputer(link, accountOf(d, req), m[1]);
       return empty(204);
+    }
+
+    // Account-token linking (the Mac app's switch): a challenge, then the computer's own signed proof of it.
+    if (req.method === 'POST' && path === '/v1/computers/link-challenges') {
+      const c = createChallenge(link, accountOf(d, req));
+      return json(200, { challenge: c.nonce, expiresAt: new Date((d.now() + c.expires_in) * 1000).toISOString() });
+    }
+    // A phone signed in to the account (connect.ts).
+    if (req.method === 'POST' && path === '/v1/client/dpop-token') {
+      return json(200, issueDpopToken(cn, await body(req), req.headers.get('dpop')));
+    }
+    if (m && req.method === 'POST' && m[2] === '/status') {
+      return json(200, await computerStatus(cn, dpopCaller(cn, req, 'status').account, m[1]));
+    }
+    if (m && req.method === 'POST' && m[2] === '/connect') {
+      const caller = dpopCaller(cn, req, 'connect');
+      return json(200, await connectComputer(cn, caller, m[1], await body(req)));
+    }
+    // Push to the account's phones (push.ts): a phone registers with its DPoP token, a computer publishes signed.
+    if (req.method === 'POST' && path === '/v1/mobile/devices') {
+      const account = dpopCaller(cn, req, 'mobile').account;
+      return json(200, registerDevice({ db: d.db, now: d.now, self, apns: d.apns }, account, await body(req)));
+    }
+    const device = /^\/v1\/mobile\/devices\/([A-Za-z0-9._:-]{1,128})$/.exec(path);
+    if (device && req.method === 'DELETE') {
+      unregisterDevice({ db: d.db, now: d.now, self }, dpopCaller(cn, req, 'mobile').account, device[1]);
+      return empty(204);
+    }
+    const activity = /^\/v1\/computers\/([0-9a-f]{32})\/activity$/.exec(path);
+    if (activity && req.method === 'POST') {
+      return json(200, await publishActivity({ db: d.db, now: d.now, self, apns: d.apns }, activity[1], await body(req)));
     }
     throw new HttpError(404, 'not_found');
   } catch (e) {

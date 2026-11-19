@@ -122,13 +122,13 @@ beforeAll(async () => {
   vi.stubGlobal("fetch", (input: string | URL | Request, init?: RequestInit) => fakeBroker(new Request(input, init)));
   adminCookie = cookieOf(await call("POST", "/api/auth/login", { body: ADMIN }));
   expect(adminCookie).not.toBe("");
-  const started = await call("POST", "/api/connect/start", { cookie: adminCookie });
+  const started = await call("POST", "/api/connect/start", { cookie: adminCookie, body: {} });
   expect(started.status).toBe(200);
   expect(await started.json()).toMatchObject({ user_code: "BCDF-GHJK", verification_uri_complete: "https://broker.test/connect?code=BCDF-GHJK" });
   // still waiting for approval
-  expect(await (await call("POST", "/api/connect/poll", { cookie: adminCookie })).json()).toEqual({ status: "pending" });
+  expect(await (await call("POST", "/api/connect/poll", { cookie: adminCookie, body: {} })).json()).toEqual({ status: "pending" });
   broker.approved = true;
-  const polled = (await (await call("POST", "/api/connect/poll", { cookie: adminCookie })).json()) as { status: string; hostname: string };
+  const polled = (await (await call("POST", "/api/connect/poll", { cookie: adminCookie, body: {} })).json()) as { status: string; hostname: string };
   expect(polled.status).toBe("linked");
   expect((await import("./connector")).connectorStatus().running).toBe(true); // the tunnel runs without a restart
   hostname = polled.hostname;
@@ -146,7 +146,7 @@ describe("a local server links to the broker", () => {
     expect(state).toMatchObject({ linked: true, hostname });
     expect(hostname).toMatch(new RegExp(`^[0-9a-f]{32}\\.${ZONE.replace(/\./g, "\\.")}$`));
     expect((await call("GET", "/api/connect")).status).toBe(401);
-    expect((await call("POST", "/api/connect/start", { cookie: adminCookie })).status).toBe(409);
+    expect((await call("POST", "/api/connect/start", { cookie: adminCookie, body: {} })).status).toBe(409);
   });
 });
 

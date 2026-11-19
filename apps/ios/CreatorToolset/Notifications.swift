@@ -98,9 +98,10 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// iOS gave the app a moment in the background: look, and tell what is new.
+    /// iOS gave the app a moment in the background: look, and tell what is new. A server on the account pushes
+    /// through it (`AccountPush`): no look for that one.
     func lookInBackground() async {
-        guard ToolsetAPI.current != nil else { return }
+        guard ToolsetAPI.current != nil, !AccountPush.coversCurrent else { return }
         looking = true
         await ChatsModel.shared.load()
         looking = false
@@ -109,7 +110,7 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
 
     private func rowsChanged(_ rows: [ChatRow]) {
         center.setBadgeCount(rows.filter(\.status.waitsOnYou).count)
-        guard !looking else { return }
+        guard !looking, !AccountPush.coversCurrent else { return }
         let notes = take(rows)
         guard !notes.isEmpty else { return }
         switch UIApplication.shared.applicationState {
@@ -142,13 +143,15 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
         default:
             // in front he sees the list itself; and a server that pushes has told him already
             guard !inFront, !defaults.bool(forKey: "notify.push") else { return }
+            // the rows are of the server and workspace in use: a tap goes back there
+            let api = API.current
             for note in notes {
                 let content = UNMutableNotificationContent()
                 content.title = note.title
                 content.body = note.body
                 content.sound = .default
                 content.threadIdentifier = note.path
-                content.userInfo = ["path": note.path]
+                content.userInfo = Self.userInfo(path: note.path, server: api?.server.absoluteString, workspace: api?.workspace)
                 try? await center.add(UNNotificationRequest(identifier: note.key, content: content, trigger: nil))
             }
         }
@@ -159,8 +162,8 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
             defaults.set(false, forKey: "notify.ask")
             _ = try? await center.requestAuthorization(options: [.alert, .badge, .sound])
         }
-        // a server that pushes gets the phone's token once he said yes (`Push`, studio plug-in only)
-        guard ServerPlugins.shared.studio else { return }
+        // a server that pushes (`Push`, studio plug-in) and the account (`AccountPush`) get the phone's token once he said yes
+        guard ServerPlugins.shared.studio || AccountPush.signedIn else { return }
         let status = await center.notificationSettings().authorizationStatus
         if status == .authorized || status == .provisional { UIApplication.shared.registerForRemoteNotifications() }
     }
@@ -174,10 +177,26 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: UNUserNotificationCenterDelegate
 
-    /// A tap on a notification opens what it is about.
+    /// What a notification carries: the page it opens, and the server and workspace it is about.
+    nonisolated static func userInfo(path: String, server: String?, workspace: String?) -> [String: String] {
+        var info = ["path": path]
+        if let server { info["server"] = server }
+        if let workspace { info["workspace"] = workspace }
+        return info
+    }
+
+    /// A tap on a notification opens what it is about, in its workspace: one about another workspace moves the app
+    /// there first and says so.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard let path = Self.path(in: response.notification.request.content.userInfo) else { return }
-        await MainActor.run { AppNavigator.shared.open(href: path) }
+        let info = response.notification.request.content.userInfo
+        guard let path = Self.path(in: info) else { return }
+        await MainActor.run {
+            // a push through the account names the computer by its id: the saved one may be on its LAN address
+            let server = Workspaces.serverKey(serverId: info["serverId"] as? String, server: info["server"] as? String,
+                                              in: Connections.shared.servers)
+            Workspaces.shared.go(server: server, workspace: info["workspace"] as? String)
+            AppNavigator.shared.open(href: path)
+        }
     }
 
     /// With the app in front the list shows it: no banner, only the number on the icon.

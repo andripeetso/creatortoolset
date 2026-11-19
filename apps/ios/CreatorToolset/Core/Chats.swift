@@ -296,6 +296,10 @@ final class ChatsModel: ObservableObject {
     private var assistant: AssistantView?
     private var videos: [ReviewListItem] = []
     private var others: [ChatRow] = []
+    /// Each chat's workspace (`GET /api/assistant/chats`), by chat id: Chats lists this workspace's.
+    private var chatSpaces: [String: String] = [:]
+    /// The workspace the rows are of (the phone's pick when they were read).
+    private var workspace: String?
     private var opened: [String: Double]
     /// Rows he dismissed, each with the row's own time at that moment (`ChatList.settle`).
     private var dismissed: [String: Double]
@@ -331,7 +335,7 @@ final class ChatsModel: ObservableObject {
         }.store(in: &bag)
         // a screen pushed on Chats or Edits is its row opened, and so is one he comes back from:
         // what finished while he watched is not news
-        for stack in [AppNavigator.shared.$chats, AppNavigator.shared.$edits] {
+        for stack in [AppNavigator.shared.$chats, AppNavigator.shared.$plan, AppNavigator.shared.$make] {
             var open: [AppRoute] = []   // the screens open on that tab, as last seen
             stack.sink { [weak self] routes in
                 MainActor.assumeIsolated {
@@ -351,6 +355,10 @@ final class ChatsModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.rebuild() } }
             .store(in: &bag)
+        // the Workshop's pieces being made sit on Make with the edits
+        WorkshopModel.shared.$sessions.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuild() }
+        }.store(in: &bag)
         // another server picked (or the last one removed): its own conversation, change line and list
         Servers.shared.$currentId.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
             MainActor.assumeIsolated {
@@ -364,7 +372,8 @@ final class ChatsModel: ObservableObject {
     /// Follows the server for as long as the app runs: once now, on every change it tells of,
     /// and when the app comes back to the front. Another server in use starts it again, there.
     func watch() {
-        let now = ToolsetAPI.current?.cacheKey
+        // the change line and the conversation are the account's, whatever workspace
+        let now = ToolsetAPI.current?.accountKey
         guard watching == nil || watchingKey != now else { return }
         if watching != nil {
             watching?.cancel()
@@ -417,7 +426,10 @@ final class ChatsModel: ObservableObject {
             rebuild()
             return
         }
-        if api.cacheKey != key { restore(api) }   // another computer picked: its own last copy, then its answer
+        #if DEBUG
+        if PhoneDemo.on { return demo(api) }
+        #endif
+        if api.cacheKey != key { restore(api) }   // another computer or workspace picked: its own last copy, then its answer
         guard !loading else {
             again = true
             return
@@ -434,11 +446,15 @@ final class ChatsModel: ObservableObject {
             unreadable = 0
             do {
                 async let list: Tolerant<ReviewListItem> = orNothing(Tolerant()) { try await api.get("/api/review") }
+                // an older server has no list of chats: then every chat shows
+                async let chats = (try? await api.get("/api/assistant/chats") as ChatSummary.List)?.chats.items
                 var fresh: [ChatRow] = []
                 for source in Self.sources { fresh += try await source(api) }
                 let read = try await list
                 let seen = read.items
+                let spaces = await chats
                 guard api.cacheKey == key else { return }
+                if let spaces { chatSpaces = ChatList.spaces(spaces) }
                 couldNotRead = unreadable + read.skipped
                 videos = seen
                 others = fresh
@@ -448,6 +464,7 @@ final class ChatsModel: ObservableObject {
                 loadedAt = Date()
                 rebuild()
                 DiskCache.write("chats-\(api.cacheKey)", ChatList.merge(videos: seen, others: fresh).map(SavedRow.init))
+                Task { await Workspaces.shared.look() }
             } catch {
                 // the list stays as it was
                 guard api.cacheKey == key else { return }   // the computer that was left did not answer: nothing to say about this one
@@ -457,6 +474,19 @@ final class ChatsModel: ObservableObject {
             }
         } while again
     }
+
+    #if DEBUG
+    /// `-PhoneDemo`: the demo's rows, whatever server.
+    private func demo(_ api: ToolsetAPI) {
+        restore(api)
+        let demo = PhoneDemo.edits()
+        videos = demo.videos
+        others = demo.others
+        chatSpaces = demo.spaces
+        loaded = true
+        rebuild()
+    }
+    #endif
 
     private func markOpened(_ id: String) {
         guard rows.contains(where: { $0.id == id }) else { return }
@@ -469,6 +499,7 @@ final class ChatsModel: ObservableObject {
     /// The last copy from disk, shown at once.
     private func restore(_ api: ToolsetAPI) {
         key = api.cacheKey
+        workspace = api.workspace
         link = .ok
         videos = []
         others = (DiskCache.read("chats-\(api.cacheKey)", as: [SavedRow].self) ?? []).compactMap(\.row)
@@ -476,9 +507,12 @@ final class ChatsModel: ObservableObject {
     }
 
     private func rebuild() {
+        let work = ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
+                                                  opened: Set(opened.keys)), dismissed: dismissed)
         let fresh = link == .none ? [] : ChatList.arrange(
-            rows: ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
-                                                 opened: Set(opened.keys)), dismissed: dismissed) + ChatList.chats(assistant),
+            rows: work
+                + ChatList.sessions(WorkshopModel.shared.sessions, besides: work)
+                + ChatList.inWorkspace(ChatList.chats(assistant), workspace, of: chatSpaces, open: assistant),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
         if fresh != rows { rows = fresh }
     }
@@ -595,6 +629,7 @@ struct ChatsView: View {
     var edits = false
     @ObservedObject private var model = ChatsModel.shared
     @ObservedObject private var access = ToolsetAccess.shared
+    @ObservedObject private var workspaces = Workspaces.shared
     @State private var query = ""
     @AppStorage("chats.working.open") private var workingOpen = true
     @AppStorage("chats.done.open") private var doneOpen = false
@@ -617,7 +652,7 @@ struct ChatsView: View {
                 list
             }
         }
-        .navigationTitle(edits ? "Edits" : "Chats")
+        .navigationTitle(edits ? "Make" : "Chats")
         .task { model.watch() }
         .sheet(isPresented: $signingIn, onDismiss: {
             Task {
@@ -652,6 +687,8 @@ struct ChatsView: View {
                     opens(row) { ChatListRow(title: row.title, detail: row.detail, status: row.status) }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 }
+                // last, so its coming and going never moves a chat
+                if !searching, workspaces.chatsElsewhere > 0 { elsewhere(workspaces.chatsElsewhere) }
             }
         }
         .listStyle(.plain)
@@ -660,7 +697,7 @@ struct ChatsView: View {
         .refreshable { await model.load() }
         .overlay {
             if edits, model.loaded, rows.isEmpty, !searching {
-                Text("No edits yet.").foregroundStyle(.secondary)
+                Text("No edits yet").foregroundStyle(.secondary)
             }
         }
         .toolbar {
@@ -757,6 +794,20 @@ struct ChatsView: View {
             .listRowBackground(Color.clear)
     }
 
+    /// The chats that wait in other workspaces, in one quiet line; a tap opens the workspaces.
+    private func elsewhere(_ n: Int) -> some View {
+        Button { workspaces.choosing = true } label: {
+            Text(n == 1 ? "1 chat waiting in another workspace" : "\(n) chats waiting in other workspaces")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+    }
+
     /// What is off, when something is.
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -834,7 +885,7 @@ private struct WorkCard: View {
 }
 
 /// "Working (2)" with a hairline and an arrow: a tap folds the rows under it.
-private struct ShelfHeader: View {
+struct ShelfHeader: View {
     let title: String
     let count: Int
     @Binding var open: Bool

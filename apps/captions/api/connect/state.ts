@@ -17,6 +17,8 @@ export interface ConnectState {
   relayKid: string;
   relayPublicKey: string; // base64 SPKI DER
   usedJti: Record<string, number>; // jti -> exp (unix seconds)
+  /** "Send notifications to your phones" (connect/activity.ts): absent = on. Goes with the link, so a new link starts on. */
+  notifyPhones?: boolean;
 }
 
 const file = () => path.join(env.dataDir, "connect.json");

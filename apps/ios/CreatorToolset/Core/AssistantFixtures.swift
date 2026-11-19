@@ -15,7 +15,7 @@ enum AssistantFixtures {
         case "asks": asks
         case "long": longReply
         case "lists": listsReply
-        default: nil
+        default: PhoneDemo.on ? PhoneDemo.assistant : nil
         }
     }()
 

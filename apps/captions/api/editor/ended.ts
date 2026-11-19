@@ -1,5 +1,6 @@
 import { workEnded } from "../assistant";
 import { libraryDb } from "../library/db";
+import { emitEvent } from "../lib/events";
 import type { JobRow } from "../library/jobs";
 import { saidOf, saidWords } from "./preview";
 import { readDraft, readEdit, readStep } from "./store";
@@ -36,10 +37,12 @@ export function runEnded(job: JobRow): void {
     if (rows.some((r) => r.state === "queued" || r.state === "running")) return;
 
     let end: Parameters<typeof workEnded>[2] = { status: "done", detail: "Done" };
+    let waits: string | null = null; // the line the person's phones get, when the run left them something
     if (bad(row)) {
       const why = (row.error ?? "failed").replace(/\s+/g, " ").trim().slice(0, 200);
       const what = `“${variant ? `${edit.name} ${variant}` : edit.name}”`;
       end = { status: "failed", detail: why, say: `${what} ${row.state === "needs_key" ? "needs setup" : "did not finish"}: ${why}`, choices: ["Show me"] };
+      waits = `${row.state === "needs_key" ? "Needs setup" : "Did not finish"}: ${why}`;
     } else if (row.kind === "file") {
       // ready = a planned version whose preview is filed and none of whose own steps failed (a file step done before a
       // step above it failed is from an earlier run)
@@ -54,6 +57,7 @@ export function runEnded(job: JobRow): void {
       }).filter(Boolean).join(" ");
       const all = planned.length;
       const name = `“${edit.name}”`;
+      if (n) waits = n === all ? "Ready for review" : `${n} of ${all} versions ready for review`;
       if (n)
         end = {
           status: "done",
@@ -62,6 +66,8 @@ export function runEnded(job: JobRow): void {
           choices: READY_CHOICES,
         };
     }
+    // the person's phones hear of a run that failed or left cuts in Review, wherever it was started
+    if (waits) emitEvent("waiting", { owner: who, kind: end.status === "failed" ? "failed" : "review", title: edit.name ?? "Edit", headline: waits, path: `/editor/${edit.id}`, ...(edit.projectId ? { workspace: edit.projectId } : {}) });
     // said already for the draft that went to Review: the other cards end without a second line
     workEnded(who, `edit:${edit.id}`, filed ? { status: end.status, detail: end.detail } : end);
   } catch (e) {

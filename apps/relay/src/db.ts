@@ -25,6 +25,13 @@ export function openDb(file: string): DatabaseSync {
       idle_since INTEGER,
       created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS computers_account ON computers (account_id);
+    -- DPoP proof ids already seen (dpop.ts), kept only while the proof could still pass.
+    CREATE TABLE IF NOT EXISTS dpop_jti (
+      jkt TEXT NOT NULL,
+      jti TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (jkt, jti));
+    CREATE INDEX IF NOT EXISTS dpop_jti_expires ON dpop_jti (expires_at);
     -- AI apps connected through this broker (gateway.ts). One row per connection; the computer's key for it is sealed.
     CREATE TABLE IF NOT EXISTS ai_grants (
       id TEXT PRIMARY KEY,
@@ -53,5 +60,24 @@ export function openDb(file: string): DatabaseSync {
   const cols = new Set((db.prepare('PRAGMA table_info(computers)').all() as { name: string }[]).map((c) => c.name));
   if (!cols.has('released_at')) db.exec('ALTER TABLE computers ADD COLUMN released_at INTEGER');
   if (!cols.has('recovers')) db.exec('ALTER TABLE computers ADD COLUMN recovers INTEGER NOT NULL DEFAULT 0');
+  // public_key: the computer's own key (base64 SPKI), which signs its health and mint answers (connect.ts). Saved at
+  // link; a computer linked before this gets it on its next signed tunnel request.
+  if (!cols.has('public_key')) db.exec('ALTER TABLE computers ADD COLUMN public_key TEXT');
+  // Push (push.ts): each phone's APNs token under its account, and the activity proofs already used.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mobile_devices (
+      account_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      token TEXT NOT NULL,
+      sandbox INTEGER NOT NULL,
+      bundle_id TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (account_id, device_id));
+    CREATE INDEX IF NOT EXISTS mobile_devices_token ON mobile_devices (token);
+    CREATE TABLE IF NOT EXISTS activity_jti (
+      computer_id TEXT NOT NULL,
+      jti TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (computer_id, jti));`);
   return db;
 }

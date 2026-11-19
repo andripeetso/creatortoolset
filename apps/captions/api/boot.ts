@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -49,7 +49,7 @@ import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
 import { reportCrash, startTelemetry, telemetryApp } from "./lib/telemetry";
 import { transcribeApp } from "./transcribe";
-import { authApp, getApiKeyUser, getSessionUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
+import { authApp, getApiKeyUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
 import { adminApp } from "./admin";
 import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
@@ -67,6 +67,12 @@ import { connectorsApp, connectorsCallbackApp, startConnectorPulls, tiktokVerify
 import { ownerProfileApp } from "./owner-profile";
 import { devicePairApp, devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
+import { phoneNotifyApp } from "./connect/activity";
+import { connectPublicApp } from "./connect/mint";
+import { computerKey } from "./connect/keys";
+import { mediaTicketApp } from "./media-ticket";
+import { authClientsApp, callerOf, oauthTokenApp, scopeFor, scopeRefused, sessionRefused } from "./auth-clients";
+import { allowedPeer, descriptorApp, endpointsApp, listensEverywhere } from "./descriptor";
 import { connectState, tunnelHostname } from "./connect/state";
 import { startConnector } from "./connect/connector";
 import { deviceForToken } from "./lib/devices";
@@ -324,6 +330,11 @@ app.route("/api/devices/pair", devicePairApp);
 app.route("/api/connectors", connectorsCallbackApp);
 // an AI app (ChatGPT, Claude) connecting to /api/mcp by signing in (oauth.ts): each route checks its own access
 app.route("/", oauthApp);
+// phones (auth-clients.ts, connect/mint.ts): who this server is, a code swapped for a session, and the connect
+// service's signed health and mint requests through the tunnel; each checks its own credential
+app.route("/", descriptorApp);
+app.route("/", oauthTokenApp);
+app.route("/api/connect", connectPublicApp);
 // a picture or video in a card an AI app shows (mcp-cards.ts): a signed link, since the card's frame has no sign-in
 app.route("/", cardApp((path, init) => Promise.resolve(app.request(path, init))));
 
@@ -339,7 +350,17 @@ app.use("/api/*", async (c, next) => {
   // except AI settings, paired Macs and keys; /api/auth reads only cookies, so a key never makes keys
   // The assistant's job token (auth.ts) opens /api/mcp only; the tools' own calls run as its account (innerCall), and
   // FULL_KEY_NEVER still refuses them the provider, device and key routes.
-  const signedIn = getSessionUser(c.req.header("cookie")) ??
+  // a phone's client session (auth-clients.ts): read before the cookie, and a request with one is answered by it alone
+  const client = callerOf(c);
+  if (client.kind === "error") return sessionRefused(c, client.code);
+  if (client.kind === "token") {
+    // a device's session is never the account's keys, AI settings, computers or admin, whatever its scopes
+    if (FULL_KEY_NEVER.test(c.req.path)) return c.json({ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }, 403);
+    const need = scopeFor(c.req.method, c.req.path);
+    if (!client.row.scopes.includes(need)) return scopeRefused(c, need);
+    c.set("clientSession", client.row.id);
+  }
+  const signedIn = client.kind === "token" || client.kind === "cookie" ? client.user :
     (FULL_KEY_NEVER.test(c.req.path)
       ? null
       : getApiKeyUser(c.req.header("authorization"), "full", c.req.path) ??
@@ -414,7 +435,24 @@ app.use("/api/*", inRequestWorkspace);
 // live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs
 app.use("/api/*", announceWrites);
 app.route("/api/sync", syncApp);
+// who has access, and how this computer is reached, are changed by a browser's cookie in every mode, so a page from
+// another site never reaches them: the browser must say it came from here and send JSON (which no plain form can).
+// A device's own token is exempt; the connect service's signed calls carry JSON and no Origin, so they pass.
+const ACCESS_WRITE = /^\/api\/(?:auth\/(?:pairing-links|clients)|connect)(?:\/|$)/;
+const sameSiteWrites: MiddlewareHandler = async (c, next) => {
+  if (c.req.method !== "POST" || !ACCESS_WRITE.test(c.req.path) || c.req.header("authorization")) return next();
+  if (crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), undefined) || !/^application\/json\b/i.test(c.req.header("content-type") ?? "")) {
+    return c.json({ error: "Sent from another site" }, 403);
+  }
+  return next();
+};
+app.use("/api/auth/*", sameSiteWrites);
+app.use("/api/connect/*", sameSiteWrites);
+app.route("/api/auth", authClientsApp);
+// tickets for what cannot sign each request (players, web views, background uploads): media-ticket.ts
+app.route("/api/auth", mediaTicketApp);
 app.route("/api/auth", authApp);
+app.route("/api/server", endpointsApp);
 // Settings → API keys: the outside services' keys (platform admins; never an AI key)
 app.route("/api/service-keys", serviceKeysApp);
 // Settings → API keys: each account's own keys for the paid services (never through an AI key)
@@ -446,6 +484,8 @@ app.route("/api/work/server-work", serverWorkApp);
 app.route("/api/server-update", serverUpdateApp);
 // Settings → Connect: link this computer to the account on the connect broker (api/connect/routes.ts)
 app.route("/api/connect", connectApp);
+// phone notifications through the connect service: the switch (api/connect/activity.ts; importing it starts the listeners)
+app.route("/api/connect", phoneNotifyApp);
 // the menu bar panel's rows from plug-ins (activity.ts)
 app.route("/api/activity", activityApp(serverPlugins));
 // the Mac app's signed-in account as this server's owner (owner-profile.ts)
@@ -618,6 +658,7 @@ if (workerFor) {
   const port = parseInt(process.env.PORT || "3000");
   // HOST: the interface to listen on (the Mac app passes 127.0.0.1); unset = every interface, as in Docker
   const host = process.env.HOST || undefined;
+  computerKey(); // every server has its id (the descriptor's serverId) from its first start, linked or not
   const server = serve(
     {
       fetch: app.fetch,
@@ -634,6 +675,8 @@ if (workerFor) {
     },
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
+  // listening on every interface on someone's own computer: only its own networks may connect (descriptor.ts)
+  if (host && listensEverywhere(host) && !hostedMode()) server.on("connection", (sock) => void (allowedPeer(sock.remoteAddress) || sock.destroy()));
   // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
   // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
   // The requests held open (the change stream, the computers' and workers' long polls) end at once and their callers

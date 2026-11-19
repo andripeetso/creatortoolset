@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
-import { ConnectStepView, CONNECT_COMMAND, HERE, PhoneRowView, mintPhoneCode, type PhoneState } from "./ConnectStep";
+import { ConnectStepView, CONNECT_COMMAND, HERE, PhoneRowView, mintPhoneLink, type PhoneState } from "./ConnectStep";
 import { serverUrl } from "./computers";
 
 const base = {
@@ -25,7 +25,7 @@ const base = {
 const view = (over: Partial<Parameters<typeof ConnectStepView>[0]> = {}) => renderToStaticMarkup(<ConnectStepView {...base} {...over} />);
 const phone = (code: PhoneState | undefined, over: Partial<Parameters<typeof PhoneRowView>[0]> = {}) =>
   renderToStaticMarkup(
-    <PhoneRowView code={code} now={1_000} canTurnOn={false} turningOn={false} problem={null} onTurnOn={() => {}} {...over} />,
+    <PhoneRowView code={code} now={1_000} onCreate={() => {}} onRevoke={async () => {}} {...over} />,
   );
 
 afterEach(() => {
@@ -75,10 +75,10 @@ it("marks a computer that is not running with an amber dot and no label on the o
   expect(html).not.toContain("Connected");
 });
 
-it("says what the phone row is for and that it works on the same Wi-Fi, above the folded Add another computer row", () => {
-  const html = view({ phone: <PhoneRowView code={undefined} now={0} canTurnOn={false} turningOn={false} problem={null} onTurnOn={() => {}} /> });
+it("says what the phone row is for, above the folded Add another computer row", () => {
+  const html = view({ phone: <PhoneRowView code={undefined} now={0} onCreate={() => {}} onRevoke={async () => {}} /> });
   expect(html).toContain("Add your phone");
-  expect(html).toContain("Use Creator Toolset on your phone too. Scan this with your phone&#x27;s camera, on the same Wi-Fi.");
+  expect(html).toContain("Scan the QR code with your phone&#x27;s camera.");
   expect(html).toContain("Add another computer");
   expect(html).not.toContain("Add a computer");
   expect(html).not.toContain("I already have a server");
@@ -112,55 +112,58 @@ it("never asks for an API key on this step", () => {
   expect(view({ expanded: true, pasteCommand: CONNECT_COMMAND })).not.toMatch(/api key/i);
 });
 
+const link = { id: "pl1", subject: "admin", credential: "AAAABBBBCCCC", scopes: ["read", "write", "access"] as const, createdAt: new Date(0).toISOString(), expiresAt: new Date(61_000).toISOString(), urls: [{ kind: "lan" as const, url: "http://tiny-mac.local:3773/#token=AAAABBBBCCCC" }] };
+const made = { ...link, scopes: [...link.scopes] };
+
 it("tells a person who is not signed in to sign in first, not that the connection failed", () => {
   const html = phone("signin");
-  expect(html).toContain("Sign in first, then this code appears here.");
+  expect(html).toContain("Sign in first, then the link appears here.");
   expect(html).not.toContain("Check the connection");
 });
 
-it("offers Network access as a button on a Mac app, and the copy to do it by hand without one", () => {
-  const local = phone("local");
-  expect(local).toContain("Your phone can&#x27;t reach this computer yet.");
-  expect(local).not.toContain("<button");
-  expect(local).toContain("In the Creator Toolset Mac app, turn on Network access and choose this computer&#x27;s password");
-
-  const withBridge = phone("local", { canTurnOn: true });
-  expect(withBridge).toContain("<button");
-  expect(withBridge).toContain("Network access");
-  expect(withBridge).not.toContain("In the Creator Toolset Mac app");
-  expect(withBridge).toContain("choose this computer&#x27;s password once");
+it("never sends a person to Network access or a password first: the link is made at once", () => {
+  for (const c of [undefined, "signin", null, "gone", made] as PhoneState[]) {
+    const html = phone(c);
+    expect(html).not.toContain("Network access");
+    expect(html).not.toMatch(/password/i);
+  }
 });
 
-it("shows the problem the Mac app gave for turning access on", () => {
-  expect(phone("local", { canTurnOn: true, problem: "Choose this computer's password to turn it on." })).toContain("Choose this computer&#x27;s password to turn it on.");
+it("draws the live link as the pairing card, and offers Create link once it is gone", () => {
+  const live = phone(made, { now: 1_000 });
+  expect(live).toContain("Pairing link");
+  expect(live).toContain("Expires in 1m");
+  expect(live).toContain("Copy code");
+  expect(live).toContain("Revoke");
+  expect(live).not.toContain("Create link");
+  expect(phone(made, { now: 61_000 })).not.toContain("Copy code");
+  expect(phone("gone")).toContain("Create link");
+  expect(phone(null)).toContain("Create link");
 });
 
-it("draws the live code with its QR, and drops it once it has run out", () => {
-  const code = { url: "http://tiny-mac.local:3773/api/auth/link/abc", qr: "data:image/png;base64,AAAA", expiresAt: 61_000 };
-  expect(phone(code, { now: 1_000 })).toContain('src="data:image/png;base64,AAAA"');
-  expect(phone(code, { now: 61_000 })).not.toContain("<img");
-});
-
-it("marks the phone row unplaced only while its height is not known: making a code with no space held, or waiting for the list above", () => {
+it("marks the phone row unplaced only while its height is not known: making a link with no space held, or waiting for the list above", () => {
   const unplaced = (html: string) => html.includes("data-unplaced");
-  expect(unplaced(phone(undefined))).toBe(true); // a first visit: a code is being made
-  expect(unplaced(phone(undefined, { hold: true }))).toBe(false); // the last answer was a code: its space is held
-  expect(unplaced(phone("local"))).toBe(false);
-  expect(unplaced(phone({ url: "https://studio.example.com/l/abc", qr: "data:image/png;base64,AAAA", expiresAt: 9_000 }))).toBe(false);
-  expect(unplaced(phone("local", { wait: true }))).toBe(true); // the other computers are not known yet
+  expect(unplaced(phone(undefined))).toBe(true); // a first visit: a link is being made
+  expect(unplaced(phone(undefined, { hold: true }))).toBe(false); // the last answer was a link: its space is held
+  expect(unplaced(phone("gone"))).toBe(false);
+  expect(unplaced(phone(made))).toBe(false);
+  expect(unplaced(phone("gone", { wait: true }))).toBe(true); // the other computers are not known yet
 });
 
-it("maps the server's answers: a code, local, sign in first (401), or no code", async () => {
-  const answer = (status: number, body?: unknown) => vi.stubGlobal("fetch", async () => new Response(body === undefined ? null : JSON.stringify(body), { status }));
-  answer(401, { error: "Sign in with an account first" });
-  expect(await mintPhoneCode()).toBe("signin");
+it("makes a Standard link, and maps a refusal: sign in first (401) or no link", async () => {
+  const bodies: unknown[] = [];
+  const answer = (status: number, body?: unknown) =>
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(body === undefined ? null : JSON.stringify(body), { status });
+    });
+  answer(401, { error: "Sign in first" });
+  expect(await mintPhoneLink()).toBe("signin");
   answer(500);
-  expect(await mintPhoneCode()).toBeNull();
-  answer(200, { url: null, path: null, expiresAt: null });
-  expect(await mintPhoneCode()).toBe("local");
-  answer(200, { url: "http://tiny-mac.local:3773", path: "/api/auth/link/abc", expiresAt: 60_000 });
-  const code = await mintPhoneCode();
-  expect(typeof code === "object" && code !== null && code.url).toBe("http://tiny-mac.local:3773/api/auth/link/abc");
+  expect(await mintPhoneLink()).toBeNull();
+  answer(200, made);
+  expect(await mintPhoneLink()).toEqual(made);
+  expect(bodies.at(-1)).toEqual({ scopes: ["read", "write", "access"], deviceType: "mobile" });
 });
 
 it("accepts a bare or https server address and keeps only its origin", () => {
