@@ -121,8 +121,9 @@ function ProjectsCard({ action }: { action: Extract<ActionNeeded, { kind: "proje
         <p className="text-xs text-muted-foreground">{LIBRARY_WORDS.projectsSet}</p>
       ) : (
         <>
-          <Button size="sm" disabled={state === "busy"} onClick={() => void use(action.path)} title={action.path}>
-            {LIBRARY_WORDS.projectsUse(action.path)}
+          {/* a long path is cut with an ellipsis inside the card, never past its edge (the full path is the tooltip) */}
+          <Button size="sm" className="min-w-0 max-w-full" disabled={state === "busy"} onClick={() => void use(action.path)} title={action.path}>
+            <span className="truncate">{LIBRARY_WORDS.projectsUse(action.path)}</span>
           </Button>
           <Button size="sm" variant="outline" disabled={state === "busy"}
             onClick={() => (here ? void chooseFolderOnMac().then(use) : navigate("/settings/folders"))}>
