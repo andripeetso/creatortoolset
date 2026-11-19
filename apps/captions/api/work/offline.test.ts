@@ -127,8 +127,8 @@ describe("Settings → Storage: each computer's proxies", () => {
     await claim(mac.token, { bytes: 900, versions: ["va", "vb", "vc"] });
     await claim(laptop.token, { bytes: 40, limit: 100, versions: ["va"] });
     expect((await rows("tiny")).sort((a, b) => b.bytes - a.bytes)).toEqual([
-      { kind: "proxies", bytes: 900, items: 3, device: { id: mac.device.id, name: "Studio Mac" } },
-      { kind: "proxies", bytes: 40, items: 1, device: { id: laptop.device.id, name: "Laptop" } },
+      { kind: "proxies", bytes: 900, items: 3, device: { id: mac.device.id, name: "Studio Mac" }, limit: 25e9 },
+      { kind: "proxies", bytes: 40, items: 1, device: { id: laptop.device.id, name: "Laptop" }, limit: 25e9 },
     ]);
     expect((await rows("bo")).map((r) => r.device?.id)).toEqual([theirs.device.id]); // only their own computer
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyQuestion, keptRows, shareLabel } from "./KeptRows";
+import { capLabel, emptyQuestion, keptRows, shareLabel } from "./KeptRows";
 
 describe("Settings → Storage, what is kept", () => {
   it("Empty's question says how many of what, what is kept and how much; it is never skippable", () => {
@@ -27,5 +27,13 @@ describe("Settings → Storage, what is kept", () => {
     expect(rows.map((r) => r.kind)).toEqual(["captions", "review"]);
     expect(shareLabel(420_000_000, 1_000_000_000)).toBe("42% of 1.0 GB");
     expect(shareLabel(1_000, 1_000_000_000)).toBe("under 1% of 1.0 GB");
+  });
+});
+
+describe("Settings → Storage, the download cache cap", () => {
+  it("the 25 GB cap reads as the copy does, decimal; a cap that is not whole GB keeps its size", () => {
+    expect(capLabel(25e9)).toBe("25 GB");
+    expect(capLabel(100)).toBe("1 KB");
+    expect(capLabel(1.5e9)).toBe("1.5 GB");
   });
 });
