@@ -43,6 +43,8 @@ export const keptTitle = (r: KeptRow) => (r.device ? `Proxies on ${r.device.name
 
 export const bytesLabel = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+/** A whole-GB cap reads "25 GB" as the copy does; any other cap keeps its exact size. */
+export const capLabel = (n: number) => (n % 1e9 === 0 ? `${n / 1e9} GB` : bytesLabel(n));
 
 const keepLabel = (days: number) => (days < 1 ? `deleted after ${Math.round(days * 24)} hours` : `deleted after ${days} ${days === 1 ? "day" : "days"}`);
 
@@ -205,7 +207,7 @@ function MacComputer() {
   useEffect(() => void downloadLocation().then((r) => setLocation(r?.path ?? null), () => {}), []);
   const row = kept.data?.rows.find((r) => r.kind === "proxies" && r.device?.id === mine);
   // the cap is named only when the server enforces one (cacheLimit), so the tooltip never promises a limit it does not hold
-  const cap = row?.limit ? (row.limit % 1e9 === 0 ? `${row.limit / 1e9} GB` : bytesLabel(row.limit)) : "";
+  const cap = row?.limit ? capLabel(row.limit) : "";
   const limit = cap ? ` of ${cap}` : "";
   const cacheTip = `Files downloaded for edits on this computer. ${cap ? `Past ${cap}, the files used longest ago are removed. ` : ""}Files you made available offline are never removed.`;
   // the computer's proxies: Empty keeps the ones made available offline (the same route as the Your files row)

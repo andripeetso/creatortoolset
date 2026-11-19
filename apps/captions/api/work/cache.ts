@@ -78,8 +78,8 @@ export const sizeOf = (file: string): number | null => {
   }
 };
 
-/** The size limit: 25 GB, or CT_PROXY_LIMIT (bytes) when set (UNIFIED-PRD M16). */
-export const CACHE_LIMIT_DEFAULT = 25 * 1024 ** 3;
+/** The size limit: 25 GB (decimal, as the copy reads), or CT_PROXY_LIMIT (bytes) when set (UNIFIED-PRD M16). */
+export const CACHE_LIMIT_DEFAULT = 25e9;
 export const cacheLimit = (): number => {
   const n = Number(process.env.CT_PROXY_LIMIT);
   return Number.isFinite(n) && n > 0 ? n : CACHE_LIMIT_DEFAULT;
