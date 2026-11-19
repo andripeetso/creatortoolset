@@ -99,7 +99,7 @@ export function whereIsMany(versionIds: string[], folderStateOf?: (device: strin
   const out = new Map<string, WhereIs>();
   for (const v of versions) {
     const byDevice = new Map<string, PlaceOn>();
-    for (const r of rows.filter((x) => x.version_id === v.id).sort((a, b) => rank[a.state] - rank[b.state])) {
+    for (const r of rows.filter((x) => x.version_id === v.id).sort((a, b) => rank[a.state] - rank[b.state] || (b.checked_at ?? 0) - (a.checked_at ?? 0))) {
       const dev = deviceOf(r.device);
       const on = byDevice.get(r.device) ?? { device: r.device, name: dev?.name ?? "A computer", online: isOnline(r.device) };
       if (r.kind === "proxy") on.proxy ??= { state: r.state, path: r.path };

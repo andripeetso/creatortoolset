@@ -8,6 +8,7 @@ import { deviceOf, listDevices } from "../lib/devices";
 import { hostPath, rootAt } from "../lib/storage";
 import { libraryChanged } from "./access";
 import { libraryDb } from "./db";
+import { mergeSamePath } from "./place-rows";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
 
@@ -183,8 +184,11 @@ export async function confirmPlaces(
     d.prepare(
       `INSERT INTO version_places (version_id, device, path, confirmed_at, checked_at, state, source, quick, verified_at) VALUES (?, ?, ?, ?, ?, ?, 'locate', ?, ?)
        ON CONFLICT (version_id, device, kind, folder_id) DO UPDATE SET path = excluded.path, confirmed_at = excluded.confirmed_at, checked_at = excluded.checked_at, gone_at = NULL,
-         state = excluded.state, quick = COALESCE(excluded.quick, quick), verified_at = COALESCE(excluded.verified_at, verified_at)`,
+         state = CASE WHEN excluded.state = 'found' AND version_places.state = 'verified' AND version_places.path = excluded.path THEN 'verified' ELSE excluded.state END,
+         quick = COALESCE(excluded.quick, quick), verified_at = COALESCE(excluded.verified_at, verified_at)`,
     ).run(v.id, c.id, x.path, now, now, verified ? "verified" : "found", x.quick ?? null, verified ? now : null);
+    // the scan's row for this file (in its folder) and this one are one place: "found" never downgrades its "verified"
+    mergeSamePath(v.id, c.id);
     answer.confirmed.push(v.id);
     // its own recorded try read: the fingerprint it never had
     if (x.quick && !v.quick) d.prepare("UPDATE asset_versions SET quick = ? WHERE id = ? AND (quick IS NULL OR quick = '')").run(x.quick, v.id);
@@ -215,6 +219,7 @@ export async function confirmPlaces(
       `INSERT INTO version_places (version_id, device, path, confirmed_at, gone_at, checked_at, state, source) VALUES (?, ?, ?, ?, ?, ?, 'gone', 'locate')
        ON CONFLICT (version_id, device, kind, folder_id) DO UPDATE SET gone_at = excluded.gone_at, checked_at = excluded.checked_at, state = 'gone'`,
     ).run(v.id, c.id, was, now, now, now);
+    mergeSamePath(v.id, c.id);
   }
   for (const m of moves.values()) {
     d.prepare(

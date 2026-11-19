@@ -43,3 +43,10 @@ export function mergeStudio(current: StorageFolder[], incoming: StorageFolder[])
   // the imported ones keep their place in the file's order, after the account's own
   return [...kept, ...byKey.values()];
 }
+
+/** The ids mergeStudio dropped from `current`, each with the id of the row it became in `merged` (version_places.folder_id follows them). */
+export function replacedIds(current: StorageFolder[], merged: StorageFolder[]): Map<string, string> {
+  const ids = new Set(merged.map((f) => f.id));
+  const byKey = new Map(merged.map((f) => [keyOf(f), f.id]));
+  return new Map(current.flatMap((f) => (ids.has(f.id) || !byKey.has(keyOf(f)) ? [] : [[f.id, byKey.get(keyOf(f))!] as const])));
+}

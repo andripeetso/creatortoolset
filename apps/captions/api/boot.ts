@@ -36,6 +36,8 @@ import { serverWorkApp } from "./work/server-work-routes";
 import { serverUpdateApp } from "./server-update";
 import { migrateOwnerChoices, settleServerWork } from "./work/server-work";
 import { migrateLibraries, migrateOnce } from "./library/migrate";
+import { fixPlaceRows } from "./library/place-rows";
+import { foldersOf } from "./editor/reach";
 import { checkWaits } from "./work/waits";
 import { startTaskTick, sweepTasks } from "./work/tasks";
 import "./work/task-kinds";
@@ -560,6 +562,13 @@ const workerFor = process.env.CT_WORKER;
 if (process.env.NODE_ENV !== "test" && !workerFor) {
   settleServerWork(); // before the loops: a new server starts with its video work off (work/server-work.ts)
   migrateOwnerChoices(); // after it: settle writes the file the migration keeps
+  try {
+    // one place row per file on a computer, under a folder that exists (library/place-rows.ts); nothing to do the second time
+    const fixed = fixPlaceRows(foldersOf);
+    console.log(`[library] place rows: ${fixed.merged} merged, ${fixed.repointed} moved to their folder`);
+  } catch (e) {
+    console.warn("[library] the place rows fix-up failed:", e instanceof Error ? e.message : e);
+  }
   void migrateOnce().catch((e) => console.warn("[library] the one-time migration failed:", e instanceof Error ? e.message : e)); // once per data folder (library/migrated.json)
   // libraries with clips are set up (setupAt, UNIFIED-PRD 4.6); without it every existing workspace would get the setup card
   void migrateLibraries().catch((e) => console.error("library migration failed", e));
