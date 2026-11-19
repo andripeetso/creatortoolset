@@ -18,7 +18,7 @@ import { blobs, finalsUpload, keepsOnlyOriginals, libraryDb, librarySetting, lib
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { hostsNone, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { cantFind, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -42,8 +42,11 @@ import { fileRoll, rollFolder } from "./roll";
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { indexOnMac, noPicture, parseOnMac, putThumb } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
-import { deviceOf, listDevices } from "../lib/devices";
-import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName } from "../../contracts/storage";
+import { deviceOf, isOnline, listDevices } from "../lib/devices";
+import { actionDone, goOnFor } from "../lib/action-done";
+import { addFolder } from "../devices-storage";
+import { workspaceById } from "../lib/workspaces";
+import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName, libraryBase, THIS_COMPUTER } from "../../contracts/storage";
 import { quickPrint } from "../work/files";
 import { libraryWorkspace, serverKind } from "../work/server-work";
 import { WORK_MIN } from "../../contracts/work";
@@ -1006,12 +1009,12 @@ libraryApp.get("/:id/status", (c) => {
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one (or all, when proxies are
 // hosted) and have none get one. organize "ai" files what is in no folder yet (UNIFIED-PRD §4.9); it does not force describe.
 // copyTo and places are read only by the one-time migration (§4.6), so nothing writes them.
-libraryApp.patch("/:id", async (c) => {
+libraryApp.patch("/:id", async (c) => patchLibrary(c, c.req.param("id"), (await c.req.json().catch(() => null)) as { name?: unknown; settings?: Record<string, unknown> } | null));
+
+async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: string, b: { name?: unknown; settings?: Record<string, unknown> } | null): Promise<Response> {
   const user = c.get("user");
-  const libraryId = c.req.param("id");
   const role = libraryRole(user.username, libraryId);
   if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const b = (await c.req.json().catch(() => null)) as { name?: unknown; settings?: Record<string, unknown> } | null;
   const name = typeof b?.name === "string" ? b.name.trim().slice(0, 80) : "";
   if (name) db().prepare("UPDATE libraries SET name = ? WHERE id = ?").run(name, libraryId);
   // one key at a time: other settings (watch folders) are written by other code
@@ -1029,6 +1032,7 @@ libraryApp.patch("/:id", async (c) => {
   // the setup dialog's last answer (UNIFIED-PRD §4.8): the owner's, once; a setup done is never undone here
   if (typeof s.setupAt === "string" && s.setupAt.length < 40 && Number.isFinite(Date.parse(s.setupAt))) {
     db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.setupAt', json(?)) WHERE id = ? AND json_extract(settings, '$.setupAt') IS NULL`).run(JSON.stringify(s.setupAt), libraryId);
+    setUp(c, libraryId);
   }
   // a new level describes the clips described from now on; the ones done keep their lines until the person asks again
   // (All clips → Shot descriptions), or an edit asks for its files
@@ -1065,6 +1069,45 @@ libraryApp.patch("/:id", async (c) => {
   };
   const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings) };
   return c.json(updated);
+}
+
+/** The library is set up: the setup cards of its workspace go, in the owner's chats (the ask carries on) and its members'. */
+function setUp(c: Context<{ Variables: AuthVars }>, libraryId: string): void {
+  const ws = (db().prepare("SELECT json_extract(settings, '$.projectId') AS p FROM libraries WHERE id = ?").get(libraryId) as { p: string | null } | undefined)?.p ?? "";
+  const card = (a: ActionNeeded) => a.kind === "setup" && a.workspace === ws;
+  actionDone(c.get("user").username, card, goOnFor(c, (ask) => ask));
+  for (const m of (ws && workspaceById(ws)?.members) || []) if (m.username !== c.get("user").username) actionDone(m.username, card);
+}
+
+// POST /api/library/:id/setup/quick { device, base? } → LibrarySummary: the setup card's defaults (contracts/library.ts
+// QuickSetup), the owner's, through the same rows and settings as the setup on the page: Source media, Project files and
+// Final exports under `base` (default ~/Movies/Creator Toolset/<workspace>) on that computer, which makes them (`make`),
+// then the settings with setupAt. 409 when the computer can't be reached now.
+libraryApp.post("/:id/setup/quick", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as { device?: unknown; base?: unknown } | null;
+  const device = typeof b?.device === "string" ? b.device : "";
+  const d = deviceOf(device);
+  const here = device === THIS_COMPUTER && watchAllowed(user.username);
+  if (!here && d?.owner !== user.username) return c.json({ error: "Needs a computer of yours" }, 400);
+  if (d && !isOnline(d.id)) return c.json({ error: cantFind(d.name) }, 409);
+  const ws = await currentWorkspaceId(user);
+  const base = (typeof b?.base === "string" && b.base.trim()) || libraryBase((ws && workspaceById(ws)?.name) || "Media Library");
+  for (const use of ["footage", "projects", "library"] as const) {
+    const r = await addFolder(c, { role: use, host: device, path: `${base.replace(/\/+$/, "")}/${FOLDER_LABELS[use]}`, make: true });
+    const said = r.ok ? null : ((await r.json().catch(() => ({}))) as { error?: string }).error ?? "";
+    if (said !== null && !/already/i.test(said)) return c.json({ error: `${FOLDER_LABELS[use]}: ${said}` }, r.status as 400);
+  }
+  return patchLibrary(c, libraryId, {
+    settings: {
+      importMode: "copy", proxy: true, proxyQuality: "standard", ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value, lookBudget: null,
+      defaultFolders: !b?.base, setupAt: new Date().toISOString(),
+      // a library on This Mac has no server to upload to, so the hosted answers stay as they are (the page's setup)
+      ...(watchAllowed(user.username) ? {} : hostedSettings(HOSTED_DEFAULT)),
+    },
+  });
 });
 
 // POST /api/library { name } → a local library of the caller's own, in the workspace this request works in

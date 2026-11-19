@@ -134,14 +134,14 @@ final class CutoutTests: XCTestCase {
         XCTAssertNil(runner.editorKinds(now: 100_000), "one step at a time")
         await offMain { runner.runSteps(claimed) }
         XCTAssertEqual(site.requests.map { "\($0.method) \($0.path)" }, [claim, "GET \(step)", "POST \(step)"])
-        XCTAssertEqual(String(decoding: site.requests[0].body, as: UTF8.self), #"{"kinds":["cards-draw","cutout","split","faceblur","folder-list","helper-check","copy"]}"#)
+        XCTAssertEqual(String(decoding: site.requests[0].body, as: UTF8.self), #"{"kinds":["cards-draw","cutout","split","faceblur","folder-list","folder-browse","helper-check","copy"]}"#)
         // what was sent is the cut-out, as a PNG file named `cutout`
         let sent = site.requests[2]
         XCTAssertTrue(sent.headers["content-type"]?.hasPrefix("multipart/form-data; boundary=") == true)
         XCTAssertNotNil(sent.body.range(of: Data("name=\"cutout\"; filename=\"cutout.png\"\r\nContent-Type: image/png".utf8)))
         XCTAssertNotNil(sent.body.range(of: Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
         XCTAssertEqual(seen.count, 0, "nothing in the menu changes: it is not Drawing cards, and no AI request")
-        XCTAssertEqual(runner.editorKinds(now: 1001), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check", "copy"])
+        XCTAssertEqual(runner.editorKinds(now: 1001), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"])
     }
 
     func testACutOutThatCannotBeMadeIsFailedWithTheReason() async throws {

@@ -871,23 +871,80 @@ export const LIBRARY_WORDS = {
   projectsUse: (path: string) => `Use ${path}`,
   projectsChoose: "Choose…",
   projectsSet: "Set: the edit carries on",
-  projectsFailed: "Could not set the folder. Retry",
+  projectsLine: (computer?: string) => `The edit waits for this folder on ${computer || "your computer"}, and carries on by itself once it is set.`,
+  exportsCard: (workspace: string) => `Final exports folder for ${workspace}`,
+  exportsLine: (computer?: string) => `Finished videos go into this folder on ${computer || "your computer"}.`,
+  quickSetupLine: (base: string, computer?: string) =>
+    `Makes Source media, Project files and Final exports in ${base} on ${computer || "your computer"}, copies imports in, with 720p proxies, High analysis and Smart folders.`,
+  quickSetupButton: "Set up",
+  customiseButton: "Customise",
   redo: "Redo",
   redoAll: "Redo all",
   forClips: (n: number) => (n === 1 ? "For 1 clip" : `For ${n} clips`),
 } as const;
 
 /**
- * One thing the person has to do before a tool or step can go on (UNIFIED-PRD §3.5, §4.7, §4.8). A tool answers
- * `{ [ACTION_NEEDED]: ActionNeeded }`; the chat shows the one card for its kind, and the ask continues when it's done
- * (setup: the LIBRARY_SETUP_DONE window event / change for that workspace; downloads: Turn on writes Downloads "needed";
- * projects: the folder row is made and the waiting job is taken again by itself).
+ * One thing the person has to do before a tool or step can go on (UNIFIED-PRD §3.5, §4.7, §4.8; the one card contract
+ * for every client, lane-d D14-CONTRACT.md). A tool answers `{ [ACTION_NEEDED]: ActionNeeded }`; every client draws the
+ * card from `title`, `line`, `actions` and `missing` alone, and the server moves the chat on once it is done (setup: the
+ * library's setupAt; downloads: Downloads "needed"; projects: the folder row is made and the waiting job is taken again).
  */
-export type ActionNeeded =
-  | { kind: "setup"; workspace: string; workspaceName: string; owner: boolean; href: string }
+export type ActionAsk =
+  // an AI Editor job waits for the workspace's Project files (or Final exports) folder on `device` (api/devices-storage.ts
+  // ensureUseFolder); `path` is the default offered (libraryBase/<folder> on that computer). null: no computer of the
+  // account's matched (`deviceName` is what it was called), and the card says so
+  | { kind: "projects" | "exports"; workspace: string; workspaceName: string; device: string | null; deviceName?: string; path: string }
   | { kind: "downloads"; libraryId: string; workspace: string }
-  // an AI Editor job waits for the workspace's Project files folder on `device` (api/devices-storage.ts ensureUseFolder);
-  // `path` is the default offered (libraryBase/Project files on that computer). The job goes on once the row exists
-  | { kind: "projects"; workspace: string; workspaceName: string; device: string; path: string };
+  | { kind: "setup"; workspace: string; workspaceName: string; owner: boolean; href: string; libraryId: string; device: string | null; deviceName?: string; defaults: QuickSetup };
+export type CardAction = {
+  id: "use_default" | "choose" | "turn_on" | "quick_setup" | "customise" | "retry";
+  label: string;
+  primary?: boolean;
+  /** sent as the signed-in session, `workspace` as X-CT-Workspace; a retry with no call re-asks GET /api/assistant/action/:stepId */
+  call?: { method: "GET" | "POST" | "PUT" | "PATCH"; path: string; body?: Record<string, unknown>; workspace?: string };
+  /** the folder browser (GET /api/devices/:device/browse); the pick is POSTed to /api/devices/storage/folders */
+  browse?: { device: string; role: "projects" | "library" | "footage"; workspace: string; start?: string };
+  open?: string;
+};
+export type ActionNeeded = ActionAsk & { title: string; line: string; missing?: "computer"; actions: CardAction[] };
+export type FolderAsk = Extract<ActionNeeded, { kind: "projects" | "exports" }>;
+/** The setup card's defaults (Quick setup), as the card shows them; POST /api/library/:id/setup/quick stores them. */
+export type QuickSetup = { base: string; importMode: "copy"; proxy: true; proxyQuality: "720p"; effort: "high"; organize: "smart"; hosted: HostedMix };
+export const quickSetup = (base: string): QuickSetup => ({ base, importMode: "copy", proxy: true, proxyQuality: "720p", effort: "high", organize: "smart", hosted: HOSTED_DEFAULT });
+/** The line of a card whose computer the server can't find (`missing: "computer"`). */
+export const cantFind = (computer?: string) => `Can't find ${computer || "your computer"} right now: open Creator Toolset on it`;
+export const RETRY = "Retry";
+
+/** The card for an ask: its title, line and buttons, the same on the web, the Mac app and the phone. */
+export function actionCard(a: ActionAsk): ActionNeeded {
+  const retry: CardAction = { id: "retry", label: RETRY, primary: true };
+  if (a.kind === "downloads")
+    return { ...a, title: LIBRARY_WORDS.downloadsTitle, line: LIBRARY_WORDS.downloadsCard, actions: [{ id: "turn_on", label: LIBRARY_WORDS.downloadsButton, primary: true, call: { method: "PUT", path: "/api/library/offline/downloads", body: { library: a.libraryId, mode: "needed" }, workspace: a.workspace } }] };
+  if (a.kind === "setup") {
+    if (!a.owner) return { ...a, title: LIBRARY_WORDS.setupCard(a.workspaceName), line: LIBRARY_WORDS.setupCardMember, actions: [] };
+    if (!a.device) return { ...a, title: LIBRARY_WORDS.setupCard(a.workspaceName), line: cantFind(a.deviceName), missing: "computer", actions: [retry] };
+    return {
+      ...a,
+      title: LIBRARY_WORDS.setupCard(a.workspaceName),
+      line: LIBRARY_WORDS.quickSetupLine(a.defaults.base, a.deviceName),
+      actions: [
+        { id: "quick_setup", label: LIBRARY_WORDS.quickSetupButton, primary: true, call: { method: "POST", path: `/api/library/${a.libraryId}/setup/quick`, body: { device: a.device }, workspace: a.workspace } },
+        { id: "customise", label: LIBRARY_WORDS.customiseButton, open: a.href },
+      ],
+    };
+  }
+  const role = a.kind === "projects" ? "projects" : "library";
+  const title = a.kind === "projects" ? LIBRARY_WORDS.projectsCard(a.workspaceName) : LIBRARY_WORDS.exportsCard(a.workspaceName);
+  if (!a.device) return { ...a, title, line: cantFind(a.deviceName), missing: "computer", actions: [retry] };
+  return {
+    ...a,
+    title,
+    line: a.kind === "projects" ? LIBRARY_WORDS.projectsLine(a.deviceName) : LIBRARY_WORDS.exportsLine(a.deviceName),
+    actions: [
+      { id: "use_default", label: LIBRARY_WORDS.projectsUse(a.path), primary: true, call: { method: "POST", path: "/api/devices/storage/folders", body: { role, host: a.device, path: a.path, make: true }, workspace: a.workspace } },
+      { id: "choose", label: LIBRARY_WORDS.projectsChoose, browse: { device: a.device, role, workspace: a.workspace, start: "~" } },
+    ],
+  };
+}
 export const ACTION_NEEDED = "action_needed";
 export const LIBRARY_SETUP_DONE = "library-setup-done";
