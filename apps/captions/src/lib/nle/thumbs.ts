@@ -21,9 +21,9 @@ const ready = (el: HTMLVideoElement, ev: "loadeddata" | "seeked") =>
     el.addEventListener("error", no);
   });
 
-/** The picture of `url` at second `sec` (null when the file won't play here). */
-export function thumbAt(url: string, sec: number): Promise<ImageBitmap | null> {
-  const key = `${url}@${sec}`;
+/** The picture of `url` at second `sec`, `height` px tall (null when the file won't play here). */
+export function thumbAt(url: string, sec: number, height = HEIGHT): Promise<ImageBitmap | null> {
+  const key = `${url}@${sec}@${height}`;
   let got = kept.get(key);
   if (!got) {
     const job = line.then(async () => {
@@ -36,7 +36,7 @@ export function thumbAt(url: string, sec: number): Promise<ImageBitmap | null> {
       if (el.error) return null;
       el.currentTime = Math.min(sec, Math.max(0, (el.duration || sec) - 0.05));
       if (!(await ready(el, "seeked")) || !el.videoWidth) return null;
-      return createImageBitmap(el, { resizeHeight: HEIGHT, resizeQuality: "low" }).catch(() => null);
+      return createImageBitmap(el, { resizeHeight: height, resizeQuality: height > HEIGHT ? "medium" : "low" }).catch(() => null);
     });
     line = got = job.catch(() => null);
     kept.set(key, got);

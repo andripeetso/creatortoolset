@@ -321,7 +321,7 @@ function Card({ row, file, offline, picked }: { row: PoolRow; file: NleFile | nu
     if (!url || sound || still) return;
     let gone = false;
     const sec = Math.floor(lead + (row.frames ? Math.min(1, row.frames / row.fps / 2) : 0));
-    void thumbAt(url, sec).then((b) => {
+    void thumbAt(url, sec, 180).then((b) => {
       const c = canvas.current;
       if (gone || !b || !c) return;
       c.width = b.width;

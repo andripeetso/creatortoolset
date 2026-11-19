@@ -397,7 +397,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               ["Paste", "⌘V", act.paste, !clipboard.length],
               ["Duplicate", "⌘D", act.duplicate, false],
               ["Delete", "⌫", () => act.delete(false), false],
-              ["Ripple delete", "⇧⌫", () => act.delete(true), false],
+              ["Ripple delete", "S", () => act.delete(true), false],
               [linked ? "Unlink" : "Link", "", linked ? act.unlink : act.link, !linked && sel.length < 2],
             ] as const).map(([l, key, fn, off]) => (
               <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
