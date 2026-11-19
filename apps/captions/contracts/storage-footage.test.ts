@@ -19,6 +19,13 @@ describe("what a Media folder scan leaves out", () => {
     expect(notFootage("raw/clip.mp4", dirs)).toBe(false);
   });
 
+  it("skips an AI Editor worker's Phone uploads folder at any depth, and only that exact name", () => {
+    expect(notFootage("Phone uploads/x 123/clip.mov")).toBe(true);
+    expect(notFootage("Day 1/Phone uploads/x 123/clip.mov")).toBe(true);
+    expect(notFootage("phone uploads/clip.mov")).toBe(false);
+    expect(notFootage("Phone uploads.mov")).toBe(false);
+  });
+
   it("finds the editor folder at any depth, and not a drafts/ folder with nothing in it", () => {
     expect([...editorDirsOf(["Work/Shoot_edit/drafts/a.mp4"])]).toEqual(["Work/Shoot_edit"]);
     expect([...editorDirsOf(["Shoot_edit/drafts"])]).toEqual([]);

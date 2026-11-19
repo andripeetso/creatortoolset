@@ -28,6 +28,9 @@ describe("the watcher keeps Projects and Exports folders out (Amendment b)", () 
   writeFileSync(path.join(media, "Day 1", "a.mp4"), "x");
   writeFileSync(path.join(projects, "Tiny Edit", "draft.mp4"), "x");
   writeFileSync(path.join(exports, "final.mp4"), "x");
+  // an AI Editor worker's download of another computer's clips: never footage either
+  mkdirSync(path.join(media, "Phone uploads", "x 123"), { recursive: true });
+  writeFileSync(path.join(media, "Phone uploads", "x 123", "clip.mov"), "y");
   mkdirSync(path.join(dir, "data", "storage"), { recursive: true });
   const row = (id: string, role: string, p: string) => ({ id, role, name: path.basename(p), origin: { host: "this-computer", path: p }, make: true, createdAt: 0, reach: {} });
   writeFileSync(
@@ -39,7 +42,7 @@ describe("the watcher keeps Projects and Exports folders out (Amendment b)", () 
     expect((await keepOutOf(USER)).sort()).toEqual([exports, projects].sort());
   });
 
-  it("a Projects folder nested inside a Media folder is not footage, and neither is an Exports folder", async () => {
+  it("a Projects folder nested inside a Media folder is not footage, and neither is an Exports or Phone uploads folder", async () => {
     const files = await filesIn(media, await keepOutOf(USER));
     expect(files).toEqual([path.join(media, "Day 1", "a.mp4")]);
   });
@@ -86,5 +89,21 @@ describe("the server's own scan of Source media never takes a nested Projects or
     expect(await scanWatchFolders(t0 + SETTLE_MS)).toBe(1);
     const taken = libraryDb().prepare("SELECT source_path FROM asset_versions").all() as { source_path: string }[];
     expect(taken.map((v) => v.source_path)).toEqual([path.join(media, "Day 1", "a.mp4")]);
+  });
+});
+
+describe("the server's own scan never takes a trashed clip's file again as a new clip", () => {
+  it("the same file at another path keeps the clip in the trash, and restored it is there as before", async () => {
+    const { setTrashedAt } = await import("./trash");
+    const assets = () => libraryDb().prepare("SELECT id, trashed_at FROM assets").all() as { id: string; trashed_at: number | null }[];
+    const [a] = assets();
+    setTrashedAt(a!.id, 1);
+    writeFileSync(path.join(media, "Day 1", "a copy.mp4"), "x");
+    const t0 = 2_000_000_000_000;
+    await scanWatchFolders(t0);
+    await scanWatchFolders(t0 + SETTLE_MS);
+    expect(assets()).toEqual([{ id: a!.id, trashed_at: 1 }]);
+    setTrashedAt(a!.id, null);
+    expect(assets()).toEqual([{ id: a!.id, trashed_at: null }]);
   });
 });

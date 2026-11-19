@@ -622,12 +622,13 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
     const dup = db()
       .prepare(
         `SELECT v.id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-         WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL ORDER BY v.state = 'missing' DESC, v.created_at LIMIT 1`,
+         WHERE a.library_id = ? AND v.sha256 = ? ORDER BY a.trashed_at IS NOT NULL, v.state = 'missing' DESC, v.created_at LIMIT 1`,
       )
       .get(libraryId, sha256) as { id: string; state: string; source_key: string; source_path: string | null } | undefined;
     // a referenced file gone from its path, here now (moved or renamed): it reads it here, and refreshMissing brings it back
     if (dup?.state === "missing" && dup.source_path && f.mode === "reference") await pointSource(dup.id, dup.source_key, file);
-    if (dup) return dup.id; // already in the library (a browser upload of it, or the same file in another folder)
+    // already in the library (a browser upload of it, the same file in another folder), or in its trash: it stays there
+    if (dup) return dup.id;
 
     const prior = priorVersion
       ? (db()

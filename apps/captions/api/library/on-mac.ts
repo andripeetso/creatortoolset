@@ -105,10 +105,13 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   const mine = device?.owner === by ? device : undefined;
   const dup = d
     .prepare(
-      `SELECT a.id, v.id AS version FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (v.mac_path = ? AND v.bytes = ?)) LIMIT 1`,
+      `SELECT a.id, v.id AS version, a.trashed_at FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.library_id = ? AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (v.mac_path = ? AND v.bytes = ?))
+       ORDER BY a.trashed_at IS NOT NULL LIMIT 1`,
     )
-    .get(libraryId, `mac:${x.quick}`, x.quick, x.size, x.path, x.size) as { id: string; version: string } | undefined;
+    .get(libraryId, `mac:${x.quick}`, x.quick, x.size, x.path, x.size) as { id: string; version: string; trashed_at: number | null } | undefined;
+  // in the trash: it stays there (Restore brings it back), never a new clip, and its id is not shown
+  if (dup?.trashed_at) return { duplicate: true };
   if (dup) {
     // a clip the caller may not see is never named: no id, no place (the id alone would say it is there)
     const viewer = await readerOf(by, libraryId);

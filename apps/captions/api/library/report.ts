@@ -221,10 +221,11 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         .prepare(
           `SELECT p.version_id, a.library_id, v.bytes AS vbytes, v.quick AS vquick, p.state, p.bytes, p.mtime, p.folder_id
            FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-           WHERE p.device = ? AND p.kind = 'original' AND p.folder_id IN (?, '') AND p.path = ? AND a.trashed_at IS NULL
+           WHERE p.device = ? AND p.kind = 'original' AND p.folder_id IN (?, '') AND p.path = ?
              AND a.library_id IN (SELECT value FROM json_each(?))`,
         )
         .all(device, folder.id, f.path, inLibs) as Hit[];
+      // a trashed clip's file counts too: its place is kept and it stays in the trash, never indexed again as new
       const done = new Set<string>();
       for (const h of hits) {
         const same = f.bytes === h.vbytes && (!f.quick || !h.vquick || f.quick === h.vquick);
@@ -237,7 +238,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         // a member's locate-only library: a file it does not have is not for indexing (indexForDevice skips it too)
         // the same file indexed before (an upload, another computer's copy): its fingerprint and size
         let found = f.quick
-          ? (d.prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.bytes = ? AND v.quick = ?").all(lib, f.bytes, f.quick) as { id: string }[]).map((x) => ({ id: x.id, state: "verified" }))
+          ? (d.prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.bytes = ? AND v.quick = ?").all(lib, f.bytes, f.quick) as { id: string }[]).map((x) => ({ id: x.id, state: "verified" }))
           : [];
         if (!found.length && !f.quick) {
           // renamed or moved inside the folder: one row of this folder not seen at its path, same size and time
@@ -311,6 +312,8 @@ export async function indexForDevice(dev: Device, folderId: string, x: OnMacInde
   if (inside(nfc(x.path), folder.origin.path) === null && !(folder.mountPath && inside(nfc(x.path), folder.mountPath) !== null)) return "Not inside that folder";
   // a file of a Projects or Exports folder is never footage, even when a computer sends it (applyFolder keeps them out too)
   if (keptOut(st, dev.id).some((k) => inside(nfc(x.path), k) !== null)) return LIBRARY_WORDS.notFootage;
+  const rel = inside(nfc(x.path), folder.origin.path) ?? (folder.mountPath ? inside(nfc(x.path), folder.mountPath) : null);
+  if (rel !== null && notFootage(rel)) return LIBRARY_WORDS.notFootage;
   const versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> = [];
   for (const { id: library, locate } of await librariesOf(dev.owner, folder)) {
     // a member's workspace is only located, never indexed into (applyFolder answers no file for it)

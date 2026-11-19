@@ -268,15 +268,18 @@ export function editorDirsOf(rels: string[]): Set<string> {
   return dirs;
 }
 
+/** The folder an AI Editor worker downloads another computer's clips into, under a Media folder (never footage). */
+export const PHONE_UPLOADS_DIR = "Phone uploads";
+
 /**
  * A file under a Media folder that is not footage, by its path below the folder: inside one of `editorDirs` (see
- * editorDirsOf; apps/editor skips the same folders) or a half-written file (".tmp", ".part": "clip.part.mp4" and
+ * editorDirsOf; apps/editor skips the same folders), inside a PHONE_UPLOADS_DIR folder, or a half-written file (".tmp", ".part": "clip.part.mp4" and
  * "clip.tmp" are; "party.mp4" and "clip.partial.mov" are not). Every scan leaves these out of the Media Library.
  */
 export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set()): boolean {
   const parts = rel.split(/[\\/]/);
   const dirs = parts.slice(0, -1);
-  return dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+  return dirs.includes(PHONE_UPLOADS_DIR) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
 }
 
 /**
