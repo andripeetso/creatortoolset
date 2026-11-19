@@ -160,7 +160,6 @@ extension Shell {
         open.canChooseFiles = false
         open.canCreateDirectories = true
         open.prompt = "Choose"
-        open.message = "Choose the folder for downloaded media. Files already there stay where they are."
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
         UserDefaults.standard.set(url.path, forKey: DownloadLocation.key)
         return ["path": url.path]

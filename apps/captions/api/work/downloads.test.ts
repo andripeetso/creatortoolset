@@ -11,7 +11,7 @@ process.env.APP_SECRET = "work-downloads-test-secret";
 const { createUser, setOff } = await import("../users");
 const app = (await import("../boot")).default;
 const { atFor } = await import("../editor/reach");
-const { downloadsAllow, downloadsOf, offlineOf } = await import("./offline");
+const { downloadsAllow, downloadsAllowFor, downloadsOf, offlineOf } = await import("./offline");
 const { cacheLimit, CACHE_LIMIT_DEFAULT } = await import("./cache");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -57,23 +57,23 @@ describe("a server copy is fetched only when the server won't run the step and D
 
   it("Downloads needed: the computer takes the copy", () => {
     writeDownloads({ lib_d: { mode: "needed" } });
-    expect(atFor(copyOnly, "pc", pc.folders, "pat", false)).toEqual({ copy: "proxy" });
+    expect(atFor(copyOnly, "pc", pc.folders, downloadsAllowFor("pat"), false)).toEqual({ copy: "proxy" });
   });
 
   it("Downloads none: no copy, the step waits or goes to the server", () => {
     writeDownloads({ lib_d: { mode: "none" } });
-    expect(atFor(copyOnly, "pc", pc.folders, "pat", false)).toBeNull();
+    expect(atFor(copyOnly, "pc", pc.folders, downloadsAllowFor("pat"), false)).toBeNull();
   });
 
   it("Server rendering takes the step, so no copy whatever Downloads says", () => {
     writeDownloads({ lib_d: { mode: "all", proxies: true } });
-    expect(atFor(copyOnly, "pc", pc.folders, "pat", true)).toBeNull();
+    expect(atFor(copyOnly, "pc", pc.folders, downloadsAllowFor("pat"), true)).toBeNull();
   });
 
   it("a file read where it is never needs Downloads", () => {
     writeDownloads({ lib_d: { mode: "none" } });
     const onDisk = { ...copyOnly, source_key: "mac:v", mac_path: "/Users/tiny/a.mp4", mac_device: "pc" };
-    expect(atFor(onDisk, "pc", pc.folders, "pat", false)).toEqual({ path: "/Users/tiny/a.mp4" });
+    expect(atFor(onDisk, "pc", pc.folders, downloadsAllowFor("pat"), false)).toEqual({ path: "/Users/tiny/a.mp4" });
   });
 
   it("the cache limit is 25 GB, or CT_PROXY_LIMIT when set", () => {

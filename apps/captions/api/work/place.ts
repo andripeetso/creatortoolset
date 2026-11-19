@@ -12,10 +12,11 @@ import type { Device } from "../../contracts/providers";
 import type { StorageFolder } from "../../contracts/storage";
 import { WORK_MIN, type WorkBeat } from "../../contracts/work";
 import { coreKinds, placeOf, type StepContext } from "../editor/engine";
-import { computers, editOf, either, fileFor, foldersOf, jobFiles, ONLINE_MS, rankOf, type FileRow } from "../editor/reach";
+import { atFor, computers, editOf, either, foldersOf, jobFiles, ONLINE_MS, rankOf, type FileRow } from "../editor/reach";
+import { downloadsAllowFor } from "./offline";
 import { readEdit, readStep } from "../editor/store";
 import { claimsFresh, mayClaim, offOf, readBalance, type WorkerSeen } from "../lib/balance";
-import { isOnline, isThisMachine, listDevices } from "../lib/devices";
+import { isOnline, listDevices } from "../lib/devices";
 import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
@@ -49,9 +50,12 @@ const variantOf = (job: Pick<JobRow, "version_id">) => {
 };
 
 /** How well computer `d` can take `job`: 3 has every file, 2 gets the rest as the server's proxies, 0 never. */
-export function rankFor(d: Device, job: Pick<JobRow, "kind" | "version_id">, rows: FileRow[], folders: StorageFolder[]): number {
+export function rankFor(d: Device, job: Pick<JobRow, "kind" | "version_id" | "actor">, rows: FileRow[], folders: StorageFolder[]): number {
   if (!works(d)) return 0;
-  const at = rows.map((r) => fileFor(r, d.id, folders, isThisMachine));
+  // the same rule as the AI Editor's placement (reach.ts atFor): a server copy only when the server won't run it and Downloads allows
+  const serverRuns = serverOpen(job);
+  const allows = downloadsAllowFor(job.actor ?? d.owner);
+  const at = rows.map((r) => atFor(r, d.id, folders, allows, serverRuns));
   if (job.kind === "post") {
     // a plug-in step it lacks would be skipped, and the cut go out without it (post.ts): never
     if ((readEdit(editOf(job))?.steps ?? []).some((s) => !d.work!.steps.includes(s.id))) return 0;
@@ -147,7 +151,7 @@ export function workWaitLine(owner: string, job: Pick<JobRow, "kind" | "version_
   const online = computers(owner).filter((c) => isOnline(c.x.id) && !off.has(c.x.id));
   const rows = jobFiles(job);
   const folders = foldersOf(owner);
-  const can = online.filter((c) => rankFor(c.x, job, rows, folders) > 0);
+  const can = online.filter((c) => rankFor(c.x, { ...job, actor: owner }, rows, folders) > 0);
   if (can.some((c) => c.free)) return undefined;
   if (can.length) return `Waits for ${either(can.map((c) => c.x.name))}`;
   const old = online.filter((c) => c.x.work && !works(c.x));

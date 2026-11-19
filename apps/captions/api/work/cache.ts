@@ -14,7 +14,8 @@ import { env } from "../lib/env";
 
 let account: string | null = null;
 // the Mac's Download location (Settings → Storage › This computer) comes in as CT_PROXY_DIR (apps/mac Worker.swift)
-const root = () => process.env.CT_PROXY_DIR || path.join(env.dataDir, "proxies");
+const legacy = () => path.join(env.dataDir, "proxies");
+const root = () => process.env.CT_PROXY_DIR || legacy();
 
 /**
  * The account this worker runs for, from the claim answer (WorkClaim.account; one per worker, as its token is). The first
@@ -23,13 +24,14 @@ const root = () => process.env.CT_PROXY_DIR || path.join(env.dataDir, "proxies")
 export function setCacheAccount(name: string): void {
   if (account === name) return;
   account = name;
+  // only the old default folder: a folder the person picked may hold footage of theirs, so it is never swept
   let names: string[] = [];
   try {
-    names = readdirSync(root());
+    names = readdirSync(legacy());
   } catch {
     // no cache yet
   }
-  for (const n of names) if (/\.mp4(\.part)?$/.test(n)) rmSync(path.join(root(), n), { force: true });
+  for (const n of names) if (/\.mp4(\.part)?$/.test(n)) rmSync(path.join(legacy(), n), { force: true });
   rmSync(path.join(env.dataDir, "offline.json"), { force: true });
 }
 

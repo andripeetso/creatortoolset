@@ -65,8 +65,13 @@ export function downloadsOf(list: OfflineList, libraryId: string): Downloads {
 }
 
 /** Whether a computer of `owner` may fetch the server's copies of this library's files (Automatic downloads on). */
-export const downloadsAllow = (owner: string, libraryId: string | undefined): boolean =>
-  !!libraryId && downloadsOf(offlineOf(owner), libraryId).mode !== "none";
+export const downloadsAllow = (owner: string, libraryId: string | undefined): boolean => downloadsAllowFor(owner)(libraryId);
+
+/** The same, reading the owner's offline file once for many files (a claim checks every file of every queued step). */
+export function downloadsAllowFor(owner: string): (libraryId: string | undefined) => boolean {
+  const list = offlineOf(owner);
+  return (libraryId) => !!libraryId && downloadsOf(list, libraryId).mode !== "none";
+}
 
 function saveOffline(user: string, list: OfflineList): void {
   mkdirSync(path.dirname(fileOf(user)), { recursive: true });
