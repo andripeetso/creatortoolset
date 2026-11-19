@@ -239,8 +239,40 @@ describe("the iPhone app's own session", () => {
     expect(await at("PUT", "/api/library/offline/downloads", { library: lib, mode: "needed" })).toBe(200);
     expect(await at("POST", "/api/devices/storage/folders", { role: "projects", host: p.mac, path: "~/Movies/Creator Toolset/Jon/Project files", make: true })).toBe(200);
     expect(await at("POST", `/api/library/${lib}/setup/quick`, { device: p.mac })).toBe(200);
-    // the rest of /api/devices stays closed to a phone's session
-    expect(await at("GET", "/api/devices")).toBe(403);
-    expect(await at("POST", "/api/devices/storage/kept", {})).toBe(403);
+  });
+
+  /** A phone's client session of `name` with these scopes, and a request as it: the status and the answer's code. */
+  const asPhone = async (name: string, scopes: ("read" | "write")[]) => {
+    const { issueSession } = await import("./lib/clients");
+    const { token } = issueSession({ subject: name, scopes, client: { deviceType: "mobile" } });
+    return async (method: string, url: string, body?: unknown) => {
+      const r = await app.request(url, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      return { status: r.status, code: ((await r.json().catch(() => ({}))) as { code?: string }).code };
+    };
+  };
+
+  it("with write, it reaches the card's two computer routes and nothing else under /api/devices or /api/admin", async () => {
+    const p = await person("kim");
+    const at = await asPhone("kim", ["read", "write"]);
+    expect((await at("GET", `/api/devices/${p.mac}/browse?path=~`)).status).toBe(501);   // the route's own answer: its app is too old
+    expect((await at("POST", "/api/devices/storage/folders", { role: "projects", host: p.mac, path: "~/Movies/Creator Toolset/Kim/Project files" })).status).toBe(200);
+    for (const [method, url] of [["GET", "/api/devices"], ["POST", "/api/devices/storage/folders/no-such-folder/re-point"], ["GET", "/api/admin/users"], ["GET", `/api/devices/${p.mac}/browse/more`], ["POST", "/api/devices/storage/folders/"]] as const)
+      expect(await at(method, url, method === "POST" ? { path: "/Volumes/X" } : undefined), `${method} ${url}`).toEqual({ status: 403, code: "NOT_FOR_CLIENTS" });
+  });
+
+  it("without write, both card routes are refused", async () => {
+    const p = await person("lou");
+    const at = await asPhone("lou", ["read"]);
+    expect(await at("GET", `/api/devices/${p.mac}/browse?path=~`)).toEqual({ status: 403, code: "SCOPE" });
+    expect(await at("POST", "/api/devices/storage/folders", { role: "projects", host: p.mac, path: "~/Movies/Creator Toolset/Lou/Project files" })).toEqual({ status: 403, code: "SCOPE" });
+  });
+
+  it("another account's computer: browse is 404 and a folder on it is refused", async () => {
+    await person("max");
+    const other = await person("ned");
+    const at = await asPhone("max", ["read", "write"]);
+    expect((await at("GET", `/api/devices/${other.mac}/browse?path=~`)).status).toBe(404);
+    expect((await at("POST", "/api/devices/storage/folders", { role: "projects", host: other.mac, path: "~/Movies/Creator Toolset/Ned/Project files" })).status).toBe(400);
+    expect((await storageOf("max")).folders).toEqual([]);
   });
 });
