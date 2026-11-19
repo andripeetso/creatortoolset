@@ -811,4 +811,21 @@ export const LIBRARY_WORDS = {
   videoBreakdown: "Video breakdown",
   transcripts: "Transcripts",
   downloadsTitle: "Downloads",
+  setupCard: (workspace: string) => `Set up the Media Library for ${workspace} first`,
+  setupCardMember: "This Media Library isn't set up yet.",
+  setupButton: "Set up",
+  downloadsCard: "This edit needs the files on your computer, and Automatic downloads is off. Turn it on?",
+  downloadsButton: "Turn on",
+  downloadsDone: (ask: string) => `Automatic downloads is on. Continuing: ${ask}`,
 } as const;
+
+/**
+ * One thing the person has to do before a tool or step can go on (UNIFIED-PRD §3.5, §4.7, §4.8). A tool answers
+ * `{ [ACTION_NEEDED]: ActionNeeded }`; the chat shows the one card for its kind, and the ask continues when it's done
+ * (setup: the LIBRARY_SETUP_DONE window event / change for that workspace; downloads: Turn on writes Downloads "needed").
+ */
+export type ActionNeeded =
+  | { kind: "setup"; workspace: string; workspaceName: string; owner: boolean; href: string }
+  | { kind: "downloads"; libraryId: string; workspace: string };
+export const ACTION_NEEDED = "action_needed";
+export const LIBRARY_SETUP_DONE = "library-setup-done";
