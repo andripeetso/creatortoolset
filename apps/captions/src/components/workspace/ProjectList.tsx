@@ -6,9 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ConnectorsSection } from "@/components/settings/ConnectorsSection";
 import { PLATFORMS } from "@contracts/connectors";
-import type { LibraryUpload } from "@contracts/library";
-import { setWorkspaceUpload } from "@/lib/library";
-import { UploadRow } from "@/pages/library/UploadSelect";
 import { ProjectForm, type KeptFile } from "@/components/workshop/ProjectForm";
 import { listAccounts, type InstagramAccount } from "@/lib/instagram";
 import {
@@ -52,9 +49,6 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
     setParams((p) => (p.delete("add"), p.delete("edit"), p.delete("accounts"), p), { replace: true });
   }, [params, setParams, only]);
   const [busy, setBusy] = useState(false);
-  // a new workspace's upload choice (Off by default), kept on its library once it exists
-  const [upload, setUpload] = useState<LibraryUpload>("none");
-  const [finalsUpload, setFinalsUpload] = useState<LibraryUpload>("all");
   const [error, setError] = useState<string | null>(null);
   // every project's accounts, from their saved copy (warmed at sign-in), live
   const { items: accounts, refresh } = useCachedList<InstagramAccount>(PROJECT_ACCOUNTS_KEY, () => listAccounts("", { projectId: null }));
@@ -82,9 +76,6 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
           const p = await createProject(fields);
           setEditing(null);
           setMade(p.id);
-          if (upload !== "none" || finalsUpload !== "all") await setWorkspaceUpload(p.id, { upload, finalsUpload });
-          setUpload("none");
-          setFinalsUpload("all");
           if (files.length) await addProjectFiles(p.id, files);
         }, () => {})
       : run(async () => {
@@ -107,8 +98,6 @@ export function ProjectList({ current: only }: { current?: boolean } = {}) {
       <div className="flex flex-col gap-2">
         {editing === "new" ? (
           <ProjectForm busy={busy} onSave={(f, files) => save("new", f, files)} onCancel={() => setEditing(null)}>
-            <UploadRow title="Footage upload" value={upload} onChange={setUpload} />
-            <UploadRow finals title="Finals upload" value={finalsUpload} onChange={setFinalsUpload} />
           </ProjectForm>
         ) : null}
         {loaded && projects.length === 0 && editing !== "new" ? (
