@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 // The Media Library's imports on this Mac, for a server here or elsewhere (the page's `import:` asks on the thisMac
 // handler, TitleBar.swift; src/lib/thisMac.ts):
@@ -35,6 +37,7 @@ enum ImportAsk: Equatable {
     case print([String])
     case locate(folder: String?, files: [LocateFile])
     case make(in: String, names: [String])
+    case thumb(path: String, max: Int)
 }
 
 /// An `import:` ask as its parts; nil when it is malformed.
@@ -58,6 +61,10 @@ func importAsk(_ ask: String) -> ImportAsk? {
     case "make":
         guard let folder = json["in"] as? String, let names = json["names"] as? [String], names.count <= 10 else { return nil }
         return .make(in: (folder as NSString).expandingTildeInPath, names: names)
+    case "thumb":
+        guard let path = json["path"] as? String else { return nil }
+        let max = (json["max"] as? NSNumber)?.intValue ?? 480
+        return .thumb(path: path, max: Swift.min(Swift.max(max, 64), 2048))
     case "locate":
         guard let list = json["files"] as? [[String: Any]] else { return nil }
         let files = list.compactMap { f in
@@ -133,6 +140,8 @@ final class Imports: @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).async { main(Locate.answer(folder: folder, files: files, allowed: MediaFiles.granted + Self.destinations)) }
         case .make(let folder, let names)?:
             DispatchQueue.global(qos: .userInitiated).async { main(Self.make(in: folder, names: names, allowed: MediaFiles.granted + Self.destinations + sources)) }
+        case .thumb(let path, let max)?:
+            DispatchQueue.global(qos: .userInitiated).async { main(Self.thumb(path, max: max, allowed: MediaFiles.granted + Self.destinations + sources)) }
         case nil: done(["error": "Not an import this app knows."])
         }
     }
@@ -215,6 +224,34 @@ final class Imports: @unchecked Sendable {
             if there == size { return (p, true) }
         }
         return (to, false)
+    }
+
+    /// "import:thumb": a picture's thumbnail made here, for a file the page's own decode can't read (HEIC it can't
+    /// decode, RAW): macOS reads it (ImageIO: HEIC, DNG and every camera RAW it knows), its orientation applied, at most
+    /// `max` pixels on its long side, as a JPEG. Only a file inside a folder this app may read (`allowed`). The reply is
+    /// { thumb: base64 JPEG, width, height } (the full picture's size, turned), or { error }.
+    static func thumb(_ path: String, max: Int, allowed: [String]) -> [String: Any] {
+        guard inside(path, allowed) != nil else { return ["error": "Not a file this app may read"] }
+        guard Places.shared.reachable(path) else { return ["error": "Its disk isn't answering"] }
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return ["error": "Not a picture macOS can read"] }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        var width = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+        var height = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
+        // EXIF orientations 5-8 turn the picture on its side
+        if let o = (props[kCGImagePropertyOrientation] as? NSNumber)?.intValue, (5...8).contains(o) { swap(&width, &height) }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max,
+            kCGImageSourceShouldCacheImmediately: false,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return ["error": "Not a picture macOS can read"] }
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else { return ["error": "Could not make the picture"] }
+        CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return ["error": "Could not make the picture"] }
+        return ["thumb": (data as Data).base64EncodedString(), "width": width, "height": height]
     }
 
     /// The root of `roots` that `path` lies in (or is), comparing real paths (links resolved) in one Unicode form; nil

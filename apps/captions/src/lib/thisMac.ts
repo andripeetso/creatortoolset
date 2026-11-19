@@ -485,6 +485,12 @@ export const importCancel = (id: string) => importAsk<unknown>(`import:cancel:${
 export const importScan = (path: string) =>
   importAsk<{ files?: { path: string; size: number; mtime: number }[] }>(`import:scan:${JSON.stringify({ path })}`).then((r) => r.files ?? []);
 /** Each path's fingerprint, the one lib/onMac.ts quickPrint makes from the file. */
+/** A picture's thumbnail made by macOS (Import.swift thumb: HEIC, RAW), for a file in a folder this app may read; null when it can't. */
+export const importThumb = (path: string, max = 480) =>
+  importAsk<{ thumb?: string; width?: number; height?: number }>(`import:thumb:${JSON.stringify({ path, max })}`).then(
+    (r) => (r.thumb ? { thumb: r.thumb, width: r.width ?? 0, height: r.height ?? 0 } : null),
+    () => null,
+  );
 export const importPrint = (paths: string[]) =>
   importAsk<{ prints?: Record<string, string> }>(`import:print:${JSON.stringify({ paths })}`).then((r) => r.prints ?? {});
 /** Locate… (apps/mac Locate.swift): which of `files` are gone from their path here, and the files in `folder` of their sizes with fingerprints. */

@@ -1,4 +1,6 @@
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import CreatorToolsetMac
 
@@ -192,5 +194,36 @@ final class ImportTests: XCTestCase {
         let r = Imports.make(in: at("lib"), names: ["../out", ".hidden", ""], allowed: [at("lib")], grant: { _ in })
         XCTAssertEqual((r["failed"] as? [[String: String]])?.count, 3)
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("out")))
+    }
+
+    /// A 40×20 picture written as `type` (a PNG or a HEIC), turned by EXIF `orientation`.
+    private func picture(_ path: String, type: UTType, orientation: Int = 1) throws {
+        let ctx = CGContext(data: nil, width: 40, height: 20, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(red: 0.2, green: 0.6, blue: 0.4, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: 40, height: 20))
+        try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, type.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, ctx.makeImage()!, [kCGImagePropertyOrientation: orientation] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+    }
+
+    func testThumbAskParsed() {
+        XCTAssertEqual(importAsk(#"import:thumb:{"path":"/Volumes/Tiny/a.heic","max":480}"#), .thumb(path: "/Volumes/Tiny/a.heic", max: 480))
+        XCTAssertEqual(importAsk(#"import:thumb:{"path":"/a.jpg"}"#), .thumb(path: "/a.jpg", max: 480))
+        XCTAssertEqual(importAsk(#"import:thumb:{"path":"/a.jpg","max":99999}"#), .thumb(path: "/a.jpg", max: 2048))
+        XCTAssertNil(importAsk(#"import:thumb:{"max":480}"#))
+    }
+
+    func testThumbMakesAJpegOfAPictureMacOSReadsTurnedAndOnlyInsideAllowedFolders() throws {
+        try picture(at("lib/side.heic"), type: .heic, orientation: 6) // a phone's picture taken on its side
+        let r = Imports.thumb(at("lib/side.heic"), max: 480, allowed: [at("lib")])
+        let jpeg = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(r["thumb"] as? String)))
+        XCTAssertEqual(Array(jpeg.prefix(2)), [0xFF, 0xD8])
+        XCTAssertEqual(r["width"] as? Int, 20) // turned: the 40×20 picture stands 20×40
+        XCTAssertEqual(r["height"] as? Int, 40)
+        try picture(at("other/a.png"), type: .png)
+        XCTAssertNotNil(Imports.thumb(at("other/a.png"), max: 480, allowed: [at("lib")])["error"])
+        FileManager.default.createFile(atPath: at("lib/not-a-picture.heic"), contents: Data("x".utf8))
+        XCTAssertNotNil(Imports.thumb(at("lib/not-a-picture.heic"), max: 480, allowed: [at("lib")])["error"])
     }
 }

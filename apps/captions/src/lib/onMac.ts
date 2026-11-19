@@ -1,5 +1,5 @@
 import { hostsOriginals, hostsProxies, SPRITE_FRAMES, type LibraryUpload } from "@contracts/library";
-import { thisMacBridge } from "@/lib/thisMac";
+import { importThumb, thisMacBridge } from "@/lib/thisMac";
 
 /**
  * A file indexed where it is on this Mac, for a server that is not on it (api/library/on-mac.ts). The Mac app's window
@@ -78,17 +78,42 @@ export interface MacFile {
   quick: string;
 }
 
-/** What the server lists `file` by, read here. A file the app can't decode is indexed by its name and size only. */
-export async function readIndex(file: File | MacFile, signal?: AbortSignal): Promise<MacIndex> {
+/**
+ * A picture this window decodes: an <img> first, else createImageBitmap (some HEICs one takes and the other doesn't),
+ * else, with its path on this Mac, a thumbnail macOS makes (importThumb: HEIC and RAW the window can't read). Null: none.
+ */
+async function pictureIndex(file: File | MacFile, url: string, path?: string): Promise<MacIndex | null> {
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return { width: img.naturalWidth, height: img.naturalHeight, thumb: await toB64(draw(img, img.naturalWidth, img.naturalHeight, 480)), frames: [] };
+  } catch {
+    /* tried below */
+  }
+  if (file instanceof File && typeof createImageBitmap === "function") {
+    try {
+      const bmp = await createImageBitmap(file);
+      const out = { width: bmp.width, height: bmp.height, thumb: await toB64(draw(bmp, bmp.width, bmp.height, 480)), frames: [] };
+      bmp.close();
+      return out;
+    } catch {
+      /* tried below */
+    }
+  }
+  const made = path ? await importThumb(path) : null;
+  return made ? { width: made.width, height: made.height, thumb: made.thumb, frames: [] } : null;
+}
+
+/**
+ * What the server lists `file` by, read here. A file the app can't decode is indexed by its name and size only (a
+ * picture with no thumbnail gets one later: repairPictures). `path`: where it is on this Mac, for the Mac's own decode.
+ */
+export async function readIndex(file: File | MacFile, signal?: AbortSignal, path?: string): Promise<MacIndex> {
   const url = file instanceof File ? URL.createObjectURL(file) : file.url;
   const type = file instanceof File ? file.type : "";
   try {
-    if (type.startsWith("image/") || /\.(jpe?g|png|heic|webp|gif|tiff?)$/i.test(file.name)) {
-      const img = new Image();
-      img.src = url;
-      await img.decode();
-      return { width: img.naturalWidth, height: img.naturalHeight, thumb: await toB64(draw(img, img.naturalWidth, img.naturalHeight, 480)), frames: [] };
-    }
+    if (type.startsWith("image/") || /\.(jpe?g|png|heic|heif|webp|gif|tiff?)$/i.test(file.name)) return (await pictureIndex(file, url, path)) ?? { frames: [] };
     const audio = type.startsWith("audio/") || /\.(mp3|m4a|wav|aac|ogg|opus|flac)$/i.test(file.name);
     const el = document.createElement(audio ? "audio" : "video") as HTMLVideoElement;
     el.muted = true;
@@ -149,7 +174,7 @@ export const deviceHere = async () => ((await thisMacBridge()?.postMessage("stat
 
 /** Indexes `file` (at `path` on this Mac) into `libraryId`: { assetId } or { duplicateOf }. Nothing of the video is sent. */
 export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal): Promise<{ assetId?: string; duplicateOf?: string; duplicate?: true }> {
-  const [quick, index, device] = await Promise.all([file instanceof File ? quickPrint(file) : file.quick, readIndex(file, signal), deviceHere()]);
+  const [quick, index, device] = await Promise.all([file instanceof File ? quickPrint(file) : file.quick, readIndex(file, signal, path), deviceHere()]);
   signal?.throwIfAborted();
   const r = await fetch(`/api/library/${libraryId}/on-mac`, {
     method: "POST",
@@ -207,4 +232,26 @@ export function pathsInDrop(files: File[], items: { path: string; folder: boolea
     out.set(f, `${parent}/${rel}`);
   }
   return out;
+}
+
+/**
+ * This library's photos with no thumbnail whose file this Mac has get one now, made here (pictureIndex through the Mac's
+ * own decode), with no re-import (11-19: photos indexed before the Mac could make HEIC pictures came in grey). Run by
+ * Look for new files and once when the Library opens in the Mac app. Resolves to how many got a picture.
+ */
+export async function repairPictures(libraryId: string, signal?: AbortSignal): Promise<number> {
+  const device = await deviceHere();
+  if (!device) return 0;
+  const r = await fetch(`/api/library/${libraryId}/no-picture?device=${encodeURIComponent(device)}`).catch(() => null);
+  if (!r?.ok) return 0;
+  const { versions } = (await r.json()) as { versions: { versionId: string; path: string }[] };
+  let filled = 0;
+  for (const v of versions) {
+    signal?.throwIfAborted();
+    const made = await importThumb(v.path);
+    if (!made) continue;
+    const put = await fetch(`/api/library/${libraryId}/versions/${v.versionId}/thumb`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ thumb: made.thumb }) }).catch(() => null);
+    if (put?.ok) filled++;
+  }
+  return filled;
 }
