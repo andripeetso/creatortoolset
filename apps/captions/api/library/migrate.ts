@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { LOOK_BUDGET_DEFAULT, type LibrarySettings, type WatchFolder } from "../../contracts/library";
-import { EVERY_WORKSPACE, THIS_COMPUTER, folderIn, type StorageFolder } from "../../contracts/storage";
+import { EVERY_WORKSPACE, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
 import { macUsageSince, type UsageTally } from "../lib/mac-claude";
@@ -87,8 +87,21 @@ const hostsUnder = (seen: Seen[], root: string): string[] => [...new Set(seen.fi
 /** The server's own computer for an account (the paired one it runs on), else the schema's name for it. */
 const hereOf = (user: string): string => listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id ?? THIS_COMPUTER;
 
+/**
+ * A folder row that is this workspace's alone, the only kind that says its library was set up (item 3): a row for every
+ * workspace ("*"), or one shared with other workspaces, says nothing about this one (11-19: one shared Exports row marked
+ * every workspace's library set up). `ws`: the library's own workspace; a library from before workspaces (none) counts
+ * only rows from before workspaces too (no workspace on them).
+ */
+export function ownRow(f: Pick<StorageFolder, "workspace" | "workspaces">, ws: string | undefined): boolean {
+  if (f.workspace === EVERY_WORKSPACE) return false;
+  const tags = (f.workspaces ?? [f.workspace]).filter((w): w is string => !!w);
+  if (tags.includes(EVERY_WORKSPACE)) return false;
+  return ws ? tags.length === 1 && tags[0] === ws : tags.length === 0;
+}
+
 /** The account's list as the migration reads it, without writing it (readStorage writes a schema move back itself). */
-async function listOf(user: string): Promise<StorageFolder[]> {
+export async function listOf(user: string): Promise<StorageFolder[]> {
   const raw = await readFile(storageFilePath(env.dataDir, user), "utf-8").catch(() => "{}");
   return migrateStorage(parseStorageFile(raw), hereOf(user), resolveDevice).st.folders;
 }
@@ -183,7 +196,7 @@ export async function migrateLibraries(opts: { dryRun?: boolean; now?: string } 
   for (const lib of factsOf()) {
     const s = lib.s;
     if (!lists.has(lib.account)) lists.set(lib.account, await listOf(lib.account));
-    const mine = lists.get(lib.account)!.filter((f) => folderIn(f, lib.ws ? (w) => w === lib.ws : null));
+    const mine = lists.get(lib.account)!.filter((f) => ownRow(f, lib.ws));
     // a workspace a plug-in serves itself (its catalog holds the media): the core library stays empty by design
     // (a library with no workspace of its own is its owner's first brand's, as projectOf files it)
     const wsOf = s.setupAt == null || uploadOf(s.upload as unknown) === "none" ? (lib.ws ?? (await projectOf({ username: lib.account } as SessionUser))?.(undefined)) : undefined;
@@ -223,7 +236,8 @@ function spendIn(usage: UsageTally, ws?: string): number {
 }
 
 const markFile = () => path.join(env.dataDir, "library", "migrated.json");
-function markedAt(): string | undefined {
+/** When the one-time migration ran here (its setupAt stamp), or undefined when it never has. */
+export function markedAt(): string | undefined {
   try {
     return (JSON.parse(readFileSync(markFile(), "utf-8")) as Record<string, string>)[MARK];
   } catch {
@@ -261,7 +275,8 @@ export async function migrateOnce(opts: { dryRun?: boolean; now?: string } = {})
     out.notes.push(...plan.notes);
     for (const f of plan.folders)
       for (const ws of f.workspaces ?? [f.workspace]) {
-        if (!ws || ws === EVERY_WORKSPACE || mine.some((l) => l.ws === ws) || setups.some((x) => x.account === account && x.ws === ws)) continue;
+        // only a row that is this workspace's alone says it was set up (ownRow)
+        if (!ws || !ownRow(f, ws) || mine.some((l) => l.ws === ws) || setups.some((x) => x.account === account && x.ws === ws)) continue;
         setups.push({ account, ws });
       }
   }
