@@ -14,6 +14,7 @@ const { createUser, newApiKey, setOff } = await import("../users");
 const app = (await import("../boot")).default;
 const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor");
 const { libraryDb } = await import("../library/db");
+const { ensureLibrary } = await import("../library/access");
 const { registerLibrarySlot, resetLibrarySlots } = await import("../library/sources");
 const { saveMyKey } = await import("../my-keys");
 const { MAX_VOICE_CHARS } = await import("./voice");
@@ -59,7 +60,9 @@ beforeAll(async () => {
   saveMyKey("robin", "ELEVENLABS_API_KEY", "robins-own");
   saveMyKey("wren", "ELEVENLABS_API_KEY", "wrens-own");
   // robin's Media Library is set up (setupAt): voice_make answers the setup card until it is (UNIFIED-PRD 4.8)
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_robin', 'robin', 'Library', 'local', ?, 0)").run(JSON.stringify({ setupAt: "2026-11-01T00:00:00.000Z" }));
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_robin', 'robin', 'Library', 'local', ?, 0)").run(JSON.stringify({ setupAt: "2026-11-01T00:00:00.000Z", upload: "all" }));
+  // the server keeps the voices here (Upload all); under none they go to a computer (library/save-on-computer.test.ts)
+  for (const u of ["jordan", "wren"]) libraryDb().prepare("UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all') WHERE id = ?").run(await ensureLibrary(u));
   vi.stubGlobal("fetch", elevenLabs);
 });
 afterEach(() => {

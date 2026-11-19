@@ -61,6 +61,8 @@ export interface TaskRow {
 export interface TaskKind<I = unknown, R = unknown> {
   /** it decodes video or sound (default): mayRunHere keeps it off the server unless video work is on */
   reads?: boolean;
+  /** it writes on the asker's computer: never run on the server (its video work on or not), it waits for a computer */
+  onComputer?: boolean;
   /** the work itself, the same code on the server and on a computer; `files` names what it made in ctx.dir */
   run(input: I, ctx: TaskCtx): Promise<{ result: R; files?: string[] }>;
   /** server: where input file `name` is on the server, for a computer that lacks it and for the server's own run */
@@ -125,7 +127,7 @@ export function placeTask(t: Pick<TaskRow, "kind" | "actor" | "workspace"> & Par
   const row = { id: 0, ref: "", input: null, state: "queued", attempts: 0, held_by: null, claim_id: null, error: null, line: null, ...t } as TaskRow;
   return mayRunHere({
     reads: kinds.get(t.kind)?.reads !== false,
-    open: () => serverWorks(t.workspace, t.actor) && serverWeight(t.actor) > 0,
+    open: () => !kinds.get(t.kind)?.onComputer && serverWorks(t.workspace, t.actor) && serverWeight(t.actor) > 0,
     computer: () => takers(row).length > 0,
   });
 }

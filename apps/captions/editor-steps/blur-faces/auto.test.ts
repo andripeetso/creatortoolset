@@ -51,7 +51,8 @@ const event = (versionId: string) => ({ libraryId: "lib_a", versionId, owner: "a
 const assets = () => (libraryDb().prepare("SELECT title FROM assets WHERE library_id = 'lib_a' ORDER BY created_at, title").all() as { title: string }[]).map((a) => a.title);
 
 beforeAll(() => {
-  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ana', 'A', 'local', 0)").run();
+  // Upload all: the server keeps what is saved here (under none a save goes to a computer: library/save-on-computer.test.ts)
+  libraryDb().prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_a', 'ana', 'A', 'local', '{"upload":"all"}', 0)`).run();
 });
 beforeEach(async () => {
   ai.configured = true;

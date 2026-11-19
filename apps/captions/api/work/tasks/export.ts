@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { constants, copyFile, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { CaptionRenderSpec } from "../../../src/lib/types";
 import { createCaptionFrameRenderer } from "../../caption-frames";
 import { filterEscape, requireFontsDir } from "../../export";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 import { env } from "../../lib/env";
+import { keepIn } from "../files";
 import { taskKind } from "../tasks";
 
 /**
@@ -147,20 +148,6 @@ async function rendered(input: ExportInput, spec: CaptionRenderSpec, args: strin
   }
 }
 
-/** A computer keeps its own copy in its Exports folder for the job's workspace, under the job's name (never over a file). */
-async function keepInExports(input: ExportInput, file: string, folder: string): Promise<void> {
-  const ext = path.extname(input.filename);
-  const stem = input.filename.slice(0, input.filename.length - ext.length);
-  await mkdir(folder, { recursive: true });
-  for (let k = 1; k < 100; k++) {
-    try {
-      return await copyFile(file, path.join(folder, k === 1 ? input.filename : `${stem}-${k}${ext}`), constants.COPYFILE_EXCL);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    }
-  }
-}
-
 const codecOf = (input: ExportInput) =>
   input.format === "h265"
     ? ["-c:v", "libx265", "-preset", "medium", "-crf", String(input.crf ?? 22), "-tag:v", "hvc1"]
@@ -240,7 +227,7 @@ taskKind<ExportInput, null>(EXPORT_TASK, {
     if (ctx.where === "computer") {
       // its copy on this computer is a convenience: the server's copy (apply) is what the page downloads
       const folder = (await ctx.call("folder", null).catch(() => null)) as string | null;
-      if (folder) await keepInExports(input, out, folder).catch((e) => console.warn("[export] not kept in the Exports folder:", e instanceof Error ? e.message : e));
+      if (folder) await keepIn(folder, input.filename, out).catch((e) => console.warn("[export] not kept in the Exports folder:", e instanceof Error ? e.message : e));
     }
     return { result: null, files: [name] };
   },

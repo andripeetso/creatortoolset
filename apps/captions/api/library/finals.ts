@@ -97,9 +97,11 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
       assetId = row.asset_id;
       versionId = source.versionId;
     } else {
-      const saved = await saveToLibrary(input.owner, source.file, source.filename, [], input.libraryId);
+      const saved = await saveToLibrary(input.owner, source.file, source.filename, [], input.libraryId, false, undefined, true);
       if (!saved) return { ok: false, code: "no_access", error: "Not allowed" };
       if ("error" in saved) return { ok: false, code: "failed", error: saved.error };
+      // Finals upload none, their computer offline: the file lands in Final exports once it is back; Finals takes it from there then
+      if ("waiting" in saved) return { ok: false, code: "failed", error: saved.waiting };
       if ("duplicateOf" in saved) {
         // the library already holds these bytes: link its current version, never a second copy
         const cur = d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ?").get(saved.duplicateOf) as { v: string | null } | undefined;

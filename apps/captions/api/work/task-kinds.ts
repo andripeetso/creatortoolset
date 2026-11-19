@@ -8,5 +8,6 @@ import "./tasks/design-pages";
 import "./tasks/enhance";
 import "./tasks/export";
 import "./tasks/frames";
+import "./tasks/library-save";
 import "./tasks/review";
 import "./tasks/social-prints";

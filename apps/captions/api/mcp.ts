@@ -585,7 +585,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       }
       try {
         const r = await json(`/api/assistant/files/${encodeURIComponent(id)}/use`, "POST", { to: "library", ...(ids.length === 1 ? pick(a, ["name"]) : {}), ...pick(a, ["sound"]) });
-        files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note"]) });
+        files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note", "waiting"]) });
       } catch (e) {
         files.push({ file: id, error: e instanceof Error ? e.message : String(e) });
       }
@@ -594,7 +594,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     const lib = String(added[0]?.library ?? "");
     // nothing went in: the line says why, when every file was refused for the same reason
     const why = new Set(files.map((f) => f.error));
-    const none = `Nothing was added${why.size === 1 && files[0]?.error ? `: ${String(files[0].error)}` : ""}`;
+    // Upload none and their computer offline: its one line, said as it is (the file lands when the computer is back)
+    const waiting = files.find((f) => f.waiting);
+    const none = waiting ? String(waiting.note) : `Nothing was added${why.size === 1 && files[0]?.error ? `: ${String(files[0].error)}` : ""}`;
     const sorted = lib ? await sortedLine(lib, added.map((f) => String(f.version_id)), SORT_WAIT_S.added, by) : { said: none, left: 0 };
     const folder = added.length && a.sound ? SOUNDS[a.sound as keyof typeof SOUNDS]?.folder : undefined;
     return {

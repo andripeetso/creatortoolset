@@ -761,6 +761,8 @@ exportsApp.post("/:id/library", async (c) => {
   );
   if (!saved) return c.json({ error: "Needs a Media Library", code: "not_found" }, 404);
   if ("error" in saved) return c.json(saved, 507);
+  // Upload none and their computer offline: it lands in their Final exports folder once it is back
+  if ("waiting" in saved) return c.json(saved, 202);
   return c.json(saved);
 });
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { mkdir, open, readdir, rename } from "node:fs/promises";
+import { constants, copyFile, mkdir, open, readdir, rename } from "node:fs/promises";
 import path from "node:path";
 import type { WorkFile, WorkPackage } from "../../contracts/work";
 import { env } from "../lib/env";
@@ -32,6 +32,24 @@ export async function quickPrint(file: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** Copies `file` into `folder` as `filename` (a computer's Exports or Source media folder), never over a file: "name-2.ext"
+ *  and on when the name is taken. Answers where it went. */
+export async function keepIn(folder: string, filename: string, file: string): Promise<string> {
+  const ext = path.extname(filename);
+  const stem = filename.slice(0, filename.length - ext.length);
+  await mkdir(folder, { recursive: true });
+  for (let k = 1; k < 100; k++) {
+    const to = path.join(folder, k === 1 ? filename : `${stem}-${k}${ext}`);
+    try {
+      await copyFile(file, to, constants.COPYFILE_EXCL);
+      return to;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+  }
+  throw new Error(`No free name for ${filename} in ${folder}`);
 }
 
 /** Where each file was last found by fingerprint: version id → path. */

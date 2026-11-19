@@ -125,6 +125,8 @@ export async function makeVoice(user: AuthVars["user"], input: { text: string; v
     const saved = await saveToLibrary(user.username, file, `${title}.mp3`, [], undefined, true);
     if (!saved) throw new VoiceError("Needs a Media Library this account can add to");
     if ("error" in saved) throw new VoiceError(saved.error, 502);
+    // Upload none and their computer offline: the voice is saved there once it is back, so there is no version to use yet
+    if ("waiting" in saved) throw new VoiceError(saved.waiting);
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
     const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };
     change(user.username, (f) => void (f.voice = voice.id));

@@ -76,7 +76,7 @@ describe("a proxy is the phone's word or a computer's, never a browser's", () =>
 });
 
 describe("saving a chat file to the Media Library asks the upload gate", () => {
-  it("refused under Upload none with the library's own words; saved under all", async () => {
+  it("under Upload none it goes to a computer (save-on-computer.test.ts), never the server; saved under all", async () => {
     await ensureLibrary("dee");
     const lib = (await librariesHere("dee"))[0]!.id;
     const setUpload = (v: string) => d.prepare("UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', ?) WHERE id = ?").run(v, lib);
@@ -86,7 +86,7 @@ describe("saving a chat file to the Media Library asks the upload gate", () => {
     writeFileSync(path.join(dir, "assistant", "files", "dee", id, "meta.json"), JSON.stringify({ id, name: "Handstand.mp4", mime: "video/mp4", size: 4, at: Date.now() }));
     const user = findUser("dee") as never;
     setUpload("none");
-    await expect(useFile(user, id, "library")).rejects.toThrow(REFUSED_NONE);
+    await expect(useFile(user, id, "library")).rejects.toThrow(/Source media folder/);
     expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(lib)).toEqual({ n: 0 });
     setUpload("all");
     const saved = await useFile(user, id, "library");

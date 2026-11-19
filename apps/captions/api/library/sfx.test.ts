@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
 import { SFX_TYPES, type SfxManifest } from "../../contracts/sfx";
 
@@ -60,6 +60,11 @@ describe("installing sounds into a workspace's library", () => {
   });
   app.route("/api/sfx", sfxApp);
   const who = { "x-user": "ana" };
+  // the server keeps the sounds here (Upload all); under none they go to a computer (save-on-computer.test.ts)
+  beforeAll(async () => {
+    const lib = await (await import("./access")).ensureLibrary("ana");
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all') WHERE id = ?").run(lib);
+  });
   const starterCount = manifest.sounds.filter((s) => s.starter).length;
   const sources = () => (libraryDb().prepare("SELECT COUNT(*) AS n FROM asset_sources").get() as { n: number }).n;
 

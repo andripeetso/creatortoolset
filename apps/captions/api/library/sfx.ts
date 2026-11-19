@@ -60,8 +60,8 @@ async function ownLibrary(username: string): Promise<string | null> {
 }
 
 /** Puts each sound into the library's Sound effects folder with its type, source and licence. */
-async function addSounds(username: string, lib: string, list: SfxSound[]): Promise<{ added: SfxSound[]; already: number; failed: number }> {
-  const out = { added: [] as SfxSound[], already: 0, failed: 0 };
+async function addSounds(username: string, lib: string, list: SfxSound[]): Promise<{ added: SfxSound[]; already: number; failed: number; waiting?: string }> {
+  const out: { added: SfxSound[]; already: number; failed: number; waiting?: string } = { added: [], already: 0, failed: 0 };
   const dir = sfxDir();
   const db = libraryDb();
   for (const s of list) {
@@ -75,6 +75,8 @@ async function addSounds(username: string, lib: string, list: SfxSound[]): Promi
       db.prepare("INSERT OR IGNORE INTO asset_sources (asset_id, url, license, author, at) VALUES (?, ?, ?, ?, ?)").run(r.assetId, s.source, s.license, s.author, Date.now());
       out.added.push(s);
     } else if (r && "duplicateOf" in r) out.already++;
+    // Upload none: on its way to their computer's Source media folder, or waiting for it to be online
+    else if (r && "waiting" in r) out.waiting = r.waiting;
     else out.failed++;
   }
   return out;
@@ -85,7 +87,7 @@ export async function installStarter(username: string) {
   const lib = await ownLibrary(username);
   if (!lib) return { error: "No Media Library here to add the sounds to", code: "not_found" as const };
   const r = await addSounds(username, lib, starter());
-  return { library: lib, added: r.added.length, already: r.already, failed: r.failed };
+  return { library: lib, added: r.added.length, already: r.already, failed: r.failed, ...(r.waiting ? { waiting: r.waiting } : {}) };
 }
 
 /**
@@ -137,7 +139,7 @@ export async function findAndAdd(username: string, o: { words?: string; type?: S
     added: r.added.map((s) => ({ title: s.title, type: s.type, pack: s.pack, license: s.license, source: s.source })),
     matches: matches.length,
     failed: r.failed,
-    ...(matches.length ? {} : { note: "No sound matches those words or that type" }),
+    ...(r.waiting ? { note: r.waiting } : matches.length ? {} : { note: "No sound matches those words or that type" }),
   };
 }
 

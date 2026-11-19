@@ -77,7 +77,8 @@ describe("sorting the clips in a library", () => {
   const talk = [seg(0.4, 9.8, 26), seg(10.5, 19.6, 25), seg(20.3, 29.5, 27)];
 
   beforeAll(() => {
-    d().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_r', 'ana', 'R', 'local', 0)").run();
+    // Upload all: the server keeps what is saved here (under none a save goes to a computer: save-on-computer.test.ts)
+    d().prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_r', 'ana', 'R', 'local', '{"upload":"all"}', 0)`).run();
   });
 
   it("waits for the transcript, then sorts by it; the description's answer is read when it comes", () => {

@@ -14,12 +14,12 @@ import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary, librariesHere } from "./library/access";
 import { mayReceive } from "./library/upload-gate";
-import { libraryDb } from "./library/db";
+import { libraryDb, libraryUpload } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { watchAllowed } from "./library/watch";
 import { mainSource } from "./library/sources";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
-import { SOUNDS, type Sound } from "../contracts/library";
+import { hostsNone, SOUNDS, type Sound } from "../contracts/library";
 
 /**
  * Videos and recordings dropped in the assistant's chat (owner, 2026-11-07: "drop in a random screen recording…
@@ -294,7 +294,7 @@ export async function useFile(
   name?: string,
   versionOf?: string,
   sound?: Sound,
-): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean }> {
+): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean; waiting?: true }> {
   const meta = (await readFileMeta(user.username, id)) ?? (await arrival(user.username, id));
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${USE_NAMES[to]} isn't switched on for this account.`);
   if (versionOf && to !== "review") throw new Error("Only a Review video takes a next version.");
@@ -313,11 +313,13 @@ export async function useFile(
     await ensureLibrary(user.username);
     // the library saveToLibrary would pick, asked first: a chat file is a person's original, as on the library's own upload
     const lib = (await librariesHere(user.username))[0]?.id;
-    const gate = lib ? mayReceive("original", { id: lib }, "person") : null;
+    // under Upload none it goes to their computer instead (saveToLibrary): nothing is refused for it
+    const gate = lib && !hostsNone(libraryUpload(lib)) ? mayReceive("original", { id: lib }, "person") : null;
     if (gate && !gate.ok) throw new Error(gate.body.message);
     const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], lib, !sound, sound);
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
+    if ("waiting" in saved) return { to, id: "", name: title, href: "/library", note: saved.waiting, waiting: true };
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
     const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };
     const href = `/library?library=${a.library_id}&asset=${assetId}`;

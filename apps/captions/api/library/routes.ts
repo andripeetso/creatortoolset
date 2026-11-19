@@ -14,7 +14,7 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
+import { blobs, finalsUpload, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
@@ -43,6 +43,9 @@ import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { indexOnMac, parseOnMac } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
 import { deviceOf } from "../lib/devices";
+import { FOLDER_LABELS, finalsDirName } from "../../contracts/storage";
+import { quickPrint } from "../work/files";
+import { libraryWorkspace, serverKind } from "../work/server-work";
 import { WORK_MIN } from "../../contracts/work";
 
 /**
@@ -209,7 +212,7 @@ export function recordVersion(
  * Without `libraryId`, the library of the first source the caller may use, else the first library of the workspace this
  * request works in. Null: no library the caller may use.
  */
-function soundFolder(d: DatabaseSync, lib: string, sound: Sound, by: string): string {
+export function soundFolder(d: DatabaseSync, lib: string, sound: Sound, by: string): string {
   const name = SOUNDS[sound].folder;
   const found = d.prepare("SELECT id FROM collections WHERE library_id = ? AND parent_id IS NULL AND kind = 'manual' AND name = ? ORDER BY created_at, id LIMIT 1").get(lib, name) as { id: string } | undefined;
   if (found) return found.id;
@@ -226,7 +229,9 @@ export async function saveToLibrary(
   libraryId?: string,
   footage = false,
   sound?: Sound,
-): Promise<{ assetId: string; versionId: string } | { duplicateOf: string } | { error: string; code: "disk_reserve" } | null> {
+  /** a final (Finals): it follows the library's Finals setting, not its Upload */
+  finals = false,
+): Promise<SavedTo | null> {
   const lib =
     libraryId ??
     sources
@@ -239,6 +244,8 @@ export async function saveToLibrary(
   if ((await freeBytes(stagingDir())) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
     return { error: "Not enough free disk space for this file", code: "disk_reserve" };
   }
+  // Upload none: the file goes to the asker's computer and is indexed there, never kept here
+  if (serverKind() !== "local" && hostsNone(finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound);
   const staged = path.join(stagingDir(), `save-${randomUUID()}`);
   try {
     await copyFile(file, staged);
@@ -256,16 +263,7 @@ export async function saveToLibrary(
       const collectionId = sound ? soundFolder(d, lib, sound, username) : undefined;
       const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId });
       // before the probe runs (same commit): the tag is what keeps the worker's AI steps off it
-      if (sound) d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')").run(assetId, SOUNDS[sound].tag);
-      if (!footage) fileRoll(d, assetId, "none"); // a finished file (an export, a Finals file) is never A-roll or B-roll
-      for (const from of new Set(sources)) {
-        const src = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(from) as
-          | { library_id: string }
-          | undefined;
-        if (src && libraryRole(username, src.library_id)) {
-          d.prepare("INSERT OR IGNORE INTO derived_from (version_id, source_version_id, note) VALUES (?, ?, 'export')").run(versionId, from);
-        }
-      }
+      fileSaved(d, assetId, versionId, username, { footage, sound, sources });
       d.exec("COMMIT");
       return { assetId, versionId };
     } catch (e) {
@@ -276,6 +274,71 @@ export async function saveToLibrary(
   } finally {
     await rm(staged, { force: true });
   }
+}
+
+export type SavedTo =
+  | { assetId: string; versionId: string }
+  | { duplicateOf: string }
+  | { error: string; code: "disk_reserve" | "no_folder" | "failed" }
+  /** Upload none and the asker's computer not online (or not done yet): the one line to say; it lands when it is back */
+  | { waiting: string };
+
+/** What a saved file gets with its new version: its sound tag, no A-roll or B-roll for a finished file, what it was made from. */
+export function fileSaved(d: DatabaseSync, assetId: string, versionId: string, username: string, o: { footage: boolean; sound?: Sound; sources: string[] }): void {
+  if (o.sound) d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')").run(assetId, SOUNDS[o.sound].tag);
+  if (!o.footage) fileRoll(d, assetId, "none"); // a finished file (an export, a Finals file) is never A-roll or B-roll
+  for (const from of new Set(o.sources)) {
+    const src = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(from) as { library_id: string } | undefined;
+    if (src && libraryRole(username, src.library_id)) {
+      d.prepare("INSERT OR IGNORE INTO derived_from (version_id, source_version_id, note) VALUES (?, ?, 'export')").run(versionId, from);
+    }
+  }
+}
+
+/** How long a save under Upload none waits for an online computer to have it indexed before answering (a test shortens it). */
+export const COMPUTER_SAVE = { ms: 30_000 };
+
+/**
+ * A save under Upload none (owner, 2026-11-19): the file goes to the workspace's first Source media folder (a finished
+ * file: its Final exports folder) on whichever of the asker's computers takes the task (work/tasks/library-save.ts), which
+ * indexes it there in place. With none online it waits for one, and the answer is the one line naming the folder.
+ */
+async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound): Promise<SavedTo> {
+  const { librariesOf, useOf } = await import("./report");
+  const { storageOf } = await import("../devices-storage");
+  const { awaitTask, startTask, taskOf } = await import("../work/tasks");
+  const use = footage || sound ? "media" : "exports";
+  const label = FOLDER_LABELS[use === "media" ? "footage" : "library"];
+  const folders: Record<string, { id: string; path: string }> = {};
+  for (const f of (await storageOf(username)).folders) {
+    if (useOf(f) !== use || folders[f.origin.host] || deviceOf(f.origin.host)?.owner !== username) continue;
+    if ((await librariesOf(username, f, false)).some((l) => l.id === lib)) folders[f.origin.host] = { id: f.id, path: f.origin.path };
+  }
+  const first = Object.entries(folders)[0];
+  if (!first) return { error: `Upload is off for this workspace, so files stay on your computer, and none of yours has a ${label} folder for it: add one in Settings → Folders.`, code: "no_folder" };
+  const size = (await stat(file)).size;
+  const quick = await quickPrint(file);
+  if (!quick) return { error: "The file could not be read", code: "failed" };
+  const dup = db()
+    .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ((v.quick = ? AND v.bytes = ?) OR v.sha256 = ?) LIMIT 1")
+    .get(lib, quick, size, `mac:${quick}`) as { id: string } | undefined;
+  if (dup) return { duplicateOf: dup.id };
+  // held here only until a computer has fetched it (the task removes it)
+  const staged = path.join(stagingDir(), `computer-${lib}-${quick}`);
+  await copyFile(file, staged);
+  const started = await startTask("library-save", `${lib}:${quick}`, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, folders, footage, ...(sound ? { sound } : {}), sources });
+  const name = (id: string) => deviceOf(id)?.name ?? "Your computer";
+  const where = (id: string) => `${label} (${folders[id]!.path})`;
+  if (started.state === "queued" && started.line) return { waiting: `${name(first[0])} is offline. I'll save it to ${where(first[0])} when it's back.` };
+  if (started.state === "queued" && (await awaitTask(started.id, COMPUTER_SAVE.ms)) === "failed") return { error: taskOf(started.id)?.error ?? "Your computer could not save it", code: "failed" };
+  const got = db()
+    .prepare("SELECT a.id AS assetId, v.id AS versionId FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.quick = ? AND v.bytes = ? LIMIT 1")
+    .get(lib, quick, size) as { assetId: string; versionId: string } | undefined;
+  if (got) return got;
+  // a computer has it but is not done yet: it lands there in a moment
+  const held = started.state === "queued" ? taskOf(started.id)?.held_by : null;
+  const on = held && folders[held] ? held : first[0];
+  return { waiting: `Saving it to ${where(on)} on ${name(on)}.` };
 }
 
 interface UploadRow {
