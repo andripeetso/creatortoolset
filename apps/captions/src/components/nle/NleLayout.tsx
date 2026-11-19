@@ -100,8 +100,10 @@ function WindowButton({ on, icon, label, keys, onClick }: { on: boolean; icon: R
  * that show and hide the side panels; a hidden one gives its room to the viewer. `media` null: no Media panel at all.
  * `panelKeys` gets what Tab (media) and ⇧Tab (inspector) call.
  */
-export function NleLayout({ media, viewer, inspector, timeline, panelKeys }: {
+export function NleLayout({ media, viewer, inspector, timeline, panelKeys, center }: {
   media: ReactNode | null; viewer: ReactNode; inspector: ReactNode; timeline: ReactNode;
+  /** the middle of the window-button bar, where Resolve has the project's name: the timeline's save */
+  center?: ReactNode;
   panelKeys?: MutableRefObject<((p: keyof Open) => void) | null>;
 }) {
   const [sizes, setSizes] = useState(readSizes);
@@ -131,9 +133,10 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys }: {
   // hidden, not taken away: a panel shown again is as it was (the bin's search, the inspector's tab)
   const showMedia = media !== null && open.media;
   return (
-    <div ref={box} data-nle className="dark flex min-h-0 w-full flex-1 flex-col bg-[#0f0f11] p-1 pt-0 text-zinc-200 [color-scheme:dark]">
+    <div ref={box} data-nle className="dark flex min-h-0 w-full flex-1 select-none flex-col bg-[#0f0f11] p-1 pt-0 text-zinc-200 [color-scheme:dark] [&_input]:select-text [&_textarea]:select-text">
       <div role="toolbar" aria-label="Panels" className="flex h-7 shrink-0 items-stretch justify-between">
         {media !== null ? <WindowButton on={open.media} icon={<Images />} label="Media Pool" keys="Tab" onClick={() => toggle("media")} /> : <span />}
+        <div className="flex min-w-0 items-center gap-2 text-[12px]">{center}</div>
         <WindowButton on={open.inspector} icon={<SlidersHorizontal />} label="Inspector" keys="⇧Tab" onClick={() => toggle("inspector")} />
       </div>
       <div className="flex min-h-0 shrink-0" style={{ height: `calc(${sizes.top * 100}% - ${sizes.top * 28}px)` }}>

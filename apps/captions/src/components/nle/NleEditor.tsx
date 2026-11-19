@@ -311,6 +311,22 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   return (
     <>
       <NleLayout panelKeys={panelKeys}
+        center={
+          <>
+            {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}
+            {!readOnly && (
+              <button type="button" disabled={!dirty || !!saving} onClick={() => void save()}
+                title={dirty ? "Save (⌘S): this timeline as this version's newest draft" : "Saved"}
+                className="relative inline-flex h-5 shrink-0 items-center gap-1.5 overflow-hidden rounded px-2 text-[12px] text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-100 disabled:text-zinc-500 disabled:hover:bg-transparent">
+                {saving?.done ? <span className="absolute inset-y-0 left-0 bg-white/10" style={{ width: `${Math.round(saving.done * 100)}%` }} /> : null}
+                <span className="relative inline-flex items-center gap-1.5">
+                  {saving ? <Loader2 className="size-3 animate-spin" /> : dirty ? <span className="size-1.5 rounded-full bg-amber-400" /> : <Save className="size-3" />}
+                  {saving ? (saving.done ? `Saving ${Math.round(saving.done * 100)} %` : "Saving") : dirty ? "Save" : "Saved"}
+                </span>
+              </button>
+            )}
+          </>
+        }
         media={
           <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} onRelink={onRelink}
             onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
@@ -368,23 +384,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                 <button type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
               </>
             }
-            end={
-              <>
-                <span className="flex min-w-0 items-center gap-2 truncate">{status}</span>
-                {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}
-                {!readOnly && (
-                  <button type="button" disabled={!dirty || !!saving} onClick={() => void save()}
-                    title={dirty ? "Save (⌘S): this timeline as this version's newest draft" : "Saved"}
-                    className="relative inline-flex h-6 min-w-[5.5rem] shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded bg-violet-600 px-2.5 text-[12px] font-medium text-white hover:bg-violet-500 disabled:bg-zinc-700 disabled:text-zinc-300">
-                    {saving?.done ? <span className="absolute inset-y-0 left-0 bg-white/20" style={{ width: `${Math.round(saving.done * 100)}%` }} /> : null}
-                    <span className="relative inline-flex items-center gap-1.5">
-                      {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                      {saving ? (saving.done ? `Saving ${Math.round(saving.done * 100)} %` : "Saving") : dirty ? "Save" : "Saved"}
-                    </span>
-                  </button>
-                )}
-              </>
-            } />
+            end={<span className="flex min-w-0 items-center gap-2 truncate">{status}</span>}
         } />
 
       {menu && (
