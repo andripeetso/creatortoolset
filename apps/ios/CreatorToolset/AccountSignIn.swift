@@ -24,6 +24,11 @@ final class Account: ObservableObject {
     @Published private(set) var profile: Profile?
     private let key = "account"
     private var token: String? { Keychain.get(key) }
+    /// The token is bound to this phone's DPoP key (signed in with its proof): it goes out only with that key's proof
+    /// on every call, so a copy of it is useless elsewhere. A token from an app before binding goes as a Bearer.
+    private let boundKey = "account.bound"
+    var bound: Bool { UserDefaults.standard.bool(forKey: boundKey) }
+    private var credential: Credential? { token.map { Credential(kind: bound ? .dpop : .bearer, token: $0) } }
 
     #if DEBUG
     /// `-signinDemo list|none|password|old|add|problem|partly|code|wrong|setup` at launch: a made-up account and its
@@ -50,11 +55,13 @@ final class Account: ObservableObject {
         // asked first without following it: no connection is said here, not on a page inside the sheet
         guard try await Self.redirects(start) else { throw AccountError.refused("Sign-in isn't set up on creatortoolset.com yet") }
         guard let code = try await WebSheet.shared.open(start, ends: "account") else { return false }
-        let data = try await Self.send(Self.site, "/api/account/token", method: "POST",
-                                       json: ["code": code, "verifier": pkce.verifier])
+        let tokenURL = API(server: Self.site, cookie: nil).url("/api/account/token")
+        let data = try await Self.send(Self.site, "/api/account/token", method: "POST", json: ["code": code, "verifier": pkce.verifier],
+                                       headers: ["DPoP": try DPoP.proof(method: "POST", url: tokenURL)])
         let reply = try JSONDecoder().decode(AccountToken.self, from: data)
         Keychain.set(key, reply.token)
         guard token != nil else { throw AccountError.refused("The Keychain didn't keep the sign-in") }
+        UserDefaults.standard.set(true, forKey: boundKey)
         keep(Profile(name: reply.name ?? "", email: reply.email ?? "", provider: provider))
         return true
     }
@@ -68,8 +75,14 @@ final class Account: ObservableObject {
     /// The connect service stops pushing to this phone first (it needs the account to ask), then the account goes.
     func signOutNow() async {
         await AccountPush.signingOut()
+        // the account's site forgets this token too (best effort: offline, it is still gone from this phone)
+        if let credential {
+            let url = API(server: Self.site, cookie: nil).url("/api/account/sign-out")
+            _ = try? await Self.send(Self.site, "/api/account/sign-out", method: "POST", json: [:], headers: credential.headers(method: "POST", url: url))
+        }
         Keychain.set(key, nil)
         UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.removeObject(forKey: boundKey)
         profile = nil
         AccountServers.shared.signedOut()
     }
@@ -96,9 +109,10 @@ final class Account: ObservableObject {
     }
 
     /// A one-time ticket (5 min) from the account's sign-in service for a hosted server this account signed in to,
-    /// bound to this phone's key and `challenge`: the server trades it for a session (`AccountServers.hostedSession`).
-    func serverTicket(host: String, challenge: String, jkt: String) async throws -> String {
-        let data = try await ask("/api/account-signin/app-ticket", method: "POST", json: ["host": host, "challenge": challenge, "jkt": jkt])
+    /// bound to the key this phone's account token is bound to (its proof rides with the call) and `challenge`: the
+    /// server trades it for a session (`AccountServers.hostedSession`). Needs a bound token.
+    func serverTicket(host: String, challenge: String) async throws -> String {
+        let data = try await ask("/api/account-signin/app-ticket", method: "POST", json: ["host": host, "challenge": challenge])
         return try JSONDecoder().decode(ServerTicket.self, from: data).ticket
     }
 
@@ -118,9 +132,10 @@ final class Account: ObservableObject {
 
     /// The account server, as this account. 401 = the token no longer works: the account is forgotten here.
     private func ask(_ path: String, method: String = "GET", json: [String: String]? = nil) async throws -> Data {
-        guard let token else { throw AccountError.signedOut }
+        guard let credential else { throw AccountError.signedOut }
         do {
-            return try await Self.send(Self.site, path, method: method, bearer: token, json: json)
+            return try await Self.send(Self.site, path, method: method, json: json,
+                                       headers: credential.headers(method: method, url: API(server: Self.site, cookie: nil).url(path)))
         } catch APIError.server(401, _) {
             signOut()
             throw AccountError.signedOut
@@ -151,10 +166,10 @@ final class Account: ObservableObject {
     }
 
     /// One request to the account server or the connect service. An answer outside 200..<300 throws the server's words.
-    private static func send(_ base: URL, _ path: String, method: String = "GET", bearer: String? = nil,
-                             json: [String: String]? = nil) async throws -> Data {
+    private static func send(_ base: URL, _ path: String, method: String = "GET", json: [String: String]? = nil,
+                             headers: [String: String] = [:]) async throws -> Data {
         var request = API(server: base, cookie: nil).request(path, method: method, json: json)
-        if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
         request.httpShouldHandleCookies = false
         let (data, response) = try await reaching(base) { try await API.session.data(for: request) }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0

@@ -312,14 +312,28 @@ signInCallbackApp.get(SERVICE_RETURN.replace("/api/auth", ""), async (c, next) =
 });
 
 /**
+ * The host account tickets are for: this server's PUBLIC_ORIGIN, never the request's Host header. Null (no tickets)
+ * unless this is a hosted server that names a sign-in service and its own address.
+ */
+export function accountTicketHost(): string | null {
+  if (!hostedMode() || !signinService()) return null;
+  try {
+    return new URL(process.env.PUBLIC_ORIGIN ?? "").host.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * A phone already signed in to its account at the sign-in service gets in here with no second sign-in
  * (POST /oauth/token with an account ticket, auth-clients.ts). The service gave the phone a ticket for this server's
  * host and the phone's DPoP key, under the phone's PKCE challenge; this server collects it from the service like a
  * sign-in's ticket, once. The person needs an account here already, found by any sign-in the account has: no
  * account is made this way. Null when it doesn't check out (the reason is logged, never who it was).
  */
-export async function accountTicketUser(o: { ticket: string; verifier: string; jkt: string; host: string }): Promise<UserRecord | null> {
-  if (!hostedMode() || !signinService()) return null;
+export async function accountTicketUser(o: { ticket: string; verifier: string; jkt: string }): Promise<UserRecord | null> {
+  const host = accountTicketHost();
+  if (!host) return null;
   try {
     const res = await fetch(`${signinService()}/api/account-signin/redeem`, {
       method: "POST",
@@ -329,7 +343,7 @@ export async function accountTicketUser(o: { ticket: string; verifier: string; j
     });
     const w = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     // a sign-in's own ticket carries no key and no host: it never opens a phone session
-    if (!res.ok || w.jkt !== o.jkt || str(w.host).toLowerCase() !== o.host.toLowerCase()) throw new Error(`the sign-in service answered ${res.status} for another key or server`);
+    if (!res.ok || w.jkt !== o.jkt || str(w.host).toLowerCase() !== host) throw new Error(`the sign-in service answered ${res.status} for another key or server`);
     const ids = [w, ...(Array.isArray(w.identities) ? w.identities : [])] as Record<string, unknown>[];
     const users = new Set(
       ids.flatMap((i) => (isSignInProvider(str(i?.provider)) && typeof i.sub === "string" && i.sub && i.sub.length <= 255 ? [findByIdentity(i.provider as Kind, i.sub)] : [])).filter((u): u is UserRecord => !!u),

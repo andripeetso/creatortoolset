@@ -15,6 +15,7 @@ for (const k of ["APPLE_SIGNIN_KEY", "GOOGLE_SIGNIN_CLIENT_ID", "GOOGLE_SIGNIN_C
 
 const app = (await import("./boot")).default;
 const { createUser, linkIdentity } = await import("./users");
+const { ticketTries, perMinute } = await import("./auth-clients");
 
 const SERVICE = "https://signin.test";
 const HOST = "studio.test.example";
@@ -67,6 +68,8 @@ beforeAll(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.ACCOUNT_SIGNIN_SERVICE;
+  process.env.PUBLIC_ORIGIN = "https://studio.test.example";
+  ticketTries.clear();
 });
 
 describe("with the sign-in service named", () => {
@@ -75,15 +78,27 @@ describe("with the sign-in service named", () => {
     expect(await account()).toBe(false);
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
     expect(await account()).toBe(true);
+    // with no address of its own it would take the request's Host for its own: no tickets then
+    delete process.env.PUBLIC_ORIGIN;
+    expect(await account()).toBe(false);
+    service(ticketFor({ provider: "google", sub: "g-sam" }));
+    expect(await (await exchange()).json()).toMatchObject({ error: "invalid_grant" });
   });
 
-  it("a ticket for this server and this phone's key opens a Standard session bound to that key, as the account's person", async () => {
+  it("a ticket for this server and this phone's key opens a read and write session bound to that key, as the account's person", async () => {
     process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
     const asked = service(ticketFor({ provider: "google", sub: "g-sam" }));
     const r = await exchange();
     expect(r.status).toBe(200);
     const t = (await r.json()) as { access_token: string; token_type: string; scope: string; expires_in: number };
-    expect(t).toMatchObject({ token_type: "DPoP", scope: "read write access" });
+    // never `access`: it can't make pairing links or manage sessions
+    expect(t).toMatchObject({ token_type: "DPoP", scope: "read write" });
+    const link = await app.request("http://localhost/api/auth/pairing-links", {
+      method: "POST",
+      headers: { authorization: `DPoP ${t.access_token}`, dpop: dpop("POST", "http://localhost/api/auth/pairing-links", t.access_token), "content-type": "application/json" },
+      body: JSON.stringify({ deviceType: "mobile" }),
+    });
+    expect(link.status).toBe(403);
     expect(t.expires_in).toBeLessThanOrEqual(3600);
     expect(asked).toEqual([`${SERVICE}/api/account-signin/redeem`]);
     const me = await app.request("http://localhost/api/auth/session", {
@@ -130,6 +145,7 @@ describe("with the sign-in service named", () => {
     expect(await (await exchange({ bound: false })).json()).toMatchObject({ error: "invalid_grant" });
     expect(await (await exchange({ verifier: "" })).json()).toMatchObject({ error: "invalid_grant" });
     expect(await (await exchange({ scope: "admin" })).json()).toMatchObject({ error: "invalid_scope" });
+    expect(await (await exchange({ scope: "access" })).json()).toMatchObject({ error: "invalid_scope" });
     expect(asked).toEqual([]);
   });
 
@@ -138,6 +154,24 @@ describe("with the sign-in service named", () => {
     service(ticketFor({ provider: "google", sub: "g-sam" }));
     expect(await (await exchange({ verifier: "w".repeat(43) })).json()).toMatchObject({ error: "invalid_grant" });
     expect(await (await exchange({ ticket: "T2" })).json()).toMatchObject({ error: "invalid_grant" });
+  });
+});
+
+describe("tried too often from one address", () => {
+  it("the 11th ticket in a minute waits, and the service is not asked", async () => {
+    process.env.ACCOUNT_SIGNIN_SERVICE = SERVICE;
+    const asked = service(ticketFor({ provider: "google", sub: "g-sam" }));
+    for (let i = 0; i < 10; i++) await exchange({ ticket: `T-${i}` });
+    const r = await exchange();
+    expect(r.status).toBe(429);
+    expect(r.headers.get("retry-after")).toBe("60");
+    expect(asked).toHaveLength(10);
+  });
+
+  it("counts per address, in a sliding minute", () => {
+    const l = perMinute(2);
+    expect([l.take("a", 0), l.take("a", 1), l.take("a", 2), l.take("b", 2)]).toEqual([true, true, false, true]);
+    expect(l.take("a", 60_001)).toBe(true);
   });
 });
 

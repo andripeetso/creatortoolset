@@ -41,7 +41,7 @@ import {
   type TokenError,
 } from "./lib/clients";
 import { LOCAL_USER, findUser, type SessionUser } from "./users";
-import { accountTicketUser, originOf } from "./sign-in";
+import { accountTicketUser } from "./sign-in";
 
 /**
  * Phones and other apps signed in to this server with a client session (api/connect/contract.md): pairing links, the
@@ -277,6 +277,29 @@ const DEVICE_TYPES: readonly DeviceType[] = ["desktop", "mobile", "tablet", "bot
 
 export const oauthTokenApp = new Hono();
 
+const ACCOUNT_TICKET_SCOPES: readonly Scope[] = ["read", "write"];
+
+/** At most `max` takes per key in a sliding minute; past 10 000 keys the oldest is forgotten. */
+export function perMinute(max: number) {
+  const hits = new Map<string, number[]>();
+  return {
+    take(key: string, now = Date.now()): boolean {
+      const recent = (hits.get(key) ?? []).filter((t) => now - t < 60_000);
+      hits.delete(key);
+      if (hits.size >= 10_000) hits.delete(hits.keys().next().value!);
+      if (recent.length >= max) {
+        hits.set(key, recent);
+        return false;
+      }
+      hits.set(key, [...recent, now]);
+      return true;
+    },
+    clear: () => hits.clear(),
+  };
+}
+/** Account tickets tried at /oauth/token, per address. */
+export const ticketTries = perMinute(10);
+
 oauthTokenApp.post("/oauth/token", async (c) => {
   c.header("Cache-Control", "no-store");
   c.header("Pragma", "no-cache");
@@ -308,12 +331,18 @@ oauthTokenApp.post("/oauth/token", async (c) => {
   const jkt = checked?.jkt;
   let r: { ok: true; grant: { kind: string; subject: string; label?: string; deviceType?: DeviceType }; scopes: Scope[] } | { ok: false; error: TokenError };
   if (type === ACCOUNT_TICKET_TOKEN_TYPE) {
-    // a phone signed in to its account (sign-in.ts accountTicketUser): bound to its key, Standard, as an account connect
-    const scopes = requested ? STANDARD.filter((s) => requested.includes(s)) : [...STANDARD];
+    // a phone signed in to its account (sign-in.ts accountTicketUser): bound to its key, read and write only (never
+    // `access`: such a session can't make pairing links or manage sessions)
+    const scopes = requested ? ACCOUNT_TICKET_SCOPES.filter((s) => requested.includes(s)) : [...ACCOUNT_TICKET_SCOPES];
     if (!scopes.length) return refuse("invalid_scope");
     const verifier = field("code_verifier");
     if (!jkt || !verifier) return refuse("invalid_grant");
-    const user = await accountTicketUser({ ticket: credential, verifier, jkt, host: new URL(originOf(c)).host });
+    // each one waits on the sign-in service (up to 20 s): a few a minute from one address
+    if (!ticketTries.take(clientAddress(c))) {
+      c.header("Retry-After", "60");
+      return c.json({ error: "temporarily_unavailable", error_description: "Too many sign-ins at once. Try again in a minute." }, 429);
+    }
+    const user = await accountTicketUser({ ticket: credential, verifier, jkt });
     r = user ? { ok: true, grant: { kind: "account", subject: user.username, deviceType: claimed }, scopes } : { ok: false, error: "invalid_grant" };
   } else {
     r = redeemGrant(credential, { jkt, ...(requested ? { requested } : {}) });

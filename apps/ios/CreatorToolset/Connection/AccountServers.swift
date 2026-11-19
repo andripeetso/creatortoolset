@@ -265,7 +265,7 @@ final class AccountServers: ObservableObject {
     func hostedSession(_ url: URL) async throws -> Credential {
         let pkce = Pkce.make()
         do {
-            let ticket = try await Account.shared.serverTicket(host: Self.host(url), challenge: pkce.challenge, jkt: DPoPKey.shared.thumbprint)
+            let ticket = try await Account.shared.serverTicket(host: Self.host(url), challenge: pkce.challenge)
             var fields = Pairing.clientMetadata()
             fields["code_verifier"] = pkce.verifier
             return try await Pairing.exchange(url, credential: ticket, dpop: true, metadata: fields, tokenType: Pairing.accountTicketType)
@@ -291,6 +291,8 @@ final class AccountServers: ObservableObject {
     /// The account's hosted servers that take its ticket are on this phone with no sign-in, like its computers; one
     /// already here (signed in by address before) stays as it is, and one that can't is left for Sign in.
     private func adoptHosted(_ list: [Computer]) async {
+        // a token from before binding gets no tickets: those servers keep Sign in until the next account sign-in
+        guard Account.shared.bound else { return }
         let here = Set(Connections.shared.servers.flatMap { $0.routes.map(\.origin) })
         let new = list.filter { !here.contains(Routes.origin($0.url)) }
         let found = await withTaskGroup(of: (Computer, ServerDescriptor?).self) { group in
