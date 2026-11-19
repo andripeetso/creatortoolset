@@ -169,8 +169,10 @@ export function FoldersToAllow() {
   return <CantRead folders={waiting.map((f) => f.origin.path)} onAllow={() => void allow()} busy={busy} />;
 }
 
-/** What Look for new files did, in one line: "Added 3 · reconnected 12", or "No new files". */
-export const lookedLine = (added: number, reconnected: number) =>
+/** What Look for new files did, in one line: "Added 3 · reconnected 12", or "No new files"; `coming`: new files still being copied in ("2 coming in"). */
+export const lookedLine = (added: number, reconnected: number, coming = 0) =>
+  coming ? [added ? `Added ${added.toLocaleString()}` : "", `${coming.toLocaleString()} coming in`].filter(Boolean).join(" · ") : lookedOnly(added, reconnected);
+const lookedOnly = (added: number, reconnected: number) =>
   [added ? `Added ${added.toLocaleString()}` : "", reconnected ? `${added ? "reconnected" : "Reconnected"} ${reconnected.toLocaleString()}` : ""].filter(Boolean).join(" · ") ||
   "No new files";
 

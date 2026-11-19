@@ -35,6 +35,7 @@ const server = vi.hoisted(() => ({
   /** the plug-in sources this library offers (its Source picker) */
   sources: [] as { id: string; label: string }[],
   watch: { allowed: true, folders: [] as unknown[], missing: 0 } as unknown,
+  scans: 0,
   /** what the page asked the listing for, and the folder changes it sent */
   asked: [] as Record<string, unknown>[],
   changed: [] as unknown[][],
@@ -102,6 +103,10 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   listCollections: async () => server.folders,
   listSources: async () => server.sources,
   getWatch: async () => server.watch,
+  scanWatchNow: async () => {
+    server.scans++;
+    return { added: 2, settling: 1 };
+  },
   getProgress: async () => ({ done: 0, left: 0, clips: 0, seconds: 0, waiting: [] }),
   getLibraryStorage: async () => ({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] }),
   listTags: async () => [{ tag: "beach", count: 2 }],
@@ -158,6 +163,7 @@ beforeEach(() => {
   server.gate = undefined;
   server.uploading = undefined;
   server.redone = [];
+  server.scans = 0;
   localStorage.clear();
 });
 afterEach(() => {
@@ -247,6 +253,26 @@ describe("Media Library page", () => {
     const click = vi.spyOn(input, "click").mockImplementation(() => {});
     await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Drop media here"))!.click());
     expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  // CEO 11-19 library-menu (Andri: "a button to check the source folder for new media")
+  it("Look for new files is in the ⋯ menu after Library status: it reads the folders now and says what it found", async () => {
+    const host = await mount();
+    await openMore(host);
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((x) => x.textContent?.trim() ?? "");
+    expect(items.findIndex((t) => t.includes("Look for new files"))).toBeGreaterThan(items.findIndex((t) => t.includes("Library status")));
+    await act(async () => moreItem("Look for new files")!.click());
+    await settle();
+    expect(server.scans).toBe(1);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Added 2 · 1 coming in");
+  });
+
+  it("a library given to look at only has no Look for new files", async () => {
+    server.readOnly = true;
+    const host = await mount();
+    await openMore(host);
+    expect(moreItem("Library status")).toBeTruthy();
+    expect(moreItem("Look for new files")).toBeUndefined();
   });
 
   it("an empty library given to look at says No clips yet, with no drop box", async () => {

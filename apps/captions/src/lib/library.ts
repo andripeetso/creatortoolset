@@ -557,6 +557,14 @@ export function reorderedPositions(items: { id: string; position: number }[], fr
 }
 
 /** The library's footage folders as its owner sees them (anyone else: an error, so no status). */
+/** Look for new files on a server that reads this computer's folders itself (This Mac): how many came in, and how many still settle. */
+export async function scanWatchNow(libraryId: string): Promise<{ added: number; settling: number }> {
+  const r = await fetch(`/api/library/${libraryId}/watch/scan`, { method: "POST" });
+  const body = (await r.json().catch(() => ({}))) as { added?: number; settling?: number; error?: string };
+  if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
+  return { added: body.added ?? 0, settling: body.settling ?? 0 };
+}
+
 export async function getWatch(libraryId: string): Promise<WatchStatus> {
   const r = await fetch(`/api/library/${libraryId}/watch`);
   if (!r.ok) throw new Error(`Request failed (${r.status})`);

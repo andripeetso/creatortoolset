@@ -220,6 +220,16 @@ watchApp.get("/:id/watch", async (c) => {
   return c.json(watchAllowed(c.get("user").username) && local ? { ...s, copyTo: await defaultCopyTo(c.get("user").username) } : s);
 });
 
+// POST /api/library/:id/watch/scan → { added, settling }: Look for new files, on a server that reads this computer's folders itself
+// (This Mac): its Source media folders read now, not at the next half minute. The owner only.
+watchApp.post("/:id/watch/scan", async (c) => {
+  const user = c.get("user");
+  if (!libraryRole(user.username, c.req.param("id"))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!watchAllowed(user.username)) return c.json({ error: "This server doesn't read your folders: the Mac app looks in them", code: "not_here" }, 409);
+  const r = await scanNow();
+  return c.json({ added: r.took, settling: r.settling });
+});
+
 // GET /api/library/:id/watch/size?path&to → { files, bytes, audio, audioBytes, free? }: the media files a folder holds (and how many are sound only), so the card can say what
 // importing it takes before it is added (estimate.ts). The same checks as adding it: a server on the person's computer.
 // `to`: a folder its files would be copied into; `free` is the room there, less the disk reserve a copy keeps.
@@ -856,6 +866,20 @@ export function scanSoon(): void {
   wake?.();
 }
 
+/** Those waiting for a scan that starts after they asked (scanNow), told how many files it took in. */
+let waiting: ((r: { took: number; settling: number }) => void)[] = [];
+/**
+ * Look for new files now (the Library's ⋯ menu): the next scan, started at once, how many files it took in, and how many
+ * new ones still wait to settle (a copy still being written goes in once it stops changing). A scan under way is not
+ * counted: the one asked for starts after it. Never resolves on a server that may not watch; ask watchAllowed first.
+ */
+export function scanNow(): Promise<{ took: number; settling: number }> {
+  return new Promise((done) => {
+    waiting.push(done);
+    scanSoon();
+  });
+}
+
 /**
  * Scans now and again after the last scan ends (never two at once): at once when asked (scanSoon), after 5 s while a
  * file waits its short turn, else after 30 s. Does nothing on a server that may not watch.
@@ -865,11 +889,16 @@ export function startWatchFolders(): void {
   const loop = async () => {
     wake = undefined;
     asked = false;
+    // the ones that asked before this scan began hear its count (scanNow)
+    const told = waiting;
+    waiting = [];
+    let took = 0;
     try {
-      await scanWatchFolders();
+      took = await scanWatchFolders();
     } catch (e) {
       console.error("[library] watch:", e);
     }
+    for (const done of told) done({ took, settling: pending.size });
     const quick = [...pending.values()].some((p) => settleFor(p) === QUICK_SETTLE_MS);
     const timer = setTimeout(loop, asked ? 0 : quick ? QUICK_SETTLE_MS : SCAN_MS);
     timer.unref();
