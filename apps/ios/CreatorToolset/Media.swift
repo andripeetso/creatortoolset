@@ -24,7 +24,7 @@ struct RemoteImage: View {
 
     private func load() async {
         guard let api = servers.api else { return }
-        let key = "\(api.server.absoluteString)\(path)" as NSString
+        let key = "\(api.cacheKey)\(path)" as NSString
         if let hit = Self.cache.object(forKey: key) { return image = hit }
         guard let data = try? await api.data(api.request(path)), let loaded = UIImage(data: data) else { return }
         Self.cache.setObject(loaded, forKey: key)
@@ -35,12 +35,20 @@ struct RemoteImage: View {
 extension API {
     /// A player for a media path. The cookie is scoped to the server's host, so a redirect to a bucket never gets it.
     func player(_ path: String) -> AVPlayer {
+        AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url(path), options: playerOptions)))
+    }
+
+    /// The player's range requests: the cookie, and the workspace as a header (a header option is not scoped to the
+    /// host, so the cookie never rides in it).
+    var playerOptions: [String: Any] {
         var cookies: [HTTPCookie] = []
         if let cookie, let host = server.host(),
            let c = HTTPCookie(properties: [.name: "cap_auth", .value: cookie, .domain: host, .path: "/"]) {
             cookies.append(c)
         }
-        return AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url(path), options: [AVURLAssetHTTPCookiesKey: cookies])))
+        var options: [String: Any] = [AVURLAssetHTTPCookiesKey: cookies]
+        if let workspace { options["AVURLAssetHTTPHeaderFieldsKey"] = [WorkspacePick.header: workspace] }
+        return options
     }
 }
 

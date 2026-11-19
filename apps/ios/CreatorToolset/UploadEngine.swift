@@ -158,7 +158,8 @@ final class UploadEngine: ObservableObject {
     // MARK: Steps
 
     func api(for item: UploadItem) -> API? {
-        Servers.shared.list.first { $0.id == item.server }.map { API(server: $0.url, cookie: Keychain.get($0.id)) }
+        // shortcut: the workspace picked now, not when the clip was picked; stamp it on UploadItem if switching mid-upload misfiles clips
+        Servers.shared.list.first { $0.id == item.server }.map(API.of)
     }
 
     /// The copy on the phone (out of Photos for a camera-roll clip), then where it goes, then on its way.

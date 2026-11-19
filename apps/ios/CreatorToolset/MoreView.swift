@@ -1,117 +1,139 @@
 import Photos
 import SwiftUI
 
-/// The last tab: the tools, each a tile with its icon (Scripts first, then the ones that work on a video from Photos), and under them the one row that opens Settings (tools and
-/// settings in one list read as the same kind of thing).
-struct MoreView: View {
+/// The last tab: the tools that work on a video from Photos, then Settings, a row each that opens its page.
+struct ToolsView: View {
+    @EnvironmentObject private var servers: Servers
     @ObservedObject private var access = ToolsetAccess.shared
     @ObservedObject private var plugins = ServerPlugins.shared
-    /// A debug build opens Settings without a tap: -MoreOpen settings.
-    @State private var settingsOpen = debugArg("MoreOpen") == "settings"
-
-    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                LazyVGrid(columns: columns, spacing: 12) {
-                    // the tools' tiles, each only when the account has it
-                    if ToolsetAccess.showsScripts(me: access.me) { ToolTile(title: "Scripts", systemImage: "doc.text") { ScriptsView() } }
-                    if access.allows("stories") { ToolTile(title: "Story Splitter", systemImage: "scissors") { StorySplitterView() } }
-                    if access.allows("captions") { ToolTile(title: "Caption Studio", systemImage: "captions.bubble") { CaptionStudioView() } }
-                    if FaceBlurView.shows(plugins: plugins.known.plugins, me: access.me) { ToolTile(title: "Face Blur", systemImage: "face.dashed") { FaceBlurView() } }
-                }
-                Button {
-                    settingsOpen = true
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28)
-                        Text("Settings").foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 52)
-                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-        }
-        .navigationTitle("More")
-        .navigationDestination(isPresented: $settingsOpen) { SettingsView() }
-    }
-}
-
-/// A tool as a tile: its icon, big, and its name. A tap opens it.
-struct ToolTile<Destination: View>: View {
-    let title: String
-    let systemImage: String
-    @ViewBuilder var destination: () -> Destination
-
-    var body: some View {
-        NavigationLink {
-            destination()
-        } label: {
-            VStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 30, weight: .medium))
-                    .foregroundStyle(Color("AccentColor"))
-                    .frame(height: 40)
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity, minHeight: 124)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// Settings, on a screen of their own: the computers this phone is signed in to, the account, notifications, how the
-/// app looks, uploads, Photos access, and which build this is.
-struct SettingsView: View {
-    @EnvironmentObject private var servers: Servers
     @ObservedObject private var account = Account.shared
-    @ObservedObject private var library = PhotoLibrary.shared
-    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("wifiOnly") private var wifiOnly = false
+    @AppStorage(Appearance.key) private var appearance = Appearance.system.rawValue
+    /// A debug build opens Computers without a tap: -MoreOpen settings.
+    @State private var computersOpen = debugArg("MoreOpen") == "settings"
+
+    var body: some View {
+        List {
+            Section("Tools") {
+                if access.allows("stories") { row("Story Splitter", "scissors") { StorySplitterView() } }
+                if access.allows("captions") { row("Caption Studio", "captions.bubble") { CaptionStudioView() } }
+                if FaceBlurView.shows(plugins: plugins.known.plugins, me: access.me) { row("Face Blur", "face.dashed") { FaceBlurView() } }
+            }
+            Section("Settings") {
+                if let profile = account.profile {
+                    row("Account", "person.crop.circle", value: profile.title) { AccountSettings() }
+                }
+                row("Computers", "desktopcomputer", value: servers.current?.name) { ComputersSettings() }
+                row("Notifications", "bell") { Form { NotificationsRow() }.navigationTitle("Notifications").navigationBarTitleDisplayMode(.inline) }
+                row("Uploads", "arrow.up.circle", value: wifiOnly ? "Wi-Fi only" : "Any network") { UploadSettings() }
+                row("Appearance", "circle.lefthalf.filled", value: Appearance(rawValue: appearance)?.title) { AppearanceSettings() }
+                LabeledContent {
+                    Text(Self.version)
+                } label: {
+                    Label("Version", systemImage: "info.circle")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Tools")
+        .workspaceSwitcher()
+        .navigationDestination(isPresented: $computersOpen) { ComputersSettings() }
+    }
+
+    private func row<Destination: View>(_ title: String, _ systemImage: String, value: String? = nil,
+                                        @ViewBuilder destination: @escaping () -> Destination) -> some View {
+        NavigationLink(destination: destination) {
+            LabeledContent {
+                if let value { Text(value).lineLimit(1) }
+            } label: {
+                Label(title, systemImage: systemImage)
+            }
+        }
+    }
+
+    /// "1.0 (12)": the version and the build, as TestFlight names them.
+    static var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? ""
+        let build = info["CFBundleVersion"] as? String ?? ""
+        return build.isEmpty ? version : "\(version) (\(build))"
+    }
+}
+
+/// The account the phone signed in with, and Sign out.
+private struct AccountSettings: View {
+    @ObservedObject private var account = Account.shared
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Form {
+            if let profile = account.profile {
+                Section {
+                    LabeledContent("Signed in with", value: profile.provider.capitalized)
+                    if !profile.email.isEmpty { LabeledContent("Email", value: profile.email) }
+                }
+                Section {
+                    Button("Sign out", role: .destructive) {
+                        account.signOut()
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .navigationTitle("Account")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// The computers this phone is signed in to, to look at: the one in use and whether its sign-in holds. The app picks
+/// the computer from the workspace; a computer is removed with a swipe, added or signed in to again below.
+private struct ComputersSettings: View {
+    @EnvironmentObject private var servers: Servers
     @State private var adding = false
 
     var body: some View {
         Form {
-            Section("Computers") {
+            Section {
                 ForEach(servers.list) { server in
-                    Button { servers.use(server.id) } label: {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(server.name)
-                                if let username = server.username { Text(username).font(.caption).foregroundStyle(.secondary) }
-                            }
-                            Spacer()
-                            if server.id == servers.currentId {
-                                if servers.signedOut {
-                                    Text("Signed out").font(.caption).foregroundStyle(.orange)
-                                } else {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(server.name)
+                            if let username = server.username { Text(username).font(.caption).foregroundStyle(.secondary) }
+                        }
+                        Spacer()
+                        if server.id == servers.currentId {
+                            Text(servers.signedOut ? "Signed out" : "In use")
+                                .font(.caption)
+                                .foregroundStyle(servers.signedOut ? Color.orange : Color.secondary)
                         }
                     }
-                    .foregroundStyle(.primary)
                     .swipeActions { Button("Remove", role: .destructive) { servers.remove(server.id) } }
                 }
+            }
+            Section {
                 Button(servers.signedOut ? "Sign in again" : "Add a computer") { adding = true }
             }
-            if let profile = account.profile {
-                Section("Account") { AccountRow(profile: profile) { account.signOut() } }
-            }
-            Section("Notifications") { NotificationsRow() }
-            Section("Appearance") { AppearancePicker() }
-            Section("Uploads") {
+        }
+        .navigationTitle("Computers")
+        .navigationBarTitleDisplayMode(.inline)
+        #if DEBUG
+        .onAppear { if Account.demo == "add" { adding = true } }
+        #endif
+        .sheet(isPresented: $adding) {
+            NavigationStack { AddServerView(prefill: servers.signedOut ? servers.current?.url.absoluteString : nil) }
+        }
+    }
+}
+
+/// Wi-Fi-only uploads, and how much of Photos the app may read.
+private struct UploadSettings: View {
+    @ObservedObject private var library = PhotoLibrary.shared
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("wifiOnly") private var wifiOnly = false
+
+    var body: some View {
+        Form {
+            Section {
                 Toggle("Only upload on Wi-Fi", isOn: $wifiOnly)
             }
             Section("Photos") {
@@ -125,29 +147,11 @@ struct SettingsView: View {
                     }
                 }
             }
-            Section {
-                LabeledContent("Version", value: Self.version)
-            }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Uploads")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
-        #if DEBUG
-        .onAppear { if Account.demo == "add" { adding = true } }
-        #endif
-        .sheet(isPresented: $adding) {
-            NavigationStack { AddServerView(prefill: servers.signedOut ? servers.current?.url.absoluteString : nil) }
-        }
         // back from the iPhone's own Settings: what was changed there shows here
         .onChange(of: scenePhase) { _, phase in if phase == .active { library.refreshAccess() } }
-    }
-
-    /// "1.0 (12)": the version and the build, as TestFlight names them.
-    static var version: String {
-        let info = Bundle.main.infoDictionary ?? [:]
-        let version = info["CFBundleShortVersionString"] as? String ?? ""
-        let build = info["CFBundleVersion"] as? String ?? ""
-        return build.isEmpty ? version : "\(version) (\(build))"
     }
 
     private var accessText: String {
@@ -163,6 +167,33 @@ struct SettingsView: View {
         guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let root = scene.keyWindow?.rootViewController else { return }
         PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: root)
+    }
+}
+
+/// Automatic, Light or Dark: a list with a check on the one in use.
+private struct AppearanceSettings: View {
+    @AppStorage(Appearance.key) private var appearance = Appearance.system.rawValue
+
+    var body: some View {
+        Form {
+            ForEach(Appearance.allCases) { option in
+                Button {
+                    appearance = option.rawValue
+                } label: {
+                    HStack {
+                        Text(option.title).foregroundStyle(.primary)
+                        Spacer()
+                        if option.rawValue == appearance {
+                            Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityAddTraits(option.rawValue == appearance ? .isSelected : [])
+            }
+        }
+        .navigationTitle("Appearance")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

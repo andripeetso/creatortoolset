@@ -72,7 +72,9 @@ final class ShareModel: ObservableObject {
             projects = ws.projects
             let last = UserDefaults.standard.string(forKey: Self.lastProject)
             if projectId == nil {
-                projectId = ws.projects.contains { $0.id == last } ? last : ws.currentProjectId
+                // the workspace the app works in, else the one picked here last time, else the computer's
+                projectId = [link.workspace, last].compactMap { $0 }.first { id in ws.projects.contains { $0.id == id } }
+                    ?? ws.currentProjectId
             }
         }
     }

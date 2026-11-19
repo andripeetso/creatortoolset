@@ -17,7 +17,13 @@ extension API {
         guard let data = defaults.data(forKey: Servers.listKey),
               let list = try? JSONDecoder().decode([Server].self, from: data) else { return nil }
         let id = defaults.string(forKey: Servers.currentKey) ?? list.first?.id
-        return list.first { $0.id == id }.map { API(server: $0.url, cookie: Keychain.get($0.id), username: $0.username) }
+        return list.first { $0.id == id }.map(API.of)
+    }
+
+    /// A saved server's client, in the workspace this phone picked there.
+    static func of(_ server: Server) -> API {
+        API(server: server.url, cookie: Keychain.get(server.id), username: server.username,
+            workspace: WorkspacePick.get(server: server.id, username: server.username))
     }
 
     /// For calls that take minutes (an upload's part, transcription, the change stream).
@@ -35,8 +41,12 @@ extension API {
         return decoder
     }()
 
-    /// Lists kept on disk are kept per server and account: an admin's names a viewer's don't.
-    var cacheKey: String {
+    /// Lists and pictures kept on disk are kept per server, account (an admin's names a viewer's don't) and workspace,
+    /// so one workspace's list never shows in another.
+    var cacheKey: String { accountKey + (workspace.map { "-\($0)" } ?? "") }
+
+    /// The server and account, whatever workspace: the assistant's one outbox, the change stream.
+    var accountKey: String {
         "\(server.host() ?? "")\(server.port.map { "-\($0)" } ?? "")-\(username ?? "local")"
     }
 
@@ -103,6 +113,9 @@ final class ToolsetImages {
     init() { memory.totalCostLimit = 100 * 1024 * 1024 }
 
     func image(_ path: String, maxPixels: Int) async -> UIImage? {
+        #if DEBUG
+        if PhoneDemo.on { return PhoneDemo.picture(path) }
+        #endif
         guard let api = API.current else { return nil }
         let key = "\(api.cacheKey)|\(maxPixels)|\(path)"
         if let hit = memory.object(forKey: key as NSString) { return hit }

@@ -1,9 +1,20 @@
 import SwiftUI
 
-/// The app's tabs: it opens on Chats, the assistant's chats; then Edits (the AI Editor's edits and the Review videos),
-/// Upload, Finals and More (Scripts is a tool there). Edits and Finals only when the account may use them.
+/// The app's tabs, the desktop's stages: Chats (the assistant's chats), Plan (ideas and scripts), Make (the edits and
+/// Review videos, and the Media Library), Distribute (Ready to post and Finals), then Tools (and Settings). Every tab
+/// always shows; one the account can't use says why it's empty (`ToolsetAccess.uses`).
 enum AppTab: String, Hashable, CaseIterable {
-    case chats, edits, upload, finals, more
+    case chats, plan, make, distribute, tools
+
+    /// A tab by an older name (`-startTab edits`, a saved `startTab`).
+    init?(named raw: String) {
+        switch raw {
+        case "edits", "upload": self = .make
+        case "finals": self = .distribute
+        case "more": self = .tools
+        default: self.init(rawValue: raw)
+        }
+    }
 }
 
 /// Which tools the account may use on the server in use (Admin → Access on the computer: `off` lists the ones switched
@@ -36,7 +47,7 @@ final class ToolsetAccess: ObservableObject {
     /// A tool by its key on the computer (contracts/tools.ts); nil = admins only. Before the account is known,
     /// everything but the admin-only tools shows, and the tool itself asks for the sign-in.
     func allows(_ key: String?) -> Bool { Self.allows(key, me: me) }
-    func shows(_ tab: AppTab) -> Bool { Self.shows(tab, me: me) }
+    func uses(_ tab: AppTab) -> Bool { Self.uses(tab, me: me) }
 
     nonisolated static func allows(_ key: String?, me: Me?) -> Bool {
         guard let me else { return key != nil }
@@ -45,18 +56,17 @@ final class ToolsetAccess: ObservableObject {
         return !(me.off ?? []).contains(key)
     }
 
-    /// Edits and Finals need a known account that has the tool; the rest always show (they ask for the sign-in
-    /// themselves). Edits holds the edits and the Review videos: an account with neither has no Edits tab.
-    nonisolated static func shows(_ tab: AppTab, me: Me?) -> Bool {
+    /// What a tab holds needs a known account that has its tool: Plan the Workshop, Make's edits the AI Editor or
+    /// Review (its Media side has its own gate, `media`), Distribute Finals. Chats and Tools ask for the sign-in
+    /// themselves. The tab shows either way.
+    nonisolated static func uses(_ tab: AppTab, me: Me?) -> Bool {
         switch tab {
-        case .chats, .upload, .more: true
-        case .edits: me != nil && (allows("editor", me: me) || allows("review", me: me))
-        case .finals: me != nil && allows("finals", me: me)
+        case .chats, .tools: true
+        case .plan: me != nil && allows("workshop", me: me)
+        case .make: me != nil && (allows("editor", me: me) || allows("review", me: me))
+        case .distribute: me != nil && allows("finals", me: me)
         }
     }
-
-    /// Scripts, a tool in More: a known account with the Workshop.
-    nonisolated static func showsScripts(me: Me?) -> Bool { me != nil && allows("workshop", me: me) }
 
     /// What this server said last time, at once.
     func load(for serverId: String?) {

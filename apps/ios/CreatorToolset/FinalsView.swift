@@ -399,6 +399,9 @@ final class FinalsModel: ObservableObject {
             return
         }
         let key = "\(api.cacheKey)\(studio ? "-studio" : "")"
+        #if DEBUG
+        if PhoneDemo.on { return data = PhoneDemo.finals }
+        #endif
         if key != self.key {
             self.key = key
             data = DiskCache.read("finals-\(key)")
@@ -501,7 +504,7 @@ struct FinalsView: View {
             .padding(.horizontal, 4)
             .padding(.bottom, 20)
         }
-        .navigationTitle("Finals")
+        .navigationTitle("Distribute")
         .searchable(text: $query, prompt: "Search Finals")
         .refreshable { await reload() }
         // again when the server turns out to have the plug-in's list (or no longer has it)

@@ -37,7 +37,7 @@ final class Servers: ObservableObject {
     var current: Server? { list.first { $0.id == currentId } }
 
     /// The client for the server in use, or nil before one is added.
-    var api: API? { current.map { API(server: $0.url, cookie: Keychain.get($0.id), username: $0.username) } }
+    var api: API? { current.map(API.of) }
 
     func add(_ server: Server, cookie: String?) {
         list = Self.adding(server, to: list)
@@ -136,6 +136,9 @@ struct API {
     let cookie: String?
     /// Who is signed in, for what is kept on disk per account (`cacheKey`).
     var username: String? = nil
+    /// The workspace every request works in (`X-CT-Workspace`): the phone's pick on this server (`API.of`), or a
+    /// chat's own for that chat's calls. nil: the server's own rule.
+    var workspace: String? = nil
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -154,7 +157,12 @@ struct API {
         return made
     }
 
-    var headers: [String: String] { cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? [:] }
+    /// Sent with every request, and with the players' and pictures' requests.
+    var headers: [String: String] {
+        var h = cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? [:]
+        if let workspace { h[WorkspacePick.header] = workspace }
+        return h
+    }
 
     func request(_ path: String, method: String = "GET", json: Any? = nil) -> URLRequest {
         var request = URLRequest(url: url(path))
