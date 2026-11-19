@@ -187,13 +187,44 @@ describe("the stored answer, with no question", () => {
     expect(result).toEqual(new Map([[file, "/Volumes/Tiny/Footage/a.mp4"]]));
   });
 
-  it("in place, unset, and a browser copy nothing", async () => {
+  // a dropped folder's file: its webkitRelativePath is the folder's name and the file's path in it
+  const inFolder = Object.defineProperty(new File(["x"], "b.mp4"), "webkitRelativePath", { value: "Shoot/b.mp4" });
+  const folderMac = { from: "mac" as const, paths: new Map([[inFolder, "/Users/tiny/Downloads/Shoot/b.mp4"]]) };
+
+  it("in place copies a loose file under the row, and a folder's file nothing; unset copies a loose file too", async () => {
     document.documentElement.dataset.macImport = "1";
     document.documentElement.dataset.macDevice = "mac_1";
     storage([{ path: "/Volumes/Tiny/Footage" }]);
-    expect((await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "in-place" } }, mac, [file])).result).toEqual(new Map());
-    expect((await answerWith({ id: "lib", name: "Tiny", settings: {} }, mac, [file])).result).toEqual(new Map());
+    const both = { from: "mac" as const, paths: new Map([...mac.paths, ...folderMac.paths]) };
+    expect((await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "in-place" } }, both, [file, inFolder])).result).toEqual(
+      new Map([[file, "/Volumes/Tiny/Footage/a.mp4"]]),
+    );
+    expect((await answerWith({ id: "lib", name: "Tiny", settings: {} }, mac, [file])).result).toEqual(new Map([[file, "/Volumes/Tiny/Footage/a.mp4"]]));
+  });
+
+  it("copy keeps a dropped folder's name under the row", async () => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    const { result } = await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, folderMac, [inFolder]);
+    expect(result).toEqual(new Map([[inFolder, "/Volumes/Tiny/Footage/Shoot/b.mp4"]]));
+  });
+
+  it("a browser's files copy nothing, whatever the stored answer", async () => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
     expect((await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, { from: "browser" }, [file])).result).toEqual(new Map());
+  });
+
+  it("an older Mac app refuses Copy, and in place indexes a loose file where it is", async () => {
+    delete document.documentElement.dataset.macImport;
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    const copy = await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, mac, [file]);
+    expect(copy.result).toBeNull();
+    expect(copy.onError).toHaveBeenCalledWith("Copy needs the latest Mac app");
+    expect((await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "in-place" } }, mac, [file])).result).toEqual(new Map());
   });
 
   it("copy with no Source media row here refuses the add and says why", async () => {

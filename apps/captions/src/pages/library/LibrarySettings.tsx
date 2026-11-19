@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { Folder } from "lucide-react";
-import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus, hostsProxies } from "@contracts/library";
+import { LOOK_LEVELS, NEEDS, WATCH_MODELS, watchModelOf, type Collection, type ImportMode, type LibraryEstimate, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibraryStep, type LibraryStepRoute, type LibrarySummary, type WatchStatus, hostsOriginals, hostsProxies } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, InUse, ListRow, Row, Section, SettingsSelect, Status, TextField } from "@/components/settings/ui";
 import type { Organize } from "@contracts/library";
-import { aboutTime, aboutUsd, CopyTo, folderName } from "@/components/LibraryProcessing";
+import { aboutTime, aboutUsd, CopyTo } from "@/components/LibraryProcessing";
 import { FOLDER_NAMES, ORGANIZE_NAME } from "./Organize";
 import { confirmDialog } from "@/lib/dialogs";
 import { askMediaFolder } from "@/lib/local-files";
@@ -15,7 +14,7 @@ import { clearLibrarySpace, getEstimate, getLibrarySpace, redoMany, updateLibrar
 import { thisMacDevice } from "@/lib/providers";
 import { redoKinds } from "./Selection";
 import { LibraryStorageSettings, storeName, thisComputer } from "../LibraryStorage";
-import { chooseFolderOnMac, macImports, thisMacBridge } from "@/lib/thisMac";
+import { macImports, thisMacBridge } from "@/lib/thisMac";
 import { UploadSelect } from "./UploadSelect";
 import { addFrom, CantRead, copyAvailable, lookedLine, lookForNew } from "./Import";
 import { LibraryWatchFolders } from "../LibraryWatchFolders";
@@ -139,9 +138,8 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
     updateLibrary(library.id, { settings })
       .then(onChange)
       .catch((e) => onError(message(e)));
-  // the footage folders on the server's own computer are listed in their own section
-  const places = (library.settings.places ?? []).filter((p) => !watch.folders.some((f) => f.path === p.path));
-  const canLook = from === "here" ? watch.folders.length > 0 : macImports() && places.some((p) => p.mode === "in-place");
+  // the Source media folders on this computer are the Mac's own list (Settings → Folders), read by Look for new files
+  const canLook = from === "here" ? watch.folders.length > 0 : macImports();
   const look = async () => {
     setBusy(true);
     try {
@@ -167,10 +165,6 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
   const allow = async () => {
     if ((await askMediaFolder(refused[0]!)).length) await look();
   };
-  const change = async () => {
-    const picked = await chooseFolderOnMac();
-    if (picked) await save({ copyTo: picked });
-  };
   return (
     <>
       <Row
@@ -180,36 +174,17 @@ function ImportRows({ library, watch, onChange, onError, inSettings }: Pick<Body
         status={!copyOk && <Status>Copy needs the latest Mac app</Status>}
         control={<SettingsSelect label="Import" value={mode} options={copyOk ? IMPORT : IMPORT.filter((o) => o.value === mode || o.value === "in-place")} onValueChange={(v) => void save({ importMode: v as ImportMode })} />}
       />
-      {mode === "copy" && copyOk && !inSettings && (
+      {mode === "copy" && copyOk && !inSettings && from === "here" && (
         <Row
           title="Library folder"
-          description={from === "here" && watch.copyTo ? <CopyTo path={watch.copyTo} /> : undefined}
+          description={watch.copyTo ? <CopyTo path={watch.copyTo} /> : undefined}
           control={
-            from === "here" ? (
-              <Button size="sm" variant="outline" asChild>
-                <Link to="/settings/folders">Change</Link>
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" onClick={() => void change()}>
-                Change
-              </Button>
-            )
-          }
-        />
-      )}
-      {places.map((p) => (
-        <ListRow
-          key={p.path}
-          icon={<Folder />}
-          title={folderName(p.path)}
-          subtitle={<span title={p.path}>{IMPORT.find((o) => o.value === p.mode)?.was} · {p.path}</span>}
-          actions={
-            <Button size="sm" variant="ghost" onClick={() => void save({ places: (library.settings.places ?? []).filter((x) => x.path !== p.path) })}>
-              Remove
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/settings/folders">Change</Link>
             </Button>
           }
         />
-      ))}
+      )}
       {canLook && (
         <Row
           id="library-look"
@@ -488,7 +463,7 @@ export function videoFacts(v: LibrarySpace["videos"], o: Parameters<typeof video
 function Storage({ library, onThisComputer, onChange, onError }: Pick<BodyProps, "library" | "onChange" | "onError"> & { onThisComputer: boolean }) {
   const [space, setSpace] = useState<LibrarySpace | null>(null);
   const read = () => getLibrarySpace(library.id).then(setSpace, (e: unknown) => onError(message(e)));
-  const onMac = thisMacBridge() && !onThisComputer ? { upload: library.settings.upload !== "none" } : null;
+  const onMac = thisMacBridge() && !onThisComputer ? { upload: hostsOriginals(library.settings.upload) || hostsProxies(library.settings.upload) } : null;
   const place = (saved: LibraryStorage | null) => ({ saved, onThisComputer, onMac });
   return (
     <LibraryStorageSettings

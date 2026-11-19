@@ -199,13 +199,22 @@ export function useImportQuestion({ library, serverHere, onError }: { library: L
   };
 
   const answer = async (look: ImportLook, files: File[]): Promise<Map<File, string> | null> => {
-    if (library?.settings.importMode !== "copy" || !look.paths || !copyAvailable(look.from)) return new Map();
+    const copying = library?.settings.importMode === "copy";
+    // loose files are copied in either mode; a folder's files only under Copy (in place, its row indexes them where they are)
+    const want = look.from === "browser" || !look.paths ? [] : files.filter((f) => look.paths!.has(f) && (copying || !f.webkitRelativePath));
+    if (!want.length) return new Map();
+    if (!copyAvailable(look.from)) {
+      // an older Mac app can't copy: Copy is refused, in place indexes a loose file where it is (no copy was chosen)
+      if (!copying) return new Map();
+      onError("Copy needs the latest Mac app");
+      return null;
+    }
     const row = (await sourceRowsHere())[0];
     if (!row) {
       onError("Add a Source media folder on this computer first");
       return null;
     }
-    return new Map(files.filter((f) => look.paths!.has(f)).map((f) => [f, copyInto(row, f)]));
+    return new Map(want.map((f) => [f, copyInto(row, f)]));
   };
 
   return { prepare, answer };

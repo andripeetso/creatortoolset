@@ -81,7 +81,7 @@ describe("copying a folder into the library folder", () => {
     rmSync(card, { recursive: true }); // the card is taken out
     const status = (await (await app.request("/api/library/lib_c/watch")).json()) as { folders: { found: boolean; copyTo?: string }[]; copyTo?: string };
     expect(status.folders[0]).toMatchObject({ found: true, copyTo: footage });
-    expect(status.copyTo).toMatch(/Creator Toolset\/Footage$/); // the default for the next folder
+    expect(status.copyTo).toMatch(/Creator Toolset\/Source media$/); // the default for the next folder
     expect(existsSync(v.source_path)).toBe(true);
     // the list saves again with the card out (another folder added beside it)
     const more = path.join(dir, "More");

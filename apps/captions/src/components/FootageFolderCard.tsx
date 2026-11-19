@@ -11,9 +11,8 @@ import { useBigFolder } from "@/components/LibraryProcessing";
 
 /**
  * "Where are your videos?": shown by the Media Library and the AI Editor while the account has no footage folder yet.
- * The folder the person picks goes on the Library's watch list (api/library/watch.ts), read where it is or first copied
- * into the Library's Footage folder on this computer, as they choose in the one dialog that opens (useBigFolder offerCopy;
- * the card's words promise neither). Choose a folder opens the Mac app's own folder picker; in a browser on the person's
+ * The folder the person picks becomes a Source media row on this computer (api/devices-storage.ts), read where it is; the
+ * one dialog that opens says what taking it in costs (useBigFolder). Choose a folder opens the Mac app's own folder picker; in a browser on the person's
  * computer it asks for a path, which the server checks. On a hosted server the card offers upload instead.
  * Skip is remembered in this browser; the card goes for good once a folder exists. `page`: in the Media Library's own
  * page while it holds nothing (below its folders), with what the library is for; no heading and no Skip there, and

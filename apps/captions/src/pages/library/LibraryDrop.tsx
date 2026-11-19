@@ -1,8 +1,10 @@
 import { useState, type DragEvent, type ReactNode } from "react";
 import type { LibrarySummary, Organize, WatchStatus } from "@contracts/library";
+import { THIS_COMPUTER } from "@contracts/storage";
 import { useBigFolder } from "@/components/LibraryProcessing";
 import { droppedFiles } from "@/components/assistant/draft";
 import { getWatch } from "@/lib/library";
+import { thisMacDevice } from "@/lib/providers";
 import { droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { pathsInDrop } from "@/lib/onMac";
 
@@ -17,6 +19,9 @@ import { pathsInDrop } from "@/lib/onMac";
 
 /** The files the library takes from a folder (the server's own kinds, api/library/routes.ts kindOf; watch.ts filesIn skips the rest too). */
 export const MEDIA = /\.(mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|aac|ogg|opus|flac|jpe?g|png|heic|webp|gif|tiff?)$/i;
+
+/** A file of a dropped folder (a loose file's webkitRelativePath is empty or absent). */
+const inFolder = (f: File) => (f.webkitRelativePath || "").includes("/");
 
 export function useLibraryDrop({
   library,
@@ -41,10 +46,17 @@ export function useLibraryDrop({
   const libraryId = library?.id;
   const big = useBigFolder();
 
+  // the folder becomes a Source media row on this computer, the request Settings → Folders makes (api/devices-storage.ts)
   const addFolder = async (folder: string) => {
     if (!libraryId) return;
-    const r = await fetch("/api/library/watch/folder", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: folder, libraryId }) });
-    if (!r.ok) return onError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "Could not add the folder");
+    const r = await fetch("/api/devices/storage/folders", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "footage", host: thisMacDevice() ?? THIS_COMPUTER, path: folder }),
+    });
+    const j = r.ok ? {} : ((await r.json().catch(() => ({}))) as { error?: string });
+    // a folder already in the list is what the person wanted: not an error (FoldersStep's send)
+    if (!r.ok && !/already/i.test(j.error ?? "")) return onError(j.error ?? "Could not add the folder");
     onWatch(await getWatch(libraryId));
   };
   const folderIn = (folder: string) => big.check(folder, () => addFolder(folder), { libraryId, organize: { offer, answer: answerOffer } });
@@ -72,11 +84,11 @@ export function useLibraryDrop({
           // under Copy a folder's files are copied in by addFiles, so no row is made for it
           const copying = library?.settings.importMode === "copy";
           if (!copying) await Promise.all(d.folders.map((f) => folderIn(f)));
-          // a folder opened here: only what the library takes (a loose file dropped by itself goes in as it is); in place a
+          // a folder's files: only what the library takes (a loose file dropped by itself goes in as it is); in place a
           // folder's files are its row's to index
-          const files = (d.folder ? d.files.filter((f) => !f.webkitRelativePath.includes("/") || MEDIA.test(f.name)) : d.files).filter(
-            (f) => copying || !d.folders.length || !f.webkitRelativePath.includes("/"),
-          );
+          const files = d.files
+            .filter((f) => !inFolder(f) || MEDIA.test(f.name))
+            .filter((f) => copying || !d.folders.length || !inFolder(f));
           const paths = onMac ? pathsInDrop(files, (await items) ?? [], d.paths) : d.paths;
           // loose files dropped beside folders come once the folders' dialogs are answered: one dialog at a time
           if (files.length) big.after(() => void addFiles(files, paths.size ? paths : undefined));
