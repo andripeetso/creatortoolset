@@ -244,7 +244,7 @@ function FolderList({ role, storage, devices, serverDisks, w, onChanged }: {
  * two or more workspaces: which one saves where), and its menu: Show in Finder (on this Mac), Workspaces (any of them, or
  * all), Remove.
  */
-function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
+export function FolderRow({ folder: f, devices, w, onChanged }: { folder: StorageFolder; devices: Computer[]; w?: SettingsWorkspace; onChanged: () => void }) {
   const exports = f.role === "library";
   const tagged = !!w?.all || (exports && !!w?.many);
   const [picking, setPicking] = useState(false);
@@ -422,7 +422,7 @@ const NEW_MAC = "this-mac:new";
  * A folder the person already has, as a Media folder, on a drive of one of the account's computers. With two or more
  * workspaces the first field is the workspace it is for: the one Settings shows, else the window's.
  */
-function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here = [], w, onChanged }: {
+export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here = [], w, onChanged }: {
   open: boolean; onOpenChange: (o: boolean) => void; role: AddFolderBody["role"]; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; w?: SettingsWorkspace; onChanged: () => void;
 }) {
   // `here`: the computers that are the machine this server runs on. A folder added on one joins the Media Library,
