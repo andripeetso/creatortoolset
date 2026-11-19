@@ -45,6 +45,8 @@ const ana = createUser("ana", "password1");
 createUser("nico", "password1");
 const fullKey = `Bearer ${newApiKey(ana, "full")}`;
 const mac = pairDevice("ana", "Ana's Mac");
+// ana's Media Library is set up (setupAt), so the library tools run instead of the setup card (mediaReady)
+(await import("./library/db")).libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_ana', 'ana', 'Library', 'local', ?, 0)").run(JSON.stringify({ setupAt: "2026-11-01T00:00:00.000Z" }));
 await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: mac.device.id }] }, "ana");
 
 const cookieOf = async (username: string) => {
