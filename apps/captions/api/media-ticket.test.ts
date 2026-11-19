@@ -56,7 +56,7 @@ async function pair(scopes: string[] = ["read", "write", "access"], withKey = fa
   return ((await r.json()) as { access_token: string }).access_token;
 }
 const ask = async (token: string, body: unknown, dpopKey = false) => {
-  const headers = dpopKey ? { authorization: `DPoP ${token}`, dpop: dpop("POST", "http://localhost/api/auth/media-ticket", token) } : { authorization: `Bearer ${token}` };
+  const headers: Record<string, string> = dpopKey ? { authorization: `DPoP ${token}`, dpop: dpop("POST", "http://localhost/api/auth/media-ticket", token) } : { authorization: `Bearer ${token}` };
   return call("POST", "/api/auth/media-ticket", { headers, body });
 };
 
