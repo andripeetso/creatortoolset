@@ -86,6 +86,15 @@ describe("Analysis effort Off", () => {
     expect(jobs(id)).toEqual(expect.arrayContaining(["describe", "transcribe"]));
   });
 
+  it("an edit's own ask still gets a clip's transcript, though the import's is skipped", async () => {
+    const { enqueueJob } = await import("./jobs");
+    const id = await upload("lib_off", "talk.mp4");
+    await drain(["probe"]);
+    expect(jobs(id)).not.toContain("transcribe");
+    enqueueJob(d, "lib_off", id, "transcribe", "owner-a", true);
+    expect(jobs(id)).toContain("transcribe");
+  });
+
   it("an edit's own ask still gets a clip's shot descriptions, and a sweep's does not", async () => {
     const [asked, swept] = [await upload("lib_off", "asked.mp4"), await upload("lib_off", "swept.mp4")];
     await drain(["probe"]);

@@ -353,6 +353,20 @@ describe("the background index", () => {
     expect(job(v, "describe")?.error).toBeNull();
   });
 
+  it("a computer's stills are held by a spent budget too: describeFromStills throws before any AI call", async () => {
+    const { describeFromStills } = await import("./worker");
+    const { BudgetSpent } = await import("./shots");
+    const d = libraryDb();
+    const v = await seed("ast-bud-04");
+    await recordUsage(DESCRIBE_LABEL, { tokens: 1000, costUsd: 5 }, undefined, "workspace", (await libraryWorkspaceId(d, "lib_s")) ?? null);
+    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 1) WHERE id = 'lib_s'`).run();
+    try {
+      await expect(describeFromStills(d, "lib_s", v, "local", [])).rejects.toBeInstanceOf(BudgetSpent);
+    } finally {
+      d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', json('null')) WHERE id = 'lib_s'`).run();
+    }
+  });
+
   it("a timeline watch is held by a spent budget: it does not read the file or ask Gemini", async () => {
     const d = libraryDb();
     const v = await seed("ast-watch-01");
@@ -371,6 +385,18 @@ describe("the background index", () => {
   it("a talking take gets a look only where the library's Max level reads them (lookTalking)", async () => {
     const d = libraryDb();
     const v = await seed("ast-talk-01", { roll: "a", duration: 30, described: false });
+    expect(lookable(d, v)).toBeNull();
+    try {
+      d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookTalking', json('true')) WHERE id = 'lib_s'`).run();
+      expect(lookable(d, v)).toBe("lib_s");
+    } finally {
+      d.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.lookTalking') WHERE id = 'lib_s'`).run();
+    }
+  });
+
+  it("at Max a talking take the AI also calls one gets its look; below Max it still doesn't", async () => {
+    const d = libraryDb();
+    const v = await seed("ast-talk-02", { roll: "a", duration: 30 });
     expect(lookable(d, v)).toBeNull();
     try {
       d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookTalking', json('true')) WHERE id = 'lib_s'`).run();

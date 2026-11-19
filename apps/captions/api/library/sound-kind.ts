@@ -13,7 +13,7 @@ import { soundMiddle } from "./media/wave";
 import { SHORT_SOUND_S } from "./organize";
 import { indexAsset } from "./query";
 import { nameWords } from "./sfx-type";
-import { LISTEN_LABEL, lookBudgetWaits } from "./shots";
+import { BUDGET_WAITS, BudgetSpent, LISTEN_LABEL, lookBudgetWaits } from "./shots";
 import { GEMINI_PRICE, parked, watchKey } from "./timeline";
 
 /**
@@ -103,7 +103,14 @@ export async function settleSoundKind(d: DatabaseSync, versionId: string, e: { s
   if (off.size === TAGS.length) return null; // both taken off, or heard as someone talking before
   let kind: Sound | null = r.kind === "audio" ? soundKindOf({ song: e.song, paths: r.paths, seconds: e.seconds }) : e.song ? "music" : null;
   if (r.kind === "audio" && !kind) {
-    const heard = e.listen ? await e.listen().catch((err: unknown) => (console.warn("[library] listen:", err), null)) : null;
+    // a listen the monthly budget holds throws BudgetSpent: the probe waits and settles again, no length guess stored
+    const heard = e.listen
+      ? await e.listen().catch((err: unknown) => {
+          if (err instanceof BudgetSpent) throw err;
+          console.warn("[library] listen:", err);
+          return null;
+        })
+      : null;
     if (heard === "speech") {
       for (const t of TAGS) d.prepare("INSERT OR IGNORE INTO tag_rejections (asset_id, tag) VALUES (?, ?)").run(r.asset, t);
       return null;
@@ -118,13 +125,13 @@ export async function settleSoundKind(d: DatabaseSync, versionId: string, e: { s
 
 /**
  * Gemini hears up to LISTEN_S seconds from the middle of `file` and says music, sound effect or someone talking. Null
- * when the library's AI is off (describe), `actor` has no Gemini key or its credit is out, or the library's budget is spent.
+ * when the library's AI is off (describe), `actor` has no Gemini key or its credit is out; BudgetSpent when the library's budget is spent.
  * ponytail: one call, no retry; a busy or failed Gemini leaves the file to its length
  */
 export async function listen(d: DatabaseSync, versionId: string, libraryId: string, file: string, seconds: number, actor: string | null): Promise<Heard> {
   const key = watchKey(actor);
   if (!key || !librarySetting(libraryId, "describe") || (parked.get(key)?.until ?? 0) > Date.now()) return null;
-  if (await lookBudgetWaits(d, versionId, firstClips())) return null;
+  if (await lookBudgetWaits(d, versionId, firstClips())) throw new BudgetSpent(BUDGET_WAITS);
   const clip = path.join(process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch"), `listen-${randomUUID()}.mp3`);
   try {
     await soundMiddle(file, seconds, LISTEN_S, clip);

@@ -79,9 +79,9 @@ const start = (lib: string, from?: string) =>
 
 describe("mayReceive: original bytes only where somebody chose to send them", () => {
   // local-first 11-18 decision 6: under none no original reaches the server, a browser or a phone's included
-  it("takes a person's original under originals and all, refuses it under proxies and none (unset reads as none)", () => {
-    for (const id of ["lib_orig", "lib_all"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
-    expect(mayReceive("original", { id: "lib_p" }, "person")).toMatchObject({ ok: false, body: { message: REFUSED_PROXIES } });
+  // replaced (UNIFIED-PRD §4.2, Media Library CEO 11-18): a person's own original is taken under proxies too
+  it("takes a person's original under originals, all and proxies, refuses it under none (unset reads as none)", () => {
+    for (const id of ["lib_orig", "lib_all", "lib_p"]) expect(mayReceive("original", { id }, "person")).toEqual({ ok: true });
     for (const id of ["lib_none", "lib_unset"]) {
       expect(mayReceive("original", { id }, "person")).toEqual({ ok: false, status: 409, body: { error: REFUSED_NONE, code: "upload_refused", message: REFUSED_NONE } });
     }

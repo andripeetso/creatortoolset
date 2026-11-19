@@ -24,7 +24,7 @@ import { makeThumb } from "./media/thumb";
 import { makeWave } from "./media/wave";
 import { keySound, NeedsKey, transcribeVersion, versionRoute } from "./transcribe";
 import { sortAfter, sortRoll, sortUnsorted } from "./roll";
-import { BUDGET_WAITS, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
+import { BUDGET_WAITS, BudgetSpent, lookAllowed, lookBudgetWaits, lookFromSheets, lookVersion, MAC_WAITS, needLookRoute, NO_ACCESS, queueLook, sweepLook } from "./shots";
 import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./mac-look";
 import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
@@ -84,8 +84,7 @@ const EXTRA = new Set(["transcribe", "describe", "look", "fingerprint", "embed",
 /** The steps that ask the person's AI: a usage limit or a Mac that is off holds them, never fails them. */
 const ON_AI = ["describe", "look"];
 
-/** A look held for its library's monthly budget (shots.ts lookBudgetWaits): it waits, saying so, and asks again in BUDGET_RETRY_S. */
-class BudgetSpent extends Error {}
+/** A look or a listen held for its library's monthly budget (shots.ts BudgetSpent): it waits, saying so, and asks again in BUDGET_RETRY_S. */
 const BUDGET_RETRY_S = 10 * 60;
 
 const scratch = () => process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch");
@@ -345,7 +344,7 @@ export async function tick(now = Date.now(), kinds: readonly string[] = LANES.fl
     // a transcript whose speech model did not download (a weak connection) waits a minute and tries again, saying why:
     // the clip did not fail, and what came in whole is kept (lib/device-transcribe.ts)
     // one made on the person's computer waits for one with its model to be on, saying so
-    const wait = ON_AI.includes(job.kind) ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
+    const wait = ON_AI.includes(job.kind) || e instanceof BudgetSpent ? waitFor(e) : e instanceof ModelNotReady || e instanceof ComputerOff ? MODEL_RETRY_S : 0;
     if (wait) {
       defer(db, job.id, wait);
       if (isLimit(e)) holdForLimit(db, job.actor, limitLine((e as Error).message), Date.now() + wait * 1000);
@@ -456,10 +455,14 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
     .prepare(
       `SELECT v.source_key, a.library_id, d.storage_key AS proxy FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' AND d.storage_key IS NOT NULL
-       WHERE v.id = ? AND a.kind = 'video' AND v.from_path IS NOT NULL AND v.mac_path IS NULL AND v.source_path IS NULL
-         -- the computer it came from still holds it: else the original waits on the server
-         -- a verified place row (its size, time and fingerprint read there); removal for good needs whereis.ts mayRemoveServerCopy
-         AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.kind = 'original' AND p.state = 'verified')
+       WHERE v.id = ? AND a.kind = 'video' AND v.mac_path IS NULL AND v.source_path IS NULL
+         AND (
+           -- a browser's original (no computer, no phone) is the person's own file: dropped once its proxy is made
+           (v.from_path IS NULL AND IFNULL(v.origin, '') != 'phone')
+           -- a computer's: the computer it came from still holds it, else the original waits on the server
+           -- a verified place row (its size, time and fingerprint read there); removal for good needs whereis.ts mayRemoveServerCopy
+           OR (v.from_path IS NOT NULL AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.kind = 'original' AND p.state = 'verified'))
+         )
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind IN (${marks(READS_ORIGINAL)}) AND j.state IN ('queued', 'running'))`,
     )
     .get(versionId, ...READS_ORIGINAL) as { source_key: string; library_id: string; proxy: string } | undefined;
@@ -701,6 +704,8 @@ async function lookOnMac(db: ReturnType<typeof libraryDb>, v: VersionRow, job: J
  * what follows a description: its first one gets shot descriptions, new words get search by meaning. The caller drops the stills.
  */
 export async function describeFromStills(db: ReturnType<typeof libraryDb>, libraryId: string, versionId: string, actor: string | null, stills: string[], duration?: number): Promise<void> {
+  // held by the monthly budget here too: a computer's stills are described on the server's key the same way (UNIFIED-PRD §4.5)
+  await budgetCheck(db, versionId);
   const fresh = !described(versionId);
   const p = JSON.parse((db.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null;
   await describeVersion(db, versionId, "", duration ?? p?.duration ?? 0, actor, scratch(), stills);

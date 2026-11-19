@@ -90,7 +90,8 @@ export function mayReceive(
   // under proxies an original is refused with or without the computer's proof: only the proxy is kept (UNIFIED-PRD §4.2)
   // the phone's own file is the one original no computer holds yet: taken under proxies and none alike (a computer makes its proxy)
   if (kind === "original") {
-    if (hostsOriginals(upload) || origin === "phone") return { ok: true };
+    // a person's own file (browser or phone) is theirs to send under proxies too: the server keeps its proxy (UNIFIED-PRD §4.2)
+    if (hostsOriginals(upload) || origin === "phone" || (origin === "person" && upload === "proxies")) return { ok: true };
     return refuse(upload === "proxies" ? REFUSED_PROXIES : REFUSED_NONE);
   }
   // a person's proxy (the phone's 720p copy) is less than the original they could send; a computer's needs Hosted proxies

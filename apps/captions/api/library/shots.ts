@@ -50,6 +50,8 @@ export const SHEET_FORMAT = `${STRETCH_FRAMES}x${SHEET_STRETCHES}`;
 export const MAC_WAITS = "Waits for the Mac this file is on to read its picture";
 /** Why a description or look waits for its library's monthly budget (lookBudgetWaits; worker.ts holds it, estimate.ts shows budgetPause). */
 export const BUDGET_WAITS = "monthly budget reached";
+/** Work held for its library's monthly budget: its job waits, saying so, and asks again later (worker.ts). */
+export class BudgetSpent extends Error {}
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** The progress line while the budget is spent: analysis resumes on the first of next month (UTC, the budget's month). */
 export const budgetPause = (now = Date.now()): string => {
@@ -122,7 +124,7 @@ export function lookable(db: DatabaseSync, versionId: string, asked = false): st
     )
     .get(versionId) as { library_id: string; kind: string; roll: string | null; probe: string | null; ai: string | null; talking: number } | undefined;
   // talking takes get a look only at Max (lookTalking, the flags' Max marker)
-  if (!r || r.kind !== "video" || !(r.roll === "b" || (r.roll === "a" && r.talking)) || r.ai === "a") return null;
+  if (!r || r.kind !== "video" || !(r.roll === "b" || (r.roll === "a" && r.talking)) || (r.ai === "a" && !r.talking)) return null;
   const duration = Number((JSON.parse(r.probe ?? "null") as ProbeSummary | null)?.duration) || 0;
   // an edit's own ask (asked) gets its shot descriptions whatever the library's Shot descriptions switch says (UNIFIED-PRD §4.4)
   return duration <= LOOK_MIN_S || (!asked && !librarySetting(r.library_id, "look")) ? null : r.library_id;
