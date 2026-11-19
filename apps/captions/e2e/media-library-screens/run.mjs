@@ -106,7 +106,7 @@ async function login(ctx, who) {
 }
 
 async function go(page, route) {
-  await page.goto(BASE + route, { waitUntil: "networkidle" });
+  await page.goto(BASE + route, { waitUntil: "networkidle", timeout: 120_000 });
   await page.waitForTimeout(800);
 }
 
