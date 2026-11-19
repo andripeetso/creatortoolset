@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Activity, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
-import { hostsOriginals, hostsProxies, LIBRARY_WORDS } from "@contracts/library";
+import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
@@ -14,7 +14,7 @@ import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
 import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { LibrarySetup } from "./library/Setup";
-import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
+import { LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
@@ -45,7 +45,7 @@ import {
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { importCancel, importCopy, importProgress, pathOnMac, thisMacBridge } from "@/lib/thisMac";
-import { addRefused, checkUpload } from "@/lib/library";
+import { addRefused, checkUpload, getEstimate } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
 import { quickPrint } from "@/lib/onMac";
 import { confirmDialog } from "@/lib/dialogs";
@@ -53,7 +53,9 @@ import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
 import { AssetRow, AssetTile, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
-import { alreadyThere, UploadTray, type Upload as UploadItem } from "./library/Uploads";
+import { alreadyThere, type Upload as UploadItem } from "./library/Uploads";
+import { ImportSummary, PlaceholderTile, going, placeholderShown, summaryLine } from "./library/Placeholders";
+import { importGates, volumeOf } from "./library/import-pool";
 import { ClipView } from "./library/ClipView";
 import { FoundInClips } from "./library/FoundInClips";
 import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
@@ -64,7 +66,7 @@ import { setOffline, useOffline } from "./library/offline-state";
 import { thisMacDevice } from "@/lib/providers";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
-import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";
+import { FoldersToAllow, useImportQuestion } from "./library/Import";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, savable, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
@@ -114,13 +116,14 @@ export default function LibraryPage() {
   const [facets, setFacets] = useState<Record<string, string[]>>({}); // plug-in sidebar filters picked so far
   const [filters, setFilters] = useState<LibraryFilters>({}); // tags, when, where (./library/Filters.tsx)
   const [uploads, setUploads] = useState<UploadItem[]>([]);
-  const [asking, setAsking] = useState<File[] | null>(null); // a big upload, waiting for its go after the estimate
-  const askingLook = useRef<ImportLook | null>(null); // those files' places on this Mac and what adding them asks (./library/Import.tsx)
+  // a drop's files go in side by side, each stage bounded (./library/import-pool.ts); one line counts them from `importStart`
+  const importGatesRef = useRef(importGates());
+  const [importStart, setImportStart] = useState(0);
+  const [importUsd, setImportUsd] = useState<number | null>(null);
   const [sharing, setSharing] = useState<AssetCard | null>(null); // the clip whose share box is open (right-click Share…)
   const [ruling, setRuling] = useState<Collection | null>(null); // the folder whose "What goes here…" is open (smart folders)
   const [reorganizing, setReorganizing] = useState(false);
   const [tags, setTags] = useState<string[]>([]); // the library's tags, most used first (Add tag)
-  const [askingHere, setAskingHere] = useState(false); // those files are on this computer: added where they are, not uploaded
   const [preview, setPreview] = useState<AssetCard | null>(null);
   const [startAt, setStartAt] = useState(0); // the second the preview opens at (a line said in it)
   const [found, setFound] = useState<{ hits: SearchHit[]; meaningGettingReady: boolean } | null>(null); // a search's answer
@@ -258,7 +261,6 @@ export default function LibraryPage() {
     sourceList?.length === 0 &&
     !watch?.folders.length &&
     !uploads.length &&
-    !asking &&
     trashPeek.data?.items.length === 0;
   const settling = emptyView && !firstScreen && (!foldersKnown || !watchKnown || !trashPeek.data || !sourceList); // still finding out: the frame, not a wrong screen
 
@@ -403,21 +405,28 @@ export default function LibraryPage() {
       // a file that is in the library already never goes, nor is taken in where it is (a failed check: the server checks
       // too). Indexed on the Mac it is matched there by its first and last MiB, so no gigabytes are hashed here; one to
       // copy first is matched the same way, so no copy is made of a file the library has
+      const g = importGatesRef.current;
+      // each stage waits only for its own room (./library/import-pool.ts): a full stage never holds another file's other stage
       const dup = mac
         ? u.copyTo
-          ? ((await checkUpload(libId, u.file.size, `mac:${await quickPrint(u.file)}`).catch(() => null))?.duplicateOf ?? null)
+          ? await g.server(async () => (await checkUpload(libId, u.file.size, `mac:${await quickPrint(u.file)}`).catch(() => null))?.duplicateOf ?? null)
           : null
-        : await alreadyThere(libId, u.file, () => ctl.signal.aborted || patch(u.key, { status: "checking", error: undefined })).catch(() => null);
+        : await g.server(() => alreadyThere(libId, u.file, () => ctl.signal.aborted || patch(u.key, { status: "checking", error: undefined })).catch(() => null));
       ctl.signal.throwIfAborted();
       if (dup) return patch(u.key, { status: "duplicate", sent: u.file.size, error: undefined });
       // copied into the library's folder on this Mac first (the Mac app does it), then taken in from there
       if (u.copyTo && here) {
-        here = await copyFirst(u, here, ctl.signal);
+        const from = here;
+        here = await g.copy(volumeOf(u.copyTo), () => (ctl.signal.throwIfAborted(), copyFirst(u, from, ctl.signal)));
         patch(u.key, { path: here, copyTo: undefined });
       }
-      patch(u.key, { status: "uploading", sent: 0, error: undefined });
-      const r = await uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, here, { signal: ctl.signal, onMac: mac });
-      patch(u.key, r.duplicateOf || r.duplicate ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size });
+      const at = here;
+      const r = await g.index(() => {
+        ctl.signal.throwIfAborted();
+        patch(u.key, { status: "uploading", sent: 0, error: undefined });
+        return uploadFile(libId, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: mac });
+      });
+      patch(u.key, r.duplicateOf || r.duplicate ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size, assetId: r.assetId });
       reload();
       if (u.folderId) reloadFolders(); // the folder's count
     } catch (e) {
@@ -464,22 +473,29 @@ export default function LibraryPage() {
     // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
     // indexed on this Mac: nothing uploads either
     const here = onMac || (look.paths ? look.paths.size === all.length : false);
-    // the first upload also asks how the library sorts files
-    if (all.length >= BIG_DROP || organize.offer) {
-      askingLook.current = look;
-      setAskingHere(here);
-      setAsking(all);
-    } else void importQ.answer(look, all).then((copies) => copies && start(all, here, look.paths, copies));
+    // a drop or a pick goes in at once (11-19: no "Add N files?"): Effort, models and the monthly budget were chosen in
+    // setup, and the budget holds the analysis at its cap
+    void importQ.answer(look, all).then((copies) => copies && start(all, here, look.paths, copies));
   };
 
-  // one file after another: the server's disk and the phone's data are both easier on that
+  // every file starts at once and waits only where its stage is full (./library/import-pool.ts); each has its card at once
   const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
     const folderId = into ?? undefined;
     const added = files.map((file) => ({ key: ++keys.current, file, sent: 0, folderId, status: "waiting" as const, inPlace: paths ? paths.has(file) : here, path: paths?.get(file), copyTo: copies?.get(file) }));
-    setUploads((prev) => [...prev, ...added]);
-    void (async () => {
-      for (const u of added) await send(u);
-    })();
+    setUploads((prev) => {
+      // a new batch (nothing going): the count, the pace and the cost start again
+      if (!prev.some(going)) {
+        setImportStart(Date.now());
+        setImportUsd(null);
+      }
+      return [...prev.filter((u) => going(u) || u.status === "failed"), ...added];
+    });
+    if (libId && levelOf(library?.settings ?? {}) !== "off")
+      void getEstimate(libId, { clips: files.length, bytes: files.reduce((n, f) => n + f.size, 0), ...audioOf(files) }).then(
+        (e) => setImportUsd((was) => (was ?? 0) + e.steps.reduce((n, x) => n + x.usd, 0)),
+        () => {},
+      );
+    for (const u of added) void send(u);
   };
 
   const saved = (l: LibrarySummary) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
@@ -911,6 +927,15 @@ export default function LibraryPage() {
   const trail = trailOf(collections, open, trash);
   // the tabs are the Gallery's way into folders; the folders and list views show the folders themselves
   const tabbed = view === "gallery" && tabs.some((t) => t.active);
+  // a drop's files as cards (./library/Placeholders.tsx), first in the folder they were dropped in, until each clip's own card is here
+  const onPage = (id: string) => shown.some((a) => a.id === id);
+  const placeholders =
+    trash || narrowed
+      ? []
+      : uploads
+          .filter((u) => placeholderShown(u, onPage) && (u.folderId ?? null) === (into ?? null))
+          .map((u) => <PlaceholderTile key={`up-${u.key}`} upload={u} onRetry={() => void send(u, true)} onCancel={() => cancel([u.key])} />);
+  const importLine = summaryLine(uploads, importStart, Date.now(), importUsd);
   const tile = (a: AssetCard) => (
     <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
       <AssetTile asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} ownShape={kind === "image"} />
@@ -934,25 +959,6 @@ export default function LibraryPage() {
       <AppBar tool="Media Library" trail={library?.name}>
         <ProjectSwitcher />
       </AppBar>
-      {asking && libId && (
-        <BigUploadDialog
-          libraryId={libId}
-          drop={{ clips: asking.length, bytes: asking.reduce((n, f) => n + f.size, 0), ...audioOf(asking) }}
-          title={`${askingHere ? "Add" : "Upload"} ${asking.length.toLocaleString()} ${asking.length === 1 ? "file" : "files"}?`}
-          go={askingHere ? "Add" : "Upload"}
-          offer={organize.offer}
-          estimate={asking.length >= BIG_DROP}
-          onClose={() => setAsking(null)}
-          onUpload={async (o) => {
-            setAsking(null);
-            if (o) await organize.answerOffer(o); // before the files: each is filed as it comes in
-            const look = askingLook.current!;
-            const copies = await importQ.answer(look, asking);
-            if (copies) start(asking, askingHere, look.paths, copies);
-          }}
-        >
-        </BigUploadDialog>
-      )}
       <input
         ref={picker}
         type="file"
@@ -1117,16 +1123,11 @@ export default function LibraryPage() {
               >
                 {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} onReorder={readOnly ? undefined : reorderFolders} />}
 
-                <LibraryProgressBar libraryId={library.id} />
+                {/* one line while a drop goes in; the library's own progress line otherwise */}
+                {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancel(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} />}
                 <FoldersToAllow />
                 {statusOpen && <LibraryStatusDialog libraryId={library.id} onClose={() => setStatusOpen(false)} />}
 
-                <UploadTray
-                  uploads={uploads}
-                  onRetry={(u) => void send(u, true)}
-                  onCancel={cancel}
-                  onClear={() => setUploads((prev) => prev.filter((u) => u.status === "uploading" || u.status === "waiting" || u.status === "checking" || u.status === "copying"))}
-                />
 
                 {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Preparing search by meaning</p>}
 
@@ -1134,12 +1135,13 @@ export default function LibraryPage() {
 
                 {(searching ? !found : !first.data) || settling ? (
                   view === "list" ? <RowFrame /> : <TileFrame columns={columns} />
-                ) : shown.length > 0 || shownFolders.length > 0 ? (
+                ) : shown.length > 0 || shownFolders.length > 0 || placeholders.length > 0 ? (
                   view === "list" ? (
                     <div className="flex flex-col gap-1.5">
                       {shownFolders.map((c) => (
                         <FolderRow key={c.id} {...folderProps(c)} />
                       ))}
+                      {placeholders.length > 0 && <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2">{placeholders}</div>}
                       {shown.map((a) => (
                         <ClipPick key={a.id} row picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
                           <AssetRow asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
@@ -1149,6 +1151,7 @@ export default function LibraryPage() {
                   ) : view === "gallery" ? (
                     <GalleryGrid
                       assets={shown}
+                      lead={placeholders}
                       size={cardSize}
                       tile={(a, ownShape) => (
                         <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
@@ -1160,6 +1163,7 @@ export default function LibraryPage() {
                     // photos in their own proportions, folders above them
                     <div className="flex flex-col gap-3">
                       {shownFolders.length > 0 && <FolderGrid size="small" columns={columns}>{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} lines={c.sounds} />)}</FolderGrid>}
+                      {placeholders.length > 0 && <FolderGrid size="small" columns={columns}>{placeholders}</FolderGrid>}
                       <PhotoMasonry assets={shown} tile={tile} />
                     </div>
                   ) : (
@@ -1167,6 +1171,7 @@ export default function LibraryPage() {
                       {shownFolders.map((c) => (
                         <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} lines={c.sounds} />
                       ))}
+                      {placeholders}
                       {shown.map(tile)}
                     </FolderGrid>
                   )

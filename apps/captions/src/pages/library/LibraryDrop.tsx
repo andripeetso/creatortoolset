@@ -1,7 +1,6 @@
 import { useState, type DragEvent, type ReactNode } from "react";
 import type { LibrarySummary, Organize, WatchStatus } from "@contracts/library";
 import { THIS_COMPUTER } from "@contracts/storage";
-import { useBigFolder } from "@/components/LibraryProcessing";
 import { droppedFiles } from "@/components/assistant/draft";
 import { getWatch } from "@/lib/library";
 import { thisMacDevice } from "@/lib/providers";
@@ -10,8 +9,8 @@ import { pathsInDrop } from "@/lib/onMac";
 
 /**
  * Files and folders dropped anywhere on the Media Library page, with no question: the library's stored answer decides
- * (settings.importMode; unset reads as in place). In place, a dropped folder becomes a Source media row, one dialog if it
- * is big (Choose a folder's), and is indexed where it is. Under Copy, a folder's files and loose files go to addFiles,
+ * (settings.importMode; unset reads as in place). In place, a dropped folder becomes a Source media row at once, with no
+ * question however big (11-19: a drop means "add these"; the monthly budget holds the analysis), and is indexed where it is. Under Copy, a folder's files and loose files go to addFiles,
  * which copies them into the first Source media row on this computer (./Import.tsx). A browser's files upload. Returns
  * the page root's handlers, whether files are held over it and the dialog. A drag of the type `ignore` (the page's own
  * clips) is not a drop of files.
@@ -27,8 +26,6 @@ export function useLibraryDrop({
   library,
   ignore,
   readsFolders,
-  offer,
-  answerOffer,
   addFiles,
   onWatch,
   onError,
@@ -36,15 +33,15 @@ export function useLibraryDrop({
   library: LibrarySummary | null;
   ignore?: string;
   readsFolders: boolean;
-  offer: boolean;
-  answerOffer: (o: Organize) => Promise<void>;
+  /** kept for callers from before 11-19: a drop asks nothing now, so these are not read */
+  offer?: boolean;
+  answerOffer?: (o: Organize) => Promise<void>;
   addFiles: (files: File[], paths?: Map<File, string>) => unknown;
   onWatch: (w: WatchStatus) => void;
   onError: (e: string) => void;
 }): { props: { onDragOver: (e: DragEvent) => void; onDragLeave: (e: DragEvent) => void; onDrop: (e: DragEvent) => void }; dropping: boolean; dialog: ReactNode } {
   const [dropping, setDropping] = useState(false);
   const libraryId = library?.id;
-  const big = useBigFolder();
 
   // the folder becomes a Source media row on this computer, the request Settings → Folders makes (api/devices-storage.ts)
   const addFolder = async (folder: string) => {
@@ -59,7 +56,7 @@ export function useLibraryDrop({
     if (!r.ok && !/already/i.test(j.error ?? "")) return onError(j.error ?? "Could not add the folder");
     onWatch(await getWatch(libraryId));
   };
-  const folderIn = (folder: string) => big.check(folder, () => addFolder(folder), { libraryId, organize: { offer, answer: answerOffer } });
+  const folderIn = (folder: string) => addFolder(folder).catch((x: unknown) => onError(x instanceof Error ? x.message : String(x)));
 
   const props = {
     onDragOver: (e: DragEvent) => {
@@ -90,13 +87,12 @@ export function useLibraryDrop({
             .filter((f) => !inFolder(f) || MEDIA.test(f.name))
             .filter((f) => copying || !d.folders.length || !inFolder(f));
           const paths = onMac ? pathsInDrop(files, (await items) ?? [], d.paths) : d.paths;
-          // loose files dropped beside folders come once the folders' dialogs are answered: one dialog at a time
-          if (files.length) big.after(() => void addFiles(files, paths.size ? paths : undefined));
+          if (files.length) void addFiles(files, paths.size ? paths : undefined);
         },
         (x: unknown) => onError(x instanceof Error ? x.message : String(x)),
       );
     },
   };
 
-  return { props, dropping, dialog: big.dialog };
+  return { props, dropping, dialog: null };
 }
