@@ -97,8 +97,8 @@ describe("the out-of-credit warning", () => {
   it("the server's key goes to its admins", async () => {
     process.env.GEMINI_API_KEY = "gk-server";
     try {
-      creditOut("GEMINI_API_KEY", "gk-server", "Media Library timelines");
-      expect(creditRows("local")[0]).toMatchObject({ title: "Gemini API: out of credit", detail: "Media Library timelines wait · the rest carries on without Gemini" });
+      creditOut("GEMINI_API_KEY", "gk-server", "Media Library video breakdowns");
+      expect(creditRows("local")[0]).toMatchObject({ title: "Gemini API: out of credit", detail: "Media Library video breakdowns wait · the rest carries on without Gemini" });
     } finally {
       delete process.env.GEMINI_API_KEY;
       creditBack("GEMINI_API_KEY", "gk-server");
@@ -112,16 +112,16 @@ describe("a choice while the credit is out", () => {
     saveMyKey("local", "GEMINI_API_KEY", "gk-test");
     const t0 = Date.now();
     try {
-      creditOut("GEMINI_API_KEY", "gk-test", "Media Library timelines", t0);
+      creditOut("GEMINI_API_KEY", "gk-test", "Media Library video breakdowns", t0);
       expect(labels(false)).toEqual(["Top up", "Continue without"]);
       expect(labels(true)).toEqual(["Top up", "Use Antigravity until then", "Continue without"]);
       expect(creditRows("local")[0]!.choices![0]).toEqual({ label: "Top up", url: "https://aistudio.google.com/billing" });
       expect(chooseCredit("GEMINI_API_KEY", "someone", "without")).toBe(false);
       expect(chooseCredit("GEMINI_API_KEY", "local", "antigravity")).toBe(true);
       expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBe("antigravity");
-      expect(creditRows("local", true)[0]).toMatchObject({ detail: "Timelines are made on Antigravity, picture only, until it is topped up" });
+      expect(creditRows("local", true)[0]).toMatchObject({ detail: "Video breakdowns are made on Antigravity, picture only, until it is topped up" });
       expect(labels(true)).toEqual(["Top up", "Continue without"]);
-      creditOut("GEMINI_API_KEY", "gk-test", "Media Library timelines", t0 + 25 * 3600_000);
+      creditOut("GEMINI_API_KEY", "gk-test", "Media Library video breakdowns", t0 + 25 * 3600_000);
       expect(creditChoice("GEMINI_API_KEY", "gk-test", "local")).toBe("antigravity");
       // without: nothing waits on them any more
       chooseCredit("GEMINI_API_KEY", "local", "without");
@@ -135,7 +135,7 @@ describe("a choice while the credit is out", () => {
   });
 
   it("a key with two owners: each one's pick is their own", () => {
-    creditGone.set("GEMINI_API_KEY:gk-two", { name: "GEMINI_API_KEY", stopped: "Media Library timelines", owners: ["local", "other"], at: Date.now() });
+    creditGone.set("GEMINI_API_KEY:gk-two", { name: "GEMINI_API_KEY", stopped: "Media Library video breakdowns", owners: ["local", "other"], at: Date.now() });
     try {
       chooseCredit("GEMINI_API_KEY", "local", "antigravity");
       expect(creditChoice("GEMINI_API_KEY", "gk-two", "local")).toBe("antigravity");
