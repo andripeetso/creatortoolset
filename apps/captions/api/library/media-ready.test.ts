@@ -51,7 +51,7 @@ describe("mediaReady", () => {
 
   it("reads the workspace's library by projectId, whoever asks, and clears once setupAt is set", async () => {
     libraryDb().prepare("UPDATE libraries SET settings = ? WHERE id = 'lib_p'").run(JSON.stringify({ projectId: "ws_p", setupAt: "2026-11-18T10:00:00.000Z" }));
-    expect(await mediaReady("mem", "ws_p").ready).toBe(true);
+    expect((await mediaReady("mem", "ws_p")).ready).toBe(true);
     expect(await setupNeeded("mem", "ws_p")).toBeNull();
   });
 
