@@ -25,6 +25,7 @@ const post = (token: string, url: string, body: unknown) =>
 const claim = (token: string, kinds: string[]) => json<{ job: { id: number; kind: string; editId: string; footage?: unknown } | null }>(post(token, "/api/devices/relay/editor/claim", { kinds }));
 
 const row = (r: Partial<FileRow>): FileRow => ({ id: "v", source_key: "k", source_path: null, mac_path: null, mac_device: null, proxy: null, ...r });
+const serverWork = (on: boolean) => writeFileSync(path.join(dir, "server-work.json"), JSON.stringify({ on, v: 2 }));
 
 describe("how a computer gets at a file", () => {
   const onMac = row({ source_key: "mac:v", mac_path: "/Users/tiny/Movies/a.mp4", mac_device: "mac" });
@@ -110,6 +111,8 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     expect(libraryDb().prepare("SELECT state FROM edit_jobs WHERE version_id = ?").get(`${editId}:v2`)).toEqual({ state: "queued" });
   });
   it("with a copy on the server: a free computer that reads it on its own disk first, else one that downloads its proxy", async () => {
+    // a server copy is fetched only while the server's video work is off (UNIFIED-PRD 4.7): server rendering off here
+    serverWork(false);
     libraryDb().exec("UPDATE asset_versions SET source_key = 'k_r1' WHERE id = 'ver_r1'; INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('ver_r1', 'proxy', 'libraries/lib_r/ver_r1/proxy.mp4', 1)");
     // the laptop is busy with v1, so the PC takes v2 from the server's copy rather than leave it waiting
     expect((await claim(strong.token, ["reach-render"])).job).toMatchObject({ kind: "reach-render", editId });
@@ -118,6 +121,10 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
     enqueueJob(libraryDb(), "maker", `${editId}:v3`, "reach-render", "maker", false, "edit_jobs");
     expect((await claim(strong.token, ["reach-render"])).job).toBeNull();
     expect((await claim(weak.token, ["reach-render"])).job).toMatchObject({ kind: "reach-render", editId });
+    // server rendering on: the server runs the step, so the computer that lacks the file gets no copy
+    serverWork(true);
+    enqueueJob(libraryDb(), "maker", `${editId}:v5`, "reach-render", "maker", false, "edit_jobs");
+    expect((await claim(strong.token, ["reach-render"])).job).toBeNull();
   });
   it("hands the computer that takes it the paths on its own disks: a shared folder found at another path", async () => {
     // the folder was added on the laptop (a Mac) and the PC found its marker at /mnt/footage
@@ -141,7 +148,8 @@ describe.skipIf(rootReplaced)("a heavy step goes to a computer that can read its
       writeFileSync(file, text);
       await blobs.put(k, file);
     }
-    libraryDb().exec(`UPDATE asset_versions SET source_key = '${key}' WHERE id = 'ver_r1'; UPDATE edit_jobs SET state = 'done', device = NULL WHERE device = '${strong.device.id}'`);
+    serverWork(false);
+    libraryDb().exec(`UPDATE asset_versions SET source_key = '${key}' WHERE id = 'ver_r1'; UPDATE edit_jobs SET state = 'done', device = NULL WHERE device = '${strong.device.id}' OR state = 'queued'`);
     enqueueJob(libraryDb(), "maker", `${editId}:v4`, "reach-render", "maker", false, "edit_jobs");
     const job = (await claim(strong.token, ["reach-render"])).job!;
     expect(job.footage).toEqual([{ id: "ver_r1", copy: "proxy" }]);

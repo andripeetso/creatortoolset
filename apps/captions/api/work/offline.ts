@@ -3,6 +3,7 @@ import path from "node:path";
 import { Hono } from "hono";
 import type { Device } from "../../contracts/providers";
 import type { WorkOffline } from "../../contracts/work";
+import { hostsOriginals, hostsProxies } from "../../contracts/library";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { deviceOf, listDevices, setDeviceWork } from "../lib/devices";
@@ -23,13 +24,18 @@ import { assetRef, canSee } from "../library/sources";
  * Settings → Storage counts each computer's cache from its last claim (api/kept.ts) and Empty tells it on the next one.
  */
 
+export interface Downloads {
+  mode: "none" | "needed" | "all";
+  proxies?: boolean;
+  originals?: boolean;
+}
+
 export interface OfflineList {
   versions: string[];
   collections: string[];
   libraries?: string[];
-  /** Downloads per library (UNIFIED-PRD M13): none, needed (Automatic downloads) or all (Make available offline) + kinds.
-   *  An old `libraries` entry reads as { mode: "all", proxies: true } at read time. */
-  downloads?: Record<string, { mode: "none" | "needed" | "all"; proxies?: boolean; originals?: boolean }>;
+  /** Downloads per library (UNIFIED-PRD M13); read through downloadsOf. */
+  downloads?: Record<string, Downloads>;
 }
 
 const fileOf = (user: string) => path.join(env.dataDir, "offline", `${encodeURIComponent(user)}.json`);
@@ -41,10 +47,30 @@ export function offlineOf(user: string): OfflineList {
       versions: Array.isArray(v.versions) ? v.versions : [],
       collections: Array.isArray(v.collections) ? v.collections : [],
       ...(Array.isArray(v.libraries) && v.libraries.length ? { libraries: v.libraries } : {}),
+      ...(v.downloads && typeof v.downloads === "object" ? { downloads: v.downloads } : {}),
     };
   } catch {
     return { versions: [], collections: [] };
   }
+}
+
+/**
+ * A library's downloads for the person (UNIFIED-PRD M13): its stored entry; an old "Keep on this computer" library reads
+ * as all with proxies; with no entry, Automatic downloads is on (needed).
+ */
+export function downloadsOf(list: OfflineList, libraryId: string): Downloads {
+  const d = list.downloads?.[libraryId];
+  if (d) return d;
+  return list.libraries?.includes(libraryId) ? { mode: "all", proxies: true } : { mode: "needed" };
+}
+
+/** Whether a computer of `owner` may fetch the server's copies of this library's files (Automatic downloads on). */
+export const downloadsAllow = (owner: string, libraryId: string | undefined): boolean => downloadsAllowFor(owner)(libraryId);
+
+/** The same, reading the owner's offline file once for many files (a claim checks every file of every queued step). */
+export function downloadsAllowFor(owner: string): (libraryId: string | undefined) => boolean {
+  const list = offlineOf(owner);
+  return (libraryId) => !!libraryId && downloadsOf(list, libraryId).mode !== "none";
 }
 
 function saveOffline(user: string, list: OfflineList): void {
@@ -67,7 +93,10 @@ export async function mayRead(user: string, libraryId: string, assetId: string, 
  */
 export async function offlineFor(d: Pick<Device, "id" | "owner">): Promise<WorkOffline[]> {
   const list = offlineOf(d.owner);
-  const libraries = list.libraries ?? [];
+  const libraries = [...new Set([...(list.libraries ?? []), ...Object.keys(list.downloads ?? {})])].filter((id) => {
+    const x = downloadsOf(list, id);
+    return x.mode === "all" && !!x.proxies;
+  });
   if (!list.versions.length && !list.collections.length && !libraries.length) return [];
   const rows = db()
     .prepare(
@@ -131,6 +160,34 @@ export async function claimExtras(deviceId: string, kept?: string[], cached?: st
 export const offlineApp = new Hono<{ Variables: AuthVars }>();
 
 offlineApp.get("/", (c) => c.json(offlineOf(c.get("user").username)));
+
+/**
+ * Library settings → Downloads (M13): the asker's own library entry, written only to their file. Automatic off = none;
+ * Automatic on = needed; offline on = all with the kinds the library hosts (a kind it doesn't host is dropped).
+ */
+offlineApp.put("/downloads", async (c) => {
+  const user = c.get("user").username;
+  const b = (await c.req.json().catch(() => null)) as { library?: unknown; mode?: unknown; proxies?: unknown; originals?: unknown } | null;
+  if (typeof b?.library !== "string" || (b.mode !== "none" && b.mode !== "needed" && b.mode !== "all"))
+    return c.json({ error: "library: an id, mode: none, needed or all" }, 400);
+  const libId = b.library;
+  if (!(await readerOf(user, libId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const upload = libraryUpload(libId);
+  if (b.mode === "all" && upload === "none") return c.json({ error: "This library keeps its files on your computers; there is no proxy to keep.", code: "no_proxies" }, 409);
+  const next: Downloads =
+    b.mode === "all"
+      ? { mode: "all", proxies: b.proxies === true && hostsProxies(upload), originals: b.originals === true && hostsOriginals(upload) }
+      : { mode: b.mode };
+  if (next.mode === "all" && !next.proxies && !next.originals) return c.json({ error: "Pick Proxies, Originals or both." }, 400);
+  const list = offlineOf(user);
+  // the old "Keep on this computer" entry is superseded by this one
+  const libraries = list.libraries?.filter((x) => x !== libId);
+  const saved: OfflineList = { ...list, downloads: { ...list.downloads, [libId]: next } };
+  if (libraries?.length) saved.libraries = libraries;
+  else delete saved.libraries;
+  saveOffline(user, saved);
+  return c.json(saved);
+});
 
 offlineApp.post("/", async (c) => {
   const user = c.get("user").username;

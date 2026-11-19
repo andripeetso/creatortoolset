@@ -4,14 +4,15 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { WORK_V, type WorkFile, type WorkPackage, type WorkTable } from "../../contracts/work";
 import { aiFor } from "../ai-complete";
-import { isThisMachine } from "../lib/devices";
 import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
 import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
-import { fileFor, foldersOf, lightKey } from "../editor/reach";
+import { atFor, foldersOf, lightKey } from "../editor/reach";
+import { downloadsAllowFor } from "./offline";
+import { serverOpen } from "./place";
 import { editDir, editRole, ownerOf, readDraft, readEdit, seesEdit, sourcesWorkspace, type EditMeta } from "../editor/store";
 
 /** The server's copy of a package handed out: what the result is merged against. */
@@ -114,6 +115,8 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
 
   // the files the step reads, each with this computer's own path to it when it has one (reach.ts fileFor)
   const folders = foldersOf(device.owner);
+  const allows = downloadsAllowFor(device.owner);
+  const serverRuns = serverOpen(job);
   const post = job.kind === "post" && !!edit.steps?.length;
   const q = db.prepare(
     `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.bytes, v.quick, v.probe, a.title,
@@ -126,10 +129,10 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
       | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; bytes: number; quick: string | null; probe: string | null; title: string; proxy: string | null; proxy_bytes: number | null }
       | undefined;
     if (!r) return [];
-    const at = fileFor(r, device.id, folders, isThisMachine);
+    const at = atFor(r, device.id, folders, allows, serverRuns);
     // a proxies-only library's source is its proxy (library/worker.ts dropOriginal): that is the proxy, not an original
-    // (or the original itself when it needs no proxy: reach.ts lightKey)
-    const light = lightKey(r);
+    // (or the original itself when it needs no proxy: reach.ts lightKey). No copy when the rule gives none (Downloads, server rendering)
+    const light = at ? lightKey(r) : null;
     const proxy = light ? { bytes: (light === r.proxy ? r.proxy_bytes : r.bytes) ?? 0 } : undefined;
     return [
       {

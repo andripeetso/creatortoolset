@@ -23,7 +23,7 @@ struct WorkStatus: Decodable, Equatable {
 /// The worker's environment: the server it works for, this Mac's token there, its own data folder, the bundled ffmpeg
 /// first on PATH, the app's export browser and the approved plug-ins. No PORT, HOST, APP_SECRET or CT_LOCAL: it serves nothing.
 func workerEnvironment(server: URL, token: String, data: URL, folder: URL, inherited: [String: String],
-                       plugins: [String: String], release: [String: String] = [:]) -> [String: String] {
+                       plugins: [String: String], release: [String: String] = [:], proxyDir: String? = nil) -> [String: String] {
     var env = inherited.filter { ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL"].contains($0.key) }
     env["PATH"] = folder.appendingPathComponent("runtime").path + ":/usr/bin:/bin:/usr/sbin:/sbin"
     env["NODE_ENV"] = "production"
@@ -36,6 +36,7 @@ func workerEnvironment(server: URL, token: String, data: URL, folder: URL, inher
     env["CT_EXIT_WITH_PARENT"] = "1"
     // one folder for every server's worker: one job at a time on this Mac
     env["CT_TURN_DIR"] = appSupport.appendingPathComponent("work-turn").path
+    if let proxyDir, !proxyDir.isEmpty { env["CT_PROXY_DIR"] = proxyDir }
     env.merge(release, uniquingKeysWith: { $1 })
     env.merge(plugins, uniquingKeysWith: { $1 })
     return env
@@ -139,7 +140,7 @@ final class Worker: ObservableObject {
         p.currentDirectoryURL = folder
         p.environment = workerEnvironment(server: server, token: token, data: data, folder: folder,
                                           inherited: ProcessInfo.processInfo.environment, plugins: plugins,
-                                          release: releaseEnv(Bundle.main.infoDictionary))
+                                          release: releaseEnv(Bundle.main.infoDictionary), proxyDir: DownloadLocation.path())
         // stdin stays open while the app runs (CT_EXIT_WITH_PARENT); stdout carries the status lines
         let stdin = Pipe(), output = Pipe()
         p.standardInput = stdin

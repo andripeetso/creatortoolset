@@ -7,7 +7,7 @@ import Foundation
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
 /// "dropped" is answered by the window itself (AppWebView.dragItems). These have parts of their own:
 /// "install:<claude|codex>:<key>" (installAsk), "ai-install:<id>" (aiInstallAsk), and the Media Library's "import:…" (Import.swift).
-let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect", "ai-install-progress", "pair"]
+let thisMacAsks = ["state", "start", "access", "folder", "download-folder", "dropped", "files", "connect", "ai-install-progress", "pair"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
@@ -149,6 +149,19 @@ extension Shell {
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
         Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
         MediaFiles.add(url.path)  // and its videos are read here later: shot descriptions, transcripts, playing originals
+        return ["path": url.path]
+    }
+
+    /// "download-folder" from the page (Settings → Storage › This computer, Download location › Change…): this Mac's open
+    /// panel for the download cache's folder. Reply { path } or { path: null }. The worker reads it when it next starts.
+    @MainActor func chooseDownloadFolder() -> [String: Any] {
+        let open = NSOpenPanel()
+        open.canChooseDirectories = true
+        open.canChooseFiles = false
+        open.canCreateDirectories = true
+        open.prompt = "Choose"
+        guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
+        UserDefaults.standard.set(url.path, forKey: DownloadLocation.key)
         return ["path": url.path]
     }
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -56,6 +56,8 @@ let editId: string;
 
 beforeAll(async () => {
   registerDeviceKinds(["fake-kind", "fake-render"]);
+  // a computer takes a server copy only while server rendering is off (UNIFIED-PRD 4.7), and these claims test that copy
+  writeFileSync(path.join(dir, "server-work.json"), JSON.stringify({ on: false, v: 2 }));
   for (const u of ["maker", "other"]) await login(u);
   libraryDb().exec(`
     INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'maker', 'A', 'local', 0);
