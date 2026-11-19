@@ -23,26 +23,34 @@ const h = vi.hoisted(() => ({
   /** the Finder items of the drag dropped on the window */
   dropped: [] as { path: string; folder: boolean }[],
   paired: null as { device: string } | null,
+  /** the Mac app's pairing answer (a test may make it never answer) */
+  pair: (async () => null) as () => Promise<{ device: string } | null>,
+  /** a folder role the server refuses, with its error */
+  refuse: {} as Record<string, string>,
+  /** the PATCH reply leaves setupAt out (a server from before it returned it) */
+  dropSetupAt: false,
 }));
 
 vi.mock("@/components/settings/ThisMacSection", () => ({ hasThisMac: () => h.mac }));
 vi.mock("@/lib/thisMac", () => ({
   chooseFolderOnMac: async () => h.picks.shift() ?? null,
   droppedOnMac: async () => h.dropped,
-  pairThisMac: async () => h.paired,
+  pairThisMac: () => h.pair(),
 }));
 vi.mock("@/components/settings/StorageRows", () => ({
   STORAGE_API: "/api/devices/storage",
   call: async (url: string, _method: string, body: Record<string, unknown>, workspace?: string | null) => {
     h.calls.push({ url, body, workspace });
     if (h.failMake && body.make) throw new Error("That folder could not be made on this computer");
+    if (h.refuse[body.role as string]) throw new Error(h.refuse[body.role as string]);
     return {};
   },
 }));
 vi.mock("@/lib/library", () => ({
   updateLibrary: async (id: string, patch: { settings: Record<string, unknown> }) => {
     h.updates.push({ id, settings: patch.settings });
-    return { id, name: "Tiny", storage: "local", settings: patch.settings };
+    const { setupAt, ...rest } = patch.settings;
+    return { id, name: "Tiny", storage: "local", settings: h.dropSetupAt ? rest : { ...rest, setupAt } };
   },
   // the Effort row's "About $N" (EffortCost) asks for the estimate; no footage in these tests, so no figure
   getEstimate: async () => ({}),
@@ -83,6 +91,9 @@ beforeEach(() => {
   h.picks = [];
   h.dropped = [];
   h.paired = null;
+  h.pair = async () => h.paired;
+  h.refuse = {};
+  h.dropSetupAt = false;
   delete document.documentElement.dataset.macDevice;
   onDone.mockReset();
   onClose.mockReset();
@@ -465,3 +476,61 @@ describe("Media Library setup: the browser path", () => {
     open.mockRestore();
   });
 });
+
+// Done on a hosted server that isn't This Mac, inside the Mac app (the 11-19 Studio case): it saves, or one red line by the
+// buttons names the step that stopped it; setupAt is sent last, so a stopped setup is never marked done
+describe("Media Library setup: Done in the Mac app on a hosted server", () => {
+  const toDone = async () => {
+    h.hosted = true;
+    document.documentElement.dataset.macDevice = "dev_mac";
+    await mount("cloud");
+    for (let i = 0; i < 4; i++) await next();
+  };
+  const alert = () => document.querySelector('[role="alert"]')?.textContent ?? "";
+
+  it("folders already in the list are skipped and the setup is saved (his existing folders)", async () => {
+    h.refuse = { footage: "That folder is already there", library: "That folder is already there" };
+    await toDone();
+    await press(button("Done"));
+    expect(h.calls.map((c) => c.body.role)).toEqual(["footage", "projects", "library"]);
+    expect(typeof h.updates[0]!.settings.setupAt).toBe("string");
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(alert()).toBe("");
+  });
+
+  it("a folder the server refuses names its step, and nothing is saved", async () => {
+    h.refuse = { library: "Needs a computer and a folder" };
+    await toDone();
+    await press(button("Done"));
+    expect(alert()).toBe("Final exports folder: Needs a computer and a folder");
+    expect(h.updates).toEqual([]);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(button("Done")?.disabled).toBe(false); // Done can be pressed again
+  });
+
+  it("a Mac app that never answers the pairing stops waiting with a red line", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      h.hosted = true;
+      h.pair = () => new Promise(() => {});
+      await mount("cloud");
+      for (let i = 0; i < 4; i++) await next();
+      act(() => button("Done")!.click());
+      await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
+      expect(alert()).toContain("This Mac didn't answer");
+      expect(h.calls).toEqual([]);
+      expect(h.updates).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a reply without setupAt says so instead of leaving the page as it was", async () => {
+    h.dropSetupAt = true;
+    await toDone();
+    await press(button("Done"));
+    expect(alert()).toContain("Saving the setup: The server didn't keep the setup");
+    expect(onDone).not.toHaveBeenCalled();
+  });
+});
+

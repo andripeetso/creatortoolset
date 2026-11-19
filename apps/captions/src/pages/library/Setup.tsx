@@ -99,6 +99,12 @@ const ICON: Record<Step, LucideIcon> = { start: FolderOpen, folders: FolderOpen,
 
 const BESIDE_SOURCE = "Beside your first Source media folder";
 const NO_COMPUTER = "Connect this Mac to the server first: Settings → Computers.";
+const PAIR_WAIT_MS = 10_000;
+const PAIR_SLOW = "This Mac didn't answer. Open Settings → Computers and connect it, then press Done again.";
+const NOT_KEPT = "The server didn't keep the setup. Press Done again; if it says this again, the server needs an update.";
+/** A Mac-app call that may never answer (an older app, a closed bridge) stops waiting after `ms`, with `why`. */
+const within = <T,>(p: Promise<T>, ms: number, why: string): Promise<T> =>
+  Promise.race([p, new Promise<never>((_, no) => setTimeout(() => no(new Error(why)), ms))]);
 const MAC_DOWNLOAD = "https://creatortoolset.com/download";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -247,13 +253,20 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
   const finish = async () => {
     setBusy(true);
     setError(null);
+    // every step names itself in the one red line if it fails; the settings (with setupAt) are saved last, so a setup
+    // that stops part way is not marked done, and Done again picks up where it stopped (rows already there are skipped)
+    let doing = "This Mac";
     try {
       // the folders are rows of the one list; without the Mac app there is no computer to add them on
       if (hasThisMac()) {
         const made = a.start === "scratch" && a.sources.length === 0;
-        const host = await computer();
-        for (const r of rowsOf(a, workspace.name)) await addRow(host, r.role, r.path, made && r.role === "footage");
+        const host = await within(computer(), PAIR_WAIT_MS, PAIR_SLOW);
+        for (const r of rowsOf(a, workspace.name)) {
+          doing = `${FOLDER_LABELS[r.role]} folder`;
+          await addRow(host, r.role, r.path, made && r.role === "footage");
+        }
       }
+      doing = "Saving the setup";
       const settings: Partial<LibrarySettings> = {
         importMode: a.copy ? "copy" : "in-place",
         // Smart folders need Analysis: with it off the answer is Organize yourself, kept as chosen while the pick is off
@@ -269,10 +282,12 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
         ...(kind === "mac" ? {} : hostedSettings(a.hosted)),
       };
       const saved = await updateLibrary(library.id, { settings });
+      // a reply without setupAt leaves this page on the setup: say so rather than do nothing
+      if (!saved.settings.setupAt) throw new Error(NOT_KEPT);
       window.dispatchEvent(new CustomEvent(LIBRARY_SETUP_DONE, { detail: { workspace: workspace.id } }));
       onDone(saved);
     } catch (e) {
-      setError(message(e));
+      setError(`${doing}: ${message(e)}`);
     } finally {
       setBusy(false);
     }
@@ -492,12 +507,13 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
       <div className="space-y-2 px-6 pb-3 pt-6">{head}</div>
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {body()}
-        {error && (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {error}
-          </p>
-        )}
       </div>
+      {/* by the buttons, never scrolled out of sight */}
+      {error && (
+        <p role="alert" className="border-t px-6 pt-3 text-sm text-destructive">
+          {error}
+        </p>
+      )}
       <div className="flex items-center justify-between gap-3 border-t px-6 py-4">
         {inline ? (
           <span />
