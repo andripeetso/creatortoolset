@@ -243,7 +243,7 @@ describe("Media Library page", () => {
     await mount();
     expect(document.body.textContent).toContain("Let's set up the Media Library");
     await act(async () => root!.unmount());
-    root = undefined;
+    root = null;
     server.settings = {};
     await mount();
     expect(document.body.textContent).not.toContain("Let's set up the Media Library");
