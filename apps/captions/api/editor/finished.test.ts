@@ -220,6 +220,8 @@ describe.skipIf(rootReplaced)("Finished edits: what is kept, and whose words", (
   });
 
   it("an edit an AI's tool made: its name and its brief are the AI's, so neither is kept; a brief the person types afterwards is", async () => {
+    // editor_create answers the setup card until the workspace's Media Library is set up (UNIFIED-PRD 4.8)
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.setupAt', ?) WHERE workspace_id = 'maker'").run("2026-11-01T00:00:00.000Z");
     const s = await style("maker", { name: "From the assistant" });
     for (const how of ["tool", "key"] as const) {
       const words = { name: "AI-NAME for the edit", brief: "AI-BRIEF about the launch" };

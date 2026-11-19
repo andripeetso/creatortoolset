@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { MadeVoice, VoicesView } from "../../contracts/editor";
+import { ACTION_NEEDED } from "../../contracts/library";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "editor-voice-"));
 process.env.DATA_DIR = dir;
@@ -53,9 +54,12 @@ const elevenLabs = vi.fn(async (input: string | URL | Request, init?: RequestIni
 });
 
 beforeAll(async () => {
-  for (const u of ["jordan", "nokey", "robin"]) await login(u);
+  for (const u of ["jordan", "nokey", "robin", "wren"]) await login(u);
   saveMyKey("jordan", "ELEVENLABS_API_KEY", "jordans-own");
   saveMyKey("robin", "ELEVENLABS_API_KEY", "robins-own");
+  saveMyKey("wren", "ELEVENLABS_API_KEY", "wrens-own");
+  // robin's Media Library is set up (setupAt): voice_make answers the setup card until it is (UNIFIED-PRD 4.8)
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_robin', 'robin', 'Library', 'local', ?, 0)").run(JSON.stringify({ setupAt: "2026-11-01T00:00:00.000Z" }));
   vi.stubGlobal("fetch", elevenLabs);
 });
 afterEach(() => {
@@ -156,6 +160,19 @@ describe.skipIf(rootReplaced)("AI Editor: a voice made from text", () => {
     expect(edit.error).toBe(false);
     const e = (await (await call("robin", "GET", `/api/editor/${edit.value!.id}`)).json()) as { sources: string[]; script: string };
     expect(e).toMatchObject({ sources: [made.value!.version_id], script: "Roll the mat out." });
+  });
+
+  it("voice_make before the Media Library is set up: the setup card answers, with or without a voice, and nothing is spoken", async () => {
+    const rpc = async (args: Record<string, unknown>) =>
+      ((await (await app.request("/api/mcp", { method: "POST", headers: { "content-type": "application/json", authorization: keys.wren! }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "voice_make", arguments: args } }) })).json()) as {
+        result: { content: { text: string }[] };
+      }).result.content[0]!.text;
+    for (const args of [{ text: "Roll the mat out.", voice: "Sam" }, { text: "Roll the mat out." }]) {
+      expect(JSON.parse(await rpc(args))).toMatchObject({ [ACTION_NEEDED]: { kind: "setup", owner: true } });
+    }
+    // no text is a mistake in the words: the handler answers it, before the setup is asked about
+    expect(await rpc({ voice: "Sam" })).toBe("Give text: what the voice says.");
+    expect(calls).toEqual([]);
   });
 
   it("where a plug-in's source is the Media Library, says a voice has no place there, and spends nothing", async () => {
