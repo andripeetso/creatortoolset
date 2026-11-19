@@ -11,7 +11,7 @@ struct CreatorToolsetApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .modifier(AccountSetupPresenter())
+                .modifier(ConnectionDemoPresenter())
                 .modifier(PairingLinkPresenter())
                 .environmentObject(Servers.shared)
                 .environmentObject(UploadEngine.shared)

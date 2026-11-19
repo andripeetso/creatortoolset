@@ -1,12 +1,14 @@
 import SwiftUI
 
 /// One computer: its connection (and, when it fails, what failed and what to try), its routes, what this phone may
-/// do there, and its version.
+/// do there, and its version. One added by code or address can be removed from this phone; one on the account can't
+/// (that is decided on the computer).
 struct ServerDetailView: View {
     let serverId: String
     @ObservedObject private var connections = Connections.shared
     @ObservedObject private var accountServers = AccountServers.shared
     @State private var addingRoute = false
+    @State private var pairingAgain = false
     @State private var removing: ServerEntry?
     @Environment(\.dismiss) private var dismiss
 
@@ -26,18 +28,25 @@ struct ServerDetailView: View {
             accountStatus: accountServers.computers.first { $0.id == serverId },
             appVersion: ToolsView.version, serverVersion: entry.version))
         return Form {
-            Section("Connection") {
+            Section {
                 HStack(spacing: 12) {
                     ConnectionDot(state: state)
-                    Text(entry.enabled ? ConnectionWords.text(state) : "Switched off")
+                    Text(ConnectionWords.status(entry, state, account: accountServers.computers.first { $0.id == serverId }))
                     Spacer()
                 }
-                Toggle("Connect this computer", isOn: Binding(get: { entry.enabled }, set: { connections.setEnabled(serverId, $0) }))
-                if entry.enabled, state.phase != .connected {
+                if entry.signedOut == true {
+                    Button("Sign in again") {
+                        if entry.onAccount { connections.signInAgain(serverId) } else { pairingAgain = true }
+                    }
+                } else if state.phase != .connected {
                     Button("Retry now") { connections.retry(serverId) }
                 }
+            } header: {
+                Text("Connection")
+            } footer: {
+                if entry.signedOut == true { Text("\(entry.label) signed this phone out. It stays saved until you sign in again.") }
             }
-            if entry.enabled, let diagnosis { DiagnosisView(host: entry.label, diagnosis: diagnosis) }
+            if entry.signedOut != true, let diagnosis { DiagnosisView(host: entry.label, diagnosis: diagnosis) }
             Section {
                 ForEach(Array(entry.routes.enumerated()), id: \.element.id) { index, route in
                     routeRow(route, index: index, of: entry.routes.count, inUse: state.phase == .connected && state.routeId == route.id)
@@ -72,23 +81,26 @@ struct ServerDetailView: View {
                 }
                 if let reason = entry.unsupportedReason { Text(reason).foregroundStyle(.secondary) }
             }
-            Section {
-                Button("Remove from this device", role: .destructive) { removing = entry }
-            } footer: {
-                Text("Removing only forgets it on this phone. To sign this phone out of the computer, revoke it there: Settings → Computers.")
+            if !entry.onAccount {
+                Section {
+                    Button("Remove from this phone", role: .destructive) { removing = entry }
+                } footer: {
+                    Text("Removing only forgets it on this phone. To sign this phone out of the computer, revoke it there: Settings → Computers.")
+                }
             }
         }
         .navigationTitle(entry.label)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $addingRoute) { NavigationStack { AddServerView(routeFor: entry) } }
-        .alert("Remove from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { entry in
+        .sheet(isPresented: $pairingAgain) { NavigationStack { AddServerView(prefill: entry.home.absoluteString) } }
+        .alert("Remove from this phone?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { entry in
             Button("Cancel", role: .cancel) {}
             Button("Remove", role: .destructive) {
                 connections.remove(entry.serverId)
                 dismiss()
             }
         } message: { entry in
-            Text("Forget \(entry.label) and what this phone keeps of it. Switch it off instead to keep it saved.")
+            Text("Forget \(entry.label) and what this phone keeps of it.")
         }
     }
 

@@ -32,12 +32,13 @@ struct Credential: Codable, Equatable {
 struct ServerEntry: Codable, Identifiable, Hashable {
     var serverId: String
     var label: String
-    var enabled = true
     var routes: [Route]
     /// Why this app can't talk to it ("Client not supported"); it stays saved.
     var unsupportedReason: String?
     /// It runs an older Creator Toolset: saved, and the detail page offers the update.
     var updateRequired: Bool?
+    /// The computer signed this phone out (SESSION_REVOKED): it waits for Sign in again, never retried by itself.
+    var signedOut: Bool?
     /// Who it signed in as (what is kept on disk is kept per account).
     var username: String?
     var version: String?
@@ -52,6 +53,8 @@ struct ServerEntry: Codable, Identifiable, Hashable {
     var key: String { home.absoluteString }
     /// Saved before servers had ids: the first answer from it names the real one.
     var provisional: Bool { serverId.hasPrefix("url:") }
+    /// On the person's account: the computer decides that (Reach from anywhere), so the phone never removes it.
+    var onAccount: Bool { routes.contains { $0.authorization == .account } }
 
     var server: Server { Server(url: home, username: username, label: label) }
 

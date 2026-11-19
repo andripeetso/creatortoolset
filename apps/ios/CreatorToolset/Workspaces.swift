@@ -97,8 +97,8 @@ final class Workspaces: ObservableObject {
         }
     }
 
-    /// The servers the switcher spans: every one saved on the phone and switched on, whichever route reaches it.
-    var servers: [Server] { Connections.shared.servers.filter(\.enabled).map(\.server) }
+    /// The servers the switcher spans: every one saved on the phone that hasn't signed it out, whichever route reaches it.
+    var servers: [Server] { Connections.shared.servers.filter { $0.signedOut != true }.map(\.server) }
 
     var entries: [WorkspaceEntry] { Self.entries(servers: servers, lists: lists) }
 

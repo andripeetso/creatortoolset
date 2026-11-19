@@ -49,13 +49,20 @@ enum ConnectionWords {
         }
     }
 
+    /// A saved computer's line: Signed out when it signed this phone out; Asleep when the account says its tunnel
+    /// was let go (the Mac sleeps); else the state's own words.
+    static func status(_ entry: ServerEntry, _ state: ConnectionState, account: AccountComputer? = nil) -> String {
+        if entry.signedOut == true { return "Signed out" }
+        if state.phase != .connected, account?.offlineReason == "tunnel_released" { return "Asleep" }
+        return text(state)
+    }
+
     /// The header's line, shown only once a state has lasted `ConnectionTiming.headerDelay` (nil: nothing to say).
     static func header(_ entries: [ServerEntry], states: [String: ConnectionState], offline: Bool, now: Date = Date()) -> String? {
-        let enabled = entries.filter(\.enabled)
-        guard !enabled.isEmpty else { return nil }
+        guard !entries.isEmpty else { return nil }
         if offline { return "You are offline" }
         let settled = { (s: ConnectionState) in now.timeIntervalSince(s.since) >= ConnectionTiming.headerDelay }
-        let down = enabled.filter { e in
+        let down = entries.filter { e in
             let s = states[e.serverId] ?? ConnectionState()
             return s.phase != .connected && settled(s)
         }

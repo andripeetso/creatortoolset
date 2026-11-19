@@ -264,7 +264,7 @@ struct FirstRunView: View {
                 } else if account.profile != nil {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Your computers").font(.largeTitle.bold())
-                        Text("Switch on the computers this phone should reach.").foregroundStyle(.secondary)
+                        Text("Each connects by itself, at home or away.").foregroundStyle(.secondary)
                     }
                     AccountComputersRows()
                 } else {

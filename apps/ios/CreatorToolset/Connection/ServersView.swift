@@ -12,35 +12,25 @@ struct ConnectionDot: View {
     }
 }
 
-/// Computers: every server saved on this phone, each with its status and a switch (off = kept saved, not connected).
-/// A tap opens its page; a long press removes it from this phone.
+/// Computers: every server saved on this phone and its status. Every one connects; a tap opens its page. Which
+/// computers are on the account is decided on the computers themselves, so nothing here switches one off.
 struct ServersView: View {
     @ObservedObject private var connections = Connections.shared
-    @ObservedObject private var account = Account.shared
+    @ObservedObject private var accountServers = AccountServers.shared
     @EnvironmentObject private var servers: Servers
     @State private var adding = false
-    @State private var removing: ServerEntry?
+    /// The address Add opens with: a paired computer that signed this phone out signs in again by pairing.
+    @State private var prefill: String?
 
     var body: some View {
         List {
             Section {
                 ForEach(connections.servers) { entry in
                     NavigationLink { ServerDetailView(serverId: entry.serverId) } label: { row(entry) }
-                        .contextMenu {
-                            Button("Remove from this device", systemImage: "trash", role: .destructive) { removing = entry }
-                        }
-                        .accessibilityHint("Long press to remove from this device")
                 }
-            } footer: {
-                if !connections.servers.isEmpty { Text("Long press a computer to remove it from this phone.") }
             }
-            if servers.signedOut {
-                Section { Button("Sign in again") { adding = true } }
-            }
-            if account.profile != nil {
-                Section {
-                    Button("Computers on your account") { AccountServers.shared.setupShown = true }
-                }
+            if servers.signedOut, connections.current?.signedOut != true {
+                Section { Button("Sign in again") { open(servers.current?.url.absoluteString) } }
             }
         }
         .overlay {
@@ -50,23 +40,22 @@ struct ServersView: View {
                 } description: {
                     Text("Add a computer to reach your chats, edits and footage.")
                 } actions: {
-                    Button("Add a computer") { adding = true }.buttonStyle(.borderedProminent)
+                    Button("Add a computer") { open(nil) }.buttonStyle(.borderedProminent)
                 }
             }
         }
         .navigationTitle("Computers")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Add a computer", systemImage: "plus") { adding = true }
+                Button("Add a computer", systemImage: "plus") { open(nil) }
             }
         }
-        .sheet(isPresented: $adding) { NavigationStack { AddServerView(prefill: servers.signedOut ? servers.current?.url.absoluteString : nil) } }
-        .alert("Remove from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { entry in
-            Button("Cancel", role: .cancel) {}
-            Button("Remove", role: .destructive) { connections.remove(entry.serverId) }
-        } message: { entry in
-            Text(removeMessage(entry))
-        }
+        .sheet(isPresented: $adding) { NavigationStack { AddServerView(prefill: prefill) } }
+    }
+
+    private func open(_ address: String?) {
+        prefill = address
+        adding = true
     }
 
     private func row(_ entry: ServerEntry) -> some View {
@@ -75,26 +64,23 @@ struct ServersView: View {
             ConnectionDot(state: state)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.label)
-                Text(entry.enabled ? ConnectionWords.text(state) : "Switched off")
+                Text(ConnectionWords.status(entry, state, account: accountServers.computers.first { $0.id == entry.serverId }))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                if state.phase == .backoff || (state.phase == .connecting && state.attempt > 1) {
+                if entry.signedOut != true, state.phase == .backoff || (state.phase == .connecting && state.attempt > 1) {
                     Text("Retrying · attempt \(state.attempt)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             Spacer()
-            Toggle("Enable \(entry.label)", isOn: Binding(get: { entry.enabled }, set: { connections.setEnabled(entry.serverId, $0) }))
-                .labelsHidden()
+            if entry.signedOut == true {
+                Button("Sign in again") {
+                    if entry.onAccount { connections.signInAgain(entry.serverId) } else { open(entry.home.absoluteString) }
+                }
+                .buttonStyle(.bordered)
+                .font(.caption)
+            }
         }
-    }
-
-    private func removeMessage(_ entry: ServerEntry) -> String {
-        var text = "Forget \(entry.label) and what this phone keeps of it. Switch it off instead to keep it saved."
-        if entry.routes.contains(where: { $0.kind == .account }) {
-            text += " It stays on your account and comes back in Computers on your account."
-        }
-        return text
     }
 }
 
@@ -160,7 +146,7 @@ enum ConnectionDemo {
                                  version: "0.15.63", platform: "hosted", home: studio)
         var old = ServerEntry(serverId: "linux", label: "Edit box", routes: [.paired(URL(string: "http://10.0.0.40:43190/")!)],
                               username: "sam", version: "0.14.2", home: URL(string: "http://10.0.0.40:43190/")!)
-        old.enabled = false
+        old.signedOut = true
         return ServerRegistry.Saved(servers: [mac, office, hosted, old], currentKey: mac.key)
     }()
 
@@ -171,7 +157,7 @@ enum ConnectionDemo {
                                                                 via: .account, cause: "tunnel_down", httpStatus: 503, traceId: "7f3a9c21e0b4"),
                                  retryAt: Date().addingTimeInterval(42), routeId: Route.accountId, since: .distantPast),
         "studio": ConnectionState(phase: .connected, attempt: 1, routeId: "paired:https://studio.tinyacrobatics.example", since: .distantPast),
-        "linux": ConnectionState(phase: .available, since: .distantPast),
+        "linux": ConnectionState(phase: .blocked, since: .distantPast),
     ]
 
     static let accountComputers: [AccountComputer] = [

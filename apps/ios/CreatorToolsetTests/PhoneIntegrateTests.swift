@@ -153,7 +153,7 @@ final class PhoneIntegrateTests: XCTestCase {
                        "This device was signed out on the computer. Pair it again.")
     }
 
-    func testARevokedAccountComputerIsSwitchedOffAndItsSessionDropped() {
+    func testARevokedAccountComputerSaysSignedOutUntilSignInAgain() {
         let url = URL(string: "https://mac-r.connect.example/")!
         let mac = ServerEntry(serverId: "mac-revoked", label: "Mac", routes: [.account(url)], home: url)
         let connections = Connections(saved: ServerRegistry.Saved(servers: [mac], currentKey: mac.key), live: false)
@@ -161,9 +161,69 @@ final class PhoneIntegrateTests: XCTestCase {
         defer { ServerRegistry.forgetCredentials(mac) }
         connections.lineRefused(mac.serverId, route: mac.routes[0], status: 401, code: "INVALID_DPOP")
         XCTAssertNotNil(ServerRegistry.credential(mac.serverId, route: mac.routes[0]))   // only the proof was off
+        XCTAssertNil(connections.entry(mac.serverId)?.signedOut)
         connections.lineRefused(mac.serverId, route: mac.routes[0], status: 401, code: "SESSION_REVOKED")
         XCTAssertNil(ServerRegistry.credential(mac.serverId, route: mac.routes[0]))
-        XCTAssertEqual(connections.entry(mac.serverId)?.enabled, false)
+        let revoked = connections.entry(mac.serverId)!
+        XCTAssertEqual(revoked.signedOut, true)   // still saved, never retried by itself
+        XCTAssertEqual(ConnectionWords.status(revoked, ConnectionState(phase: .blocked)), "Signed out")
+        connections.signInAgain(mac.serverId)   // the next try mints a session through the account
+        XCTAssertNil(connections.entry(mac.serverId)?.signedOut)
+        XCTAssertEqual(connections.servers.count, 1)
+    }
+
+    func testARevokedPairedComputerSaysSignedOutAndPairingAgainClearsIt() {
+        let lan = URL(string: "http://10.0.0.21:43190/")!
+        let box = ServerEntry(serverId: "box-revoked", label: "Edit box", routes: [.paired(lan)], home: lan)
+        let connections = Connections(saved: ServerRegistry.Saved(servers: [box], currentKey: box.key), live: false)
+        ServerRegistry.setCredential(box.serverId, routeId: box.routes[0].id, Credential(kind: .bearer, token: "ctp_r"))
+        defer { ServerRegistry.forgetCredentials(box) }
+        connections.lineRefused(box.serverId, route: box.routes[0], status: 401, code: "SESSION_REVOKED")
+        XCTAssertNil(ServerRegistry.credential(box.serverId, route: box.routes[0]))
+        XCTAssertEqual(connections.entry(box.serverId)?.signedOut, true)
+        // Sign in again opens Add with its address; the pairing that follows saves it signed in again
+        connections.add(serverId: box.serverId, label: box.label, route: .paired(lan), credential: nil, username: nil)
+        XCTAssertNil(connections.entry(box.serverId)?.signedOut)
+    }
+
+    func testAPairedRouteRevokedOnAnAccountComputerLeavesItConnectedThroughTheAccount() {
+        let lan = URL(string: "http://10.0.0.22:43190/")!
+        let tunnel = URL(string: "https://mac-p.connect.example/")!
+        let mac = ServerEntry(serverId: "mac-paired-revoked", label: "Mac", routes: [.paired(lan), .account(tunnel)], home: lan)
+        let connections = Connections(saved: ServerRegistry.Saved(servers: [mac], currentKey: mac.key), live: false)
+        connections.lineRefused(mac.serverId, route: mac.routes[0], status: 401, code: "SESSION_REVOKED")
+        XCTAssertNil(connections.entry(mac.serverId)?.signedOut)
+    }
+
+    func testOnlyComputersOffTheAccountCanBeRemovedFromThePhone() {
+        let lan = URL(string: "http://10.0.0.23:43190/")!
+        let tunnel = URL(string: "https://mac-a.connect.example/")!
+        XCTAssertTrue(ServerEntry(serverId: "a", label: "A", routes: [.account(tunnel)], home: tunnel).onAccount)
+        XCTAssertTrue(ServerEntry(serverId: "b", label: "B", routes: [.paired(lan), .account(tunnel)], home: lan).onAccount)
+        XCTAssertFalse(ServerEntry(serverId: "c", label: "C", routes: [.paired(lan)], home: lan).onAccount)
+    }
+
+    func testAnAccountComputerAddedLaterNeverTakesThePlaceOfTheOneShown() {
+        let lan = URL(string: "http://10.0.0.24:43190/")!
+        let shown = ServerEntry(serverId: "shown", label: "Shown", routes: [.paired(lan)], home: lan)
+        let connections = Connections(saved: ServerRegistry.Saved(servers: [shown], currentKey: shown.key), live: false)
+        connections.add(serverId: "later", label: "Later", route: .account(URL(string: "https://later.connect.example/")!),
+                        credential: nil, username: nil, shown: false)
+        XCTAssertEqual(connections.current?.serverId, "shown")
+        XCTAssertEqual(connections.servers.count, 2)
+        let empty = Connections(saved: ServerRegistry.Saved(), live: false)
+        empty.add(serverId: "first", label: "First", route: .account(URL(string: "https://first.connect.example/")!),
+                  credential: nil, username: nil, shown: false)
+        XCTAssertEqual(empty.current?.serverId, "first")   // nothing was shown: it is
+    }
+
+    func testTheRowSaysAsleepWhenTheAccountSaysTheMacLetItsTunnelGo() {
+        let tunnel = URL(string: "https://mac-s.connect.example/")!
+        let mac = ServerEntry(serverId: "mac-s", label: "Mac", routes: [.account(tunnel)], home: tunnel)
+        let asleep = AccountComputer(id: "mac-s", name: "Mac", endpoint: tunnel, status: .offline, offlineReason: "tunnel_released")
+        XCTAssertEqual(ConnectionWords.status(mac, ConnectionState(phase: .backoff, attempt: 3), account: asleep), "Asleep")
+        XCTAssertEqual(ConnectionWords.status(mac, ConnectionState(phase: .connected), account: asleep), "Connected")
+        XCTAssertEqual(ConnectionWords.status(mac, ConnectionState(phase: .connected)), "Connected")
     }
 
     func testAnInvalidProofIsSentOnceMoreWithAFreshOneThenGivenUp() async {

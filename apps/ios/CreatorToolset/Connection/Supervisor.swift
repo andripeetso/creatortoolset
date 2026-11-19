@@ -289,8 +289,8 @@ final class ServerSupervisor {
     private func run() async {
         while !Task.isCancelled {
             guard let entry, let owner else { return }
-            if suspended || !entry.enabled || owner.offline {
-                if !entry.enabled { state = ConnectionState(phase: .available) }
+            if suspended || entry.signedOut == true || owner.offline {
+                if entry.signedOut == true { state = ConnectionState(phase: .blocked, lastFailure: state.lastFailure) }
                 else if owner.offline, !suspended { state = ConnectionState(phase: .offline, attempt: state.attempt, lastFailure: state.lastFailure, networkOffline: true) }
                 guard await waitForSignal(until: nil) else { return }
                 continue
@@ -521,7 +521,7 @@ final class ServerSupervisor {
                 closeLine()
                 throw Interrupted.interrupted
             case .changed:
-                if self.entry?.enabled != true || self.entry?.routes.contains(where: { $0.id == route.id }) != true {
+                if self.entry?.signedOut == true || self.entry?.routes.contains(where: { $0.id == route.id }) != true {
                     closeLine()
                     throw Interrupted.interrupted
                 }
@@ -568,7 +568,7 @@ final class ServerSupervisor {
                 suspended = true
                 return .interrupted
             case .changed:
-                guard let entry, entry.enabled, entry.routes.contains(where: { $0.id == route.id }) else { return .interrupted }
+                guard let entry, entry.signedOut != true, entry.routes.contains(where: { $0.id == route.id }) else { return .interrupted }
                 if let better = await betterRoute(than: route) { return replace(with: better) }
             case .checkRoutes:
                 if let better = await betterRoute(than: route) { return replace(with: better) }
@@ -634,8 +634,8 @@ final class ServerSupervisor {
     }
 }
 
-/// Every server saved on this phone and its connection. Every enabled server connects at once; the app picks the
-/// route by itself. The tabs read `servers`, `state(_:)` and `current`, and call `setEnabled`, `remove`, `retry`.
+/// Every server saved on this phone and its connection. Every saved server connects at once; the app picks the
+/// route by itself. The tabs read `servers`, `state(_:)` and `current`, and call `remove`, `retry`, `signInAgain`.
 @MainActor
 final class Connections: ObservableObject {
     static let shared = Connections()
@@ -712,9 +712,10 @@ final class Connections: ObservableObject {
 
     // MARK: what the screens do
 
-    /// Switch off = kept saved, not connected.
-    func setEnabled(_ serverId: String, _ on: Bool) {
-        update(serverId) { $0.enabled = on }
+    /// Sign in again on a computer on the account that signed this phone out: the next try mints a new session
+    /// through the account. A paired one signs in again by pairing (`add` clears it).
+    func signInAgain(_ serverId: String) {
+        update(serverId) { $0.signedOut = nil }
     }
 
     /// The person reordered or removed a route.
@@ -736,7 +737,7 @@ final class Connections: ObservableObject {
         for listener in listeners.values { listener.yield(ServerEvents.Event(name: "hello", data: "")) }
     }
 
-    /// Remove from this device: forgets it, its credentials and what the app kept for it. It never revokes: that
+    /// Remove from this phone (only one added by code or address): forgets it, its credentials and what the app kept for it. It never revokes: that
     /// happens on the computer.
     func remove(_ serverId: String) {
         guard let entry = entry(serverId) else { return }
@@ -756,12 +757,13 @@ final class Connections: ObservableObject {
     // MARK: adding
 
     /// A server paired or reached through the account. One already saved under the same id takes the new route
-    /// (first among its kind) and credential; a new one is saved, enabled and connected. It becomes the one shown.
+    /// (first among its kind) and credential, signed in again; a new one is saved and connected. It becomes the one
+    /// shown, unless `shown` is false and another one already is.
     func add(serverId: String, label: String, route: Route, credential: Credential?, username: String?,
-             descriptor: ServerDescriptor? = nil, updateRequired: Bool = false) {
+             descriptor: ServerDescriptor? = nil, updateRequired: Bool = false, shown: Bool = true) {
         if let i = saved.servers.firstIndex(where: { $0.serverId == serverId }) {
             saved.servers[i].routes = Routes.upsert(saved.servers[i].routes, route)
-            saved.servers[i].enabled = true
+            saved.servers[i].signedOut = nil
             if let username { saved.servers[i].username = username }
             saved.servers[i].updateRequired = updateRequired ? true : nil
             saved.servers[i].unsupportedReason = nil
@@ -771,7 +773,7 @@ final class Connections: ObservableObject {
                                              home: route.url))
         }
         if let credential { ServerRegistry.setCredential(serverId, routeId: route.authorization == .account ? Route.accountId : route.id, credential) }
-        saved.currentKey = entry(serverId)?.key
+        if shown || !saved.servers.contains(where: { $0.key == saved.currentKey }) { saved.currentKey = entry(serverId)?.key }
         persist()
         supervisors[serverId]?.post(.changed)
     }
@@ -798,14 +800,15 @@ final class Connections: ObservableObject {
     /// The server turned the credential of a request away: the next request asks the supervisor again.
     func refused(_ entry: ServerEntry) { supervisors[entry.serverId]?.post(.retry) }
 
-    /// A 401 on a server's line or a request, by its code. Revoked: signed out of that computer, never retried by
-    /// itself (a paired token is dropped; a computer on the account is switched off until the person turns it on,
-    /// which mints a new session). An account session that ended otherwise is dropped so the next try mints one.
+    /// A 401 on a server's line or a request, by its code. Revoked: that credential is dropped and the computer says
+    /// Signed out until the person signs in again, never retried by itself (a paired route revoked on a computer still
+    /// on the account just leaves the account's route). An account session that ended otherwise is dropped so the
+    /// next try mints one.
     func lineRefused(_ serverId: String, route: Route, status: Int, code: String?) {
         guard status == 401, code != "INVALID_DPOP", let entry = entry(serverId) else { return }
         if code == "SESSION_REVOKED" {
             ServerRegistry.setCredential(serverId, routeId: route.authorization == .account ? Route.accountId : route.id, nil)
-            if route.authorization == .account { setEnabled(serverId, false) }
+            if route.authorization == .account || !entry.onAccount { update(serverId) { $0.signedOut = true } }
             return
         }
         if route.authorization == .account { ServerRegistry.setCredential(entry.serverId, routeId: Route.accountId, nil) }

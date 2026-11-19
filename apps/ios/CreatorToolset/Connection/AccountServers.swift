@@ -37,8 +37,6 @@ final class AccountServers: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var problem: String?
     @Published private(set) var traceId: String?
-    /// "Set up" after a sign-in: the linked computers with switches.
-    @Published var setupShown = false
 
     private var relay: Credential?
 
@@ -152,6 +150,7 @@ final class AccountServers: ObservableObject {
             traceId = (error as? APIError).map { "\($0.status)" }
             return
         }
+        adopt()
         await withTaskGroup(of: (String, Health?).self) { group in
             for computer in computers {
                 group.addTask { [weak self] in
@@ -237,31 +236,29 @@ final class AccountServers: ObservableObject {
 
     // MARK: on this phone
 
-    func isAdded(_ computerId: String) -> Bool { Connections.shared.entry(computerId)?.enabled == true }
-
-    /// The switch: on adds the computer (or switches a saved one back on) and connects it; off keeps it saved, not
-    /// connected.
-    func setAdded(_ computer: AccountComputer, _ on: Bool) {
-        if Connections.shared.entry(computer.id) != nil { return Connections.shared.setEnabled(computer.id, on) }
-        guard on, let endpoint = computer.endpoint else { return }
-        Connections.shared.add(serverId: computer.id, label: computer.name, route: .account(endpoint), credential: nil, username: nil)
+    /// Every computer on the account is on this phone: whether it is on the account is decided on the computer
+    /// (Reach from anywhere), never here. A new one is saved and connected without taking the place of the one shown.
+    func adopt() {
+        for computer in computers where Connections.shared.entry(computer.id) == nil {
+            guard let endpoint = computer.endpoint else { continue }
+            Connections.shared.add(serverId: computer.id, label: computer.name, route: .account(endpoint), credential: nil,
+                                   username: nil, shown: false)
+        }
     }
 
-    /// Right after a sign-in the app picks the computer itself (`pick`) and connects it; no setup sheet. The list of
-    /// the account's computers opens only when it can't tell (none answers, or two linked at the same moment), unless
-    /// the person said not to show it again. None linked: the first-run screen says to set it up on the computer.
+    /// Right after a sign-in every computer on the account is added (`refresh`) and the app picks the one it shows
+    /// (`pick`); when it can't tell, the one shown stays. None linked: the first-run screen says to set it up on the
+    /// computer.
     func afterSignIn() async {
+        let lastUsed = Connections.shared.current?.serverId   // before the account's computers are added
         await AccountPush.register()
         await refresh()
         let online = computers.filter { $0.status == .online }
         let here = await answeringHere(online.map(\.id))
-        if let id = Self.pick(computers, answersHere: here, lastUsed: Connections.shared.current?.serverId),
-           let computer = computers.first(where: { $0.id == id }) {
-            setAdded(computer, true)
-            if let key = Connections.shared.entry(id)?.key { Connections.shared.use(key: key) }
-            return
+        if let id = Self.pick(computers, answersHere: here, lastUsed: lastUsed),
+           let key = Connections.shared.entry(id)?.key {
+            Connections.shared.use(key: key)
         }
-        if !computers.isEmpty, !optedOut { setupShown = true }
     }
 
     /// Which computer the phone uses after an account sign-in, in the owner's order: the offline ones drop out; the
@@ -294,13 +291,6 @@ final class AccountServers: ObservableObject {
             return out
         }
     }
-
-    var optedOut: Bool {
-        get { UserDefaults.standard.bool(forKey: optOutKey) }
-        set { UserDefaults.standard.set(newValue, forKey: optOutKey) }
-    }
-
-    private var optOutKey: String { "connectSetupOptOut." + (Account.shared.profile?.email ?? "") }
 
     /// Signed out: the account's routes go; a computer still reachable another way stays saved.
     func signedOut() {

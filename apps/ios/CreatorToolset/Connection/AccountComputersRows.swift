@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The account's computers, each with a switch: on adds it to this phone and connects it with no code and no password;
-/// off keeps it saved, not connected. Hosted servers the account signed in to are signed in to with the same account.
+/// The account's computers and their status: each is on this phone and connects with no code and no password.
+/// Hosted servers the account signed in to are signed in to with the same account.
 struct AccountComputersRows: View {
     @ObservedObject private var accountServers = AccountServers.shared
     @ObservedObject private var connections = Connections.shared
@@ -42,11 +42,8 @@ struct AccountComputersRows: View {
                         Text(statusLine(computer)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Toggle("Enable \(computer.name)", isOn: Binding(get: { connections.entry(computer.id)?.enabled == true },
-                                                                   set: { accountServers.setAdded(computer, $0) }))
-                        .labelsHidden()
-                        .disabled(computer.endpoint == nil)
                 }
+                .accessibilityElement(children: .combine)
                 .padding(.vertical, 10)
                 Divider()
             }
@@ -76,7 +73,7 @@ struct AccountComputersRows: View {
     private func statusLine(_ computer: AccountComputer) -> String {
         switch computer.status {
         case .checking: return "Checking…"
-        case .online: return connections.entry(computer.id) == nil ? "Online" : "Online · on this phone"
+        case .online: return "Online"
         case .offline: return computer.offlineReason == "tunnel_released" ? "Offline · asleep" : "Offline"
         }
     }
@@ -113,61 +110,29 @@ struct AccountComputersList: View {
     }
 }
 
-/// Shown once after a sign-in: the computers on the account, with switches.
-struct AccountSetupSheet: View {
-    @ObservedObject private var accountServers = AccountServers.shared
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Switch on the computers this phone should reach. Each connects by itself, at home or away.")
-                        .foregroundStyle(.secondary)
-                    AccountComputersRows()
-                    Button("Don't show this again") {
-                        accountServers.optedOut = true
-                        dismiss()
-                    }
-                    .font(.subheadline)
-                    .padding(.top, 8)
-                }
-                .padding(.horizontal, 20)
-            }
-            .refreshable { await accountServers.refresh() }
-            .navigationTitle("Your computers")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
-    }
-}
-
-/// Puts the setup sheet over whatever is showing, so it stays up when the first computer switched on turns the first
-/// screen into the tabs.
-struct AccountSetupPresenter: ViewModifier {
-    @ObservedObject private var accountServers = AccountServers.shared
-
+/// The connection screens' made-up states for screenshots (`-connectionDemo`), over whatever is showing.
+struct ConnectionDemoPresenter: ViewModifier {
     func body(content: Content) -> some View {
         #if DEBUG
-        content.sheet(isPresented: $accountServers.setupShown) { AccountSetupSheet() }
-            .fullScreenCover(isPresented: .constant(ConnectionDemo.screen)) { NavigationStack { ConnectionDemo.view } }
-            .onAppear { if ConnectionDemo.mode == "setup" { accountServers.setupShown = true } }
+        content.fullScreenCover(isPresented: .constant(ConnectionDemo.screen)) { NavigationStack { ConnectionDemo.view } }
         #else
-        content.sheet(isPresented: $accountServers.setupShown) { AccountSetupSheet() }
+        content
         #endif
     }
 }
 
 #if DEBUG
 extension ConnectionDemo {
-    /// `list`, `add`, `detail` and `diagnosis` open their screen over the app.
-    static var screen: Bool { ["list", "add", "detail", "diagnosis"].contains(mode ?? "") }
+    /// `list`, `add`, `detail`, `diagnosis`, `paired` and `signedout` open their screen over the app.
+    static var screen: Bool { ["list", "add", "detail", "diagnosis", "paired", "signedout"].contains(mode ?? "") }
 
     @MainActor @ViewBuilder static var view: some View {
         switch mode {
         case "add": AddServerView()
         case "detail": ServerDetailView(serverId: "mac-1")
         case "diagnosis": ServerDetailView(serverId: "mac-2")
+        case "paired": ServerDetailView(serverId: "studio")
+        case "signedout": ServerDetailView(serverId: "linux")
         default: ServersView()
         }
     }
