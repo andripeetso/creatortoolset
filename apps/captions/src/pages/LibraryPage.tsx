@@ -12,7 +12,6 @@ import { FolderCard, FolderRow, type FolderProps } from "@/components/browse/Fol
 import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
-import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { LibrarySetup } from "./library/Setup";
 import { LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
@@ -66,6 +65,7 @@ import { setOffline, useOffline } from "./library/offline-state";
 import { thisMacDevice } from "@/lib/providers";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
+import { EmptyDrop } from "./library/EmptyDrop";
 import { FoldersToAllow, useImportQuestion } from "./library/Import";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, savable, withSaved } from "./library/Filters";
@@ -82,7 +82,7 @@ import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./lib
 
 /**
  * Media Library (/library): the person's raw materials, one library's footage. An empty library is this same page,
- * with what it is for and the folder to choose (FootageFolderCard) in place of the grid (the first upload's dialog asks
+ * as one drop box with no toolbar (./library/EmptyDrop.tsx) in place of the grid (the first upload's dialog asks
  * how to sort the files, ./library/Organize.tsx); a drop anywhere on it adds files and folders (./library/LibraryDrop.tsx).
  * Left: the sidebar (./library/Sidebar.tsx: sort, when, where, tags, kinds, a plug-in's own filters; a sheet on a
  * narrow window). Above the grid: the page's own row (left: search, View with the layout and card size, More with Library
@@ -262,6 +262,8 @@ export default function LibraryPage() {
     !watch?.folders.length &&
     !uploads.length &&
     trashPeek.data?.items.length === 0;
+  // nothing at all yet (no clip and no folder): the page is the drop box, with no toolbar (11-19, Andri)
+  const bare = firstScreen && !collections.some(holdsClips);
   const settling = emptyView && !firstScreen && (!foldersKnown || !watchKnown || !trashPeek.data || !sourceList); // still finding out: the frame, not a wrong screen
 
   // the plug-in sources this account may browse here (none unless a plug-in brings one)
@@ -499,15 +501,9 @@ export default function LibraryPage() {
   };
 
   const saved = (l: LibrarySummary) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
-  const organize = useOrganize({
-    library,
-    owner: !!watch, // the settings are the owner's too
-    onSaved: saved,
-    setFolders: folderList.set,
-    onError: setError,
-  });
+  const organize = useOrganize({ onSaved: saved, setFolders: folderList.set });
   const importQ = useImportQuestion({ library, serverHere: !!watch?.allowed, onError: setError });
-  const drop = useLibraryDrop({ library, ignore: DRAG, readsFolders: !!watch?.allowed, ...organize, addFiles, onWatch: watchLoad.set, onError: setError });
+  const drop = useLibraryDrop({ library, ignore: DRAG, readsFolders: !!watch?.allowed, addFiles, onWatch: watchLoad.set, onError: setError });
 
   const create = async () => {
     try {
@@ -1013,6 +1009,8 @@ export default function LibraryPage() {
               {(trash || (open && (!tabbed || trail.length > 1))) && (
                 <FolderTrail state={{ open: trash ? "trash" : open, trail, to: folderTo }} top={library.name} />
               )}
+              {/* none while there is nothing in the library: the drop box is the page */}
+              {!bare && (
               <BrowseBar
                 search={{ value: q, onChange: setQ, placeholder: "Search clips and transcripts" }}
                 tools={
@@ -1109,6 +1107,7 @@ export default function LibraryPage() {
                   </Button>
                 )}
               </BrowseBar>
+              )}
 
               <SpaceMenu
                 className="flex flex-1 flex-col gap-4"
@@ -1191,7 +1190,7 @@ export default function LibraryPage() {
                   )
                 )}
 
-                {firstScreen && <FootageFolderCard page libraryId={library.id} needsSetup={!library.settings.setupAt} onUpload={chooseFiles} />}
+                {firstScreen && <EmptyDrop canAdd={mayAdd} onChoose={chooseFiles} />}
                 {setupOpen && library && <LibrarySetup library={library} watchAllowed={!!watch?.allowed} onDone={(l) => (saved(l), closeSetup())} onClose={closeSetup} />}
 
                 {next &&

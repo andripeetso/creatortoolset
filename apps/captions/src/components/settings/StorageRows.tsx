@@ -3,7 +3,6 @@ import { EVERY_WORKSPACE, THIS_COMPUTER, connectFor, type AddFolderBody, type Di
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useBigFolder } from "@/components/LibraryProcessing";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports, pairThisMac, thisMacBridge, thisMacState, type ThisMacState } from "@/lib/thisMac";
@@ -35,7 +34,7 @@ export const getStorage = () => call<StorageView>(STORAGE_API);
 // a new folder goes to the workspace the call works in; one is moved or removed by its id, whatever workspace it is in
 const addStorageFolder = (b: AddFolderBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b, workspace);
 const moveStorageFolder = (id: string, workspaces: string[] | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspaces } satisfies MoveFolderBody);
-const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
+export const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
 const repointStorageFolder = (id: string, path: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}/re-point`, "POST", { path });
 
 /** The drives a computer reported (its system disk, external drives, network shares). Empty until it reports one. */
@@ -426,12 +425,11 @@ const NEW_MAC = "this-mac:new";
  * A folder the person already has, as a Media folder, on a drive of one of the account's computers. With two or more
  * workspaces the first field is the workspace it is for: the one Settings shows, else the window's.
  */
-export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, here = [], w, onChanged }: {
+export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, w, onChanged }: {
   open: boolean; onOpenChange: (o: boolean) => void; role: AddFolderBody["role"]; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; w?: SettingsWorkspace; onChanged: () => void;
 }) {
-  // `here`: the computers that are the machine this server runs on. A folder added on one joins the Media Library,
-  // which transcribes and describes every clip, so a big one shows what that takes before it is added
-  const big = useBigFolder();
+  // a folder added joins the Media Library at once (11-19: no dialog; its row says what indexing it takes, and the
+  // library's monthly budget guards the cost). `here` (the server's own computers) is kept for callers, not read now
   const windowIn = useWorkspace((s) => s.currentProjectId);
   const [pickWorkspace, setPickWorkspace] = useState("");
   const [pickHost, setPickHost] = useState("");
@@ -470,9 +468,7 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
       }
     };
     try {
-      // Projects and Exports are written to, never read in whole as footage
-      if (role === "footage" && here.includes(host)) await big.check(p, add);
-      else await add();
+      await add();
     } finally {
       setBusy(false);
     }
@@ -498,7 +494,6 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
           )}
         </>
       )}
-      {big.dialog}
     </FormDialog>
   );
 }

@@ -95,7 +95,7 @@ export function ClipPlayer({
   const fallback = proxySource(check, a.versionId, serverPlays);
   // no proxy anywhere (none cached here, and the server plays nothing of this library): the original is all there is, so
   // it is never left for nothing. A network share that was asleep answers late: this computer is asked again and the
-  // original tried again, a little later each time; after the last try it says so, with Try again
+  // original tried again, a little later each time; after the last try it says so, with Retry
   const nowhere = !fallback.src;
   const retryLater = useRef(0);
   useEffect(() => () => clearTimeout(retryLater.current), []);
@@ -165,7 +165,7 @@ export function ClipPlayer({
   const noCopy = failedOnServer && !!upload && hostsProxies(upload.upload) ? "This clip isn't on the server." : null;
   const away =
     !waiting && (failedOnServer || (!serverPlays && !src)) ? (awayLine(check) ?? noCopy ?? placeLine(a.placeWord ?? { word: "unchecked" })) : null;
-  // the original here didn't open after its tries, and there is nothing else to play: said, with Try again
+  // the original here didn't open after its tries, and there is nothing else to play: said, with Retry
   const stuck = phase === "failed" && pin?.badge === "Original" && nowhere;
   const note = stuck || said === "missing" || away ? null : said;
   // the owner, with no proxies and no originals hosted: told why it plays only where the files are
@@ -481,13 +481,13 @@ function Away({ line, noUpload }: { line: string; noUpload: boolean }) {
   );
 }
 
-/** The original on this computer didn't open, after its tries (a share that didn't answer): one line and Try again. */
+/** The original on this computer didn't open, after its tries (a share that didn't answer): one line and Retry. */
 function Stuck({ onTry }: { onTry: () => void }) {
   return (
     <div className="flex max-w-sm flex-col items-center gap-2 text-sm">
       <p>The original on this computer didn't open.</p>
       <Button size="sm" variant="secondary" onClick={onTry}>
-        Try again
+        Retry
       </Button>
     </div>
   );

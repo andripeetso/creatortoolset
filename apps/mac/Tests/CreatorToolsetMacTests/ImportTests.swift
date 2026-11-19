@@ -145,4 +145,52 @@ final class ImportTests: XCTestCase {
         XCTAssertTrue(MediaFiles.isMedia("/a/B.TIFF"))
         XCTAssertFalse(MediaFiles.isMedia("/a/b.txt"))
     }
+
+    // setup's Library folder (11-19): the folder names in a picked folder, and its missing folders made on Done
+
+    func testMakeAskParsed() {
+        XCTAssertEqual(importAsk(#"import:make:{"in":"/Volumes/Tiny/Lib","names":["Source media"]}"#), .make(in: "/Volumes/Tiny/Lib", names: ["Source media"]))
+        XCTAssertEqual(importAsk(#"import:make:{"in":"~/Movies/Creator Toolset/Tiny","names":[]}"#), .make(in: NSHomeDirectory() + "/Movies/Creator Toolset/Tiny", names: []))
+        XCTAssertNil(importAsk(#"import:make:{"in":"/a","names":["1","2","3","4","5","6","7","8","9","10","11"]}"#))
+    }
+
+    func testSubfoldersAreFolderNamesOnlyNoHiddenSortedAndCapped() throws {
+        for name in ["FOOTAGE", "EXPORTS", ".cache", "b", "a", "c"] {
+            try FileManager.default.createDirectory(atPath: at("lib/\(name)"), withIntermediateDirectories: true)
+        }
+        try write("lib/notes.txt")
+        XCTAssertEqual(Imports.subfolders(at("lib")), ["a", "b", "c", "EXPORTS", "FOOTAGE"])
+        XCTAssertEqual(Imports.subfolders(at("lib"), limit: 2), ["a", "b"])
+        XCTAssertEqual(Imports.subfolders(at("not-there")), [])
+    }
+
+    func testMakeCreatesOnlyTheMissingFoldersAndSaysWhatIsThere() throws {
+        try FileManager.default.createDirectory(atPath: at("lib/FOOTAGE"), withIntermediateDirectories: true)
+        var granted: [String] = []
+        let r = Imports.make(in: at("lib"), names: ["FOOTAGE", "Project files", "Final exports"], allowed: [at("lib")], grant: { granted.append($0) })
+        XCTAssertEqual(r["made"] as? [String], [at("lib/Project files"), at("lib/Final exports")])
+        XCTAssertEqual((r["failed"] as? [[String: String]])?.count, 0)
+        XCTAssertEqual(r["children"] as? [String], ["Final exports", "FOOTAGE", "Project files"])
+        XCTAssertEqual(granted, [at("lib/Project files"), at("lib/Final exports")])
+        // made again: nothing new
+        XCTAssertEqual(Imports.make(in: at("lib"), names: ["Project files"], allowed: [at("lib")], grant: { _ in })["made"] as? [String], [])
+    }
+
+    func testMakeIntoTheFolderBesideAPickAndIntoANewDefaultPlace() throws {
+        try FileManager.default.createDirectory(atPath: at("moo/FOOTAGE"), withIntermediateDirectories: true)
+        // existing folders: FOOTAGE was picked, PROJECTS goes in the folder it is in
+        let beside = Imports.make(in: at("moo"), names: ["Project files"], allowed: [at("moo/FOOTAGE")], grant: { _ in })
+        XCTAssertEqual(beside["made"] as? [String], [at("moo/Project files")])
+        // the library's default place, not there yet, inside an allowed root
+        let fresh = Imports.make(in: at("root/Tiny"), names: ["Source media"], allowed: [at("root")], grant: { _ in })
+        XCTAssertEqual(fresh["made"] as? [String], [at("root/Tiny/Source media")])
+    }
+
+    func testMakeRefusesAFolderNotAllowedAndNamesThatArePaths() throws {
+        try FileManager.default.createDirectory(atPath: at("lib"), withIntermediateDirectories: true)
+        XCTAssertNotNil(Imports.make(in: at("lib"), names: ["x"], allowed: [at("elsewhere")], grant: { _ in })["error"])
+        let r = Imports.make(in: at("lib"), names: ["../out", ".hidden", ""], allowed: [at("lib")], grant: { _ in })
+        XCTAssertEqual((r["failed"] as? [[String: String]])?.count, 3)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: at("out")))
+    }
 }

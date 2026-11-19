@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type ReactNode } from "react";
-import type { LibrarySummary, Organize, WatchStatus } from "@contracts/library";
+import type { LibrarySummary, WatchStatus } from "@contracts/library";
 import { THIS_COMPUTER } from "@contracts/storage";
 import { droppedFiles } from "@/components/assistant/draft";
 import { getWatch } from "@/lib/library";
@@ -33,9 +33,6 @@ export function useLibraryDrop({
   library: LibrarySummary | null;
   ignore?: string;
   readsFolders: boolean;
-  /** kept for callers from before 11-19: a drop asks nothing now, so these are not read */
-  offer?: boolean;
-  answerOffer?: (o: Organize) => Promise<void>;
   addFiles: (files: File[], paths?: Map<File, string>) => unknown;
   onWatch: (w: WatchStatus) => void;
   onError: (e: string) => void;

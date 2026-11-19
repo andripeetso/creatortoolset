@@ -130,8 +130,9 @@ extension Shell {
         return thisMacState(problem: await setOtherDevices(true))
     }
 
-    /// "folder" from the page (FootageFolderCard, "Choose a folder"): this Mac's own open panel for one folder. The reply is
-    /// { path }, or { path: null } when cancelled. Choosing it is what lets this app read the folder; the server then adds it
+    /// "folder" from the page (FootageFolderCard, "Choose a folder", setup's Library folder): this Mac's own open panel for
+    /// one folder. The reply is { path, children, siblings } (the folder names in it and beside it), or { path: null } when
+    /// cancelled. Choosing it is what lets this app read the folder; the server then adds it
     /// to the Library's watch list (api/library/watch.ts), which reads it in place.
     @MainActor func chooseFolder() -> [String: Any] {
         let open = NSOpenPanel()
@@ -143,7 +144,8 @@ extension Shell {
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
         Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
         MediaFiles.add(url.path)  // and its videos are read here later: shot descriptions, transcripts, playing originals
-        return ["path": url.path]
+        // the names of the folders in it and beside it: setup finds Source media, Project files and Final exports by them
+        return ["path": url.path, "children": Imports.subfolders(url.path), "siblings": Imports.subfolders(url.deletingLastPathComponent().path)]
     }
 
     /// "download-folder" from the page (Settings → Storage › This computer, Download location › Change…): this Mac's open

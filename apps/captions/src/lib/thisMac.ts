@@ -101,6 +101,25 @@ export async function chooseFolderOnMac(): Promise<string | null | undefined> {
   return pathAskOnMac("folder");
 }
 
+/** A folder picked in the Mac app's open panel, with the names of the folders in it and beside it (a Mac app from before
+ *  sends no names: then nothing is known to be there). */
+export type PickedFolder = { path: string; children?: string[]; siblings?: string[] };
+/** chooseFolderOnMac with the folder's subfolder names, for setup's Library folder (Found or Will be created). */
+export async function pickFolderOnMac(): Promise<PickedFolder | null | undefined> {
+  const bridge = thisMacBridge();
+  if (!bridge) return undefined;
+  const names = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
+  try {
+    const r = ((await (bridge.postMessage("folder") as unknown as Promise<{ path?: string | null; children?: unknown; siblings?: unknown }>)) ?? {}) as { path?: string | null; children?: unknown; siblings?: unknown };
+    if (!r.path) return null;
+    const children = names(r.children);
+    const siblings = names(r.siblings);
+    return { path: r.path, ...(children ? { children } : {}), ...(siblings ? { siblings } : {}) };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Settings → Storage › This computer, Download location › Change…: this Mac's own folder panel for the download cache
  * (ThisMacBridge.swift chooseDownloadFolder). The same answer shape as chooseFolderOnMac.
@@ -448,6 +467,18 @@ export type ImportCopied = { copied: { from: string; to: string }[]; failed: { f
 export const importCopy = (id: string, files: { from: string; to: string }[]) =>
   importAsk<ImportCopied>(`import:copy:${JSON.stringify({ id, files })}`).then((r) => ({ copied: r.copied ?? [], failed: r.failed ?? [], stopped: r.stopped }));
 export const importProgress = (id: string) => importAsk<{ bytes: number; of: number; file?: string }>(`import:progress:${id}`);
+/**
+ * Makes the named folders inside `folder` on this Mac where they are missing (setup's Library folder, on Done): `folder` is
+ * one picked in its open panel, or the library's own default place, or the folder beside a picked one. A Mac app from
+ * before answers it as unknown: the caller then leaves the folders to be made by the first copy into them.
+ */
+export const importMake = (folder: string, names: string[]) =>
+  importAsk<{ made?: string[]; failed?: { name: string; error: string }[]; children?: string[] }>(`import:make:${JSON.stringify({ in: folder, names })}`).then((r) => ({
+    made: r.made ?? [],
+    failed: r.failed ?? [],
+    // the folders in it afterwards (no names asked: just what is there), for Found
+    children: Array.isArray(r.children) ? r.children : undefined,
+  }));
 /** Stops a copy; the file it was writing is removed. */
 export const importCancel = (id: string) => importAsk<unknown>(`import:cancel:${id}`);
 /** The media files under a place on this Mac (one the person dropped or picked before). */
