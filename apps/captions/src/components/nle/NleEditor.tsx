@@ -8,6 +8,7 @@ import {
   timecode, toSaved, unlink, withKeys, type Gap, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { dragging, type Dragged } from "@/lib/nle/drag";
+import { fingerprint, keepUnsaved, readUnsaved } from "@/lib/nle/unsaved";
 import { cn } from "@/lib/utils";
 import { keyAction } from "@/lib/nle/keys";
 import { NleInspector } from "./NleInspector";
@@ -52,6 +53,13 @@ let clipboard: { track: string; item: NleItem }[] = [];
 /** A drag from the source viewer's picture: the source's marked part. */
 const VIEWER_MIME = "application/x-ct-nle-viewer";
 const LOOP_KEY = "ct-nle-loop";
+
+/** What a timeline opens as: as saved, and with the edits this browser kept unsaved on that same timeline (unsaved.ts). */
+const openOf = (initial: NleTimeline, key: string) => {
+  const saved = withKeys(initial);
+  const base = fingerprint(initial);
+  return { key, base, saved, now: readUnsaved(key, base) ?? saved };
+};
 
 /** A playhead and its clock: it runs on the page's frame clock while playing (backwards for J) and stops on the last
  *  frame, or with `loop` (seconds) goes round that part. */
@@ -127,8 +135,11 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   /** Relink… on a clip in the Media Pool: look for the files not found here */
   onRelink?: () => void;
 }) {
-  const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(withKeys(initial)));
-  const [saved, setSaved] = useState<NleTimeline>(hist.now);
+  const [first] = useState(() => openOf(initial, resetKey));
+  // the timeline open now (its key and fingerprint), for keeping its unsaved edits
+  const opened = useRef(first);
+  const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(first.now));
+  const [saved, setSaved] = useState<NleTimeline>(first.saved);
   const [live, setLive] = useState<NleTimeline | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   // a gap picked on the timeline (its clips' selection let go); any edit lets it go
@@ -157,10 +168,21 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
+  // every edit kept in this browser until it is saved, so a reload or the page opened again never loses it. Before the
+  // effect below: on another version it still keeps the last edits under the timeline they were made on
+  useEffect(() => keepUnsaved(opened.current.key, opened.current.base, hist.now === saved ? null : hist.now), [hist.now, saved]);
+  // said once when a timeline opens with edits that were never saved
+  const back = opened.current.now !== opened.current.saved;
   useEffect(() => {
-    const fresh = withKeys(initial);
-    setHist(freshHist(fresh));
-    setSaved(fresh);
+    if (back) toast("Your edits that weren't saved are back", { description: "Save keeps them in this version" });
+  }, [back, resetKey]);
+
+  useEffect(() => {
+    if (opened.current.key === resetKey) return; // opened with the page
+    const o = openOf(initial, resetKey);
+    opened.current = o;
+    setHist(freshHist(o.now));
+    setSaved(o.saved);
     setLive(null);
     setSelected([]);
     tln.setTime(0);
