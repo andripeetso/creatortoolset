@@ -191,7 +191,10 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         guard let path = Self.path(in: info) else { return }
         await MainActor.run {
-            Workspaces.shared.go(server: info["server"] as? String, workspace: info["workspace"] as? String)
+            // a push through the account names the computer by its id: the saved one may be on its LAN address
+            let server = Workspaces.serverKey(serverId: info["serverId"] as? String, server: info["server"] as? String,
+                                              in: Connections.shared.servers)
+            Workspaces.shared.go(server: server, workspace: info["workspace"] as? String)
             AppNavigator.shared.open(href: path)
         }
     }

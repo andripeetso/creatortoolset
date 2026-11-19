@@ -9,6 +9,8 @@ struct AddServerView: View {
     var prefill: String?
     /// Add a route to this computer instead of a new computer.
     var routeFor: ServerEntry?
+    /// A pairing link opened from outside: its address and code are filled in; Connect is the person's.
+    var link: PairingTarget?
 
     @ObservedObject private var account = Account.shared
     @Environment(\.dismiss) private var dismiss
@@ -103,6 +105,10 @@ struct AddServerView: View {
         .onChange(of: code) { error = nil }
         .onAppear {
             if let prefill, address.isEmpty { address = prefill }
+            if let link, address.isEmpty {
+                address = link.origin.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                code = link.code ?? ""
+            }
             #if DEBUG
             if ConnectionDemo.mode == "add" {
                 address = "10.0.0.40"
@@ -317,5 +323,23 @@ private struct ShareLinkButton: View {
             Label("Send the link to my computer", systemImage: "square.and.arrow.up")
         }
         .buttonStyle(.bordered)
+    }
+}
+
+/// Opens the Add screen for a pairing link the app was opened with (`PairingLinks`), filled in, never connecting.
+struct PairingLinkPresenter: ViewModifier {
+    @ObservedObject private var links = PairingLinks.shared
+
+    func body(content: Content) -> some View {
+        content
+            .onOpenURL { links.open($0) }
+            .sheet(item: Binding(get: { links.pending.map(PendingLink.init) }, set: { if $0 == nil { links.pending = nil } })) { pending in
+                NavigationStack { AddServerView(link: pending.target) }
+            }
+    }
+
+    private struct PendingLink: Identifiable {
+        let target: PairingTarget
+        var id: String { target.origin.absoluteString + (target.code ?? "") }
     }
 }

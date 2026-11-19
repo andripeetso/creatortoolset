@@ -62,6 +62,12 @@ final class Account: ObservableObject {
     /// Forgets the account on this phone. A computer reached only through the account goes with it; one still
     /// reachable another way stays saved.
     func signOut() {
+        Task { await signOutNow() }
+    }
+
+    /// The connect service stops pushing to this phone first (it needs the account to ask), then the account goes.
+    func signOutNow() async {
+        await AccountPush.signingOut()
         Keychain.set(key, nil)
         UserDefaults.standard.removeObject(forKey: key)
         profile = nil

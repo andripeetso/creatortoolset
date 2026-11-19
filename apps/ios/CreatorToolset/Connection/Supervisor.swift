@@ -461,7 +461,8 @@ final class ServerSupervisor {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         for (k, v) in credential.headers(method: "GET", url: request.url!) { request.setValue(v, forHTTPHeaderField: k) }
         let mailbox = mailbox
-        line = Task.detached {
+        let serverId = serverId
+        line = Task.detached { [weak owner] in
             func post(_ signal: SupervisorSignal) { Task { @MainActor in mailbox.post(signal) } }
             do {
                 let (bytes, response) = try await API.slow.bytes(for: request)
@@ -469,7 +470,10 @@ final class ServerSupervisor {
                 guard status == 200 else { return post(.lineEnded(generation: generation, .status(status, route: route))) }
                 var parser = ServerEvents.Parser()
                 for try await text in bytes.lines {
-                    if let event = parser.take(text) { post(.frame(generation: generation, name: event.name)) }
+                    guard let event = parser.take(text) else { continue }
+                    post(.frame(generation: generation, name: event.name))
+                    // the screens read this same line (`ServerEvents`): one line per server
+                    Task { @MainActor in owner?.deliver(serverId, event) }
                 }
                 post(.lineEnded(generation: generation, ConnectionFailure.from(URLError(.networkConnectionLost), route: route)))
             } catch is CancellationError {
@@ -659,6 +663,28 @@ final class Connections: ObservableObject {
 
     // MARK: what the screens read
 
+    private var listeners: [UUID: AsyncStream<ServerEvents.Event>.Continuation] = [:]
+
+    /// The change line of the server in use, as the screens read it (`ServerEvents.stream`): the events of that
+    /// server's own supervised line, so no screen opens a second one. Another server taking its place says "hello",
+    /// so every reader reads again.
+    func events() -> AsyncStream<ServerEvents.Event> {
+        AsyncStream { continuation in
+            let id = UUID()
+            listeners[id] = continuation
+            continuation.onTermination = { _ in Task { @MainActor [weak self] in self?.listeners[id] = nil } }
+        }
+    }
+
+    /// An event on a server's line: to the readers when it is the server in use.
+    func deliver(_ serverId: String, _ event: ServerEvents.Event) {
+        guard serverId == current?.serverId else { return }
+        for listener in listeners.values { listener.yield(event) }
+    }
+
+    /// How many readers listen (a test's look).
+    var listenerCount: Int { listeners.count }
+
     var servers: [ServerEntry] { saved.servers }
     var current: ServerEntry? { saved.current }
 
@@ -692,6 +718,7 @@ final class Connections: ObservableObject {
         guard saved.currentKey != key else { return }
         saved.currentKey = key
         persist()
+        for listener in listeners.values { listener.yield(ServerEvents.Event(name: "hello", data: "")) }
     }
 
     /// Remove from this device: forgets it, its credentials and what the app kept for it. It never revokes: that

@@ -217,6 +217,15 @@ final class Workspaces: ObservableObject {
         return true
     }
 
+    /// The saved server a notification is about, as `Server.id`: by the computer's own id first (a push through the
+    /// account names its tunnel address, while this phone may reach it on its LAN), else by the address it names.
+    nonisolated static func serverKey(serverId: String?, server: String?, in entries: [ServerEntry]) -> String? {
+        if let serverId, let entry = entries.first(where: { $0.serverId == serverId }) { return entry.key }
+        guard let server, let url = URL(string: server) else { return server }
+        let origin = Routes.origin(url)
+        return entries.first { e in e.key == server || e.routes.contains { Routes.origin($0.url) == origin } }?.key ?? server
+    }
+
     /// The workspace a link names in its query (`ws=`), the way the website opens a page in a workspace.
     nonisolated static func asked(in path: String) -> String? {
         URLComponents(string: path)?.queryItems?.first { $0.name == "ws" }?.value.flatMap { $0.isEmpty ? nil : $0 }
@@ -410,10 +419,16 @@ struct WorkspaceToast: View {
 }
 
 extension View {
-    /// The workspace switcher, top left: on the first screen of every tab.
+    /// The workspace switcher, top left: on the first screen of every tab, with the connection's line under it once a
+    /// state has lasted 800 ms (nothing while every computer is connected).
     func workspaceSwitcher() -> some View {
         toolbar {
-            ToolbarItem(placement: .topBarLeading) { WorkspaceSwitcherButton() }
+            ToolbarItem(placement: .topBarLeading) {
+                VStack(alignment: .leading, spacing: 0) {
+                    WorkspaceSwitcherButton()
+                    ConnectionHeaderStatus()
+                }
+            }
         }
     }
 }

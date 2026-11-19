@@ -36,8 +36,8 @@ extension API {
     var webNeedsTicket: Bool { cookie == nil && (credential?.kind == .dpop || credential?.kind == .bearer) }
 
     /// A ticket for `prefix` (a path on this server), reading only unless `write`.
-    func mediaTicket(_ prefix: String, write: Bool = false) async throws -> String {
-        let data = try await send("/api/auth/media-ticket", json: ["path": prefix, "write": write])
+    func mediaTicket(_ prefix: String, write: Bool = false, session: URLSession = API.session) async throws -> String {
+        let data = try await data(request("/api/auth/media-ticket", method: "POST", json: ["path": prefix, "write": write]), session: session)
         return try JSONDecoder().decode(MediaTicket.Answer.self, from: data).ticket
     }
 
@@ -49,10 +49,10 @@ extension API {
 
     /// A request built by `request(_:method:)` for the background transfer service: a DPoP session's proof is swapped
     /// for a write ticket on `prefix`, so iOS may send it whenever it likes within the hour. Others go as they are.
-    func background(_ request: URLRequest, prefix: String) async throws -> URLRequest {
+    func background(_ request: URLRequest, prefix: String, session: URLSession = API.session) async throws -> URLRequest {
         guard needsTicket, let url = request.url else { return request }
         var out = request
-        out.url = MediaTicket.add(try await mediaTicket(prefix, write: true), to: url)
+        out.url = MediaTicket.add(try await mediaTicket(prefix, write: true, session: session), to: url)
         out.setValue(nil, forHTTPHeaderField: "Authorization")
         out.setValue(nil, forHTTPHeaderField: "DPoP")
         return out

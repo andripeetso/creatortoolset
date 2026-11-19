@@ -100,4 +100,37 @@ final class AccountPushTests: XCTestCase {
         XCTAssertNil(AppNotifications.path(in: ["path": "https://elsewhere.example/review/r1"]))
         XCTAssertNil(AppNotifications.path(in: ["serverId": mac]))
     }
+
+    // MARK: wired to the connection code
+
+    func testTheAccountsConnectServiceCallsAreTheRelay() {
+        let real: AccountRelay = AccountServers.shared
+        XCTAssertEqual(real.signedIn, Account.shared.profile != nil)
+        XCTAssertEqual(real.currentServerId, Connections.shared.current?.serverId)
+    }
+
+    func testSignInRegistersAndSignOutUnregistersFirst() async {
+        await AccountServers.shared.afterSignIn()
+        XCTAssertEqual(relay.calls.first?.path, "/v1/mobile/devices")
+        XCTAssertEqual(relay.calls.first?.method, "POST")
+        relay.calls = []
+        await Account.shared.signOutNow()
+        XCTAssertEqual(relay.calls.map(\.method), ["DELETE"])
+        XCTAssertEqual(relay.calls.first?.path, "/v1/mobile/devices/\(AccountPush.deviceId)")
+    }
+
+    func testATapFindsTheComputerByItsIdFirst() {
+        let lan = URL(string: "http://10.0.0.20:43190/")!
+        let tunnel = URL(string: "https://mac-1.connect.example/")!
+        let mac = ServerEntry(serverId: self.mac, label: "Mac", routes: [.paired(lan), .account(tunnel)], home: lan)
+        let other = ServerEntry(serverId: "other-id", label: "Other", routes: [.paired(URL(string: "https://other.example/")!)],
+                                home: URL(string: "https://other.example/")!)
+        // the push names the tunnel; the phone saved the Mac by its LAN address
+        XCTAssertEqual(Workspaces.serverKey(serverId: self.mac, server: tunnel.absoluteString, in: [other, mac]), mac.key)
+        // no id (the phone's own notification): by any of its addresses
+        XCTAssertEqual(Workspaces.serverKey(serverId: nil, server: "https://mac-1.connect.example", in: [other, mac]), mac.key)
+        XCTAssertEqual(Workspaces.serverKey(serverId: nil, server: other.key, in: [other, mac]), other.key)
+        // an unknown id falls back to the address
+        XCTAssertEqual(Workspaces.serverKey(serverId: "nope", server: other.key, in: [mac, other]), other.key)
+    }
 }

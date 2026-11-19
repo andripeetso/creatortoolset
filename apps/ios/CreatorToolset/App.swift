@@ -11,9 +11,8 @@ struct CreatorToolsetApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                // the connection's line, once a state has lasted 800 ms (nothing while every computer is connected)
-                .safeAreaInset(edge: .top, spacing: 0) { ConnectionHeaderStatus() }
                 .modifier(AccountSetupPresenter())
+                .modifier(PairingLinkPresenter())
                 .environmentObject(Servers.shared)
                 .environmentObject(UploadEngine.shared)
                 .environmentObject(UploadEngine.shared.store)
@@ -241,6 +240,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         PhoneDemo.install()
         #endif
         _ = Servers.shared   // first, so `API.current` reads what it saved (a debug -localServer too)
+        AccountPush.relay = AccountServers.shared   // push through the account signs with the account's relay token
         // created at launch, a background relaunch included, so the background session reconnects
         _ = UploadEngine.shared
         BackgroundRefresh.register()

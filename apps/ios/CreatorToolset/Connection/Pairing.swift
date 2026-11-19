@@ -70,13 +70,13 @@ struct PairingTarget: Equatable {
     let origin: URL
     let code: String?
 
-    /// `https://host/#token=XXXX`, `?token=`, the app's own link (`creatortoolset://pair?url=<that link>`), or an
+    /// `https://host/#token=XXXX`, `?token=`, the app's own link (`creatortoolset://pair?pairingUrl=<that link>`), or an
     /// address with no scheme: http for an IP or a `.local` name, https otherwise.
     static func parse(_ text: String, code typed: String? = nil) -> PairingTarget? {
         var raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty, !raw.contains(" ") else { return nil }
         if let link = URLComponents(string: raw), link.scheme?.lowercased() == "creatortoolset", link.host?.lowercased() == "pair",
-           let inner = link.queryItems?.first(where: { $0.name == "url" })?.value {
+           let inner = link.queryItems?.first(where: { $0.name == "pairingUrl" || $0.name == "url" })?.value {
             return parse(inner, code: typed)
         }
         if !raw.contains("://") {
@@ -225,5 +225,37 @@ enum Pairing {
         var api = API(server: base, cookie: nil)
         api.credential = credential
         return try JSONDecoder().decode(SessionInfo.self, from: try await session.data(for: api.request("/api/auth/session")).0)
+    }
+}
+
+/// A pairing link opened from outside the app (the Camera, the website's "Open in the app", another app): the Add screen
+/// opens filled in and waits for the person's Connect. It never connects by itself: a link carries a host and a code
+/// someone else chose.
+@MainActor
+final class PairingLinks: ObservableObject {
+    static let shared = PairingLinks()
+
+    /// The link waiting on the Add screen.
+    @Published var pending: PairingTarget?
+
+    /// True when `url` was a pairing link (it is then shown, never redeemed).
+    @discardableResult
+    func open(_ url: URL) -> Bool {
+        guard let target = Self.target(url) else { return false }
+        pending = target
+        return true
+    }
+
+    /// `creatortoolset://pair?pairingUrl=…`, or a universal link `https://host/#token=…` (`?token=` too).
+    nonisolated static func target(_ url: URL) -> PairingTarget? {
+        let scheme = url.scheme?.lowercased()
+        if scheme == "creatortoolset" { guard url.host()?.lowercased() == "pair" else { return nil } }
+        else if scheme == "https" || scheme == "http" {
+            let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let inFragment = URLComponents(string: "?" + (parts?.fragment ?? ""))?.queryItems?.contains { $0.name == "token" } ?? false
+            guard inFragment || parts?.queryItems?.contains(where: { $0.name == "token" }) == true else { return nil }
+        } else { return nil }
+        guard let target = PairingTarget.parse(url.absoluteString), target.code?.isEmpty == false else { return nil }
+        return target
     }
 }

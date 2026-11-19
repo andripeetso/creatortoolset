@@ -13,6 +13,8 @@ struct AccountComputer: Identifiable, Equatable {
     var offlineReason: String?
     var endpointFailure: String?
     var traceId: String?
+    /// When it was linked to the account (the connect service's `created_at`), for "the account's most recent".
+    var linkedAt: Double?
 
     /// `https://<host>` from a host name or a URL: an address that a session is sent to, so https and a plain name only.
     static func endpoint(_ raw: String?) -> URL? {
@@ -108,6 +110,7 @@ final class AccountServers: ObservableObject {
             let label: String?
             let hostname: String?
             let endpoint: String?
+            let created_at: Double?
         }
         let computers: [One]
     }
@@ -141,7 +144,8 @@ final class AccountServers: ObservableObject {
                 guard one.id.wholeMatch(of: #/[A-Za-z0-9_-]{8,128}/#) != nil else { return nil }
                 let old = computers.first { $0.id == one.id }
                 return AccountComputer(id: one.id, name: one.label ?? one.name ?? one.hostname ?? "Computer",
-                                       endpoint: AccountComputer.endpoint(one.endpoint ?? one.hostname), status: old?.status ?? .checking)
+                                       endpoint: AccountComputer.endpoint(one.endpoint ?? one.hostname), status: old?.status ?? .checking,
+                                       linkedAt: one.created_at)
             }
         } catch {
             problem = "Could not load your computers"
@@ -181,10 +185,8 @@ final class AccountServers: ObservableObject {
                                   json: ["clientProofKeyThumbprint": DPoPKey.shared.thumbprint])
         } catch APIError.server(404, _) {
             throw ConnectionFailure(reason: .configuration, detail: "This computer is not linked to your account.", hop: .account, via: .account, cause: "not_linked")
-        } catch APIError.server(let status, let words) {
-            throw ConnectionFailure(reason: status == 503 || status == 504 ? .remoteUnavailable : .relayUnavailable, detail: words,
-                                    hop: status == 503 || status == 504 ? .tunnel : .account, via: .account,
-                                    cause: status == 503 ? "tunnel_down" : status == 504 ? "timeout" : "relay_error", httpStatus: status)
+        } catch APIError.server(let status, let code) {
+            throw Self.connectFailure(status: status, code: code)
         } catch let error as AccountError {
             throw ConnectionFailure(reason: .relayUnavailable, detail: error.localizedDescription, hop: .account, via: .account)
         }
@@ -211,6 +213,28 @@ final class AccountServers: ObservableObject {
         }
     }
 
+    /// The connect service's answer to a connect that failed (`apps/relay/src/connect.ts`: `{error: <code>}`), in words:
+    /// the computer didn't answer through its tunnel (502/503/504), or it never told the account its key (409).
+    nonisolated static func connectFailure(status: Int, code: String) -> ConnectionFailure {
+        switch (status, code) {
+        case (409, _):
+            return ConnectionFailure(reason: .configuration, detail: "Open Creator Toolset on the computer once, then try again.",
+                                     hop: .tunnel, via: .account, cause: code, httpStatus: status)
+        case (504, _), (_, "computer_timeout"):
+            return ConnectionFailure(reason: .remoteUnavailable, detail: "The computer didn't answer in time.", hop: .tunnel,
+                                     via: .account, cause: "timeout", httpStatus: status)
+        case (502, "invalid_response"):
+            return ConnectionFailure(reason: .remoteUnavailable, detail: "The computer's answer didn't check out.", hop: .server,
+                                     via: .account, cause: code, httpStatus: status)
+        case (502, _), (503, _):
+            return ConnectionFailure(reason: .remoteUnavailable, detail: "The computer can't be reached through its tunnel.", hop: .tunnel,
+                                     via: .account, cause: status == 503 ? "tunnel_down" : code, httpStatus: status)
+        default:
+            return ConnectionFailure(reason: .relayUnavailable, detail: "The connect service answered \(status).", hop: .account,
+                                     via: .account, cause: code, httpStatus: status)
+        }
+    }
+
     // MARK: on this phone
 
     func isAdded(_ computerId: String) -> Bool { Connections.shared.entry(computerId)?.enabled == true }
@@ -223,15 +247,52 @@ final class AccountServers: ObservableObject {
         Connections.shared.add(serverId: computer.id, label: computer.name, route: .account(endpoint), credential: nil, username: nil)
     }
 
-    /// Right after a sign-in: one computer that answers is added at once; several open the setup sheet, unless the
-    /// person said not to show it again. None: the first-run screen says to set it up on the computer.
+    /// Right after a sign-in the app picks the computer itself (`pick`) and connects it; no setup sheet. The list of
+    /// the account's computers opens only when it can't tell (none answers, or two linked at the same moment), unless
+    /// the person said not to show it again. None linked: the first-run screen says to set it up on the computer.
     func afterSignIn() async {
+        await AccountPush.register()
         await refresh()
         let online = computers.filter { $0.status == .online }
-        if computers.count == 1, let only = online.first, Connections.shared.entry(only.id) == nil {
-            return setAdded(only, true)
+        let here = await answeringHere(online.map(\.id))
+        if let id = Self.pick(computers, answersHere: here, lastUsed: Connections.shared.current?.serverId),
+           let computer = computers.first(where: { $0.id == id }) {
+            setAdded(computer, true)
+            if let key = Connections.shared.entry(id)?.key { Connections.shared.use(key: key) }
+            return
         }
         if !computers.isEmpty, !optedOut { setupShown = true }
+    }
+
+    /// Which computer the phone uses after an account sign-in, in the owner's order: the offline ones drop out; the
+    /// only one left; else the one that answers on this network (its LAN route); else the one this phone used last;
+    /// else the one linked to the account most recently. Nil when it truly can't tell.
+    nonisolated static func pick(_ computers: [AccountComputer], answersHere: Set<String>, lastUsed: String?) -> String? {
+        let online = computers.filter { $0.status == .online }
+        if online.count == 1 { return online[0].id }
+        guard !online.isEmpty else { return nil }
+        let local = online.filter { answersHere.contains($0.id) }
+        if local.count == 1 { return local[0].id }
+        if let lastUsed, online.contains(where: { $0.id == lastUsed }) { return lastUsed }
+        let dated = online.compactMap { c in c.linkedAt.map { (c.id, $0) } }.sorted { $0.1 > $1.1 }
+        guard let newest = dated.first, dated.count == online.count, dated.dropFirst().first?.1 != newest.1 else { return nil }
+        return newest.0
+    }
+
+    /// The computers (by id) whose LAN route, learned on an earlier connection, answers as that same computer on this
+    /// network now (its descriptor, 2.5 s each, all at once). A computer never connected before has no LAN route yet.
+    private func answeringHere(_ ids: [String]) async -> Set<String> {
+        let lan = ids.compactMap { id in Connections.shared.entry(id).map { e in (id, e.routes.filter { $0.kind == .lan }.map(\.url)) } }
+        return await withTaskGroup(of: String?.self) { group in
+            for (id, urls) in lan {
+                for url in urls {
+                    group.addTask { (try? await ServerDescriptor.fetch(url, timeout: ConnectionTiming.routeCheck))?.serverId == id ? id : nil }
+                }
+            }
+            var out = Set<String>()
+            for await id in group { if let id { out.insert(id) } }
+            return out
+        }
     }
 
     var optedOut: Bool {
@@ -248,4 +309,31 @@ final class AccountServers: ObservableObject {
         hosted = []
         Connections.shared.accountSignedOut()
     }
+}
+
+/// Push through the account (`AccountPush`) signs its calls to the connect service the way the list does.
+extension AccountServers: AccountRelay {
+    var signedIn: Bool { Account.shared.profile != nil }
+
+    func send(_ path: String, method: String, json: [String: Any]?) async throws -> Int {
+        let token = try await relayAccess()
+        var request = URLRequest(url: API(server: Account.connectService, cookie: nil).url(path))
+        request.httpMethod = method
+        request.timeoutInterval = 20
+        for (k, v) in Credential(kind: .dpop, token: token).headers(method: method, url: request.url!) { request.setValue(v, forHTTPHeaderField: k) }
+        if let json {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: json)
+        }
+        let (_, response) = try await API.session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 { relay = nil }
+        return status
+    }
+
+    func computerIds() async throws -> Set<String> {
+        Set(try JSONDecoder().decode(Listed.self, from: try await call("/v1/computers")).computers.map(\.id))
+    }
+
+    var currentServerId: String? { Connections.shared.current?.serverId }
 }
