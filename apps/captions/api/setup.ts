@@ -98,7 +98,7 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
   if (publicApifyStatus(await readApify(u)).configured) have.push("apify");
   await ensureLibrary(u);
   // the Media Library counts once it is set up (setupAt), not merely made (UNIFIED-PRD 4.8)
-  if (mediaReady(u).ready) have.push("library");
+  if ((await mediaReady(u)).ready) have.push("library");
   const full = (() => {
     const rec = findUser(u);
     return rec ? apiKeysOf(rec).full : null;

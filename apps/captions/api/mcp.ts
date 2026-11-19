@@ -1397,7 +1397,7 @@ class Asked extends Error {}
  * The workspace is the chat's (its turn), so the owner's library answers for a member too.
  */
 const libraryGate = async (user: SessionUser, turn: string | null | undefined): Promise<ActionNeeded | null> =>
-  setupNeeded(user.username, await workspaceOfTurn(user.username, turn ?? null));
+  await setupNeeded(user.username, await workspaceOfTurn(user.username, turn ?? null));
 
 /** A step queued with no reader and Downloads off (reach.ts downloadsAsk): the card asks before the reply goes on. */
 const downloadsWaiting = (jobs: Args[]): ActionNeeded | null => {

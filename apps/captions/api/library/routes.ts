@@ -9,10 +9,10 @@ import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { hasMembers, mayReceive, mayServe, REFUSED_COMPUTER_OFF, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
-import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite } from "./access";
+import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
-import { sharedHere } from "../lib/workshop/workspace";
+import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
 import { blobs, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
@@ -823,6 +823,8 @@ libraryApp.get("/", async (c) => {
   // in a workspace the team's owner gave this person, the owner's libraries there (librariesHere): none is made for them
   const given = await sharedHere(user);
   if (!given) await ensureLibrary(user.username);
+  // a workspace a plug-in serves (its catalog) is set up before the page reads it: no setup dialog over the catalog
+  await mediaReady(user.username, workspaceScope.getStore()?.id);
   const rows = await librariesHere(user.username);
   const libraries: LibrarySummary[] = await Promise.all(
     rows.map(async (r) => ({

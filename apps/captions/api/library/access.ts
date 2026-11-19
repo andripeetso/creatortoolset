@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../lib/env";
+import { pluginUploadsTo } from "../lib/plugin";
 import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
 import { sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
@@ -181,13 +182,13 @@ export async function versionSource(username: string, versionId: string): Promis
  * projectId: never the asker's home). No projectId: the asker's own first library. `owner`: the asker sets it up; a
  * member is told it isn't set up, with no button.
  */
-export function mediaReady(username: string, projectId?: string): { ready: boolean; owner: boolean; libraryId: string | null } {
+export async function mediaReady(username: string, projectId?: string): Promise<{ ready: boolean; owner: boolean; libraryId: string | null }> {
   const cols = "SELECT id, json_extract(settings, '$.setupAt') AS setupAt FROM libraries WHERE";
   const d = libraryDb();
   type Row = { id: string; setupAt: string | null };
   if (projectId === undefined) {
     const row = d.prepare(`${cols} workspace_id = ? ORDER BY created_at, id LIMIT 1`).get(homeOf(username)) as Row | undefined;
-    return { ready: !!row?.setupAt, owner: true, libraryId: row?.id ?? null };
+    return settled(row, true, username, undefined);
   }
   const ws = workspaceById(projectId);
   const owner = !!ws?.members.some((m) => m.username === username && m.role === "owner");
@@ -195,12 +196,34 @@ export function mediaReady(username: string, projectId?: string): { ready: boole
     (d.prepare(`${cols} json_extract(settings, '$.projectId') = ? ORDER BY created_at, id LIMIT 1`).get(projectId) as Row | undefined) ??
     // a library from before workspaces kept their own: the first brand's, as librariesIn reads it
     (ws && (d.prepare(`${cols} workspace_id = ? AND json_extract(settings, '$.projectId') IS NULL ORDER BY created_at, id LIMIT 1`).get(homeOf(ws.members.find((m) => m.role === "owner")?.username ?? "")) as Row | undefined));
-  return { ready: !!row?.setupAt, owner, libraryId: row?.id ?? null };
+  return settled(row || undefined, owner, username, projectId);
+}
+
+/** A library not set up whose workspace a plug-in serves itself is set up now (setupAt written once, as the migration does). */
+async function settled(row: { id: string; setupAt: string | null } | undefined, owner: boolean, username: string, projectId: string | undefined) {
+  if (row?.setupAt) return { ready: true, owner, libraryId: row.id };
+  if (!(await servedByPlugin(username, projectId))) return { ready: false, owner, libraryId: row?.id ?? null };
+  if (row) libraryDb().prepare("UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.setupAt', ?) WHERE id = ? AND json_extract(settings, '$.setupAt') IS NULL").run(new Date().toISOString(), row.id);
+  return { ready: true, owner, libraryId: row?.id ?? null };
+}
+
+/**
+ * Whether a loaded plug-in serves this workspace's media itself: its uploadsTo names its own store there (a footage
+ * catalog), so the core library stays empty by design and needs no setup. A plug-in that refuses the question (no
+ * workspace named) does not serve it.
+ */
+export async function servedByPlugin(username: string, projectId?: string): Promise<boolean> {
+  const ask = () => pluginUploadsTo(username);
+  try {
+    return !!(await (projectId ? workspaceScope.run({ id: projectId }, ask) : ask()));
+  } catch {
+    return false;
+  }
 }
 
 /** The chat card's setup ask for a workspace whose Media Library is not set up (ActionNeeded), or null when it is. */
-export function setupNeeded(username: string, projectId?: string): ActionNeeded | null {
-  const m = mediaReady(username, projectId);
+export async function setupNeeded(username: string, projectId?: string): Promise<ActionNeeded | null> {
+  const m = await mediaReady(username, projectId);
   if (m.ready) return null;
   const ws = projectId === undefined ? undefined : workspaceById(projectId);
   return { kind: "setup", workspace: projectId ?? "", workspaceName: ws?.name ?? "", owner: m.owner, href: "/library?setup=1" };

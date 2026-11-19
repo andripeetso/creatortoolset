@@ -9,8 +9,9 @@ import { env } from "../lib/env";
 import { macUsageSince, type UsageTally } from "../lib/mac-claude";
 import { migrateStorage, parseStorageFile, storageFilePath } from "../lib/storage";
 import { changeStorage } from "../devices-storage";
-import { LOCAL_USER, listUsers } from "../users";
-import { accountOf, ensureLibrary } from "./access";
+import { LOCAL_USER, listUsers, type SessionUser } from "../users";
+import { projectOf } from "../lib/project-of";
+import { accountOf, ensureLibrary, servedByPlugin } from "./access";
 import { DESCRIBE_LABEL, libraryWorkspaceId } from "./describe";
 import { libraryDb, uploadOf } from "./db";
 import { LISTEN_LABEL, LOOK_LABEL, WATCH_LABEL } from "./shots";
@@ -183,12 +184,17 @@ export async function migrateLibraries(opts: { dryRun?: boolean; now?: string } 
     const s = lib.s;
     if (!lists.has(lib.account)) lists.set(lib.account, await listOf(lib.account));
     const mine = lists.get(lib.account)!.filter((f) => folderIn(f, lib.ws ? (w) => w === lib.ws : null));
-    // item 3: a library with clips or folder records is set up, so nobody who works today sees setup
-    if (s.setupAt == null && (lib.hasClips || (s.watch?.length ?? 0) > 0 || mine.length > 0))
+    // a workspace a plug-in serves itself (its catalog holds the media): the core library stays empty by design
+    // (a library with no workspace of its own is its owner's first brand's, as projectOf files it)
+    const wsOf = s.setupAt == null || uploadOf(s.upload as unknown) === "none" ? (lib.ws ?? (await projectOf({ username: lib.account } as SessionUser))?.(undefined)) : undefined;
+    const served = !!wsOf && (await servedByPlugin(lib.account, wsOf));
+    // item 3: a library with clips or folder records is set up, so nobody who works today sees setup; so is a served one
+    if (s.setupAt == null && (lib.hasClips || (s.watch?.length ?? 0) > 0 || mine.length > 0 || served))
       changes.push({ libraryId: lib.id, field: "setupAt", from: null, to: nowIso });
-    // item 4: a shared library that keeps no Hosted media takes the team's proxies (a legacy false or a null reads as none)
+    // item 4: a shared library that keeps no Hosted media takes the team's proxies (a legacy false or a null reads as none);
+    // not a served one: nothing is uploaded to it (the plug-in takes that workspace's uploads), so its value stays
     const upload = s.upload as unknown;
-    if (uploadOf(upload) === "none" && (await hasMembers(lib.id)))
+    if (!served && uploadOf(upload) === "none" && (await hasMembers(lib.id)))
       changes.push({ libraryId: lib.id, field: "upload", from: upload === false ? 0 : (upload ?? null), to: "proxies" });
     // item 6: at or over the cap (stored, else the default; a stored null is no cap), the cap becomes 1.5× the last 30 days' spend
     const cap = "lookBudget" in s ? s.lookBudget : LOOK_BUDGET_DEFAULT;
