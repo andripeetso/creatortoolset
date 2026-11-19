@@ -168,9 +168,9 @@ export const sourcesOf = (folders: StorageFolder[]): StorageFolder[] => folders.
 export const exportsOf = (folders: StorageFolder[]): StorageFolder | undefined =>
   folders.find((f) => f.role === "library" && f.workspace !== EVERY_WORKSPACE) ?? folders.find((f) => f.role === "library");
 
-/** An Exports folder's own subfolder for `role` as a folder of its own: the same host and reach, one level down. */
-export function inLibrary(lib: StorageFolder, role: "footage" | "finals"): StorageFolder {
-  const sub = LIBRARY_SUBFOLDERS[role === "finals" ? "finished" : role];
+/** An Exports folder's own subfolder for `role` as a folder of its own: the same host and reach, one level down. `sub` is
+ *  the name on disk when it is not the current one: an older Library's Footage/ keeps its name (existing folders are never renamed). */
+export function inLibrary(lib: StorageFolder, role: "footage" | "finals", sub = LIBRARY_SUBFOLDERS[role === "finals" ? "finished" : role]): StorageFolder {
   return {
     ...lib,
     id: `${lib.id}:${role}`,

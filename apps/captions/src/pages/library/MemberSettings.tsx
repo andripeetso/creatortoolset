@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { hostsOriginals, hostsProxies, type LibrarySummary, type LibraryUpload } from "@contracts/library";
-import type { StorageView } from "@contracts/storage";
+import { hostsOriginals, hostsProxies, LIBRARY_WORDS, type LibrarySummary, type LibraryUpload } from "@contracts/library";
+import { FOLDER_LABELS, type StorageView } from "@contracts/storage";
 import type { ServerWorkView } from "@contracts/work";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -15,12 +15,12 @@ import { downloadsOf, setDownloads, useOffline, type Downloads } from "./offline
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const HOSTED: Record<LibraryUpload, string> = { none: "Off", originals: "Originals", proxies: "Proxies", all: "Originals and proxies" };
+const HOSTED: Record<LibraryUpload, string> = { none: "Off", originals: LIBRARY_WORDS.originals, proxies: LIBRARY_WORDS.proxies, all: "Originals and proxies" };
 
 /** Hosted media in words: the owner's Upload to server, and " and final exports" when Final exports is on. */
 export function hostedWords(s: LibrarySummary["settings"]): string {
   const finals = !!s.finalsUpload && s.finalsUpload !== "none";
-  if (!hostsOriginals(s.upload) && !hostsProxies(s.upload)) return finals ? "Final exports" : HOSTED.none;
+  if (!hostsOriginals(s.upload) && !hostsProxies(s.upload)) return finals ? LIBRARY_WORDS.finalExportsUpload.label : HOSTED.none;
   return finals ? `${HOSTED[s.upload]} and final exports` : HOSTED[s.upload];
 }
 
@@ -58,7 +58,7 @@ export function DownloadsCard({ library }: { library: LibrarySummary }) {
     );
   };
   return (
-    <Section title="Downloads">
+    <Section title={LIBRARY_WORDS.downloadsTitle}>
       <Card>
         <Row
           title="Automatic downloads"
@@ -76,8 +76,8 @@ export function DownloadsCard({ library }: { library: LibrarySummary }) {
             />
           }
         />
-        {keep && kind("proxies", "Proxies")}
-        {keep && kind("originals", "Originals")}
+        {keep && kind("proxies", LIBRARY_WORDS.proxies)}
+        {keep && kind("originals", LIBRARY_WORDS.originals)}
       </Card>
       {error && <p className="pt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
     </Section>
@@ -85,9 +85,9 @@ export function DownloadsCard({ library }: { library: LibrarySummary }) {
 }
 
 const FOLDERS = [
-  { role: "footage", title: "Source media", tip: "Folders on this computer that already hold this workspace's media. Clips found there play from here; nothing new is imported." },
-  { role: "projects", title: "Project files", tip: "Where project work is saved: edits, renders and test renders." },
-  { role: "library", title: "Final exports", tip: "Where finished, clean exports are saved." },
+  { role: "footage", title: FOLDER_LABELS.footage, tip: "Folders on this computer that already hold this workspace's media. Clips found there play from here; nothing new is imported." },
+  { role: "projects", title: FOLDER_LABELS.projects, tip: LIBRARY_WORDS.projectFilesTip },
+  { role: "library", title: FOLDER_LABELS.library, tip: LIBRARY_WORDS.finalExportsTip },
 ] as const;
 
 type FolderRole = (typeof FOLDERS)[number]["role"];
@@ -133,7 +133,7 @@ export function MemberSettings({ library }: { library: LibrarySummary }) {
       </Section>
       <DownloadsCard library={library} />
       {here && (
-        <Section title="Folders">
+        <Section title={LIBRARY_WORDS.foldersTitle}>
           <Card>
             {FOLDERS.map((f) => {
               const own = mine(f.role);
@@ -144,12 +144,12 @@ export function MemberSettings({ library }: { library: LibrarySummary }) {
                   key={f.role}
                   title={f.title}
                   tip={f.tip}
-                  status={!own.length && storage && f.role !== "footage" ? "Not set" : undefined}
+                  status={!own.length && storage && f.role !== "footage" ? LIBRARY_WORDS.notSet : undefined}
                   description={own.map((x) => x.origin.path).join(", ") || undefined}
                   control={
                     add ? (
                       <Button size="sm" variant="outline" onClick={() => setAdding(f.role)}>
-                        {f.role === "footage" ? "Add folder…" : "Set…"}
+                        {f.role === "footage" ? LIBRARY_WORDS.addFolder : LIBRARY_WORDS.setFolder}
                       </Button>
                     ) : undefined
                   }

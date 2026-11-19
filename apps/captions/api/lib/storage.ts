@@ -40,7 +40,7 @@ export function finalsAsExports(folders: StorageFolder[]): StorageFolder[] {
  */
 export function withOwnFootage(folders: StorageFolder[]): StorageFolder[] {
   const add = folders.filter((f) => f?.role === "library" && ownFootage(f)).flatMap((lib): StorageFolder[] => {
-    const { folderState: _s, checkedAt: _c, error: _e, copyTo: _t, ...f } = inLibrary(lib, "footage");
+    const { folderState: _s, checkedAt: _c, error: _e, copyTo: _t, ...f } = inLibrary(lib, "footage", "Footage");
     const listed = folders.some((g) => ["footage", "music"].includes(g?.role) && g.origin?.host === f.origin.host && g.origin?.path === f.origin.path);
     return listed ? [] : [{ ...f, make: false }];
   });
