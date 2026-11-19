@@ -1,29 +1,32 @@
 import Foundation
 import WebKit
 
-/// A media ticket (`POST /api/auth/media-ticket`, `api/media-ticket.ts`): what stands for this phone's session where a
+/// A media ticket (`POST /api/auth/media-ticket/<use>`, `api/media-ticket.ts`): what stands for this phone's session where a
 /// request can't be signed by itself: a player's range requests, a web view's page and its own calls, an upload the
 /// background transfer service sends minutes later. It opens one path (and below it), reading only unless asked for
-/// writing, for an hour at most, and ends with the session.
+/// writing, for 5 minutes at most, and ends with the session. It works only for its own use: `media` (players, web
+/// views) rides in a cookie, `upload` (background upload steps) in a header; never in a URL (URLs end up in logs).
 enum MediaTicket {
-    static let param = "ct_ticket"
+    enum Use: String {
+        case media, upload
+    }
+
+    static let cookieName = "ct_ticket"
+    static let header = "X-CT-Ticket"
+    /// A web view asks again this often; the server's tickets live 5 minutes.
+    static let refresh: Duration = .seconds(4 * 60)
 
     struct Answer: Decodable {
         let ticket: String
     }
 
-    /// `url` with the ticket in its query, beside what is there.
-    static func add(_ ticket: String, to url: URL) -> URL {
-        url.appending(queryItems: [URLQueryItem(name: param, value: ticket)])
-    }
-
-    /// The cookie a web view carries it in: this server's host only, never sent from another site's page.
+    /// The cookie a web view or a player carries it in: this server's host only, never sent from another site's page,
+    /// never readable by the page's scripts.
     static func cookie(_ ticket: String, for server: URL) -> HTTPCookie? {
-        guard let host = server.host() else { return nil }
-        var properties: [HTTPCookiePropertyKey: Any] = [.name: param, .value: ticket, .domain: host, .path: "/",
-                                                        .sameSitePolicy: HTTPCookieStringPolicy.sameSiteStrict]
-        if server.scheme == "https" { properties[.secure] = "TRUE" }
-        return HTTPCookie(properties: properties)
+        guard server.host() != nil else { return nil }
+        let secure = server.scheme == "https" ? "; Secure" : ""
+        let header = "\(cookieName)=\(ticket); Path=/; HttpOnly; SameSite=Strict\(secure)"
+        return HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": header], for: server).first
     }
 }
 
@@ -35,24 +38,21 @@ extension API {
     /// A web view can't add a header to the page's own calls: any device session (Bearer or DPoP) hands it a ticket.
     var webNeedsTicket: Bool { cookie == nil && (credential?.kind == .dpop || credential?.kind == .bearer) }
 
-    /// A ticket for `prefix` (a path on this server), reading only unless `write`.
-    func mediaTicket(_ prefix: String, write: Bool = false, session: URLSession = API.session) async throws -> String {
-        let data = try await data(request("/api/auth/media-ticket", method: "POST", json: ["path": prefix, "write": write]), session: session)
+    /// A ticket for `prefix` (a path on this server) and `use`, reading only unless `write` (an upload always writes).
+    func mediaTicket(_ prefix: String, use: MediaTicket.Use = .media, write: Bool = false,
+                     session: URLSession = API.session) async throws -> String {
+        let data = try await data(request("/api/auth/media-ticket/\(use.rawValue)", method: "POST",
+                                          json: ["path": prefix, "write": write || use == .upload]), session: session)
         return try JSONDecoder().decode(MediaTicket.Answer.self, from: data).ticket
     }
 
-    /// `path` on this server with a ticket for exactly that path in its query.
-    func ticketed(_ path: String, write: Bool = false) async throws -> URL {
-        let url = url(path)
-        return MediaTicket.add(try await mediaTicket(url.path(percentEncoded: false), write: write), to: url)
-    }
-
     /// A request built by `request(_:method:)` for the background transfer service: a DPoP session's proof is swapped
-    /// for a write ticket on `prefix`, so iOS may send it whenever it likes within the hour. Others go as they are.
+    /// for a write ticket on `prefix` in a header, so iOS may send it later; a 401 asks for a new one (`UploadEngine`).
+    /// Others go as they are.
     func background(_ request: URLRequest, prefix: String, session: URLSession = API.session) async throws -> URLRequest {
-        guard needsTicket, let url = request.url else { return request }
+        guard needsTicket else { return request }
         var out = request
-        out.url = MediaTicket.add(try await mediaTicket(prefix, write: true, session: session), to: url)
+        out.setValue(try await mediaTicket(prefix, use: .upload, session: session), forHTTPHeaderField: MediaTicket.header)
         out.setValue(nil, forHTTPHeaderField: "Authorization")
         out.setValue(nil, forHTTPHeaderField: "DPoP")
         return out

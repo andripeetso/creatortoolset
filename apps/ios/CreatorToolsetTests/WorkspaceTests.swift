@@ -21,13 +21,13 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(api.request("/api/library").value(forHTTPHeaderField: "Cookie"), "cap_auth=c")
         // thumbnails and downloads are built by request(); the players' range requests carry it as a header option
         XCTAssertEqual(api.headers(url: api.url("/x"))["X-CT-Workspace"], "ws-b")
-        let fields = try XCTUnwrap(api.playerOptions["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String])
+        let fields = try XCTUnwrap(api.playerOptions()["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String])
         XCTAssertEqual(fields, ["X-CT-Workspace": "ws-b"])   // the cookie stays scoped to the host, never in a header option
-        XCTAssertNotNil(api.playerOptions[AVURLAssetHTTPCookiesKey])
+        XCTAssertNotNil(api.playerOptions()[AVURLAssetHTTPCookiesKey])
         // none picked yet: no header, the server's own rule
         let none = API(server: one.url, cookie: "c")
         XCTAssertNil(none.request("/api/library").value(forHTTPHeaderField: "X-CT-Workspace"))
-        XCTAssertNil(none.playerOptions["AVURLAssetHTTPHeaderFieldsKey"])
+        XCTAssertNil(none.playerOptions()["AVURLAssetHTTPHeaderFieldsKey"])
         // the Share extension's calls
         let share = ShareLink(server: one.url, cookie: "c", workspace: "ws-a")
         XCTAssertEqual(share.request("/api/instagram/share", json: ["text": "x"]).value(forHTTPHeaderField: "X-CT-Workspace"), "ws-a")
@@ -58,7 +58,7 @@ final class WorkspaceTests: XCTestCase {
             XCTAssertNil(r.value(forHTTPHeaderField: "Cookie"))
         }
         // a Bearer player sends its token as a header with the workspace; it needs no ticket
-        XCTAssertEqual(bearer.playerOptions["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String],
+        XCTAssertEqual(bearer.playerOptions()["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String],
                        ["Authorization": "Bearer cts_paired", "X-CT-Workspace": "ws-a"])
         XCTAssertFalse(bearer.needsTicket)
         XCTAssertTrue(bearer.webNeedsTicket)
@@ -71,8 +71,8 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(r.value(forHTTPHeaderField: "X-CT-Workspace"), "ws-b")
         // each request its own proof
         XCTAssertNotEqual(dpop.request("/api/library").value(forHTTPHeaderField: "DPoP"), dpop.request("/api/library").value(forHTTPHeaderField: "DPoP"))
-        // a DPoP player never carries a proof in its header option (it would be stale): a ticket in the URL instead
-        XCTAssertEqual(dpop.playerOptions["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String], ["X-CT-Workspace": "ws-b"])
+        // a DPoP player never carries a proof in its header option (it would be stale): a ticket in a cookie instead
+        XCTAssertEqual(dpop.playerOptions()["AVURLAssetHTTPHeaderFieldsKey"] as? [String: String], ["X-CT-Workspace": "ws-b"])
         XCTAssertTrue(dpop.needsTicket)
 
         // the Share extension: the route's credential and the phone's pick
