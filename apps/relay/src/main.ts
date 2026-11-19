@@ -38,6 +38,7 @@ const deps = {
   limitFor: freeLimit(Number(env.RELAY_FREE_LIMIT ?? 3)),
   tunnelDomain: need('RELAY_TUNNEL_DOMAIN'),
   publicUrl: need('RELAY_PUBLIC_URL'),
+  selfUrl: env.RELAY_SELF_URL?.replace(/\/$/, '') || undefined,
   accountSecret,
   signing: loadSigningKey(env.RELAY_SIGNING_KEY, join(dataDir, 'relay-signing-key.der')),
   ...(grantSecret ? { gateway: { secret: grantSecret, openaiChallenge: env.RELAY_OPENAI_APPS_CHALLENGE, selfUrl: env.RELAY_SELF_URL?.replace(/\/$/, '') } } : {}),
