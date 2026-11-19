@@ -122,7 +122,7 @@ describe("pairing links", () => {
 
 describe("the token exchange", () => {
   it("gives a 30-day Bearer session that signs in as the link's maker, once", async () => {
-    const link = await newLink({ label: "Living room iPad" });
+    const link = await newLink({ label: "Living room iPad", deviceType: "tablet" });
     const r = await exchange(link.credential.toLowerCase());
     expect(r.headers.get("cache-control")).toBe("no-store");
     const t = (await r.json()) as { access_token: string; token_type: string; expires_in: number; scope: string };
@@ -131,9 +131,15 @@ describe("the token exchange", () => {
     expect(await (await exchange(link.credential)).json()).toMatchObject({ error: "invalid_grant" });
     const s = await (await call("GET", "/api/auth/session", { address: PHONE, token: t.access_token })).json();
     expect(s).toMatchObject({ authenticated: true, method: "bearer-access-token", scopes: ["read", "write", "access"], user: { username: "admin" } });
-    // the link's name wins over the name the phone sent; the phone's own details are kept
+    // the link's name and kind win over what the device sent; its own details are kept
     const list = (await (await call("GET", "/api/auth/access", { cookie })).json()) as { clientSessions: Array<{ label?: string; client: { os?: string; deviceType: string; ipAddress?: string } }> };
-    expect(list.clientSessions.find((x) => x.label === "Living room iPad")?.client).toMatchObject({ os: "iOS 26", deviceType: "mobile", ipAddress: PHONE });
+    expect(list.clientSessions.find((x) => x.label === "Living room iPad")?.client).toMatchObject({ os: "iOS 26", deviceType: "tablet", ipAddress: PHONE });
+    // a link made without a kind is for an unknown device, though the device says phone; a kind it doesn't know is refused
+    const plain = await newLink({ label: "Another device" });
+    expect((await exchange(plain.credential)).status).toBe(200);
+    const after = (await (await call("GET", "/api/auth/access", { cookie })).json()) as typeof list;
+    expect(after.clientSessions.find((x) => x.label === "Another device")?.client.deviceType).toBe("unknown");
+    expect((await call("POST", "/api/auth/pairing-links", { cookie, body: { deviceType: "phone" } })).status).toBe(400);
   });
 
   it("refuses scopes the link doesn't hold without spending it", async () => {

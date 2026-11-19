@@ -163,7 +163,7 @@ it("makes a Standard link, and maps a refusal: sign in first (401) or no link", 
   expect(await mintPhoneLink()).toBeNull();
   answer(200, made);
   expect(await mintPhoneLink()).toEqual(made);
-  expect(bodies.at(-1)).toEqual({ scopes: ["read", "write", "access"] });
+  expect(bodies.at(-1)).toEqual({ scopes: ["read", "write", "access"], deviceType: "mobile" });
 });
 
 it("accepts a bare or https server address and keeps only its origin", () => {

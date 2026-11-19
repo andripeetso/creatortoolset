@@ -103,7 +103,7 @@ connectPublicApp.post("/mint", async (c) => {
   if (!r.ok) return c.json({ error: r.error }, r.status);
   const jkt = r.p.clientProofKeyThumbprint as string;
   // the account's phone signs in as the local account that linked this computer, with Standard access
-  const { link, credential } = createGrant({ kind: "connect", subject: r.s.localUser, scopes: STANDARD, jkt, label: "Through your account", now: now * 1000 });
+  const { link, credential } = createGrant({ kind: "connect", subject: r.s.localUser, scopes: STANDARD, jkt, deviceType: "mobile", label: "Through your account", now: now * 1000 });
   const id = computerKey().id;
   const exp = Math.floor(Date.parse(link.expiresAt) / 1000);
   const proof = signJws("ct-connect-mint-answer+jwt", {
