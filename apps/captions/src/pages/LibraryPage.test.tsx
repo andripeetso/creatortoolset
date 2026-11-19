@@ -231,9 +231,9 @@ describe("Media Library page", () => {
     expect(more(host)).not.toBeNull(); // Library settings, in the More menu
     expect(host.textContent).not.toContain("Where are your videos?");
     expect(host.textContent).toContain("No clips");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Choose a folder", "Upload"]));
-    expect(host.textContent).not.toContain("Standard"); // asked in the first upload's dialog, not on the page
-    expect(buttons(host)).not.toContain("Upload files"); // one button per job: the bar's Upload, where it always is
+    expect(buttons(host)).toEqual(expect.arrayContaining(["Set up", "Upload files", "Upload"])); // setup owns the folders now
+    expect(buttons(host)).not.toContain("Choose a folder");
+    expect(host.textContent).not.toContain("Copies");
     expect(buttons(host)).not.toContain("Skip");
     expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
   });
