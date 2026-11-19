@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Collection, LibrarySummary, WatchStatus } from "@contracts/library";
+import type { LibrarySummary, WatchStatus } from "@contracts/library";
 import { scopeRequests } from "@/lib/current-workspace";
-import { getWatch, isFinals, listCollections } from "@/lib/library";
-import { holdsClips } from "@/pages/library/folders";
+import { getWatch } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
 import { LibrarySettingsBody } from "@/pages/library/LibrarySettings";
@@ -37,7 +36,6 @@ export function MediaLibrarySection() {
   if (prefix) scopeRequests(prefix, w.id && w.id !== here ? w.id : null);
   useEffect(() => () => void (prefix && scopeRequests(prefix, null)), [prefix]);
   const watch = useCachedLoad<WatchStatus>(id ? `/api/library/${id}/watch` : null, () => getWatch(id!), { workspace: w.cacheKey });
-  const folders = useCachedLoad<Collection[]>(id ? `/api/library/${id}/collections` : null, () => listCollections(id!), { own: true, workspace: w.cacheKey });
   const [error, setError] = useState<string | null>(null);
   const saved = (l: LibrarySummary) => libs.set((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
 
