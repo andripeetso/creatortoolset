@@ -49,12 +49,21 @@ func isPlainHostname(_ host: String) -> Bool {
 struct BrokerClient {
     let base: URL
     var session: URLSession = .shared
+    /// This Mac's key: a relay token minted from its bound account token names it, and the broker takes such a token
+    /// only with this key's proof on each request. A token that names no key ignores the proof.
+    var key: DPoPKey? = nil
+
+    private func authorize(_ request: inout URLRequest, _ token: String) throws {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let key, let url = request.url else { return }
+        request.setValue(try DPoP.proof(method: request.httpMethod ?? "GET", url: url, accessToken: token, key: key), forHTTPHeaderField: "DPoP")
+    }
 
     func computers(token: String) async throws -> [BrokerComputer] {
         var request = URLRequest(url: URL(string: "/v1/computers", relativeTo: base)!)
         request.timeoutInterval = 15
         request.httpShouldHandleCookies = false
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         let (data, response) = try await session.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw BrokerError.status((response as? HTTPURLResponse)?.statusCode ?? 0) }
         struct Reply: Decodable { let computers: [BrokerComputer] }
@@ -67,7 +76,7 @@ struct BrokerClient {
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.httpShouldHandleCookies = false
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
         let (data, response) = try await session.data(for: request)
@@ -81,7 +90,7 @@ struct BrokerClient {
         request.httpMethod = "DELETE"
         request.timeoutInterval = 30
         request.httpShouldHandleCookies = false
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authorize(&request, token)
         let (_, response) = try await session.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard code == 204 || code == 404 else { throw BrokerError.status(code) }
@@ -197,7 +206,7 @@ extension Shell {
         let signedIn = account.profile != nil
         var list: [BrokerComputer]?
         if signedIn, let base = connectService, let token = await relayToken() {
-            list = try? await BrokerClient(base: base).computers(token: token)
+            list = try? await BrokerClient(base: base, key: DPoPKey.shared).computers(token: token)
         }
         let mine = linkedConfig?.computerId
         accountComputers = accountServers(list ?? [], thisComputer: mine)
@@ -228,7 +237,7 @@ extension Shell {
             new = try? await AccountClient(server: accountServer, key: DPoPKey.shared).relayToken(newToken)
             if new == nil { return }
         }
-        if await BrokerClient(base: base).leave(id, oldToken: old, newToken: new) {
+        if await BrokerClient(base: base, key: DPoPKey.shared).leave(id, oldToken: old, newToken: new) {
             try? await client().delete("/api/connect/relay-config")
         } else if new == nil {
             AppLog.write("this Mac stays on the account it was signed in to: the connect service couldn't be reached")
@@ -237,7 +246,7 @@ extension Shell {
 
     private func refreshedList() async throws -> [BrokerComputer]? {
         guard let base = connectService, let token = await relayToken() else { return nil }
-        return try await BrokerClient(base: base).computers(token: token)
+        return try await BrokerClient(base: base, key: DPoPKey.shared).computers(token: token)
     }
 
     /// The page's connect.link / connect.unlink (Settings → Computers → Reach from anywhere). Returns the problem, or nil.
@@ -265,7 +274,7 @@ extension Shell {
         guard let base = connectService else { return "this Mac has no connect service set" }
         guard account.profile != nil, let token = await relayToken() else { return Reach.signedOut.text }
         do {
-            try await BrokerClient(base: base).link(token: token) { path, body in try await self.client().postData(path, body) }
+            try await BrokerClient(base: base, key: DPoPKey.shared).link(token: token) { path, body in try await self.client().postData(path, body) }
             return nil
         } catch BrokerError.status(403) {
             return "your account has as many computers as it can have. Remove one first"
@@ -281,7 +290,7 @@ extension Shell {
         guard let id = linkedConfig?.computerId else { return nil }
         guard let base = connectService, let token = await relayToken() else { return Reach.signedOut.text }
         do {
-            try await BrokerClient(base: base).unlink(id, token: token)
+            try await BrokerClient(base: base, key: DPoPKey.shared).unlink(id, token: token)
         } catch {
             return "The connect service couldn't be reached. Try again."
         }

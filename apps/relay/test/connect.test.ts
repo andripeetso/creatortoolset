@@ -262,6 +262,28 @@ test('dpop token: an account token bound to an app key opens a token for that ke
   assert.deepEqual(verifyJwt(ok.json.access_token, deps.signing.publicKey, TYP.token)!.cnf, { jkt: p.jkt });
 });
 
+test('an account token naming an app key lists, links and unlinks only with that key\'s proof, and approves no device', async () => {
+  const p = phone();
+  const thief = phone();
+  const bound = mintAccountToken(SECRET, 'acct-1', clock, p.jkt);
+  const list = (k?: ReturnType<typeof phone>) => call('GET', '/v1/computers', { token: bound, ...(k ? { dpop: k.proof('GET', `${SELF}/v1/computers`, { token: bound }) } : {}) });
+  assert.equal((await list()).status, 401);
+  assert.equal((await list(thief)).status, 401);
+  assert.equal((await list(p)).status, 200);
+  const challenge = (k?: ReturnType<typeof phone>) =>
+    call('POST', '/v1/computers/link-challenges', { token: bound, body: {}, ...(k ? { dpop: k.proof('POST', `${SELF}/v1/computers/link-challenges`, { token: bound }) } : {}) });
+  assert.equal((await challenge()).status, 401);
+  assert.equal((await challenge(p)).status, 200);
+  const gone = `/v1/computers/${'a'.repeat(32)}`;
+  assert.equal((await call('DELETE', gone, { token: bound })).status, 401);
+  assert.equal((await call('DELETE', gone, { token: bound, dpop: p.proof('DELETE', `${SELF}${gone}`, { token: bound }) })).status, 204); // none there: already off
+  // a device approval would mint a token that names no key: refused even with the right proof
+  const approve = await call('POST', '/oauth/device/approve', { token: bound, dpop: p.proof('POST', `${SELF}/oauth/device/approve`, { token: bound }), body: { user_code: 'ABCD-EFGH', approve: true } });
+  assert.equal(approve.status, 403);
+  // the site's own tokens name no key and go on as before
+  assert.equal((await call('GET', '/v1/computers', { token: acct() })).status, 200);
+});
+
 test('dpop token: no proof, a bad account token, or a wrong grant is refused', async () => {
   const p = phone();
   assert.equal((await exchange(acct())).json.error, 'invalid_dpop');

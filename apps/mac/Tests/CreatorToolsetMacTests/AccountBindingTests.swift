@@ -85,4 +85,18 @@ final class AccountBindingTests: XCTestCase {
         _ = try await client.me(token)
         XCTAssertEqual(StubServer.seen.last!.value(forHTTPHeaderField: "Authorization"), "DPoP \(token)")
     }
+
+    func testTheBrokerGetsThisMacsProofWithTheRelayToken() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubServer.self]
+        let broker = BrokerClient(base: URL(string: "https://connect.example.com")!, session: URLSession(configuration: config), key: mac)
+        StubServer.routes["/v1/computers"] = (200, #"{"computers":[]}"#)
+        _ = try await broker.computers(token: "relay-1")
+        let sent = StubServer.seen.last!
+        XCTAssertEqual(sent.value(forHTTPHeaderField: "Authorization"), "Bearer relay-1")
+        let claims = try proofClaims(sent)
+        XCTAssertEqual(claims["htu"] as? String, "https://connect.example.com/v1/computers")
+        XCTAssertEqual(claims["htm"] as? String, "GET")
+        XCTAssertEqual(claims["ath"] as? String, DPoP.b64(Data(SHA256.hash(data: Data("relay-1".utf8)))))
+    }
 }

@@ -6,6 +6,7 @@ import { HttpError } from './errors.ts';
 import { DEVICE_GRANT, decideDevice, pollDeviceGrant, startDeviceGrant } from './device.ts';
 import { connectStats, createChallenge, linkComputer, listComputers, renewTunnel, STATS_ACCOUNT, unlinkComputer, type LinkDeps } from './link.ts';
 import { computerStatus, connectComputer, dpopCaller, issueDpopToken, type ConnectDeps } from './connect.ts';
+import { checkDpop } from './dpop.ts';
 import type { LimitFor } from './limits.ts';
 import { publicKeyB64 } from './keys.ts';
 import { ACCOUNT_TTL, checkAccountToken, mintAccountToken, TokenError } from './tickets.ts';
@@ -46,16 +47,26 @@ const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const empty = (status: number) => new Response(null, { status });
 
-// Account auth: a bearer token the hosted site or this broker minted. Anything else is 401.
-function accountOf(d: Deps, req: Request): string {
+// Account auth: a bearer token the hosted site or this broker minted. Anything else is 401. A token that names an app's
+// key (its account token is bound to it) also needs a DPoP proof by that key for this request, and works only where
+// `self` (this broker's origin, the base of the proof's htu) is given: listing, linking and unlinking computers. It never
+// approves a device or an AI app (403): those take the site's own tokens, which name no key, so a copy of an app's
+// relay token can't mint a token for any key there.
+function accountOf(d: Deps, req: Request, self?: string): string {
   const h = req.headers.get('authorization') ?? '';
   if (!h.startsWith('Bearer ')) throw new HttpError(401, 'unauthorized');
+  let t: { account: string; jkt?: string };
   try {
-    return checkAccountToken(d.accountSecret, h.slice(7), d.now()).account;
+    t = checkAccountToken(d.accountSecret, h.slice(7), d.now());
   } catch (e) {
     if (e instanceof TokenError) throw new HttpError(401, 'unauthorized');
     throw e;
   }
+  if (!t.jkt) return t.account;
+  if (!self) throw new HttpError(403, 'forbidden');
+  const url = new URL(new URL(req.url).pathname, self).href;
+  checkDpop(d.db, req.headers.get('dpop'), { method: req.method, url, now: d.now(), accessToken: h.slice(7), jkt: t.jkt });
+  return t.account;
 }
 
 async function body(req: Request): Promise<Record<string, unknown>> {
@@ -130,14 +141,14 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
     }
 
     if (req.method === 'POST' && path === '/v1/computers') {
-      return json(200, createChallenge(link, accountOf(d, req)));
+      return json(200, createChallenge(link, accountOf(d, req, self)));
     }
     if (req.method === 'POST' && path === '/v1/computers/link') {
-      return json(200, await linkComputer(link, accountOf(d, req), await body(req)));
+      return json(200, await linkComputer(link, accountOf(d, req, self), await body(req)));
     }
     if (req.method === 'GET' && path === '/v1/computers') {
       // a phone lists with its DPoP token, the site and the Mac app with an account token
-      const account = (req.headers.get('authorization') ?? '').startsWith('DPoP ') ? dpopCaller(cn, req, 'status').account : accountOf(d, req);
+      const account = (req.headers.get('authorization') ?? '').startsWith('DPoP ') ? dpopCaller(cn, req, 'status').account : accountOf(d, req, self);
       const rows = listComputers(link, account);
       const computers = [];
       for (const r of rows) {
@@ -167,13 +178,13 @@ export async function handle(d: Deps, req: Request): Promise<Response> {
       return json(200, await renewTunnel(link, m[1], await body(req)));
     }
     if (m && req.method === 'DELETE' && !m[2]) {
-      await unlinkComputer(link, accountOf(d, req), m[1]);
+      await unlinkComputer(link, accountOf(d, req, self), m[1]);
       return empty(204);
     }
 
     // Account-token linking (the Mac app's switch): a challenge, then the computer's own signed proof of it.
     if (req.method === 'POST' && path === '/v1/computers/link-challenges') {
-      const c = createChallenge(link, accountOf(d, req));
+      const c = createChallenge(link, accountOf(d, req, self));
       return json(200, { challenge: c.nonce, expiresAt: new Date((d.now() + c.expires_in) * 1000).toISOString() });
     }
     // A phone signed in to the account (connect.ts).
