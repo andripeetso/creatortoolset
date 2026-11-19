@@ -34,7 +34,7 @@ const nicoKey = `Bearer ${newApiKey(nico, "full")}`;
 const mac = pairDevice("ana", "Ana's Mac");
 await saveSettings({ ...structuredClone(DEFAULT_SETTINGS), instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: mac.device.id }] }, "ana");
 libraryDb().exec(`
-  INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ana', 'A', 'local', 0), ('lib_n', 'nico', 'N', 'local', 0);
+  INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_a', 'ana', 'A', 'local', '{"setupAt":"2026-11-01T00:00:00.000Z"}', 0), ('lib_n', 'nico', 'N', 'local', '{"setupAt":"2026-11-01T00:00:00.000Z"}', 0);
   INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_a', 'lib_a', 'video', 'Take 1', 'ana', 0);
   INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_a', 'ast_a', 1, 'k1', 1, 'x1', 'ready', 'ana', 0);
   INSERT INTO collections (id, library_id, name, kind, created_at) VALUES ('col_a', 'lib_a', 'Tiny B-roll', 'manual', 0), ('col_n', 'lib_n', 'Theirs', 'manual', 0);

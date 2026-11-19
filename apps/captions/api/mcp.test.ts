@@ -9,8 +9,11 @@ process.env.APP_SECRET = "mcp-test-secret";
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { TOOLS, handle, workFor } = await import("./mcp");
+const { libraryDb } = await import("./library/db");
 
 const user = createUser("mcpowner", "password1");
+// the Media Library is set up (setupAt): the library tools answer, not the setup card (mediaReady)
+libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_mcp', 'mcpowner', 'Library', 'local', ?, 0)").run(JSON.stringify({ setupAt: "2026-11-01T00:00:00.000Z" }));
 const full = `Bearer ${newApiKey(user, "full")}`;
 const review = `Bearer ${newApiKey(user)}`;
 
