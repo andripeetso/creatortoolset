@@ -42,10 +42,10 @@ export interface NleItem {
   opacity?: number;
   speed?: number;
   gain_db?: number;
-  /** a fade from black / silence at the clip's start, and to it at its end, in timeline frames */
+  enabled?: boolean;
+  /** timeline frames of fade at the start / end: a picture from / to black (an opacity ramp), a sound from / to silence */
   fade_in?: number;
   fade_out?: number;
-  enabled?: boolean;
   /** this editor's own handle on the clip while it is open (stripped on save) */
   _k?: string;
   [k: string]: unknown;
@@ -94,7 +94,14 @@ export function withKeys(tl: NleTimeline): NleTimeline {
 export function toSaved(tl: NleTimeline): NleTimeline {
   const out = clone(tl);
   for (const t of Object.values(out.tracks)) {
-    for (const it of t.items) delete it._k;
+    for (const it of t.items) {
+      delete it._k;
+      // a clip trimmed shorter than its fades keeps fades that fit it
+      for (const f of ["fade_in", "fade_out"] as const) if (it[f] === undefined) delete it[f];
+      if (it.fade_in) it.fade_in = Math.min(it.fade_in, it.len);
+      if (it.fade_out) it.fade_out = Math.min(it.fade_out, it.len - (it.fade_in ?? 0)) || undefined;
+      if (it.fade_out === undefined) delete it.fade_out;
+    }
     t.items.sort((a, b) => a.rec - b.rec);
   }
   out.timeline.duration = lengthOf(out);
@@ -153,8 +160,9 @@ const lockedAny = (tl: NleTimeline, keys: string[]) => keys.some((k) => tl.track
 /** A clip cut in two at timeline frame `f` (inside it): the left part keeps its handle. */
 function cutAt(tl: NleTimeline, it: NleItem, f: number): [NleItem, NleItem] {
   const d = f - it.rec;
-  const right = { ...clone(it), _k: newKey(), rec: f, len: it.len - d, in: r3(it.in + d * rateOf(tl, it)) };
-  return [{ ...it, len: d }, right];
+  const right = { ...clone(it), _k: newKey(), rec: f, len: it.len - d, in: r3(it.in + d * rateOf(tl, it)), fade_in: undefined };
+  // the fade in stays on the left part, the fade out on the right one
+  return [{ ...it, len: d, fade_out: undefined }, right];
 }
 
 /** What lies on `track` between frames a and b is taken out (overwrite): clips cut back, split or removed. */
@@ -552,15 +560,23 @@ export function putParts(tl: NleTimeline, parts: Record<string, Partial<NleItem>
 export const resetFields = (tl: NleTimeline, keys: string[], fields: string[]): NleTimeline =>
   putParts(tl, Object.fromEntries(keys.map((k) => [k, Object.fromEntries(fields.map((f) => [f, undefined]))])));
 
-/** A fade at clips' start ("in") or end ("out") in timeline frames: whole frames, at most the clip less its other fade. */
-export function setFade(tl: NleTimeline, keys: string[], edge: "in" | "out", frames: number): NleTimeline {
-  let out = tl;
-  for (const k of keys) {
-    const it = find(tl, k)?.item;
-    if (!it) continue;
-    const other = (edge === "in" ? it.fade_out : it.fade_in) ?? 0;
-    const f = Math.max(0, Math.min(Math.round(frames), it.len - other));
-    out = setItems(out, [k], { [edge === "in" ? "fade_in" : "fade_out"]: f || undefined });
-  }
-  return out;
+/** The Inspector's fade rows: the fade at the picked clips' start ("in") or end ("out"), each clip on its own. */
+export const setFades = (tl: NleTimeline, keys: string[], edge: "in" | "out", frames: number): NleTimeline =>
+  keys.reduce((out, k) => setFade(out, k, edge === "in" ? "head" : "tail", frames), tl);
+
+/**
+ * A clip's fade at its start (`head`, fade_in) or end (`tail`, fade_out) set to `frames`, kept so the two fit in the
+ * clip; 0 takes it off. The clip alone, not its linked clips.
+ */
+export function setFade(tl: NleTimeline, key: string, edge: Edge, frames: number): NleTimeline {
+  const hit = find(tl, key);
+  if (!hit || tl.tracks[hit.track].locked) return tl;
+  const [f, other] = edge === "head" ? (["fade_in", "fade_out"] as const) : (["fade_out", "fade_in"] as const);
+  const v = Math.max(0, Math.min(Math.round(frames) || 0, hit.item.len - (hit.item[other] ?? 0)));
+  if (v === (hit.item[f] ?? 0)) return tl;
+  return setItems(tl, [key], { [f]: v || undefined });
 }
+
+/** How much of a clip shows `k` timeline frames after its start, 0–1, from its fades. */
+export const fadeAt = (it: NleItem, k: number): number =>
+  Math.max(0, Math.min(1, it.fade_in ? k / it.fade_in : 1, it.fade_out ? (it.len - k) / it.fade_out : 1));

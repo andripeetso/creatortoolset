@@ -1,7 +1,7 @@
 import { useReducer, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, FileText, Film, FlipHorizontal2, FlipVertical2, Link2, Music, RotateCcw, Rows3, type LucideIcon } from "lucide-react";
 import {
-  find, isPlain, isVideo, lengthOf, move, partsOf, putParts, rateOf, resetFields, setFade, setItems, setSpeed, slip, trim, withLinked,
+  find, isPlain, isVideo, lengthOf, move, partsOf, putParts, rateOf, resetFields, setFades, setItems, setSpeed, slip, trim, withLinked,
   type Flip, type NleItem, type NleTimeline,
 } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
@@ -113,7 +113,7 @@ const fadeRows = (e: Edit, keys: string[], item: NleItem) => {
   const fps = e.tl.timeline.fps;
   return (["in", "out"] as const).map((edge) => (
     <NumberRow key={edge} edit={e} label={edge === "in" ? "Fade in" : "Fade out"} value={((edge === "in" ? item.fade_in : item.fade_out) ?? 0) / fps}
-      def={0} step={1 / fps} min={0} max={item.len / fps} unit="s" digits={2} make={(v) => setFade(e.tl, keys, edge, v * fps)} />
+      def={0} step={1 / fps} min={0} max={item.len / fps} unit="s" digits={2} make={(v) => setFades(e.tl, keys, edge, v * fps)} />
   ));
 };
 

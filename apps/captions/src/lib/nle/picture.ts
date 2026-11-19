@@ -61,7 +61,7 @@ export const picturesSoon = (tl: NleTimeline, f: number, ahead: number): Playing
   pictureTracks(tl).flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false && i.rec > f && i.rec <= f + ahead).map((item) => ({ track, item })));
 
 /** A sound to play: from `at` seconds on the timeline, `offset` seconds into its file, for `dur` seconds of timeline. */
-export type SoundPiece = { key: string; src: string; at: number; offset: number; dur: number; speed: number; gain: number };
+export type SoundPiece = { key: string; src: string; at: number; offset: number; dur: number; speed: number; gain: number; fadeIn?: number; fadeOut?: number };
 
 /** Every clip on the sound tracks that are heard, as pieces. */
 export function soundPieces(tl: NleTimeline): SoundPiece[] {
@@ -76,6 +76,9 @@ export function soundPieces(tl: NleTimeline): SoundPiece[] {
       dur: i.len / fps,
       speed: i.speed || 1,
       gain: Math.pow(10, (i.gain_db ?? 0) / 20),
+      // seconds of fade from / to silence
+      ...(i.fade_in ? { fadeIn: i.fade_in / fps } : {}),
+      ...(i.fade_out ? { fadeOut: i.fade_out / fps } : {}),
     })));
 }
 
