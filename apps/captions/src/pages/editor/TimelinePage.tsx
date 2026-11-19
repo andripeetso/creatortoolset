@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Download, Eye, Loader2, MoreHorizontal, PanelLeft, Pause, Play, Save, Trash2, Undo2 } from "lucide-react";
 import type { Draft, Edit, TrackId } from "@contracts/editor";
 import { describeEdit, editedSpan, mediaRoom, mergeEdit, playPlan, splitView, stackEdits, type ItemEdit, type TimelineItem, type TimelineView } from "@contracts/edit-timeline";
+import { describeEdits } from "@contracts/edit-summary";
 import type { AssetCard, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { EditTimeline } from "@/components/EditTimeline";
@@ -18,6 +19,7 @@ import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit
 import { addClip, duplicateVersion, exportUrl, getDraft, getEdit, markVersion, saveCut } from "@/lib/editor";
 import { listAssets, listLibraries } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
+import { usePageNote } from "@/lib/page-context";
 import type { ReviewPlayPlan } from "@/lib/plugin";
 import { mutedAt, usePlanFollow } from "@/lib/review-play";
 import { undoable } from "@/lib/undo";
@@ -233,6 +235,10 @@ export function TimelinePage({ id, name }: { id: string; name: string }) {
   });
 
   const title = e ? versionTitle(e, name) : name;
+  // the chat knows which version is open here and what was changed by hand and not saved yet
+  const said = `Editor timeline: ${e?.name ?? id}, ${title}. ${edits.length ? `Unsaved edits by hand: ${describeEdits(edits, fps)}` : "No unsaved edits"}`;
+  useEffect(() => usePageNote.setState({ note: said }), [said]);
+  useEffect(() => () => usePageNote.setState({ note: null }), []);
   const run = (f: () => Promise<unknown>) => void f().catch((x) => toast.error(message(x)));
   const duplicate = () => run(async () => {
     const made = await duplicateVersion(id, name);
