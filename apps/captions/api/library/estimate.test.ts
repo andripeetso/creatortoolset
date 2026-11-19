@@ -244,4 +244,20 @@ describe("parallel lanes", () => {
     b!();
     c!();
   });
+
+  it("the Effort row: ready footage with no describe done yet, and an hour's cost at this library's effort", async () => {
+    // Low (describe only): the step left to analyze is the description
+    d.prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_u', 'local', 'U', 'local', '{"describe":true,"look":false}', 1)`).run();
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('au1', 'lib_u', 'video', 'c', 'vu1', 'local', 1)").run();
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at)
+       VALUES ('vu1', 'au1', 1, 'k', 1, 'su1', '{"duration":3600,"vcodec":"h264"}', 'ready', 'local', 1)`,
+    ).run();
+    const before = await estimate("lib_u", "local", { clips: 0, bytes: 0 });
+    expect(before.unanalyzed?.seconds).toBe(3600);
+    expect(Number.isFinite(before.unanalyzed?.hourUsd)).toBe(true);
+    // once described, nothing is left to analyze
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, started_at, done_at) VALUES ('lib_u', 'vu1', 'describe', 'done', 'local', 0, 1)").run();
+    expect((await estimate("lib_u", "local", { clips: 0, bytes: 0 })).unanalyzed?.seconds).toBe(0);
+  });
 });

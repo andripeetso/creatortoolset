@@ -12,6 +12,7 @@ import { updateLibrary } from "@/lib/library";
 import { useAuth, useMe } from "@/lib/auth";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { useModelsInUse } from "./settings/Models";
+import { EffortCost } from "./settings/Effort";
 import { cn } from "@/lib/utils";
 import {
   ANALYSIS_DEFAULT,
@@ -416,7 +417,7 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
       return (
         <div className="space-y-5">
           <Card>
-            <Row title={LIBRARY_WORDS.effort} tip={LIBRARY_WORDS.effortTips[a.effort]}>
+            <Row title={LIBRARY_WORDS.effort} tip={LIBRARY_WORDS.effortTips[a.effort]} control={<EffortCost libraryId={library.id} level={a.effort} />}>
               <input
                 type="range"
                 min={0}

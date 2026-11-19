@@ -14,15 +14,19 @@ const data = process.env.SEED_DATA_DIR;
 if (!data) throw new Error("SEED_DATA_DIR is not set");
 process.env.DATA_DIR = data;
 process.env.APP_SECRET = process.env.APP_SECRET || "screens-secret-123";
+// the workspace's owner is the seeded owner: api/lib/workspaces.ts migrate() makes the admin named here the owner of the first workspace
+process.env.ADMIN_USERNAME = OWNER.username;
 mkdirSync(data, { recursive: true });
 
-const { createUser, findUser } = await import("../../api/users");
+const { createUser, findUser, setPassword } = await import("../../api/users");
 const { workspaceOf, renameWorkspace, addMember, updateMember } = await import("../../api/lib/workspaces");
 const { libraryDb, blobs } = await import("../../api/library/db");
 const { probe } = await import("../../api/library/media/probe");
 const { indexAsset } = await import("../../api/library/query");
 
+// the bootstrap makes the ADMIN_USERNAME account with the APP_SECRET as its password: the owner's own is set here
 if (!findUser(OWNER.username)) createUser(OWNER.username, OWNER.password, { role: "admin" });
+setPassword(findUser(OWNER.username)!, OWNER.password);
 if (!findUser(MEMBER.username)) createUser(MEMBER.username, MEMBER.password);
 const w = workspaceOf(OWNER.username);
 if (!w) throw new Error("the owner has no workspace: check how a new account gets one (api/lib/workspaces.ts)");
@@ -31,8 +35,9 @@ addMember(w, MEMBER.username);
 // The shared workspace: the owner's Workshop project (the Settings → Team row the app writes), given to the member. The
 // workspace routes exist only on a hosted server, so the seed writes them with the app's own modules; the member then
 // switches to it through the app's workspace route (run.mjs).
-// the workspace's own owner (the server's admin account may own it, the seeded owner is a member): sharedWith reads the owner by it
+// the workspace's own owner: sharedWith reads the owner by it
 const wsOwner = w.members.find((m) => m.role === "owner")!.username;
+if (wsOwner !== OWNER.username) throw new Error(`the workspace's owner is ${wsOwner}, not the seeded owner`);
 const shared = randomUUID();
 const now = Date.now();
 mkdirSync(path.join(data, "workshop", "projects"), { recursive: true });

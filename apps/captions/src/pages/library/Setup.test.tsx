@@ -34,6 +34,8 @@ vi.mock("@/lib/library", () => ({
     h.updates.push({ id, settings: patch.settings });
     return { id, name: "Tiny", storage: "local", settings: patch.settings };
   },
+  // the Effort row's "About $N" (EffortCost) asks for the estimate; no footage in these tests, so no figure
+  getEstimate: async () => ({}),
 }));
 vi.mock("@/lib/auth", () => ({
   useAuth: (sel: (s: { hosted: boolean }) => unknown) => sel({ hosted: h.hosted }),

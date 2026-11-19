@@ -65,10 +65,14 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
                 ) : undefined
               }
               control={
-                none && !defaults ? (
-                  <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
-                    {LIBRARY_WORDS.setFolder}
-                  </Button>
+                // copy (SCREENS-COPY §1): a folder not chosen gets Set… only while the switch is off; Source media's Add folder…
+                // shows for the folders already there (and while off). On with nothing made (no computer to make them on): no button
+                none ? (
+                  !defaults ? (
+                    <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
+                      {LIBRARY_WORDS.setFolder}
+                    </Button>
+                  ) : undefined
                 ) : role === "footage" ? (
                   <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
                     {LIBRARY_WORDS.addFolder}
