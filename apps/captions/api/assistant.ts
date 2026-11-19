@@ -34,7 +34,6 @@ import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/wo
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
 import { RETRY, type ActionNeeded } from "../contracts/library";
 import { onActionDone, publicOrigin } from "./lib/action-done";
-import { recheckAction } from "./library/action-check";
 import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
@@ -2065,6 +2064,8 @@ assistantApp.get("/action/:id", async (c) => {
   const id = c.req.param("id");
   const was = messageOf(username, id)?.action;
   if (!was) return c.json({ error: "Not found" }, 404);
+  // loaded here: the library's modules load the assistant's, so a top-level import would close a loop
+  const { recheckAction } = await import("./library/action-check");
   const now = await recheckAction(username, was);
   const m = messageOf(username, id);
   if (!m?.action) return c.json({ action: null });
