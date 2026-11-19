@@ -285,7 +285,7 @@ export function inviteByToken(token: string): { invite: Invite; workspace: Works
   return i && w ? { invite: publicInvite(i), workspace: w } : null;
 }
 
-const workspaceById = (id: string): Workspace | null => store().workspaces.find((w) => w.id === id) ?? null;
+export const workspaceById = (id: string): Workspace | null => store().workspaces.find((w) => w.id === id) ?? null;
 
 /** What an invited person gets once they join (the owner sets it on the pending invite; `off` is checked by the route). */
 export function updateInvite(w: Workspace, id: string, patch: { off?: (Tool | PluginGateId)[]; read?: Tool[]; scripts?: boolean; workspaces?: string[] }): void {

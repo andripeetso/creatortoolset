@@ -114,7 +114,7 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
   // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
   // folders that have no workspace are its own: a workspace's folder is another client's, never picked
   const owned = workspace ? [] : await ownedProjects(user);
-  if (!workspace && owned.length > 1) return { error: "Choose a Projects folder in Settings → Folders." };
+  if (!workspace && owned.length > 1) return { error: "Choose a Project files folder in Settings → Media Library." };
   const ws = workspace ?? owned[0]?.id;
   const inWs = (w?: string) => w === ws;
   const st = await readStorage(user);
@@ -125,7 +125,7 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
   const parent = media ? media.origin.path.replace(/\/[^/]*$/, "") : "";
   const p = `${parent}/${role === "projects" ? PROJECTS_NAME : EXPORTS_NAME}`;
   // shortcut: a Media folder at a volume's root has no room beside it on that volume (its parent is /Volumes), so it is refused
-  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) return { error: "Choose a Projects folder in Settings → Folders." };
+  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) return { error: "Choose a Project files folder in Settings → Media Library." };
   return chained(user, async () => {
     const cur = await readStorage(user);
     const had = cur.folders.find((f) => f.role === role && f.origin.host === device && f.origin.path === p && folderIn(f, inWs));

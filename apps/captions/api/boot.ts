@@ -35,7 +35,7 @@ import { editorStepsAtRisk, releaseRunningSteps, startEditorWorker } from "./edi
 import { serverWorkApp } from "./work/server-work-routes";
 import { serverUpdateApp } from "./server-update";
 import { migrateOwnerChoices, settleServerWork } from "./work/server-work";
-import { migrateOnce } from "./library/migrate";
+import { migrateLibraries, migrateOnce } from "./library/migrate";
 import { checkWaits } from "./work/waits";
 import { startTaskTick, sweepTasks } from "./work/tasks";
 import "./work/task-kinds";
@@ -519,6 +519,8 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
   settleServerWork(); // before the loops: a new server starts with its video work off (work/server-work.ts)
   migrateOwnerChoices(); // after it: settle writes the file the migration keeps
   void migrateOnce().catch((e) => console.warn("[library] the one-time migration failed:", e instanceof Error ? e.message : e)); // once per data folder (library/migrated.json)
+  // libraries with clips are set up (setupAt, UNIFIED-PRD 4.6); without it every existing workspace would get the setup card
+  void migrateLibraries().catch((e) => console.error("library migration failed", e));
   startLibraryWorker();
   setInterval(() => {
     try {

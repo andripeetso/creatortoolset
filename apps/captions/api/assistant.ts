@@ -29,9 +29,10 @@ import { storageOf } from "./devices-storage";
 import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac } from "./lib/folder-list";
 import { watchAllowed } from "./library/watch";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
-import { exportsOf, folderIn, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
+import { exportsOf, FOLDER_LABELS, folderIn, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
+import type { ActionNeeded } from "../contracts/library";
 import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
@@ -108,7 +109,7 @@ You also run on the user's own Mac, in a folder of your own there (the current f
 
 ${process.env.CT_LOCAL === "1" ? LINK_LOCAL : LINK_AWAY}
 
-Where this workspace keeps its files on the user's computers (Settings → Folders) is listed below when it has any folders. Look for its footage and music there first, and save what you make on the Mac (a cut, a render) in its Finished videos folder. With no folders listed, don't search the user's drives for footage: say this workspace has no footage folder yet, offer to open Settings → Folders (navigate /settings/folders), where they set its Media folders (footage, music and sound effects, all in one list) and where its finished videos go, and use ask_folder for the footage this once.
+Where this workspace keeps its files on the user's computers is listed below when it has any folders (${FOLDER_LABELS.footage}; ${FOLDER_LABELS.library} for finished videos). Look for its footage and music there first, and save what you make on the Mac (a cut, a render) in its ${FOLDER_LABELS.library} folder. With no folders listed, don't search the user's drives for footage, and don't ask for a folder: a tool that needs the Media Library answers with the setup card, so stop there in one line (see the tools' answers).
 
 Before saying a file is not there, or asking what it is called, look with folder_list (match: words from what they said, like song): it sees every subfolder.`;
 
@@ -125,8 +126,8 @@ export async function foldersNote(username: string, workspace?: string): Promise
   const lib = exportsOf(all);
   const on = (f: StorageFolder) => (f.origin.host === THIS_COMPUTER ? "" : ` (on ${deviceOf(f.origin.host)?.name ?? "another computer"})`);
   const lines = [
-    ...mine.filter((f) => f.role === "footage").map((f) => `- Footage: ${f.origin.path}${on(f)}`),
-    ...(lib ? [`- Exports (finished videos): ${lib.origin.path}${on(lib)}`] : []),
+    ...mine.filter((f) => f.role === "footage").map((f) => `- ${FOLDER_LABELS.footage}: ${f.origin.path}${on(f)}`),
+    ...(lib ? [`- ${FOLDER_LABELS.library} (finished videos): ${lib.origin.path}${on(lib)}`] : []),
   ];
   return lines.length ? `\n\nThis workspace's folders:\n${lines.join("\n")}` : "";
 }
@@ -574,6 +575,17 @@ export function askFolder(username: string, turn: string, why: string): void {
   const m = messageOf(username, turn);
   if (m?.status !== "thinking") return;
   m.folderAsk = { why: why.replace(/\s+/g, " ").trim().slice(0, 200) };
+  saveSoon(username, turn);
+}
+
+/**
+ * A tool needs the person first (ActionNeeded, contracts/library.ts): the chat card under the reply. The reply ends
+ * with one line (callTool, mcp.ts), and the card's own answer carries the ask on (ChatCard).
+ */
+export function noteAction(username: string, turn: string, action: ActionNeeded): void {
+  const m = messageOf(username, turn);
+  if (m?.status !== "thinking") return;
+  m.action = action;
   saveSoon(username, turn);
 }
 

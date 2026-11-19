@@ -23,6 +23,7 @@
  */
 
 import type { Selection } from "./providers";
+import type { ActionNeeded } from "./library";
 
 /** "none" = no AI connected yet (the dock can't talk), "claude" = Claude Code on a paired Mac (the only one for now), "other" = any other provider. */
 export type AssistantProvider = "none" | "claude" | "other";
@@ -54,6 +55,8 @@ export interface AssistantMessage {
   choices?: string[];
   /** The reply asks for a folder on the user's computer (ask_folder): in the Mac app a Choose a folder button under it; the chosen folder goes with their next message. */
   folderAsk?: { why: string };
+  /** A tool needs the person first (contracts/library.ts ActionNeeded): the chat card under the reply. */
+  action?: ActionNeeded;
   /** Questions the reply put before deleting, publishing or sending something: a Yes / No card each. */
   confirms?: AssistantConfirm[];
   /** A user message's attachments as shown in the chat: pictures by name (served by GET /api/assistant/images/:id), pastes by name. */

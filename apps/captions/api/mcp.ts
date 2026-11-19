@@ -11,7 +11,7 @@ import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askFolder, askSend, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended, workspaceOfTurn } from "./assistant";
+import { askConfirm, askFolder, askSend, noteAction, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended, workspaceOfTurn } from "./assistant";
 import { workspaceScope } from "./lib/workshop/workspace";
 import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { mimeOf, uploadLink } from "./assistant-files";
@@ -26,7 +26,8 @@ import { one } from "./mcp-tools/editor-styles";
 import type { EditingStylesView } from "../contracts/editor-styles";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
-import { SOUNDS, type AssetCard } from "../contracts/library";
+import { setupNeeded } from "./library/access";
+import { ACTION_NEEDED, SOUNDS, type ActionNeeded, type AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
 import { cardFor, cardResource, cardResourceList, cardToolMeta, hasCard, mediaLinks } from "./mcp-cards";
 
@@ -797,12 +798,16 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return { id: cm.id, resolved: !!cm.resolved, text: cm.text };
     },
     use_file: async (a) => {
+      if (a.to === "library") {
+        const gate = await libraryGate(user, jobTurn(auth.get("authorization") ?? undefined));
+        if (gate) return { [ACTION_NEEDED]: gate };
+      }
       // what the tool still needs comes first: the assistant asks for it (ask_secret) or opens the page that holds it, then tries again
       const tool = a.to === "review" ? "review" : a.to === "captions" ? "captions" : a.to === "library" ? "media" : "notes";
       const { missing } = readiness(tool, (await json<SetupView>("/api/setup")).have);
       if (missing.length) {
         // the page each kind of need is set up on, the same ones Settings → Tools sends a person to
-        const page: Record<Exclude<(typeof missing)[number]["form"], "keys">, string> = { ai: "/settings/providers", apify: "/settings/keys", library: "/library", project: "/projects" };
+        const page: Record<Exclude<(typeof missing)[number]["form"], "keys">, string> = { ai: "/settings/providers", apify: "/settings/keys", library: "/library?setup=1", project: "/projects" };
         return {
           not_yet: `${TOOL_NAMES[tool]} needs these first; then call use_file again.`,
           needs: missing.map((n) => ({ what: n.what, ...(n.form === "keys" ? { ask_secret: n.anyOf } : { open: page[n.form] }) })),
@@ -918,6 +923,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     editor_get: async (a) => {
       const e = await json(`/api/editor/${encodeURIComponent(String(a.edit))}`);
       const jobs = (e.jobs as Args[] | undefined) ?? [];
+      const waiting = downloadsWaiting(jobs);
+      if (waiting) return { [ACTION_NEEDED]: waiting };
       const previews = (e.previews as Record<string, { assetId: string; n: number }> | undefined) ?? {};
       const titles = (e.plans as Args[] | undefined) ?? [];
       // a moment of a long recording is one line: what is said in it, for the AI to write a script or a post from
@@ -952,6 +959,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return { status: "queued", from: a.kind, ...(a.now === true ? { now: true } : {}) };
     },
     editor_create: async (a) => {
+      const gate = await libraryGate(user, jobTurn(auth.get("authorization") ?? undefined));
+      if (gate) return { [ACTION_NEEDED]: gate };
       const sources = Array.isArray(a.sources) ? a.sources.map(String) : [];
       if (!sources.length) throw new ToolError("Give sources: the footage's version_id (media_search or media_import_folder).");
       const body: Args = { sources, ...pick(a, ["name", "brief", "script", "versions", "languages", "moments", "plan", "song"]) };
@@ -960,7 +969,11 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       // the style by its id or name, as editor_style_use takes it
       if (a.style != null && String(a.style).trim()) body.style = one((await json<EditingStylesView>("/api/editor/styles")).styles, a.style).id;
       const { id } = await json<{ id: string }>("/api/editor", "POST", body);
-      if (a.start !== false) await json(`/api/editor/${encodeURIComponent(id)}/run`, "POST", { from: "analyze" });
+      if (a.start !== false) {
+        await json(`/api/editor/${encodeURIComponent(id)}/run`, "POST", { from: "analyze" });
+        const waiting = downloadsWaiting(((await json(`/api/editor/${encodeURIComponent(id)}`)).jobs as Args[] | undefined) ?? []);
+        if (waiting) return { [ACTION_NEEDED]: waiting };
+      }
       return { id, name: a.name ?? "Untitled edit", status: a.start !== false ? "started" : "made", link: `${origin}/editor/${id}`, note: "It runs by itself and files each version's preview in Review; the chat says when it is ready, so end your reply rather than wait." };
     },
     media_folders: async () => {
@@ -1050,6 +1063,8 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       };
     },
     media_import_folder: async (a) => {
+      const gate = await libraryGate(user, jobTurn(auth.get("authorization") ?? undefined));
+      if (gate) return { [ACTION_NEEDED]: gate };
       const by = Date.now() + ANSWER_BY_S * 1000; // the route itself may take 40 s
       const body: Args = { path: a.path };
       if (a.since) body.since = dateMs(a.since);
@@ -1375,6 +1390,25 @@ class Asked extends Error {}
  * One tool call. `confirmed`: the person pressed Yes on the card this same call put up (assistant.ts runs it again
  * as them, with their own login instead of the reply's token), so sure() goes through.
  */
+/**
+ * The Media Library gate (UNIFIED-PRD 4.8): the answer a tool gives while the workspace's library is not set up, or null.
+ * The workspace is the chat's (its turn), so the owner's library answers for a member too.
+ */
+const libraryGate = async (user: SessionUser, turn: string | null | undefined): Promise<ActionNeeded | null> =>
+  setupNeeded(user.username, await workspaceOfTurn(user.username, turn ?? null));
+
+/** A step queued with no reader and Downloads off (reach.ts downloadsAsk): the card asks before the reply goes on. */
+const downloadsWaiting = (jobs: Args[]): ActionNeeded | null => {
+  const d = jobs.find((j) => j.downloads)?.downloads as { libraryId: string; workspace: string } | undefined;
+  return d ? { kind: "downloads", ...d } : null;
+};
+
+/** What the reply says in its one line when a tool stopped for the person (the card under it asks). */
+const ACTION_STOP: Record<ActionNeeded["kind"], string> = {
+  setup: "The Media Library of this workspace is not set up yet. Say one line that it needs setting up and end your reply: no uploads, no folder questions. The card under your reply carries on.",
+  downloads: "The edit needs the files on this computer and Automatic downloads is off. Say one line and end your reply: the card under it turns them on.",
+};
+
 async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools, confirmed = false) {
   const api = apiOf(call, auth);
   const turn = jobTurn(auth.get("authorization") ?? undefined);
@@ -1401,7 +1435,15 @@ async function callTool(call: Call, auth: Headers, origin: string, user: Session
     const off = plug ? await offHere(user, plugged.from.get(name)!) : null;
     if (off) throw new ToolError(off);
     if ((ASSISTANT_TOOLS.has(name) || DOCK_ONLY.has(name)) && !isJob(auth) && !confirmed) throw new ToolError(`${name} is for the assistant only.`);
-    const result = await handler(args ?? {});
+    // voice_make saves its voice into the Media Library: the same setup gate as use_file, editor_create and media_import_folder
+    const gate = name === "voice_make" ? await libraryGate(user, turn) : null;
+    const result = gate ? { [ACTION_NEEDED]: gate } : await handler(args ?? {});
+    // a tool that needs the person first answers ACTION_NEEDED (library gate, downloads): the card shows it, the reply stops
+    const action = result && typeof result === "object" && ACTION_NEEDED in result ? ((result as Args)[ACTION_NEEDED] as ActionNeeded) : null;
+    if (action) {
+      if (turn) noteAction(user.username, turn, action);
+      return { content: [{ type: "text", text: JSON.stringify({ [ACTION_NEEDED]: action, stop: ACTION_STOP[action.kind] }) }] };
+    }
     if (turn && result && typeof result === "object" && !Array.isArray(result)) {
       const cards = plug ? plugged.work : MODULES.filter((m) => name in m.handlers).map((m) => m.work).filter((w) => !!w);
       const work = cards.map((w) => w(name, args ?? {}, result as Args)).find((c) => !!c) ?? workFor(name, args ?? {}, result as Args);

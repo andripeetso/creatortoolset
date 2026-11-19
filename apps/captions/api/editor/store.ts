@@ -11,7 +11,7 @@ import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
 import type { Coverage, Critique, EditPlan } from "../../contracts/edit-plan";
 import { cardsView } from "./cards/state";
-import { waitLine } from "./reach";
+import { downloadsAsk, waitLine } from "./reach";
 import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
 import { lineOf } from "./progress";
@@ -676,7 +676,9 @@ export function jobsOf(id: string): EditJob[] {
     const progress = p ? { device: p.device, done: p.done, total: p.total, leftS: p.leftS } : r.state === "running" && r.device ? { device: deviceName(r.device) } : undefined;
     // queued: why no computer has taken it, when none that runs it can read its files (reach.ts)
     const line = r.state === "running" ? (p?.line ?? lineOf(r.id)) : r.state === "queued" && r.actor ? waitLine(r.actor, r) : undefined;
-    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}), ...(progress ? { progress } : {}) };
+    // queued with no reader and a server copy to download: the chat asks to turn Downloads on (reach.ts downloadsAsk)
+    const downloads = r.state === "queued" && r.actor ? downloadsAsk(r) : undefined;
+    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}), ...(progress ? { progress } : {}), ...(downloads ? { downloads } : {}) };
   });
 }
 

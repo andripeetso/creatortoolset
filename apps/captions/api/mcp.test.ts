@@ -9,8 +9,11 @@ process.env.APP_SECRET = "mcp-test-secret";
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { TOOLS, handle, workFor } = await import("./mcp");
+const { libraryDb } = await import("./library/db");
 
 const user = createUser("mcpowner", "password1");
+// the Media Library is set up (setupAt): the library tools answer, not the setup card (mediaReady)
+libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_mcp', 'mcpowner', 'Library', 'local', ?, 0)").run(JSON.stringify({ setupAt: "2026-11-01T00:00:00.000Z" }));
 const full = `Bearer ${newApiKey(user, "full")}`;
 const review = `Bearer ${newApiKey(user)}`;
 
@@ -252,7 +255,7 @@ describe("Creator Toolset as a remote MCP server", () => {
   });
 
   it("editor_create makes the edit from the takes and starts it at analyze; start=false only makes it", async () => {
-    const site = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }), "POST /api/editor/edit_tiny/run": () => ({ ok: true }) });
+    const site = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }), "POST /api/editor/edit_tiny/run": () => ({ ok: true }), "GET /api/editor/edit_tiny": () => ({ jobs: [] }) });
     const out = await callWith(site, "editor_create", {
       sources: ["v_a", "v_b"],
       name: "Tiny Acrobatics cut",
@@ -262,10 +265,25 @@ describe("Creator Toolset as a remote MCP server", () => {
       target_s: 45,
       broll_folder: "coll_b",
     });
-    expect(site.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor", "POST /api/editor/edit_tiny/run"]);
+    // then the edit is read once: a step queued with no reader and Downloads off answers the card instead (downloadsWaiting)
+    expect(site.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor", "POST /api/editor/edit_tiny/run", "GET /api/editor/edit_tiny"]);
     expect(site.hits[0]!.body).toEqual({ sources: ["v_a", "v_b"], name: "Tiny Acrobatics cut", brief: "A short hype reel", script: "Hook line", versions: 2, targetS: 45, brollCollectionId: "coll_b" });
     expect(site.hits[1]!.body).toEqual({ from: "analyze" });
     expect(out.value).toEqual({ id: "edit_tiny", name: "Tiny Acrobatics cut", status: "started", link: "https://tools.example.com/editor/edit_tiny", note: expect.any(String) });
+
+    // a queued step with no reader and Downloads off: the answer is the card, not the edit (UNIFIED-PRD 4.7)
+    const waiting = fakeSite({
+      "POST /api/editor": () => ({ id: "edit_tiny" }),
+      "POST /api/editor/edit_tiny/run": () => ({ ok: true }),
+      "GET /api/editor/edit_tiny": () => ({ jobs: [{ id: 3, state: "queued", downloads: { libraryId: "lib_t", workspace: "ws_t" } }] }),
+    });
+    const asked = await callWith(waiting, "editor_create", { sources: ["v_a"] });
+    expect(asked.value).toEqual({ action_needed: { kind: "downloads", libraryId: "lib_t", workspace: "ws_t" }, stop: expect.any(String) });
+
+    // voice_make saves into the Media Library, which this account has set up (the gate passes; a library not set up is media-ready.test.ts)
+    const voice = fakeSite({ "POST /api/editor/voice": () => ({ versionId: "v_x", name: "Tiny voice", voice: { name: "Tiny" }, libraryId: "lib_mcp", assetId: "a_x" }) });
+    expect((await callWith(voice, "voice_make", { text: "Hello" })).value).toMatchObject({ version_id: "v_x", voice: "Tiny" });
+    expect(voice.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor/voice"]);
 
     const made = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }) });
     const kept = await callWith(made, "editor_create", { sources: ["v_a"], start: false });

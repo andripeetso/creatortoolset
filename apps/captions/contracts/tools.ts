@@ -87,7 +87,7 @@ export const NEED_SENTENCE: Record<Have, string> = {
   project: "A workspace keeps this tool's work together. Making one takes a moment.",
   ai: "ChatGPT, Claude or another AI plan you already have.",
   ownAi: "ChatGPT, Claude or another AI plan you already have.",
-  library: "The Media Library is where your footage lives. Make one to start.",
+  library: "The Media Library is where your footage lives. Set it up to start.",
   instagram: "Lets this tool read your own Instagram posts. You sign in yourself.",
   apify: "Apify reads public posts for you. Apify bills you for each read, to your own account.",
   mcp: "Lets your own Claude Code or Codex use Creator Toolset. Set it up in Settings → Headless access.",

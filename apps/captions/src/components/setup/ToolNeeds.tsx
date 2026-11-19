@@ -28,7 +28,7 @@ function NeedForm({ need }: { need: Need }) {
   if (need.form === "library")
     return (
       <p className="text-xs text-muted-foreground">
-        The <Link to="/library" className="underline">Media Library</Link> creates the library and sets where its files are kept.
+        The <Link to="/library?setup=1" className="underline">Media Library</Link> is set up once: where its files are kept, and how imports behave.
       </p>
     );
   return (
