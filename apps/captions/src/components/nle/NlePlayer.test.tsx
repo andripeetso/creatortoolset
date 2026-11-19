@@ -26,6 +26,7 @@ describe("a shot whose file doesn't play here", () => {
     const root = createRoot(document.body.appendChild(document.createElement("div")));
     await act(async () => root.render(<NlePlayer tl={tl} time={0} playing={false} rate={1} urlOf={urlOf} nameOf={() => "desktop.mp4"} />));
     await act(() => new Promise((done) => setTimeout(done, 50)));
+    expect(texts).toContain("Media Offline");
     expect(texts).toContain("Tiny Drive isn't connected");
     expect(texts).not.toContain("File not found here");
     act(() => root.unmount());

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { readSound } from "@/lib/synced-sound";
-import { nleAudio, runningAudio } from "@/lib/nle/audio";
-import { lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
+import { fadePoints, nleAudio, runningAudio } from "@/lib/nle/audio";
+import { fadeAt, lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
 import { picturesAt, picturesSoon, placement, soundPieces, sourceTime, type SoundPiece } from "@/lib/nle/picture";
 import { localFileState, pathLine } from "@/lib/local-files";
 import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type ShotOp } from "@/lib/nle/shot";
@@ -11,8 +11,9 @@ import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type
 // shots with their frame size, blurred fill, split rows and smooth zoom, as the renderer draws them (lib/nle/shot.ts);
 // the sound tracks play through Web Audio with each clip's gain. One <video> per picture on screen (and the ones about to
 // start, so they are ready), kept on the timeline's clock: seeked when paused, played at the clip's speed and put back
-// when they drift; a card made as numbered pictures shows its picture for the frame. A clip whose file can't play here
-// is a grey frame with its name, never an older render.
+// when they drift; a card made as numbered pictures shows its picture for the frame. A clip's fades ramp its picture's
+// opacity (black under V1) and its sound's gain. A clip whose file can't play here is a red Media Offline frame with its
+// name and why, never an older render.
 
 type Media = {
   el: HTMLVideoElement | HTMLImageElement;
@@ -135,22 +136,24 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
       }
       return el.complete && el.naturalWidth ? { el, w: el.naturalWidth, h: el.naturalHeight } : null;
     };
-    // a picture with no file here: a grey frame with its name where the picture would be (as if it were the frame's size)
-    const missing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why: string) => {
+    // a picture with no file here: Resolve's red Media Offline frame where the picture would be (as if it were the
+    // frame's size), with the clip's name and why
+    const missing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string) => {
       const p = placement(it, track, W, H, W, H);
       ctx.save();
       ctx.setTransform(...p.m);
-      ctx.fillStyle = "#3f3f46";
+      ctx.fillStyle = "#8f1414";
       ctx.fillRect(...p.crop);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       const [cx, cy] = [p.m[0] * (W / 2) + p.m[2] * (H / 2) + p.m[4], p.m[1] * (W / 2) + p.m[3] * (H / 2) + p.m[5]];
-      ctx.fillStyle = "#e4e4e7";
+      ctx.fillStyle = "#fff";
       ctx.textAlign = "center";
-      ctx.font = `600 ${Math.round(W / 24)}px system-ui, sans-serif`;
-      ctx.fillText(name, cx, cy, W * 0.9);
-      ctx.font = `${Math.round(W / 34)}px system-ui, sans-serif`;
-      ctx.fillStyle = "#a1a1aa";
-      ctx.fillText(why, cx, cy + W / 18, W * 0.9);
+      ctx.font = `600 ${Math.round(W / 14)}px system-ui, sans-serif`;
+      ctx.fillText("Media Offline", cx, cy, W * 0.9);
+      ctx.font = `${Math.round(W / 30)}px system-ui, sans-serif`;
+      ctx.fillStyle = "#fecaca";
+      ctx.fillText(name, cx, cy + W / 14, W * 0.9);
+      if (why) ctx.fillText(why, cx, cy + W / 8, W * 0.9);
       ctx.restore();
     };
     /** A darkened blur of a picture behind a shot (the renderer's: an eighth of the size, blurred, darkened, scaled up). */
@@ -196,6 +199,8 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
       for (const { item, track } of on) {
         const key = item._k ?? `${item.src}:${item.rec}`;
         const k = f - item.rec;
+        // the fades: how much of the picture shows now (what is under it, or black, shows through)
+        const fade = fadeAt(item, s * fps - item.rec);
         if (item.fx === "flash") {
           // a designed white flash, fading as its file does (drawn over everything, as the renderer does)
           flashes.push(1 - (item.in + k) / Math.max(Number(t.sources[item.src]?.dur) || item.len, 1));
@@ -209,7 +214,7 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
         live.add(key);
         if (!m || m.bad) {
           const why = m?.why ?? now.current.urlOf(item.src)?.why;
-          missing(ctx, item, track, name(item.src), why ?? (m ? "This file won't play here" : "File not found here"));
+          missing(ctx, item, track, name(item.src), why ?? (m ? "This file won't play here" : undefined));
           continue;
         }
         const d = pictureOf(m, own, srcFps(item.src), forward && !still, (item.speed || 1) * r);
@@ -244,6 +249,7 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
             lc.drawImage(pd.el, ...op.src, ...op.dst);
           }
           ctx.save();
+          ctx.globalAlpha = fade;
           const look = canFilter ? lookFilter(item, k, W) : "";
           if (look) ctx.filter = look;
           ctx.drawImage(layer, ...plan.view, 0, 0, W, H);
@@ -251,9 +257,9 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className }:
           continue;
         }
         const p = placement(item, track, d.w, d.h, W, H);
-        if (p.crop[2] <= 0 || p.crop[3] <= 0 || !p.alpha) continue;
+        if (p.crop[2] <= 0 || p.crop[3] <= 0 || !p.alpha || !fade) continue;
         ctx.save();
-        ctx.globalAlpha = p.alpha;
+        ctx.globalAlpha = p.alpha * fade;
         ctx.setTransform(...p.m);
         ctx.drawImage(d.el, ...p.crop, ...p.crop);
         ctx.restore();
@@ -352,7 +358,7 @@ function useNleSound(tl: NleTimeline, time: number, playing: boolean, rate: numb
         src.buffer = buf;
         src.playbackRate.value = p.speed * rate;
         const g = ctx.createGain();
-        g.gain.value = p.gain;
+        ramp(g, p, a, late);
         src.connect(g).connect(ctx.destination);
         src.start(Math.max(ctx.currentTime, a.at + Math.max(0, p.at - a.t) / rate), offset, Math.min(dur, buf.duration - offset));
         state.current.nodes.push(src);
@@ -360,14 +366,21 @@ function useNleSound(tl: NleTimeline, time: number, playing: boolean, rate: numb
     }
   };
 
+  // the clip's gain, up from silence over its fade in and down over its fade out, on the engine's clock
+  const ramp = (g: GainNode, p: SoundPiece, a: { t: number; at: number }, late: number) => {
+    const [first, ...rest] = fadePoints(p, a.at + (p.at - a.t) / rate, late, rate);
+    g.gain.setValueAtTime(first[1], first[0]);
+    for (const [t, v] of rest) g.gain.linearRampToValueAtTime(v, t);
+  };
+
   // a clip at another speed keeps its pitch, as the render's (a media element stretches its sound; a buffer can't)
   const stretched = (ctx: AudioContext, p: SoundPiece & { url: string }, gen: number) => {
     const a = state.current.anchor!;
     const el = Object.assign(new Audio(), { crossOrigin: "anonymous", preload: "auto", preservesPitch: true, src: p.url });
     const g = ctx.createGain();
-    g.gain.value = p.gain;
-    ctx.createMediaElementSource(el).connect(g).connect(ctx.destination);
     const late = Math.max(0, a.t - p.at);
+    ramp(g, p, a, late);
+    ctx.createMediaElementSource(el).connect(g).connect(ctx.destination);
     el.currentTime = p.offset + late * p.speed;
     el.playbackRate = p.speed * rate;
     const wait = (a.at + Math.max(0, p.at - a.t) / rate - ctx.currentTime) * 1000;

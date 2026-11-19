@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Film, Loader2, Magnet, MousePointer2, Music, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { Loader2, Magnet, MousePointer2, Pause, Play, Plus, Redo2, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
-  addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
+  addSource, addTrack, blade, clipAt, clipsFrom, copyOf, duplicate, endOf, find, freeTrack, isVideo, lengthOf, linkTogether, move, paste,
   place, remove, removeTrack, rippleToPlayhead, setItems, setTrack, timecode, toSaved, unlink, withKeys, type NleItem, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { cn } from "@/lib/utils";
+import { keyAction } from "@/lib/nle/keys";
 import { NleInspector } from "./NleInspector";
 import { nleAudio } from "@/lib/nle/audio";
 import type { NleFile } from "./NlePlayer";
 import { NleLayout, Panel } from "./NleLayout";
+import { NleMediaPool, SOURCE_MIME } from "./NleMediaPool";
 import { NleViewer } from "./NleViewer";
 
 export type { NleFile };
 import { NleTracks as Timeline, type Tool } from "./NleTracks";
 
-// A non-linear editor for one timeline, laid out as editors are (NleLayout): Media on the left (the timeline's own
+// A non-linear editor for one timeline, laid out as editors are (NleLayout): the Media Pool on the left (the timeline's own
 // sources, then the page's media bin), the viewer in the middle playing the timeline live from its files, the inspector
 // on the right, the timeline across the bottom. It fills the box it is put in. The page gives the timeline, where its
 // files play from and what Save does; everything else (edits, undo, keys, playback) is here.
@@ -39,11 +41,9 @@ export interface NleControl {
 }
 
 let clipboard: { track: string; item: NleItem }[] = [];
-/** A drag of one of the timeline's own sources (Media → In this timeline): its key. */
-const SOURCE_MIME = "application/x-ct-nle-source";
 
 
-export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly }: {
+export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -60,6 +60,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   /** what the inspector's Timeline tab says besides the timeline's settings */
   notes?: ReactNode;
   readOnly?: boolean;
+  /** Relink… on a clip in the Media Pool: look for the files not found here */
+  onRelink?: () => void;
 }) {
   const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(withKeys(initial)));
   const [saved, setSaved] = useState<NleTimeline>(hist.now);
@@ -74,6 +76,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [marks, setMarks] = useState<[number | null, number | null]>([null, null]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
+  const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
   useEffect(() => {
     const fresh = withKeys(initial);
@@ -107,10 +110,10 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   useEffect(() => {
     if (!playing) return;
     let raf = 0;
-    let last = performance.now();
+    let then = performance.now();
     const step = (now: number) => {
-      const t = timeRef.current + ((now - last) / 1000) * rate;
-      last = now;
+      const t = timeRef.current + ((now - then) / 1000) * rate;
+      then = now;
       if (t >= last && rate > 0) {
         setTime(last);
         setPlaying(false);
@@ -189,7 +192,12 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     },
     unlink: () => sel.length && commit(unlink(tl, sel)),
     link: () => sel.length > 1 && commit(linkTogether(tl, sel)),
-    blade: () => commit(blade(tl, Math.round(time * fps), sel.length ? sel : undefined)),
+    // the picked clips under the playhead, or (none there) every clip under it on the unlocked tracks
+    blade: () => {
+      const f = Math.round(time * fps);
+      const under = sel.filter((k) => { const it = find(tl, k)!.item; return it.rec < f && f < endOf(it); });
+      commit(blade(tl, f, under.length ? under : undefined));
+    },
   };
 
   const save = async () => {
@@ -209,61 +217,75 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
-      const k = e.key.toLowerCase();
-      const mod = e.metaKey || e.ctrlKey;
+      const a = keyAction(e);
+      if (!a) return;
       const f = Math.round(time * fps);
-      // Y / ⌘Y: the clips from the playhead on / before it, all tracks; with ⌥ only the track under the pointer (or the
-      // picked clips' tracks), as Resolve has them
-      const pickFrom = (dir: 1 | -1) => {
-        const over = document.querySelector<HTMLElement>("[data-lane]:hover")?.dataset.lane;
-        const tracks = !e.altKey ? undefined : over ? [over] : sel.length ? [...new Set(sel.map((s) => find(tl, s)!.track))] : ["V1"];
-        setSelected(clipsFrom(tl, f, dir, tracks));
+      const zoom = (key: string) => zoomKeys.current?.(new KeyboardEvent("keydown", { key }));
+      const step = (d: number) => {
+        play(false);
+        seek(time + d / fps);
       };
-      if (e.code === "KeyY" && !e.shiftKey) pickFrom(mod ? -1 : 1);
-      else if (mod && k === "s") void save();
-      else if (mod && k === "z") setHist(e.shiftKey ? histRedo : histUndo);
-      else if (mod && e.key === "\\") act.blade();
-      else if (mod && k === "c") act.copy();
-      else if (mod && k === "x") act.cut();
-      else if (mod && k === "v") act.paste();
-      else if (mod && k === "d") act.duplicate();
-      else if (mod && k === "b") act.blade();
-      else if (mod && k === "a") setSelected(Object.values(tl.tracks).flatMap((t) => t.items.map((i) => i._k!)));
-      else if (e.altKey && e.code === "KeyX") setMarks([null, null]);
-      else if (mod || e.altKey) return;
-      else if (e.key === " ") play(!playing);
-      else if (k === "k") play(false);
-      else if (k === "l") shuttle(1);
-      else if (k === "j") shuttle(-1);
-      else if (k === "i") setMarks(([, o]) => [f, o !== null && o > f ? o : null]);
-      else if (k === "o") setMarks(([i]) => [i !== null && i < f ? i : null, f]);
-      else if (k === "a") setTool("select");
-      else if (k === "t") setTool("trim");
-      else if (k === "b") setTool("blade");
-      else if (k === "n") setSnap((s) => !s);
-      // Q / W: ripple-trim the clip under the playhead's start / end to it; E: the picked clip's nearer end to it
-      else if (k === "q" && !readOnly) {
-        const h = clipAt(tl, f, sel);
-        const next = rippleToPlayhead(tl, f, "head", sel);
-        commit(next);
-        if (h && next !== tl) seek(h.item.rec / fps); // the playhead goes to the cut, where the next shot now starts
-      } else if (k === "w" && !readOnly) commit(rippleToPlayhead(tl, f, "tail", sel));
-      else if (k === "e" && sel.length) commit(extendTo(tl, sel[0], f));
-      else if (k === "d" && sel.length) commit(setItems(tl, sel, { enabled: find(tl, sel[0])!.item.enabled === false ? undefined : false }));
-      else if ((e.key === "," || e.key === "<" || e.key === "." || e.key === ">") && sel.length) commit(move(tl, sel, (e.key === "," || e.key === "<" ? -1 : 1) * (e.shiftKey ? 5 : 1)));
-      else if (e.key === "Delete" || e.key === "Backspace") act.delete(e.shiftKey);
-      else if (e.key === "Escape") setSelected([]);
-      else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        play(false);
-        seek(time + ((e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? fps : 1)) / fps);
-      } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-        play(false);
-        const p = e.key === "ArrowUp" ? points.filter((x) => x < f).at(-1) : points.find((x) => x > f);
-        if (p !== undefined) seek(p / fps);
-      } else if (e.key === "Home") seek(0);
-      else if (e.key === "End") seek(last);
-      else if (k === "z" && e.shiftKey) zoomKeys.current?.(new KeyboardEvent("keydown", { key: "\\" }));
-      else if (!zoomKeys.current?.(e)) return;
+      if (a.startsWith("lock:")) {
+        const id = a.slice(5);
+        if (tl.tracks[id]) commit(setTrack(tl, id, { locked: tl.tracks[id].locked ? undefined : true }));
+      } else switch (a) {
+        case "play": play(!playing); break;
+        case "stop": play(false); break;
+        case "forward": shuttle(1); break;
+        case "reverse": shuttle(-1); break;
+        case "save": void save(); break;
+        case "undo": setHist(histUndo); break;
+        case "redo": setHist(histRedo); break;
+        case "split": act.blade(); break;
+        case "copy": act.copy(); break;
+        case "cut": act.cut(); break;
+        case "paste": act.paste(); break;
+        case "duplicate": act.duplicate(); break;
+        case "selectAll": setSelected(Object.values(tl.tracks).flatMap((t) => t.items.map((i) => i._k!))); break;
+        case "deselect": setSelected([]); break;
+        // ⌥Y / ⌥⌘Y: every clip from the playhead on / up to it, on all tracks
+        case "selectForward": setSelected(clipsFrom(tl, f, 1)); break;
+        case "selectBack": setSelected(clipsFrom(tl, f, -1)); break;
+        case "rippleStart": {
+          if (readOnly) break;
+          const h = clipAt(tl, f, sel);
+          const next = rippleToPlayhead(tl, f, "head", sel);
+          commit(next);
+          if (h && next !== tl) seek(h.item.rec / fps); // the playhead goes to the cut, where the next shot now starts
+          break;
+        }
+        case "rippleEnd": if (!readOnly) commit(rippleToPlayhead(tl, f, "tail", sel)); break;
+        case "delete": act.delete(false); break;
+        case "rippleDelete": act.delete(true); break;
+        case "enable": if (sel.length) commit(setItems(tl, sel, { enabled: find(tl, sel[0])!.item.enabled === false ? undefined : false })); break;
+        case "markIn": setMarks(([, o]) => [f, o !== null && o > f ? o : null]); break;
+        case "markOut": setMarks(([i]) => [i !== null && i < f ? i : null, f]); break;
+        case "clearMarks": setMarks([null, null]); break;
+        case "toolSelect": setTool("select"); break;
+        case "toolTrim": setTool("trim"); break;
+        case "toolBlade": setTool("blade"); break;
+        case "snap": setSnap((s) => !s); break;
+        case "nudgeBack": case "nudgeBack5": case "nudgeOn": case "nudgeOn5":
+          if (sel.length) commit(move(tl, sel, (a.startsWith("nudgeBack") ? -1 : 1) * (a.endsWith("5") ? 5 : 1)));
+          break;
+        case "frameBack": step(-1); break;
+        case "frameOn": step(1); break;
+        case "secondBack": step(-fps); break;
+        case "secondOn": step(fps); break;
+        case "prevEdit": case "nextEdit": {
+          play(false);
+          const p = a === "prevEdit" ? points.filter((x) => x < f).at(-1) : points.find((x) => x > f);
+          if (p !== undefined) seek(p / fps);
+          break;
+        }
+        case "start": seek(0); break;
+        case "end": seek(last); break;
+        case "zoomIn": zoom("="); break;
+        case "zoomOut": zoom("-"); break;
+        case "zoomFit": zoom("\\"); break;
+        case "mediaPool": panelKeys.current?.("media"); break;
+        case "inspector": panelKeys.current?.("inspector"); break;
+      }
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
@@ -288,13 +310,10 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   return (
     <>
-      <NleLayout
+      <NleLayout panelKeys={panelKeys}
         media={
-          <Panel title="Media" className="flex-1">
-            <Sources tl={tl} nameOf={nameOfSrc} here={urlFor} bin={!!bin}
-              onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
-            {bin && <div className="flex min-h-0 flex-1 flex-col p-2">{bin}</div>}
-          </Panel>
+          <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} onRelink={onRelink}
+            onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))} />
         }
         viewer={
           <Panel title="Viewer" className="flex-1" bar={<span className="min-w-0 truncate text-zinc-500">{tl.timeline.name}</span>}>
@@ -309,7 +328,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               transport={
                 <>
                   <button type="button" aria-label="Start" title="Start (Home)" onClick={() => seek(0)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipBack className="size-3.5" /></button>
-                  <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space, K)" : "Play (Space, L; J plays back)"} onClick={() => play(!playing)}
+                  <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space, 2, K)" : "Play (Space, 2; 3 or L forward, 1 or J back)"} onClick={() => play(!playing)}
                     className="inline-flex size-7 items-center justify-center rounded-full bg-zinc-200 text-zinc-900 hover:bg-white">
                     {playing ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 translate-x-px fill-current" />}
                   </button>
@@ -331,7 +350,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               <>
                 <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
-                <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there. W or ⌘B splits at the playhead" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
                 {sep}
                 <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Edit mode">
                   {(["overwrite", "insert"] as const).map((m) => (
@@ -378,7 +397,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               ["Paste", "⌘V", act.paste, !clipboard.length],
               ["Duplicate", "⌘D", act.duplicate, false],
               ["Delete", "⌫", () => act.delete(false), false],
-              ["Ripple delete", "⇧⌫", () => act.delete(true), false],
+              ["Ripple delete", "S", () => act.delete(true), false],
               [linked ? "Unlink" : "Link", "", linked ? act.unlink : act.link, !linked && sel.length < 2],
             ] as const).map(([l, key, fn, off]) => (
               <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
@@ -389,54 +408,5 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         </div>
       )}
     </>
-  );
-}
-
-/** Media → In this timeline: the sources its clips play, each with how often it is used; a click selects its clips,
- *  a drag lays it on a track. One with no file here has an amber mark. */
-function Sources({ tl, nameOf, here, bin, onPick }: {
-  tl: NleTimeline; nameOf: (src: string) => string; here: (src: string) => NleFile | null; bin: boolean; onPick: (src: string) => void;
-}) {
-  const [open, setOpen] = useState(true);
-  const uses = new Map<string, { n: number; video: boolean }>();
-  for (const [id, t] of Object.entries(tl.tracks)) for (const i of t.items) {
-    const u = uses.get(i.src) ?? { n: 0, video: false };
-    u.n++;
-    u.video ||= isVideo(id);
-    uses.set(i.src, u);
-  }
-  const list = [...uses.entries()].sort((a, b) => nameOf(a[0]).localeCompare(nameOf(b[0])));
-  return (
-    <div className={cn("flex min-h-0 flex-col border-b border-black/60", bin ? "max-h-[45%] shrink-0" : "flex-1")}>
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
-        className="flex h-7 shrink-0 items-center gap-1.5 px-2 text-[11px] font-medium text-zinc-300 hover:bg-white/[0.03]">
-        {open ? <ChevronDown className="size-3.5 text-zinc-500" /> : <ChevronRight className="size-3.5 text-zinc-500" />}
-        In this timeline <span className="tabular-nums text-zinc-500">{list.length}</span>
-      </button>
-      {open && (
-        <ul aria-label="In this timeline" className="min-h-0 overflow-x-hidden overflow-y-scroll pb-1">
-          {list.map(([src, u]) => {
-            const away = !here(src);
-            return (
-              <li key={src}>
-                <button type="button" draggable={!!tl.sources[src]?.path} title={String(tl.sources[src]?.path ?? src)}
-                  onDragStart={(e) => { e.dataTransfer.setData(SOURCE_MIME, src); e.dataTransfer.effectAllowed = "copy"; }}
-                  onClick={() => onPick(src)}
-                  className="flex h-7 w-full min-w-0 items-center gap-2 px-2 text-left text-[12px] text-zinc-300 hover:bg-white/[0.05]">
-                  <span className="relative shrink-0 text-zinc-500">
-                    {u.video ? <Film className="size-3.5" /> : <Music className="size-3.5" />}
-                    {away && <span title="Not found here" className="absolute -top-1 -right-1 size-1.5 rounded-full bg-amber-400" />}
-                  </span>
-                  <span className={cn("min-w-0 flex-1 truncate", away && "text-zinc-500")}>{nameOf(src)}</span>
-                  <span className="shrink-0 tabular-nums text-[11px] text-zinc-500" title={`Used ${u.n} time${u.n === 1 ? "" : "s"}`}>{u.n}</span>
-                </button>
-              </li>
-            );
-          })}
-          {!list.length && <li className="px-2 py-3 text-[12px] text-zinc-500">Empty</li>}
-        </ul>
-      )}
-      {bin && <div className="flex h-7 shrink-0 items-center border-t border-black/60 px-2 text-[11px] font-medium text-zinc-300">Library</div>}
-    </div>
   );
 }
