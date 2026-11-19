@@ -49,7 +49,8 @@ const DAY = 86_400_000;
 /** The spend the monthly budget counts (§4.5): shot descriptions, the video breakdown, sound listens and describe. */
 const SPEND = [LOOK_LABEL, `${LOOK_LABEL} (API)`, WATCH_LABEL, LISTEN_LABEL, DESCRIBE_LABEL, `${DESCRIBE_LABEL} (API)`];
 
-type Raw = Partial<LibrarySettings> & { watch?: WatchFolder[] };
+/** The settings as stored: the library's own fields, plus `watch` and `projectId`, which the type does not list */
+type Raw = Partial<LibrarySettings> & { watch?: WatchFolder[]; projectId?: string };
 interface Seen {
   versionId: string;
   device: string;
