@@ -1,4 +1,5 @@
 import BackgroundTasks
+import Sentry
 import SwiftUI
 
 @main
@@ -243,6 +244,15 @@ struct ComposeButton: View {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        // Crash reports go to the Sentry project in Info.plist (SentryDSN); a fork sets its own or leaves it empty to send none.
+        if let dsn = Bundle.main.object(forInfoDictionaryKey: "SentryDSN") as? String, !dsn.isEmpty {
+            SentrySDK.start { options in
+                options.dsn = dsn
+                #if DEBUG
+                options.environment = "debug"
+                #endif
+            }
+        }
         Keychain.moveToSharedGroup()
         #if DEBUG
         PhoneDemo.install()

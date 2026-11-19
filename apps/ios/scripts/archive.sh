@@ -11,6 +11,8 @@ build=$(git rev-list --count HEAD)
 xcodebuild -quiet -project CreatorToolset.xcodeproj -scheme CreatorToolset -configuration Release \
   -destination generic/platform=iOS -archivePath "$out/CreatorToolset.xcarchive" -allowProvisioningUpdates \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" CURRENT_PROJECT_VERSION="$build" archive
+# Readable crash reports: the Sentry CLI (logged in, with its default org and project set) uploads the build's debug symbols.
+if command -v sentry >/dev/null; then sentry debug-files upload "$out/CreatorToolset.xcarchive/dSYMs" || echo "Sentry: debug symbols not uploaded"; fi
 plist="$out/ExportOptions.plist"
 cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

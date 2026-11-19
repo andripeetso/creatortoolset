@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C700000000000000000000E3 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = C700000000000000000000E2 /* Sentry */; };
 		C70000000000000000000079 /* ShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C70000000000000000000071 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -100,6 +101,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C700000000000000000000E3 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -164,6 +166,7 @@
 			);
 			name = CreatorToolset;
 			packageProductDependencies = (
+				C700000000000000000000E2 /* Sentry */,
 			);
 			productName = CreatorToolset;
 			productReference = C70000000000000000000011 /* CreatorToolset.app */;
@@ -246,6 +249,9 @@
 			);
 			mainGroup = C70000000000000000000002;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C700000000000000000000E1 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C70000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -565,6 +571,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C700000000000000000000E1 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C700000000000000000000E2 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C700000000000000000000E1 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C70000000000000000000001 /* Project object */;
 }
