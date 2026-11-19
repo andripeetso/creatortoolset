@@ -49,6 +49,9 @@ type Props = {
   onNext?: () => void;
 };
 
+/** Typing, and the player (Video.js's skin seeks and plays with ← → and Space there), keep their keys: the clip stays. */
+export const ownKeys = (t: Element | null) => !!t?.closest("input, textarea, select, [contenteditable=true], [data-player]");
+
 export function ClipPanel(props: Props) {
   // a new clip is a new panel: its player, detail and state never carry over from the one before
   return <Panel key={props.asset.id} {...props} />;
@@ -145,7 +148,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       const t = e.target instanceof Element ? e.target : null;
-      if (t?.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (ownKeys(t)) return;
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         const go = e.key === "ArrowLeft" ? onPrev : onNext;
         if (!go || e.repeat) return;

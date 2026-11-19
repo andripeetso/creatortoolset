@@ -39,10 +39,16 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const open = (a: AssetCard = card) =>
-  act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} />));
-const openWith = (detail: unknown) =>
-  act(async () => r.render(<ClipPlayer asset={card} detail={detail as AssetDetail} media={createRef()} startAt={0} />));
+// the player's skin is its own chunk (React.lazy): rendered, then that chunk waited for
+const skin = () => act(async () => void (await import("./SkinPlayer")));
+const open = async (a: AssetCard = card) => {
+  await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} />));
+  await skin();
+};
+const openWith = async (detail: unknown) => {
+  await act(async () => r.render(<ClipPlayer asset={card} detail={detail as AssetDetail} media={createRef()} startAt={0} />));
+  await skin();
+};
 const video = () => host.querySelector("video")!;
 const badge = () => host.querySelector("span.rounded")?.textContent;
 const fire = (type: string) => act(async () => void video().dispatchEvent(new Event(type)));
@@ -204,8 +210,10 @@ describe("with it", () => {
 
 // Upload none (no team shares the library): the server plays nothing of a clip this computer lacks, so no address is asked
 describe("under Upload none", () => {
-  const openNone = (a: AssetCard = card) =>
-    act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+  const openNone = async (a: AssetCard = card) => {
+    await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+    await skin();
+  };
 
   it("a 'not here' answer (the original missing) never yields a server address, and the panel says where it is", async () => {
     answer = { state: "gone" };
@@ -266,8 +274,10 @@ describe("under Upload none", () => {
 });
 
 describe("where a clip is, when this Mac cannot play it (decision 5, A4/A5)", () => {
-  const openNone = (a: AssetCard = card) =>
-    act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+  const openNone = async (a: AssetCard = card) => {
+    await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+    await skin();
+  };
 
   it("a clip on none of his computers under Upload none: no server address, and the panel says Not checked yet", async () => {
     answer = undefined;
@@ -313,6 +323,16 @@ describe("under Originals hosted", () => {
     expect(host.querySelector('a[href="/api/library/media/v1/source"]')?.textContent).toContain("Download");
   });
 
+  it("an address that failed before the player was on the page (no error event to hear) is said all the same", async () => {
+    answer = undefined;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ libraries: [{ id: "lib", name: "Tiny Acrobatics", storage: "local", settings: { upload: "originals" } }] })));
+    const failed = vi.spyOn(HTMLMediaElement.prototype, "error", "get").mockReturnValue({ code: 4 } as MediaError);
+    await openWith({ state: "ready", jobs: [] });
+    await act(async () => {});
+    expect(host.textContent).toContain("Can't play this format here");
+    failed.mockRestore();
+  });
+
   it("the library's answer comes first: no away line shows while it is pending", async () => {
     answer = undefined;
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
@@ -332,5 +352,69 @@ describe("under Proxies hosted, with no proxy for the clip", () => {
     await act(async () => {});
     expect(host.textContent).toContain("This clip isn't on the server.");
     expect(host.textContent).not.toContain("Can't play this format here");
+  });
+});
+
+// 11-19 (Andri): Video.js's skin replaces the window's own controls and the strip under the player
+describe("the player", () => {
+  const strip = { ...card, spriteUrl: "/api/library/media/v1/sprite?s=144x256", width: 1080, height: 1920 };
+  it("plays in the skin, its bar previewing the clip's strip (thumbs.vtt); no strip of frames under it", async () => {
+    await open(strip);
+    const v = host.querySelector(".video-skin video")!;
+    expect(v).not.toBeNull();
+    expect(v.hasAttribute("controls")).toBe(false);
+    expect(v.querySelector('track[kind="metadata"][label="thumbnails"]')!.getAttribute("src")).toBe("/api/library/media/v1/thumbs.vtt");
+    expect(host.querySelector("[data-filmstrip]")).toBeNull();
+    await act(async () => r.unmount());
+    r = createRoot(host);
+    await open(card); // no strip: no preview track
+    expect(host.querySelector("track")).toBeNull();
+  });
+
+  it("its one accent is the workspace colour (violet follows <html data-tint>)", async () => {
+    await open(strip);
+    const skin = host.querySelector<HTMLElement>(".video-skin")!;
+    expect(skin.style.getPropertyValue("--media-accent-color")).toBe("rgb(var(--violet-600))");
+    expect(skin.style.getPropertyValue("--media-object-fit")).toBe("contain");
+  });
+
+  it("a turned clip is a plain video with no bar: a click plays and pauses", async () => {
+    await open({ ...strip, turn: 90 });
+    expect(host.querySelector(".video-skin")).toBeNull();
+    const v = video();
+    expect(v.hasAttribute("controls")).toBe(false);
+    await act(async () => v.pause());
+    await act(async () => void v.click());
+    expect(v.paused).toBe(false);
+    await act(async () => void v.click());
+    expect(v.paused).toBe(true);
+  });
+
+  it("a sound plays in the window's own audio controls", async () => {
+    await open({ ...card, kind: "audio" });
+    expect(host.querySelector("audio[controls]")).not.toBeNull();
+    expect(host.querySelector(".video-skin")).toBeNull();
+  });
+
+  it("muted by the window: the badge first, then Sound on, both over the skin", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValueOnce(new DOMException("no", "NotAllowedError")).mockResolvedValue(undefined);
+    await open(strip);
+    await act(async () => {});
+    const row = host.querySelector("[data-player] > div.absolute.left-2")!;
+    expect([...row.children].map((c) => c.textContent)).toEqual(["Original", "Sound on"]);
+    play.mockRestore();
+  });
+});
+
+describe("the clip's keys", () => {
+  it("← → and Space inside the player are the player's; outside they move between clips", async () => {
+    const { ownKeys } = await import("./ClipPanel");
+    await open(card);
+    expect(ownKeys(host.querySelector(".video-skin"))).toBe(true);
+    expect(ownKeys(host.querySelector("video"))).toBe(true);
+    const outside = document.createElement("div");
+    document.body.append(outside);
+    expect(ownKeys(outside)).toBe(false);
+    outside.remove();
   });
 });

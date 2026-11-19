@@ -25,6 +25,7 @@ import { enqueueJob, prepareFirst } from "./jobs";
 import { fileUnfiled, organizeOf } from "./organize";
 import { needsProxy, wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
+import { stripOf, thumbsVtt } from "./media/sprite";
 import { spaceApp } from "./space";
 import { locateApp } from "./locate";
 import { folderStatesFor, placesApp } from "./places";
@@ -1328,6 +1329,13 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
   const viewer = v ? await readerOf(username, v.library_id) : null;
   if (!v || !viewer || !(await canSee(viewer, assetRef(v.library_id, v.asset_id, versionId)))) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
+  }
+  // the player's preview frames: the strip as a WebVTT thumbnails track (media/sprite.ts thumbsVtt)
+  if (kind === "thumbs.vtt") {
+    const strip = mediaFile(versionId, "sprite")?.key ? stripOf(db(), versionId) : null;
+    const duration = (JSON.parse((db().prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null }).probe ?? "null") as ProbeSummary | null)?.duration ?? 0;
+    if (!strip || !(duration > 0)) return c.json({ error: "Not found", code: "not_found" }, 404);
+    return c.body(thumbsVtt(versionId, duration, strip), 200, { "content-type": "text/vtt; charset=utf-8", "cache-control": "private, max-age=300" });
   }
   const file = mediaFile(versionId, kind);
   if (!file) return c.json({ error: "Not found", code: "not_found" }, 404);

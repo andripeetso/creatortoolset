@@ -86,3 +86,21 @@ export async function makeSprite(src: string, out: string, duration: number, tur
     await Promise.all(parts.map((p) => rm(p, { force: true })));
   }
 }
+
+/** Seconds as WebVTT reads them: 00:01:02.500. */
+const vttTime = (t: number) => new Date(Math.max(0, t) * 1000).toISOString().slice(11, 23);
+
+/**
+ * The clip's strip as preview frames for the player's bar (a WebVTT thumbnails track): frame i covers the i-th share of
+ * the clip and points at its cut of the strip (#xywh), in the strip's own frame size (stripOf). Its address carries that
+ * size (?s=), so a strip made again is never answered from what the window kept.
+ */
+export function thumbsVtt(versionId: string, duration: number, strip: { w: number; h: number; frames: number }): string {
+  const url = `/api/library/media/${versionId}/sprite?s=${strip.w}x${strip.h}`;
+  const cues = Array.from({ length: strip.frames }, (_, i) => {
+    const from = (i * duration) / strip.frames;
+    const to = ((i + 1) * duration) / strip.frames;
+    return `${vttTime(from)} --> ${vttTime(to)}\n${url}#xywh=${i * strip.w},0,${strip.w},${strip.h}`;
+  });
+  return `WEBVTT\n\n${cues.join("\n\n")}\n`;
+}
