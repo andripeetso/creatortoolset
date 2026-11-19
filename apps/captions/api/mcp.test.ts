@@ -265,10 +265,25 @@ describe("Creator Toolset as a remote MCP server", () => {
       target_s: 45,
       broll_folder: "coll_b",
     });
-    expect(site.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor", "POST /api/editor/edit_tiny/run"]);
+    // then the edit is read once: a step queued with no reader and Downloads off answers the card instead (downloadsWaiting)
+    expect(site.hits.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /api/editor", "POST /api/editor/edit_tiny/run", "GET /api/editor/edit_tiny"]);
     expect(site.hits[0]!.body).toEqual({ sources: ["v_a", "v_b"], name: "Tiny Acrobatics cut", brief: "A short hype reel", script: "Hook line", versions: 2, targetS: 45, brollCollectionId: "coll_b" });
     expect(site.hits[1]!.body).toEqual({ from: "analyze" });
     expect(out.value).toEqual({ id: "edit_tiny", name: "Tiny Acrobatics cut", status: "started", link: "https://tools.example.com/editor/edit_tiny", note: expect.any(String) });
+
+    // a queued step with no reader and Downloads off: the answer is the card, not the edit (UNIFIED-PRD 4.7)
+    const waiting = fakeSite({
+      "POST /api/editor": () => ({ id: "edit_tiny" }),
+      "POST /api/editor/edit_tiny/run": () => ({ ok: true }),
+      "GET /api/editor/edit_tiny": () => ({ jobs: [{ id: 3, state: "queued", downloads: { libraryId: "lib_t", workspace: "ws_t" } }] }),
+    });
+    const asked = await callWith(waiting, "editor_create", { sources: ["v_a"] });
+    expect(asked.value).toEqual({ action_needed: { kind: "downloads", libraryId: "lib_t", workspace: "ws_t" }, stop: expect.any(String) });
+
+    // voice_make saves into the Media Library: a library not set up answers the setup card before anything is posted
+    const voice = fakeSite({ "POST /api/editor/voice": () => ({ versionId: "v_x" }) });
+    expect((await callWith(voice, "voice_make", { text: "Hello" })).value).toEqual({ action_needed: { kind: "setup", workspace: "", workspaceName: "", owner: true, href: "/library?setup=1" }, stop: expect.any(String) });
+    expect(voice.hits).toEqual([]);
 
     const made = fakeSite({ "POST /api/editor": () => ({ id: "edit_tiny" }) });
     const kept = await callWith(made, "editor_create", { sources: ["v_a"], start: false });
