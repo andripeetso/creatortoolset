@@ -231,3 +231,19 @@ own-computer rule (the `APP_SECRET` password signs in from this Mac only).
 When the server listens on every interface (`HOST` = `0.0.0.0` or `::`) and is not hosted, it closes any connection
 whose peer is not loopback, private (10/8, 172.16/12, 192.168/16, fc00::/7), link-local (169.254/16, fe80::/10) or
 100.64.0.0/10.
+
+## Phone notifications
+
+`GET /api/connect/notifications` → `{ linked, on }` · `POST /api/connect/notifications { on: boolean }` → the same
+(the owner only: 403 for anyone else; 409 when this computer is not on an account). Settings → Computers shows the
+"Send notifications to your phones" switch only while `linked`. What is sent and when: `activity.ts`.
+
+## Deploy notes (connect service, apps/relay)
+
+- `RELAY_SELF_URL` (else `RELAY_PUBLIC_URL`) is the service's own address: its **origin** is the `iss` of everything it
+  signs for a computer, the `aud` computers sign their answers and link proofs to, and the base of every DPoP `htu` a
+  phone signs. It must be exactly the origin computers linked with and phones call (`https://connect.creatortoolset.com`
+  for the public service): a different scheme, host or port refuses every health, mint and DPoP request.
+- Push to iPhones: `RELAY_APNS_KEY_ID`, `RELAY_APNS_TEAM_ID`, and the `.p8` key as text in `RELAY_APNS_KEY` (`\n` may be
+  written out) or a path in `RELAY_APNS_KEY_FILE`. Unset: no push, everything else works.
+- The service drops `/ticket`: ship it with or after the phone app that pairs through `/v1/computers/:id/connect`.

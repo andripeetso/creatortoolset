@@ -34,6 +34,10 @@ export const revokePairingLink = (id: string) => send("/api/auth/pairing-links/r
 export const revokeClient = (sessionId: string) => send("/api/auth/clients/revoke", { sessionId });
 export const revokeOtherClients = () => send("/api/auth/clients/revoke-others", {});
 export const getEndpoints = () => send<Endpoint[]>("/api/server/endpoints");
+/** "Send notifications to your phones" (api/connect/activity.ts): owner only; `linked` false = not on an account. */
+export type PhoneNotifications = { linked: boolean; on: boolean };
+export const getPhoneNotifications = () => send<PhoneNotifications>("/api/connect/notifications");
+export const setPhoneNotifications = (on: boolean) => send<PhoneNotifications>("/api/connect/notifications", { on });
 
 const EVENTS = ["snapshot", "pairingLinkUpserted", "pairingLinkRemoved", "clientUpserted", "clientRemoved"] as const;
 export type AccessEvent = (typeof EVENTS)[number];
@@ -140,4 +144,4 @@ export function hostOf(url: string): string {
 }
 
 /** A pairing address's name in the endpoint list: the network it is on, else its host. */
-export const endpointName = (kind: string, url: string): string => (kind === "lan" ? "Local network" : kind === "tailnet" ? "VPN" : hostOf(url));
+export const endpointName = (kind: string, url: string): string => (kind === "lan" ? "Local network" : kind === "tailnet" ? "Tailnet" : hostOf(url));

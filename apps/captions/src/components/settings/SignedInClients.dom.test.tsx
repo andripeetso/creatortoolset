@@ -166,7 +166,7 @@ it("creates a Read only link with its name, and shows its card with the QR code 
   expect(card.textContent).toContain("Expires in 5m · Read only");
   // two addresses: a list to pick the one the QR code and link use, the first picked
   const addresses = card.querySelectorAll('[role="radiogroup"] [role="radio"]');
-  expect([...addresses].map((a) => a.textContent)).toEqual(["Local networktiny-mac.local:3773", "VPNtiny-mac.vpn.example:3773"]);
+  expect([...addresses].map((a) => a.textContent)).toEqual(["Local networktiny-mac.local:3773", "Tailnettiny-mac.vpn.example:3773"]);
   expect(card.querySelector("code")!.textContent).toBe("http://tiny-mac.local:3773/#token=AAAABBBBCCCC");
   click(addresses[1] as HTMLElement);
   expect(card.querySelector("code")!.textContent).toBe("http://tiny-mac.vpn.example:3773/#token=AAAABBBBCCCC");
