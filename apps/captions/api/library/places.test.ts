@@ -329,3 +329,42 @@ it("migration 27 keeps where each clip was indexed as that computer's place", ()
   ]);
   db.close();
 });
+
+describe("a library source's items", () => {
+  it("the source names its own items' paths, only for refs the viewer may see; a computer's report on one is refused and kept nowhere", async () => {
+    const { externalRefFor } = await import("./refs");
+    const askedFor: string[][] = [];
+    registerLibrarySlot("test-stock", {
+      source: {
+        id: "stock",
+        label: "Stock",
+        places: async (_viewer, _req, ids) => {
+          askedFor.push(ids);
+          return { a: { tries: ["/Volumes/footage/stock/a.mov"], bytes: 42 }, hidden: { tries: ["/Volumes/footage/stock/h.mov"], bytes: 1 }, bad: { tries: ["/Volumes/footage/../x.mov"], bytes: 1 } };
+        },
+      },
+      policies: [{ sourceId: "stock", canSee: (_v, x) => x.external?.externalId !== "hidden" }],
+    });
+    registerLibrarySlot("test-plain", { source: { id: "plain", label: "Plain" }, policies: [{ sourceId: "plain", canSee: () => true }] });
+    const [a, hidden, bad, plain] = [
+      externalRefFor("stock", "clip", "a")!.id,
+      externalRefFor("stock", "clip", "hidden")!.id,
+      externalRefFor("stock", "clip", "bad")!.id,
+      externalRefFor("plain", "clip", "p")!.id,
+    ];
+    const got = await call<PlacesAnswer>("ana", `/api/library/lib/places?device=${anaMac}&versions=june,${a},${hidden},${bad},${plain},ext_nope`);
+    expect(got.json.versions[a]).toEqual({ tries: ["/Volumes/footage/stock/a.mov"], bytes: 42, quick: null, proxy: null });
+    // the refused ref is never asked of the source, a path with .. is dropped, a source with no places and an unknown ref get nothing
+    expect(Object.keys(got.json.versions).sort()).toEqual([a, "june"].sort());
+    expect(askedFor).toEqual([["a", "bad"]]);
+    // another person's computer: refused before any source is asked
+    expect((await call("bo", `/api/library/lib/places?device=${anaMac}&versions=${a}`)).status).toBe(403);
+    expect(askedFor).toHaveLength(1);
+
+    const rows = () => (d.prepare("SELECT COUNT(*) AS n FROM version_places").get() as { n: number }).n;
+    const before = rows();
+    const r = await call<PlacesReportAnswer>("ana", "/api/library/lib/places", { device: anaMac, confirmed: [{ versionId: a, path: "/Volumes/footage/stock/a.mov" }], gone: [a] });
+    expect(r.json).toEqual({ confirmed: [], refused: [a] });
+    expect(rows()).toBe(before);
+  });
+});
