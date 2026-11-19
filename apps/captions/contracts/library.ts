@@ -221,6 +221,8 @@ export type LibraryUpload = "none" | "originals" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "originals", "proxies", "all"];
 export const hostsOriginals = (u: LibraryUpload | null | undefined): boolean => u === "originals" || u === "all";
 export const hostsProxies = (u: LibraryUpload | null | undefined): boolean => u === "proxies" || u === "all";
+/** Upload off: nothing of the library's is kept on the server (the one place the "none" word is compared). */
+export const hostsNone = (u: LibraryUpload | null | undefined): boolean => !hostsOriginals(u) && !hostsProxies(u);
 /** The Hosted media switches back to the one stored value. */
 export const uploadFrom = (originals: boolean, proxies: boolean): LibraryUpload =>
   originals && proxies ? "all" : originals ? "originals" : proxies ? "proxies" : "none";

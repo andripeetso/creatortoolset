@@ -18,7 +18,7 @@ import { blobs, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, lib
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { hostsNone, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -508,7 +508,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   // a member's add is an upload, taken only where Hosted media takes it (UNIFIED-PRD §4.3, the §3.2 line under Off)
   const collectionOf = typeof body?.collectionId === "string" ? body.collectionId : null;
-  if (!libraryRole(user.username, libraryId) && uploadFor({ id: libraryId, collectionId: collectionOf }) === "none") {
+  if (!libraryRole(user.username, libraryId) && hostsNone(uploadFor({ id: libraryId, collectionId: collectionOf }))) {
     return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
   }
   const size = Number(body?.size);
@@ -668,7 +668,7 @@ libraryApp.post("/:id/on-mac", async (c) => {
   if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   // a member's rows only locate (UNIFIED-PRD §4.3): what a member adds from a folder is uploaded, never indexed from it
   if (!libraryRole(user.username, libraryId)) {
-    if (uploadFor({ id: libraryId }) === "none") return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
+    if (hostsNone(uploadFor({ id: libraryId }))) return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
     // the app sends a member's file by upload where Hosted media takes it; this path is never a member's folder
     return c.json({ error: MEMBER_NOT_INDEXED, code: "forbidden" }, 403);
   }

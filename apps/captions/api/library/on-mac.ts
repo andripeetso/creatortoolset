@@ -16,6 +16,7 @@ import { rootAt } from "../lib/storage";
 import { confirmPlaces } from "./places";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
+import { hostsNone } from "../../contracts/library";
 
 /**
  * A file indexed where it is on the person's Mac, for a server that is not on that Mac (the Mac app's Media Library
@@ -159,7 +160,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   // Analysis effort: Off makes no transcript on import (UNIFIED-PRD §4.4)
   if (kind === "video" && librarySetting(libraryId, "transcribe")) enqueueJob(d, libraryId, versionId, "transcribe", by);
   // Upload off with Generate proxies on: the computer holding the file makes its proxy and keeps it (library-package keepProxy)
-  if (kind === "video" && mine && libraryUpload(libraryId) === "none" && wantsProxy(probe as ProbeSummary, { cloud: false, on: !!librarySetting(libraryId, "proxy") }))
+  if (kind === "video" && mine && hostsNone(libraryUpload(libraryId)) && wantsProxy(probe as ProbeSummary, { cloud: false, on: !!librarySetting(libraryId, "proxy") }))
     enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     const dir = framesDir(versionId);

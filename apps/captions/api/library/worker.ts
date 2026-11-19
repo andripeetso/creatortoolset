@@ -507,7 +507,8 @@ export async function afterProbe(
   // a photo is probed as a one-frame video but shows as itself: no proxy
   // a video uploaded to a library that keeps only proxies gets one whatever the proxy switch says: it is all that stays
   // (a person's own upload under proxies too: the server keeps its proxy, UNIFIED-PRD §4.2)
-  const onlyProxy = v.kind === "video" && versionUpload(v.id) === "proxies";
+  const vu = versionUpload(v.id);
+  const onlyProxy = v.kind === "video" && hostsProxies(vu) && !hostsOriginals(vu);
   // Originals only keeps no proxy on the server, not even one in a bucket (UNIFIED-PRD §4.2)
   const originalsOnly = keepsOnlyOriginals(v.library_id);
   if (v.kind !== "image" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
