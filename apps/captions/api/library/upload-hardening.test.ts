@@ -21,7 +21,7 @@ const { librariesHere, ensureLibrary } = await import("./access");
 const { useFile } = await import("../assistant-files");
 const { createUser, findUser } = await import("../users");
 
-for (const u of ["ana", "ben", "cara", "dee", "eli"]) createUser(u, `secret-${u}-tiny-acrobatics`);
+for (const u of ["ana", "ben", "cara", "dee", "eli", "fay", "gus"]) createUser(u, `secret-${u}-tiny-acrobatics`);
 
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
@@ -35,6 +35,8 @@ library("lib_cara", "cara", "none");
 library("lib_ana", "ana", "all");
 library("lib_ben", "ben", "all");
 library("lib_eli", "eli", "all");
+library("lib_fay", "fay", "all");
+library("lib_gus", "gus", "all");
 
 /** The library routes as one server process sees them, signed in as `x-user`. */
 const serve = (routes: typeof libraryApp) => {
@@ -117,6 +119,23 @@ describe("the disk reserve: one person's uploads never hold everyone else's", ()
     reserve(2);
     d.prepare("UPDATE uploads SET expires_at = ? WHERE created_by = 'ana'").run(Date.now() + 7 * 86_400_000 - 2 * 3_600_000);
     expect((await start("ben", "lib_ben", big)).status).toBe(201);
+    delete process.env.LIBRARY_DISK_RESERVE_GB;
+  });
+
+  it("a person's own uploads all count against their next start: six sent to, the seventh is refused; another person's still goes", async () => {
+    d.prepare("UPDATE uploads SET expires_at = 0 WHERE state = 'open'").run(); // nothing from the test before holds space
+    const big = { size: 8 * GiB };
+    for (let i = 0; i < 6; i++) {
+      const r = await start("fay", "lib_fay", big);
+      expect(r.status).toBe(201);
+      const { id } = (await r.json()) as { id: string };
+      expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "x-user": "fay", "upload-offset": "0", "content-length": "1" }, body: "w" })).status).toBe(204);
+    }
+    // 50 GB free above the reserve: fay's six still to write (48 GB) and her new 8 GB don't fit; counted as her four largest
+    // (32 GB) they would, and they do for gus
+    process.env.LIBRARY_DISK_RESERVE_GB = "50";
+    expect((await start("fay", "lib_fay", big)).status).toBe(507);
+    expect((await start("gus", "lib_gus", big)).status).toBe(201);
     delete process.env.LIBRARY_DISK_RESERVE_GB;
   });
 });

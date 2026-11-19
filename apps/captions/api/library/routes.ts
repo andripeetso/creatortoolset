@@ -562,11 +562,12 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     await mkdir(stagingDir(), { recursive: true });
     // bytes the open uploads may still write count too, or several large uploads would each pass alone; only those sent
     // to in the last hour (expires_at moves on with each part), so empty or abandoned ones hold no space, and of each
-    // person's only the OPEN_PER_USER largest, so one person's many uploads never hold everyone else's
+    // other person's only the OPEN_PER_USER largest, so one person's many uploads never hold everyone else's; the
+    // starter's own all count, or ten of theirs sent a byte each would together write past the reserve
     const pending = (db().prepare(
-      `SELECT COALESCE(SUM(n), 0) AS n FROM (SELECT size - received AS n, ROW_NUMBER() OVER (PARTITION BY created_by ORDER BY size - received DESC) AS k
-       FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?) WHERE k <= ?`,
-    ).get(active(), OPEN_PER_USER) as { n: number }).n;
+      `SELECT COALESCE(SUM(n), 0) AS n FROM (SELECT created_by, size - received AS n, ROW_NUMBER() OVER (PARTITION BY created_by ORDER BY size - received DESC) AS k
+       FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?) WHERE k <= ? OR created_by = ?`,
+    ).get(active(), OPEN_PER_USER, user.username) as { n: number }).n;
     if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
       return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
     }
