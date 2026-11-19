@@ -34,13 +34,21 @@ writeFileSync(
   }),
 );
 
+// the account's Workshop workspaces: ws_first is its first brand (the oldest), where a library from before workspaces is read
+mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
+for (const [id, name, createdAt] of [["ws_first", "First Brand", 1], ["ws_new", "New Brand", 5]] as const)
+  writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "tinyacrobatics", name, audience: "", voice: "", cta: "", notes: "", createdAt, updatedAt: createdAt }));
+
 const { createUser } = await import("../users");
 createUser("tinyacrobatics", "fixture-password-only");
 const { libraryDb } = await import("./db");
 const { migrateLibraries, ownRow } = await import("./migrate");
 const { correctSetups } = await import("./setup-correction");
+const { Hono } = await import("hono");
+const { mountPlugins } = await import("../lib/plugin");
+const { workspaceScope } = await import("../lib/workshop/workspace");
 const d = libraryDb();
-const lib = (id: string, s: object) => d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'tinyacrobatics', 'Library', 'local', ?, 0)").run(id, JSON.stringify(s));
+const lib = (id: string, s: object, home = "tinyacrobatics") => d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'Library', 'local', ?, 0)").run(id, home, JSON.stringify(s));
 const setupAt = (id: string) => (d.prepare("SELECT json_extract(settings, '$.setupAt') AS v FROM libraries WHERE id = ?").get(id) as { v: string | null }).v;
 
 describe("(a) migration item 3: only a workspace's own folder rows say it was set up", () => {
@@ -64,9 +72,11 @@ describe("(a) migration item 3: only a workspace's own folder rows say it was se
 });
 
 describe("(b) the correction", () => {
-  it("clears only migration-stamped setups with no clips, watch, own folder rows or saved answers; dry run by default", async () => {
+  it("clears only migration-stamped setups with no clips, watch, own folder rows, saved answers or a plug-in serving them; dry run by default", async () => {
     mkdirSync(path.join(dir, "library"), { recursive: true });
     writeFileSync(path.join(dir, "library", "migrated.json"), JSON.stringify({ "4.6": STAMP }));
+    // a plug-in that serves ws_cat's media itself (a footage catalog)
+    mountPlugins(new Hono(), [{ id: "catalog", uploadsTo: () => (workspaceScope.getStore()?.id === "ws_cat" ? "catalog" : null) }]);
     lib("lib_wrong", { projectId: "ws_new", setupAt: STAMP, organize: "ai", lookBudget: null });
     lib("lib_done", { projectId: "ws_done", setupAt: STAMP, importMode: "copy" });
     lib("lib_clips", { projectId: "ws_clips", setupAt: STAMP });
@@ -75,8 +85,14 @@ describe("(b) the correction", () => {
     lib("lib_ownrow", { projectId: "ws_own", setupAt: STAMP });
     lib("lib_later", { projectId: "ws_later", setupAt: "2026-11-19T14:58:41.000Z" });
     lib("lib_none", { projectId: "ws_none" });
+    lib("lib_served", { projectId: "ws_cat", setupAt: STAMP });
+    lib("lib_kept", { projectId: "ws_k", setupAt: STAMP });
+    // from before workspaces: read in the first brand (it has no rows of its own there, so it is cleared)
+    lib("lib_old", { setupAt: STAMP });
+    // an account with no workspace at all: its library's workspace can't be found, so it is kept
+    lib("lib_lost", { setupAt: STAMP }, "solo");
 
-    const dry = await correctSetups();
+    const dry = await correctSetups({ keep: ["lib_kept"] });
     expect(dry.stamp).toBe(STAMP);
     expect(Object.fromEntries(dry.rows.map((r) => [r.id, r.action]))).toEqual({
       lib_wrong: "clear",
@@ -86,15 +102,22 @@ describe("(b) the correction", () => {
       lib_ownrow: "has folder rows of its own workspace",
       lib_later: "set up by a Done or a plug-in, not the migration",
       lib_none: "not set up",
+      lib_served: "served by a plug-in",
+      lib_kept: "kept (--keep)",
+      lib_old: "clear",
+      lib_lost: "workspace not found",
     });
     expect(dry.rows.find((r) => r.id === "lib_clips")).toMatchObject({ clips: 1, ownFolders: 0, projectId: "ws_clips" });
+    expect(dry.rows.find((r) => r.id === "lib_old")).toMatchObject({ projectId: null, ws: "ws_first", workspace: "First Brand" });
+    expect(dry.rows.find((r) => r.id === "lib_wrong")).toMatchObject({ ws: "ws_new", workspace: "New Brand" });
     expect(setupAt("lib_wrong")).toBe(STAMP); // the dry run wrote nothing
 
-    await correctSetups({ write: true });
+    await correctSetups({ write: true, keep: ["lib_kept"] });
     expect(setupAt("lib_wrong")).toBeNull();
-    for (const id of ["lib_done", "lib_clips", "lib_watch", "lib_ownrow"]) expect(setupAt(id)).toBe(STAMP);
+    expect(setupAt("lib_old")).toBeNull();
+    for (const id of ["lib_done", "lib_clips", "lib_watch", "lib_ownrow", "lib_served", "lib_kept", "lib_lost"]) expect(setupAt(id), id).toBe(STAMP);
     expect(setupAt("lib_later")).toBe("2026-11-19T14:58:41.000Z");
     // a second run finds nothing more to clear
-    expect((await correctSetups({ write: true })).rows.filter((r) => r.action === "clear")).toEqual([]);
+    expect((await correctSetups({ write: true, keep: ["lib_kept"] })).rows.filter((r) => r.action === "clear")).toEqual([]);
   });
 });
