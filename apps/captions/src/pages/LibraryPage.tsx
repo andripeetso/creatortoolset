@@ -63,6 +63,7 @@ import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { EmptyDrop } from "./library/EmptyDrop";
 import { FoldersToAllow, lookForNew, lookedLine, useImportQuestion } from "./library/Import";
+import { repairPictures } from "@/lib/onMac";
 import { SourceMediaItems } from "./library/SourceMediaItems";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, savable, withSaved } from "./library/Filters";
@@ -98,6 +99,9 @@ const SORT_IDS = SORTS.map((o) => o.id);
 const SORT_KEY = "library:sort";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** The libraries whose photos with no picture this window has asked this Mac for, once a session (repairPictures). */
+const picturesRepaired = new Set<string>();
 
 export default function LibraryPage() {
   // the lists are saved copies (lib/local-cache): they paint on the first frame and the change stream's library topic
@@ -828,13 +832,23 @@ export default function LibraryPage() {
     try {
       const r = serverReads ? { ...(await scanWatchNow(library.id)), reconnected: 0, refused: [] as string[] } : { ...(await lookForNew(library, setLookLine)), settling: 0 };
       const cant = r.refused.length ? ` · can't read ${r.refused.map((f) => f.split("/").pop()).join(", ")}` : "";
-      setLookLine(lookedLine(r.added, r.reconnected, r.settling) + cant);
+      // photos that came in with no picture get it from this Mac now (repairPictures)
+      const pictures = macRemote && watch ? await repairPictures(library.id).catch(() => 0) : 0;
+      setLookLine(lookedLine(r.added, r.reconnected, r.settling) + (pictures ? ` · pictures for ${pictures.toLocaleString()} ${pictures === 1 ? "photo" : "photos"}` : "") + cant);
       reload();
     } catch (e) {
       setLookLine(message(e));
     }
     lookDone.current = window.setTimeout(() => setLookLine(null), 8000);
   };
+
+  // once per library a session, in the Mac app with the server elsewhere: photos with no picture get theirs from this Mac
+  useEffect(() => {
+    if (!library || !watch || !macRemote || picturesRepaired.has(library.id)) return;
+    picturesRepaired.add(library.id);
+    void repairPictures(library.id).then((n) => n && reload(), () => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once a library, when the owner's view and the Mac are known
+  }, [library?.id, !!watch, macRemote]);
 
   const sidebar = library && (
     <LibrarySidebar

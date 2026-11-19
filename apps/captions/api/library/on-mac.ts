@@ -13,7 +13,7 @@ import { settleSoundKind } from "./sound-kind";
 import { kindOf, recordVersion } from "./routes";
 import { deviceOf } from "../lib/devices";
 import { rootAt } from "../lib/storage";
-import { confirmPlaces } from "./places";
+import { confirmPlaces, OWN } from "./places";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
 import { hostsNone } from "../../contracts/library";
@@ -172,4 +172,38 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     enqueueJob(d, libraryId, versionId, "describe", by);
   }
   return { assetId, versionId };
+}
+
+/**
+ * The pictures (photos) of `libraryId` with no thumbnail whose file computer `device` has: its path there, from where the
+ * Mac indexed it or a place it reported (11-19: photos indexed in place came in grey when the page couldn't decode them).
+ * The Mac app makes each one's thumbnail and hands it in (putThumb), with no re-import.
+ */
+export function noPicture(libraryId: string, device: string, limit = 500): { versionId: string; path: string }[] {
+  const rows = libraryDb()
+    .prepare(
+      `SELECT v.id AS versionId, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
+         FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+        WHERE a.library_id = ? AND a.kind = 'image' AND a.trashed_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
+        ORDER BY a.created_at DESC LIMIT ?`,
+    )
+    .all(device, device, libraryId, limit) as { versionId: string; path: string | null }[];
+  return rows.filter((r): r is { versionId: string; path: string } => !!r.path);
+}
+
+/** A picture's thumbnail handed in for a version of `libraryId` (a JPEG under 1 MB): false when it isn't one or the version isn't the library's. */
+export async function putThumb(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
+  if (!jpeg(b64, MB)) return false;
+  const d = libraryDb();
+  const own = d.prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ?").get(versionId, libraryId);
+  if (!own) return false;
+  const base = `libraries/${libraryId}/v/${versionId}`;
+  const scratch = path.join(env.dataDir, "library", "staging");
+  await mkdir(scratch, { recursive: true });
+  const file = path.join(scratch, `${versionId}-thumb.jpg`);
+  await writeFile(file, Buffer.from(b64 as string, "base64"));
+  const { bytes } = await blobs.put(`${base}/thumb.jpg`, file);
+  d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, "thumb", `${base}/thumb.jpg`, bytes);
+  return true;
 }

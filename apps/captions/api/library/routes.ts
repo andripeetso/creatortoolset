@@ -40,7 +40,7 @@ import { buildAssetQuery, indexAsset, macPlace, markHere, pageOf, parseSearch, t
 import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
-import { indexOnMac, parseOnMac } from "./on-mac";
+import { indexOnMac, noPicture, parseOnMac, putThumb } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
 import { deviceOf, listDevices } from "../lib/devices";
 import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName } from "../../contracts/storage";
@@ -777,6 +777,28 @@ libraryApp.post("/:id/on-mac", async (c) => {
     if (col.kind !== "manual" && !rollFolder(db(), libraryId, x.collectionId)) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   }
   return c.json(await indexOnMac(libraryId, user.username, x));
+});
+
+// GET /api/library/:id/no-picture?device= → { versions: [{ versionId, path }] }: this library's photos with no thumbnail
+// whose file that computer has; the Mac app makes each one's picture and PUTs it (below). The owner, for a computer of theirs.
+libraryApp.get("/:id/no-picture", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const device = c.req.query("device") ?? "";
+  if (!libraryRole(user.username, libraryId) || deviceOf(device)?.owner !== user.username) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json({ versions: noPicture(libraryId, device) });
+});
+
+// PUT /api/library/:id/versions/:versionId/thumb { thumb: base64 JPEG } → { ok }: a photo's picture made on the computer
+// that has it (a HEIC or RAW the page couldn't decode, or one indexed before it could). The owner only.
+libraryApp.put("/:id/versions/:versionId/thumb", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const b = (await c.req.json().catch(() => null)) as { thumb?: unknown } | null;
+  if (!(await putThumb(libraryId, c.req.param("versionId"), b?.thumb))) return c.json({ error: "Not a picture of this library's (a JPEG under 1 MB)", code: "invalid" }, 400);
+  libraryChanged(libraryId);
+  return c.json({ ok: true });
 });
 
 // HEAD /api/library/uploads/:uploadId → Upload-Offset: what is on disk. Hono sends HEAD through GET, so this is a GET
