@@ -1,7 +1,8 @@
 import Photos
 import SwiftUI
 
-/// The last tab: the tools that work on a video from Photos, then Settings, a row each that opens its page.
+/// The last tab: Upload media first, then the tools that work on a video from Photos, then Settings, a row each that
+/// opens its page.
 struct ToolsView: View {
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var access = ToolsetAccess.shared
@@ -14,6 +15,16 @@ struct ToolsView: View {
 
     var body: some View {
         List {
+            if servers.api != nil {
+                Section {
+                    // the same camera roll and upload as Media's Upload button, into the workspace's Media Library
+                    NavigationLink { UploadMediaView() } label: {
+                        Label("Upload media", systemImage: "arrow.up.circle.fill")
+                            .font(.title3.weight(.semibold))
+                            .frame(minHeight: 52)
+                    }
+                }
+            }
             Section("Tools") {
                 if access.allows("stories") { row("Story Splitter", "scissors") { StorySplitterView() } }
                 if access.allows("captions") { row("Caption Studio", "captions.bubble") { CaptionStudioView() } }
@@ -36,7 +47,7 @@ struct ToolsView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Tools")
-        .workspaceSwitcher()
+        .connectionHeader()
         .navigationDestination(isPresented: $computersOpen) { ServersView() }
     }
 

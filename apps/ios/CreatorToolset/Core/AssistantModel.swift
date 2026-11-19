@@ -206,11 +206,24 @@ final class AssistantModel: ObservableObject {
     /// Replies being stopped because a video of their message failed.
     private var stopping: Set<String> = []
 
+    /// The workspace a new chat starts in: the one last written in, or picked in its box before the first message. nil
+    /// (or one the server in use doesn't have): the app's pick.
+    @Published var startIn = UserDefaults.standard.string(forKey: "chats.startIn") {
+        didSet { UserDefaults.standard.set(startIn, forKey: "chats.startIn") }
+    }
+
+    /// The chat's workspace: its own once its first message set it; a new chat's is where it starts (`startIn`).
+    var chatWorkspace: String? {
+        if let own = view?.workspace { return own }
+        guard view?.messages.isEmpty ?? true, let startIn, Workspaces.shared.entry(startIn) != nil else { return nil }
+        return startIn
+    }
+
     /// The chat's own client: the server in use, in the chat's workspace (a chat keeps its own), else the phone's pick.
-    var chatAPI: ToolsetAPI? { ToolsetAPI.current(in: view?.workspace) }
+    var chatAPI: ToolsetAPI? { ToolsetAPI.current(in: chatWorkspace) }
 
     init() {
-        server = { [weak self] in .signedIn(chat: self?.view?.workspace) }
+        server = { [weak self] in .signedIn(chat: self?.chatWorkspace) }
         draft.changed = { [weak self] in self?.carryOn() }
         draft.handedOver = { [weak self] video, picked in
             self?.outbox.handed(video, picked)
@@ -290,6 +303,8 @@ final class AssistantModel: ObservableObject {
     /// The person's message: it goes now when it can, and waits its turn when a reply is being
     /// written or there is no connection.
     func send(_ message: QueuedMessage) {
+        // the next new chat starts where he wrote last
+        if let ws = chatWorkspace ?? API.current?.workspace { startIn = ws }
         var message = message
         message.videos = AssistantUpload.stamped(message.videos, api: chatAPI)
         outbox.add(message)

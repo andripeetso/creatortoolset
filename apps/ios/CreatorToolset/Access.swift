@@ -1,16 +1,18 @@
 import SwiftUI
 
-/// The app's tabs, the desktop's stages: Chats (the assistant's chats), Plan (ideas and scripts), Make (the edits and
-/// Review videos, and the Media Library), Distribute (Ready to post and Finals), then Tools (and Settings). Every tab
-/// always shows; one the account can't use says why it's empty (`ToolsetAccess.uses`).
+/// The app's tabs: Chats (the assistant's chats, every workspace's), Projects (the workspace's Workshop projects, each
+/// with its script, edits, Review videos and finals), Media (the Media Library and this phone's uploads), Publish (Ready
+/// to post and Finals), then Tools (and Settings). Every tab always shows; one the account can't use says why it's
+/// empty (`ToolsetAccess.uses`).
 enum AppTab: String, Hashable, CaseIterable {
-    case chats, plan, make, distribute, tools
+    case chats, projects, media, publish, tools
 
     /// A tab by an older name (`-startTab edits`, a saved `startTab`).
     init?(named raw: String) {
         switch raw {
-        case "edits", "upload": self = .make
-        case "finals": self = .distribute
+        case "plan", "make", "edits": self = .projects
+        case "upload": self = .media
+        case "distribute", "finals": self = .publish
         case "more": self = .tools
         default: self.init(rawValue: raw)
         }
@@ -56,15 +58,14 @@ final class ToolsetAccess: ObservableObject {
         return !(me.off ?? []).contains(key)
     }
 
-    /// What a tab holds needs a known account that has its tool: Plan the Workshop, Make's edits the AI Editor or
-    /// Review (its Media side has its own gate, `media`), Distribute Finals. Chats and Tools ask for the sign-in
-    /// themselves. The tab shows either way.
+    /// What a tab holds needs a known account that has its tool: Projects the Workshop, the AI Editor or Review, Publish
+    /// Finals. Chats and Tools ask for the sign-in themselves, and Media has its own gate (`media`). The tab shows
+    /// either way.
     nonisolated static func uses(_ tab: AppTab, me: Me?) -> Bool {
         switch tab {
-        case .chats, .tools: true
-        case .plan: me != nil && allows("workshop", me: me)
-        case .make: me != nil && (allows("editor", me: me) || allows("review", me: me))
-        case .distribute: me != nil && allows("finals", me: me)
+        case .chats, .media, .tools: true
+        case .projects: me != nil && (allows("workshop", me: me) || allows("editor", me: me) || allows("review", me: me))
+        case .publish: me != nil && allows("finals", me: me)
         }
     }
 

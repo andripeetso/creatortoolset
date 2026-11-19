@@ -507,7 +507,7 @@ struct FinalsView: View {
             .padding(.horizontal, 4)
             .padding(.bottom, 20)
         }
-        .navigationTitle("Distribute")
+        .navigationTitle("Publish")
         .searchable(text: $query, prompt: "Search Finals")
         .refreshable { await reload() }
         // again when the server turns out to have the plug-in's list (or no longer has it)
@@ -677,7 +677,7 @@ private struct ReadyCard: View {
     }
 }
 
-private struct FinalCell: View {
+struct FinalCell: View {
     let piece: FinalsData.Piece
     let api: API?
 
