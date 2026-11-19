@@ -2,30 +2,37 @@ import { homedir } from "node:os";
 import { readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Sound } from "../../../contracts/library";
+import type { SaveAfter } from "../../library/routes";
 import { probe } from "../../library/media/probe";
 import { makeThumb } from "../../library/media/thumb";
 import { keepIn, quickPrint } from "../files";
-import { taskKind } from "../tasks";
+import { TASK_EXPIRED, taskKind, type TaskRow } from "../tasks";
 
 /**
  * A save into a library whose Upload is none (api/library/routes.ts saveToLibrary): the file goes to the workspace's
  * Source media folder (a finished video: its Final exports folder) on one of the asker's computers, and is indexed there
  * in place. Never run on the server, its video work on or not: with no computer online it waits for one. The server holds
- * the bytes only until a computer has fetched them (`staged`), never in the library.
+ * the bytes only until a computer has fetched them (`staged`), never in the library, and for WAIT_DAYS at most: then the
+ * save is dropped, its bytes deleted, and the person told (in the chat whose card is about it, else the inbox).
  */
+
+const WAIT_DAYS = 7;
 
 export const LIBRARY_SAVE_TASK = "library-save";
 
 export interface LibrarySaveInput {
   lib: string;
   filename: string;
-  /** the server's copy until a computer has it */
+  /** the server's copy until a computer has it, and its size (it counts in the free-space reserve: routes.ts pendingBytes) */
   staged: string;
+  bytes: number;
   /** each computer that may take it: its folder for this save (id and path there) */
   folders: Record<string, { id: string; path: string }>;
   footage: boolean;
   sound?: Sound;
   sources: string[];
+  /** what runs once it is there */
+  after?: SaveAfter;
 }
 
 interface Saved {
@@ -41,6 +48,7 @@ interface Saved {
 
 taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
   onComputer: true,
+  ttlMs: WAIT_DAYS * 86_400_000,
   can: (d, t) => !!t.input.folders[d.id],
   serve: (t, name) => (name === "file" ? (t.input as LibrarySaveInput).staged : undefined),
   async run(input, ctx) {
@@ -87,6 +95,40 @@ taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
     const done = await indexOnMac(t.input.lib, t.actor, { ...x, device, folder: folder.id, ...(collectionId ? { collectionId } : {}) });
     if ("versionId" in done) fileSaved(d, done.assetId, done.versionId, t.actor, t.input);
     await rm(t.input.staged, { force: true });
+    const asset = "assetId" in done ? done.assetId : "duplicateOf" in done ? done.duplicateOf : null;
+    const version = asset && (d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ?").get(asset) as { v: string } | undefined)?.v;
+    if (asset && version && t.input.after) await followUp(t.actor, t.input, asset, version);
+    // a chat's card for it (use_file) ends: it is there now
+    const { workEnded } = await import("../../assistant");
+    workEnded(t.actor, `library-save:${t.ref}`, { status: "done", detail: "Saved", ...(asset ? { href: `/library?library=${t.input.lib}&asset=${asset}` } : {}) });
   },
-  failed: (t) => void rm(t.input.staged, { force: true }),
+  failed: (t, error) => void dropped(t, error).catch((e: unknown) => console.warn("[library-save] not told:", e instanceof Error ? e.message : e)),
 });
+
+/** What the save was for, once the file is there: its Finals piece, a sound effect's tags, the voice's edit. */
+async function followUp(actor: string, input: LibrarySaveInput, assetId: string, versionId: string): Promise<void> {
+  const a = input.after!;
+  if ("finals" in a) {
+    const { addToFinals, linkFinalsPiece } = await import("../../library/finals");
+    const out = await addToFinals(a.finals, { versionId });
+    if (out.ok && a.session) linkFinalsPiece(out.pieceId, a.session, undefined, a.finals.owner);
+    if (!out.ok) console.warn(`[library-save] ${input.filename} not put in Finals: ${out.error}`);
+  } else if ("sfx" in a) {
+    const { libraryDb } = await import("../../library/db");
+    const d = libraryDb();
+    d.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'ai')").run(assetId, a.sfx.type);
+    d.prepare("INSERT OR IGNORE INTO asset_sources (asset_id, url, license, author, at) VALUES (?, ?, ?, ?, ?)").run(assetId, a.sfx.source, a.sfx.license, a.sfx.author, Date.now());
+  } else if ("edit" in a) {
+    await (await import("../../editor/voice")).editFromVoice(actor, versionId, a.edit, a.projectId);
+  }
+}
+
+/** It failed for good or waited too long: its bytes go, and the person hears it was dropped, naming the file. */
+async function dropped(t: TaskRow & { input: LibrarySaveInput }, error: string): Promise<void> {
+  await rm(t.input.staged, { force: true });
+  const say = `“${t.input.filename}” was not saved to your Media Library: ${error === TASK_EXPIRED ? `no computer of yours was online within ${WAIT_DAYS} days` : error.replace(/\.$/, "")}. Save it again when your computer is on.`;
+  const { workEnded } = await import("../../assistant");
+  if (workEnded(t.actor, `library-save:${t.ref}`, { status: "failed", detail: "Not saved", say })) return;
+  const { notifyWorkshopOwner } = await import("../../review");
+  await notifyWorkshopOwner(t.actor, { kind: "failed", by: "Media Library", name: t.input.filename, text: say, href: "/library", ref: `library-save:${t.ref}` });
+}

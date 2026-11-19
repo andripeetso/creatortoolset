@@ -4914,8 +4914,13 @@ async function finalsOfShare(token: string): Promise<void> {
       const out = await addToFinals(
         // the Finals of the session's own workspace ("": the account's first library, for a session from before workspaces)
         { owner: share.owner, libraryId: (await ensureLibrary(share.owner, meta.projectId ?? "")) ?? "", label: meta.title || share.title, item: d.name, kind: "export", width, height },
-        { file, filename: d.name },
+        { file, filename: d.name, session: meta.id },
       );
+      // on its way to a computer that is offline: it goes into Finals, linked to this project, once it is there
+      if (!out.ok && out.code === "waiting") {
+        sent.push(d.id);
+        continue;
+      }
       if (!out.ok) throw new Error(out.error);
       pieceId = out.pieceId;
       sent.push(d.id);

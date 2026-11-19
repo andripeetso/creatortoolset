@@ -56,6 +56,7 @@ export interface TaskRow {
   claim_id: string | null;
   error: string | null;
   line: string | null;
+  created_at: number;
 }
 
 export interface TaskKind<I = unknown, R = unknown> {
@@ -63,6 +64,8 @@ export interface TaskKind<I = unknown, R = unknown> {
   reads?: boolean;
   /** it writes on the asker's computer: never run on the server (its video work on or not), it waits for a computer */
   onComputer?: boolean;
+  /** how long it may wait for a computer: queued longer, it fails for good with TASK_EXPIRED (its `failed` tells) */
+  ttlMs?: number;
   /** the work itself, the same code on the server and on a computer; `files` names what it made in ctx.dir */
   run(input: I, ctx: TaskCtx): Promise<{ result: R; files?: string[] }>;
   /** server: where input file `name` is on the server, for a computer that lacks it and for the server's own run */
@@ -78,6 +81,12 @@ export interface TaskKind<I = unknown, R = unknown> {
 }
 
 const kinds = new Map<string, TaskKind>();
+
+/** The error a task that waited past its kind's ttlMs fails with. */
+export const TASK_EXPIRED = "expired";
+
+/** Makes sure the tasks table is there, for a reader that queries it directly (library/routes.ts pendingBytes). */
+export const taskTable = (): void => void db();
 
 /** Registers a kind (each module in api/work/tasks/ at load). */
 export function taskKind<I, R>(kind: string, def: TaskKind<I, R>): void {
@@ -155,7 +164,8 @@ export async function startTask<I, R>(kind: string, ref: string, actor: string, 
     .prepare(
       `INSERT INTO computer_tasks (kind, ref, actor, workspace, input, state, created_at) VALUES (?, ?, ?, ?, ?, 'queued', ?)
        ON CONFLICT (kind, ref) DO UPDATE SET actor = excluded.actor, workspace = excluded.workspace, input = excluded.input,
-         state = 'queued', attempts = 0, run_after = 0, lease_until = NULL, held_by = NULL, claim_id = NULL, error = NULL, line = NULL
+         state = 'queued', attempts = 0, run_after = 0, lease_until = NULL, held_by = NULL, claim_id = NULL, error = NULL, line = NULL,
+         created_at = excluded.created_at
        WHERE computer_tasks.state <> 'running'
        RETURNING id`,
     )
@@ -309,6 +319,12 @@ export async function taskTick(now = Date.now()): Promise<void> {
     const queued = (db().prepare("SELECT * FROM computer_tasks WHERE state = 'queued' AND run_after <= ? ORDER BY id LIMIT 50").all(now) as unknown as Raw[]).map((r) => rowOf(r)!);
     for (const t of queued) {
       if (!kinds.has(t.kind)) continue;
+      const ttl = kinds.get(t.kind)!.ttlMs;
+      if (ttl && now - t.created_at > ttl) {
+        const gone = db().prepare("UPDATE computer_tasks SET state = 'failed', error = ?, line = NULL WHERE id = ? AND state = 'queued'").run(TASK_EXPIRED, t.id).changes;
+        if (gone) kinds.get(t.kind)!.failed?.(t, TASK_EXPIRED);
+        continue;
+      }
       if (placeTask(t) !== "server") {
         const line = taskWaitLine(t) ?? null;
         if (line !== t.line) db().prepare("UPDATE computer_tasks SET line = ? WHERE id = ? AND state = 'queued'").run(line, t.id);

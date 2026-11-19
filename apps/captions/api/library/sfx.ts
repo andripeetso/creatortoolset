@@ -69,7 +69,8 @@ async function addSounds(username: string, lib: string, list: SfxSound[]): Promi
       out.failed++;
       continue;
     }
-    const r = await saveToLibrary(username, path.join(dir, s.file), `${s.title}.m4a`, [], lib, false, "effect");
+    // its type, source and licence: here now, or once a save that waits for a computer lands (library-save.ts)
+    const r = await saveToLibrary(username, path.join(dir, s.file), `${s.title}.m4a`, [], lib, false, "effect", { after: { sfx: { type: s.type, source: s.source, license: s.license, author: s.author } } });
     if (r && "assetId" in r) {
       db.prepare("INSERT OR IGNORE INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'ai')").run(r.assetId, s.type);
       db.prepare("INSERT OR IGNORE INTO asset_sources (asset_id, url, license, author, at) VALUES (?, ?, ?, ?, ?)").run(r.assetId, s.source, s.license, s.author, Date.now());

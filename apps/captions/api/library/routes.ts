@@ -42,8 +42,8 @@ import { fileRoll, rollFolder } from "./roll";
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { indexOnMac, parseOnMac } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
-import { deviceOf } from "../lib/devices";
-import { FOLDER_LABELS, finalsDirName } from "../../contracts/storage";
+import { deviceOf, listDevices } from "../lib/devices";
+import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName } from "../../contracts/storage";
 import { quickPrint } from "../work/files";
 import { libraryWorkspace, serverKind } from "../work/server-work";
 import { WORK_MIN } from "../../contracts/work";
@@ -229,8 +229,9 @@ export async function saveToLibrary(
   libraryId?: string,
   footage = false,
   sound?: Sound,
-  /** a final (Finals): it follows the library's Finals setting, not its Upload */
-  finals = false,
+  /** finals: a final, which follows the library's Finals setting, not its Upload; after: what runs once a save that
+   *  waited for a computer lands there (work/tasks/library-save.ts) */
+  opts: { finals?: boolean; after?: SaveAfter } = {},
 ): Promise<SavedTo | null> {
   const lib =
     libraryId ??
@@ -241,11 +242,11 @@ export async function saveToLibrary(
   if (!lib || !libraryRole(username, lib)) return null;
   const { size } = await stat(file);
   await mkdir(stagingDir(), { recursive: true });
-  if ((await freeBytes(stagingDir())) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
+  if ((await freeBytes(stagingDir())) - (await pendingBytes(username)) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
     return { error: "Not enough free disk space for this file", code: "disk_reserve" };
   }
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here
-  if (serverKind() !== "local" && hostsNone(finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound);
+  if (serverKind() !== "local" && hostsNone(opts.finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after);
   const staged = path.join(stagingDir(), `save-${randomUUID()}`);
   try {
     await copyFile(file, staged);
@@ -279,9 +280,34 @@ export async function saveToLibrary(
 export type SavedTo =
   | { assetId: string; versionId: string }
   | { duplicateOf: string }
-  | { error: string; code: "disk_reserve" | "no_folder" | "failed" }
-  /** Upload none and the asker's computer not online (or not done yet): the one line to say; it lands when it is back */
-  | { waiting: string };
+  | { error: string; code: "disk_reserve" | "no_folder" | "no_computer" | "failed" }
+  /** Upload none and the asker's computer not online (or not done yet): the one line to say; it lands when it is back.
+   *  `save`: the save's own id (a chat's card for it is library-save:<save>) */
+  | { waiting: string; save: string };
+
+/** What a save that waited for a computer does once the file is there (work/tasks/library-save.ts runs it): link it to its
+ *  Finals piece (and the Workshop project it was sent from), tag a sound effect, or start the edit made from a voice. */
+export type SaveAfter =
+  | { finals: import("./finals").FinalsAdd; session?: string }
+  | { sfx: { type: string; source: string; license: string; author: string } }
+  | { edit: Record<string, unknown>; projectId?: string };
+
+/**
+ * Bytes this server's disk is about to hold for others, counted against the free-space reserve: what the open uploads
+ * may still write (only those sent to in the last hour, so empty or abandoned ones hold no space), and saves waiting in
+ * staging for a computer (they hold the disk until one takes them), each under its asker. Of each other person only the
+ * OPEN_PER_USER largest count, so one person's many uploads never hold everyone else's; the asker's own all count, or ten
+ * of theirs sent a byte each would together write past the reserve.
+ */
+async function pendingBytes(username: string): Promise<number> {
+  (await import("../work/tasks")).taskTable();
+  return (db().prepare(
+    `SELECT COALESCE(SUM(n), 0) AS n FROM (SELECT created_by, n, ROW_NUMBER() OVER (PARTITION BY created_by ORDER BY n DESC) AS k FROM (
+       SELECT created_by, size - received AS n FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?
+       UNION ALL SELECT actor, COALESCE(json_extract(input, '$.bytes'), 0) FROM computer_tasks WHERE kind = 'library-save' AND state IN ('queued', 'running')
+     )) WHERE k <= ? OR created_by = ?`,
+  ).get(active(), OPEN_PER_USER, username) as { n: number }).n;
+}
 
 /** What a saved file gets with its new version: its sound tag, no A-roll or B-roll for a finished file, what it was made from. */
 export function fileSaved(d: DatabaseSync, assetId: string, versionId: string, username: string, o: { footage: boolean; sound?: Sound; sources: string[] }): void {
@@ -295,6 +321,9 @@ export function fileSaved(d: DatabaseSync, assetId: string, versionId: string, u
   }
 }
 
+/** Upload none and no computer paired at all: what to do, in one sentence. */
+export const NO_COMPUTER = "Add a computer, or turn on Originals in Settings → Media Library.";
+
 /** How long a save under Upload none waits for an online computer to have it indexed before answering (a test shortens it). */
 export const COMPUTER_SAVE = { ms: 30_000 };
 
@@ -303,14 +332,18 @@ export const COMPUTER_SAVE = { ms: 30_000 };
  * file: its Final exports folder) on whichever of the asker's computers takes the task (work/tasks/library-save.ts), which
  * indexes it there in place. With none online it waits for one, and the answer is the one line naming the folder.
  */
-async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound): Promise<SavedTo> {
+async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter): Promise<SavedTo> {
   const { librariesOf, useOf } = await import("./report");
   const { storageOf } = await import("../devices-storage");
   const { awaitTask, startTask, taskOf } = await import("../work/tasks");
   const use = footage || sound ? "media" : "exports";
   const label = FOLDER_LABELS[use === "media" ? "footage" : "library"];
+  // no computer at all: nothing to wait for
+  if (!listDevices((d) => d.owner === username).length) return { error: NO_COMPUTER, code: "no_computer" };
   const folders: Record<string, { id: string; path: string }> = {};
-  for (const f of (await storageOf(username)).folders) {
+  // the workspace's own folder before one for every workspace, then in list order
+  const all = (await storageOf(username)).folders;
+  for (const f of [...all].sort((a, b) => Number(a.workspace === EVERY_WORKSPACE) - Number(b.workspace === EVERY_WORKSPACE))) {
     if (useOf(f) !== use || folders[f.origin.host] || deviceOf(f.origin.host)?.owner !== username) continue;
     if ((await librariesOf(username, f, false)).some((l) => l.id === lib)) folders[f.origin.host] = { id: f.id, path: f.origin.path };
   }
@@ -326,10 +359,11 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   // held here only until a computer has fetched it (the task removes it)
   const staged = path.join(stagingDir(), `computer-${lib}-${quick}`);
   await copyFile(file, staged);
-  const started = await startTask("library-save", `${lib}:${quick}`, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, folders, footage, ...(sound ? { sound } : {}), sources });
+  const ref = `${lib}:${quick}`;
+  const started = await startTask("library-save", ref, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, bytes: size, folders, footage, ...(sound ? { sound } : {}), sources, ...(after ? { after } : {}) });
   const name = (id: string) => deviceOf(id)?.name ?? "Your computer";
   const where = (id: string) => `${label} (${folders[id]!.path})`;
-  if (started.state === "queued" && started.line) return { waiting: `${name(first[0])} is offline. I'll save it to ${where(first[0])} when it's back.` };
+  if (started.state === "queued" && started.line) return { waiting: `${name(first[0])} is offline. I'll save it to ${where(first[0])} when it's back.`, save: ref };
   if (started.state === "queued" && (await awaitTask(started.id, COMPUTER_SAVE.ms)) === "failed") return { error: taskOf(started.id)?.error ?? "Your computer could not save it", code: "failed" };
   const got = db()
     .prepare("SELECT a.id AS assetId, v.id AS versionId FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.quick = ? AND v.bytes = ? LIMIT 1")
@@ -338,7 +372,7 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   // a computer has it but is not done yet: it lands there in a moment
   const held = started.state === "queued" ? taskOf(started.id)?.held_by : null;
   const on = held && folders[held] ? held : first[0];
-  return { waiting: `Saving it to ${where(on)} on ${name(on)}.` };
+  return { waiting: `Saving it to ${where(on)} on ${name(on)}.`, save: ref };
 }
 
 interface UploadRow {
@@ -631,14 +665,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const started = direct ? await direct.start(sourceKeyOf(libraryId, id), size, { contentType: mimeOf(filename) }) : null;
   if (!started) {
     await mkdir(stagingDir(), { recursive: true });
-    // bytes the open uploads may still write count too, or several large uploads would each pass alone; only those sent
-    // to in the last hour (expires_at moves on with each part), so empty or abandoned ones hold no space, and of each
-    // other person's only the OPEN_PER_USER largest, so one person's many uploads never hold everyone else's; the
-    // starter's own all count, or ten of theirs sent a byte each would together write past the reserve
-    const pending = (db().prepare(
-      `SELECT COALESCE(SUM(n), 0) AS n FROM (SELECT created_by, size - received AS n, ROW_NUMBER() OVER (PARTITION BY created_by ORDER BY size - received DESC) AS k
-       FROM uploads WHERE state = 'open' AND direct_upload_id IS NULL AND received > 0 AND expires_at > ?) WHERE k <= ? OR created_by = ?`,
-    ).get(active(), OPEN_PER_USER, user.username) as { n: number }).n;
+    // what the open uploads may still write and saves waiting for a computer count too (pendingBytes)
+    const pending = await pendingBytes(user.username);
     if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
       return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
     }

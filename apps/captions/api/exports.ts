@@ -401,9 +401,10 @@ async function sendToFinals(job: Job): Promise<void> {
   } catch (e) {
     out = { ok: false, code: "failed", error: e instanceof Error ? e.message : String(e) };
   }
+  // waiting: on its way to a computer that is offline, it goes into its Finals piece once it is there
   job.finals = out.ok
     ? { status: "sent", pieceId: out.pieceId }
-    : { status: out.code === "refused" ? "refused" : "error", error: out.error };
+    : { status: out.code === "refused" ? "refused" : out.code === "waiting" ? "waiting" : "error", error: out.error };
   await jobPersist(job);
 }
 

@@ -86,7 +86,8 @@ describe("saving a chat file to the Media Library asks the upload gate", () => {
     writeFileSync(path.join(dir, "assistant", "files", "dee", id, "meta.json"), JSON.stringify({ id, name: "Handstand.mp4", mime: "video/mp4", size: 4, at: Date.now() }));
     const user = findUser("dee") as never;
     setUpload("none");
-    await expect(useFile(user, id, "library")).rejects.toThrow(/Source media folder/);
+    // dee has no computer at all: the answer says what to do
+    await expect(useFile(user, id, "library")).rejects.toThrow("Add a computer, or turn on Originals in Settings → Media Library.");
     expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(lib)).toEqual({ n: 0 });
     setUpload("all");
     const saved = await useFile(user, id, "library");

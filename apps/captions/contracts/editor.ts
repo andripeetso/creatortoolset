@@ -424,6 +424,9 @@ export interface NewVoice {
   text: string;
   voice?: string;
   name?: string;
+  /** the edit to make from it (POST /api/editor's body, no sources): made on the server once a save that waits for a
+   *  computer (Upload none) lands; the answer is then { waiting } */
+  edit?: Omit<NewEdit, "sources">;
 }
 
 /** The recording as saved in the Media Library: `versionId` is a source for a new edit. */

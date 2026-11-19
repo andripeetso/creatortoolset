@@ -296,7 +296,8 @@ describe("New edit: a script, nothing filmed", () => {
     await type("edit-spoken", "Roll the mat out.");
     expect(button("Start").disabled).toBe(false);
     await submit();
-    expect(calls.find((c) => c.url === "/api/editor/voice")!.body).toEqual({ text: "Roll the mat out.", voice: "v_mine" });
+    // the edit goes with it: made on the server instead when the voice's save waits for an offline computer (Upload none)
+    expect(calls.find((c) => c.url === "/api/editor/voice")!.body).toEqual({ text: "Roll the mat out.", voice: "v_mine", edit: { brief: "", script: "Roll the mat out.", versions: 1, targetS: 0 } });
     // one version, as long as the voice; no folder named, so all their B-roll
     expect(posted.at(-1)).toEqual({ sources: ["ver_voice"], brief: "", script: "Roll the mat out.", versions: 1, targetS: 0 });
     expect(calls.at(-1)!.url).toBe("/api/editor/edit_1/run");

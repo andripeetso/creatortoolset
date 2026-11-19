@@ -37,12 +37,15 @@ export interface FinalsAdd {
 /** Where the version comes from: a library version already (linked), a file to store once, or a source's own item (a ref). */
 export type FinalsSource =
   | { versionId: string }
-  | { file: string; filename: string }
+  /** session: the Workshop project the file was sent from, linked to its piece once a save that waited lands */
+  | { file: string; filename: string; session?: string }
   | { external: { source: string; kind: string; externalId: string; title: string } };
 
 export type FinalsOutcome =
   | { ok: true; pieceId: string; assetId: string | null; versionId: string | null }
-  | { ok: false; code: "below_hd" | "refused" | "no_access" | "not_found" | "failed"; error: string };
+  | { ok: false; code: "below_hd" | "refused" | "no_access" | "not_found" | "failed"; error: string }
+  /** Finals upload none and the computer offline: the file goes to Final exports and into its piece when it is back */
+  | { ok: false; code: "waiting"; error: string };
 
 /**
  * The account's first library, made when there is none: for a check by id (a plug-in's clip), where any of the account's
@@ -97,11 +100,14 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
       assetId = row.asset_id;
       versionId = source.versionId;
     } else {
-      const saved = await saveToLibrary(input.owner, source.file, source.filename, [], input.libraryId, false, undefined, true);
+      const saved = await saveToLibrary(input.owner, source.file, source.filename, [], input.libraryId, false, undefined, {
+        finals: true,
+        after: { finals: input, ...(source.session ? { session: source.session } : {}) },
+      });
       if (!saved) return { ok: false, code: "no_access", error: "Not allowed" };
       if ("error" in saved) return { ok: false, code: "failed", error: saved.error };
-      // Finals upload none, their computer offline: the file lands in Final exports once it is back; Finals takes it from there then
-      if ("waiting" in saved) return { ok: false, code: "failed", error: saved.waiting };
+      // Finals upload none, their computer offline: the file lands in Final exports once it is back, and in its piece then
+      if ("waiting" in saved) return { ok: false, code: "waiting", error: saved.waiting };
       if ("duplicateOf" in saved) {
         // the library already holds these bytes: link its current version, never a second copy
         const cur = d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ?").get(saved.duplicateOf) as { v: string | null } | undefined;

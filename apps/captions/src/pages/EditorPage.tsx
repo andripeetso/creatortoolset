@@ -656,23 +656,29 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
     setBusy(true);
     setError(null);
     try {
-      // nothing filmed: the script is spoken first, and that recording is the edit's one take
-      const spoken = filmed ? null : await makeVoice({ text: script, voice, name: name.trim() || undefined });
-      const { id } = await createEdit({
-        sources: spoken ? [spoken.versionId] : [...picked.keys()],
-        name: name.trim() || undefined,
-        brief,
-        script: from === "long" ? "" : script,
-        // one voice says the script once: one version, as long as the voice, whatever the style says. No folder chosen
-        // says nothing, so the style's own B-roll folder stands (with none: all their B-roll)
-        ...(spoken
-          ? { versions: 1, targetS: 0, ...(broll ? { brollCollectionId: broll } : {}) }
-          : from === "long"
-            ? { moments, targetS: Number(targetS) || 0, ...(shape ? { shape } : {}) }
-            : { versions, targetS: Number(targetS) || 0 }),
-        // only an account with styles says anything about one: its pick, or null for None
-        ...(styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {}),
-      });
+      // only an account with styles says anything about one: its pick, or null for None
+      const style = styles?.styles.length ? { style: styles.styles.some((x) => x.id === styleId) ? styleId : null } : {};
+      const common = { name: name.trim() || undefined, brief, script: from === "long" ? "" : script, ...style };
+      // one voice says the script once: one version, as long as the voice, whatever the style says. No folder chosen
+      // says nothing, so the style's own B-roll folder stands (with none: all their B-roll)
+      const spokenEdit = { ...common, versions: 1, targetS: 0, ...(broll ? { brollCollectionId: broll } : {}) };
+      // nothing filmed: the script is spoken first, and that recording is the edit's one take. When its save waits for a
+      // computer that is offline (Upload none), the server makes the edit once it lands, and the line says so
+      const spoken = filmed ? null : await makeVoice({ text: script, voice, name: name.trim() || undefined, edit: spokenEdit });
+      if (spoken && "waiting" in spoken) {
+        setError(spoken.waiting);
+        setBusy(false);
+        return;
+      }
+      const { id } = await createEdit(
+        spoken
+          ? { sources: [spoken.versionId], ...spokenEdit }
+          : {
+              sources: [...picked.keys()],
+              ...common,
+              ...(from === "long" ? { moments, targetS: Number(targetS) || 0, ...(shape ? { shape } : {}) } : { versions, targetS: Number(targetS) || 0 }),
+            },
+      );
       await runEdit(id);
       navigate(`/editor/${id}`);
     } catch (e) {

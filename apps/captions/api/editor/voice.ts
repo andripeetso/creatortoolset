@@ -7,6 +7,8 @@ import type { AuthVars } from "../auth";
 import { creditBack, creditOut, isOutOfCredits } from "../credits";
 import { ensureLibrary } from "../library/access";
 import { libraryDb } from "../library/db";
+import { enqueueJob } from "../library/jobs";
+import { resolveProjectId } from "../lib/workshop/workspace";
 import { saveToLibrary } from "../library/routes";
 import { mainSource } from "../library/sources";
 import { keyFor } from "../my-keys";
@@ -105,7 +107,11 @@ function pickVoice(voices: Voice[], wanted: string, last: string | null): Voice 
  * Speaks `text` in `voice` and saves the recording in the person's Media Library.
  * ponytail: spoken inside the request (seconds for a reel's script, the page waits on "Making the voice"); a job with a state of its own when texts get long.
  */
-export async function makeVoice(user: AuthVars["user"], input: { text: string; voice?: string; name?: string }): Promise<MadeVoice> {
+export async function makeVoice(
+  user: AuthVars["user"],
+  /** edit: the edit to make from the voice (POST /api/editor's body, no sources), when its save waits for a computer */
+  input: { text: string; voice?: string; name?: string; edit?: Record<string, unknown>; projectId?: string },
+): Promise<MadeVoice | VoiceWaits> {
   // where a plug-in's source is the Media Library, the storage library is never shown: nothing goes where nobody looks
   const main = mainSource();
   if (main) throw new VoiceError(`On this server the Media Library is the ${main.label}: a voice cannot be added to it`);
@@ -122,11 +128,15 @@ export async function makeVoice(user: AuthVars["user"], input: { text: string; v
     const file = path.join(dir, "voice.mp3");
     await writeFile(file, Buffer.from(await res.arrayBuffer()));
     await ensureLibrary(user.username);
-    const saved = await saveToLibrary(user.username, file, `${title}.mp3`, [], undefined, true);
+    const saved = await saveToLibrary(user.username, file, `${title}.mp3`, [], undefined, true, undefined, input.edit ? { after: { edit: input.edit, ...(input.projectId ? { projectId: input.projectId } : {}) } } : {});
     if (!saved) throw new VoiceError("Needs a Media Library this account can add to");
     if ("error" in saved) throw new VoiceError(saved.error, 502);
-    // Upload none and their computer offline: the voice is saved there once it is back, so there is no version to use yet
-    if ("waiting" in saved) throw new VoiceError(saved.waiting);
+    // Upload none and their computer offline: the voice is saved there once it is back, and the edit asked for is made
+    // from it then; with none asked for there is no version to use yet
+    if ("waiting" in saved) {
+      if (input.edit) return { waiting: saved.waiting };
+      throw new VoiceError(saved.waiting);
+    }
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
     const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };
     change(user.username, (f) => void (f.voice = voice.id));
@@ -134,6 +144,20 @@ export async function makeVoice(user: AuthVars["user"], input: { text: string; v
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** A voice whose save waits for a computer: the line to show; its edit starts once it is there (editFromVoice). */
+export interface VoiceWaits {
+  waiting: string;
+}
+
+/** The edit asked for with a voice, made from it once its save landed on a computer, and started. Its id, or null. */
+export async function editFromVoice(username: string, versionId: string, edit: Record<string, unknown>, projectId?: string): Promise<string | null> {
+  const { createEdit } = await import("./store");
+  const e = await createEdit(username, { ...edit, sources: [versionId] }, false, projectId);
+  if (!e) return null;
+  enqueueJob(libraryDb(), e.workspaceId, `${e.id}:`, "analyze", username, true, "edit_jobs");
+  return e.id;
 }
 
 export const voiceApp = new Hono<{ Variables: AuthVars }>();
@@ -162,6 +186,8 @@ voiceApp.post("/", (c) =>
   answer(c, async () => {
     const b = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
     const s = (v: unknown) => (typeof v === "string" ? v : "");
-    return makeVoice(c.get("user"), { text: s(b.text), voice: s(b.voice), name: s(b.name) });
+    const edit = b.edit && typeof b.edit === "object" && !Array.isArray(b.edit) ? (b.edit as Record<string, unknown>) : undefined;
+    const projectId = edit ? await resolveProjectId(c.get("user"), typeof edit.projectId === "string" ? edit.projectId : null) : undefined;
+    return makeVoice(c.get("user"), { text: s(b.text), voice: s(b.voice), name: s(b.name), ...(edit ? { edit } : {}), ...(projectId ? { projectId } : {}) });
   }),
 );

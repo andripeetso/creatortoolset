@@ -585,7 +585,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       }
       try {
         const r = await json(`/api/assistant/files/${encodeURIComponent(id)}/use`, "POST", { to: "library", ...(ids.length === 1 ? pick(a, ["name"]) : {}), ...pick(a, ["sound"]) });
-        files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note", "waiting"]) });
+        files.push({ name: r.name, version_id: r.versionId, library: r.libraryId, href: r.href, ...pick(r, ["note", "waiting"]), ...(r.waiting ? { save: r.id } : {}) });
       } catch (e) {
         files.push({ file: id, error: e instanceof Error ? e.message : String(e) });
       }
@@ -1354,7 +1354,12 @@ export function workFor(name: string, a: Args, r: Args): { card: AssistantWork; 
         ? { card: { id: `edit:${r.id}:new`, kind: "edit", title: String(r.name ?? "New edit"), href: `/editor/${encodeURIComponent(String(r.id))}`, status: r.status === "started" ? "running" : "done", detail: r.status === "started" ? "The Editor is working on it" : "Made, not started" } }
         : null;
     case "use_file": {
-      if (a.to === "library") return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;
+      if (a.to === "library") {
+        // a save waiting for a computer: its card runs until the file lands there, or the save is dropped (library-save.ts)
+        const waits = ((r.files as Args[] | undefined) ?? []).find((f) => f.save);
+        if (waits) return { card: { id: `library-save:${String(waits.save)}`, kind: "link", title: "Media Library", href: "/library", status: "running", detail: String(r.said) } };
+        return r.said && r.href ? { card: { id: `library:${String(r.href)}`, kind: "link", title: "Media Library", href: String(r.href), status: "done", detail: String(r.said) } } : null;
+      }
       // Caption Studio: the card runs while the captions are being made (captions-job.ts ends it, and says so in the chat)
       if (a.to === "captions")
         return r.id ? { card: { id: `captions:${r.id}`, kind: "captions", title: String(r.name ?? "Caption Studio"), href: String(r.href), status: r.captioning ? "running" : "done", detail: r.captioning ? "Making the captions" : "In Caption Studio, not transcribed" } } : null;

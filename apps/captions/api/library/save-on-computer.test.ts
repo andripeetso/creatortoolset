@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { WORK_V, type TaskPackage } from "../../contracts/work";
+import type { MadeVoice } from "../../contracts/editor";
 
 /**
  * Upload none (owner, 2026-11-19): every save into the library lands on the asker's computer, in the workspace's first
@@ -19,6 +20,8 @@ process.env.APP_SECRET = "save-on-computer-test-secret";
 process.env.LIBRARY_DISK_RESERVE_GB = "0";
 process.env.ELEVENLABS_API_KEY = "";
 vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
+// the disk has 100 GB free, whatever disk the test runs on
+vi.mock("../lib/uploads", async (real) => ({ ...(await real<typeof import("../lib/uploads")>()), freeBytes: async () => 100 * 1024 ** 3 }));
 
 // a finished export of tina's, as the export queue leaves one on disk
 const exportId = "00000000-0000-4000-8000-000000000001";
@@ -39,11 +42,13 @@ const { writeServerWork } = await import("../work/server-work");
 const { changeStorage } = await import("../devices-storage");
 const { ensureLibrary } = await import("./access");
 const { libraryDb } = await import("./db");
-const { COMPUTER_SAVE } = await import("./routes");
+const { COMPUTER_SAVE, NO_COMPUTER } = await import("./routes");
 const { useFile } = await import("../assistant-files");
 const { makeVoice } = await import("../editor/voice");
 const { findAndAdd } = await import("./sfx");
 const { saveMyKey } = await import("../my-keys");
+const { addToFinals } = await import("./finals");
+const { allEdits } = await import("../editor/store");
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 COMPUTER_SAVE.ms = 10_000;
@@ -118,6 +123,22 @@ function inPlace(versionId: string) {
   return { ...v, place };
 }
 
+/** ElevenLabs answering with `speech` as the voice's bytes, while `run` runs. */
+async function elevenLabs(speech: string, run: () => Promise<void>) {
+  const real = globalThis.fetch;
+  vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.startsWith("https://api.elevenlabs.io/")) return real(input, init);
+    if (url.includes("/v2/voices")) return Response.json({ voices: [{ voice_id: "v_sam", name: "Sam", category: "premade" }] });
+    return new Response(speech, { headers: { "content-type": "audio/mpeg" } });
+  });
+  try {
+    await run();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+}
+
 const tina = await account("tina", "none");
 tina.online();
 
@@ -149,22 +170,13 @@ describe("Upload none: a save lands on the computer, indexed in place", () => {
 
   it("a voice: spoken, then into Source media on the Mac", async () => {
     saveMyKey("tina", "ELEVENLABS_API_KEY", "tinas-own");
-    const real = globalThis.fetch;
-    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input);
-      if (!url.startsWith("https://api.elevenlabs.io/")) return real(input, init);
-      if (url.includes("/v2/voices")) return Response.json({ voices: [{ voice_id: "v_sam", name: "Sam", category: "premade" }] });
-      return new Response("tiny acrobatics voice", { headers: { "content-type": "audio/mpeg" } });
-    });
-    try {
+    await elevenLabs("tiny acrobatics voice", async () => {
       const [made] = await Promise.all([makeVoice(findUser("tina") as never, { text: "Hello there", voice: "Sam", name: "Hello" }), tina.takes()]);
       const at = path.join(tina.media, "Hello.mp3");
-      expect(inPlace(made.versionId)).toMatchObject({ mac_path: at, place: { folder_id: "tina-media", state: "verified" } });
+      expect(inPlace((made as MadeVoice).versionId)).toMatchObject({ mac_path: at, place: { folder_id: "tina-media", state: "verified" } });
       expect(readFileSync(at, "utf8")).toBe("tiny acrobatics voice");
       expect(serverCopies("tiny acrobatics voice")).toEqual([]);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    });
   });
 
   it("Export → Library: a finished video goes to Final exports", async () => {
@@ -230,6 +242,116 @@ describe("Upload none with the computer offline", () => {
     drop("wes", "00000000-0000-4000-8000-0000000000c1", "Roll.mp4", "tiny acrobatics roll");
     await expect(useFile(findUser("wes") as never, "00000000-0000-4000-8000-0000000000c1", "library")).rejects.toThrow(/Source media folder/);
     expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(wes.lib)).toEqual({ n: 0 });
+  });
+});
+
+describe("which folder, and no computer at all", () => {
+  it("the workspace's own Source media folder comes before one for every workspace, whatever the list order", async () => {
+    const ora = await account("ora", "none");
+    const every = path.join(root, "computers", "ora", "Every workspace");
+    // the folder for every workspace listed first
+    await changeStorage("ora", (st) => void st.folders.unshift({ id: "ora-every", role: "footage", name: "Every workspace", workspace: "*", origin: { host: ora.mac.device.id, path: every }, make: true, createdAt: Date.now(), reach: {} }));
+    ora.online();
+    drop("ora", "00000000-0000-4000-8000-0000000000e1", "Pike.mp4", "tiny acrobatics pike");
+    const [saved] = await Promise.all([useFile(findUser("ora") as never, "00000000-0000-4000-8000-0000000000e1", "library"), ora.takes()]);
+    expect(inPlace(saved.versionId!)).toMatchObject({ mac_path: path.join(ora.media, "Pike.mp4"), place: { folder_id: "ora-media" } });
+    expect(existsSync(path.join(every, "Pike.mp4"))).toBe(false);
+  });
+
+  it("with no computer paired at all, the answer says what to do in one sentence; nothing is kept", async () => {
+    setOff(createUser("pia", "password1", { role: "user" }), []);
+    const lib = (await ensureLibrary("pia"))!;
+    d.prepare("UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'none', '$.setupAt', '2026-11-01T00:00:00.000Z') WHERE id = ?").run(lib);
+    const src = drop("pia", "00000000-0000-4000-8000-0000000000f1", "Tuck.mp4", "tiny acrobatics tuck");
+    await expect(useFile(findUser("pia") as never, "00000000-0000-4000-8000-0000000000f1", "library")).rejects.toThrow(NO_COMPUTER);
+    expect(NO_COMPUTER).toBe("Add a computer, or turn on Originals in Settings → Media Library.");
+    expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(lib)).toEqual({ n: 0 });
+    expect(d.prepare("SELECT COUNT(*) AS n FROM computer_tasks WHERE actor = 'pia'").get()).toEqual({ n: 0 });
+    expect(serverCopies("tiny acrobatics tuck", [src])).toEqual([]);
+  });
+});
+
+describe("a save waiting for a computer: the reserve, and 7 days at most", () => {
+  it("its bytes count in the free-space reserve under the asker; past 7 days they go and the person is told, naming the file", async () => {
+    const rae = await account("rae", "none");
+    drop("rae", "00000000-0000-4000-8000-0000000000a9", "Straddle.mp4", "tiny acrobatics straddle");
+    const saved = await useFile(findUser("rae") as never, "00000000-0000-4000-8000-0000000000a9", "library");
+    expect(saved).toMatchObject({ waiting: true });
+    const staged = readdirSync(path.join(dataDir, "library", "staging")).filter((n) => n.startsWith(`computer-${rae.lib}-`));
+    expect(staged).toHaveLength(1);
+    // a second library of rae's that keeps uploads, to start one in
+    d.prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_rae_all', 'rae', 'All', 'local', '{"upload":"all","setupAt":"2026-11-01T00:00:00.000Z"}', 0)`).run();
+    // as if the clip waiting were 8 GB, with room for 9 GB above the reserve: a 2 GB upload would cross it
+    d.prepare("UPDATE computer_tasks SET input = json_set(input, '$.bytes', ?) WHERE actor = 'rae'").run(8 * 1024 ** 3);
+    process.env.LIBRARY_DISK_RESERVE_GB = "91";
+    const start = () =>
+      app.request("/api/library/lib_rae_all/uploads", { method: "POST", headers: { cookie: cookies.rae!, "content-type": "application/json" }, body: JSON.stringify({ filename: "Big.mp4", size: 2 * 1024 ** 3 }) });
+    try {
+      const refused = await start();
+      expect(refused.status).toBe(507);
+      expect(await refused.json()).toMatchObject({ code: "disk_reserve" });
+      // 8 days later the save is dropped: its bytes go, and the inbox says so with the file's name (it came from no chat)
+      d.prepare("UPDATE computer_tasks SET created_at = ? WHERE actor = 'rae'").run(Date.now() - 8 * 86_400_000);
+      await taskTick();
+      expect(d.prepare("SELECT state, error FROM computer_tasks WHERE actor = 'rae'").get()).toEqual({ state: "failed", error: "expired" });
+      for (let i = 0; i < 50 && !existsSync(path.join(dataDir, "review", "notifications", "rae.json")); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(existsSync(path.join(dataDir, "library", "staging", staged[0]!))).toBe(false);
+      const inbox = JSON.parse(readFileSync(path.join(dataDir, "review", "notifications", "rae.json"), "utf8")) as Array<{ kind: string; name: string; text: string }>;
+      expect(inbox[0]).toMatchObject({ kind: "failed", name: "Straddle.mp4", text: expect.stringContaining("“Straddle.mp4” was not saved") });
+      expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(rae.lib)).toEqual({ n: 0 });
+      // its bytes no longer hold the disk
+      expect((await start()).status).toBe(201);
+    } finally {
+      process.env.LIBRARY_DISK_RESERVE_GB = "0";
+    }
+  });
+});
+
+describe("what a waiting save was for happens once it lands", () => {
+  it("Finals: under Finals upload none it waits (not a failure), then goes into Final exports and its piece", async () => {
+    const fin = await account("fin", "none");
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.finalsUpload', 'none') WHERE id = ?").run(fin.lib);
+    const file = path.join(root, "fin-final.mp4");
+    writeFileSync(file, "tiny acrobatics finals cut");
+    const out = await addToFinals({ owner: "fin", libraryId: fin.lib, label: "Tiny finals", item: null, kind: "export", width: 1080, height: 1920 }, { file, filename: "Tiny finals.mp4" });
+    expect(out).toMatchObject({ ok: false, code: "waiting", error: expect.stringMatching(/^Fin's Mac is offline\. I'll save it to Final exports/) });
+    fin.online();
+    expect(await fin.takes()).toBe("done");
+    const at = path.join(fin.finished, "Tiny finals.mp4");
+    const row = d
+      .prepare("SELECT v.mac_path, p.label FROM piece_items i JOIN pieces p ON p.id = i.piece_id JOIN asset_versions v ON v.id = i.version_id WHERE p.library_id = ?")
+      .get(fin.lib);
+    expect(row).toEqual({ mac_path: at, label: "Tiny finals" });
+  });
+
+  it("sound effects: their type, source and licence once they land", async () => {
+    const sid = await account("sid", "none");
+    const r = await findAndAdd("sid", { count: 1 });
+    expect(r).toMatchObject({ note: expect.stringMatching(/^Sid's Mac is offline/) });
+    expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(sid.lib)).toEqual({ n: 0 });
+    sid.online();
+    expect(await sid.takes()).toBe("done");
+    const a = d.prepare("SELECT id FROM assets WHERE library_id = ?").get(sid.lib) as { id: string };
+    const tags = (d.prepare("SELECT tag FROM asset_tags WHERE asset_id = ?").all(a.id) as { tag: string }[]).map((t) => t.tag);
+    expect(tags).toContain("sound effect");
+    expect(tags.length).toBeGreaterThan(1); // its type too
+    expect(d.prepare("SELECT license, author FROM asset_sources WHERE asset_id = ?").get(a.id)).toEqual({ license: "CC0", author: "Kenney" });
+  });
+
+  it("a voice: its edit is made and started once the voice lands", async () => {
+    const vo = await account("vo", "none");
+    saveMyKey("vo", "ELEVENLABS_API_KEY", "vos-own");
+    await elevenLabs("tiny acrobatics spoken script", async () => {
+      const made = await makeVoice(findUser("vo") as never, { text: "Roll, then reach", voice: "Sam", name: "Roll", edit: { name: "Tiny voice edit", versions: 1, targetS: 0 } });
+      expect(made).toEqual({ waiting: expect.stringMatching(/^Vo's Mac is offline/) });
+    });
+    expect(allEdits().some((e) => e.name === "Tiny voice edit")).toBe(false);
+    vo.online();
+    expect(await vo.takes()).toBe("done");
+    const v = d.prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ?").get(vo.lib) as { id: string };
+    const edit = allEdits().find((e) => e.name === "Tiny voice edit");
+    expect(edit?.sources).toEqual([v.id]);
+    expect(d.prepare("SELECT kind, state FROM edit_jobs WHERE edit_id = ?").get(edit!.id)).toMatchObject({ kind: "analyze" });
   });
 });
 

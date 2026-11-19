@@ -319,7 +319,8 @@ export async function useFile(
     const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], lib, !sound, sound);
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
-    if ("waiting" in saved) return { to, id: "", name: title, href: "/library", note: saved.waiting, waiting: true };
+    // id: the save's own, which names the chat's card for it (library-save:<id>): it ends when the file lands, or is dropped
+    if ("waiting" in saved) return { to, id: saved.save, name: title, href: "/library", note: saved.waiting, waiting: true };
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;
     const a = libraryDb().prepare("SELECT library_id, current_version_id FROM assets WHERE id = ?").get(assetId) as { library_id: string; current_version_id: string };
     const href = `/library?library=${a.library_id}&asset=${assetId}`;

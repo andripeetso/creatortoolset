@@ -25,7 +25,7 @@ export const footageTarget = () => send<FootageTarget>("/api/editor/footage-targ
 export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "POST", e);
 /** The voices of the person's ElevenLabs account, and a voice made from text: saved in the Media Library as a take. */
 export const listVoices = () => send<VoicesView>("/api/editor/voice");
-export const makeVoice = (v: NewVoice) => send<MadeVoice>("/api/editor/voice", "POST", v);
+export const makeVoice = (v: NewVoice) => send<MadeVoice | { waiting: string }>("/api/editor/voice", "POST", v);
 export const getEdit = (id: string) => send<Edit>(base(id));
 export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/run`, "POST", from ? { from } : {});
 export const retryJob = (id: string, jobId: number) => send<Edit>(`${base(id)}/jobs/${jobId}/retry`, "POST");
