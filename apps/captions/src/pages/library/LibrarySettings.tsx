@@ -1,5 +1,4 @@
-import { FOLDER_LABELS } from "@contracts/storage";
-import { LIBRARY_WORDS, PROXY_QUALITIES, hostsOriginals, hostsProxies, levelOf, organizeOf, proxyQualityOf, uploadFrom, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, hostsProxies, levelOf, organizeOf, proxyQualityOf, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status } from "@/components/settings/ui";
@@ -13,6 +12,7 @@ import { Effort } from "./settings/Effort";
 import { Models } from "./settings/Models";
 import { OwnerFolders } from "./settings/OwnerFolders";
 import { RadioList } from "./settings/RadioList";
+import { HostedSwitches } from "./settings/Hosted";
 
 /**
  * The Media Library's settings, the owner's (UNIFIED-PRD §3.1), behind one button beside its search (the sheet) and as
@@ -159,36 +159,19 @@ function Proxies({ library, save }: { library: LibrarySummary; save: (s: Partial
 }
 
 /**
- * Hosted media: the master (Upload to server, which turns Proxies on), Originals and Proxies while it is on, and Final
- * exports as its own switch (independent of the master). On This Mac, with the server on this computer, the master is off
- * and disabled: there is no server to upload to.
+ * Hosted media: the Upload to server master and Final exports, Proxies and Originals under it in any mix, the same
+ * component as setup's last step (./settings/Hosted.tsx). On This Mac, with the server on this computer, there is no
+ * server to upload to: the row says so and nothing else is shown.
  */
 function Hosted({ library, watch, save }: { library: LibrarySummary; watch: WatchStatus; save: (s: Partial<Settings>) => Promise<unknown> }) {
-  const u = library.settings.upload;
-  const originals = hostsOriginals(u);
-  const proxies = hostsProxies(u);
-  const master = originals || proxies;
   const noServer = !!thisMacBridge() && watch.allowed;
-  const finals = library.settings.finalsUpload ?? "all";
-  const finalsOn = hostsOriginals(finals) || hostsProxies(finals);
   return (
     <Card>
-      <Row
-        title={LIBRARY_WORDS.uploadToServer}
-        status={noServer ? <Status>{LIBRARY_WORDS.noServer}</Status> : undefined}
-        control={<Switch aria-label={LIBRARY_WORDS.uploadToServer} checked={master && !noServer} disabled={noServer} onCheckedChange={(on) => void save({ upload: uploadFrom(false, on) })} />}
-      />
-      {master && (
-        <>
-          <Row title={LIBRARY_WORDS.originals} control={<Switch aria-label={LIBRARY_WORDS.originals} checked={originals} onCheckedChange={(on) => void save({ upload: uploadFrom(on, proxies) })} />} />
-          <Row title={LIBRARY_WORDS.proxies} control={<Switch aria-label={LIBRARY_WORDS.proxies} checked={proxies} onCheckedChange={(on) => void save({ upload: uploadFrom(originals, on) })} />} />
-        </>
+      {noServer ? (
+        <Row title={LIBRARY_WORDS.uploadToServer} status={<Status>{LIBRARY_WORDS.noServer}</Status>} />
+      ) : (
+        <HostedSwitches value={hostedOf(library.settings)} onChange={(m) => void save(hostedSettings(m, library.settings.finalsUpload))} />
       )}
-      <Row
-        title={FOLDER_LABELS.library}
-        tip={LIBRARY_WORDS.finalExportsUpload.tip}
-        control={<Switch aria-label={FOLDER_LABELS.library} checked={finalsOn} onCheckedChange={(on) => void save({ finalsUpload: on ? (finals === "none" ? "all" : finals) : "none" })} />}
-      />
     </Card>
   );
 }

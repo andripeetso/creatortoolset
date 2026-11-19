@@ -169,14 +169,11 @@ export default function LibraryPage() {
   const watchLoad = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!));
   const watch = watchLoad.data;
   const adding = !!watch?.folders.some((f) => f.adding > 0);
-  // the setup sheet: the owner's only (watch is theirs alone), opened by ?setup=1 or by itself until the library is set up
-  const setupParam = linked.get("setup") === "1";
-  const [setupClosed, setSetupClosed] = useState(false);
-  const setupOpen = !!watch && (setupParam || (!library?.settings.setupAt && !setupClosed));
-  const closeSetup = () => {
-    setSetupClosed(true);
-    if (setupParam) navigate("/library", { replace: true });
-  };
+  // the setup: the owner's only (watch is theirs alone). Until the library is set up it is the page itself, with no way
+  // around it; after that ?setup=1 opens it again as a sheet
+  const needsSetup = !!watch && !!library && !library.settings.setupAt;
+  const setupOpen = !!watch && linked.get("setup") === "1" && !needsSetup;
+  const closeSetup = () => navigate("/library", { replace: true });
 
   // ?clip= is the clip open (?asset= in older links), ?library= the library when not the first: Back closes the clip,
   // Forward opens it again, a link opens it. Read from the address itself on Back and Forward too: the router's copy can
@@ -920,8 +917,18 @@ export default function LibraryPage() {
     </ClipPick>
   );
 
+  if (needsSetup)
+    return (
+      <div className="flex min-h-dvh flex-col">
+        <AppBar tool="Media Library" trail={library.name}>
+          <ProjectSwitcher />
+        </AppBar>
+        <LibrarySetup inline library={library} watchAllowed={!!watch.allowed} onDone={saved} onClose={() => {}} />
+      </div>
+    );
+
   return (
-    <div className="flex min-h-dvh flex-col" onContextMenu={noBrowserMenu} {...(mayAdd ? drop.props : {})}>
+    <div className="flex min-h-dvh flex-col" onContextMenu={noBrowserMenu} {...(mayAdd && !setupOpen ? drop.props : {})}>
       {drop.dialog}
       {/* where you are and in which workspace; what the page does is on the page itself */}
       <AppBar tool="Media Library" trail={library?.name}>

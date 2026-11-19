@@ -227,6 +227,31 @@ export const hostsNone = (u: LibraryUpload | null | undefined): boolean => !host
 export const uploadFrom = (originals: boolean, proxies: boolean): LibraryUpload =>
   originals && proxies ? "all" : originals ? "originals" : proxies ? "proxies" : "none";
 
+/**
+ * Hosted media as the owner sets it (setup step 5 and the owner page, one component): the Upload to server master, and
+ * under it Final exports, Proxies and Originals in any mix. Off = nothing goes up, final exports included. Stored as the
+ * two values it always was (upload, finalsUpload; a missing finalsUpload is "all", as the server reads it).
+ */
+export interface HostedMix {
+  finals: boolean;
+  proxies: boolean;
+  originals: boolean;
+}
+export const HOSTED_OFF: HostedMix = { finals: false, proxies: false, originals: false };
+/** What the master turns on when there is no earlier mix to bring back (a new library's default). */
+export const HOSTED_DEFAULT: HostedMix = { finals: true, proxies: false, originals: false };
+export const hostedOn = (m: HostedMix): boolean => m.finals || m.proxies || m.originals;
+export const hostedOf = (s: { upload?: LibraryUpload | null; finalsUpload?: LibraryUpload | null }): HostedMix => ({
+  finals: !hostsNone(s.finalsUpload ?? "all"),
+  proxies: hostsProxies(s.upload),
+  originals: hostsOriginals(s.upload),
+});
+/** The mix as stored; `finalsWas` keeps a finals value other than "all" (Smaller copies) while Final exports stays on. */
+export const hostedSettings = (m: HostedMix, finalsWas?: LibraryUpload | null): { upload: LibraryUpload; finalsUpload: LibraryUpload } => ({
+  upload: uploadFrom(m.originals, m.proxies),
+  finalsUpload: m.finals ? (finalsWas && !hostsNone(finalsWas) ? finalsWas : "all") : "none",
+});
+
 /** Proxy quality (UNIFIED-PRD §4.1): short side cap, CRF and max video rate; never upscaled, never above 0.8 × the source's rate. */
 export type ProxyQuality = "low" | "standard" | "high";
 export const PROXY_QUALITIES: readonly { value: ProxyQuality; label: string; short: number; crf: number; maxKbps: number }[] = [
@@ -783,6 +808,8 @@ export const LIBRARY_WORDS = {
   originals: "Originals",
   proxies: "Proxies",
   finalExportsUpload: { label: "Final exports", tip: "Finished videos are uploaded so they can be reviewed and shared." },
+  proxiesUpload: { tip: "Smaller copies of every clip are uploaded, so your team can play and edit them. The originals stay on your computers." },
+  originalsUpload: { tip: "The full files are uploaded, so they can be downloaded anywhere." },
   noServer: "No server connected",
   sourceMediaTip: "Where your media is kept, with all its subfolders. Files you add in the app are saved to the first folder.",
   projectFilesTip: "Where project work is saved: edits, renders and test renders.",
@@ -790,6 +817,9 @@ export const LIBRARY_WORDS = {
   insideSourceMedia: "Inside Source media: not imported as footage",
   addFolder: "Add folder…",
   setFolder: "Set…",
+  chooseFolder: "Choose…",
+  changeFolder: "Change…",
+  removeFolder: "Remove",
   analysisOff: "Analysis is Off",
   smartFoldersOff: "Smart folders sort clips by their descriptions, so Analysis has to be on.",
   proxiesHostedOn: "On while proxies are hosted",

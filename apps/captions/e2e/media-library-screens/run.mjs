@@ -110,10 +110,13 @@ async function go(page, route) {
   await page.waitForTimeout(800);
 }
 
-/** Continue through the setup dialog, capturing each step. */
+/** The setup: the Library page itself until it is set up, a sheet when opened again. */
+const setupOf = (page) => page.locator(`[role="dialog"], section[aria-label="Let's set up the Media Library"]`).first();
+
+/** Continue through the setup, capturing each step. */
 async function setupSteps(page, theme) {
   for (let step = 1; step <= 5; step++) {
-    const dialog = page.getByRole("dialog").first();
+    const dialog = setupOf(page);
     if (!(await dialog.count())) break;
     await capture(page, `S-setup-step${step}`, theme);
     const next = dialog.getByRole("button", { name: /^(Continue|Done)$/ });
@@ -135,6 +138,22 @@ try {
     await login(owner, OWNER);
     const op = await owner.newPage();
     await op.addInitScript(SKIP_APP_SETUP);
+    // the Folders step as the Mac app shows it (its folder rows, picked in the app's folder window): a page that says it
+    // is in the Mac app; nothing is pressed past it
+    const asMac = await owner.newPage();
+    await asMac.addInitScript(SKIP_APP_SETUP);
+    // set on the parsed <html> (an init script runs before it exists), before the app's scripts run
+    await asMac.addInitScript(() => new MutationObserver(() => document.documentElement?.setAttribute("data-mac-this-mac", "1")).observe(document, { childList: true, subtree: true }));
+    await go(asMac, "/library");
+    await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
+    await asMac.waitForTimeout(500);
+    await capture(asMac, "S-setup-folders-scratch-mac", theme);
+    await setupOf(asMac).getByRole("button", { name: "Back" }).click();
+    await setupOf(asMac).getByRole("radio", { name: /Use my existing folders/ }).click();
+    await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
+    await asMac.waitForTimeout(500);
+    await capture(asMac, "S-setup-folders-existing-mac", theme);
+    await asMac.close();
     await go(op, "/library");
     await setupSteps(op, theme);
     await go(op, "/settings/library");

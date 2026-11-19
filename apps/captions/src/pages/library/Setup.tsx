@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { Cloud, FolderOpen, Gauge, Laptop, ScanSearch, type LucideIcon } from "lucide-react";
+import { useState, type DragEvent, type ReactNode } from "react";
+import { Cloud, FolderOpen, Gauge, ScanSearch, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -9,9 +9,12 @@ import { Card, InfoTip, Row } from "@/components/settings/kit-rows";
 import { hasThisMac } from "@/components/settings/ThisMacSection";
 import { call, STORAGE_API } from "@/components/settings/StorageRows";
 import { updateLibrary } from "@/lib/library";
+import { chooseFolderOnMac, droppedOnMac, pairThisMac } from "@/lib/thisMac";
+import { thisMacDevice } from "@/lib/providers";
 import { useAuth, useMe } from "@/lib/auth";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { ModelRows } from "./settings/Models";
+import { HostedSwitches } from "./settings/Hosted";
 import { EffortCost } from "./settings/Effort";
 import { cn } from "@/lib/utils";
 import {
@@ -23,8 +26,10 @@ import {
   PROXY_QUALITIES,
   WATCH_MODELS,
   flagsOf,
-  uploadFrom,
+  HOSTED_DEFAULT,
+  hostedSettings,
   type AnalysisLevel,
+  type HostedMix,
   type LibrarySettings,
   type LibrarySummary,
   type ProxyQuality,
@@ -36,7 +41,9 @@ import { EXPORTS_NAME, FOLDER_LABELS, LIBRARY_NAME, LIBRARY_SUBFOLDERS, PROJECTS
  * The owner's Media Library setup (UNIFIED-PRD §3.3, SCREENS-COPY §4): one fixed-size sheet, the steps in dependency
  * order (where the media is, then proxies, analysis and organization, then hosted media on a server or Cloud). Done
  * writes the folder rows through the one folder list, then the library settings with setupAt, then dispatches
- * LIBRARY_SETUP_DONE. Finish later closes it and writes nothing.
+ * LIBRARY_SETUP_DONE. Until the library is set up it is the Library page itself (`inline`: no way to close it); opened
+ * again later (?setup=1) it is a sheet, and Finish later closes it and writes nothing. Folders are picked in the Mac
+ * app's folder window, or dropped on the step; a drop on the setup never reaches the Library behind it.
  */
 
 export type Kind = "mac" | "server" | "cloud";
@@ -45,10 +52,9 @@ type Step = "start" | "folders" | "proxy" | "analysis" | "hosted";
 
 interface Answers {
   start: Start;
-  /** Use default folders: the scratch paths, or Project files and Final exports beside the first Source media folder */
-  defaults: boolean;
-  /** Source media folders on this computer (scratch with the switch off: the one folder) */
+  /** Source media folders chosen on this computer; from scratch, none = the default folder */
   sources: string[];
+  /** "" = the default: beside the first Source media folder (from scratch, in the workspace's folder) */
   projects: string;
   exports: string;
   /** How should imported media behave? true: copied into Source media (the default) */
@@ -61,15 +67,11 @@ interface Answers {
   /** dollars a month; null: No limit (the default for a new library) */
   budget: number | null;
   organize: "ai" | "own";
-  upload: boolean;
-  originals: boolean;
-  proxies: boolean;
-  finals: boolean;
+  hosted: HostedMix;
 }
 
 const START: Answers = {
   start: "scratch",
-  defaults: true,
   sources: [],
   projects: "",
   exports: "",
@@ -80,10 +82,7 @@ const START: Answers = {
   watchModel: WATCH_MODELS[0]!.value,
   budget: null,
   organize: "ai",
-  upload: false,
-  originals: false,
-  proxies: false,
-  finals: true,
+  hosted: HOSTED_DEFAULT,
 };
 
 const stepsFor = (kind: Kind): Step[] => (kind === "mac" ? ["start", "folders", "proxy", "analysis"] : ["start", "folders", "proxy", "analysis", "hosted"]);
@@ -98,23 +97,25 @@ const TITLE: Record<Step, string> = {
 
 const ICON: Record<Step, LucideIcon> = { start: FolderOpen, folders: FolderOpen, proxy: Gauge, analysis: ScanSearch, hosted: Cloud };
 
-const NEXT_TO_SOURCE = "Project files and Final exports are made next to your first Source media folder.";
+const BESIDE_SOURCE = "Beside your first Source media folder";
+const NO_COMPUTER = "Connect this Mac to the server first: Settings → Computers.";
 const MAC_DOWNLOAD = "https://creatortoolset.com/download";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Hosted media's Proxies forces the proxy switch on (SCREENS-COPY §1): the answer is kept, and only read here. */
-const proxiesHosted = (a: Answers): boolean => a.upload && a.proxies;
+/** Hosted media's Proxies forces the proxy switch on (SCREENS-COPY §1). */
+const proxiesHosted = (a: Answers): boolean => a.hosted.proxies;
+/** No folder picked by hand: the default folders (the owner page's Use default folders). */
+const defaultsOf = (a: Answers): boolean => !a.projects && !a.exports && (a.start === "existing" || a.sources.length === 0);
 
 /** The folders the answers name, as rows of the one folder list (the scratch paths sit in ~/Movies/Creator Toolset/<workspace>). */
 export function rowsOf(a: Answers, workspace: string): { role: StorageRole; path: string }[] {
   const base = `~/Movies/${LIBRARY_NAME}/${workspace.replace(/\//g, "-")}`;
-  const scratchDefault = a.start === "scratch" && a.defaults;
-  const footage = scratchDefault ? [`${base}/${LIBRARY_SUBFOLDERS.footage}`] : a.start === "scratch" ? a.sources.slice(0, 1) : a.sources;
+  const footage = a.start === "scratch" ? [a.sources[0] ?? `${base}/${LIBRARY_SUBFOLDERS.footage}`] : a.sources;
   // Project files and Final exports: beside the first Source media folder (the parent of it)
-  const near = a.start === "scratch" ? base : (footage[0] ?? "").replace(/\/[^/]*\/?$/, "");
-  const projects = a.defaults ? `${near}/${PROJECTS_NAME}` : a.projects;
-  const exports = a.defaults ? `${near}/${EXPORTS_NAME}` : a.exports;
+  const near = a.start === "scratch" && a.sources.length === 0 ? base : (footage[0] ?? "").replace(/\/[^/]*\/?$/, "");
+  const projects = a.projects || `${near}/${PROJECTS_NAME}`;
+  const exports = a.exports || `${near}/${EXPORTS_NAME}`;
   return [
     ...footage.map((path) => ({ role: "footage" as const, path })),
     { role: "projects", path: projects },
@@ -122,12 +123,8 @@ export function rowsOf(a: Answers, workspace: string): { role: StorageRole; path
   ];
 }
 
-/** The folders step is complete: the scratch Set… rows, or at least one Source media folder and, switch off, both others. */
-const folderOk = (a: Answers): boolean => {
-  if (a.start === "scratch" && a.defaults) return true;
-  if (a.start === "scratch") return a.sources.length > 0 && !!a.projects && !!a.exports;
-  return a.sources.length > 0 && (a.defaults || (!!a.projects && !!a.exports));
-};
+/** The folders step is complete: from scratch always (the defaults), with existing folders once one is picked. */
+const folderOk = (a: Answers): boolean => a.start === "scratch" || a.sources.length > 0;
 
 /** The small picture of a Smart folders / Organize yourself option (decoration, read by no one). */
 function OrganizeArt({ smart }: { smart: boolean }) {
@@ -154,14 +151,14 @@ function OrganizeArt({ smart }: { smart: boolean }) {
 /** A radio option: the name, its ⓘ tip, a status line when it says why it is off, and an optional picture. */
 function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; disabled?: boolean; label: string; tip?: string; status?: string; art?: ReactNode; onPick: () => void }) {
   return (
-    <div className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5", on ? "border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_7%,transparent)]" : "border-border/70")}>
+    <div className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--tint)]", on ? "border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_7%,transparent)]" : "border-border/70")}>
       <button
         type="button"
         role="radio"
         aria-checked={on}
         disabled={disabled}
         onClick={onPick}
-        className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] disabled:opacity-50"
+        className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none disabled:opacity-50"
       >
         <span className={cn("size-4 shrink-0 rounded-full border", on ? "border-[var(--tint)] bg-[var(--tint)] shadow-[inset_0_0_0_3px_var(--background)]" : "border-foreground/25")} />
         <span className="min-w-0 flex-1">
@@ -175,72 +172,30 @@ function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; 
   );
 }
 
-/** The computer → server picture for Hosted media (SCREENS-COPY §4 step 5): the current state is highlighted. */
-function HostedPicture({ state }: { state: "off" | "proxies" | "originals" }) {
-  const captions: [typeof state, string][] = [
-    ["off", "Off: media stays on your computers."],
-    ["proxies", "Proxies: the team plays every clip from the server."],
-    ["originals", "Originals: the full files are on the server too."],
-  ];
-  return (
-    <div className="flex items-center gap-3">
-      <div aria-hidden className="flex shrink-0 items-center gap-1 text-foreground/60">
-        <Laptop className="size-5" />
-        <span className="text-xs">→</span>
-        <Cloud className="size-5" />
-      </div>
-      <ul className="min-w-0 space-y-0.5 text-xs">
-        {captions.map(([s, text]) => (
-          <li key={s} className={s === state ? "font-medium text-foreground" : "text-muted-foreground"} aria-current={s === state ? "true" : undefined}>
-            {text}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
+/** A long path breaks after a slash, never inside a folder's name (a zero-width space; shown only, the path is kept as it is). */
+const wrapAtSlashes = (p: string) => p.replace(/\//g, "/\u200b");
 
-/** A folder row: its paths (or Not set), and a button that opens a typed path. `submit`: the typed path's button. */
-function FolderRow({ title, tip, paths, button, submit, onAdd }: { title: string; tip: string; paths: string[]; button: string; submit: string; onAdd: (p: string) => void }) {
-  const [typing, setTyping] = useState(false);
-  const [text, setText] = useState("");
+/** A folder row: its path (or `empty`), and a button that opens the Mac app's folder window. */
+function FolderRow({ title, tip, path, empty = LIBRARY_WORDS.notSet, onPick }: { title: string; tip: string; path: string | null; empty?: string; onPick: (p: string) => void }) {
   return (
     <Row
       title={title}
       tip={tip}
-      status={paths.length ? <span className="font-mono">{paths.join(", ")}</span> : LIBRARY_WORDS.notSet}
+      status={path ? <span title={path}>{wrapAtSlashes(path)}</span> : empty}
       control={
-        <Button size="sm" variant="outline" onClick={() => setTyping((t) => !t)}>
-          {button}
+        <Button size="sm" variant="outline" onClick={() => void chooseFolderOnMac().then((p) => p && onPick(p))}>
+          {path ? LIBRARY_WORDS.changeFolder : LIBRARY_WORDS.chooseFolder}
         </Button>
       }
-    >
-      {typing && (
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const p = text.trim();
-            if (!p) return;
-            onAdd(p);
-            setText("");
-            setTyping(false);
-          }}
-        >
-          <Input value={text} onChange={(e) => setText(e.target.value)} aria-label={`${title} folder path`} placeholder="Folder path" className="min-w-0 flex-1 font-mono" autoFocus />
-          <Button type="submit" size="sm" disabled={!text.trim()}>
-            {submit}
-          </Button>
-        </form>
-      )}
-    </Row>
+    />
   );
 }
 
 /**
- * The setup sheet. `watchAllowed`: the server reads this computer's folders (This Mac). `onDone` gets the saved library.
+ * The setup. `watchAllowed`: the server reads this computer's folders (This Mac). `onDone` gets the saved library.
+ * `inline`: the Library page itself until the library is set up, with nothing to close it.
  */
-export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { library: LibrarySummary; watchAllowed: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
+export function LibrarySetup({ library, watchAllowed, inline = false, onDone, onClose }: { library: LibrarySummary; watchAllowed: boolean; inline?: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
   const hosted = useAuth((s) => s.hosted);
   const me = useMe();
   const project = useWorkspace((s) => currentProject(s));
@@ -261,10 +216,33 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
   const videoLevel = levelIdx >= ANALYSIS_LEVELS.findIndex((l) => l.value === "high");
 
   // a row the folder list refuses because it is already there is what the person wanted; the scratch default is made first
-  const addRow = (role: StorageRole, path: string, make: boolean) =>
-    call(`${STORAGE_API}/folders`, "POST", { role, host: THIS_COMPUTER, path, ...(make ? { make: true } : {}) }, workspace.id || undefined).catch((e: unknown) => {
+  const addRow = (host: string, role: StorageRole, path: string, make: boolean) =>
+    call(`${STORAGE_API}/folders`, "POST", { role, host, path, ...(make ? { make: true } : {}) }, workspace.id || undefined).catch((e: unknown) => {
       if (!/already/i.test(message(e))) throw e;
     });
+  // the computer the folders are on: "this computer" where the server runs on it, else this Mac as the server knows it
+  // (paired now when it isn't yet), as Settings → Folders adds them
+  const computer = async (): Promise<string> => {
+    if (kind === "mac") return THIS_COMPUTER;
+    const id = thisMacDevice() ?? (await pairThisMac())?.device;
+    if (!id) throw new Error(NO_COMPUTER);
+    return id;
+  };
+  const addSources = (paths: string[]) => set({ sources: a.start === "scratch" ? paths.slice(0, 1) : [...a.sources, ...paths.filter((p) => !a.sources.includes(p))] });
+  // Finder folders dropped on the setup: on the Folders step they are the Source media folders; anywhere, nothing is imported
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (step !== "folders" || !hasThisMac()) return;
+    void droppedOnMac().then((items) => {
+      const folders = (items ?? []).filter((i) => i.folder).map((i) => i.path);
+      if (folders.length) addSources(folders);
+    });
+  };
+  const holdDrag = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
 
   const finish = async () => {
     setBusy(true);
@@ -272,8 +250,9 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
     try {
       // the folders are rows of the one list; without the Mac app there is no computer to add them on
       if (hasThisMac()) {
-        const made = a.start === "scratch" && a.defaults;
-        for (const r of rowsOf(a, workspace.name)) await addRow(r.role, r.path, made && r.role === "footage");
+        const made = a.start === "scratch" && a.sources.length === 0;
+        const host = await computer();
+        for (const r of rowsOf(a, workspace.name)) await addRow(host, r.role, r.path, made && r.role === "footage");
       }
       const settings: Partial<LibrarySettings> = {
         importMode: a.copy ? "copy" : "in-place",
@@ -284,10 +263,10 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
         ...flagsOf(a.effort),
         timelineModel: a.watchModel,
         lookBudget: a.budget,
-        defaultFolders: a.defaults,
+        defaultFolders: defaultsOf(a),
         setupAt: new Date().toISOString(),
         // a library on This Mac has no server to upload to, so the hosted answers stay as they are
-        ...(kind === "mac" ? {} : { upload: a.upload ? uploadFrom(a.originals, a.proxies) : "none", finalsUpload: a.finals ? "all" : "none" }),
+        ...(kind === "mac" ? {} : hostedSettings(a.hosted)),
       };
       const saved = await updateLibrary(library.id, { settings });
       window.dispatchEvent(new CustomEvent(LIBRARY_SETUP_DONE, { detail: { workspace: workspace.id } }));
@@ -300,7 +279,6 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
   };
 
   const next = () => (last ? void finish() : setAt(at + 1));
-  const hostedState = !a.upload ? "off" : a.originals ? "originals" : "proxies";
 
   const body = (): ReactNode => {
     if (step === "start")
@@ -312,6 +290,10 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
       );
 
     if (step === "folders") {
+      const rows = rowsOf(a, workspace.name);
+      const projects = rows.at(-2)!.path;
+      const exports = rows.at(-1)!.path;
+      const beside = a.start === "existing" && a.sources.length === 0;
       return (
         <div className="space-y-5">
           {!hasThisMac() ? (
@@ -321,40 +303,46 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
                 {LIBRARY_WORDS.downloadMacApp}
               </Button>
             </div>
-          ) : a.start === "scratch" ? (
-            <Card>
-              <Row title={LIBRARY_WORDS.defaultFolders.label} tip={LIBRARY_WORDS.defaultFolders.tip} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
-              {!a.defaults && (
-                <>
-                  <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} paths={a.sources} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ sources: [p] })} />
-                  <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} paths={a.projects ? [a.projects] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ projects: p })} />
-                  <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} paths={a.exports ? [a.exports] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ exports: p })} />
-                </>
-              )}
-            </Card>
           ) : (
             <>
               <Card>
-                <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} paths={a.sources} button={LIBRARY_WORDS.addFolder} submit="Add" onAdd={(p) => set({ sources: [...a.sources, p] })} />
-              </Card>
-              <Card>
-                <Row title={`${PROJECTS_NAME} and ${EXPORTS_NAME}`} tip={NEXT_TO_SOURCE} control={<Switch aria-label={LIBRARY_WORDS.defaultFolders.label} checked={a.defaults} onCheckedChange={(v) => set({ defaults: v })} />} />
-                {!a.defaults && (
-                  <>
-                    <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} paths={a.projects ? [a.projects] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ projects: p })} />
-                    <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} paths={a.exports ? [a.exports] : []} button={LIBRARY_WORDS.setFolder} submit="Set" onAdd={(p) => set({ exports: p })} />
-                  </>
+                {a.start === "scratch" ? (
+                  <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} path={rows[0]!.path} onPick={(p) => set({ sources: [p] })} />
+                ) : (
+                  <Row
+                    title={FOLDER_LABELS.footage}
+                    tip={LIBRARY_WORDS.sourceMediaTip}
+                    status={a.sources.length ? undefined : LIBRARY_WORDS.notSet}
+                    control={
+                      <Button size="sm" variant="outline" onClick={() => void chooseFolderOnMac().then((p) => p && addSources([p]))}>
+                        {LIBRARY_WORDS.addFolder}
+                      </Button>
+                    }
+                  >
+                    {a.sources.map((p) => (
+                      <div key={p} className="flex items-center gap-2">
+                        <span title={p} className="min-w-0 flex-1 text-xs text-muted-foreground">{wrapAtSlashes(p)}</span>
+                        <Button size="sm" variant="ghost" className="h-7" onClick={() => set({ sources: a.sources.filter((x) => x !== p) })}>
+                          {LIBRARY_WORDS.removeFolder}
+                        </Button>
+                      </div>
+                    ))}
+                  </Row>
                 )}
+              </Card>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">{LIBRARY_WORDS.importTitle}</p>
+                <div role="radiogroup" aria-label={LIBRARY_WORDS.importTitle} className="space-y-2">
+                  <Pick on={a.copy} label={LIBRARY_WORDS.importCopy.label} tip={LIBRARY_WORDS.importCopy.tip} onPick={() => set({ copy: true })} />
+                  <Pick on={!a.copy} label={LIBRARY_WORDS.importInPlace.label} tip={LIBRARY_WORDS.importInPlace.tip} onPick={() => set({ copy: false })} />
+                </div>
+              </div>
+              <Card>
+                <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} path={beside && !a.projects ? null : projects} empty={BESIDE_SOURCE} onPick={(p) => set({ projects: p })} />
+                <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} path={beside && !a.exports ? null : exports} empty={BESIDE_SOURCE} onPick={(p) => set({ exports: p })} />
               </Card>
             </>
           )}
-          <div className="space-y-2">
-            <p className="text-sm font-medium">{LIBRARY_WORDS.importTitle}</p>
-            <div role="radiogroup" aria-label={LIBRARY_WORDS.importTitle} className="space-y-2">
-              <Pick on={a.copy} label={LIBRARY_WORDS.importCopy.label} tip={LIBRARY_WORDS.importCopy.tip} onPick={() => set({ copy: true })} />
-              <Pick on={!a.copy} label={LIBRARY_WORDS.importInPlace.label} tip={LIBRARY_WORDS.importInPlace.tip} onPick={() => set({ copy: false })} />
-            </div>
-          </div>
         </div>
       );
     }
@@ -472,22 +460,9 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
 
     // hosted: only on a server or Cloud
     return (
-      <div className="space-y-5">
-        <Card>
-          <Row
-            title={LIBRARY_WORDS.uploadToServer}
-            control={<Switch aria-label={LIBRARY_WORDS.uploadToServer} checked={a.upload} onCheckedChange={(v) => set({ upload: v, ...(v ? { proxies: true, proxy: true } : { proxies: false, originals: false }) })} />}
-          />
-          {a.upload && (
-            <>
-              <Row title={LIBRARY_WORDS.originals} control={<Switch aria-label={LIBRARY_WORDS.originals} checked={a.originals} onCheckedChange={(v) => set({ originals: v })} />} />
-              <Row title={LIBRARY_WORDS.proxies} control={<Switch aria-label={LIBRARY_WORDS.proxies} checked={a.proxies} onCheckedChange={(v) => set({ proxies: v, ...(v ? { proxy: true } : {}) })} />} />
-            </>
-          )}
-          <Row title={LIBRARY_WORDS.finalExportsUpload.label} tip={LIBRARY_WORDS.finalExportsUpload.tip} control={<Switch aria-label={LIBRARY_WORDS.finalExportsUpload.label} checked={a.finals} onCheckedChange={(v) => set({ finals: v })} />} />
-        </Card>
-        <HostedPicture state={hostedState} />
-      </div>
+      <Card>
+        <HostedSwitches value={a.hosted} onChange={(m) => set({ hosted: m })} />
+      </Card>
     );
   };
 
@@ -503,44 +478,67 @@ export function LibrarySetup({ library, watchAllowed, onDone, onClose }: { libra
             : `Choose what goes to ${serverName}, so your team can play it.`;
   const Icon = ICON[step];
 
-  return (
-    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent className="flex h-[min(38rem,calc(100dvh-2rem))] w-[min(36rem,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
-        <div className="space-y-2 px-6 pb-3 pt-6">
-          <span aria-hidden className="grid size-11 place-items-center rounded-2xl bg-[color-mix(in_srgb,var(--tint)_12%,transparent)] text-[var(--tint)]">
-            <Icon className="size-5" />
-          </span>
-          <DialogTitle className="text-xl font-semibold">{TITLE[step]}</DialogTitle>
-          <DialogDescription className="text-sm text-muted-foreground">{lead}</DialogDescription>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          {body()}
-          {error && (
-            <p role="alert" className="mt-3 text-sm text-destructive">
-              {error}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center justify-between gap-3 border-t px-6 py-4">
+  const head = (
+    <>
+      <span aria-hidden className="grid size-11 place-items-center rounded-2xl bg-[color-mix(in_srgb,var(--tint)_12%,transparent)] text-[var(--tint)]">
+        <Icon className="size-5" />
+      </span>
+      {inline ? <h1 className="text-xl font-semibold">{TITLE[step]}</h1> : <DialogTitle className="text-xl font-semibold">{TITLE[step]}</DialogTitle>}
+      {inline ? <p className="text-sm text-muted-foreground">{lead}</p> : <DialogDescription className="text-sm text-muted-foreground">{lead}</DialogDescription>}
+    </>
+  );
+  const sheet = (
+    <div className="flex h-full min-h-0 flex-col" onDragOver={holdDrag} onDragEnter={holdDrag} onDrop={onDrop}>
+      <div className="space-y-2 px-6 pb-3 pt-6">{head}</div>
+      <div className="flex-1 overflow-y-auto px-6 py-4">
+        {body()}
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t px-6 py-4">
+        {inline ? (
+          <span />
+        ) : (
           <Button variant="ghost" disabled={busy} onClick={onClose}>
             Finish later
           </Button>
-          <div className="flex items-center gap-1.5" aria-label="Steps">
-            {steps.map((s, i) => (
-              <span key={s} className={cn("size-1.5 rounded-full", i === at ? "bg-foreground" : "bg-foreground/20")} />
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            {at > 0 && (
-              <Button variant="outline" disabled={busy} onClick={() => setAt(at - 1)}>
-                Back
-              </Button>
-            )}
-            <Button disabled={busy || !ok} onClick={next}>
-              {last ? "Done" : "Continue"}
-            </Button>
-          </div>
+        )}
+        <div className="flex items-center gap-1.5" aria-label="Steps">
+          {steps.map((s, i) => (
+            <span key={s} className={cn("size-1.5 rounded-full", i === at ? "bg-foreground" : "bg-foreground/20")} />
+          ))}
         </div>
+        <div className="flex items-center gap-2">
+          {at > 0 && (
+            <Button variant="outline" disabled={busy} onClick={() => setAt(at - 1)}>
+              Back
+            </Button>
+          )}
+          <Button disabled={busy || !ok} onClick={next}>
+            {last ? "Done" : "Continue"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // not set up yet: the page is the setup, in the sheet's own size, with nothing to close it
+  if (inline)
+    return (
+      <div className="flex flex-1 items-start justify-center px-4 py-8">
+        <section aria-label={LIBRARY_WORDS.setupTitle} className="h-[min(38rem,calc(100dvh-8rem))] w-[min(36rem,100%)] overflow-hidden rounded-2xl border bg-background shadow-sm">
+          {sheet}
+        </section>
+      </div>
+    );
+  return (
+    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      {/* no option focused on open: the first one showed a focus ring before anything was pressed */}
+      <DialogContent onOpenAutoFocus={(e) => e.preventDefault()} className="flex h-[min(38rem,calc(100dvh-2rem))] w-[min(36rem,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+        {sheet}
       </DialogContent>
     </Dialog>
   );

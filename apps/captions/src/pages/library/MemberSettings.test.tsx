@@ -73,16 +73,19 @@ describe("the workspace's settings, read only", () => {
   it("shows the server name, Hosted media in words and this workspace's rendering, with no 'set by'", async () => {
     await show(<MemberSettings library={lib("proxies", { finalsUpload: "all" })} />);
     expect(host.textContent).toContain("Creator Toolset Cloud");
-    expect(host.textContent).toContain("Proxies and final exports");
+    expect(host.textContent).toContain("Final exports and proxies"); // replaced (CEO 11-19): the list order, Final exports first
     expect(host.textContent).toContain("Server rendering");
     expect(host.textContent).not.toContain("set by");
   });
 
-  it("says Final exports alone when Upload to server is off and Final exports is on", () => {
-    expect(hostedWords({ upload: "none", finalsUpload: "all" } as LibrarySummary["settings"])).toBe("Final exports");
-    expect(hostedWords({ upload: "none" } as LibrarySummary["settings"])).toBe("Off");
-    expect(hostedWords({ upload: "originals" } as LibrarySummary["settings"])).toBe("Originals");
-    expect(hostedWords({ upload: "all" } as LibrarySummary["settings"])).toBe("Originals and proxies");
+  // replaced (CEO 11-19): the value lists what the owner sends up; a missing finalsUpload is "all", as the server reads it
+  it("lists what is uploaded, or Off", () => {
+    const words = (s: object) => hostedWords(s as LibrarySummary["settings"]);
+    expect(words({ upload: "none", finalsUpload: "all" })).toBe("Final exports");
+    expect(words({ upload: "none", finalsUpload: "none" })).toBe("Off");
+    expect(words({ upload: "originals", finalsUpload: "none" })).toBe("Originals");
+    expect(words({ upload: "proxies" })).toBe("Final exports and proxies");
+    expect(words({ upload: "all", finalsUpload: "all" })).toBe("Final exports, proxies and originals");
   });
 
   it("says the library isn't set up yet, without the owner's sections", async () => {

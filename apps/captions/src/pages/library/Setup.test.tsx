@@ -18,9 +18,19 @@ const h = vi.hoisted(() => ({
   updates: [] as { id: string; settings: Record<string, unknown> }[],
   events: [] as CustomEvent[],
   failMake: false,
+  /** what the Mac app's folder window answers, in order */
+  picks: [] as string[],
+  /** the Finder items of the drag dropped on the window */
+  dropped: [] as { path: string; folder: boolean }[],
+  paired: null as { device: string } | null,
 }));
 
 vi.mock("@/components/settings/ThisMacSection", () => ({ hasThisMac: () => h.mac }));
+vi.mock("@/lib/thisMac", () => ({
+  chooseFolderOnMac: async () => h.picks.shift() ?? null,
+  droppedOnMac: async () => h.dropped,
+  pairThisMac: async () => h.paired,
+}));
 vi.mock("@/components/settings/StorageRows", () => ({
   STORAGE_API: "/api/devices/storage",
   call: async (url: string, _method: string, body: Record<string, unknown>, workspace?: string | null) => {
@@ -70,6 +80,10 @@ beforeEach(() => {
   h.updates = [];
   h.events = [];
   h.failMake = false;
+  h.picks = [];
+  h.dropped = [];
+  h.paired = null;
+  delete document.documentElement.dataset.macDevice;
   onDone.mockReset();
   onClose.mockReset();
   window.addEventListener(LIBRARY_SETUP_DONE, onEvent);
@@ -83,7 +97,7 @@ afterEach(() => {
   window.removeEventListener(LIBRARY_SETUP_DONE, onEvent);
 });
 
-async function mount(kind: Kind) {
+async function mount(kind: Kind, inline = false) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -91,7 +105,7 @@ async function mount(kind: Kind) {
   act(() => {
     root!.render(
       <MemoryRouter>
-        <LibrarySetup library={library} watchAllowed={kind === "mac"} onDone={onDone} onClose={onClose} />
+        <LibrarySetup library={library} watchAllowed={kind === "mac"} inline={inline} onDone={onDone} onClose={onClose} />
       </MemoryRouter>,
     );
   });
@@ -107,21 +121,11 @@ const press = async (el: HTMLElement | undefined) => {
   await flush();
 };
 const next = () => press(button("Continue"));
-/** writes into a text field by its label, the way a person types (React sees the change) */
-const type = async (label: string, value: string) => {
-  const input = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
-  act(() => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await flush();
-};
-const submit = async (label: string) => {
-  const form = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!.closest("form")!;
-  act(() => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-  await flush();
-};
-const toggle = (label: string) => press(document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) ?? undefined);
+/** a switch by its label, and pressing it */
+const sw = (label: string) => document.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="${label}"]`);
+const toggle = (label: string) => press(sw(label) ?? undefined);
+/** the page's text as read, without the break hints in long paths */
+const shown = () => (document.body.textContent ?? "").replace(/\u200b/g, "");
 const dots = () => document.querySelector('[aria-label="Steps"]')?.children.length ?? 0;
 const folderPaths = () => h.calls.map((c) => c.body.path);
 
@@ -155,22 +159,50 @@ describe("Media Library setup: scratch, This Mac", () => {
     expect(h.events).toEqual([]);
   });
 
-  it("with the default folders switched off, Continue waits until Source media, Project files and Final exports are all set", async () => {
+  it("Finish later is only on the sheet opened again: before setup the page is the setup, with nothing to close it", async () => {
+    await mount("mac", true);
+    expect(document.body.textContent).toContain("Let's set up the Media Library");
+    expect(button("Finish later")).toBeUndefined();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  // replaced (Andri 11-19): folders are picked in the Mac app's folder window, never typed; no Use default folders switch
+  it("Change… picks Source media in the Mac app's folder window; Project files and Final exports go beside it", async () => {
     await mount("mac");
-    await next(); // scratch: to Folders
-    await toggle("Use default folders"); // off: three Set… rows
-    expect(button("Continue")?.disabled).toBe(true);
-    await press(buttons("Set…")[0]); // Source media
-    await type("Source media folder path", "/Volumes/NAS/Media");
-    await submit("Source media folder path");
-    await press(buttons("Set…")[1]); // Project files (the first button stays Set… after its row is set)
-    await type("Project files folder path", "/Volumes/NAS/Projects");
-    await submit("Project files folder path");
-    expect(button("Continue")?.disabled).toBe(true); // Final exports still not set
-    await press(buttons("Set…")[2]);
-    await type("Final exports folder path", "/Volumes/NAS/Exports");
-    await submit("Final exports folder path");
+    await next(); // scratch: to Folders, the defaults shown
+    expect(shown()).toContain("~/Movies/Creator Toolset/Tiny Acrobatics/Source media");
+    expect(document.querySelector('input[type="text"], input:not([type])')).toBeNull(); // nothing to type
+    h.picks = ["/Volumes/NAS/Media/Footage"];
+    await press(buttons("Change…")[0]);
+    expect(shown()).toContain("/Volumes/NAS/Media/Project files");
+    h.picks = ["/Volumes/NAS/Exports"];
+    await press(buttons("Change…")[2]); // Final exports
     expect(button("Continue")?.disabled).toBe(false);
+    await next(); // proxy
+    await next(); // analysis
+    await press(button("Done"));
+    expect(folderPaths()).toEqual(["/Volumes/NAS/Media/Footage", "/Volumes/NAS/Media/Project files", "/Volumes/NAS/Exports"]);
+    expect(h.calls.map((c) => c.body.make)).toEqual([undefined, undefined, undefined]); // a picked folder is there already
+    expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: false });
+  });
+
+  it("a Finder folder dropped on the Folders step becomes Source media, and the drop goes no further", async () => {
+    const behind = vi.fn();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const library = { id: "lib_1", name: "Tiny", storage: "local" as const, settings: {} };
+    // the Library page behind it takes drops as imports (its onDrop)
+    act(() => root!.render(<MemoryRouter><div onDrop={behind}><LibrarySetup inline library={library as never} watchAllowed onDone={onDone} onClose={onClose} /></div></MemoryRouter>));
+    await flush();
+    await next();
+    h.dropped = [{ path: "/Volumes/NAS/Trips", folder: true }, { path: "/Users/tiny/a.mp4", folder: false }];
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: { files: [], items: [], types: ["Files"] } });
+    await act(async () => void host!.querySelector("section > div")!.dispatchEvent(drop));
+    await flush();
+    expect(shown()).toContain("/Volumes/NAS/Trips");
+    expect(behind).not.toHaveBeenCalled();
   });
 });
 
@@ -180,9 +212,8 @@ describe("Media Library setup: existing folders", () => {
     await press(button("Use my existing folders"));
     await next(); // to Folders: no folder yet
     expect(button("Continue")?.disabled).toBe(true);
+    h.picks = ["/Volumes/NAS/Media"];
     await press(button("Add folder…"));
-    await type("Source media folder path", "/Volumes/NAS/Media");
-    await submit("Source media folder path");
     expect(button("Continue")?.disabled).toBe(false);
     await next(); // proxy
     await next(); // analysis
@@ -195,9 +226,8 @@ describe("Media Library setup: existing folders", () => {
     await mount("mac");
     await press(button("Use my existing folders"));
     await next();
+    h.picks = ["/Volumes/NAS/Media"];
     await press(button("Add folder…"));
-    await type("Source media folder path", "/Volumes/NAS/Media");
-    await submit("Source media folder path");
     await press(button("Use files where they are"));
     await next();
     await next();
@@ -207,7 +237,8 @@ describe("Media Library setup: existing folders", () => {
 });
 
 describe("Media Library setup: own server and Cloud", () => {
-  it("an own server has five steps; Upload to server turns Proxies on and saves proxies, Final exports on", async () => {
+  // replaced (Andri 11-19, CEO 11-19): Upload to server is the master; Final exports, Proxies and Originals under it in any mix
+  it("an own server has five steps; Final exports is on by default, and Proxies saves proxies and turns Proxies on", async () => {
     h.mac = false; // a browser on the server: no folder rows here
     await mount("server");
     expect(dots()).toBe(5);
@@ -217,31 +248,86 @@ describe("Media Library setup: own server and Cloud", () => {
     await next(); // analysis
     await next(); // hosted
     expect(button("Done")).toBeDefined();
-    await toggle("Upload to server");
-    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Proxies"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(sw("Upload to server")?.getAttribute("aria-checked")).toBe("true");
+    expect(sw("Final exports")?.getAttribute("aria-checked")).toBe("true");
+    await toggle("Proxies");
     await press(button("Done"));
     expect(h.calls).toEqual([]); // no Mac app, so no rows
     expect(h.updates[0]!.settings).toMatchObject({ upload: "proxies", finalsUpload: "all", proxy: true });
   });
 
-  it("Cloud has five steps too, and Upload to server with Originals saves all", async () => {
+  it("Cloud has five steps too; Originals without Proxies and without Final exports is a mix of its own", async () => {
     h.hosted = true;
     h.mac = false;
     await mount("cloud");
     expect(dots()).toBe(5);
     for (let i = 0; i < 4; i++) await next();
-    await toggle("Upload to server");
     await toggle("Originals");
-    await press(button("Done"));
-    expect(h.updates[0]!.settings).toMatchObject({ upload: "all" });
-  });
-
-  it("with Final exports switched off, it is saved as none", async () => {
-    await mount("server");
-    for (let i = 0; i < 4; i++) await next();
     await toggle("Final exports");
     await press(button("Done"));
+    expect(h.updates[0]!.settings).toMatchObject({ upload: "originals", finalsUpload: "none" });
+  });
+
+  it("the master off saves nothing uploaded, final exports included", async () => {
+    h.mac = false;
+    await mount("server");
+    for (let i = 0; i < 4; i++) await next();
+    await toggle("Upload to server");
+    expect(sw("Final exports")).toBeNull(); // the three show only under the master on
+    await press(button("Done"));
     expect(h.updates[0]!.settings).toMatchObject({ finalsUpload: "none", upload: "none" });
+  });
+
+  it("the master on again brings back the last mix; all three off is the master off; on from nothing is Final exports only", async () => {
+    h.mac = false;
+    await mount("server");
+    for (let i = 0; i < 4; i++) await next();
+    await toggle("Proxies"); // Final exports and Proxies
+    await toggle("Upload to server");
+    await toggle("Upload to server");
+    expect(["Final exports", "Proxies", "Originals"].map((l) => sw(l)?.getAttribute("aria-checked"))).toEqual(["true", "true", "false"]);
+    await toggle("Final exports");
+    await toggle("Proxies");
+    expect(sw("Upload to server")?.getAttribute("aria-checked")).toBe("false");
+    act(() => root!.unmount());
+    await mount("server");
+    for (let i = 0; i < 4; i++) await next();
+    await toggle("Upload to server"); // off (the default mix was on)
+    act(() => root!.unmount());
+    await mount("server"); // a new view: no earlier mix to bring back
+    for (let i = 0; i < 4; i++) await next();
+    await toggle("Final exports"); // all off
+    await toggle("Upload to server");
+    expect(["Final exports", "Proxies", "Originals"].map((l) => sw(l)?.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+  });
+
+  // the 11-19 miss: on Cloud the folders went to "this computer", which only a server on that computer knows
+  it("in the Mac app on Cloud the folders are this Mac's, by its id on the server; an unpaired Mac is paired first", async () => {
+    h.hosted = true;
+    document.documentElement.dataset.macDevice = "dev_mac";
+    await mount("cloud");
+    for (let i = 0; i < 4; i++) await next();
+    await press(button("Done"));
+    expect(h.calls.map((c) => c.body.host)).toEqual(["dev_mac", "dev_mac", "dev_mac"]);
+    expect(onDone).toHaveBeenCalledTimes(1);
+
+    h.calls = [];
+    delete document.documentElement.dataset.macDevice;
+    h.paired = { device: "dev_new" };
+    act(() => root!.unmount());
+    await mount("cloud");
+    for (let i = 0; i < 4; i++) await next();
+    await press(button("Done"));
+    expect(h.calls.map((c) => c.body.host)).toEqual(["dev_new", "dev_new", "dev_new"]);
+  });
+
+  it("in the Mac app on Cloud with no way to add this Mac, Done says so and saves nothing", async () => {
+    h.hosted = true;
+    await mount("cloud");
+    for (let i = 0; i < 4; i++) await next();
+    await press(button("Done"));
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Connect this Mac");
+    expect(h.updates).toEqual([]);
   });
 });
 
@@ -263,7 +349,7 @@ describe("Media Library setup: analysis and organization", () => {
 
 describe("rowsOf", () => {
   it("names the scratch folders for the workspace and puts the others beside the first Source media folder", () => {
-    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", defaults: true, sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", upload: false, originals: false, proxies: false, finals: true };
+    const base: Parameters<typeof rowsOf>[0] = { start: "scratch", sources: [], projects: "", exports: "", copy: true, proxy: true, proxyQuality: "standard", effort: "high", watchModel: "gemini-3.8-flash", budget: null, organize: "ai", hosted: "finals" };
     expect(rowsOf(base, "Moo/Classic")).toEqual([
       { role: "footage", path: "~/Movies/Creator Toolset/Moo-Classic/Source media" },
       { role: "projects", path: "~/Movies/Creator Toolset/Moo-Classic/Project files" },
@@ -304,9 +390,10 @@ describe("Media Library setup: the scratch folder is made before its row", () =>
 
 describe("Media Library setup: proxies, analysis and organization details", () => {
   it("Hosted media's Proxies holds the proxy switch on and disabled, and a Back trip cannot switch it off", async () => {
+    h.mac = false;
     await mount("server");
     for (let i = 0; i < 4; i++) await next(); // to Hosted media
-    await toggle("Upload to server"); // Proxies is on with it
+    await toggle("Proxies");
     await press(button("Back"));
     await press(button("Back")); // proxy workflow
     const proxy = document.querySelector<HTMLButtonElement>('button[aria-label="Generate proxies for imported media"]')!;

@@ -115,8 +115,9 @@ describe("Settings → Media Library, the owner's page", () => {
       expect(tip(label), label).not.toBeNull();
     }
     for (const stop of ["Off", "Low", "Medium", "High", "Extra high", "Max"]) expect(tip(stop), stop).not.toBeNull();
-    // Final exports has its tip on its own row; the Upload to server row has none (S1.12)
+    // the master has no ⓘ; the three under it have one each
     expect(tip(LIBRARY_WORDS.uploadToServer)).toBeNull();
+    for (const label of ["Final exports", "Proxies", "Originals"]) expect(tip(label), label).not.toBeNull();
   });
 
   it("the Effort slider has six stops, the one in use is High, Recommended is under High", async () => {
@@ -152,19 +153,13 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(bodyText()).toContain("On while proxies are hosted");
   });
 
-  it("on This Mac with no server connected, Upload to server is off and disabled", async () => {
-    serverHere = true;
-    await render(<LibrarySettingsBody library={library} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
-    expect(toggle(LIBRARY_WORDS.uploadToServer).disabled).toBe(true);
-    expect(bodyText()).toContain("No server connected");
-  });
-
-  it("on This Mac, a stored upload of all still reads as off: the master is off and disabled", async () => {
+  // replaced (Andri 11-19): Upload to server is one pick-one, as in setup; on This Mac it is a row saying there is no server
+  it("on This Mac with no server connected, Upload to server says so and offers no choice, whatever is stored", async () => {
     serverHere = true;
     const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all" } };
     await render(<LibrarySettingsBody library={stored} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
-    expect(toggle(LIBRARY_WORDS.uploadToServer).getAttribute("aria-checked")).toBe("false");
-    expect(toggle(LIBRARY_WORDS.uploadToServer).disabled).toBe(true);
+    expect(bodyText()).toContain("No server connected");
+    expect(host!.querySelector('button[role="switch"][aria-label="Proxies"]')).toBeNull();
   });
 
   it("an import mode never stored reads as Copy on a set-up library", async () => {
@@ -188,11 +183,16 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(bodyText()).not.toContain("Remove");
   });
 
-  it("Originals and Proxies show while Upload to server is on, and Proxies is on when the master is turned on", async () => {
-    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(host!.querySelector(`button[role="switch"][aria-label=""]`)).toBeNull();
+  // replaced (Andri 11-19, CEO 11-19): the Upload to server master, Final exports · Proxies · Originals under it in any mix
+  it("Upload to server is the master over Final exports, Proxies and Originals; each switch saves both values", async () => {
+    const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "none", finalsUpload: "all" } };
+    await render(<LibrarySettingsBody library={stored} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(toggle(LIBRARY_WORDS.uploadToServer).getAttribute("aria-checked")).toBe("true");
+    expect(toggle("Final exports").getAttribute("aria-checked")).toBe("true");
+    await act(async () => toggle("Originals").click());
+    expect(patches.at(-1)).toEqual({ settings: { upload: "originals", finalsUpload: "all" } });
     await act(async () => toggle(LIBRARY_WORDS.uploadToServer).click());
-    expect(patches.at(-1)).toEqual({ settings: { upload: "proxies" } });
+    expect(patches.at(-1)).toEqual({ settings: { upload: "none", finalsUpload: "none" } });
   });
 
   it("Models shows the three rows, and hides at Off", async () => {

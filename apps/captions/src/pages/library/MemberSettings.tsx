@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { hostsOriginals, hostsProxies, LIBRARY_WORDS, type LibrarySummary, type LibraryUpload } from "@contracts/library";
+import { hostedOf, hostsOriginals, hostsProxies, LIBRARY_WORDS, type LibrarySummary } from "@contracts/library";
 import { FOLDER_LABELS, type StorageView } from "@contracts/storage";
 import type { ServerWorkView } from "@contracts/work";
 import { Button } from "@/components/ui/button";
@@ -15,13 +15,13 @@ import { downloadsOf, setDownloads, useOffline, type Downloads } from "./offline
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const HOSTED: Record<LibraryUpload, string> = { none: "Off", originals: LIBRARY_WORDS.originals, proxies: LIBRARY_WORDS.proxies, all: "Originals and proxies" };
-
-/** Hosted media in words: the owner's Upload to server, and " and final exports" when Final exports is on. */
+/** Hosted media in words: what the owner's Upload to server sends up ("Final exports and proxies"), or Off. */
 export function hostedWords(s: LibrarySummary["settings"]): string {
-  const finals = !!s.finalsUpload && s.finalsUpload !== "none";
-  if (!hostsOriginals(s.upload) && !hostsProxies(s.upload)) return finals ? LIBRARY_WORDS.finalExportsUpload.label : HOSTED.none;
-  return finals ? `${HOSTED[s.upload]} and final exports` : HOSTED[s.upload];
+  const m = hostedOf(s);
+  const on = [m.finals && LIBRARY_WORDS.finalExportsUpload.label, m.proxies && LIBRARY_WORDS.proxies, m.originals && LIBRARY_WORDS.originals].filter((w): w is string => !!w);
+  if (!on.length) return "Off";
+  const words = on.map((w, i) => (i ? w.toLowerCase() : w));
+  return words.length === 1 ? words[0]! : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 }
 
 /**
