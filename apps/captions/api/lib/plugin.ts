@@ -1,4 +1,5 @@
 import { Hono as HonoApp, type Hono, type MiddlewareHandler } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { applyNeedWays, isPluginGateId, isTool, TOOL_NAMES, type Have, type NeedWay, type PluginGateId, type Tool } from "../../contracts/tools";
 import type { LibrarySlot } from "../../contracts/library-source";
 import type { CopyItem, LibraryCopy } from "../../contracts/library";
@@ -101,6 +102,10 @@ export interface ServerPlugin {
   // plug-in that answers wins, and the library's own upload without a library id refuses that workspace. { error } refuses
   // this asker there (403 with that line); the workspace still counts as the plug-in's.
   uploadsTo?: (username: string) => UploadsTo | Promise<UploadsTo>;
+  // Takes a file the person dropped in the chat into the store its uploadsTo names in the workspace the request works in,
+  // as that person: the store's own checks (its login, its upload permission, its duplicate check) decide. Answers where
+  // it went (`where`, said to the person: "Tiny Acrobatics' footage store"), or the store's own refusal line.
+  receiveFile?: (user: SessionUser, file: ReceivedFile) => Promise<Received>;
   // Work a Mac of the account's own runs for this plug-in: a kind its claim lists (api/devices.ts asks each in turn).
   deviceJobs?: DeviceJobSlot[];
   // Replaces a built-in tool: answers that tool's old root paths (the URLs a script or worker still posts to), mounted by
@@ -111,7 +116,8 @@ export interface ServerPlugin {
   // old GET /:id, say). Routes are relative to the path ("/session" under "/api/instagram"). Mounted by boot.ts before the built-in
   // router. `path` must be in ANSWERABLE_PATHS, and no two plug-ins may answer the same path.
   answers?: { path: string; routes: Hono<any, any, any> }[];
-  // MCP tools (api/mcp.ts pluginToolsOf): { defs, handlers, replaces }. replaces lists the built-in tool names this plug-in answers instead.
+  // MCP tools (api/mcp.ts pluginToolsOf): { defs, handlers, replaces, guide, guideHere }. replaces lists the built-in tool names this plug-in
+  // answers instead; guideHere(username) is the guide's paragraph for the workspace a call works in (asked in it), "" for none.
   tools?: unknown;
   // Installers for pack items the core can't install itself (a design system for the AI Editor). Each kind is installed by
   // at most one plug-in; a pack's items of a kind with no installer are held on the account (api/lib/packs.ts).
@@ -421,13 +427,41 @@ function checkDeviceJobs(plugins: ServerPlugin[]): void {
 /** A plug-in's store's name, its refusal of the asker, or null for the workspace's own library (ServerPlugin.uploadsTo). */
 export type UploadsTo = string | { error: string } | null;
 
-/** The store a loaded plug-in files this request's uploads in (ServerPlugin.uploadsTo): the first answer, else null. */
-export async function pluginUploadsTo(username: string): Promise<UploadsTo> {
-  for (const p of loaded) {
-    const to = await p.uploadsTo?.(username);
-    if (to) return to;
+/** A file from the chat for a plug-in's store (ServerPlugin.receiveFile): where it lies on this server, its name, type and size. */
+export type ReceivedFile = { path: string; name: string; mime: string; size: number };
+/** What a plug-in's store made of a chat file: its id there, its page, the store's name for the person, or its refusal. */
+export type Received = { id: string; href: string; where: string; duplicate?: boolean } | { error: string };
+
+/** The plug-in that serves this request's workspace itself (ServerPlugin.uploadsTo), with its answer; null when none does. */
+async function servingPlugin(username: string): Promise<{ plugin: ServerPlugin; to: Exclude<UploadsTo, null> } | null> {
+  for (const plugin of loaded) {
+    const to = await plugin.uploadsTo?.(username);
+    if (to) return { plugin, to };
   }
   return null;
+}
+
+/** The store a loaded plug-in files this request's uploads in (ServerPlugin.uploadsTo): the first answer, else null. */
+export const pluginUploadsTo = async (username: string): Promise<UploadsTo> => (await servingPlugin(username))?.to ?? null;
+
+/**
+ * A chat file into the store of the plug-in that serves this request's workspace (ServerPlugin.receiveFile), as `user`;
+ * null when no plug-in serves it, so the file goes to the workspace's own library. A plug-in's refusal (of the asker, or
+ * of a request that names no workspace) comes back as its line.
+ */
+export async function pluginReceiveFile(user: SessionUser, file: ReceivedFile): Promise<Received | null> {
+  let s;
+  try {
+    s = await servingPlugin(user.username);
+  } catch (e) {
+    if (!(e instanceof HTTPException)) throw e;
+    return { error: ((await e.getResponse().json().catch(() => null)) as { error?: string } | null)?.error || e.message };
+  }
+  if (!s) return null;
+  if (typeof s.to === "object") return s.to;
+  // an account set to Read for the Media Library sends nothing, as GET /api/upload-target tells it
+  if (user.read?.includes("media")) return { error: "This account can't add footage to that workspace" };
+  return s.plugin.receiveFile ? s.plugin.receiveFile(user, file) : { error: `In this workspace files go into ${s.to} on the Media Library page.` };
 }
 
 /** The upload relays every loaded plug-in adds, in load order. */

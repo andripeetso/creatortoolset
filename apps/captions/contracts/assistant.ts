@@ -137,6 +137,9 @@ export interface AssistantConfirm {
   at: number;
   status: "waiting" | "done" | "failed" | "no";
   result?: string;
+  /** The buttons' words when Yes / No would read wrong. */
+  yes?: string;
+  no?: string;
 }
 
 /** A key the assistant asked for (ask_secret): shown as a password box in the dock. */

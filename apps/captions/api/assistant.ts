@@ -608,7 +608,7 @@ const everyChat = (conv: Conv): AssistantMessage[][] => [conv.messages, ...(conv
  * A tool's question as a Yes / No card under the reply, with the call it stands for kept here. The same call asked
  * twice in one reply keeps its one card. false when the reply is gone or already has too many.
  */
-export function askConfirm(username: string, turn: string, question: string, call: { tool: string; args: unknown }): boolean {
+export function askConfirm(username: string, turn: string, question: string, call: { tool: string; args: unknown }, labels?: { yes: string; no: string }): boolean {
   const m = messageOf(username, turn);
   if (!m || m.role !== "assistant") return false;
   const conv = load(username);
@@ -618,7 +618,7 @@ export function askConfirm(username: string, turn: string, question: string, cal
   if (list.some((x) => x.status === "waiting" && JSON.stringify(calls[x.id]) === same)) return true;
   if (list.length >= MAX_CONFIRMS) return false;
   const id = randomUUID();
-  list.push({ id, question: question.replace(/\s+/g, " ").trim().slice(0, 300), at: Date.now(), status: "waiting" });
+  list.push({ id, question: question.replace(/\s+/g, " ").trim().slice(0, 300), at: Date.now(), status: "waiting", ...labels });
   calls[id] = call;
   save(username);
   tell(username, turn);
@@ -634,7 +634,12 @@ const answering = new Set<string>();
 
 /** What this install's plug-ins add to the assistant's guide (mcp.ts gathers it at boot). */
 let installGuide = "";
-export const setInstallGuide = (text: string): void => void (installGuide = text ? `\n\n${text}` : "");
+/** What they add for the workspace a reply works in (mcp.ts PluginTools.guideHere), asked in that workspace. */
+let guideHere: (username: string) => Promise<string> = async () => "";
+export const setInstallGuide = (text: string, here?: (username: string) => Promise<string>): void => {
+  installGuide = text ? `\n\n${text}` : "";
+  if (here) guideHere = here;
+};
 
 /** The scheduled task a reply is a run of (api/automations.ts posts the prompt with its task). */
 function taskOf(username: string, turn: string): AssistantMessage["task"] {
@@ -1178,13 +1183,14 @@ export async function answerWithTools(
   // ponytail: an old Codex or Gemini CLI (no per-run MCP server) answers without the tools though the prompt names them (the Mac checks).
   const claude = route.instance.driver === "claude";
   const token = hasTools(route) ? mintJobToken(username, opts.turn) : undefined;
-  const guide = SYSTEM + installGuide;
+  // the reply's usage counts under its chat's workspace, whatever the window that sent the message is in (Settings → Usage)
+  const workspace = await workspaceOfTurn(username, opts.turn);
+  const here = await (workspace ? workspaceScope.run({ id: workspace }, () => guideHere(username)) : guideHere(username));
+  const guide = SYSTEM + installGuide + (here ? `\n\n${here}` : "");
   let system = !token ? guide + NO_TOOLS_NOTE : claude && opts.onAsk ? guide + MAC_NOTE : guide;
   // only where the reply has the tool that opens a skill
   if (token && opts.skills) system += `\n\n${opts.skills}`;
   const asks = claude ? opts.onAsk : undefined;
-  // the reply's usage counts under its chat's workspace, whatever the window that sent the message is in (Settings → Usage)
-  const workspace = await workspaceOfTurn(username, opts.turn);
   return ended(
     opts.turn,
     usageIn(workspace, () => streamMacClaude(system + (opts.memory ?? ""), prompt, opts.cancel, (t) => opts.onDelta?.(t), undefined, {

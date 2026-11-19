@@ -12,12 +12,12 @@ import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
-import { ensureLibrary, librariesHere } from "./library/access";
+import { ensureLibrary, librariesHere, servedByPlugin } from "./library/access";
 import { mayReceive } from "./library/upload-gate";
 import { libraryDb, libraryUpload } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { watchAllowed } from "./library/watch";
-import { mainSource } from "./library/sources";
+import { pluginReceiveFile } from "./lib/plugin";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
 import { hostsNone, SOUNDS, type Sound } from "../contracts/library";
 
@@ -294,7 +294,7 @@ export async function useFile(
   name?: string,
   versionOf?: string,
   sound?: Sound,
-): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean; waiting?: true }> {
+): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean; waiting?: true; store?: string }> {
   const meta = (await readFileMeta(user.username, id)) ?? (await arrival(user.username, id));
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${USE_NAMES[to]} isn't switched on for this account.`);
   if (versionOf && to !== "review") throw new Error("Only a Review video takes a next version.");
@@ -306,9 +306,13 @@ export async function useFile(
     return { to, id: made.id, name: title, href: `/video-notes/${made.id}` };
   }
   if (to === "library") {
-    // where a plug-in's source is the Media Library, the page never shows the storage library: nothing goes where nobody looks
-    const main = mainSource();
-    if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
+    // a workspace a plug-in serves itself (its uploadsTo) keeps its media in that plug-in's store: the file goes there as
+    // this person, and the store's own checks decide. Asked per workspace: every other one's goes to its own library below
+    const fileName = path.extname(title) ? title : `${title}${path.extname(meta.name)}`;
+    if (sound && (await servedByPlugin(user.username))) throw new Error("Songs and sound effects aren't kept in this workspace's Media Library.");
+    const taken = sound ? null : await pluginReceiveFile(user, { path: file, name: fileName, mime: meta.mime, size: meta.size });
+    if (taken && "error" in taken) throw new Error(taken.error);
+    if (taken) return { to, id: taken.id, name: title, href: taken.href, store: taken.where, ...(taken.duplicate ? { note: `Already in ${taken.where}` } : {}) };
     // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
     await ensureLibrary(user.username);
     // the library saveToLibrary would pick, asked first: a chat file is a person's original, as on the library's own upload
@@ -316,7 +320,7 @@ export async function useFile(
     // under Upload none it goes to their computer instead (saveToLibrary): nothing is refused for it
     const gate = lib && !hostsNone(libraryUpload(lib)) ? mayReceive("original", { id: lib }, "person") : null;
     if (gate && !gate.ok) throw new Error(gate.body.message);
-    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], lib, !sound, sound);
+    const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound);
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
     // id: the save's own, which names the chat's card for it (library-save:<id>): it ends when the file lands, or is dropped

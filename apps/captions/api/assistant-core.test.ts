@@ -277,7 +277,7 @@ describe("a file dropped for the Media Library", () => {
   };
 
   // with a plug-in loaded that IS the Media Library there is no storage library to drop into: nothing to compare against
-  it.skipIf(pluggedLibrary)("is not put where the person never looks: on an install whose Media Library is a plug-in's source it is refused, and the answer says why", async () => {
+  it.skipIf(pluggedLibrary)("goes into the workspace's own library, also on an install whose Media Library is a plug-in's source where no plug-in serves this workspace (chat-to-library.test.ts: one that does)", async () => {
     const { registerLibrarySlot, resetLibrarySlots } = await import("./library/sources");
     const { libraryDb } = await import("./library/db");
     (await import("./mcp")).SORT_WAIT_S.added = 0; // the line as it is the moment the file is in, without waiting for the sorting
@@ -293,13 +293,13 @@ describe("a file dropped for the Media Library", () => {
     expect(added.said).toMatch(/^1 clip added/);
     const before = count();
     expect(before).toBeGreaterThan(0);
-    // a source that IS the Media Library: nothing is added to the storage library its page never shows
+    // a source that is the server's Media Library, with no plug-in serving this workspace: the workspace's own library takes it
     resetLibrarySlots();
     registerLibrarySlot("tiny", { source: { id: "catalog", label: "Footage catalog", main: true } });
     try {
-      const refused = JSON.parse((await tool(t.token, "use_file", { files: [await drop(cookie, "Talk.mp4"), await drop(cookie, "Roll.mp4")], to: "library" })).text) as { said: string; href?: string };
-      expect(refused.said).toBe("Nothing was added: On this server the Media Library is the Footage catalog, and files go in on its own page (/library): open it and add them there.");
-      expect(refused.href).toBeUndefined();
+      // (the same bytes as Sea.mp4: the library's duplicate check answers with that asset, still in the library)
+      const two = JSON.parse((await tool(t.token, "use_file", { files: [await drop(cookie, "Talk.mp4"), await drop(cookie, "Roll.mp4")], to: "library" })).text) as { said: string; files: { version_id?: string; error?: string }[] };
+      expect(two.files.map((f) => [!!f.version_id, f.error])).toEqual([[true, undefined], [true, undefined]]);
       expect(count()).toBe(before);
     } finally {
       resetLibrarySlots();
