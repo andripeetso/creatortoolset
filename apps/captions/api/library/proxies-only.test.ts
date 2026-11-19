@@ -130,17 +130,35 @@ describe("a Media Library whose upload is proxies only", () => {
   });
 
   // replaced: api/library/proxies-only.test.ts (no test before: a browser original drops, a phone's waits for its computer's copy)
-  it("a browser original goes once its proxy is made; a phone's waits for a verified computer copy", async () => {
+  // the phone guard (Media Library CEO 11-18, PRD §4.2 / R9): one test per case
+  const phoneUpload = async (name: string) => {
+    const id = await upload("lib_p", name, true, true);
+    d.prepare("UPDATE asset_versions SET origin = 'phone' WHERE id = ?").run(id);
+    await proxied(id);
+    return id;
+  };
+  const kept = (id: string) => (d.prepare("SELECT source_key FROM asset_versions WHERE id = ?").get(id) as { source_key: string }).source_key;
+
+  it("a phone's original under proxies is kept while no computer has a verified copy", async () => {
+    const phone = await phoneUpload("Phone kept.mp4");
+    const before = kept(phone);
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES (?, 'mac-1', ?, ?, 'found')").run(phone, "/Users/tiny/Movies/Phone kept.mp4", Date.now());
+    expect(await dropOriginal(phone)).toBe(false);
+    expect(kept(phone)).toBe(before);
+  });
+
+  it("a phone's original under proxies goes once a computer has a verified copy", async () => {
+    const phone = await phoneUpload("Phone copied.mp4");
+    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES (?, 'mac-1', ?, ?, 'verified')").run(phone, "/Users/tiny/Movies/Phone copied.mp4", Date.now());
+    expect(await dropOriginal(phone)).toBe(true);
+    expect(kept(phone)).toMatch(/proxy\.mp4$/);
+  });
+
+  it("a browser's original under proxies goes once its proxy is made", async () => {
     const browser = await upload("lib_p", "Browser.mp4", true, true);
     await proxied(browser);
     expect(await dropOriginal(browser)).toBe(true);
-    const phone = await upload("lib_p", "Phone.mp4", true, true);
-    d.prepare("UPDATE asset_versions SET origin = 'phone' WHERE id = ?").run(phone);
-    await proxied(phone);
-    expect(await dropOriginal(phone)).toBe(false);
-    d.prepare("UPDATE asset_versions SET from_path = ?, from_device = 'mac-1' WHERE id = ?").run("/Users/tiny/Movies/Phone.mp4", phone);
-    d.prepare("INSERT INTO version_places (version_id, device, path, confirmed_at, state) VALUES (?, 'mac-1', ?, ?, 'verified')").run(phone, "/Users/tiny/Movies/Phone.mp4", Date.now());
-    expect(await dropOriginal(phone)).toBe(true);
+    expect(kept(browser)).toMatch(/proxy\.mp4$/);
   });
 
   it("keeps the original while a step that reads it is still to run, and deletes it once they are done", async () => {

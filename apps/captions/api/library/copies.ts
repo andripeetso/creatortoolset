@@ -12,6 +12,7 @@ import { accountOf, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { triesOn } from "./places";
 import { downloadName } from "./routes";
+import { dropOriginal } from "./worker";
 
 /**
  * Copies of a Media Library in folders on its owner's computers (Settings → Media Library → Copies;
@@ -377,6 +378,8 @@ export const copyJob: DeviceJobSlot = {
     end(h, { state: "ok", free: b.free });
     // an original a computer sent before (copy_sends) that every copy has now goes
     if (!h.item) void dropSent(h.key).catch((e: unknown) => console.error("[library] copies:", e));
+    // a phone's original under Proxies waits for this: a verified computer copy (worker.ts dropOriginal)
+    if (!h.item && sha) void dropOriginal(h.key).catch((e: unknown) => console.error("[library] dropping an original:", e));
     void wakeEditorPolls();
     return { reply: {} };
   },

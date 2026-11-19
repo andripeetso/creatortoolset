@@ -448,6 +448,8 @@ const READS_ORIGINAL = ["probe", "thumb", "wave", "proxy", "transcribe"];
  * of the source (playback, the AI Editor, Caption Studio, the steps here) reads the proxy from then on. Pictures and
  * sounds have no proxy: they stay as uploaded. Only while the Mac it came from still has a place for it (version_places),
  * so the original is never on no computer at all. True when it dropped one.
+ * A browser's original goes at once (the person still has the file); a phone's only once a computer has a verified copy
+ * (copies.ts calls this again when one lands).
  */
 export async function dropOriginal(versionId: string): Promise<boolean> {
   const db = libraryDb();
@@ -459,6 +461,8 @@ export async function dropOriginal(versionId: string): Promise<boolean> {
          AND (
            -- a browser's original (no computer, no phone) is the person's own file: dropped once its proxy is made
            (v.from_path IS NULL AND IFNULL(v.origin, '') != 'phone')
+           -- a phone's: the phone may not keep it, so only once a computer holds a verified copy of it (PRD §4.2, R9)
+           OR (v.from_path IS NULL AND v.origin = 'phone' AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.kind = 'original' AND p.state = 'verified'))
            -- a computer's: the computer it came from still holds it, else the original waits on the server
            -- a verified place row (its size, time and fingerprint read there); removal for good needs whereis.ts mayRemoveServerCopy
            OR (v.from_path IS NOT NULL AND EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.device = v.from_device AND p.kind = 'original' AND p.state = 'verified'))
