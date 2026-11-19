@@ -404,6 +404,9 @@ export function issueSession(o: { subject: string; scopes: Scope[]; jkt?: string
   return { token, row };
 }
 
+/** A session by its id (the request's, set by the account gate in boot.ts). */
+export const sessionById = (id: string): SessionRow | undefined => load().sessions.find((r) => r.id === id);
+
 export type ResolveResult = { ok: true; row: SessionRow } | { ok: false; code: "INVALID_TOKEN" | "SESSION_EXPIRED" | "SESSION_REVOKED" };
 
 export function resolveToken(token: string, now = Date.now()): ResolveResult {
