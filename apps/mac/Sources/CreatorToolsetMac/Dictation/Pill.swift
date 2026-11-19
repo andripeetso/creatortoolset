@@ -154,6 +154,8 @@ final class DictationPill {
         // as it grows and shrinks, and would linger after it had gone.
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
+        // a test run's pill keeps its state but never shows: it sat on screen as a second "Listening" bar
+        if AppLog.underTests { panel.alphaValue = 0 }
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
 
