@@ -66,7 +66,7 @@ async function shareWorkspace(browser) {
   if (made.status() !== 201) throw new Error(`create the shared workspace failed: ${made.status()}`);
   const { id } = await made.json();
   const shared = await ownerCtx.request.patch(BASE + `/api/workspace/members/${MEMBER.username}`, { data: { workspaces: [id] }, timeout: 180_000 });
-  if (shared.status() !== 200) throw new Error(`share the workspace failed: ${shared.status()}`);
+  if (shared.status() !== 200) throw new Error(`share the workspace failed: ${shared.status()} ${await shared.text()}`);
   await ownerCtx.close();
   return id;
 }
