@@ -73,7 +73,10 @@ final class Workspaces: ObservableObject {
             .flatMap { try? JSONDecoder().decode([String: [Workspace]].self, from: $0) } ?? [:]
         picked = API.current?.workspace
         #if DEBUG
-        if PhoneDemo.on { lists = PhoneDemo.lists }
+        if PhoneDemo.on {
+            lists = PhoneDemo.lists
+            waiting = PhoneDemo.waiting
+        }
         #endif
         // another server in use (signed in to a new one, the one in use removed): its own pick
         Servers.shared.$currentId.dropFirst().removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -302,11 +305,13 @@ struct WorkspaceSwitcherButton: View {
             HStack(spacing: 6) {
                 if let entry = workspaces.current {
                     WorkspaceMark(entry: entry)
+                    // its own width up to a cap: a toolbar item otherwise squeezes the name away
                     Text(entry.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                        .frame(maxWidth: 170, alignment: .leading)
+                        .fixedSize()
                 }
                 Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 220, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

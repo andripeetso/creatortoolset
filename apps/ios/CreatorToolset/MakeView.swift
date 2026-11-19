@@ -30,6 +30,8 @@ struct MakeView: View {
             .background(.bar)
         }
         .navigationTitle("Make")
+        // inline: the control under it stays put, and the title shows over both sides
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

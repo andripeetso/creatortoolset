@@ -507,10 +507,11 @@ final class ChatsModel: ObservableObject {
     }
 
     private func rebuild() {
+        let work = ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
+                                                  opened: Set(opened.keys)), dismissed: dismissed)
         let fresh = link == .none ? [] : ChatList.arrange(
-            rows: ChatList.settle(ChatList.phone(PhoneEdits.shared.here, over: ChatList.merge(videos: videos, others: others),
-                                                 opened: Set(opened.keys)), dismissed: dismissed)
-                + ChatList.sessions(WorkshopModel.shared.sessions)
+            rows: work
+                + ChatList.sessions(WorkshopModel.shared.sessions, besides: work)
                 + ChatList.inWorkspace(ChatList.chats(assistant), workspace, of: chatSpaces, open: assistant),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
         if fresh != rows { rows = fresh }

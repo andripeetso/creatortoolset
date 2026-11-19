@@ -130,6 +130,9 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(rows.first?.route, .session("filming"))
         XCTAssertEqual(rows.first?.detail, "In Production · Reel")
         XCTAssertFalse(rows.contains { $0.status.waitsOnYou })
+        // a piece whose edit has a row is told once, by the edit
+        let edit = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Editing", detail: "", status: .working(since: nil), at: .distantPast)
+        XCTAssertEqual(ChatList.sessions(all, besides: [edit]).map(\.title), ["filming"])
     }
 
     func testEditsSortWhatWaitsThenWhatWorksThenWhatIsDone() {

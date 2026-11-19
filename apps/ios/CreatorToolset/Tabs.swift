@@ -32,9 +32,11 @@ extension ChatList {
     }
 
     /// The Workshop pieces being filmed or edited, a row each on Make: their stage in words, never waiting on the
-    /// person (only Review, a go and a failure do), so they sit under what waits and above Working.
-    static func sessions(_ sessions: [WorkshopSession]) -> [ChatRow] {
-        sessions.filter { $0.status.tab == .make }.map { session in
+    /// person (only Review, a go and a failure do), so they sit under what waits and above Working. A piece whose edit
+    /// has a row already (the editor names the edit after it) is told once, by the edit.
+    static func sessions(_ sessions: [WorkshopSession], besides rows: [ChatRow] = []) -> [ChatRow] {
+        let named = Set(rows.filter { !$0.route.isAssistant }.map { $0.title.lowercased() })
+        return sessions.filter { $0.status.tab == .make && !named.contains($0.title.lowercased()) }.map { session in
             let route = AppRoute.session(session.id)
             let at = session.updatedAt.map { Date(timeIntervalSince1970: $0 / 1000) } ?? .distantPast
             return ChatRow(id: path(route), route: route, title: session.title,
