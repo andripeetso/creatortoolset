@@ -286,6 +286,7 @@ final class Shell: NSObject, ObservableObject {
             guard let self else { return done(["state": "off"]) }
             self.account.publish(text, done: done)
         }
+        account.leaving = { [weak self] old, new in await self?.leaveAccount(oldToken: old, newToken: new) }
         account.signedIn = { [weak self] profile in
             self?.ownerProfile(profile)
             Task { await self?.refreshReach() }   // signed in: this Mac joins the account by itself while the switch is on

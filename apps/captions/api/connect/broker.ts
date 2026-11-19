@@ -1,4 +1,4 @@
-import { sign } from "node:crypto";
+import { randomUUID, sign } from "node:crypto";
 import { computerKey, parseRelayKey } from "./keys";
 import { saveConnectState, type ConnectState } from "./state";
 
@@ -99,7 +99,8 @@ export async function linkThisComputer(o: {
  */
 export async function renewTunnel(s: ConnectState): Promise<string | null> {
   const key = computerKey();
-  const payload = JSON.stringify({ purpose: "tunnel", computer_id: s.computerId, at: Math.floor(Date.now() / 1000) });
+  // jti: the broker takes each ask once
+  const payload = JSON.stringify({ purpose: "tunnel", computer_id: s.computerId, at: Math.floor(Date.now() / 1000), jti: randomUUID() });
   const r = await call(s.brokerUrl, `/v1/computers/${s.computerId}/tunnel`, {
     body: {
       public_key: key.publicKey.export({ type: "spki", format: "der" }).toString("base64"),

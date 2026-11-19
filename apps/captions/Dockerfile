@@ -30,6 +30,8 @@ RUN pnpm --filter @creator-toolset/captions deploy --prod /deploy \
   && rm -f /deploy/node_modules/.pnpm/onnxruntime-node@*/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_*.so
 
 COPY apps/captions apps/captions
+# the DPoP proof check the server shares with the connect service (api/lib/dpop.ts imports it; the bundle carries it)
+COPY apps/relay/src/dpop-proof.ts apps/relay/src/dpop-proof.ts
 RUN pnpm --filter @creator-toolset/captions run build
 
 # ---------- runtime stage ----------

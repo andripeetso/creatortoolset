@@ -135,4 +135,31 @@ final class ConnectTests: XCTestCase {
             XCTFail("a broker error was taken as unlinked")
         } catch {}
     }
+
+    func testChangingAccountTakesTheMacOffTheOldOneWithTheOldToken() async {
+        let broker = FakeSite()
+        broker.answer = { r in r.method == "GET" ? (200, #"{"computers":[]}"#) : (204, "") }
+        let left = await BrokerClient(base: broker.url).leave("bbbb", oldToken: "old", newToken: "new")
+        XCTAssertTrue(left)
+        XCTAssertEqual(broker.requests.map { "\($0.method) \($0.path)" }, ["GET /v1/computers", "DELETE /v1/computers/bbbb"])
+        let auth = { (i: Int) in broker.requests[i].headers.first { $0.key.lowercased() == "authorization" }?.value }
+        XCTAssertEqual(auth(0), "Bearer new")
+        XCTAssertEqual(auth(1), "Bearer old")
+    }
+
+    func testTheSameAccountAgainOrAListThatDidNotComeLeavesTheLinkAlone() async {
+        let broker = FakeSite()
+        broker.answer = { _ in (200, #"{"computers":[{"id":"bbbb","name":"M","hostname":"bbbb.tunnels.example.com","status":"healthy"}]}"#) }
+        let same = await BrokerClient(base: broker.url).leave("bbbb", oldToken: "old", newToken: "new")
+        XCTAssertFalse(same)
+        broker.answer = { _ in (502, "{}") }
+        let unknown = await BrokerClient(base: broker.url).leave("bbbb", oldToken: "old", newToken: "new")
+        XCTAssertFalse(unknown)
+        XCTAssertFalse(broker.requests.contains { $0.method == "DELETE" })
+        // signing out: the old account drops it
+        broker.answer = { _ in (204, "") }
+        let out = await BrokerClient(base: broker.url).leave("bbbb", oldToken: "old", newToken: nil)
+        XCTAssertTrue(out)
+        XCTAssertEqual(broker.requests.last?.method, "DELETE")
+    }
 }

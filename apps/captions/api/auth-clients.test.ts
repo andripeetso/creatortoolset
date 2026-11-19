@@ -11,6 +11,7 @@ process.env.APP_SECRET = "local-sign-in-test-secret";
 process.env.CT_LOCAL = "1";
 
 const app = (await import("./boot")).default;
+const { MAX_JTIS_PER_KEY, dpopReplayForTest, jwkThumbprint } = await import("./lib/dpop");
 
 type Opts = { address?: string; headers?: Record<string, string>; body?: unknown; form?: Record<string, string>; cookie?: string; token?: string };
 function call(method: string, p: string, o: Opts = {}) {
@@ -172,6 +173,16 @@ describe("the token exchange", () => {
     expect(await asBearer.json()).toMatchObject({ code: "INVALID_DPOP" });
     expect((await call("GET", "/api/auth/session", { address: PHONE, headers: { authorization: `DPoP ${t.access_token}` } })).status).toBe(401);
   });
+
+  it("keeps a proof's jti unspent when the code fails, so anyone posting proofs here spends nothing", async () => {
+    const proof = dpop("POST", "http://localhost/oauth/token");
+    expect(await (await exchange("ZZZZZZZZZZZZ", {}, { dpop: proof })).json()).toMatchObject({ error: "invalid_grant" });
+    const link = await newLink();
+    const r = await exchange(link.credential, {}, { dpop: proof });
+    expect(await r.json()).toMatchObject({ token_type: "DPoP" });
+    // once a code went through with it, the proof is spent
+    expect(await (await exchange((await newLink()).credential, {}, { dpop: proof })).json()).toMatchObject({ error: "invalid_dpop_proof" });
+  });
 });
 
 describe("a session on /api", () => {
@@ -211,6 +222,48 @@ describe("a session on /api", () => {
     expect((await call("POST", "/api/auth/clients/revoke", { cookie, body: { sessionId: mine[0]!.sessionId } })).status).toBe(200);
     expect(await endsSoon(reader)).toBe("ended");
     expect(await (await call("GET", "/api/auth/session", { address: PHONE, token: t.access_token })).json()).toMatchObject({ code: "SESSION_REVOKED" });
+  });
+
+  it("never reaches this computer's connect settings, whatever its scopes", async () => {
+    const t = await pairBearer();
+    for (const [method, p] of [["GET", "/api/connect"], ["POST", "/api/connect/ai"], ["POST", "/api/connect/relay-config"], ["GET", "/api/connect/notifications"]]) {
+      const r = await call(method, p, { address: PHONE, token: t.access_token, body: method === "POST" ? {} : undefined });
+      expect({ p, status: r.status }).toEqual({ p, status: 403 });
+      expect(await r.json()).toMatchObject({ code: "NOT_FOR_CLIENTS" });
+    }
+    // the app's connectors are a different route
+    expect(await (await call("GET", "/api/connectors", { address: PHONE, token: t.access_token })).json()).not.toMatchObject({ code: "NOT_FOR_CLIENTS" });
+  });
+
+  it("answers 503 BUSY, never a signature error, while its key has spent its share of proofs", async () => {
+    const link = await newLink();
+    const t = (await (await exchange(link.credential, {}, { dpop: dpop("POST", "http://localhost/oauth/token") })).json()) as { access_token: string };
+    const url = "http://localhost/api/auth/session";
+    const seen = dpopReplayForTest();
+    const jkt = jwkThumbprint(phoneKey.jwk as never);
+    const before = seen.get(jkt);
+    seen.set(jkt, new Map(Array.from({ length: MAX_JTIS_PER_KEY }, (_, i) => [`flood${i}`, Date.now() / 1000 + 600])));
+    try {
+      const r = await call("GET", "/api/auth/session", { address: PHONE, headers: { authorization: `DPoP ${t.access_token}`, dpop: dpop("GET", url, t.access_token) } });
+      expect(r.status).toBe(503);
+      expect(r.headers.get("retry-after")).toBe("60");
+      expect(await r.json()).toMatchObject({ code: "BUSY" });
+    } finally {
+      if (before) seen.set(jkt, before);
+      else seen.delete(jkt);
+    }
+    const ok = await call("GET", "/api/auth/session", { address: PHONE, headers: { authorization: `DPoP ${t.access_token}`, dpop: dpop("GET", url, t.access_token) } });
+    expect(ok.status).toBe(200);
+  });
+
+  it("has its access line closed when the session runs out", async () => {
+    const { issueSession, BEARER_TTL_MS } = await import("./lib/clients");
+    const { token } = issueSession({ subject: "admin", scopes: ["read", "write", "access"], client: { deviceType: "mobile" }, now: Date.now() - BEARER_TTL_MS + 1000 });
+    const res = await call("GET", "/api/auth/access/events", { address: PHONE, token });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    await readUntil(reader, "event: snapshot");
+    expect(await endsSoon(reader)).toBe("ended");
   });
 
   it("revoke-others keeps the caller's own session", async () => {
