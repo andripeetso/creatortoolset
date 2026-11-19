@@ -31,6 +31,7 @@ export function openDb(file: string): DatabaseSync {
       jti TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       PRIMARY KEY (jkt, jti));
+    CREATE INDEX IF NOT EXISTS dpop_jti_expires ON dpop_jti (expires_at);
     -- AI apps connected through this broker (gateway.ts). One row per connection; the computer's key for it is sealed.
     CREATE TABLE IF NOT EXISTS ai_grants (
       id TEXT PRIMARY KEY,

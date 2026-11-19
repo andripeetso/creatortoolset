@@ -7,6 +7,8 @@ import { HttpError } from './errors.ts';
 
 export const DPOP_SKEW = 300; // seconds a proof's iat may be off, either way (the computer's own rule, contract.md)
 const JTI_KEEP = 2 * DPOP_SKEW + 1; // a jti is remembered as long as its proof could still pass (about 10 min)
+/** Proof ids held at most: a flood of proofs is refused (503 busy), never let in by forgetting live ones. */
+export const MAX_JTIS = 50_000;
 
 type Jwk = { kty?: unknown; crv?: unknown; x?: unknown; y?: unknown; d?: unknown };
 
@@ -68,6 +70,8 @@ export function checkDpop(
   if (!signed) throw no();
   // spent after every other check, so a bad proof cannot burn someone's jti
   db.prepare('DELETE FROM dpop_jti WHERE expires_at <= ?').run(o.now);
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM dpop_jti').get() as { n: number };
+  if (n >= MAX_JTIS) throw new HttpError(503, 'busy');
   const fresh = db.prepare('INSERT OR IGNORE INTO dpop_jti (jkt, jti, expires_at) VALUES (?, ?, ?)').run(thumb, claims.jti, o.now + JTI_KEEP);
   if (fresh.changes !== 1) throw no();
   return thumb;

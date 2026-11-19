@@ -9,7 +9,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 export const DPOP_SKEW_S = 300;
 const REPLAY_MS = 2 * DPOP_SKEW_S * 1000;
 
-export type DpopFailure = "missing" | "malformed" | "key_mismatch" | "method_mismatch" | "url_mismatch" | "token_mismatch" | "signature" | "time_window" | "replay";
+export type DpopFailure = "missing" | "malformed" | "key_mismatch" | "method_mismatch" | "url_mismatch" | "token_mismatch" | "signature" | "time_window" | "replay" | "busy";
 export type DpopResult = { ok: true; jkt: string; jti: string } | { ok: false; code: DpopFailure };
 
 interface P256Jwk {
@@ -42,9 +42,18 @@ export function htuOf(url: string): string | null {
 }
 
 const seen = new Map<string, number>(); // jkt:jti -> forget after (ms)
+/** Proof ids held at most: a flood of proofs (anyone may send one to /oauth/token) is refused, never let in by forgetting. */
+export const MAX_JTIS = 50_000;
+
+const prune = (now = Date.now()) => {
+  for (const [k, until] of seen) if (until <= now) seen.delete(k);
+};
+setInterval(prune, 60_000).unref();
 
 /** Forget every jti (tests). */
 export const resetDpopReplay = () => seen.clear();
+/** The jti map itself (tests fill it). */
+export const dpopReplayForTest = () => seen;
 
 export function verifyDpop(o: {
   proof: string | undefined;
@@ -100,9 +109,10 @@ export function verifyDpop(o: {
   }
   if (!signed) return { ok: false, code: "signature" };
   if (Math.abs(now / 1000 - payload.iat) > DPOP_SKEW_S) return { ok: false, code: "time_window" };
-  for (const [k, until] of seen) if (until <= now) seen.delete(k);
   const key = `${jkt}:${payload.jti}`;
   if (seen.has(key)) return { ok: false, code: "replay" };
+  if (seen.size >= MAX_JTIS) prune(now);
+  if (seen.size >= MAX_JTIS) return { ok: false, code: "busy" };
   seen.set(key, now + REPLAY_MS);
   return { ok: true, jkt, jti: payload.jti };
 }

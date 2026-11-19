@@ -1,6 +1,6 @@
 import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
-import { htuOf, jwkThumbprint, resetDpopReplay, tokenHash, verifyDpop } from "./dpop";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_JTIS, dpopReplayForTest, htuOf, jwkThumbprint, resetDpopReplay, tokenHash, verifyDpop } from "./dpop";
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const keyPair = () => {
@@ -64,5 +64,35 @@ describe("DPoP proofs", () => {
   it("names the URL without query or fragment", () => {
     expect(htuOf("https://h.example:8443/a/b?c=1#d")).toBe("https://h.example:8443/a/b");
     expect(htuOf("not a url")).toBeNull();
+  });
+});
+
+describe("the proof-id cache", () => {
+  it("refuses new proofs when full of live ids, never forgetting one, and takes them again once old ones expire", () => {
+    const seen = dpopReplayForTest();
+    const now = Date.now();
+    for (let i = 0; i < MAX_JTIS; i++) seen.set(`flood:${i}`, now + 600_000);
+    const p = proofBy(phone, { htm: "POST", htu: URL_ });
+    expect(verifyDpop({ proof: p, method: "POST", url: URL_, now })).toEqual({ ok: false, code: "busy" });
+    expect(seen.size).toBe(MAX_JTIS);
+    // ten minutes on, the flood's ids could no longer pass: they go, and a fresh proof is taken
+    const later = now + 600_001;
+    const q = proofBy(phone, { htm: "POST", htu: URL_, iat: Math.floor(later / 1000) });
+    expect(verifyDpop({ proof: q, method: "POST", url: URL_, now: later })).toMatchObject({ ok: true });
+    expect(seen.size).toBe(1);
+  });
+
+  it("forgets expired ids on a timer that never keeps the process alive", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.resetModules();
+      const d = await import("./dpop");
+      d.dpopReplayForTest().set("k:old", Date.now() + 1000);
+      d.dpopReplayForTest().set("k:live", Date.now() + 10 * 60_000);
+      vi.advanceTimersByTime(61_000);
+      expect([...d.dpopReplayForTest().keys()]).toEqual(["k:live"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
