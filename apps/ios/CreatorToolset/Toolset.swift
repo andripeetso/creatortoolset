@@ -29,8 +29,12 @@ extension API {
         return decoder
     }()
 
-    /// Lists kept on disk are kept per server and account: an admin's names a viewer's don't.
-    var cacheKey: String {
+    /// Lists and pictures kept on disk are kept per server, account (an admin's names a viewer's don't) and workspace,
+    /// so one workspace's list never shows in another.
+    var cacheKey: String { accountKey + (workspace.map { "-\($0)" } ?? "") }
+
+    /// The server and account, whatever workspace: the assistant's one outbox, the change stream.
+    var accountKey: String {
         "\(server.host() ?? "")\(server.port.map { "-\($0)" } ?? "")-\(username ?? "local")"
     }
 
@@ -97,6 +101,9 @@ final class ToolsetImages {
     init() { memory.totalCostLimit = 100 * 1024 * 1024 }
 
     func image(_ path: String, maxPixels: Int) async -> UIImage? {
+        #if DEBUG
+        if PhoneDemo.on { return PhoneDemo.picture(path) }
+        #endif
         guard let api = API.current else { return nil }
         let key = "\(api.cacheKey)|\(maxPixels)|\(path)"
         if let hit = memory.object(forKey: key as NSString) { return hit }

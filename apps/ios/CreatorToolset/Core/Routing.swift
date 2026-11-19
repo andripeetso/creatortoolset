@@ -53,7 +53,7 @@ enum AppRoute: Hashable {
     }
 }
 
-/// Where the app is: the tab, and what is open on top of Chats and of Edits. One object, so a card in a
+/// Where the app is: the tab, and what is open on top of Chats, Plan and Make. One object, so a card in a
 /// chat, a notification or a launch argument all open a screen the same way.
 @MainActor
 final class AppNavigator: ObservableObject {
@@ -62,10 +62,12 @@ final class AppNavigator: ObservableObject {
     @Published var tab: AppTab = AppNavigator.startTab
     /// The screens pushed on Chats, first to last.
     @Published var chats: [AppRoute] = []
-    /// The screens pushed on Edits, first to last.
-    @Published var edits: [AppRoute] = []
-    /// The account has the Edits tab (RootView says): without it an edit or a video opens on Chats.
-    var hasEdits = true
+    /// The screens pushed on Plan, first to last.
+    @Published var plan: [AppRoute] = []
+    /// The screens pushed on Make, first to last.
+    @Published var make: [AppRoute] = []
+    /// Make shows its edits or its Media Library.
+    @Published var makeSide: MakeSide = debugArg("MakeSide") == "media" ? .media : .edits
     /// The assistant was opened to write: its box takes the keyboard once, then this is cleared.
     var composing = false
 
@@ -73,23 +75,28 @@ final class AppNavigator: ObservableObject {
         if let route = debugArg("OpenPath").flatMap(AppRoute.from(path:)) { open(route) }
     }
 
-    /// The tab a screen opens on: an edit or a Review video on Edits, the assistant's chats on Chats, Finals on
-    /// its own tab; a script or a page on the tab in front (Chats when that one has no screens of its own).
-    nonisolated static func tab(for route: AppRoute, from current: AppTab, hasEdits: Bool) -> AppTab {
-        let edits: AppTab = hasEdits ? .edits : .chats
+    /// The tab a screen opens on: an edit or a Review video on Make, the assistant's chats on Chats, Finals on
+    /// Distribute; a script on the tab in front when it has screens of its own (from a chat it opens over the chat),
+    /// else on Plan; a page on the tab in front, else on Chats.
+    nonisolated static func tab(for route: AppRoute, from current: AppTab) -> AppTab {
+        let stacked = [AppTab.chats, .plan, .make].contains(current)
         switch route {
-        case .finals: return .finals
-        case .edit, .review: return edits
+        case .finals: return .distribute
+        case .edit, .review: return .make
         case .assistant, .chat: return .chats
-        case .session, .page: return current == .edits ? edits : .chats
+        case .session: return stacked ? current : .plan
+        case .page: return stacked ? current : .chats
         }
     }
 
     func open(_ route: AppRoute) {
-        tab = Self.tab(for: route, from: tab, hasEdits: hasEdits)
+        tab = Self.tab(for: route, from: tab)
         switch tab {
         case .chats: if chats.last != route { chats.append(route) }
-        case .edits: if edits.last != route { edits.append(route) }
+        case .plan: if plan.last != route { plan.append(route) }
+        case .make:
+            makeSide = .edits
+            if make.last != route { make.append(route) }
         default: break
         }
     }
@@ -119,21 +126,30 @@ final class AppNavigator: ObservableObject {
         open(.assistant)
     }
 
-    /// A link in a chat or on a card: a page of the website becomes a screen, anything else leaves the app.
+    /// A link in a chat or on a card: a page of the website becomes a screen, anything else leaves the app. A page
+    /// that names another workspace (`ws=`) moves the app there first, and says so.
     func open(href: String) {
         if let route = AppRoute.from(path: href) {
+            if let ws = Workspaces.asked(in: href) { Workspaces.shared.go(server: nil, workspace: ws) }
             open(route)   // a chat of the assistant ("/?chat=<id>") is made the open one by its screen (AssistantChatRoute)
         } else if let url = URL(string: href), url.scheme == "http" || url.scheme == "https" {
             UIApplication.shared.open(url)
         }
     }
 
-    /// A launch can open on a tab and a debug build on a screen, without taps: `-startTab 1` or `-startTab edits`
-    /// (also `-StartTab`), `-OpenPath /review/<id>?v=2` (on its own tab), `-OpenPath /assistant`. `-newEdit YES` opens
-    /// on Edits, where New edit then opens.
+    /// A launch can open on a tab and a debug build on a screen, without taps: `-startTab 1` or `-startTab make`
+    /// (also `-StartTab`; the older names edits, upload, finals and more still work), `-OpenPath /review/<id>?v=2`
+    /// (on its own tab), `-OpenPath /assistant`. `-newEdit YES` opens on Make, where New edit then opens.
     private static var startTab: AppTab {
         let raw = UserDefaults.standard.string(forKey: "startTab") ?? debugArg("StartTab")
-        return raw.flatMap { AppTab(rawValue: $0) ?? Int($0).flatMap { AppTab.allCases.indices.contains($0) ? AppTab.allCases[$0] : nil } }
-            ?? (UserDefaults.standard.bool(forKey: "newEdit") ? .edits : .chats)
+        return raw.flatMap { AppTab(named: $0) ?? Int($0).flatMap { AppTab.allCases.indices.contains($0) ? AppTab.allCases[$0] : nil } }
+            ?? (UserDefaults.standard.bool(forKey: "newEdit") ? .make : .chats)
     }
+}
+
+/// The two sides of Make.
+enum MakeSide: String, CaseIterable, Identifiable {
+    case edits = "Edits"
+    case media = "Media"
+    var id: String { rawValue }
 }

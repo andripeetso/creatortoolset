@@ -17,6 +17,15 @@ struct PhoneEdit: Codable, Identifiable, Hashable {
     var problem: String?
     /// When Start was pressed (its place in Chats); nil for one made before this was kept.
     var made: Date?
+    /// The workspace it was started in: its row shows there, its calls go there. nil for one made before this was kept.
+    var workspace: String? = nil
+
+    /// Its server's client, in its own workspace.
+    func api(_ server: Server) -> API? {
+        guard var api = API.connected(server) else { return nil }
+        if let workspace { api.workspace = workspace }
+        return api
+    }
 }
 
 /// The edit as `GET /api/editor/:id` answers, only what the row needs.
@@ -134,7 +143,7 @@ final class PhoneEdits: ObservableObject {
     /// `beforeBytes` runs between the edit and its bytes (the server tests look at the waiting edit there).
     func start(_ id: UUID, beforeBytes: () async throws -> Void = {}) async {
         guard let edit = item(id), let server = Servers.shared.list.first(where: { $0.id == edit.server }),
-              let api = API.connected(server) else { return }
+              let api = edit.api(server) else { return }
         starting.insert(id)
         // the phone locked right after Start: iOS gives the app the moment it needs to make the edit and hand over the bytes
         let background = UIApplication.shared.beginBackgroundTask(withName: "New edit")
@@ -170,7 +179,7 @@ final class PhoneEdits: ObservableObject {
         starting.insert(id)
         defer { starting.remove(id) }
         if let old = edit.editId {
-            if let api = Servers.shared.list.first(where: { $0.id == edit.server }).flatMap(API.connected) {
+            if let api = Servers.shared.list.first(where: { $0.id == edit.server }).flatMap(edit.api) {
                 _ = try? await api.send("/api/editor/\(old)", method: "DELETE")
             }
             let kept = edit.clips.filter {
@@ -203,6 +212,8 @@ final class PhoneEdits: ObservableObject {
             // an answer about an edit that Try again replaced in the meantime is dropped
             let still = { self.item(edit.id)?.editId == editId && !self.starting.contains(edit.id) }
             do {
+                var api = api
+                if let ws = edit.workspace { api.workspace = ws }
                 let answer: RemoteEdit = try await api.get("/api/editor/\(editId)")
                 guard still() else { continue }
                 remote[edit.id] = answer
@@ -353,7 +364,8 @@ struct NewEditView: View {
         let id = UUID()
         for clip in clips { engine.add(id: clip.id, filename: clip.name, size: clip.size, server: server, edit: id) }
         let name = "Phone edit, " + Date().formatted(date: .abbreviated, time: .shortened)
-        edits.add(PhoneEdit(id: id, server: server.id, name: name, clips: clips.map(\.id), made: Date()))
+        edits.add(PhoneEdit(id: id, server: server.id, name: name, clips: clips.map(\.id), made: Date(),
+                            workspace: WorkspacePick.get(server: server.id, username: server.username)))
         started = true
         dismiss()
         Task { await edits.start(id) }

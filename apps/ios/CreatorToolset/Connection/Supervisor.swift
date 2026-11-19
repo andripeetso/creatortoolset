@@ -635,8 +635,9 @@ final class Connections: ObservableObject {
     init(saved: ServerRegistry.Saved = ServerRegistry.read(), live: Bool = true) {
         self.saved = saved
         #if DEBUG
-        let demo = ConnectionDemo.on
-        if demo { self.saved = ConnectionDemo.saved; states = ConnectionDemo.states }
+        let demo = ConnectionDemo.on || PhoneDemo.on
+        if ConnectionDemo.on { self.saved = ConnectionDemo.saved; states = ConnectionDemo.states }
+        if PhoneDemo.on { self.saved = PhoneDemo.saved; states = PhoneDemo.states }
         self.live = live && !demo
         #else
         self.live = live

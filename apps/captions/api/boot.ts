@@ -68,6 +68,7 @@ import { devicePairApp, devicesApp } from "./devices";
 import { connectApp } from "./connect/routes";
 import { connectPublicApp } from "./connect/mint";
 import { computerKey } from "./connect/keys";
+import { mediaTicketApp } from "./media-ticket";
 import { authClientsApp, callerOf, oauthTokenApp, scopeFor, scopeRefused, sessionRefused } from "./auth-clients";
 import { allowedPeer, descriptorApp, endpointsApp, listensEverywhere } from "./descriptor";
 import { connectState, tunnelHostname } from "./connect/state";
@@ -431,6 +432,8 @@ app.use("/api/*", inRequestWorkspace);
 app.use("/api/*", announceWrites);
 app.route("/api/sync", syncApp);
 app.route("/api/auth", authClientsApp);
+// tickets for what cannot sign each request (players, web views, background uploads): media-ticket.ts
+app.route("/api/auth", mediaTicketApp);
 app.route("/api/auth", authApp);
 app.route("/api/server", endpointsApp);
 // Settings → API keys: the outside services' keys (platform admins; never an AI key)

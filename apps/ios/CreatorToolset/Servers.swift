@@ -102,7 +102,7 @@ enum APIError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .signedOut: return "Signed out. Sign in again in More → Computers."
+        case .signedOut: return "Signed out. Sign in again in Tools → Computers."
         case .server(_, let message): return message
         case .offline: return "No connection to the server"
         case .refused(let line): return line
@@ -121,6 +121,9 @@ struct API {
     var credential: Credential? = nil
     /// The saved server this client is for (`Server.id`): its route can change, this stays.
     var key: String? = nil
+    /// The workspace every request works in (`X-CT-Workspace`): the phone's pick on this server (`API.connected`), or
+    /// a chat's own for that chat's calls. nil: the server's own rule.
+    var workspace: String? = nil
 
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -139,16 +142,18 @@ struct API {
         return made
     }
 
-    /// For a player or a picture that asks by itself: the cookie, or the route's `Authorization`.
-    var headers: [String: String] {
-        cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? credential?.headers(method: "GET", url: server) ?? [:]
+    /// What one request to `url` carries: the cookie or the route's `Authorization` (a DPoP proof names the method
+    /// and the URL), and the workspace.
+    func headers(method: String = "GET", url: URL) -> [String: String] {
+        var h = cookie.map { ["Cookie": "cap_auth=\($0)"] } ?? credential?.headers(method: method, url: url) ?? [:]
+        if let workspace { h[WorkspacePick.header] = workspace }
+        return h
     }
 
     func request(_ path: String, method: String = "GET", json: Any? = nil) -> URLRequest {
         var request = URLRequest(url: url(path))
         request.httpMethod = method
-        if let cookie { request.setValue("cap_auth=\(cookie)", forHTTPHeaderField: "Cookie") }
-        for (k, v) in credential?.headers(method: method, url: request.url ?? server) ?? [:] { request.setValue(v, forHTTPHeaderField: k) }
+        for (k, v) in headers(method: method, url: request.url ?? server) { request.setValue(v, forHTTPHeaderField: k) }
         if let json {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: json)

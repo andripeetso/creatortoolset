@@ -59,21 +59,9 @@ enum Appearance: String, CaseIterable, Identifiable {
     }
 }
 
-/// The Appearance choice, as a row for Settings.
-struct AppearancePicker: View {
-    @AppStorage(Appearance.key) private var appearance = Appearance.system.rawValue
-
-    var body: some View {
-        Picker("Appearance", selection: $appearance) {
-            ForEach(Appearance.allCases) { Text($0.title).tag($0.rawValue) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-    }
-}
-
-/// The tabs: Chats (the assistant's chats), Edits (the edits and the Review videos, as cards), Upload, Finals and More
-/// (Scripts is a tool there). A tab the account may not use is gone; each tab's badge counts what waits there.
+/// The tabs, the desktop's stages: Chats · Plan · Make · Distribute · Tools. Every tab always shows (one the account
+/// can't use says why it's empty), and each starts with the workspace switcher top left. A badge counts only what waits
+/// on the person.
 struct RootView: View {
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var access = ToolsetAccess.shared
@@ -81,7 +69,8 @@ struct RootView: View {
     @ObservedObject private var nav = AppNavigator.shared
     @ObservedObject private var chats = ChatsModel.shared
     @ObservedObject private var workshop = WorkshopModel.shared
-    /// Uploads that need a look (the Upload badge). Counted from the store's list, not by watching the store: a byte
+    @ObservedObject private var workspaces = Workspaces.shared
+    /// Uploads that need a look (on Make's badge). Counted from the store's list, not by watching the store: a byte
     /// going up must not redraw every tab.
     @State private var failed = 0
     private static var placed = false
@@ -91,44 +80,36 @@ struct RootView: View {
             NavigationStack { FirstRunView() }
         } else {
             TabView(selection: $nav.tab) {
-                ChatsTab()
+                StackTab(path: $nav.chats) { ChatsTab() }
                     .tabItem { Label("Chats", systemImage: "bubble.left.and.text.bubble.right") }
                     .badge(ChatList.waiting(chats.rows, chats: true))
                     .tag(AppTab.chats)
-                if access.shows(.edits) {
-                    ChatsTab(edits: true)
-                        .tabItem { Label("Edits", systemImage: "film.stack") }
-                        .badge(ChatList.waiting(chats.rows, chats: false))
-                        .tag(AppTab.edits)
-                }
-                NavigationStack { UploadView() }
-                    .tabItem { Label("Upload", systemImage: "arrow.up.circle") }
-                    .badge(failed)
-                    .tag(AppTab.upload)
-                if access.shows(.finals) {
-                    NavigationStack { FinalsView() }
-                        .tabItem { Label("Finals", systemImage: "checkmark.seal") }
-                        .badge(workshop.sessions.filter(\.toPost).count)
-                        .tag(AppTab.finals)
-                }
-                NavigationStack { MoreView() }
-                    .tabItem { Label("More", systemImage: "square.grid.2x2") }
-                    .tag(AppTab.more)
+                StackTab(path: $nav.plan) { PlanView() }
+                    .tabItem { Label("Plan", systemImage: "lightbulb") }
+                    .tag(AppTab.plan)
+                StackTab(path: $nav.make) { MakeView() }
+                    .tabItem { Label("Make", systemImage: "film.stack") }
+                    .badge(ChatList.waiting(chats.rows, chats: false) + failed)
+                    .tag(AppTab.make)
+                NavigationStack { DistributeView() }
+                    .tabItem { Label("Distribute", systemImage: "paperplane") }
+                    .badge(workshop.sessions.filter(\.toPost).count)
+                    .tag(AppTab.distribute)
+                NavigationStack { ToolsView() }
+                    .tabItem { Label("Tools", systemImage: "square.grid.2x2") }
+                    .tag(AppTab.tools)
             }
-            // another server shows its own content: every tab starts again
-            .id(servers.currentId)
-            // access taken away while its tab was open
-            .onChange(of: access.me) { _, _ in
-                nav.hasEdits = access.shows(.edits)
-                if !access.shows(nav.tab) { nav.tab = .chats }
-            }
+            // another server or workspace shows its own content: every tab starts again
+            .id("\(servers.currentId ?? "")|\(workspaces.picked ?? "")")
+            .overlay(alignment: .top) { WorkspaceToast() }
+            .sheet(isPresented: $workspaces.choosing) { WorkspaceSwitcher() }
             // what the shared parts know is per server: the last answer at once, then the server's
             .task(id: servers.currentId) {
                 access.load(for: servers.currentId)
-                nav.hasEdits = access.shows(.edits)
                 plugins.load(for: servers.currentId)
                 ChatsModel.shared.watch()   // whichever tab it opens on: the badges and notifications need the rows
                 StudioHooks.serverChanged()
+                await workspaces.load()
                 await access.refresh()
                 // a Caption Studio video picked on this phone that hasn't all reached the server carries on
                 CaptionEditor.resumeKept()
@@ -142,35 +123,48 @@ struct RootView: View {
         }
     }
 
-    /// A helper who uploads (an account without the AI Editor on the studio) starts on Upload. Once per launch, and
-    /// never over a tab or screen asked for at launch.
+    /// A helper who uploads (an account without the AI Editor on the studio) starts on Make's Media Library. Once per
+    /// launch, and never over a tab or screen asked for at launch.
     private func place() {
         guard !Self.placed else { return }
         Self.placed = true
         guard UserDefaults.standard.string(forKey: "startTab") == nil, debugArg("StartTab") == nil,
               debugArg("OpenPath") == nil else { return }
-        if plugins.studio, let me = access.me, me.role != "admin" { nav.tab = .upload }
+        if plugins.studio, let me = access.me, me.role != "admin" {
+            nav.tab = .make
+            nav.makeSide = .media
+        }
     }
 }
 
-/// Chats or Edits (`edits`), each with its own screens: whatever a row, a card or a notification opens on top of it.
+/// A tab with its own screens: whatever a row, a card or a notification opens on top of its first screen.
+struct StackTab<Root: View>: View {
+    @Binding var path: [AppRoute]
+    @ViewBuilder let root: () -> Root
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            root()
+                .workspaceSwitcher()
+                .navigationDestination(for: AppRoute.self) { RouteView(route: $0) }
+        }
+    }
+}
+
+/// Chats: the workspace's chats, the round New chat button over them.
 struct ChatsTab: View {
-    var edits = false
     @EnvironmentObject private var servers: Servers
     @ObservedObject private var nav = AppNavigator.shared
 
     var body: some View {
-        NavigationStack(path: edits ? $nav.edits : $nav.chats) {
-            ChatsView(edits: edits)
-                .navigationDestination(for: AppRoute.self) { RouteView(route: $0) }
-                .overlay(alignment: .bottomTrailing) {
-                    if !edits, servers.current != nil, !servers.signedOut {
-                        ComposeButton { nav.newChat() }
-                            .padding(.trailing, 16)
-                            .padding(.bottom, 12)
-                    }
+        ChatsView()
+            .overlay(alignment: .bottomTrailing) {
+                if servers.current != nil, !servers.signedOut {
+                    ComposeButton { nav.newChat() }
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 12)
                 }
-        }
+            }
     }
 }
 
@@ -243,6 +237,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         Keychain.moveToSharedGroup()
+        #if DEBUG
+        PhoneDemo.install()
+        #endif
         _ = Servers.shared   // first, so `API.current` reads what it saved (a debug -localServer too)
         // created at launch, a background relaunch included, so the background session reconnects
         _ = UploadEngine.shared

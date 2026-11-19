@@ -549,7 +549,7 @@ final class CaptionEditor: ObservableObject, Identifiable {
     /// By server and project.
     private static var open: [String: CaptionEditor] = [:]
     /// Saved presets are per account, so the cache is too.
-    static var presetsKey: String { "caption-presets-\(API.current?.cacheKey ?? "")" }
+    static var presetsKey: String { "caption-presets-\(API.current?.accountKey ?? "")" }
 
     let id: String
     /// The server and account the project is on (`API.cacheKey`).

@@ -24,7 +24,7 @@ struct ServerDetailView: View {
             host: entry.label, state: state,
             via: entry.routes.first(where: { $0.id == state.routeId })?.kind == .account || entry.routes.allSatisfy({ $0.authorization == .account }) ? .account : .direct,
             accountStatus: accountServers.computers.first { $0.id == serverId },
-            appVersion: SettingsView.version, serverVersion: entry.version))
+            appVersion: ToolsView.version, serverVersion: entry.version))
         return Form {
             Section("Connection") {
                 HStack(spacing: 12) {

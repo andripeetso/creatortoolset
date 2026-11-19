@@ -158,6 +158,7 @@ final class UploadEngine: ObservableObject {
     // MARK: Steps
 
     func api(for item: UploadItem) -> API? {
+        // shortcut: the workspace picked now, not when the clip was picked; stamp it on UploadItem if switching mid-upload misfiles clips
         Servers.shared.list.first { $0.id == item.server }.flatMap(API.connected)
     }
 
@@ -389,7 +390,7 @@ final class UploadEngine: ObservableObject {
         request.setValue("application/offset+octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue(String(offset), forHTTPHeaderField: "Upload-Offset")
         request.allowsCellularAccess = !UserDefaults.standard.bool(forKey: "wifiOnly")
-        start(request, file: body, step: step, as: .sending) { $0.sent = offset }
+        signed(request, api, uploadId: uploadId, step: step) { self.start($0, file: body, step: step, as: .sending) { $0.sent = offset } }
     }
 
     /// A part straight to the bucket's signed URL: no cookie and no other header goes with it.
@@ -418,9 +419,26 @@ final class UploadEngine: ObservableObject {
         FileManager.default.createFile(atPath: body.path, contents: json)
         var request = api.request("/api/library/uploads/\(uploadId)/finish", method: "POST")
         if !json.isEmpty { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        start(request, file: body, step: step, as: .finishing) {
-            $0.sent = $0.size
-            $0.note = "Finishing…"
+        signed(request, api, uploadId: uploadId, step: step) {
+            self.start($0, file: body, step: step, as: .finishing) {
+                $0.sent = $0.size
+                $0.note = "Finishing…"
+            }
+        }
+    }
+
+    /// The request as the background transfer service may send it later: a DPoP session's carries a write ticket for
+    /// its upload's path in place of the proof (`MediaTicket`), which iOS may send after the proof's minutes are up.
+    /// No ticket (no connection): the step waits and is tried again.
+    private func signed(_ request: URLRequest, _ api: API, uploadId: String, step: TransferStep, then: @escaping (URLRequest) -> Void) {
+        guard api.needsTicket else { return then(request) }
+        Task { @MainActor in
+            do {
+                then(try await api.background(request, prefix: "/api/library/uploads/\(uploadId)"))
+            } catch {
+                try? FileManager.default.removeItem(at: AppFiles.slice(step))
+                perform(.retryLater("No connection to the server"), step.itemId)
+            }
         }
     }
 
@@ -454,6 +472,10 @@ final class UploadEngine: ObservableObject {
         store.liveBytes[step.itemId] = nil
         guard let item = store.item(step.itemId), item.isWorking else { return }
         if let error = error as NSError?, error.code == NSURLErrorCancelled { return }
+        // a ticket that ran out with its session: the next try asks for a new one
+        if response?.statusCode == 401, api(for: item)?.needsTicket == true {
+            return perform(.retryLater("Signing in again"), step.itemId)
+        }
         let action = Rules.after(step, status: response?.statusCode ?? 0,
                                  uploadOffset: response?.value(forHTTPHeaderField: "Upload-Offset").flatMap { Int64($0) },
                                  etag: response?.value(forHTTPHeaderField: "ETag"),
@@ -504,7 +526,7 @@ final class UploadEngine: ObservableObject {
             }
         case .signedOut:
             // the server in use is marked signed out by the read that was refused (`API.data`), only if it still is
-            fail(id, "Signed out: sign in again in More, then Upload")
+            fail(id, "Signed out: sign in again in Tools → Computers, then Upload")
         case .failed(let why):
             fail(id, why)
         }

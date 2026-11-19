@@ -17,6 +17,7 @@ struct ConnectionDot: View {
 struct ServersView: View {
     @ObservedObject private var connections = Connections.shared
     @ObservedObject private var account = Account.shared
+    @EnvironmentObject private var servers: Servers
     @State private var adding = false
     @State private var removing: ServerEntry?
 
@@ -32,6 +33,9 @@ struct ServersView: View {
                 }
             } footer: {
                 if !connections.servers.isEmpty { Text("Long press a computer to remove it from this phone.") }
+            }
+            if servers.signedOut {
+                Section { Button("Sign in again") { adding = true } }
             }
             if account.profile != nil {
                 Section {
@@ -56,7 +60,7 @@ struct ServersView: View {
                 Button("Add a computer", systemImage: "plus") { adding = true }
             }
         }
-        .sheet(isPresented: $adding) { NavigationStack { AddServerView() } }
+        .sheet(isPresented: $adding) { NavigationStack { AddServerView(prefill: servers.signedOut ? servers.current?.url.absoluteString : nil) } }
         .alert("Remove from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { entry in
             Button("Cancel", role: .cancel) {}
             Button("Remove", role: .destructive) { connections.remove(entry.serverId) }

@@ -6,6 +6,7 @@ import { tunnelHostname } from "./connect/state";
 import { env, hostedMode } from "./lib/env";
 import { onLeave } from "./lib/sync";
 import { verifyDpop } from "./lib/dpop";
+import { ticketCaller } from "./media-ticket";
 import {
   ACCESS_TOKEN_TYPE,
   BOOTSTRAP_TOKEN_TYPE,
@@ -70,6 +71,9 @@ const tokenOf = (c: Context): { scheme: "Bearer" | "DPoP"; token: string } | nul
 export function callerOf(c: Context): Caller {
   const t = tokenOf(c);
   if (!t) {
+    // a media ticket stands for its session on its own path (media-ticket.ts), before the cookie
+    const ticket = ticketCaller(c);
+    if (ticket) return ticket;
     const user = getSessionUser(c.req.header("cookie"));
     return user ? { kind: "cookie", user } : { kind: "none" };
   }
