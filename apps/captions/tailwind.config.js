@@ -162,5 +162,11 @@ module.exports = {
     // the Workshop's writing header (DocumentTabs): narrower than its tabs and its tools' names need side by side.
     // There the tools show their icons only, so the header stays one row at any width and nothing is cut off
     addVariant("docbar-narrow", "@container docbar (max-width: 43.99rem)");
+    // the Library's list view (ClipCards LIST_COLS): its columns come in as its own width allows, Length always shown
+    addVariant("cl1", "@container cliplist (min-width: 470px)");
+    addVariant("cl2", "@container cliplist (min-width: 570px)");
+    addVariant("cl3", "@container cliplist (min-width: 660px)");
+    addVariant("cl4", "@container cliplist (min-width: 750px)");
+    addVariant("cl5", "@container cliplist (min-width: 830px)");
   })],
 }

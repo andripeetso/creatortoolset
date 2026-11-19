@@ -630,7 +630,8 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     expect(by.getAttribute("aria-label")).toBe("Sort by Date filmed");
     expect(host.querySelector('button[aria-label="Newest first"]')).not.toBeNull();
     await act(async () => by.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
-    expect([...document.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent?.trim())).toEqual(["Date filmed", "Date added", "Name", "Length"]);
+    // replaced (CEO 11-19 list columns: the list's Size and Kind headers sort, so Sort by has them too)
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent?.trim())).toEqual(["Date filmed", "Date added", "Name", "Length", "Size", "Kind"]);
     await act(async () => moreItem("Name")!.click());
     await settle();
     expect(server.asked.at(-1)).toMatchObject({ sort: "name" });

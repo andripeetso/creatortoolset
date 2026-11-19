@@ -28,6 +28,10 @@ export interface AssetCard {
   description?: { text: string; source: "user" | "ai" };
   state: VersionState;
   capturedAt?: number;
+  /** when it came into the library (the list's Date added) */
+  addedAt?: number;
+  /** the current version's file size (the list's Size) */
+  bytes?: number;
   trashedAt?: number;
   /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
   review?: true;
@@ -122,7 +126,7 @@ export interface SearchQuery {
   limit?: number; // limit ≤ 200
 }
 
-export type LibrarySort = "new" | "old" | "name" | "name-za" | "longest" | "shortest" | "filmed" | "filmed-old";
+export type LibrarySort = "new" | "old" | "name" | "name-za" | "longest" | "shortest" | "filmed" | "filmed-old" | "biggest" | "smallest" | "kind" | "kind-za";
 
 /** GET /api/library/:id/tags */
 export interface TagCount {

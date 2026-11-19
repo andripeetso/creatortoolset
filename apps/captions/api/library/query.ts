@@ -35,6 +35,10 @@ export const SORTS: Record<LibrarySort, { key: string; desc: boolean; text?: tru
   shortest: { key: `COALESCE(NULLIF(${LENGTH}, 0), 1e15)`, desc: false },
   filmed: { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: true },
   "filmed-old": { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: false },
+  biggest: { key: "v.bytes", desc: true },
+  smallest: { key: "v.bytes", desc: false },
+  kind: { key: "a.kind", desc: false, text: true },
+  "kind-za": { key: "a.kind", desc: true, text: true },
 };
 
 /** FTS5 query: each word quoted as a prefix match, words ANDed. Null when there are no words. */
@@ -111,7 +115,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
   };
 }
 
-export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at,
+export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at, v.bytes AS bytes,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
@@ -129,6 +133,7 @@ export interface CardRow {
   kind: AssetKind;
   title: string;
   created_at: number;
+  bytes?: number | null;
   trashed_at: number | null;
   version_id: string;
   version_n: number;
@@ -293,6 +298,8 @@ export function toCard(r: CardRow): AssetCard {
     ...(r.description ? { description: describedAs(r.description) } : {}),
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
+    ...(r.created_at ? { addedAt: r.created_at } : {}),
+    ...(r.bytes ? { bytes: r.bytes } : {}),
     ...(p.country ? { place: p.country } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
     ...(r.roll && !review ? { roll: r.roll } : {}),

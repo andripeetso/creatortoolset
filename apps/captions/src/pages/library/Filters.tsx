@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SearchQuery } from "@contracts/library";
-import { Laptop } from "lucide-react";
+import { Laptop, X } from "lucide-react";
 import type { LibraryFilters } from "@/lib/library";
 import { thisMacDevice } from "@/lib/providers";
 import { cn } from "@/lib/utils";
@@ -113,25 +113,46 @@ export function WhenPicker({ value, onChange }: { value: LibraryFilters; onChang
         })}
       </div>
       <div className="grid grid-cols-2 gap-1.5">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          From
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => (setFrom(e.target.value), range(e.target.value, to))}
-            className="h-8 rounded-md border bg-transparent px-1.5 text-[12px] text-foreground"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          To
-          <input
-            type="date"
-            value={to}
-            min={from || undefined}
-            onChange={(e) => (setTo(e.target.value), range(from, e.target.value))}
-            className="h-8 rounded-md border bg-transparent px-1.5 text-[12px] text-foreground"
-          />
-        </label>
+        <DateField label="From" value={from} onPick={(v) => (setFrom(v), range(v, to))} />
+        <DateField label="To" value={to} min={from || undefined} onPick={(v) => (setTo(v), range(from, v))} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A From/To day (11-19, Andri): an empty date field in the Mac app (WebKit) shows today's date as if one were set. The
+ * field shows "Any date", muted, until a day is picked, and × clears it. The real date input lies over it, unseen: a
+ * click on it opens the browser's own picker (WebKit opens it on a click; Chromium on showPicker).
+ */
+function DateField({ label, value, min, onPick }: { label: string; value: string; min?: string; onPick: (v: string) => void }) {
+  // numbers, the way the person's own date fields write them: the narrow sidebar field holds them with the ×
+  const shown = value ? new Date(`${value}T00:00`).toLocaleDateString(undefined, { day: "numeric", month: "numeric", year: "numeric" }) : "Any date";
+  return (
+    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+      <span>{label}</span>
+      <div className="relative flex h-8 items-center rounded-md border px-1.5 text-[12px]">
+        <span className={cn("min-w-0 flex-1 truncate", value ? "text-foreground" : "text-muted-foreground")}>{shown}</span>
+        <input
+          type="date"
+          aria-label={`${label} date`}
+          value={value}
+          min={min}
+          onChange={(e) => onPick(e.target.value)}
+          onClick={(e) => {
+            try {
+              e.currentTarget.showPicker?.();
+            } catch {
+              // already open, or not allowed here: the click itself opens it
+            }
+          }}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        />
+        {value && (
+          <button type="button" aria-label={`Clear ${label} date`} onClick={() => onPick("")} className="relative z-10 ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
     </div>
   );

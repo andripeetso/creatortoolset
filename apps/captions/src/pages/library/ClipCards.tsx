@@ -154,31 +154,56 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
   );
 }
 
-/** One clip in the list view: its picture, name, the step running on it and its length, as a folder's row. */
+/**
+ * The list view's columns, one grid for the header and every row: Name · Date filmed · Date added · Length · Size · Kind
+ * · Roll. They come in as the list's own width allows (the cliplist container, tailwind.config.js cl1…cl5), right to left,
+ * with Length always shown (it was on every row before the columns); Name takes the rest and truncates.
+ */
+export const LIST_COLS =
+  "grid items-center gap-x-3 grid-cols-[minmax(0,1fr)_3.5rem] cl1:grid-cols-[minmax(0,1fr)_6.5rem_3.5rem] cl2:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_3.5rem] cl3:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_3.5rem_4.5rem] cl4:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_3.5rem_4.5rem_4.5rem] cl5:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_3.5rem_4.5rem_4.5rem_3.5rem]";
+/** Each column's cell, shown from its width on (in the order of LIST_COLS). */
+export const COL = { filmed: "hidden cl1:block", added: "hidden cl2:block", length: "", size: "hidden cl3:block", kind: "hidden cl4:block", roll: "hidden cl5:block" } as const;
+/** The list's container: the columns follow its width, not the window's (beside a chat it is half the window). */
+export const LIST_CONTAINER: CSSProperties = { containerType: "inline-size", containerName: "cliplist" };
+
+export const KIND_WORD: Record<AssetKind, string> = { video: "Video", image: "Photo", audio: "Audio", doc: "Document" };
+const day = (ms?: number) => (ms ? new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "");
+const sizeWord = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+
+/** One clip in the list view: its picture, name and the step running on it, then the columns (LIST_COLS). */
 export function AssetRow({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen: () => void; drag?: Drag }) {
   const Icon = KIND_ICON[a.kind];
+  const cell = "truncate text-xs text-zinc-500";
   return (
     <button
       type="button"
       onClick={onOpen}
       data-state={a.state}
       {...drag}
-      className="flex w-full items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-left transition-colors hover:border-violet-500/50"
+      className={cn(LIST_COLS, "w-full rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2 text-left transition-colors hover:border-violet-500/50")}
     >
-      <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-zinc-950 text-zinc-600">
-        {a.thumbUrl ? <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} /> : <Icon className="h-4 w-4" />}
-      </div>
-      <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
-      {isHere(a) && <HereMark className="shrink-0 text-zinc-500" />}
-      {fileLine(a) && a.state !== "failed" ? (
-        <span className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
-          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-          {fileLine(a)}
+      <span className="flex min-w-0 items-center gap-3">
+        <span className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-zinc-950 text-zinc-600">
+          {a.thumbUrl ? <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} /> : <Icon className="h-4 w-4" />}
         </span>
-      ) : (
-        <ClipStage card={a} className="shrink-0" />
-      )}
-      {a.durationS !== undefined && <span className="shrink-0 font-mono text-[11px] text-zinc-500">{clock(a.durationS)}</span>}
+        <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
+        {isHere(a) && <HereMark className="shrink-0 text-zinc-500" />}
+        {fileLine(a) && a.state !== "failed" ? (
+          <span className="flex shrink-0 items-center gap-1.5 text-xs text-zinc-500">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+            {fileLine(a)}
+          </span>
+        ) : (
+          <ClipStage card={a} className="shrink-0" />
+        )}
+      </span>
+      {/* Date filmed is the file's own date; with none the clip sorts by when it was added, and the cell stays empty */}
+      <span className={cn(cell, COL.filmed)}>{day(a.capturedAt)}</span>
+      <span className={cn(cell, COL.added)}>{day(a.addedAt)}</span>
+      <span className="text-right font-mono text-[11px] text-zinc-500">{a.durationS !== undefined ? clock(a.durationS) : ""}</span>
+      <span className={cn(cell, "text-right", COL.size)}>{a.bytes ? sizeWord(a.bytes) : ""}</span>
+      <span className={cn(cell, COL.kind)}>{KIND_WORD[a.kind]}</span>
+      <span className={cn(cell, COL.roll)}>{a.roll ? `${a.roll.toUpperCase()}-roll` : ""}</span>
     </button>
   );
 }
