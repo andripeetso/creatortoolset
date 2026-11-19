@@ -279,7 +279,7 @@ describe("Creator Toolset as a remote MCP server", () => {
       "GET /api/editor/edit_tiny": () => ({ jobs: [{ id: 3, state: "queued", downloads: { libraryId: "lib_t", workspace: "ws_t" } }] }),
     });
     const asked = await callWith(waiting, "editor_create", { sources: ["v_a"] });
-    expect(asked.value).toEqual({ action_needed: { kind: "downloads", libraryId: "lib_t", workspace: "ws_t" }, stop: expect.any(String) });
+    expect(asked.value).toEqual({ action_needed: expect.objectContaining({ kind: "downloads", libraryId: "lib_t", workspace: "ws_t", actions: [expect.objectContaining({ id: "turn_on" })] }), stop: expect.any(String) });
 
     // voice_make saves into the Media Library, which this account has set up (the gate passes; a library not set up is media-ready.test.ts)
     // only where the built-in AI Editor answers: mcp.ts notHere hides its tools, voice_make included, where a plug-in answers /api/editor (studio runs)

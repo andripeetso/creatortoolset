@@ -80,6 +80,16 @@ export const TRANSCRIBE_KIND = "transcribe";
 export const FOLDER_LIST_KIND = "folder-list";
 
 /**
+ * A chat card's folder browser (GET /api/devices/:id/browse, api/lib/folder-browse.ts): one level of folders on the
+ * computer (the Mac app's FolderBrowseJob.swift). The claim's option: `path` ("~", "~/…" or a full path). Then:
+ *   POST job/folder-browse/:id        FolderBrowse (without device, deviceName) → DeviceEnded
+ *   POST job/folder-browse/:id/fail   { error } → DeviceEnded
+ */
+export const FOLDER_BROWSE_KIND = "folder-browse";
+/** GET /api/devices/:id/browse's answer: folders only; `roots` are the computer's home folder and mounted drives. */
+export type FolderBrowse = { device: string; deviceName: string; path: string; parent: string | null; roots: { name: string; path: string }[]; dirs: { name: string; path: string }[] };
+
+/**
  * The kind that writes the Media Library's shot descriptions of a file kept on a Mac with nothing uploaded
  * (api/library/mac-look.ts; the Mac app's LibraryLookJob.swift, a Linux computer's worker: api/work/look.ts). Claimed on
  * the road above by a computer of the account that added it that reaches the file (the Mac it is on, or one that connects

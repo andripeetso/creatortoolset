@@ -27,7 +27,7 @@ import type { EditingStylesView } from "../contracts/editor-styles";
 import { finalsTools } from "./mcp-tools/finals";
 import { mainSource } from "./library/sources";
 import { setupNeeded } from "./library/access";
-import { ACTION_NEEDED, SOUNDS, type ActionNeeded, type AssetCard } from "../contracts/library";
+import { ACTION_NEEDED, actionCard, SOUNDS, type ActionNeeded, type AssetCard } from "../contracts/library";
 import { rollCount, rollLine } from "./library/roll";
 import { cardFor, cardResource, cardResourceList, cardToolMeta, hasCard, mediaLinks } from "./mcp-cards";
 
@@ -1443,7 +1443,7 @@ const libraryGate = async (user: SessionUser, turn: string | null | undefined): 
 /** A step queued with no reader and Downloads off (reach.ts downloadsAsk): the card asks before the reply goes on. */
 const downloadsWaiting = (jobs: Args[]): ActionNeeded | null => {
   const d = jobs.find((j) => j.downloads)?.downloads as { libraryId: string; workspace: string } | undefined;
-  return d ? { kind: "downloads", ...d } : null;
+  return d ? actionCard({ kind: "downloads", ...d }) : null;
 };
 
 /** What the reply says in its one line when a tool stopped for the person (the card under it asks). */
@@ -1451,6 +1451,7 @@ const ACTION_STOP: Record<ActionNeeded["kind"], string> = {
   setup: "The Media Library of this workspace is not set up yet. Say one line that it needs setting up and end your reply: no uploads, no folder questions. The card under your reply carries on.",
   downloads: "The edit needs the files on this computer and Automatic downloads is off. Say one line and end your reply: the card under it turns them on.",
   projects: "The edit waits for this workspace's Project files folder. Say one line and end your reply: the card under it sets the folder, and the edit carries on by itself.",
+  exports: "The edit waits for this workspace's Final exports folder. Say one line and end your reply: the card under it sets the folder, and the edit carries on by itself.",
 };
 
 async function callTool(call: Call, auth: Headers, origin: string, user: SessionUser, name: string, args: Args, plugged: PluginTools, confirmed = false) {

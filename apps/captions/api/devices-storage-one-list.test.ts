@@ -142,7 +142,7 @@ describe("Projects and Exports are made beside the workspace's first Media folde
     const dev = "dev-studio-2";
     listFile([folder("m2", dev, "~/Movies/Shoots")]);
     const r = await ensureUseFolder(USER, undefined, "library", dev);
-    expect(r).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
+    expect(r).toEqual({ error: "Choose a Final exports folder in Settings → Media Library." });
     expect((await storageOf(USER)).folders.some((f) => f.role === "library")).toBe(false);
   });
 

@@ -30,8 +30,9 @@ it("a Media folder at a volume's root gets no Projects folder: the answer says w
   await changeStorage("ana", (st) => {
     st.folders.push({ ...media("dev-c", "/Volumes/MONOLITH"), id: "media-root" });
   });
+  // "dev-c" is no computer anyone paired: the card says it can't find it, never that a folder is missing
   const r = await ensureUseFolder("ana", "ws-a", "projects", "dev-c");
-  expect(r).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
+  expect(r).toMatchObject({ wait: { missing: "computer", device: null, line: "Can't find dev-c right now: open Creator Toolset on it", actions: [{ id: "retry" }] } });
 });
 
 it("with no workspace named and two of the account's, no Projects folder is picked: the answer says what to choose", async () => {

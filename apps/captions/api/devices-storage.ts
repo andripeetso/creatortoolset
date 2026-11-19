@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, EXPORTS_NAME, PROJECTS_NAME, libraryBase, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, EXPORTS_NAME, FOLDER_LABELS, PROJECTS_NAME, libraryBase, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import type { ActionNeeded } from "../contracts/library";
+import { actionCard, type FolderAsk } from "../contracts/library";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
@@ -19,6 +19,7 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf, projectOf } from "./lib/project-of";
 import { ownedProjects, sharedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary } from "./library/access";
+import { actionDone } from "./lib/action-done";
 
 /**
  * Settings → Folders (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
@@ -110,34 +111,46 @@ function lookupHost(host: string): { id: string; owner: string } | undefined {
   return d ? { id: d.id, owner: d.owner } : undefined;
 }
 
+/** A Projects or Exports row is there for `workspace` on `host`: the chat cards that asked for one go (lib/action-done.ts),
+ *  the ones that could not find that computer by its host name too. */
+function folderMade(user: string, role: string, workspace: string | undefined, host: string): void {
+  if (!workspace || (role !== "projects" && role !== "library")) return;
+  const named = deviceOf(host)?.report?.machine?.host;
+  const same = (n?: string) => !!n && !!named && n.toLowerCase().replace(/\.local$/, "") === named.toLowerCase().replace(/\.local$/, "");
+  actionDone(user, (a) => a.kind === (role === "projects" ? "projects" : "exports") && a.workspace === workspace && (a.device === host || (!a.device && same(a.deviceName))));
+}
+
 /**
  * The workspace's Projects or Exports folder for work on computer `device` (AI Editor working files; finished videos):
  * the one it has, else one made next to its first Media folder on that computer, written as a record. Never on the
- * Mac's internal disk by itself: with no Media folder off it, the answer says what to choose (Settings → Folders), and
- * for a named workspace's Projects folder it is a pause (`wait`): the chat's card offers the workspace's default
- * (~/Movies/Creator Toolset/<workspace>/Project files) or Choose…, and the job goes on once the row is there.
+ * Mac's internal disk by itself: with no Media folder off it, a named workspace's folder is a pause (`wait`): the chat's
+ * card offers the workspace's default (~/Movies/Creator Toolset/<workspace>/Project files) or Choose…, and the job goes
+ * on once the row is there. A `device` that is no known computer (a worker's host name nothing matched) is a card that
+ * says so (`missing: "computer"`), never a folder to choose.
  */
-export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string } | { wait: Extract<ActionNeeded, { kind: "projects" }> }> {
+export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string } | { wait: FolderAsk }> {
   // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
   // folders that have no workspace are its own: a workspace's folder is another client's, never picked
-  const owned = workspace ? [] : await ownedProjects(user);
-  if (!workspace && owned.length > 1) return { error: "Choose a Project files folder in Settings → Media Library." };
-  const ws = workspace ?? owned[0]?.id;
+  const owned = await ownedProjects(user);
+  const ws = workspace ?? (owned.length === 1 ? owned[0]!.id : undefined);
+  const label = FOLDER_LABELS[role];
+  const ask = (dev: string | null, deviceName: string | undefined): { wait: FolderAsk } | { error: string } => {
+    if (!ws) return { error: `Choose a ${label} folder in Settings → Media Library.` };
+    const name = owned.find((x) => x.id === ws)?.name || ws;
+    return { wait: actionCard({ kind: role === "projects" ? "projects" : "exports", workspace: ws, workspaceName: name, device: dev, ...(deviceName ? { deviceName } : {}), path: `${libraryBase(name)}/${label}` }) as FolderAsk };
+  };
+  if (!workspace && owned.length > 1) return { error: `Choose a ${label} folder in Settings → Media Library.` };
   const inWs = (w?: string) => w === ws;
   const st = await readStorage(user);
   const has = st.folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, inWs));
   if (has) return has;
   const media = st.folders.find((f) => f.role === "footage" && f.origin.host === device && folderIn(f, inWs));
-  const disks = deviceOf(device)?.report?.machine?.disks ?? [];
+  const computer = deviceOf(device);
+  const disks = computer?.report?.machine?.disks ?? [];
   const parent = media ? media.origin.path.replace(/\/[^/]*$/, "") : "";
   const p = `${parent}/${role === "projects" ? PROJECTS_NAME : EXPORTS_NAME}`;
   // shortcut: a Media folder at a volume's root has no room beside it on that volume (its parent is /Volumes), so it is refused
-  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) {
-    // a pause needs a workspace to name and a computer of the account's to make the folder on (the card's request)
-    if (role !== "projects" || !ws || !deviceOf(device)) return { error: "Choose a Project files folder in Settings → Media Library." };
-    const name = (await ownedProjects(user)).find((x) => x.id === ws)?.name || ws;
-    return { wait: { kind: "projects", workspace: ws, workspaceName: name, device, path: `${libraryBase(name)}/${PROJECTS_NAME}` } };
-  }
+  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) return computer ? ask(device, computer.name) : ask(null, device);
   return chained(user, async () => {
     const cur = await readStorage(user);
     const had = cur.folders.find((f) => f.role === role && f.origin.host === device && f.origin.path === p && folderIn(f, inWs));
@@ -145,6 +158,7 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
     const f: StorageFolder = { id: randomUUID(), role, name: p.split("/").pop() ?? p, origin: { host: device, path: p }, make: true, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) };
     cur.folders.push(f);
     await writeStorage(user, cur);
+    folderMade(user, role, ws, device);
     return f;
   });
 }
@@ -360,10 +374,12 @@ storageApp.get("/", async (c) => {
 });
 
 /** Use a folder you already have as a Media folder, or a folder as the workspace's Finals or Exports folder. */
-storageApp.post("/folders", async (c) => {
+storageApp.post("/folders", async (c) => addFolder(c, (await c.req.json().catch(() => null)) as Record<string, unknown> | null));
+
+/** POST /folders' work, for the request `c` (its account and workspace): Quick setup adds its rows through it too. */
+export async function addFolder(c: C, b: Record<string, unknown> | null): Promise<Response> {
   const u = c.get("user");
   const user = u.username;
-  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   // "music" from an older app is footage: the Media Library sorts songs and sound effects itself
   // the three uses (Media, Projects, Exports); "music" from an older app is footage; "finals" is no use any more (Finals reads Exports)
   const role: "footage" | "library" | "projects" | undefined = b?.role === "music" ? "footage" : b?.role === "footage" || b?.role === "library" || b?.role === "projects" ? b.role : undefined;
@@ -412,13 +428,15 @@ storageApp.post("/folders", async (c) => {
     }
     // the share its drive is on that computer, so another computer can be told how to connect it (never a password)
     const mount = mountOf(p, deviceOf(host)?.report?.machine?.disks);
-    // an Exports folder is made when missing (setup's default may not be there yet); the others must already exist
-    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: role !== "footage", createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
+    // Projects and Exports are made when missing (setup's default may not be there yet); a Media folder only when asked
+    // (`make`: setup's default Library folder, made by the computer it is on)
+    st.folders.push({ id: randomUUID(), role, name: p.split("/").filter(Boolean).pop() ?? p, origin: { host, path: p }, make: role !== "footage" || b?.make === true, createdAt: Date.now(), reach: {}, ...(workspace ? { workspace } : {}), ...(mount ? { mount } : {}) });
     await writeStorage(user, st);
     return st;
   });
+  if (out) folderMade(user, role, workspace, host);
   return out ? c.json(shown(out, here, user, named)) : c.json({ error: "That folder is already there" }, 400);
-});
+}
 
 /**
  * Which of the account's workspaces a Media or Exports folder is in: `workspaces`, one or more, or null for every

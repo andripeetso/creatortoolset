@@ -33,7 +33,7 @@ it("no Project files and no Media folder: a pause with the workspace's default, 
   const mac = pairDevice("ana", "Ana's Mac").device.id;
   const r = await ensureUseFolder("ana", "ws-tiny", "projects", mac);
   const wait = { kind: "projects", workspace: "ws-tiny", workspaceName: "Tiny Acrobatics", device: mac, path: "~/Movies/Creator Toolset/Tiny Acrobatics/Project files" };
-  expect(r).toEqual({ wait });
+  expect(r).toMatchObject({ wait: { ...wait, title: "Project files folder for Tiny Acrobatics", actions: [{ id: "use_default" }, { id: "choose" }] } });
 
   // the card's [Use <default>]: the request ActionCard's addProjectsFolder sends
   const res = await app.request("/api/devices/storage/folders", {
@@ -47,6 +47,6 @@ it("no Project files and no Media folder: a pause with the workspace's default, 
   // the job's next claim finds it: no pause any more, and that workspace only
   expect(await ensureUseFolder("ana", "ws-tiny", "projects", mac)).toEqual(rows[0]);
   expect(await ensureUseFolder("ana", "ws-other", "projects", mac)).toMatchObject({ wait: { workspace: "ws-other", path: "~/Movies/Creator Toolset/Other/Project files" } });
-  // Exports keeps its plain answer: nothing waits on it
-  expect(await ensureUseFolder("ana", "ws-other", "library", mac)).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
+  // Exports gets the same card, with its own folder
+  expect(await ensureUseFolder("ana", "ws-other", "library", mac)).toMatchObject({ wait: { kind: "exports", title: "Final exports folder for Other", path: "~/Movies/Creator Toolset/Other/Final exports" } });
 });

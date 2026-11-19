@@ -3,7 +3,8 @@ import path from "node:path";
 import { Hono } from "hono";
 import type { Device } from "../../contracts/providers";
 import type { WorkOffline } from "../../contracts/work";
-import { hostsOriginals, hostsProxies } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, LIBRARY_WORDS } from "../../contracts/library";
+import { actionDone, goOnFor } from "../lib/action-done";
 import type { AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { deviceOf, listDevices, setDeviceWork } from "../lib/devices";
@@ -197,6 +198,8 @@ offlineApp.put("/downloads", async (c) => {
   if (libraries?.length) saved.libraries = libraries;
   else delete saved.libraries;
   saveOffline(user, saved);
+  // the chat's Downloads card for this library is answered: it goes, and the edit it stopped on carries on
+  if (next.mode !== "none") actionDone(user, (a) => a.kind === "downloads" && a.libraryId === libId, goOnFor(c, LIBRARY_WORDS.downloadsDone));
   return c.json(saved);
 });
 

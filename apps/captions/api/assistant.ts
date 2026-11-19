@@ -32,7 +32,9 @@ import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { exportsOf, FOLDER_LABELS, folderIn, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
 import { readWorkPrefs, writeWorkPrefs } from "./work-prefs";
-import type { ActionNeeded } from "../contracts/library";
+import { RETRY, type ActionNeeded } from "../contracts/library";
+import { onActionDone, publicOrigin } from "./lib/action-done";
+import { recheckAction } from "./library/action-check";
 import type { AssistantApproval, AssistantChat, AssistantContext, AssistantFile, AssistantFileUse, AssistantImage, AssistantMedia, AssistantMessage, AssistantPaste, AssistantProvider, AssistantView } from "../contracts/assistant";
 
 /**
@@ -585,9 +587,38 @@ export function askFolder(username: string, turn: string, why: string): void {
 export function noteAction(username: string, turn: string, action: ActionNeeded): void {
   const m = messageOf(username, turn);
   if (m?.status !== "thinking") return;
-  m.action = action;
+  m.action = stepped(turn, action);
   saveSoon(username, turn);
 }
+
+/** A card on message `id`: its Retry re-asks the server about that message (GET /action/:id). */
+const stepped = (id: string, a: ActionNeeded): ActionNeeded => ({ ...a, actions: a.actions.map((x) => (x.id === "retry" ? { ...x, label: RETRY, call: { method: "GET", path: `/api/assistant/action/${id}` } } : x)) });
+
+// a card's goal reached by any route (lib/action-done.ts): its messages lose the card, and the last word of a chat goes on
+onActionDone((username, done, goOn) => {
+  const conv = load(username);
+  let changed = false;
+  for (const chat of [{ messages: conv.messages, ai: conv.ai }, ...(conv.past ?? [])]) {
+    const list = chat.messages;
+    list.forEach((m, i) => {
+      if (!m.action || !done(m.action)) return;
+      delete m.action;
+      changed = true;
+      const ask = list[i - 1]?.role === "user" ? list[i - 1]!.text : "";
+      // shortcut: a card whose reply is still being written is only cleared, its ask is not carried on; carry it from `later` if that bites
+      if (!goOn || !ask || i !== list.length - 1 || m.status === "thinking") return;
+      const t = Date.now();
+      const asked: AssistantMessage = { id: randomUUID(), role: "user", text: goOn.say(ask), at: t };
+      const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: t + 1, status: "thinking" };
+      list.push(asked, reply);
+      (conv.held ??= {})[reply.id] = { ask: asked.id, files: [], pasted: [], url: goOn.url, admin: goOn.admin, at: t, ...(chat.ai ? { ai: chat.ai } : {}) };
+    });
+  }
+  if (!changed) return;
+  save(username);
+  tell(username);
+  if (goOn) void pump(username);
+});
 
 /** Answers the reply offers as buttons (offer_choices, mcp.ts): the newest offer replaces an earlier one. */
 export function noteChoices(username: string, turn: string, choices: string[]): void {
@@ -685,7 +716,8 @@ export function workEnded(username: string, idStart: string, end: WorkEnd & { sa
     said = true;
     // the line carries the card it is about, so "Show me" has a page to open however far back the work was started
     const about = holders.flatMap((m) => m.work!.filter((w) => cardOf(w.id, idStart)))[0];
-    const line: AssistantMessage = { id: randomUUID(), role: "assistant", text: end.say, at: Date.now(), status: "done", ...(about ? { work: [{ ...about }] } : {}), ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}), ...(end.action ? { action: end.action } : {}) };
+    const id = randomUUID();
+    const line: AssistantMessage = { id, role: "assistant", text: end.say, at: Date.now(), status: "done", ...(about ? { work: [{ ...about }] } : {}), ...(end.choices?.length ? { choices: end.choices.slice(0, 4) } : {}), ...(end.action ? { action: stepped(id, end.action) } : {}) };
     const last = list.at(-1);
     // a reply being written there keeps the last word until it ends
     if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), { line, idStart }]);
@@ -909,10 +941,6 @@ export async function askSecret(username: string, env: MyKeyEnv, why: string, tu
 
 /* ---- the turn ---- */
 
-const publicOrigin = (c: Context) => {
-  const url = new URL(c.req.url);
-  return process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || `${c.req.header("x-forwarded-proto") ?? url.protocol.replace(":", "")}://${url.host}`;
-};
 
 /**
  * The account's own AI only: the workspace's providers (the owner's own logins) answer the assistant for an admin alone.
@@ -2029,6 +2057,23 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
 }
 
 assistantApp.post("/turn", (c) => sendTurn(c));
+
+// GET /action/:id → { action }: a card's Retry (D14). The server asks again (the computer it could not find, the setup,
+// the folder) and the message gets the card as it stands now, or none once its goal is reached; the change stream says so
+assistantApp.get("/action/:id", async (c) => {
+  const { username } = c.get("user");
+  const id = c.req.param("id");
+  const was = messageOf(username, id)?.action;
+  if (!was) return c.json({ error: "Not found" }, 404);
+  const now = await recheckAction(username, was);
+  const m = messageOf(username, id);
+  if (!m?.action) return c.json({ action: null });
+  if (now) m.action = stepped(id, now);
+  else delete m.action;
+  save(username);
+  tell(username);
+  return c.json({ action: m.action ?? null });
+});
 
 /* ---- every chat by its id, none of them made the open one (the phone; the dock keeps the open chat) ---- */
 

@@ -289,7 +289,7 @@ final class CardJobsTests: XCTestCase {
         for request in site.requests {
             // the same request the app sends today, to the same address; the one thing new is a field in its body
             XCTAssertEqual("\(request.method) \(request.path)", poll)
-            XCTAssertEqual(json(request), ["blobs": true, "work": 1, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check", "copy"]])
+            XCTAssertEqual(json(request), ["blobs": true, "work": 1, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"]])
         }
         XCTAssertTrue(seen.statuses.isEmpty, "and nothing a person sees changes")
     }
@@ -343,7 +343,7 @@ final class CardJobsTests: XCTestCase {
         XCTAssertTrue(ended)
         // the hint is followed once; the next poll lists no kind, and a hint it did not ask for is left alone for a poll's length
         XCTAssertEqual(paths(site), [poll, claim, poll])
-        XCTAssertEqual(json(site.requests[0]), ["blobs": true, "work": 1, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check", "copy"]])
+        XCTAssertEqual(json(site.requests[0]), ["blobs": true, "work": 1, "editor": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"]])
         XCTAssertEqual(json(site.requests[2]), ["blobs": true, "work": 1])
         XCTAssertTrue(seen.statuses.isEmpty)
     }
@@ -353,14 +353,14 @@ final class CardJobsTests: XCTestCase {
         site.answer = { _ in (200, #"{"job":null}"#) }   // another Mac of the account was first
         let seen = Seen()
         let runner = runner(site, seen: seen)
-        XCTAssertEqual(runner.editorKinds(now: 1000), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check", "copy"])
+        XCTAssertEqual(runner.editorKinds(now: 1000), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"])
         XCTAssertNil(runner.claimStep(now: 1000))
         XCTAssertEqual(paths(site), [claim])
         XCTAssertEqual(site.requests[0].headers["authorization"], "Bearer \(token)")
-        XCTAssertEqual(String(decoding: site.requests[0].body, as: UTF8.self), #"{"kinds":["cards-draw","cutout","split","faceblur","folder-list","helper-check","copy"]}"#)
+        XCTAssertEqual(String(decoding: site.requests[0].body, as: UTF8.self), #"{"kinds":["cards-draw","cutout","split","faceblur","folder-list","folder-browse","helper-check","copy"]}"#)
         XCTAssertNil(runner.editorKinds(now: 1000), "no kind is listed for a poll's length, so no hint and no claim")
         XCTAssertNil(runner.editorKinds(now: 1024.9))
-        XCTAssertEqual(runner.editorKinds(now: 1025), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check", "copy"])
+        XCTAssertEqual(runner.editorKinds(now: 1025), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"])
 
         // a server whose claim route refuses: an hour; one that is restarting: a poll's length
         for (status, quiet) in [(404, 3600.0), (400, 3600.0), (502, 25.0)] {
@@ -369,7 +369,7 @@ final class CardJobsTests: XCTestCase {
             let runner = self.runner(other, seen: seen)
             XCTAssertNil(runner.claimStep(now: 1000))
             XCTAssertNil(runner.editorKinds(now: 1000 + quiet - 0.1), "HTTP \(status)")
-            XCTAssertEqual(runner.editorKinds(now: 1000 + quiet), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check", "copy"], "HTTP \(status)")
+            XCTAssertEqual(runner.editorKinds(now: 1000 + quiet), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"], "HTTP \(status)")
         }
         XCTAssertTrue(seen.statuses.isEmpty, "none of it is an error a person sees")
 
@@ -405,7 +405,7 @@ final class CardJobsTests: XCTestCase {
         XCTAssertEqual(seen.statuses.map(\.drawing), [true, false])
         XCTAssertTrue(seen.statuses.allSatisfy { $0.lastError == nil && $0.running == 0 })
         // listed again on the next poll: the server hints at once when more steps wait
-        XCTAssertEqual(runner.editorKinds(now: 1001), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "helper-check", "copy"])
+        XCTAssertEqual(runner.editorKinds(now: 1001), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"])
     }
 
     func testAStepSaidOnDoneIsDrawnAtOnceWithNoPollBetween() async {
@@ -461,8 +461,8 @@ final class CardJobsTests: XCTestCase {
         let told = (try? JSONSerialization.jsonObject(with: site.requests[2].body)) as? [String: Any]
         XCTAssertEqual(told?["error"] as? String, "Cards can't be drawn on this Mac: this macOS has no switch for link preconnect (NoSuchFeature).")
         // from now on its polls say it draws no cards, so the server stops counting on it and another Mac gets the step
-        for now in [1001.0, 5000, 1_000_000] { XCTAssertEqual(runner.editorKinds(now: now), ["cutout", "split", "faceblur", "folder-list", "helper-check", "copy"]) }
-        XCTAssertEqual(runner.waitBody(listing: runner.editorKinds()) as NSDictionary, ["blobs": true, "work": 1, "editor": ["cutout", "split", "faceblur", "folder-list", "helper-check", "copy"]])
+        for now in [1001.0, 5000, 1_000_000] { XCTAssertEqual(runner.editorKinds(now: now), ["cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"]) }
+        XCTAssertEqual(runner.waitBody(listing: runner.editorKinds()) as NSDictionary, ["blobs": true, "work": 1, "editor": ["cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy"]])
     }
 
     func testAStepOfAKindThisMacDidNotListIsHandedBack() {
