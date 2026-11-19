@@ -91,7 +91,7 @@ async function signedIn(account = 'acct-1', scope?: string) {
 const TOKEN_A = 'a'.repeat(64);
 const TOKEN_B = 'b'.repeat(64);
 const reg = (deviceId: string, token: string, over: Record<string, unknown> = {}) => ({ deviceId, token, sandbox: true, bundleId: 'com.example.toolset', ...over });
-const devices = () => deps.db.prepare('SELECT account_id, device_id, token FROM mobile_devices ORDER BY account_id, device_id').all() as any[];
+const devices = () => deps.db.prepare('SELECT account_id, device_id, token FROM mobile_devices ORDER BY account_id, device_id').all().map((r) => ({ ...r })) as any[];
 
 // a computer linked to `account`, its own Ed25519 key kept as at link
 function computer(account = 'acct-1') {
