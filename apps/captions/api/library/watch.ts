@@ -299,6 +299,12 @@ watchApp.post("/watch/folder", async (c) => {
   const copyTo = typeof body?.copyTo === "string" && body.copyTo.trim() ? body.copyTo : undefined;
   const refused = await addWatchFolder(user.username, folder, libraryId, copyTo);
   if (refused) return c.json({ error: refused, code: "invalid" }, 400);
+  const target = libraryId ?? (await ensureLibrary(user.username));
+  if (target) {
+    await addSourceRow(user.username, await realpath(expandHome(folder)).catch(() => folder), target);
+    libraryChanged(target);
+    scanSoon();
+  }
   return c.json({ ok: true });
 });
 
@@ -474,10 +480,9 @@ const writeWatch = (libraryId: string, folders: WatchFolder[]) => {
 const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
 
 /**
- * Adds one folder to the account's Library footage folders, read in place. The Library and the AI Editor both read that
- * list, so the Library card, setup's Folders step and Settings → Devices land here. Returns the reason it was refused, or
- * null when it is in the list (already there counts as added). `libraryId` is the library the person is looking at
- * (default: their own in the workspace this request works in).
+ * Checks a folder for the account's Library footage list, read in place, and says why it is refused (null when it may be
+ * added). It writes no row: the caller adds the Source media row (the Settings route writes it itself; the Library card
+ * route calls addSourceRow). The Library card and setup's Folders step both come through here.
  */
 export async function addWatchFolder(username: string, folderPath: string, libraryId?: string, copyTo?: string): Promise<string | null> {
   if (!watchAllowed(username)) return "This server is not on your computer, so it cannot read your folders. Upload the files instead.";
@@ -490,9 +495,6 @@ export async function addWatchFolder(username: string, folderPath: string, libra
   const current = (await footageOf(username, false)).get(target) ?? [];
   if (current.some((g) => g.path === f.path)) return null;
   if (current.length >= MAX_FOLDERS) return `A library has up to ${MAX_FOLDERS} footage folders: remove one first`;
-  await addSourceRow(username, f.path, target);
-  libraryChanged(target);
-  scanSoon();
   return null;
 }
 
