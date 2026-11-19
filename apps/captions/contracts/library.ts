@@ -178,8 +178,6 @@ export interface LibrarySettings {
   importMode?: ImportMode;
   /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
   organize?: Organize;
-  /** a big folder came in and the AI organizing was offered (once, either answer) */
-  organizeOffered?: boolean;
   /** how densely shots are described (LOOK_LEVELS); absent: "standard" */
   lookLevel: LookLevel;
   /** dollars a month (UTC) shot descriptions may cost in this library's workspace, by the usage tally; null: no cap */
@@ -820,6 +818,14 @@ export const LIBRARY_WORDS = {
   chooseFolder: "Choose…",
   changeFolder: "Change…",
   removeFolder: "Remove",
+  libraryFolder: { label: "Library folder", tip: "Source media, Project files and Final exports are kept inside this folder." },
+  folderFound: "Found",
+  folderWillBeMade: "Will be created",
+  chooseEachFolder: "Choose each folder",
+  customFolders: "Custom",
+  dropMedia: "Drop media here",
+  orChooseFiles: "or click to choose files",
+  noClipsYet: "No clips yet",
   analysisOff: "Analysis is Off",
   smartFoldersOff: "Smart folders sort clips by their descriptions, so Analysis has to be on.",
   proxiesHostedOn: "On while proxies are hosted",

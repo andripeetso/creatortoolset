@@ -33,6 +33,21 @@ export const LIBRARY_NAME = "Creator Toolset";
 /** New disk folders' names (existing folders are never renamed); apps/editor/editor/storage.py mirrors them. */
 export const LIBRARY_SUBFOLDERS: Record<"footage" | "finished", string> = { footage: "Source media", finished: "Final exports" };
 
+/** The names a Library folder's subfolder of each use may already have, in this order (setup's Found; any case). */
+export const FOLDER_ALIASES: Record<"footage" | "projects" | "library", readonly string[]> = {
+  footage: ["Source media", "Footage", "Media"],
+  projects: ["Project files", "Projects"],
+  library: ["Final exports", "Exports", "Finals"],
+};
+/** The subfolder among `names` that already holds `use`, as it is named on disk (never renamed); undefined when none does. */
+export function foundFolder(names: readonly string[] | undefined, use: keyof typeof FOLDER_ALIASES): string | undefined {
+  for (const alias of FOLDER_ALIASES[use]) {
+    const hit = names?.find((n) => n.toLowerCase() === alias.toLowerCase());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 /** A drive or volume a computer reported: its name, where it is mounted, and its space (GB). A network share
  *  also says it is one (`network`) and which machine it lives on (`server`, e.g. the NAS's name). */
 export interface Disk {

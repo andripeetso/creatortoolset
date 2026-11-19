@@ -15,6 +15,10 @@ import Foundation
 // - import:print:{"paths":[…]} → { prints:{ path: hex } }: each granted file's quick fingerprint, the same as the page's
 //   quickPrint (src/lib/onMac.ts), which the server's duplicate check compares.
 // - import:locate:{"folder"?,"files":[…]} → Locate… in the Media Library (Locate.swift).
+// - import:make:{"in","names":[…]} → { made:[path], failed:[{name,error}], children:[name] }: setup's Library folder on
+//   Done. Each named folder missing in `in` is made (an existing one is left as it is); `children` are the folders in `in`
+//   after (no names: only that, for a dropped folder's Found). `in` must be a folder this app may write or read (a pick, a
+//   drop, the library's default place) or the folder one of those is in; a name is one plain folder name, never a path.
 
 func isImportAsk(_ ask: String) -> Bool { ask.hasPrefix("import:") }
 
@@ -30,6 +34,7 @@ enum ImportAsk: Equatable {
     case scan(String)
     case print([String])
     case locate(folder: String?, files: [LocateFile])
+    case make(in: String, names: [String])
 }
 
 /// An `import:` ask as its parts; nil when it is malformed.
@@ -50,6 +55,9 @@ func importAsk(_ ask: String) -> ImportAsk? {
         return files.count == list.count ? .copy(id: id, files: files) : nil
     case "scan": return (json["path"] as? String).map(ImportAsk.scan)
     case "print": return (json["paths"] as? [String]).map { ImportAsk.print(Array($0.prefix(5000))) }
+    case "make":
+        guard let folder = json["in"] as? String, let names = json["names"] as? [String], names.count <= 10 else { return nil }
+        return .make(in: (folder as NSString).expandingTildeInPath, names: names)
     case "locate":
         guard let list = json["files"] as? [[String: Any]] else { return nil }
         let files = list.compactMap { f in
@@ -123,6 +131,8 @@ final class Imports: @unchecked Sendable {
             }
         case .locate(let folder, let files)?:
             DispatchQueue.global(qos: .userInitiated).async { main(Locate.answer(folder: folder, files: files, allowed: MediaFiles.granted + Self.destinations)) }
+        case .make(let folder, let names)?:
+            DispatchQueue.global(qos: .userInitiated).async { main(Self.make(in: folder, names: names, allowed: MediaFiles.granted + Self.destinations + sources)) }
         case nil: done(["error": "Not an import this app knows."])
         }
     }
@@ -210,6 +220,50 @@ final class Imports: @unchecked Sendable {
     /// The root of `roots` that `path` lies in (or is), comparing real paths (links resolved) in one Unicode form; nil
     /// when it lies in none or is not a plain absolute path. A path that does not exist yet is resolved from its nearest
     /// existing folder, so a link inside a root never leads a copy out of it.
+    /// The folders directly in `path`, by name: no hidden ones, no packages or files, at most `limit`, sorted. [] when it
+    /// can't be read (or isn't there yet).
+    static func subfolders(_ path: String, limit: Int = 500) -> [String] {
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        let items = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey], options: [.skipsHiddenFiles])) ?? []
+        let names = items.filter { u in
+            let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+            return v?.isDirectory == true && v?.isPackage != true
+        }.map(\.lastPathComponent)
+        return Array(names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.prefix(limit))
+    }
+
+    /// The Library folder's missing folders made in `folder` (see the top of this file). `allowed`: the folders this app may
+    /// use; `folder` must be one of them, inside one, or the folder one of them is in. `grant` lets the page play and copy
+    /// into each made one.
+    static func make(in folder: String, names: [String], allowed: [String], grant: (String) -> Void = { MediaFiles.add($0); Imports.chose($0) }) -> [String: Any] {
+        let parentOfAllowed = allowed.contains { (($0 as NSString).deletingLastPathComponent as NSString).standardizingPath == (folder as NSString).standardizingPath }
+        guard inside(folder, allowed) != nil || parentOfAllowed else { return ["error": "That folder isn't one this app may use. Choose it again."] }
+        var made: [String] = []
+        var failed: [[String: String]] = []
+        let fm = FileManager.default
+        for name in names {
+            guard !name.isEmpty, !name.contains("/"), !name.hasPrefix("."), name.count <= 255 else {
+                failed.append(["name": name, "error": "Not a folder name"])
+                continue
+            }
+            let path = (folder as NSString).appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: path, isDirectory: &isDir) {
+                if !isDir.boolValue { failed.append(["name": name, "error": "A file has that name"]) }
+                continue
+            }
+            do {
+                // the Library folder itself may be new too (the default place, a name typed in the panel's New Folder)
+                try fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+                grant(path)
+                made.append(path)
+            } catch {
+                failed.append(["name": name, "error": error.localizedDescription])
+            }
+        }
+        return ["made": made, "failed": failed, "children": subfolders(folder)]
+    }
+
     static func inside(_ path: String, _ roots: [String]) -> String? {
         let parts = path.split(separator: "/")
         guard path.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else { return nil }

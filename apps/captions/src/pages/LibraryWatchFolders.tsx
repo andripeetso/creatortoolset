@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Folder } from "lucide-react";
-import type { Collection, LibrarySummary, WatchFolder, WatchStatus } from "@contracts/library";
+import type { Collection, WatchFolder, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, ErrorRow, ListRow, Section, SettingsSelect, Status } from "@/components/settings/ui";
-import { folderName, useBigFolder } from "@/components/LibraryProcessing";
+import { folderName } from "@/components/LibraryProcessing";
 import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac, thisMacBridge } from "@/lib/thisMac";
 
@@ -35,12 +35,9 @@ const NONE = "none";
 export function LibraryWatchFolders({
   libraryId,
   folders: libraryFolders,
-  onOrganized,
 }: {
   libraryId: string;
   folders: Collection[];
-  /** a big folder's offer to organize the library was answered (useBigFolder) */
-  onOrganized?: (l: LibrarySummary) => void;
 }) {
   // the saved status, read again when the library changes (a footage folder's file came in, a referenced file went missing)
   const live = useCachedLoad<WatchStatus>(`/api/library/${libraryId}/watch`, () => call(libraryId));
@@ -51,7 +48,6 @@ export function LibraryWatchFolders({
   const [path, setPath] = useState("");
   const [mode, setMode] = useState<WatchFolder["mode"]>("reference");
   const [into, setInto] = useState("");
-  const big = useBigFolder(onOrganized); // a big folder says first what adding it takes, as from the first screen
 
   const save = async (next: Change[]) => {
     try {
@@ -63,12 +59,8 @@ export function LibraryWatchFolders({
     }
   };
   const current = (status?.folders ?? []).map(({ path, mode, collectionId, copyTo }) => ({ path, mode, collectionId, copyTo }));
-  // where the server can copy into a folder on this computer, the one dialog asks copy or keep, as everywhere else
-  const add = () =>
-    big.check(path.trim(), (copyTo) =>
-      save([...current, { path: path.trim(), collectionId: into || undefined, ...(copyTo ? { mode: "reference", copyTo } : { mode: status?.copyTo ? "reference" : mode }) }]),
-      { libraryId },
-    );
+  // added at once (11-19: no dialog; the library's monthly budget guards what indexing it costs)
+  const add = () => save([...current, { path: path.trim(), collectionId: into || undefined, mode: status?.copyTo ? "reference" : mode }]);
   const choose = async () => {
     const picked = await chooseFolderOnMac();
     if (picked) setPath(picked);
@@ -134,7 +126,6 @@ export function LibraryWatchFolders({
         </form>
         {error && <ErrorRow title={error} />}
       </Card>
-      {big.dialog}
     </Section>
   );
 }

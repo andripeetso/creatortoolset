@@ -231,19 +231,28 @@ const openMore = async (host: HTMLElement) => {
 const moreItem = (text: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((x) => x.textContent?.includes(text));
 
 describe("Media Library page", () => {
-  it("an empty library is its own page: it says what it is for, the folder to choose, upload as the second way", async () => {
+  // replaced (CEO 11-19, Andri): the empty Library is one drop box, nothing else on the page (no toolbar until the first clip)
+  it("an empty library is one drop box: no toolbar, Drop media here, and a click opens the file window", async () => {
     server.items = [];
     const host = await mount();
-    expect(host.querySelector('[role="searchbox"]')).not.toBeNull(); // the library's own layout, not a card in its place
-    expect(more(host)).not.toBeNull(); // Library settings, in the More menu
-    expect(host.textContent).not.toContain("Where are your videos?");
-    expect(host.textContent).toContain("No clips");
-    expect(buttons(host)).toEqual(expect.arrayContaining(["Upload files", "Upload"])); // the fixture is set up: no Set up button
-    expect(buttons(host)).not.toContain("Set up");
-    expect(buttons(host)).not.toContain("Choose a folder");
-    expect(host.textContent).not.toContain("Copies");
-    expect(buttons(host)).not.toContain("Skip");
-    expect(host.querySelector('input[type="file"]')).not.toBeNull(); // Upload files still has its picker
+    expect(host.querySelector('[role="searchbox"]')).toBeNull();
+    expect(more(host)).toBeNull();
+    expect(buttons(host)).not.toContain("Upload");
+    expect(buttons(host)).not.toContain("New folder");
+    expect(host.textContent).toContain("Drop media here");
+    expect(host.textContent).toContain("or click to choose files");
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const click = vi.spyOn(input, "click").mockImplementation(() => {});
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Drop media here"))!.click());
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("an empty library given to look at says No clips yet, with no drop box", async () => {
+    server.items = [];
+    server.readOnly = true;
+    const host = await mount();
+    expect(host.textContent).toContain("No clips yet");
+    expect(host.textContent).not.toContain("Drop media here");
   });
 
   it("an owner whose library was never set up is asked to set it up; a set-up library is not", async () => {

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibraryProgress, WatchStatus } from "@contracts/library";
-import { LibraryProgressBar, useBigFolder } from "./LibraryProcessing";
+import { LibraryProgressBar } from "./LibraryProcessing";
 
 // The library's processing: one line and a moving bar by default, the steps when the person opens it (remembered), and
 // what waits for them in a few words, said by itself when nothing else runs.
@@ -110,91 +110,6 @@ describe("the library's processing line", () => {
   });
 });
 
-describe("folders dropped together", () => {
-  it("are asked one after another, and each is added", async () => {
-    vi.stubGlobal("fetch", async (url: string) => {
-      if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
-      if (url.includes("/estimate")) return new Response(JSON.stringify({ steps: [] }), { status: 200 });
-      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 50, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
-      return new Response(JSON.stringify({ ...watch, copyTo: "~/Movies/Creator Toolset/Footage" }), { status: 200 });
-    });
-    const added: string[] = [];
-    let big!: ReturnType<typeof useBigFolder>;
-    function Host() {
-      big = useBigFolder();
-      return <>{big.dialog}</>;
-    }
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    act(() => root!.render(<MemoryRouter><Host /></MemoryRouter>));
-    await act(async () => {
-      await Promise.all(["/Volumes/Card/Trip", "/Volumes/Card/Beach"].map((p) => big.check(p, () => void added.push(p), { libraryId: "lib_1" })));
-    });
-    for (const name of ["Trip", "Beach"]) {
-      const dialogs = document.querySelectorAll('[role="dialog"]');
-      expect(dialogs).toHaveLength(1);
-      expect(dialogs[0].textContent).toContain(`Add 50 files from ${name}?`);
-      act(() => [...dialogs[0].querySelectorAll("button")].find((b) => b.textContent === "Add folder")!.click());
-      await flush();
-    }
-    expect(added).toEqual(["/Volumes/Card/Trip", "/Volumes/Card/Beach"]);
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-  });
-
-  it("what waits on them (loose files dropped beside) comes once the last is answered, or closed; at once with none open", async () => {
-    vi.stubGlobal("fetch", async (url: string) => {
-      if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
-      if (url.includes("/estimate")) return new Response(JSON.stringify({ steps: [] }), { status: 200 });
-      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 50, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
-      return new Response(JSON.stringify({ ...watch, copyTo: "~/Movies/Creator Toolset/Footage" }), { status: 200 });
-    });
-    const done: string[] = [];
-    let big!: ReturnType<typeof useBigFolder>;
-    function Host() {
-      big = useBigFolder();
-      return <>{big.dialog}</>;
-    }
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    act(() => root!.render(<MemoryRouter><Host /></MemoryRouter>));
-    big.after(() => void done.push("none open"));
-    expect(done).toEqual(["none open"]);
-    await act(async () => {
-      await Promise.all(["/Volumes/Card/Trip", "/Volumes/Card/Beach"].map((p) => big.check(p, () => void done.push(p), { libraryId: "lib_1" })));
-    });
-    big.after(() => void done.push("loose files"));
-    act(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Add folder")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flush();
-    expect(done).toEqual(["none open", "/Volumes/Card/Trip"]); // one dialog still open: they wait
-    act(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent === "Cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flush();
-    expect(done).toEqual(["none open", "/Volumes/Card/Trip", "loose files"]);
-  });
-});
-
-describe("a folder dropped in place", () => {
-  it("under the big-folder count it is added at once, with no question", async () => {
-    vi.stubGlobal("fetch", async (url: string) => {
-      if (url === "/api/library") return new Response(JSON.stringify({ libraries: [{ id: "lib_1", name: "Tiny", storage: "local", settings: { organize: "own" } }] }), { status: 200 });
-      if (url.includes("/watch/size")) return new Response(JSON.stringify({ files: 3, bytes: 3e8, audio: 0, audioBytes: 0, free: 1e12 }), { status: 200 });
-      return new Response(JSON.stringify(watch), { status: 200 });
-    });
-    const added: string[] = [];
-    let big!: ReturnType<typeof useBigFolder>;
-    function Host() {
-      big = useBigFolder();
-      return <>{big.dialog}</>;
-    }
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    act(() => root!.render(<MemoryRouter><Host /></MemoryRouter>));
-    await act(async () => {
-      await big.check("/Volumes/Card/Trip", () => void added.push("/Volumes/Card/Trip"), { libraryId: "lib_1" });
-    });
-    expect(added).toEqual(["/Volumes/Card/Trip"]);
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-  });
-});
+// replaced (CEO 11-19: no confirm dialog on adding media or a folder; organize offer dropped, Organization is chosen in setup
+// step 4 and Library settings only): "folders dropped together" and "a folder dropped in place" tested useBigFolder's
+// dialog queue, which is gone with it.

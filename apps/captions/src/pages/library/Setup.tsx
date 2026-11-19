@@ -9,12 +9,13 @@ import { Card, InfoTip, Row } from "@/components/settings/kit-rows";
 import { hasThisMac } from "@/components/settings/ThisMacSection";
 import { call, STORAGE_API } from "@/components/settings/StorageRows";
 import { updateLibrary } from "@/lib/library";
-import { chooseFolderOnMac, droppedOnMac, pairThisMac } from "@/lib/thisMac";
+import { chooseFolderOnMac, droppedOnMac, importMake, pairThisMac, pickFolderOnMac } from "@/lib/thisMac";
 import { thisMacDevice } from "@/lib/providers";
 import { useAuth } from "@/lib/auth";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { ModelRows } from "./settings/Models";
 import { HostedSwitches } from "./settings/Hosted";
+import { LibraryFolderRow, layoutIn, missingIn } from "./settings/LibraryFolder";
 import { EffortCost } from "./settings/Effort";
 import { cn } from "@/lib/utils";
 import {
@@ -36,7 +37,7 @@ import {
   type WatchModel,
 } from "@contracts/library";
 import type { ServerWorkView } from "@contracts/work";
-import { EXPORTS_NAME, FOLDER_LABELS, LIBRARY_NAME, LIBRARY_SUBFOLDERS, PROJECTS_NAME, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
+import { EXPORTS_NAME, FOLDER_LABELS, LIBRARY_NAME, PROJECTS_NAME, THIS_COMPUTER, type StorageRole } from "@contracts/storage";
 
 /**
  * The owner's Media Library setup (UNIFIED-PRD §3.3, SCREENS-COPY §4): one fixed-size sheet, the steps in dependency
@@ -53,9 +54,16 @@ type Step = "start" | "folders" | "proxy" | "analysis" | "hosted";
 
 interface Answers {
   start: Start;
-  /** Source media folders chosen on this computer; from scratch, none = the default folder */
+  /** From scratch: the Library folder ("" = the workspace's default one), and the names of the folders in it when the Mac
+   *  app said them (undefined: nothing known, so all three are made). `custom`: each folder chosen on its own instead */
+  base: string;
+  names?: string[];
+  custom: boolean;
+  /** Source media folders chosen on this computer (from scratch with `custom`: the one folder) */
   sources: string[];
-  /** "" = the default: beside the first Source media folder (from scratch, in the workspace's folder) */
+  /** the names beside the first Source media folder (existing folders), for Project files and Final exports found there */
+  siblings?: string[];
+  /** "" = the default: inside the Library folder, or beside the first Source media folder */
   projects: string;
   exports: string;
   /** How should imported media behave? true: copied into Source media (the default) */
@@ -73,6 +81,8 @@ interface Answers {
 
 const START: Answers = {
   start: "scratch",
+  base: "",
+  custom: false,
   sources: [],
   projects: "",
   exports: "",
@@ -112,22 +122,34 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Hosted media's Proxies forces the proxy switch on (SCREENS-COPY §1). */
 const proxiesHosted = (a: Answers): boolean => a.hosted.proxies;
-/** No folder picked by hand: the default folders (the owner page's Use default folders). */
-const defaultsOf = (a: Answers): boolean => !a.projects && !a.exports && (a.start === "existing" || a.sources.length === 0);
+/** No folder picked by hand: the default folders (the owner page's Library folder rather than Custom). */
+const defaultsOf = (a: Answers): boolean => (a.start === "scratch" ? !a.custom : !a.projects && !a.exports);
 
-/** The folders the answers name, as rows of the one folder list (the scratch paths sit in ~/Movies/Creator Toolset/<workspace>). */
+/** The workspace's default Library folder: ~/Movies/Creator Toolset/<workspace>. */
+export const baseOf = (workspace: string) => `~/Movies/${LIBRARY_NAME}/${workspace.replace(/\//g, "-")}`;
+/** The folder the first Source media folder is in (existing folders): Project files and Final exports go there. */
+const parentOf = (p: string) => p.replace(/\/[^/]*\/?$/, "");
+
+/** The folders the answers name, as rows of the one folder list: the Library folder's three (found ones as they are named). */
 export function rowsOf(a: Answers, workspace: string): { role: StorageRole; path: string }[] {
-  const base = `~/Movies/${LIBRARY_NAME}/${workspace.replace(/\//g, "-")}`;
-  const footage = a.start === "scratch" ? [a.sources[0] ?? `${base}/${LIBRARY_SUBFOLDERS.footage}`] : a.sources;
-  // Project files and Final exports: beside the first Source media folder (the parent of it)
-  const near = a.start === "scratch" && a.sources.length === 0 ? base : (footage[0] ?? "").replace(/\/[^/]*\/?$/, "");
-  const projects = a.projects || `${near}/${PROJECTS_NAME}`;
-  const exports = a.exports || `${near}/${EXPORTS_NAME}`;
+  if (a.start === "scratch" && !a.custom) return layoutIn(a.base || baseOf(workspace), a.names).map((l) => ({ role: l.use, path: l.path }));
+  const near = layoutIn(a.start === "scratch" ? baseOf(workspace) : parentOf(a.sources[0] ?? ""), a.start === "scratch" ? undefined : a.siblings);
+  const footage = a.start === "scratch" ? [a.sources[0] || near[0]!.path] : a.sources;
   return [
     ...footage.map((path) => ({ role: "footage" as const, path })),
-    { role: "projects", path: projects },
-    { role: "library", path: exports },
+    { role: "projects", path: a.projects || near[1]!.path },
+    { role: "library", path: a.exports || near[2]!.path },
   ];
+}
+
+/** The folders to make on this Mac on Done: the Library folder's missing ones, or the two beside the first Source media
+ *  folder that aren't there (existing folders). None for folders each chosen on their own (they exist). */
+export function toMake(a: Answers, workspace: string): { in: string; names: string[] } | null {
+  if (a.start === "scratch") return a.custom ? null : { in: a.base || baseOf(workspace), names: missingIn(a.names) };
+  // nothing known beside it (a dropped folder before the Mac said, or a Mac app from before): nothing is made there
+  if (!a.sources[0] || !a.siblings) return null;
+  const missing = missingIn(a.siblings).filter((n) => n !== FOLDER_LABELS.footage && !(n === PROJECTS_NAME ? a.projects : n === EXPORTS_NAME ? a.exports : ""));
+  return missing.length ? { in: parentOf(a.sources[0]), names: missing } : null;
 }
 
 /** The folders step is complete: from scratch always (the defaults), with existing folders once one is picked. */
@@ -182,13 +204,22 @@ function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; 
 /** A long path breaks after a slash, never inside a folder's name (a zero-width space; shown only, the path is kept as it is). */
 const wrapAtSlashes = (p: string) => p.replace(/\//g, "/\u200b");
 
-/** A folder row: its path (or `empty`), and a button that opens the Mac app's folder window. */
-function FolderRow({ title, tip, path, empty = LIBRARY_WORDS.notSet, onPick }: { title: string; tip: string; path: string | null; empty?: string; onPick: (p: string) => void }) {
+/** A folder row: its path (or `empty`), Found or Will be created (`found`), and a button that opens the Mac app's folder window. */
+function FolderRow({ title, tip, path, found, empty = LIBRARY_WORDS.notSet, onPick }: { title: string; tip: string; path: string | null; found?: boolean; empty?: string; onPick: (p: string) => void }) {
   return (
     <Row
       title={title}
       tip={tip}
-      status={path ? <span title={path}>{wrapAtSlashes(path)}</span> : empty}
+      status={
+        path ? (
+          <span title={path}>
+            {wrapAtSlashes(path)}
+            {found !== undefined && ` · ${found ? LIBRARY_WORDS.folderFound : LIBRARY_WORDS.folderWillBeMade}`}
+          </span>
+        ) : (
+          empty
+        )
+      }
       control={
         <Button size="sm" variant="outline" onClick={() => void chooseFolderOnMac().then((p) => p && onPick(p))}>
           {path ? LIBRARY_WORDS.changeFolder : LIBRARY_WORDS.chooseFolder}
@@ -239,14 +270,24 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
     return id;
   };
   const addSources = (paths: string[]) => set({ sources: a.start === "scratch" ? paths.slice(0, 1) : [...a.sources, ...paths.filter((p) => !a.sources.includes(p))] });
-  // Finder folders dropped on the setup: on the Folders step they are the Source media folders; anywhere, nothing is imported
+  // Finder folders dropped on the setup: on the Folders step the Library folder (from scratch) or Source media folders;
+  // anywhere, nothing is imported
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (step !== "folders" || !hasThisMac()) return;
     void droppedOnMac().then((items) => {
       const folders = (items ?? []).filter((i) => i.folder).map((i) => i.path);
-      if (folders.length) addSources(folders);
+      if (!folders.length) return;
+      // what is in (or beside) a dropped folder, from the Mac app; a Mac app from before says nothing, so nothing is known
+      const look = (folder: string) => importMake(folder, []).then((r) => r.children, () => undefined);
+      if (a.start === "scratch" && !a.custom) {
+        set({ base: folders[0]!, names: undefined });
+        void look(folders[0]!).then((names) => names && set({ names }));
+      } else {
+        if (!a.sources.length) void look(parentOf(folders[0]!)).then((siblings) => siblings && set({ siblings }));
+        addSources(folders);
+      }
     });
   };
   const holdDrag = (e: DragEvent) => {
@@ -263,8 +304,19 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
     try {
       // the folders are rows of the one list; without the Mac app there is no computer to add them on
       if (hasThisMac()) {
-        const made = a.start === "scratch" && a.sources.length === 0;
+        // the server makes the default Source media itself on its own computer (a Mac app from before makes none)
+        const made = a.start === "scratch" && !a.custom && !a.base;
         const host = await within(computer(), PAIR_WAIT_MS, PAIR_SLOW);
+        const make = toMake(a, workspace.name);
+        if (make?.names.length) {
+          doing = LIBRARY_WORDS.libraryFolder.label;
+          const r = await importMake(make.in, make.names).catch((e: unknown) => {
+            // a Mac app from before has no such ask: the first copy into them makes them (on a server here, the server)
+            if (/latest Mac app|Not an import/i.test(message(e))) return null;
+            throw e;
+          });
+          if (r?.failed[0]) throw new Error(`${r.failed[0].name}: ${r.failed[0].error}`);
+        }
         for (const r of rowsOf(a, workspace.name)) {
           doing = `${FOLDER_LABELS[r.role]} folder`;
           await addRow(host, r.role, r.path, made && r.role === "footage");
@@ -313,6 +365,9 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
       const projects = rows.at(-2)!.path;
       const exports = rows.at(-1)!.path;
       const beside = a.start === "existing" && a.sources.length === 0;
+      // existing folders: Project files and Final exports found beside the first Source media folder (Moo's PROJECTS, EXPORTS)
+      const near = layoutIn("", a.siblings);
+      const nearFound = a.siblings ? { projects: near[1]!.found, library: near[2]!.found } : { projects: undefined, library: undefined };
       return (
         <div className="space-y-5">
           {!hasThisMac() ? (
@@ -326,14 +381,40 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
             <>
               <Card>
                 {a.start === "scratch" ? (
-                  <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} path={rows[0]!.path} onPick={(p) => set({ sources: [p] })} />
+                  <>
+                    <LibraryFolderRow
+                      path={a.base || baseOf(workspace.name)}
+                      names={a.names}
+                      custom={a.custom}
+                      onPick={(f) => set({ base: f.path, names: f.children, custom: false })}
+                      onCustom={() => set({ custom: true, sources: [rows[0]!.path], projects: rows[1]!.path, exports: rows[2]!.path })}
+                    />
+                    {a.custom && (
+                      <>
+                        <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} path={a.sources[0] ?? null} onPick={(p) => set({ sources: [p] })} />
+                        <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} path={a.projects || null} onPick={(p) => set({ projects: p })} />
+                        <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} path={a.exports || null} onPick={(p) => set({ exports: p })} />
+                      </>
+                    )}
+                  </>
                 ) : (
                   <Row
                     title={FOLDER_LABELS.footage}
                     tip={LIBRARY_WORDS.sourceMediaTip}
                     status={a.sources.length ? undefined : LIBRARY_WORDS.notSet}
                     control={
-                      <Button size="sm" variant="outline" onClick={() => void chooseFolderOnMac().then((p) => p && addSources([p]))}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          void pickFolderOnMac().then((f) => {
+                            if (!f) return;
+                            // the folders beside the first one: where Project files and Final exports are looked for
+                            if (!a.sources.length) set({ siblings: f.siblings });
+                            addSources([f.path]);
+                          })
+                        }
+                      >
                         {LIBRARY_WORDS.addFolder}
                       </Button>
                     }
@@ -356,10 +437,12 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
                   <Pick on={!a.copy} label={LIBRARY_WORDS.importInPlace.label} tip={LIBRARY_WORDS.importInPlace.tip} onPick={() => set({ copy: false })} />
                 </div>
               </div>
-              <Card>
-                <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} path={beside && !a.projects ? null : projects} empty={BESIDE_SOURCE} onPick={(p) => set({ projects: p })} />
-                <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} path={beside && !a.exports ? null : exports} empty={BESIDE_SOURCE} onPick={(p) => set({ exports: p })} />
-              </Card>
+              {a.start === "existing" && (
+                <Card>
+                  <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} path={beside && !a.projects ? null : projects} found={a.projects ? undefined : nearFound.projects} empty={BESIDE_SOURCE} onPick={(p) => set({ projects: p })} />
+                  <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} path={beside && !a.exports ? null : exports} found={a.exports ? undefined : nearFound.library} empty={BESIDE_SOURCE} onPick={(p) => set({ exports: p })} />
+                </Card>
+              )}
             </>
           )}
         </div>

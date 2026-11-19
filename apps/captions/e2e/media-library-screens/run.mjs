@@ -140,20 +140,31 @@ try {
     await op.addInitScript(SKIP_APP_SETUP);
     // the Folders step as the Mac app shows it (its folder rows, picked in the app's folder window): a page that says it
     // is in the Mac app; nothing is pressed past it
-    const asMac = await owner.newPage();
-    await asMac.addInitScript(SKIP_APP_SETUP);
-    // set on the parsed <html> (an init script runs before it exists), before the app's scripts run
-    await asMac.addInitScript(() => new MutationObserver(() => document.documentElement?.setAttribute("data-mac-this-mac", "1")).observe(document, { childList: true, subtree: true }));
-    await go(asMac, "/library");
-    await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
-    await asMac.waitForTimeout(500);
-    await capture(asMac, "S-setup-folders-scratch-mac", theme);
-    await setupOf(asMac).getByRole("button", { name: "Back" }).click();
-    await setupOf(asMac).getByRole("radio", { name: /Use my existing folders/ }).click();
-    await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
-    await asMac.waitForTimeout(500);
-    await capture(asMac, "S-setup-folders-existing-mac", theme);
-    await asMac.close();
+    // once, in light: the light run's Done sets the library up, so the dark run has no setup to show
+    if (theme === "light") {
+      const asMac = await owner.newPage();
+      await asMac.addInitScript(SKIP_APP_SETUP);
+      // set on the parsed <html> (an init script runs before it exists), before the app's scripts run
+      await asMac.addInitScript(() => new MutationObserver(() => document.documentElement?.setAttribute("data-mac-this-mac", "1")).observe(document, { childList: true, subtree: true }));
+      await go(asMac, "/library");
+      await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
+      await asMac.waitForTimeout(500);
+      await capture(asMac, "S-setup-folders-scratch-mac", theme);
+      // the Mac app's folder window stubbed, only now (set from the start it takes the page down the Mac app's other paths):
+      // it answers a Library folder with FOOTAGE and EXPORTS in it, Moo's layout
+      await asMac.evaluate(() => {
+        window.webkit = { messageHandlers: { thisMac: { postMessage: async (ask) => (ask === "folder" ? { path: "/Volumes/Tiny/MOO CLASSIC", children: ["EXPORTS", "FOOTAGE"], siblings: [] } : {}) } } };
+      });
+      await setupOf(asMac).getByRole("button", { name: "Change…" }).first().click();
+      await asMac.waitForTimeout(500);
+      await capture(asMac, "S-setup-folders-found-mac", theme);
+      await setupOf(asMac).getByRole("button", { name: "Back" }).click();
+      await setupOf(asMac).getByRole("radio", { name: /Use my existing folders/ }).click();
+      await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
+      await asMac.waitForTimeout(500);
+      await capture(asMac, "S-setup-folders-existing-mac", theme);
+      await asMac.close();
+    }
     await go(op, "/library");
     await setupSteps(op, theme);
     await go(op, "/settings/library");
