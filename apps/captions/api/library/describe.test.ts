@@ -64,6 +64,14 @@ async function seed(id: string, by = "local", bytes?: string, from = clip) {
   return v;
 }
 
+// tick() can claim nothing and never yield (it returns false while a device job is out), so wait a turn and bound the wait
+const untilProbed = async (v: string) => {
+  for (let turns = 0; job(v, "probe")?.state === "queued"; turns++) {
+    if (turns > 5000) throw new Error(`probe of ${v} still queued after 5000 turns`);
+    await tick();
+    await new Promise((r) => setImmediate(r));
+  }
+};
 const job = (v: string, kind: string) =>
   libraryDb().prepare("SELECT state, error FROM jobs WHERE version_id = ? AND kind = ?").get(v, kind) as { state: string; error: string | null } | undefined;
 const card = (assetId: string) => {
@@ -176,7 +184,7 @@ describe("describe job", () => {
       const v = await seed(id);
       d.prepare("UPDATE asset_versions SET probe = NULL WHERE id = ?").run(v);
       enqueueJob(d, "lib_a", v, "probe", "local");
-      while (job(v, "probe")?.state === "queued") await tick();
+      await untilProbed(v);
       return v;
     };
     d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.describe', json('false')) WHERE id = 'lib_a'`).run();
@@ -200,7 +208,7 @@ describe("describe job", () => {
       if (tag) d.prepare("INSERT INTO asset_tags (asset_id, tag, source) VALUES (?, ?, 'user')").run(id, tag);
       d.prepare("UPDATE asset_versions SET probe = NULL WHERE id = ?").run(v);
       enqueueJob(d, "lib_a", v, "probe", "local");
-      while (job(v, "probe")?.state === "queued") await tick();
+      await untilProbed(v);
       return v;
     };
     const plain = await run("ast-sound-01");

@@ -67,10 +67,19 @@ async function seed(lib: string, id: string, kind: string, file: string, probe?:
   return v;
 }
 
+// tick() can claim nothing and never yield (it returns false while a device job is out), so wait a turn and bound the wait
+const untilProbed = async (v: string) => {
+  for (let turns = 0; job(v, "probe")?.state === "queued"; turns++) {
+    if (turns > 5000) throw new Error(`probe of  still queued after 5000 turns`);
+    await tick();
+    await new Promise((r) => setImmediate(r));
+  }
+};
+
 const probed = async (lib: string, id: string, kind: string, file: string) => {
   const v = await seed(lib, id, kind, file);
   enqueueJob(libraryDb(), lib, v, "probe", "local");
-  while (job(v, "probe")?.state === "queued") await tick();
+  await untilProbed(v);
   return v;
 };
 
