@@ -16,7 +16,7 @@ describe("ActionCard", () => {
 
   it("a member's setup card says it isn't set up, with no button", () => {
     const html = render(setup(false));
-    expect(html).toContain(LIBRARY_WORDS.setupCardMember);
+    expect(html).toContain(LIBRARY_WORDS.setupCardMember.replace(/'/g, "&#x27;"));  // static markup escapes the apostrophe
     expect(html).not.toContain(LIBRARY_WORDS.setupButton);
   });
 
