@@ -88,3 +88,20 @@ export const sourceTime = (tl: NleTimeline, it: NleItem, t: number) => {
   const sfps = tl.sources[it.src]?.fps || fps;
   return (it.in + (t * fps - it.rec) * (sfps / fps) * (it.speed || 1)) / sfps;
 };
+
+/** How much smaller than the timeline the viewer draws its frame: the canvas's size on screen in device px, never more
+ *  than the timeline's own (a 2160 px frame shown 270 px wide draws 540 px on a 2× screen, not 2160). */
+export const drawScale = (cssW: number, dpr: number, W: number) => (cssW > 0 && W > 0 ? Math.min(1, (cssW * (dpr || 1)) / W) : 1);
+
+/** Further than this off the clock, a playing video is moved; nearer, its speed is bent until it is back. */
+export const SEEK_S = 0.6;
+
+/** What a playing video does to keep to the timeline's clock when it is `ahead` seconds ahead of it (behind: < 0):
+ *  within 2 frames nothing, then its speed bent by up to a quarter, past SEEK_S a move. WebKit stands a video that has
+ *  played still for about 240 ms after each move, so moving it for every small drift made playback stall. */
+export function steer(ahead: number, speed: number, fps: number): { rate: number; seek: boolean } {
+  if (Math.abs(ahead) > SEEK_S) return { rate: speed, seek: true };
+  if (Math.abs(ahead) <= 2 / fps) return { rate: speed, seek: false };
+  // in steps of 5 %: a speed set on every frame is a hitch of its own
+  return { rate: speed * (1 - Math.round(clamp(ahead, -0.25, 0.25) * 20) / 20), seek: false };
+}

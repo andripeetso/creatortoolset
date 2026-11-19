@@ -2,18 +2,19 @@ import { useEffect, useMemo, useRef } from "react";
 import { readSound } from "@/lib/synced-sound";
 import { fadePoints, nleAudio, runningAudio } from "@/lib/nle/audio";
 import { fadeAt, lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
-import { picturesAt, picturesSoon, placement, soundPieces, sourceTime, type SoundPiece } from "@/lib/nle/picture";
+import { drawScale, picturesAt, picturesSoon, placement, soundPieces, sourceTime, steer, type SoundPiece } from "@/lib/nle/picture";
 import { localFileState, pathLine } from "@/lib/local-files";
 import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type ShotOp } from "@/lib/nle/shot";
 
 // The editor's viewer: the timeline played live from its source files. Every picture at the playhead is drawn on a
-// canvas the timeline's size, V1 at the bottom, each with its transform, crop and opacity, and a shot-list edit's V1
-// shots with their frame size, blurred fill, split rows and smooth zoom, as the renderer draws them (lib/nle/shot.ts);
+// canvas the timeline's shape (in timeline units, at the size it is shown), V1 at the bottom, each with its transform,
+// crop and opacity, and a shot-list edit's V1 shots with their frame size, blurred fill, split rows and smooth zoom, as the renderer draws them (lib/nle/shot.ts);
 // the sound tracks play through Web Audio with each clip's gain. One <video> per picture on screen (and the ones about to
 // start, so they are ready), kept on the timeline's clock: seeked when paused, played at the clip's speed and put back
 // when they drift; a card made as numbered pictures shows its picture for the frame. A clip's fades ramp its picture's
 // opacity (black under V1) and its sound's gain. A clip whose file can't play here is a red Media Offline frame with its
-// name and why, never an older render.
+// name and why, never an older render. A picture not ready yet (a file opening, a move landing) keeps the frame drawn
+// last on screen, never black.
 
 type Media = {
   el: HTMLVideoElement | HTMLImageElement;
@@ -37,7 +38,6 @@ export async function whyNot(url: string): Promise<string | undefined> {
   return url.startsWith("ctlocal://media/") ? pathLine(await localFileState(url)) : undefined;
 }
 
-const DRIFT_S = 0.25;
 const SEQ_AHEAD = 8;
 const isImage = (url: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url);
 type Drawable = { el: CanvasImageSource; w: number; h: number };
@@ -67,8 +67,13 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
   useEffect(() => {
     let raf = 0;
     let tick = 0;
+    let painted = false;
+    // drawn at the size shown (CSS px × the screen's), never the timeline's 8 MP when it is shown small
+    let px = 1;
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(([e]) => void (px = drawScale(e.contentRect.width, devicePixelRatio, W)));
+    if (canvas.current) ro?.observe(canvas.current);
     // a shot is composed here first, then its zoom drawn onto the viewer; a blurred fill is made small here
-    const layer = Object.assign(document.createElement("canvas"), { width: W, height: H });
+    const layer = document.createElement("canvas");
     const small = document.createElement("canvas");
     const media = (k: string, src: string): Media | null => {
       const file = now.current.urlOf(src);
@@ -102,12 +107,13 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
       }
       pool.current.delete(k);
     };
-    const keep = (el: HTMLVideoElement, want: number, run: boolean, speed: number) => {
+    const keep = (el: HTMLVideoElement, want: number, run: boolean, speed: number, fps = 25) => {
       if (el.readyState < 1) return;
       if (run) {
-        el.playbackRate = Math.min(16, Math.max(0.0625, speed));
+        const go = steer(el.currentTime - want, Math.min(16, Math.max(0.0625, speed)), fps);
+        if (Math.abs(el.playbackRate - go.rate) > 0.005) el.playbackRate = go.rate;
         if (el.paused) void el.play().catch(() => {});
-        if (Math.abs(el.currentTime - want) > DRIFT_S && !el.seeking) el.currentTime = want;
+        if (go.seek && !el.seeking) el.currentTime = want;
       } else {
         if (!el.paused) el.pause();
         if (Math.abs(el.currentTime - want) > 0.01 && !el.seeking) el.currentTime = want;
@@ -133,7 +139,7 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
       }
       const el = m.el;
       if (el instanceof HTMLVideoElement) {
-        keep(el, secs + m.lead, run, speed);
+        keep(el, secs + m.lead, run, speed, fps);
         return el.readyState >= 2 && el.videoWidth ? { el, w: el.videoWidth, h: el.videoHeight } : null;
       }
       return el.complete && el.naturalWidth ? { el, w: el.naturalWidth, h: el.naturalHeight } : null;
@@ -143,10 +149,10 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
     const missing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string) => {
       const p = placement(it, track, W, H, W, H);
       ctx.save();
-      ctx.setTransform(...p.m);
+      ctx.transform(...p.m);
       ctx.fillStyle = "#8f1414";
       ctx.fillRect(...p.crop);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.setTransform(px, 0, 0, px, 0, 0);
       const [cx, cy] = [p.m[0] * (W / 2) + p.m[2] * (H / 2) + p.m[4], p.m[1] * (W / 2) + p.m[3] * (H / 2) + p.m[5]];
       ctx.fillStyle = "#fff";
       ctx.textAlign = "center";
@@ -192,38 +198,28 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
       const on = picturesAt(t, f);
       const live = new Set<string>();
       const forward = run && r > 0;
-      const flashes: number[] = [];
-      ctx.globalAlpha = 1;
-      // a gap in the cut is black; past its last clip there is no picture, only the frame's edge on the pasteboard
-      ctx.fillStyle = "#000";
-      if (f < lengthOf(t)) ctx.fillRect(0, 0, W, H);
-      else ctx.clearRect(0, 0, W, H);
-      for (const { item, track } of on) {
+      const cv = canvas.current!;
+      const [cw, ch] = [Math.max(1, Math.round(W * px)), Math.max(1, Math.round(H * px))];
+      if (cv.width !== cw || cv.height !== ch) {
+        Object.assign(cv, { width: cw, height: ch });
+        Object.assign(layer, { width: cw, height: ch });
+        painted = false;
+      }
+      // what is on screen now: each picture's file and frame (a shot's other pictures too), before anything is drawn
+      const pics = on.map(({ item, track }) => {
         const key = item._k ?? `${item.src}:${item.rec}`;
         const k = f - item.rec;
-        // the fades: how much of the picture shows now (what is under it, or black, shows through)
-        const fade = fadeAt(item, s * fps - item.rec);
-        if (item.fx === "flash") {
-          // a designed white flash, fading as its file does (drawn over everything, as the renderer does)
-          flashes.push(1 - (item.in + k) / Math.max(Number(t.sources[item.src]?.dur) || item.len, 1));
-          continue;
-        }
+        if (item.fx === "flash") return { item, track, key, k, m: null, d: null, got: null };
         const v1 = track === "V1";
         // V1 plays a freeze held and a reversed shot backwards (seeked frame by frame); the other tracks as they are
         const still = v1 && (!!item.freeze || !!item.rev);
         const own = v1 ? shotTime(item, "main", k, fps, srcFps) : sourceTime(t, item, s);
         const m = media(key, item.src);
         live.add(key);
-        if (!m || m.bad) {
-          const why = m?.why ?? now.current.urlOf(item.src)?.why;
-          missing(ctx, item, track, name(item.src), why ?? (m ? "This file won't play here" : undefined));
-          continue;
-        }
-        const d = pictureOf(m, own, srcFps(item.src), forward && !still, (item.speed || 1) * r);
-        if (!d) continue;
-        if (drawnAsShot(item, track, W, H)) {
-          // the shot's other pictures: the shot before under an inset, the split rows; each plays on from its own frame
-          const got: Partial<Record<Pic, Drawable>> = { main: d };
+        const d = m && !m.bad ? pictureOf(m, own, srcFps(item.src), forward && !still, (item.speed || 1) * r) : null;
+        // the shot's other pictures: the shot before under an inset, the split rows; each plays on from its own frame
+        const got: Partial<Record<Pic, Drawable>> = d ? { main: d } : {};
+        if (d && drawnAsShot(item, track, W, H)) {
           for (const pic of ["under", 1, 2] as const) {
             const src = shotSource(item, pic);
             if (!src) continue;
@@ -233,45 +229,78 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
             const pd = pm && !pm.bad ? pictureOf(pm, shotTime(item, pic, k, fps, srcFps), srcFps(src), forward, r) : null;
             if (pd) got[pic] = pd;
           }
-          const plan = shotPlan(item, k, (pic) => (got[pic] ? [got[pic]!.w, got[pic]!.h] : null), W, H);
-          const lc = layer.getContext("2d")!;
-          lc.fillStyle = "#000";
-          lc.fillRect(0, 0, W, H);
-          for (const op of plan.ops) {
-            const pd = got[op.pic];
-            if (!pd) continue;
-            if (op.bg) {
-              blurred(lc, pd, op);
-              continue;
-            }
-            if (op.edge) {
-              lc.fillStyle = "#fff";
-              lc.fillRect(op.dst[0] - op.edge, op.dst[1] - op.edge, op.dst[2] + 2 * op.edge, op.dst[3] + 2 * op.edge);
-            }
-            lc.drawImage(pd.el, ...op.src, ...op.dst);
-          }
-          ctx.save();
-          ctx.globalAlpha = fade;
-          const look = canFilter ? lookFilter(item, k, W) : "";
-          if (look) ctx.filter = look;
-          ctx.drawImage(layer, ...plan.view, 0, 0, W, H);
-          ctx.restore();
-          continue;
         }
-        const p = placement(item, track, d.w, d.h, W, H);
-        if (p.crop[2] <= 0 || p.crop[3] <= 0 || !p.alpha || !fade) continue;
-        ctx.save();
-        ctx.globalAlpha = p.alpha * fade;
-        ctx.setTransform(...p.m);
-        ctx.drawImage(d.el, ...p.crop, ...p.crop);
-        ctx.restore();
-      }
-      for (const a of flashes) {
-        ctx.fillStyle = `rgba(255,255,255,${Math.min(1, Math.max(0, a))})`;
-        ctx.fillRect(0, 0, W, H);
+        return { item, track, key, k, m, d, got };
+      });
+      // one not ready (a file opening, a move landing): the last frame stays on screen until it is, never black (a file
+      // that can't play errors, and is drawn as Media Offline)
+      if (!painted || !pics.some((p) => p.m && !p.m.bad && !p.d)) {
+        painted = true;
+        const flashes: number[] = [];
+        ctx.setTransform(px, 0, 0, px, 0, 0);
+        ctx.globalAlpha = 1;
+        // a gap in the cut is black; past its last clip there is no picture, only the frame's edge on the pasteboard
+        ctx.fillStyle = "#000";
+        if (f < lengthOf(t)) ctx.fillRect(0, 0, W, H);
+        else ctx.clearRect(0, 0, W, H);
+        for (const { item, track, k, m, d, got } of pics) {
+          // the fades: how much of the picture shows now (what is under it, or black, shows through)
+          const fade = fadeAt(item, s * fps - item.rec);
+          if (item.fx === "flash") {
+            // a designed white flash, fading as its file does (drawn over everything, as the renderer does)
+            flashes.push(1 - (item.in + k) / Math.max(Number(t.sources[item.src]?.dur) || item.len, 1));
+            continue;
+          }
+          if (!m || m.bad) {
+            const why = m?.why ?? now.current.urlOf(item.src)?.why;
+            missing(ctx, item, track, name(item.src), why ?? (m ? "This file won't play here" : undefined));
+            continue;
+          }
+          if (!d || !got) continue;
+          if (drawnAsShot(item, track, W, H)) {
+            const plan = shotPlan(item, k, (pic) => (got[pic] ? [got[pic]!.w, got[pic]!.h] : null), W, H);
+            const lc = layer.getContext("2d")!;
+            lc.setTransform(px, 0, 0, px, 0, 0);
+            lc.fillStyle = "#000";
+            lc.fillRect(0, 0, W, H);
+            for (const op of plan.ops) {
+              const pd = got[op.pic];
+              if (!pd) continue;
+              if (op.bg) {
+                blurred(lc, pd, op);
+                continue;
+              }
+              if (op.edge) {
+                lc.fillStyle = "#fff";
+                lc.fillRect(op.dst[0] - op.edge, op.dst[1] - op.edge, op.dst[2] + 2 * op.edge, op.dst[3] + 2 * op.edge);
+              }
+              lc.drawImage(pd.el, ...op.src, ...op.dst);
+            }
+            ctx.save();
+            ctx.globalAlpha = fade;
+            // the filter's blur is in the canvas's own px
+            const look = canFilter ? lookFilter(item, k, W * px) : "";
+            if (look) ctx.filter = look;
+            const [vx, vy, vw, vh] = plan.view;
+            ctx.drawImage(layer, vx * px, vy * px, vw * px, vh * px, 0, 0, W, H);
+            ctx.restore();
+            continue;
+          }
+          const p = placement(item, track, d.w, d.h, W, H);
+          if (p.crop[2] <= 0 || p.crop[3] <= 0 || !p.alpha || !fade) continue;
+          ctx.save();
+          ctx.globalAlpha = p.alpha * fade;
+          ctx.transform(...p.m);
+          ctx.drawImage(d.el, ...p.crop, ...p.crop);
+          ctx.restore();
+        }
+        for (const a of flashes) {
+          ctx.fillStyle = `rgba(255,255,255,${Math.min(1, Math.max(0, a))})`;
+          ctx.fillRect(0, 0, W, H);
+        }
       }
       // the clips about to start: their files open and waiting on their first frame
-      if (forward) {
+      if (forward || !run) {
         for (const { item, track } of picturesSoon(t, f, 2 * fps)) {
           if (item.fx === "flash") continue;
           const key = item._k ?? `${item.src}:${item.rec}`;
@@ -307,13 +336,14 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
     const all = pool.current;
     return () => {
       cancelAnimationFrame(raf);
+      ro?.disconnect();
       for (const k of [...all.keys()]) drop(k);
     };
   }, [W, H]);
 
   useNleSound(tl, time, playing, rate, urlOf);
 
-  return <canvas ref={canvas} width={W} height={H} className={className} style={{ aspectRatio: `${W} / ${H}` }} />;
+  return <canvas ref={canvas} className={className} style={{ aspectRatio: `${W} / ${H}` }} />;
 }
 
 const buffers = new Map<string, Promise<{ buf: AudioBuffer; from: number }>>();
