@@ -138,4 +138,13 @@ final class AccountBindingTests: XCTestCase {
         let out = await account.signOut()
         XCTAssertEqual(out["state"], "signedOut")
     }
+
+    func testTheKeyItemStaysOnThisMac() {
+        for dp in [true, false] {
+            let item = KeyItem.adding("sw:x", dataProtection: dp)
+            XCTAssertEqual(item[kSecAttrAccessible as String] as! CFString, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
+            XCTAssertEqual(item[kSecUseDataProtectionKeychain as String] as? Bool, dp ? true : nil)
+            XCTAssertEqual(item[kSecAttrAccount as String] as? String, "dpop-key")
+        }
+    }
 }

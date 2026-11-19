@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 
 /// This Mac's proof-of-possession key (RFC 9449) for its account token: a P-256 key in the Secure Enclave (a software
 /// key where there is none), made once and kept in the Keychain. The account token is bound to it at sign-in and goes
@@ -8,13 +9,11 @@ struct DPoPKey {
     let publicKey: P256.Signing.PublicKey
     let sign: (Data) throws -> P256.Signing.ECDSASignature
 
-    private static let item = "dpop-key"
-
     /// This Mac's key, made on first use. Nil only when the Keychain won't keep it (the token then stays as it is).
     static let shared: DPoPKey? = load() ?? make()
 
     private static func load() -> DPoPKey? {
-        guard let stored = DeviceVault.token(for: item, service: Account.vault),
+        guard let stored = KeyItem.read(),
               let data = Data(base64Encoded: String(stored.dropFirst(3))) else { return nil }
         if stored.hasPrefix("se:"), let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data) {
             return DPoPKey(publicKey: key.publicKey, sign: { try key.signature(for: $0) })
@@ -25,11 +24,11 @@ struct DPoPKey {
 
     private static func make() -> DPoPKey? {
         if SecureEnclave.isAvailable, let key = try? SecureEnclave.P256.Signing.PrivateKey() {
-            guard DeviceVault.save("se:" + key.dataRepresentation.base64EncodedString(), for: item, service: Account.vault) else { return nil }
+            guard KeyItem.save("se:" + key.dataRepresentation.base64EncodedString()) else { return nil }
             return DPoPKey(publicKey: key.publicKey, sign: { try key.signature(for: $0) })
         }
         let key = P256.Signing.PrivateKey()
-        guard DeviceVault.save("sw:" + key.rawRepresentation.base64EncodedString(), for: item, service: Account.vault) else { return nil }
+        guard KeyItem.save("sw:" + key.rawRepresentation.base64EncodedString()) else { return nil }
         return software(key)
     }
 
@@ -49,6 +48,50 @@ struct DPoPKey {
         let canonical = #"{"crv":"P-256","kty":"EC","x":"\#(j["x"]!)","y":"\#(j["y"]!)"}"#
         return DPoP.b64(Data(SHA256.hash(data: Data(canonical.utf8))))
     }
+}
+
+/// The key's Keychain item: this device only, so a software key never goes into a backup or onto another Mac (a Secure
+/// Enclave key's blob is of no use elsewhere anyway). In the data-protection Keychain when the build may use it; a build
+/// without its entitlement keeps it in the file-based Keychain (the same question Plugins.swift asks).
+enum KeyItem {
+    static let service = Account.vault, account = "dpop-key"
+
+    static func query(dataProtection: Bool) -> [String: Any] {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        if dataProtection { q[kSecUseDataProtectionKeychain as String] = true }
+        return q
+    }
+
+    /// Whether the data-protection Keychain can be used: only a write or delete there says no (errSecMissingEntitlement).
+    static var protected: Bool {
+        var q = query(dataProtection: true)
+        q[kSecAttrAccount as String] = "probe"
+        return SecItemDelete(q as CFDictionary) != errSecMissingEntitlement
+    }
+
+    static func read() -> String? {
+        var q = query(dataProtection: protected)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The new item: readable after the first unlock, on this device only.
+    static func adding(_ value: String, dataProtection: Bool) -> [String: Any] {
+        var q = query(dataProtection: dataProtection)
+        q[kSecValueData as String] = Data(value.utf8)
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return q
+    }
+
+    static func save(_ value: String) -> Bool {
+        let dp = protected
+        SecItemDelete(query(dataProtection: dp) as CFDictionary)
+        return SecItemAdd(adding(value, dataProtection: dp) as CFDictionary, nil) == errSecSuccess
+    }
+
 }
 
 enum DPoP {
