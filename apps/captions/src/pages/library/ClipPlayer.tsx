@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-react";
-import { SPRITE_FRAMES, type AssetCard, type AssetDetail } from "@contracts/library";
+import { hostsOriginals, hostsProxies, SPRITE_FRAMES, type AssetCard, type AssetDetail } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { awayLine, pickSource, proxySource, useHere, type Source } from "@/lib/here";
@@ -134,7 +134,7 @@ export function ClipPlayer({
     let gone = false;
     listLibraries().then((ls) => {
       const l = ls.find((x) => x.id === a.libraryId);
-      if (!gone) setNoUpload(!!l && !l.readOnly && l.settings.upload === "none");
+      if (!gone) setNoUpload(!!l && !l.readOnly && !hostsOriginals(l.settings.upload) && !hostsProxies(l.settings.upload));
     }, () => {});
     return () => {
       gone = true;

@@ -22,6 +22,7 @@ import type {
   WatchStatus,
   WhereAnswer,
 } from "@contracts/library";
+import { hostsOriginals, hostsProxies } from "@contracts/library";
 import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from "@contracts/places";
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";
@@ -51,18 +52,8 @@ export const listLibraries = () =>
 export async function macIndexOnly(libraryId: string): Promise<boolean> {
   if (!macPageMarked()) return false;
   const libs = await listLibraries().catch(() => [] as LibrarySummary[]);
-  return libs.find((l) => l.id === libraryId)?.settings.upload === "none";
-}
-
-/**
- * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,
- * made the way the Media Library page makes one when the workspace has none yet.
- */
-export async function setWorkspaceUpload(workspaceId: string, settings: { upload: LibraryUpload; finalsUpload: LibraryUpload }): Promise<void> {
-  const headers = { "content-type": "application/json", "X-CT-Workspace": workspaceId };
-  const own = (await fetch("/api/library", { headers }).then((r) => json<{ libraries: LibrarySummary[] }>(r))).libraries.find((l) => !l.readOnly);
-  const library: LibrarySummary = own ?? (await fetch("/api/library", { method: "POST", headers, body: JSON.stringify({ name: "Library" }) }).then((r) => json<LibrarySummary>(r)));
-  await fetch(`/api/library/${library.id}`, { method: "PATCH", headers, body: JSON.stringify({ settings }) }).then((r) => json<LibrarySummary>(r));
+  const u = libs.find((l) => l.id === libraryId)?.settings.upload;
+  return !hostsOriginals(u) && !hostsProxies(u);
 }
 
 /** What is going in: `clips` files of `bytes`, `audio` of them sound only (`audioBytes`), from a music folder or not. */

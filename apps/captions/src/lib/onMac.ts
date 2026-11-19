@@ -1,4 +1,4 @@
-import { SPRITE_FRAMES, type LibraryUpload } from "@contracts/library";
+import { hostsOriginals, hostsProxies, SPRITE_FRAMES, type LibraryUpload } from "@contracts/library";
 import { thisMacBridge } from "@/lib/thisMac";
 
 /**
@@ -167,7 +167,7 @@ export async function indexOnMac(libraryId: string, file: File | MacFile, path: 
  * this Mac sends its proxy, and the file too for "all" (the server's send job). { assetId } or { duplicateOf }.
  */
 export async function addFromMac(libraryId: string, file: MacFile, path: string, collectionId: string | undefined, upload: LibraryUpload): Promise<{ assetId?: string; duplicateOf?: string }> {
-  const fromDevice = upload === "none" ? undefined : await deviceHere();
+  const fromDevice = hostsOriginals(upload) || hostsProxies(upload) ? await deviceHere() : undefined;
   if (fromDevice) {
     const r = await fetch(`/api/library/${libraryId}/uploads`, {
       method: "POST",

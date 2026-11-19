@@ -67,7 +67,7 @@ export function LibraryWatchFolders({
   const add = () =>
     big.check(path.trim(), (copyTo) =>
       save([...current, { path: path.trim(), collectionId: into || undefined, ...(copyTo ? { mode: "reference", copyTo } : { mode: status?.copyTo ? "reference" : mode }) }]),
-      { libraryId, offerCopy: true },
+      { libraryId },
     );
   const choose = async () => {
     const picked = await chooseFolderOnMac();

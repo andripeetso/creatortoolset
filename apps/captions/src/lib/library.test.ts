@@ -109,7 +109,7 @@ describe("uploadFile from the Mac app on its own server", () => {
     expect(told).toEqual([[0, true]]);
   });
 
-  it("a drop in the Mac app with Upload none is indexed in place (macIndexOnly); a browser or Upload all is not", async () => {
+  it("a Mac-app drop sends nothing unless Hosted media says so, so it is indexed in place (macIndexOnly); a browser or Hosted media on is not", async () => {
     const libs = (upload: string) => vi.fn(async () => new Response(JSON.stringify({ libraries: [{ id: "lib_1", settings: { upload } }] })));
     mac(picked);
     // the Mac app's page mark (the one canReveal reads): without it the bridge alone is not the Mac app's page

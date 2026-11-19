@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { UploadCloud } from "lucide-react";
+import { hostsOriginals, hostsProxies } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { uploadFinal } from "@/lib/library";
@@ -137,7 +138,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
       if (copied && finals.reads) return setStage("done"); // the server reads the folder itself
       // the copy on this Mac is extra: the server still gets the final, under Upload none too (uploadFinal)
       setSent(0);
-      setStage(copied && finals.upload === "none" ? "finals" : "upload");
+      setStage(copied && !hostsOriginals(finals.upload) && !hostsProxies(finals.upload) ? "finals" : "upload");
       const up = await uploadFinal(ask.libraryId, f, copied, finals.upload, finalsId, (n) => setSent(n), ctl.signal);
       const id = up.assetId ?? up.duplicateOf;
       if (!id) throw new Error("The upload did not finish");

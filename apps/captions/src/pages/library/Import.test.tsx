@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import type { PlacesReport } from "@contracts/places";
-import { copyAvailable, copyPath, FoldersToAllow, ImportCards, importAsk, lookedLine, lookForNew, NEEDS_MAC, placeOfFile, waitingFolders } from "./Import";
+import { copyAvailable, copyInto, FoldersToAllow, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, waitingFolders } from "./Import";
 
 const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn() }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint }));
@@ -12,8 +12,7 @@ vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/
 vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant }));
 vi.mock("@/lib/onMac", async (orig) => ({ ...(await orig<typeof import("@/lib/onMac")>()), indexOnMac: m.indexOnMac }));
 
-// The import question: asked on the first add, not from a place the library knows, in short from a new place; a browser
-// with the server elsewhere only says the files upload; an older Mac app can't copy.
+// Adding files asks nothing: the stored answer decides. Copies go under the first Source media row on this computer.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,27 +27,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const places = [{ path: "/Volumes/Tiny/Footage", mode: "in-place" as const }];
+/** This computer's Source media rows, as the storage list has them (another computer's row is left out). */
+function storage(rows: { path: string; host?: string; role?: string }[]) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ folders: rows.map((r) => ({ id: r.path, role: r.role ?? "footage", origin: { host: r.host ?? "mac_1", path: r.path } })) }))),
+  );
+}
 
-describe("what an add asks", () => {
-  it("the first add asks the whole question", () => {
-    expect(importAsk("mac", {}, ["/Users/tiny/Downloads"])).toEqual({ kind: "first" });
-    expect(importAsk("here", {}, ["/Users/tiny/Downloads"])).toEqual({ kind: "first" });
+describe("where copies go", () => {
+  it("a copy keeps the dropped folder's name under the first Source media row, and a loose file goes in by its own name", () => {
+    const inFolder = new File(["x"], "a.mp4");
+    Object.defineProperty(inFolder, "webkitRelativePath", { value: "Trip/Day 1/a.mp4" });
+    expect(copyInto("~/Movies/Creator Toolset/Tiny/Source media/", inFolder)).toBe("~/Movies/Creator Toolset/Tiny/Source media/Trip/Day 1/a.mp4");
+    expect(copyInto("/Volumes/Tiny/Footage", new File(["x"], "b.mp4"))).toBe("/Volumes/Tiny/Footage/b.mp4");
   });
 
-  it("an add from inside a known place asks nothing", () => {
-    expect(importAsk("mac", { importMode: "in-place", places }, ["/Volumes/Tiny/Footage/Day 1"])).toBeNull();
+  it("the Source media rows here are the footage rows of this computer, in list order", async () => {
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }, { path: "/Volumes/Other/Footage", host: "pc_2" }, { path: "/Volumes/Tiny/Exports", role: "library" }, { path: "/Volumes/Tiny/Footage 2" }]);
+    expect(await sourceRowsHere()).toEqual(["/Volumes/Tiny/Footage", "/Volumes/Tiny/Footage 2"]);
   });
 
-  it("an add from a new place asks in short, starting on the library's answer", () => {
-    expect(importAsk("mac", { importMode: "copy", places }, ["/Volumes/Tiny/Footage", "/Users/tiny/Downloads"])).toEqual({ kind: "new", mode: "copy" });
+  it("no Source media row here means no rows, not a guess", async () => {
+    vi.clearAllMocks();
+    storage([{ path: "/Volumes/Other/Footage", host: "pc_2" }]);
+    expect(await sourceRowsHere()).toEqual([]); // no device id: nothing is read
   });
+});
 
-  it("a browser with the server elsewhere only says the files upload", () => {
-    expect(importAsk("browser", {}, [])).toEqual({ kind: "upload" });
-    expect(importAsk("browser", { importMode: "in-place", places }, ["/Volumes/Tiny/Footage"])).toEqual({ kind: "upload" });
-  });
-
+describe("copying", () => {
   it("copying needs the latest Mac app, except a folder the server on this computer copies", () => {
     vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
     expect(copyAvailable("mac")).toBe(false);
@@ -57,36 +65,12 @@ describe("what an add asks", () => {
     expect(copyAvailable("mac")).toBe(true);
     expect(copyAvailable("browser")).toBe(false);
   });
-
-  it("an older Mac app shows the copy choice switched off, saying why", () => {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    act(() => root!.render(<ImportCards legend="Import" value="in-place" onChange={() => {}} copy={{ to: null, off: NEEDS_MAC }} />));
-    const copy = [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith("Copy into the library"))!;
-    expect(copy.querySelector("input")!.disabled).toBe(true);
-    expect(copy.textContent).toContain("Needs the latest Mac app");
-  });
-});
-
-describe("places and copies", () => {
-  it("a file read from a dropped folder comes from that folder; a loose file from its own folder", () => {
-    const inFolder = new File(["x"], "a.mp4");
-    Object.defineProperty(inFolder, "webkitRelativePath", { value: "Trip/Day 1/a.mp4" });
-    expect(placeOfFile(inFolder, "/Volumes/Card/Trip/Day 1/a.mp4")).toBe("/Volumes/Card/Trip");
-    expect(placeOfFile(new File(["x"], "b.mp4"), "/Users/tiny/Downloads/b.mp4")).toBe("/Users/tiny/Downloads");
-  });
-
-  it("a copy goes into Footage, Audio or Pictures, under the place's own name", () => {
-    expect(copyPath("~/Movies/Creator Toolset/Library", "/Volumes/Card/Trip", "/Volumes/Card/Trip/Day 1/a.mp4")).toBe("~/Movies/Creator Toolset/Library/Footage/Trip/Day 1/a.mp4");
-    expect(copyPath("/Users/tiny/Lib/", "/Users/tiny/Downloads", "/Users/tiny/Downloads/song.mp3")).toBe("/Users/tiny/Lib/Audio/Downloads/song.mp3");
-    expect(copyPath("/x", "/y", "/y/p.JPG")).toBe("/x/Pictures/y/p.JPG");
-  });
 });
 
 describe("Look for new files", () => {
   it("adds what is new and reconnects a file the library has at a path this computer doesn't read it from", async () => {
     document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
     const at = (n: string) => `/Volumes/Tiny/Footage/${n}`;
     const scanned = ["new.mov", "moved.mov", "same.mov", "b/copy.mov", "a/copy.mov"];
     m.importScan.mockResolvedValue(scanned.map((n, i) => ({ path: at(n), size: i + 1, mtime: 0 })));
@@ -108,14 +92,15 @@ describe("Look for new files", () => {
     });
     m.reportPlaces.mockImplementation(async (_lib: string, r: PlacesReport) => ({ confirmed: r.confirmed.map((c) => c.versionId), refused: [] }));
     m.indexOnMac.mockResolvedValue({ assetId: "a_new" });
-    const library = { id: "lib", name: "Tiny Acrobatics", settings: { places } } as unknown as LibrarySummary;
+    const library = { id: "lib", name: "Tiny Acrobatics", settings: {} } as unknown as LibrarySummary;
     expect(await lookForNew(library, () => undefined)).toEqual({ added: 1, reconnected: 1, refused: [] });
     expect(m.reportPlaces).toHaveBeenCalledTimes(1);
     expect(m.reportPlaces).toHaveBeenCalledWith("lib", { device: "mac_1", confirmed: [{ versionId: "v_moved", path: at("moved.mov"), quick: "q-moved.mov" }], gone: [] });
   });
 
-  it("reads a place it may not read through its granted folders inside, reconnects an upload found there, and names the place", async () => {
+  it("reads a folder it may not read through its granted folders inside, reconnects an upload found there, and names the folder", async () => {
     document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
     vi.clearAllMocks();
     const inside = "/Volumes/Tiny/Footage/Day 1";
     m.importScan.mockImplementation(async (p: string) => {
@@ -128,17 +113,19 @@ describe("Look for new files", () => {
     // uploaded: the server has no path for it anywhere
     m.versionPlaces.mockResolvedValue({ versions: { v_flip: { tries: [], bytes: 5, quick: "q-flip", proxy: null } } });
     m.reportPlaces.mockImplementation(async (_lib: string, r: PlacesReport) => ({ confirmed: r.confirmed.map((c) => c.versionId), refused: [] }));
-    const library = { id: "lib", name: "Tiny Acrobatics", settings: { places } } as unknown as LibrarySummary;
+    const library = { id: "lib", name: "Tiny Acrobatics", settings: {} } as unknown as LibrarySummary;
     expect(await lookForNew(library, () => undefined)).toEqual({ added: 0, reconnected: 1, refused: ["/Volumes/Tiny/Footage"] });
-    expect(m.importScan).toHaveBeenCalledTimes(2); // the place, then only the granted folder inside it
+    expect(m.importScan).toHaveBeenCalledTimes(2); // the folder, then only the granted folder inside it
     expect(m.reportPlaces).toHaveBeenCalledWith("lib", { device: "mac_1", confirmed: [{ versionId: "v_flip", path: `${inside}/flip.mov`, quick: "q-flip" }], gone: [] });
   });
 
-  it("a granted place that can't be read says why, as before", async () => {
+  it("a granted folder that can't be read says why, as before", async () => {
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
     vi.clearAllMocks();
     m.importScan.mockRejectedValue(new Error("That folder's disk isn't connected."));
     m.listMediaFolders.mockResolvedValue(["/Volumes/Tiny"]);
-    const library = { id: "lib", name: "Tiny Acrobatics", settings: { places } } as unknown as LibrarySummary;
+    const library = { id: "lib", name: "Tiny Acrobatics", settings: {} } as unknown as LibrarySummary;
     await expect(lookForNew(library, () => undefined)).rejects.toThrow("disk isn't connected");
   });
 
@@ -173,5 +160,79 @@ describe("Folders this Mac may not read yet", () => {
     await act(async () => host!.querySelector("button")!.click());
     expect(m.folderGrant).toHaveBeenCalledWith("/Volumes/Tiny/Media", "Media");
     expect(host.textContent).toBe("");
+  });
+});
+
+describe("the stored answer, with no question", () => {
+  type Answer = ReturnType<typeof useImportQuestion>["answer"];
+  async function answerWith(library: unknown, look: { from: "mac" | "browser"; paths?: Map<File, string> }, files: File[], onError = vi.fn()) {
+    let answer!: Answer;
+    const Host = () => {
+      answer = useImportQuestion({ library: library as LibrarySummary, serverHere: false, onError }).answer;
+      return null;
+    };
+    host = document.createElement("div");
+    root = createRoot(host);
+    await act(async () => root!.render(<Host />));
+    return { result: await answer(look as never, files), onError };
+  }
+  const file = new File(["x"], "a.mp4");
+  const mac = { from: "mac" as const, paths: new Map([[file, "/Users/tiny/Downloads/a.mp4"]]) };
+
+  it("copy puts each file under the first Source media row here", async () => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }, { path: "/Volumes/Tiny/Footage 2" }]);
+    const { result } = await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, mac, [file]);
+    expect(result).toEqual(new Map([[file, "/Volumes/Tiny/Footage/a.mp4"]]));
+  });
+
+  // a dropped folder's file: its webkitRelativePath is the folder's name and the file's path in it
+  const inFolder = Object.defineProperty(new File(["x"], "b.mp4"), "webkitRelativePath", { value: "Shoot/b.mp4" });
+  const folderMac = { from: "mac" as const, paths: new Map([[inFolder, "/Users/tiny/Downloads/Shoot/b.mp4"]]) };
+
+  it("in place copies a loose file under the row, and a folder's file nothing; unset copies a loose file too", async () => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    const both = { from: "mac" as const, paths: new Map([...mac.paths, ...folderMac.paths]) };
+    expect((await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "in-place" } }, both, [file, inFolder])).result).toEqual(
+      new Map([[file, "/Volumes/Tiny/Footage/a.mp4"]]),
+    );
+    expect((await answerWith({ id: "lib", name: "Tiny", settings: {} }, mac, [file])).result).toEqual(new Map([[file, "/Volumes/Tiny/Footage/a.mp4"]]));
+  });
+
+  it("copy keeps a dropped folder's name under the row", async () => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    const { result } = await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, folderMac, [inFolder]);
+    expect(result).toEqual(new Map([[inFolder, "/Volumes/Tiny/Footage/Shoot/b.mp4"]]));
+  });
+
+  it("a browser's files copy nothing, whatever the stored answer", async () => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    expect((await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, { from: "browser" }, [file])).result).toEqual(new Map());
+  });
+
+  it("an older Mac app refuses Copy, and in place indexes a loose file where it is", async () => {
+    delete document.documentElement.dataset.macImport;
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    const copy = await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, mac, [file]);
+    expect(copy.result).toBeNull();
+    expect(copy.onError).toHaveBeenCalledWith("Copy needs the latest Mac app");
+    expect((await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "in-place" } }, mac, [file])).result).toEqual(new Map());
+  });
+
+  it("copy with no Source media row here refuses the add and says why", async () => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([]);
+    const { result, onError } = await answerWith({ id: "lib", name: "Tiny", settings: { importMode: "copy" } }, mac, [file]);
+    expect(result).toBeNull();
+    expect(onError).toHaveBeenCalledWith("Add a Source media folder on this computer first");
   });
 });
