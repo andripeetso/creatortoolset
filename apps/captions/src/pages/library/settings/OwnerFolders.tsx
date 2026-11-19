@@ -9,7 +9,7 @@ import { getEstimate, getWatch, updateLibrary, useLibraryChanges } from "@/lib/l
 import { AddFolderDialog, FolderRow, STORAGE_API, call, removeStorageFolder } from "@/components/settings/StorageRows";
 import { thisMacDevice } from "@/lib/providers";
 import { importMake, type PickedFolder } from "@/lib/thisMac";
-import { LibraryFolderRow, layoutIn, missingIn } from "./LibraryFolder";
+import { LibraryFolderBox, layoutIn, missingIn } from "./LibraryFolder";
 import { Card, ErrorRow, LoadingRow, Row, Status } from "@/components/settings/ui";
 
 type Role = AddFolderBody["role"];
@@ -19,15 +19,16 @@ const TIPS: Record<Role, string> = { footage: LIBRARY_WORDS.sourceMediaTip, proj
 
 /**
  * The workspace's folder rows (UNIFIED-PRD §3.1 Folders): the one folder list of Settings → Folders, for this workspace
- * (the folder records of every computer). First the Library folder (setup's own row, ./LibraryFolder.tsx): the folder the
- * three are in, Change… picks another (its Source media, Project files and Final exports found there or made, and added
- * as rows), Choose each folder sets `defaultFolders` off: each folder then has Set… or its menu, and the row says Custom.
- * The rows and their menu are StorageRows' own.
+ * (the folder records of every computer), in setup's own box (./LibraryFolder.tsx, 11-19 sign-off D1): the Library
+ * folder the three are in, Change… picks another (its Source media, Project files and Final exports found there or made,
+ * and added as rows); under it the three in a summary, and ⋯ unrolls them into their rows, each with Set…, Add folder…
+ * or its menu (StorageRows' own). A folder still being indexed says so under the box, folded or not.
  */
 export function OwnerFolders({ library, workspace, onChange, onError }: { library: LibrarySummary; workspace: string | null; onChange: (l: LibrarySummary) => void; onError: (e: string) => void }) {
   const providers = useProviders();
   const store = useCachedLoad<StorageView>(STORAGE_API, () => call<StorageView>(STORAGE_API, "GET", undefined, workspace), { own: true, workspace: workspace ?? undefined });
   const [adding, setAdding] = useState<Role | null>(null);
+  const [unrolled, setUnrolled] = useState(false);
   // the folders this server reads, with how many files each still has to take in (a folder added indexes at once)
   const watch = useCachedLoad<WatchStatus>(`/api/library/${library.id}/watch`, () => getWatch(library.id));
   useLibraryChanges(() => void watch.refresh().catch(() => {}));
@@ -72,63 +73,73 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
   const three = ROLES.map((role) => folders.find((f) => f.role === role));
   const base = three.every((f) => f && f.origin.host === three[0]!.origin.host && parent(f) === parent(three[0])) ? parent(three[0]) : undefined;
 
+  // the folders still being indexed, under the box in both its states
+  const indexing = sources.flatMap((f) => {
+    const w = watch.data?.folders.find((x) => x.path === f.origin.path && x.adding > 0);
+    return w ? [{ f, count: w.adding }] : [];
+  });
+  const nameOf = (f: StorageFolder) => (base && parent(f) === base ? f.name : f.origin.path);
+
   return (
     <Card>
-      {/* the rows below say each folder, so the three lines under the Library folder are setup's only */}
-      <LibraryFolderRow path={base ?? LIBRARY_WORDS.notSet} names={undefined} custom={!defaults || (!base && folders.length > 0)} lines={false} onPick={(p) => void moveTo(p)} onCustom={() => void setDefaults(false)} />
-      {ROLES.map((role) => {
-        const mine = folders.filter((f) => f.role === role);
-        const none = mine.length === 0;
-        const nested = mine.some(inside);
-        return (
-          <Fragment key={role}>
-            <Row
-              title={FOLDER_LABELS[role]}
-              tip={TIPS[role]}
-              status={
-                none ? (
-                  <Status tone="attention">{LIBRARY_WORDS.notSet}</Status>
-                ) : nested ? (
-                  <Status>{LIBRARY_WORDS.insideSourceMedia}</Status>
-                ) : undefined
-              }
-              control={
-                // copy (SCREENS-COPY §1): a folder not chosen gets Set… only while the switch is off; Source media's Add folder…
-                // shows for the folders already there (and while off). On with nothing made (no computer to make them on): no button
-                none ? (
-                  !defaults ? (
+      <LibraryFolderBox
+        path={base}
+        onPick={(p) => void moveTo(p)}
+        head={base ? LIBRARY_WORDS.foldersInIt : LIBRARY_WORDS.foldersInUse}
+        lines={ROLES.map((role) => {
+          const mine = folders.filter((f) => f.role === role);
+          return { use: role as "footage" | "projects" | "library", folder: mine.length ? mine.map(nameOf).join(", ") : LIBRARY_WORDS.notSet };
+        })}
+        open={unrolled}
+        onToggle={() => setUnrolled((o) => !o)}
+        below={indexing.map(({ f, count }) => (
+          <IndexingLine
+            key={f.id}
+            libraryId={library.id}
+            path={f.origin.path}
+            count={count}
+            off={levelOf(library.settings) === "off"}
+            onCancel={() => void removeStorageFolder(f.id).then(refresh, (e: unknown) => onError(e instanceof Error ? e.message : String(e)))}
+          />
+        ))}
+      >
+        {ROLES.map((role) => {
+          const mine = folders.filter((f) => f.role === role);
+          const none = mine.length === 0;
+          const nested = mine.some(inside);
+          return (
+            <Fragment key={role}>
+              <Row
+                title={FOLDER_LABELS[role]}
+                tip={TIPS[role]}
+                status={
+                  none ? (
+                    <Status tone="attention">{LIBRARY_WORDS.notSet}</Status>
+                  ) : nested ? (
+                    <Status>{LIBRARY_WORDS.insideSourceMedia}</Status>
+                  ) : undefined
+                }
+                control={
+                  // a folder not set yet: Set…; Source media: Add folder… for one more. A set one is changed from its own menu
+                  none ? (
                     <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
                       {LIBRARY_WORDS.setFolder}
                     </Button>
+                  ) : role === "footage" ? (
+                    <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
+                      {LIBRARY_WORDS.addFolder}
+                    </Button>
                   ) : undefined
-                ) : role === "footage" ? (
-                  <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
-                    {LIBRARY_WORDS.addFolder}
-                  </Button>
-                ) : undefined
-              }
-            />
-            {mine.map((f) => {
-              const indexing = role === "footage" ? watch.data?.folders.find((w) => w.path === f.origin.path && w.adding > 0) : undefined;
-              return (
-                // Source media stays changeable (the folders added); the default Project files and Final exports rows are fixed while the switch is on
-                <Fragment key={f.id}>
-                  <FolderRow folder={f} devices={devices} onChanged={refresh} locked={defaults && role !== "footage"} />
-                  {indexing && (
-                    <IndexingLine
-                      libraryId={library.id}
-                      path={f.origin.path}
-                      count={indexing.adding}
-                      off={levelOf(library.settings) === "off"}
-                      onCancel={() => void removeStorageFolder(f.id).then(refresh, (e: unknown) => onError(e instanceof Error ? e.message : String(e)))}
-                    />
-                  )}
-                </Fragment>
-              );
-            })}
-          </Fragment>
-        );
-      })}
+                }
+              />
+              {mine.map((f) => (
+                // Source media stays changeable (the folders added); the default Project files and Final exports rows are fixed while all three are the Library folder's
+                <FolderRow key={f.id} folder={f} devices={devices} onChanged={refresh} locked={defaults && role !== "footage"} />
+              ))}
+            </Fragment>
+          );
+        })}
+      </LibraryFolderBox>
       {adding && (
         <AddFolderDialog
           open

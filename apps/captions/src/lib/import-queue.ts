@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { audioOf, checkUpload, getEstimate, uploadFile } from "@/lib/library";
-import { quickPrint } from "@/lib/onMac";
+import { quickPrint, shapeOf } from "@/lib/onMac";
 import { importCancel, importCopy, importProgress, pathOnMac } from "@/lib/thisMac";
 import { going } from "@/pages/library/Placeholders";
 import { alreadyThere, type Upload } from "@/pages/library/Uploads";
@@ -84,6 +84,15 @@ export function addImports(files: File[], o: AddOptions): void {
       () => {},
     );
   for (const u of added) void send(u);
+  void shapes(added);
+}
+
+/** Each file's shape, one after another (metadata only), so its card takes it as soon as it is known. */
+async function shapes(items: readonly QueueItem[]): Promise<void> {
+  for (const u of items) {
+    const aspect = await shapeOf(u.file);
+    if (aspect) patch(u.key, { aspect });
+  }
 }
 
 /** Retry: sends a failed or cancelled file again. */

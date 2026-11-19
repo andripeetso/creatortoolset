@@ -15,8 +15,8 @@ import { useAuth } from "@/lib/auth";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { ModelRows } from "./settings/Models";
 import { HostedSwitches } from "./settings/Hosted";
-import { LibraryFolderRow, layoutIn, missingIn } from "./settings/LibraryFolder";
-import { EffortCost } from "./settings/Effort";
+import { LibraryFolderBox, layoutIn, missingIn, type LibraryUse, type SummaryLine } from "./settings/LibraryFolder";
+import { EffortCost, EffortStops } from "./settings/Effort";
 import { cn } from "@/lib/utils";
 import {
   ANALYSIS_DEFAULT,
@@ -55,15 +55,14 @@ type Step = "start" | "folders" | "proxy" | "analysis" | "hosted";
 interface Answers {
   start: Start;
   /** From scratch: the Library folder ("" = the workspace's default one), and the names of the folders in it when the Mac
-   *  app said them (undefined: nothing known, so all three are made). `custom`: each folder chosen on its own instead */
+   *  app said them (undefined: nothing known, so all three are made) */
   base: string;
   names?: string[];
-  custom: boolean;
-  /** Source media folders chosen on this computer (from scratch with `custom`: the one folder) */
+  /** Source media folders chosen on this computer (from scratch: one set by its own Change…, in place of the Library folder's) */
   sources: string[];
   /** the names beside the first Source media folder (existing folders), for Project files and Final exports found there */
   siblings?: string[];
-  /** "" = the default: inside the Library folder, or beside the first Source media folder */
+  /** "" = the default: inside the Library folder, or beside the first Source media folder; else set by its own Change… */
   projects: string;
   exports: string;
   /** How should imported media behave? true: copied into Source media (the default) */
@@ -82,7 +81,6 @@ interface Answers {
 const START: Answers = {
   start: "scratch",
   base: "",
-  custom: false,
   sources: [],
   projects: "",
   exports: "",
@@ -109,6 +107,9 @@ const TITLE: Record<Step, string> = {
 const ICON: Record<Step, LucideIcon> = { start: FolderOpen, folders: FolderOpen, proxy: Gauge, analysis: ScanSearch, hosted: Cloud };
 
 const BESIDE_SOURCE = "Beside your first Source media folder";
+const TIPS: Record<LibraryUse, string> = { footage: LIBRARY_WORDS.sourceMediaTip, projects: LIBRARY_WORDS.projectFilesTip, library: LIBRARY_WORDS.finalExportsTip };
+/** A folder's own name, the last part of its path. */
+const nameOf = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 const NO_COMPUTER = "Connect this Mac to the server first: Settings → Computers.";
 const PAIR_WAIT_MS = 10_000;
 const PAIR_SLOW = "This Mac didn't answer. Open Settings → Computers and connect it, then press Done again.";
@@ -122,8 +123,8 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Hosted media's Proxies forces the proxy switch on (SCREENS-COPY §1). */
 const proxiesHosted = (a: Answers): boolean => a.hosted.proxies;
-/** No folder picked by hand: the default folders (the owner page's Library folder rather than Custom). */
-const defaultsOf = (a: Answers): boolean => (a.start === "scratch" ? !a.custom : !a.projects && !a.exports);
+/** No folder set by its own Change…: the default folders (all three in the Library folder, or beside Source media). */
+const defaultsOf = (a: Answers): boolean => !a.projects && !a.exports && (a.start === "existing" || !a.sources[0]);
 
 /** The workspace's default Library folder: ~/Movies/Creator Toolset/<workspace>. */
 export const baseOf = libraryBase;
@@ -132,8 +133,7 @@ const parentOf = (p: string) => p.replace(/\/[^/]*\/?$/, "");
 
 /** The folders the answers name, as rows of the one folder list: the Library folder's three (found ones as they are named). */
 export function rowsOf(a: Answers, workspace: string): { role: StorageRole; path: string }[] {
-  if (a.start === "scratch" && !a.custom) return layoutIn(a.base || baseOf(workspace), a.names).map((l) => ({ role: l.use, path: l.path }));
-  const near = layoutIn(a.start === "scratch" ? baseOf(workspace) : parentOf(a.sources[0] ?? ""), a.start === "scratch" ? undefined : a.siblings);
+  const near = a.start === "scratch" ? layoutIn(a.base || baseOf(workspace), a.names) : layoutIn(parentOf(a.sources[0] ?? ""), a.siblings);
   const footage = a.start === "scratch" ? [a.sources[0] || near[0]!.path] : a.sources;
   return [
     ...footage.map((path) => ({ role: "footage" as const, path })),
@@ -145,7 +145,12 @@ export function rowsOf(a: Answers, workspace: string): { role: StorageRole; path
 /** The folders to make on this Mac on Done: the Library folder's missing ones, or the two beside the first Source media
  *  folder that aren't there (existing folders). None for folders each chosen on their own (they exist). */
 export function toMake(a: Answers, workspace: string): { in: string; names: string[] } | null {
-  if (a.start === "scratch") return a.custom ? null : { in: a.base || baseOf(workspace), names: missingIn(a.names) };
+  // from scratch: the Library folder's missing ones, but not one set elsewhere by its own Change…
+  if (a.start === "scratch") {
+    const set = { footage: a.sources[0], projects: a.projects, library: a.exports };
+    const names = layoutIn("", a.names).filter((l) => !l.found && !set[l.use]).map((l) => FOLDER_LABELS[l.use]);
+    return names.length ? { in: a.base || baseOf(workspace), names } : null;
+  }
   // nothing known beside it (a dropped folder before the Mac said, or a Mac app from before): nothing is made there
   if (!a.sources[0] || !a.siblings) return null;
   const missing = missingIn(a.siblings).filter((n) => n !== FOLDER_LABELS.footage && !(n === PROJECTS_NAME ? a.projects : n === EXPORTS_NAME ? a.exports : ""));
@@ -180,7 +185,7 @@ function OrganizeArt({ smart }: { smart: boolean }) {
 /** A radio option: the name, its ⓘ tip, a status line when it says why it is off, and an optional picture. */
 function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; disabled?: boolean; label: string; tip?: string; status?: string; art?: ReactNode; onPick: () => void }) {
   return (
-    <div className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--tint)]", on ? "border-[var(--tint)] bg-[color-mix(in_srgb,var(--tint)_7%,transparent)]" : "border-border/70")}>
+    <div className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-violet-600", on ? "border-violet-600 bg-violet-600/[0.07]" : "border-border/70")}>
       <button
         type="button"
         role="radio"
@@ -189,7 +194,7 @@ function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; 
         onClick={onPick}
         className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none disabled:opacity-50"
       >
-        <span className={cn("size-4 shrink-0 rounded-full border", on ? "border-[var(--tint)] bg-[var(--tint)] shadow-[inset_0_0_0_3px_var(--background)]" : "border-foreground/25")} />
+        <span className={cn("size-4 shrink-0 rounded-full border", on ? "border-violet-600 bg-violet-600 shadow-[inset_0_0_0_3px_var(--background)]" : "border-foreground/25")} />
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium text-foreground">{label}</span>
           {status && <span className="block text-xs text-muted-foreground">{status}</span>}
@@ -204,8 +209,31 @@ function Pick({ on, disabled, label, tip, status, art, onPick }: { on: boolean; 
 /** A long path breaks after a slash, never inside a folder's name (a zero-width space; shown only, the path is kept as it is). */
 const wrapAtSlashes = (p: string) => p.replace(/\//g, "/\u200b");
 
-/** A folder row: its path (or `empty`), Found or Will be created (`found`), and a button that opens the Mac app's folder window. */
-function FolderRow({ title, tip, path, found, empty = LIBRARY_WORDS.notSet, onPick }: { title: string; tip: string; path: string | null; found?: boolean; empty?: string; onPick: (p: string) => void }) {
+/** A folder row: its path (or `empty`), "Will be created" under it when it isn't there yet (`made`), and Change… (the Mac app's folder window). */
+function FolderRow({ title, tip, path, made, empty = LIBRARY_WORDS.notSet, tight, onPick }: { title: string; tip: string; path: string | null; made?: boolean; empty?: string; tight?: boolean; onPick: (p: string) => void }) {
+  const change = (
+    <Button size="sm" variant="outline" className={cn(tight && "h-6 px-2.5 text-xs")} onClick={() => void chooseFolderOnMac().then((p) => p && onPick(p))}>
+      {path ? LIBRARY_WORDS.changeFolder : LIBRARY_WORDS.chooseFolder}
+    </Button>
+  );
+  // unrolled in the Library folder box: name, path and Change… on one line, so both states fit the one dialog (11-19 ruling)
+  if (tight)
+    return (
+      <div className="flex items-center gap-3 px-3 py-2 sm:px-4">
+        <span className="shrink-0 text-sm font-medium text-foreground">
+          {title}
+          <InfoTip text={tip} label={title} />
+        </span>
+        <span className="flex min-w-0 flex-1 text-xs text-muted-foreground">
+          {/* the folder's own name is what tells them apart: a long path loses its start, never its end */}
+          <span className="min-w-0 truncate text-left [direction:rtl]" title={path ?? undefined}>
+            <bdi dir="ltr">{path ?? empty}</bdi>
+          </span>
+          {path && made && <span className="shrink-0 whitespace-pre">{` · ${LIBRARY_WORDS.folderWillBeMade}`}</span>}
+        </span>
+        {change}
+      </div>
+    );
   return (
     <Row
       title={title}
@@ -214,7 +242,7 @@ function FolderRow({ title, tip, path, found, empty = LIBRARY_WORDS.notSet, onPi
         path ? (
           <span title={path}>
             {wrapAtSlashes(path)}
-            {found !== undefined && ` · ${found ? LIBRARY_WORDS.folderFound : LIBRARY_WORDS.folderWillBeMade}`}
+            {made && <span className="block">{LIBRARY_WORDS.folderWillBeMade}</span>}
           </span>
         ) : (
           empty
@@ -248,13 +276,14 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
   const [a, setA] = useState<Answers>(START);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // the folders unrolled into rows with Change… each (⋯), or folded into their summary
+  const [unrolled, setUnrolled] = useState(false);
   const step = steps[at]!;
   const set = (p: Partial<Answers>) => setA((x) => ({ ...x, ...p }));
   const last = at === steps.length - 1;
   // without the Mac app no folder can be added here (the step says so), so it does not hold Continue
   const ok = step !== "folders" || !hasThisMac() || folderOk(a);
-  const levelIdx = ANALYSIS_LEVELS.findIndex((l) => l.value === a.effort);
-  const videoLevel = levelIdx >= ANALYSIS_LEVELS.findIndex((l) => l.value === "high");
+  const videoLevel = ANALYSIS_LEVELS.findIndex((l) => l.value === a.effort) >= ANALYSIS_LEVELS.findIndex((l) => l.value === "high");
 
   // a row the folder list refuses because it is already there is what the person wanted; the scratch default is made first
   const addRow = (host: string, role: StorageRole, path: string, make: boolean) =>
@@ -281,8 +310,8 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
       if (!folders.length) return;
       // what is in (or beside) a dropped folder, from the Mac app; a Mac app from before says nothing, so nothing is known
       const look = (folder: string) => importMake(folder, []).then((r) => r.children, () => undefined);
-      if (a.start === "scratch" && !a.custom) {
-        set({ base: folders[0]!, names: undefined });
+      if (a.start === "scratch") {
+        set({ base: folders[0]!, names: undefined, sources: [], projects: "", exports: "" });
         void look(folders[0]!).then((names) => names && set({ names }));
       } else {
         if (!a.sources.length) void look(parentOf(folders[0]!)).then((siblings) => siblings && set({ siblings }));
@@ -305,7 +334,7 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
       // the folders are rows of the one list; without the Mac app there is no computer to add them on
       if (hasThisMac()) {
         // the server makes the default Source media itself on its own computer (a Mac app from before makes none)
-        const made = a.start === "scratch" && !a.custom && !a.base;
+        const made = a.start === "scratch" && !a.base && !a.sources[0];
         const host = await within(computer(), PAIR_WAIT_MS, PAIR_SLOW);
         const make = toMake(a, workspace.name);
         if (make?.names.length) {
@@ -362,12 +391,16 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
 
     if (step === "folders") {
       const rows = rowsOf(a, workspace.name);
-      const projects = rows.at(-2)!.path;
-      const exports = rows.at(-1)!.path;
-      const beside = a.start === "existing" && a.sources.length === 0;
-      // existing folders: Project files and Final exports found beside the first Source media folder (Moo's PROJECTS, EXPORTS)
-      const near = layoutIn("", a.siblings);
-      const nearFound = a.siblings ? { projects: near[1]!.found, library: near[2]!.found } : { projects: undefined, library: undefined };
+      // from scratch: the Library folder's three, each its found folder, the name to make, or one set by its own Change…
+      const base = a.base || baseOf(workspace.name);
+      const layout = layoutIn(base, a.names);
+      const own: Record<LibraryUse, string> = { footage: a.start === "scratch" ? (a.sources[0] ?? "") : "", projects: a.projects, library: a.exports };
+      const anyFound = layout.some((l) => l.found);
+      const lineOf = (use: LibraryUse, path: string, found: boolean, known: boolean): SummaryLine =>
+        own[use] ? { use, folder: own[use] } : { use, folder: nameOf(path), ...(known && !found ? { note: LIBRARY_WORDS.folderWillBeMade } : {}) };
+      // existing folders: Project files and Final exports beside the first Source media folder (Moo's PROJECTS, EXPORTS)
+      const near = layoutIn(parentOf(a.sources[0] ?? ""), a.siblings);
+      const pick = (use: LibraryUse) => (p: string) => set(use === "footage" ? { sources: [p] } : use === "projects" ? { projects: p } : { exports: p });
       return (
         <div className="space-y-5">
           {!hasThisMac() ? (
@@ -381,22 +414,23 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
             <>
               <Card>
                 {a.start === "scratch" ? (
-                  <>
-                    <LibraryFolderRow
-                      path={a.base || baseOf(workspace.name)}
-                      names={a.names}
-                      custom={a.custom}
-                      onPick={(f) => set({ base: f.path, names: f.children, custom: false })}
-                      onCustom={() => set({ custom: true, sources: [rows[0]!.path], projects: rows[1]!.path, exports: rows[2]!.path })}
-                    />
-                    {a.custom && (
-                      <>
-                        <FolderRow title={FOLDER_LABELS.footage} tip={LIBRARY_WORDS.sourceMediaTip} path={a.sources[0] ?? null} onPick={(p) => set({ sources: [p] })} />
-                        <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} path={a.projects || null} onPick={(p) => set({ projects: p })} />
-                        <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} path={a.exports || null} onPick={(p) => set({ exports: p })} />
-                      </>
-                    )}
-                  </>
+                  <LibraryFolderBox
+                    path={base}
+                    onPick={(f) => {
+                      set({ base: f.path, names: f.children, sources: [], projects: "", exports: "" });
+                      // a folder that has them opens on its rows: each one's path, to see and change
+                      if (layoutIn("", f.children).some((l) => l.found)) setUnrolled(true);
+                    }}
+                    head={anyFound ? LIBRARY_WORDS.foldersInIt : LIBRARY_WORDS.foldersWillBeMade}
+                    lines={layout.map((l) => lineOf(l.use, l.path, l.found, anyFound))}
+                    open={unrolled}
+                    onToggle={() => setUnrolled((o) => !o)}
+                  >
+                    {layout.map((l) => (
+                      // "Will be created" only beside found ones: with none found the line above says it of all three
+                      <FolderRow key={l.use} tight title={FOLDER_LABELS[l.use]} tip={TIPS[l.use]} path={own[l.use] || l.path} made={anyFound && !own[l.use] && !l.found} onPick={pick(l.use)} />
+                    ))}
+                  </LibraryFolderBox>
                 ) : (
                   <Row
                     title={FOLDER_LABELS.footage}
@@ -439,8 +473,25 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
               </div>
               {a.start === "existing" && (
                 <Card>
-                  <FolderRow title={FOLDER_LABELS.projects} tip={LIBRARY_WORDS.projectFilesTip} path={beside && !a.projects ? null : projects} found={a.projects ? undefined : nearFound.projects} empty={BESIDE_SOURCE} onPick={(p) => set({ projects: p })} />
-                  <FolderRow title={FOLDER_LABELS.library} tip={LIBRARY_WORDS.finalExportsTip} path={beside && !a.exports ? null : exports} found={a.exports ? undefined : nearFound.library} empty={BESIDE_SOURCE} onPick={(p) => set({ exports: p })} />
+                  <LibraryFolderBox
+                    top={false}
+                    head={LIBRARY_WORDS.foldersBeside}
+                    lines={near.slice(1).map((l) => lineOf(l.use, l.path, l.found, !!a.siblings))}
+                    open={unrolled}
+                    onToggle={() => setUnrolled((o) => !o)}
+                  >
+                    {near.slice(1).map((l, i) => (
+                      <FolderRow
+                        key={l.use}
+                        title={FOLDER_LABELS[l.use]}
+                        tip={TIPS[l.use]}
+                        path={own[l.use] || (a.sources.length ? rows.at(i - 2)!.path : null)}
+                        made={!own[l.use] && !!a.siblings && !l.found}
+                        empty={BESIDE_SOURCE}
+                        onPick={pick(l.use)}
+                      />
+                    ))}
+                  </LibraryFolderBox>
                 </Card>
               )}
             </>
@@ -475,57 +526,47 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
     if (step === "analysis")
       return (
         <div className="space-y-5">
-          <Card>
-            <Row title={LIBRARY_WORDS.effort} tip={LIBRARY_WORDS.effortTips[a.effort]} control={<EffortCost libraryId={library.id} level={a.effort} />}>
-              <input
-                type="range"
-                min={0}
-                max={ANALYSIS_LEVELS.length - 1}
-                step={1}
-                value={levelIdx}
-                aria-label={LIBRARY_WORDS.effort}
-                onChange={(e) => set({ effort: ANALYSIS_LEVELS[Number(e.target.value)]!.value })}
-                className="w-full accent-[var(--tint)]"
-              />
-              <div className="mt-1 grid grid-cols-6 text-center text-xs text-muted-foreground">
-                {ANALYSIS_LEVELS.map((l) => (
-                  <span key={l.value}>
-                    {l.label}
-                    {l.value === ANALYSIS_DEFAULT && <span className="block text-[10px]">{LIBRARY_WORDS.recommended}</span>}
-                  </span>
-                ))}
+          {/* Effort: six stops in a row (11-19 sign-off B7), with its cost and the monthly budget on one line above them */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <p className="flex items-center gap-1 text-sm font-medium">
+                {LIBRARY_WORDS.effort}
+                <InfoTip text={LIBRARY_WORDS.effortTips[a.effort]} label={LIBRARY_WORDS.effort} />
+              </p>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <EffortCost libraryId={library.id} level={a.effort} />
+                <span aria-hidden>·</span>
+                <Popover>
+                  <PopoverTrigger className="underline-offset-4 outline-none hover:underline focus-visible:underline">
+                    {`${LIBRARY_WORDS.budget.label}: ${a.budget === null ? LIBRARY_WORDS.budget.noLimit : `$${a.budget}`}`}
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72 space-y-3">
+                    <p className="flex items-center gap-2 text-sm font-medium">
+                      {LIBRARY_WORDS.budget.label}
+                      <InfoTip text={LIBRARY_WORDS.budget.tip} label={LIBRARY_WORDS.budget.label} />
+                    </p>
+                    <div className="flex items-center gap-2 text-sm">
+                      $
+                      <Input
+                        type="number"
+                        min={0}
+                        aria-label="Monthly budget in dollars"
+                        value={a.budget ?? ""}
+                        disabled={a.budget === null}
+                        onChange={(e) => set({ budget: Math.max(0, Number(e.target.value) || 0) })}
+                        className="w-24"
+                      />
+                      {LIBRARY_WORDS.budget.amount}
+                    </div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" aria-label={LIBRARY_WORDS.budget.noLimit} checked={a.budget === null} onChange={(e) => set({ budget: e.target.checked ? null : LOOK_BUDGET_DEFAULT })} />
+                      {LIBRARY_WORDS.budget.noLimit}
+                    </label>
+                  </PopoverContent>
+                </Popover>
               </div>
-            </Row>
-          </Card>
-          <div className="text-center">
-            <Popover>
-              <PopoverTrigger className="text-sm text-muted-foreground underline-offset-4 outline-none hover:underline focus-visible:underline">
-                {`${LIBRARY_WORDS.budget.label}: ${a.budget === null ? LIBRARY_WORDS.budget.noLimit : `$${a.budget}`}`}
-              </PopoverTrigger>
-              <PopoverContent className="w-72 space-y-3">
-                <p className="flex items-center gap-2 text-sm font-medium">
-                  {LIBRARY_WORDS.budget.label}
-                  <InfoTip text={LIBRARY_WORDS.budget.tip} label={LIBRARY_WORDS.budget.label} />
-                </p>
-                <div className="flex items-center gap-2 text-sm">
-                  $
-                  <Input
-                    type="number"
-                    min={0}
-                    aria-label="Monthly budget in dollars"
-                    value={a.budget ?? ""}
-                    disabled={a.budget === null}
-                    onChange={(e) => set({ budget: Math.max(0, Number(e.target.value) || 0) })}
-                    className="w-24"
-                  />
-                  {LIBRARY_WORDS.budget.amount}
-                </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" aria-label={LIBRARY_WORDS.budget.noLimit} checked={a.budget === null} onChange={(e) => set({ budget: e.target.checked ? null : LOOK_BUDGET_DEFAULT })} />
-                  {LIBRARY_WORDS.budget.noLimit}
-                </label>
-              </PopoverContent>
-            </Popover>
+            </div>
+            <EffortStops value={a.effort} onPick={(effort) => set({ effort })} />
           </div>
           {a.effort !== "off" && (
             <div className="space-y-2">
@@ -582,7 +623,7 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
 
   const head = (
     <>
-      <span aria-hidden className="grid size-11 place-items-center rounded-2xl bg-[color-mix(in_srgb,var(--tint)_12%,transparent)] text-[var(--tint)]">
+      <span aria-hidden className="grid size-11 place-items-center rounded-2xl bg-violet-600/10 text-violet-600">
         <Icon className="size-5" />
       </span>
       {inline ? <h1 className="text-xl font-semibold">{TITLE[step]}</h1> : <DialogTitle className="text-xl font-semibold">{TITLE[step]}</DialogTitle>}

@@ -64,4 +64,12 @@ if (!d.prepare("SELECT 1 FROM assets WHERE id = 'ast_clip1'").get()) {
     indexAsset(d, `ast_clip${n}`);
   }
 }
+// The owner's three folders in one Library folder on their Mac (Settings → Media Library's Folders, D1 of the 11-19
+// sign-off): written as the app keeps them, since a server not on that Mac refuses to read a Source media folder there
+const { changeStorage } = await import("../../api/devices-storage");
+await changeStorage(OWNER.username, (st) => {
+  if (st.folders.some((f) => f.id === "fold_footage")) return "keep";
+  for (const [role, name] of [["footage", "FOOTAGE"], ["projects", "Project files"], ["library", "EXPORTS"]] as const)
+    st.folders.push({ id: `fold_${role}`, role, name, origin: { host: "mac-tiny", path: `/Volumes/Tiny/Library/${name}` }, make: false, createdAt: now, reach: {}, workspace: "*" } as never);
+});
 console.log(JSON.stringify({ seeded: data, workspace: w.id, shared, owner: OWNER.username, member: MEMBER.username }));

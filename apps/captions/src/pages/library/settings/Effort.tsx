@@ -1,56 +1,48 @@
 import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 import { ANALYSIS_DEFAULT, ANALYSIS_LEVELS, LIBRARY_WORDS, LOOK_BUDGET_DEFAULT, flagsOf, levelOf, type AnalysisLevel, type LibraryEstimate, type LibrarySettings, type LibrarySummary } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Slider } from "@/components/ui/slider";
 import { Card, InfoTip, Row, TextField } from "@/components/settings/ui";
 import { getEstimate } from "@/lib/library";
 
-/** Analysis: one Effort slider over the existing flags (UNIFIED-PRD §4.4), and the monthly budget link under it (§4.5). */
+/** Analysis: Effort's six stops over the existing flags (UNIFIED-PRD §4.4), and the monthly budget link under it (§4.5). */
 export function Effort({ library, save }: { library: LibrarySummary; save: (settings: Partial<LibrarySettings>) => Promise<unknown> }) {
-  const [drag, setDrag] = useState<number | null>(null);
-  const top = ANALYSIS_LEVELS.length - 1;
   const level = levelOf(library.settings);
-  const at = drag ?? ANALYSIS_LEVELS.findIndex((l) => l.value === level);
   return (
     <Card>
-      <Row title={LIBRARY_WORDS.effort} control={<EffortCost libraryId={library.id} level={level} />}>
-        <div className="px-1">
-          <Slider
-            aria-label={LIBRARY_WORDS.effort}
-            min={0}
-            max={top}
-            step={1}
-            value={[at]}
-            onValueChange={([n]) => setDrag(n!)}
-            onValueCommit={([n]) => {
-              setDrag(null);
-              void save(flagsOf(ANALYSIS_LEVELS[n!]!.value));
-            }}
-          />
-          {/* each label sits under its knob: the knob's centre is 8 px in from each end of the track (size-4 thumb) */}
-          <div className="relative mt-2 h-10 text-xs text-muted-foreground">
-            {ANALYSIS_LEVELS.map((l, n) => (
-              <div
-                key={l.value}
-                className="absolute top-0 flex -translate-x-1/2 flex-col items-center whitespace-nowrap"
-                style={{ left: `calc(8px + (100% - 16px) * ${n / top})` }}
-              >
-                <span className="inline-flex items-center">
-                  {l.label}
-                  <InfoTip text={LIBRARY_WORDS.effortTips[l.value]} label={l.label} />
-                </span>
-                {l.value === ANALYSIS_DEFAULT && <span className="text-[10px]">{LIBRARY_WORDS.recommended}</span>}
-              </div>
-            ))}
-          </div>
-          <div className="pt-2">
-            <Budget library={library} save={save} />
-          </div>
+      <Row title={LIBRARY_WORDS.effort} tip={LIBRARY_WORDS.effortTips[level]} control={<EffortCost libraryId={library.id} level={level} />}>
+        <EffortStops value={level} onPick={(l) => void save(flagsOf(l))} />
+        <div className="pt-3">
+          <Budget library={library} save={save} />
         </div>
       </Row>
     </Card>
+  );
+}
+
+/** Effort's six stops in a row (11-19 sign-off B7): the one control, in the setup and on the owner's settings page. */
+export function EffortStops({ value, onPick }: { value: AnalysisLevel; onPick: (level: AnalysisLevel) => void }) {
+  return (
+    <div role="radiogroup" aria-label={LIBRARY_WORDS.effort} className="grid grid-cols-3 overflow-hidden rounded-lg border sm:grid-cols-6">
+      {ANALYSIS_LEVELS.map((l) => (
+        <button
+          key={l.value}
+          type="button"
+          role="radio"
+          aria-checked={value === l.value}
+          title={l.value === ANALYSIS_DEFAULT ? LIBRARY_WORDS.recommended : undefined}
+          onClick={() => onPick(l.value)}
+          className={cn(
+            "border-l px-1 py-1.5 text-xs outline-none first:border-l-0 focus-visible:ring-2 [&:nth-child(4)]:border-l-0 [&:nth-child(n+4)]:border-t sm:[&:nth-child(4)]:border-l sm:[&:nth-child(n+4)]:border-t-0 focus-visible:ring-inset focus-visible:ring-violet-600",
+            value === l.value ? "bg-violet-600/10 font-semibold text-foreground" : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          {l.label}
+        </button>
+      ))}
+    </div>
   );
 }
 

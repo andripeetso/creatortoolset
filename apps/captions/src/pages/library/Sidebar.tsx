@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Download, FileX, SlidersHorizontal } from "lucide-react";
-import type { AssetKind, LibrarySort } from "@contracts/library";
+import type { AssetKind } from "@contracts/library";
 import { LibraryFacetBar, type FacetChoice } from "@/components/LibraryFacetBar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -13,19 +13,11 @@ import { anyFilter, countryName, HereFilter, WhenPicker } from "./Filters";
 import { Missing } from "./Missing";
 
 /**
- * The Media Library's sidebar (LibraryPage.tsx): Sort, When, Where (the countries clips were filmed in, with counts), Tags
+ * The Media Library's sidebar (LibraryPage.tsx): When, Where (the countries clips were filmed in, with counts), Tags
  * (with counts, every one picked; its own small search), Kinds, then a plug-in's own groups. On a desktop it stands left
  * of the grid and scrolls by itself; on a narrow window and a phone the Filters button opens it as a sheet.
  */
 
-export const SORTS: { id: LibrarySort; label: string }[] = [
-  { id: "new", label: "Newest" },
-  { id: "old", label: "Oldest" },
-  { id: "name", label: "Name" },
-  { id: "longest", label: "Longest" },
-  { id: "shortest", label: "Shortest" },
-  { id: "filmed", label: "Date filmed" },
-];
 
 export const KINDS: { value: AssetKind | "all"; label: string }[] = [
   { value: "all", label: "All" },
@@ -37,8 +29,6 @@ export const KINDS: { value: AssetKind | "all"; label: string }[] = [
 
 export interface SidebarProps {
   libraryId: string;
-  sort: LibrarySort;
-  onSort: (s: LibrarySort) => void;
   kind: AssetKind | "all";
   onKind: (k: AssetKind | "all") => void;
   filters: LibraryFilters;
@@ -108,20 +98,6 @@ export function LibrarySidebar(p: SidebarProps) {
 
   return (
     <div className="flex flex-col gap-5">
-      <Section title="Sort">
-        <select
-          aria-label="Sort clips"
-          value={p.sort}
-          onChange={(e) => p.onSort(e.target.value as LibrarySort)}
-          className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2 text-[12px] text-zinc-300 outline-none"
-        >
-          {SORTS.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </Section>
 
       <Section title="When">
         <WhenPicker value={f} onChange={(w) => set(w)} />

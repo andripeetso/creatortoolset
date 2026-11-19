@@ -45,8 +45,9 @@ export const disksFor = (devices: Computer[], host: string, serverDisks: Disk[] 
   return d && disksOf(d).length ? disksOf(d) : serverDisks;
 };
 /** The computer a folder is on, as its row names it. A folder whose computer is none of the account's is listed and says so. */
+const UNKNOWN_COMPUTER = "Computer not found";
 const nameOf = (devices: Computer[], f: StorageFolder) =>
-  f.origin.host === THIS_COMPUTER ? "This computer" : f.missing ? "Computer not found" : (devices.find((d) => d.id === f.origin.host)?.name ?? "Computer not found");
+  f.origin.host === THIS_COMPUTER ? "This computer" : f.missing ? UNKNOWN_COMPUTER : (devices.find((d) => d.id === f.origin.host)?.name ?? UNKNOWN_COMPUTER);
 
 /** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage too). */
 const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f)} · ${f.origin.path}`;
@@ -288,7 +289,8 @@ export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder
           {tagged && <WorkspaceTag id={workspacesOf(f)} />}
           {f.error && <Status tone="broken">{f.error}</Status>}
           <span className="inline-flex flex-wrap items-center gap-1.5">
-            <Status tone={!f.folderState ? undefined : f.folderState === "ok" ? "ok" : "attention"}>{folderLine(f, nameOf(devices, f), mine)}</Status>
+            {/* a computer nobody knows has nothing to report: its subtitle says Computer not found, once */}
+            {nameOf(devices, f) !== UNKNOWN_COMPUTER && <Status tone={!f.folderState ? undefined : f.folderState === "ok" ? "ok" : "attention"}>{folderLine(f, nameOf(devices, f), mine)}</Status>}
             {allow}
             {repoint}
           </span>

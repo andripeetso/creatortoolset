@@ -30,9 +30,11 @@ export const SORTS: Record<LibrarySort, { key: string; desc: boolean; text?: tru
   new: { key: "a.created_at", desc: true },
   old: { key: "a.created_at", desc: false },
   name: { key: "a.title COLLATE NOCASE", desc: false, text: true },
+  "name-za": { key: "a.title COLLATE NOCASE", desc: true, text: true },
   longest: { key: `COALESCE(NULLIF(${LENGTH}, 0), -1)`, desc: true },
   shortest: { key: `COALESCE(NULLIF(${LENGTH}, 0), 1e15)`, desc: false },
   filmed: { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: true },
+  "filmed-old": { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: false },
 };
 
 /** FTS5 query: each word quoted as a prefix match, words ANDed. Null when there are no words. */

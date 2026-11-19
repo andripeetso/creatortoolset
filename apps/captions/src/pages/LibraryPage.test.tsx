@@ -240,18 +240,19 @@ const moreItem = (text: string) => [...document.querySelectorAll<HTMLElement>('[
 
 describe("Media Library page", () => {
   // replaced (CEO 11-19, Andri): the empty Library is one drop box, nothing else on the page (no toolbar until the first clip)
-  it("an empty library is one drop box: no toolbar, Drop media here, and a click opens the file window", async () => {
+  // replaced (Andri 13:00 sign-off: C1, a small box with a drawing, Drop media here and a Choose files button)
+  it("an empty library is one drop box: no toolbar, Drop media here, and Choose files opens the file window", async () => {
     server.items = [];
     const host = await mount();
     expect(host.querySelector('[role="searchbox"]')).toBeNull();
     expect(more(host)).toBeNull();
     expect(buttons(host)).not.toContain("Upload");
     expect(buttons(host)).not.toContain("New folder");
+    expect(host.querySelector('[aria-label^="Sort by"]')).toBeNull();
     expect(host.textContent).toContain("Drop media here");
-    expect(host.textContent).toContain("or click to choose files");
     const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
     const click = vi.spyOn(input, "click").mockImplementation(() => {});
-    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Drop media here"))!.click());
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Choose files")!.click());
     expect(click).toHaveBeenCalledTimes(1);
   });
 
@@ -618,6 +619,26 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     localStorage.setItem("library:sort", "longest");
     await mount();
     expect(server.asked.at(-1)).toMatchObject({ sort: "longest" });
+  });
+
+  // Andri 13:00 sign-off C4: Sort by is a dropdown after View, which way is its own ↓/↑ button
+  it("sorts by Date filmed, newest first, until another is picked; Sort by keeps the way, the order button turns it", async () => {
+    localStorage.removeItem("library:sort");
+    const host = await mount();
+    expect(server.asked.at(-1)).toMatchObject({ sort: "filmed" });
+    const by = host.querySelector<HTMLButtonElement>('[aria-label^="Sort by"]')!;
+    expect(by.getAttribute("aria-label")).toBe("Sort by Date filmed");
+    expect(host.querySelector('button[aria-label="Newest first"]')).not.toBeNull();
+    await act(async () => by.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent?.trim())).toEqual(["Date filmed", "Date added", "Name", "Length"]);
+    await act(async () => moreItem("Name")!.click());
+    await settle();
+    expect(server.asked.at(-1)).toMatchObject({ sort: "name" });
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="A → Z"]')!.click());
+    await settle();
+    expect(server.asked.at(-1)).toMatchObject({ sort: "name-za" });
+    expect(host.querySelector('button[aria-label="Z → A"]')).not.toBeNull();
+    expect(localStorage.getItem("library:sort")).toBe("name-za");
   });
 
   // replaced (CEO 11-19 import-flow): no Uploads list; each file is a card in the grid while it goes in

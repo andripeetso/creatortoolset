@@ -109,24 +109,26 @@ describe("Settings → Media Library, the owner's page", () => {
     for (const t of [LIBRARY_WORDS.importCopy.tip, LIBRARY_WORDS.smartFolders.tip, LIBRARY_WORDS.generateProxies.tip, LIBRARY_WORDS.descriptionsTip]) expect(bodyText()).not.toContain(t);
   });
 
-  it("gives each setting its ⓘ tip, and the stops of the Effort slider one each", async () => {
+  // replaced (CEO 11-19 ruling 3): Effort is setup's six stops, its ⓘ on the title says what the chosen stop does
+  it("gives each setting its ⓘ tip, Effort one for its chosen stop", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
     // replaced (CEO 11-19): the Library folder row took the Use default folders switch's place, with its own ⓘ
     for (const label of [LIBRARY_WORDS.importCopy.label, LIBRARY_WORDS.importInPlace.label, LIBRARY_WORDS.libraryFolder.label, LIBRARY_WORDS.smartFolders.label, LIBRARY_WORDS.generateProxies.label, LIBRARY_WORDS.descriptions, LIBRARY_WORDS.videoBreakdown, LIBRARY_WORDS.transcripts]) {
       expect(tip(label), label).not.toBeNull();
     }
-    for (const stop of ["Off", "Low", "Medium", "High", "Extra high", "Max"]) expect(tip(stop), stop).not.toBeNull();
+    expect(tip(LIBRARY_WORDS.effort)).not.toBeNull();
     // the master has no ⓘ; the three under it have one each
     expect(tip(LIBRARY_WORDS.uploadToServer)).toBeNull();
     for (const label of ["Final exports", "Proxies", "Originals"]) expect(tip(label), label).not.toBeNull();
   });
 
-  it("the Effort slider has six stops, the one in use is High, Recommended is under High", async () => {
+  // replaced (CEO 11-19 ruling 3): the slider became the setup's stops, one component
+  it("Effort has setup's six stops, the one in use is High, and High is the recommended one", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    const slider = host!.querySelector('[role="slider"]')!;
-    expect(slider.getAttribute("aria-valuemax")).toBe("5");
-    expect(slider.getAttribute("aria-valuenow")).toBe("3");
-    expect(bodyText()).toContain("Recommended");
+    const stops = [...host!.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Effort"] [role="radio"]')];
+    expect(stops.map((b) => b.textContent)).toEqual(["Off", "Low", "Medium", "High", "Extra high", "Max"]);
+    expect(stops.filter((b) => b.getAttribute("aria-checked") === "true").map((b) => b.textContent)).toEqual(["High"]);
+    expect(stops.find((b) => b.textContent === "High")!.title).toBe("Recommended");
     expect(bodyText()).toContain("Monthly budget: No limit");
   });
 
@@ -136,7 +138,7 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(radio("Smart folders").disabled).toBe(true);
     expect(radio("Organize yourself").disabled).toBe(false);
     expect(bodyText()).toContain("Analysis is Off");
-    expect(host!.querySelector('[role="slider"]')!.getAttribute("aria-valuenow")).toBe("0");
+    expect(host!.querySelector('[aria-label="Effort"] [aria-checked="true"]')!.textContent).toBe("Off");
   });
 
   it("the Proxy quality radio shows only while proxies are generated", async () => {

@@ -49,7 +49,7 @@ import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
 import { AssetRow, AssetTile, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
-import { ImportSummary, PlaceholderTile, going, placeholderShown, summaryLine } from "./library/Placeholders";
+import { ImportSummary, PlaceholderTile, commonAspect, going, placeholderShown, placeholderWide, summaryLine } from "./library/Placeholders";
 import { addImports, cancelImports, onImported, retryImport, useImportQueue } from "@/lib/import-queue";
 import { ClipView } from "./library/ClipView";
 import { FoundInClips } from "./library/FoundInClips";
@@ -72,7 +72,8 @@ import type { LibraryFilters } from "@/lib/library";
 import { restoreFolder, tabCounts, type TabCounts } from "./library/api";
 import { GalleryGrid, GalleryTile } from "./library/Gallery";
 import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll } from "./library/moves";
-import { LibrarySidebar, SidebarSheet, sidebarPicked, SORTS } from "./library/Sidebar";
+import { LibrarySidebar, SidebarSheet, sidebarPicked } from "./library/Sidebar";
+import { SORT_IDS, SortControls } from "./library/SortControls";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
 import { LibraryTabs, type Tab } from "./library/Tabs";
 import { ReorganizeDialog, SmartFolderDialog } from "./library/SmartFolders";
@@ -95,7 +96,6 @@ import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./lib
  * finishes it (the change stream), without polling. Finals has its own tool (/finals): its folder is not shown here.
  */
 
-const SORT_IDS = SORTS.map((o) => o.id);
 const SORT_KEY = "library:sort";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -853,11 +853,6 @@ export default function LibraryPage() {
   const sidebar = library && (
     <LibrarySidebar
       libraryId={library.id}
-      sort={sort}
-      onSort={(v) => {
-        setSort(v);
-        persistSort(SORT_KEY, v);
-      }}
       kind={kind}
       onKind={setKind}
       filters={filters}
@@ -876,12 +871,14 @@ export default function LibraryPage() {
   const tabbed = view === "gallery" && tabs.some((t) => t.active);
   // a drop's files as cards (./library/Placeholders.tsx), first in the folder they were dropped in, until each clip's own card is here
   const onPage = (id: string) => shown.some((a) => a.id === id);
-  const placeholders =
-    trash || narrowed
-      ? []
-      : uploads
-          .filter((u) => placeholderShown(u, onPage) && (u.folderId ?? null) === (into ?? null))
-          .map((u) => <PlaceholderTile key={`up-${u.key}`} upload={u} onRetry={() => retryImport(u.key)} onCancel={() => cancelImports([u.key])} />);
+  const pending = trash || narrowed ? [] : uploads.filter((u) => placeholderShown(u, onPage) && (u.folderId ?? null) === (into ?? null));
+  const placeholders = pending.map((u) => <PlaceholderTile key={`up-${u.key}`} upload={u} onRetry={() => retryImport(u.key)} onCancel={() => cancelImports([u.key])} />);
+  // in the Gallery each takes its clip's cell: the file's own shape once read, the library's usual one before
+  const usual = commonAspect(shown);
+  const galleryLead = pending.map((u) => {
+    const wide = placeholderWide(u, usual);
+    return { key: `up-${u.key}`, wide, node: <PlaceholderTile gallery wide={wide} upload={u} onRetry={() => retryImport(u.key)} onCancel={() => cancelImports([u.key])} /> };
+  });
   const importLine = summaryLine(uploads, queue.startedAt, Date.now(), queue.usd);
   const tile = (a: AssetCard) => (
     <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
@@ -974,6 +971,13 @@ export default function LibraryPage() {
                     )}
                     {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
                     <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} />
+                    <SortControls
+                      sort={sort}
+                      onSort={(v) => {
+                        setSort(v);
+                        persistSort(SORT_KEY, v);
+                      }}
+                    />
                     {(watch || (changing && !firstScreen)) && (
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
@@ -1107,7 +1111,7 @@ export default function LibraryPage() {
                   ) : view === "gallery" ? (
                     <GalleryGrid
                       assets={shown}
-                      lead={placeholders}
+                      lead={galleryLead}
                       size={cardSize}
                       tile={(a, ownShape) => (
                         <ClipPick key={a.id} picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>

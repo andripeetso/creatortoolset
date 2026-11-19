@@ -42,6 +42,9 @@ describe("Storage rows", () => {
     const gone: StorageFolder = { ...library, id: "gone_1", origin: { host: "device-nobody-has", path: "/Volumes/Old/Exports" }, missing: true };
     const html = page([gone]);
     expect(html).toContain("Computer not found · /Volumes/Old/Exports");
+    // said once: no "Not checked yet on Computer not found" under it
+    expect(html.match(/Computer not found/g)).toHaveLength(1);
+    expect(html).not.toContain("Not checked yet");
     expect(html).not.toContain("A removed computer");
     expect(html).toContain('aria-label="Actions for Creator Toolset"');
   });

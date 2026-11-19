@@ -2,15 +2,28 @@ import { AlertCircle, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { aboutTime, aboutUsd } from "@/components/LibraryProcessing";
+import type { AssetCard } from "@contracts/library";
 import { cn } from "@/lib/utils";
+import { wideShape } from "./Gallery";
 import type { Upload } from "./Uploads";
 
 /**
  * A drop's files as they go in (11-19, the way a photo library fills in): each is a card in the grid at once, a grey
  * frame with its name; working, a thin bar runs along its foot; once indexed the clip's own card takes its place. A
  * failed one has a red mark and Retry; Cancel is in its menu. Above the grid one quiet line counts them, with Cancel
- * all. There is no list of uploads.
+ * all. There is no list of uploads. A card is the size its clip's card will be, so nothing moves when it takes its
+ * place (11-19, Andri: "fill the row height"): in the Gallery the file's own shape (tall: a cell, wide: two) once read,
+ * the library's usual shape before; in the other views the clip card's frame. It fills its row's height either way.
  */
+
+/** The library's usual shape (width / height): the middle one of the clips on the page; none, a phone's (portrait). */
+export function commonAspect(cards: readonly Pick<AssetCard, "width" | "height">[]): number {
+  const all = cards.flatMap((a) => (a.width && a.height ? [a.width / a.height] : [])).sort((x, y) => x - y);
+  return all.length ? all[Math.floor(all.length / 2)]! : 9 / 16;
+}
+
+/** Wide in the Gallery: two cells like a wide clip's card. */
+export const placeholderWide = (u: Upload, usual: number) => wideShape(u.aspect ?? usual);
 
 /** Still to go or on its way. */
 export const going = (u: Upload) => u.status === "waiting" || u.status === "checking" || u.status === "copying" || u.status === "uploading";
@@ -21,16 +34,26 @@ const done = (u: Upload) => u.status === "added" || u.status === "duplicate";
 export const placeholderShown = (u: Upload, onPage: (assetId: string) => boolean) =>
   going(u) || u.status === "failed" || (u.status === "added" && !!u.assetId && !onPage(u.assetId));
 
-export function PlaceholderTile({ upload: u, onRetry, onCancel }: { upload: Upload; onRetry: () => void; onCancel: () => void }) {
+/** `gallery`: the Gallery's cell (its name on the picture, `wide` two cells); else the clip card's frame with the name under it. */
+export function PlaceholderTile({ upload: u, onRetry, onCancel, gallery, wide }: { upload: Upload; onRetry: () => void; onCancel: () => void; gallery?: boolean; wide?: boolean }) {
   const failed = u.status === "failed";
   // the copy's bytes show how far it is; the other steps run the bar without a length
   const part = u.status === "copying" || (u.status === "uploading" && !u.inPlace) ? u.sent / Math.max(1, u.file.size) : null;
   return (
-    <div data-placeholder={u.status} className="group relative flex flex-col gap-1.5" title={failed ? u.error : undefined}>
-      <div className={cn("relative aspect-video overflow-hidden rounded-lg bg-zinc-200 dark:bg-zinc-800", failed && "ring-1 ring-red-500/60")}>
+    <div data-placeholder={u.status} className="group relative flex h-full flex-col gap-1.5" title={failed ? u.error : undefined}>
+      {/* the clip cards' own frame colour; its height grows to the row's (flex-1), its shape the least */}
+      <div
+        data-frame
+        className={cn(
+          "relative min-h-0 flex-1 overflow-hidden bg-zinc-900 ring-1 ring-zinc-500/20",
+          gallery ? (wide ? "aspect-[3/2] rounded-md" : "aspect-[3/4] rounded-md") : "aspect-video rounded-lg",
+          failed && "ring-red-500/60",
+        )}
+      >
+        {gallery && <span className="absolute inset-x-0 bottom-2.5 truncate px-2 text-xs text-zinc-500">{u.file.name}</span>}
         {working(u) && (
           <div className="absolute inset-x-0 bottom-0 h-1 bg-black/10" aria-label="Adding">
-            {part === null ? <div className="h-full w-1/3 animate-pulse bg-[var(--tint)]" /> : <div className="h-full bg-[var(--tint)] transition-[width]" style={{ width: `${Math.round(part * 100)}%` }} />}
+            {part === null ? <div className="h-full w-1/3 animate-pulse bg-violet-600" /> : <div className="h-full bg-violet-600 transition-[width]" style={{ width: `${Math.round(part * 100)}%` }} />}
           </div>
         )}
         {failed && <AlertCircle aria-label="Not added" className="absolute left-2 top-2 h-4 w-4 text-red-500" />}
@@ -55,7 +78,7 @@ export function PlaceholderTile({ upload: u, onRetry, onCancel }: { upload: Uplo
           </DropdownMenu>
         )}
       </div>
-      <p className="truncate text-xs text-zinc-500">{u.file.name}</p>
+      {!gallery && <p className="truncate text-xs text-zinc-500">{u.file.name}</p>}
     </div>
   );
 }

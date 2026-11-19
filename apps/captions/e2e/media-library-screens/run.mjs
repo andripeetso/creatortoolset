@@ -3,7 +3,8 @@
 // Seeds a scratch DATA_DIR (seed.ts), starts the dev server on it with APP_SECRET set (accounts on: an own-server
 // kind), drives the owner and the member through Playwright in light and dark, and writes <outDir>/<screen>-<theme>.png
 // plus <outDir>/screens.json: the visible text, every ⓘ tooltip and the disabled controls of each screen.
-// Removes the scratch data and stops its own server by pid when done.
+// Removes the scratch data and stops its own server by pid when done. The 11-19 sign-off screens (B2…D1 of the design
+// page) are named by their letter: B2-folded, B2-unrolled, B3, B5, B6, B7, B8, C1, C2, C4-closed, C4-open, D1, D1-unrolled.
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -68,7 +69,7 @@ const shot = async (page, name, theme) => {
 };
 
 /** Visible text, every ⓘ tooltip (hover each trigger), and the disabled controls of the current page. */
-async function capture(page, name, theme) {
+async function capture(page, name, theme, focus) {
   const text = await page.evaluate(() => document.body.innerText);
   const tips = {};
   const triggers = page.locator('button[aria-label^="About "]');
@@ -95,6 +96,11 @@ async function capture(page, name, theme) {
       .map((e) => (e.textContent || e.getAttribute("aria-label") || e.getAttribute("name") || "").trim().slice(0, 80))
       .filter(Boolean),
   );
+  // hovering the ⓘ scrolled the page's own scroll areas: back to the top (or to `focus`), the pointer off them
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => document.querySelectorAll("*").forEach((e) => e.scrollTop && (e.scrollTop = 0)));
+  if (focus) await focus.evaluate((e) => e.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
   if (theme === "light") results[name] = { text, tooltips: tips, disabled };
   else results[name] = { ...results[name], darkText: text, darkTooltips: tips, darkDisabled: disabled };
   await shot(page, name, theme);
@@ -108,6 +114,20 @@ async function login(ctx, who) {
 async function go(page, route) {
   await page.goto(BASE + route, { waitUntil: "networkidle", timeout: 120_000 });
   await page.waitForTimeout(800);
+}
+
+/** 11-19 ruling: folded and unrolled both fit the 608 px setup at an 860 px window, Copy fully shown, no inner scroll. */
+const fits = {};
+async function fitCheck(page, name) {
+  const r = await setupOf(page).evaluate((d) => {
+    const body = d.querySelector(".overflow-y-auto");
+    const text = [...d.querySelectorAll("*")].find((e) => !e.children.length && e.textContent.trim() === "Copy into Source media");
+    const option = text?.closest("label, button, [role=radio]") ?? text?.parentElement;
+    const foot = body?.nextElementSibling?.getBoundingClientRect().top ?? Infinity;
+    return { scrolls: !!body && body.scrollHeight > body.clientHeight + 1, over: body ? body.scrollHeight - body.clientHeight : 0, copyShown: !!option && option.getBoundingClientRect().bottom <= foot };
+  });
+  fits[name] = r;
+  console.log(`fit ${name}: ${!r.scrolls && r.copyShown ? "ok" : `NO (scrolls ${r.scrolls} by ${r.over} px, Copy shown ${r.copyShown})`}`);
 }
 
 /** The setup: the Library page itself until it is set up, a sheet when opened again. */
@@ -132,39 +152,54 @@ async function setupSteps(page, theme) {
 try {
   await up();
   const browser = await chromium.launch();
+  // The setup as the Mac app shows it (its folder rows, picked in the app's folder window), in both themes before any Done:
+  // a page that says it is in the Mac app, walked to the last step and left there.
+  for (const theme of ["light", "dark"]) {
+    const ctx = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
+    await login(ctx, OWNER);
+    const asMac = await ctx.newPage();
+    await asMac.addInitScript(SKIP_APP_SETUP);
+    // set on the parsed <html> (an init script runs before it exists), before the app's scripts run
+    await asMac.addInitScript(() => new MutationObserver(() => document.documentElement?.setAttribute("data-mac-this-mac", "1")).observe(document, { childList: true, subtree: true }));
+    await go(asMac, "/library");
+    const sheet = setupOf(asMac);
+    const press = async (name) => {
+      await sheet.getByRole("button", { name, exact: true }).first().click();
+      await asMac.waitForTimeout(500); // the unroll's 260 ms, and a step's change
+    };
+    await press("Continue");
+    await capture(asMac, "B2-folded", theme);
+    await fitCheck(asMac, `B2-folded-${theme}`);
+    await press("Choose each folder");
+    await capture(asMac, "B2-unrolled", theme);
+    await fitCheck(asMac, `B2-unrolled-${theme}`);
+    await press("Choose each folder");
+    // the Mac app's folder window stubbed, only now (set from the start it takes the page down the Mac app's other paths):
+    // it answers a Library folder with FOOTAGE and EXPORTS in it, Moo's layout
+    await asMac.evaluate(() => {
+      window.webkit = { messageHandlers: { thisMac: { postMessage: async (ask) => (ask === "folder" ? { path: "/Volumes/Tiny/MOO CLASSIC", children: ["EXPORTS", "FOOTAGE"], siblings: [] } : {}) } } };
+    });
+    await press("Change…");
+    await capture(asMac, "B3", theme);
+    await fitCheck(asMac, `B3-${theme}`);
+    await press("Continue");
+    await capture(asMac, "B6", theme);
+    await press("Continue");
+    await capture(asMac, "B7", theme);
+    await press("Continue");
+    await capture(asMac, "B8", theme);
+    for (let i = 0; i < 4; i++) await press("Back");
+    await sheet.getByRole("radio", { name: /Use my existing folders/ }).click();
+    await press("Continue");
+    await capture(asMac, "B5", theme);
+    await ctx.close();
+  }
   for (const theme of ["light", "dark"]) {
     // Owner: the setup dialog opens itself on the fresh library; then the owner page and the empty Library.
     const owner = await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 860 } });
     await login(owner, OWNER);
     const op = await owner.newPage();
     await op.addInitScript(SKIP_APP_SETUP);
-    // the Folders step as the Mac app shows it (its folder rows, picked in the app's folder window): a page that says it
-    // is in the Mac app; nothing is pressed past it
-    // once, in light: the light run's Done sets the library up, so the dark run has no setup to show
-    if (theme === "light") {
-      const asMac = await owner.newPage();
-      await asMac.addInitScript(SKIP_APP_SETUP);
-      // set on the parsed <html> (an init script runs before it exists), before the app's scripts run
-      await asMac.addInitScript(() => new MutationObserver(() => document.documentElement?.setAttribute("data-mac-this-mac", "1")).observe(document, { childList: true, subtree: true }));
-      await go(asMac, "/library");
-      await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
-      await asMac.waitForTimeout(500);
-      await capture(asMac, "S-setup-folders-scratch-mac", theme);
-      // the Mac app's folder window stubbed, only now (set from the start it takes the page down the Mac app's other paths):
-      // it answers a Library folder with FOOTAGE and EXPORTS in it, Moo's layout
-      await asMac.evaluate(() => {
-        window.webkit = { messageHandlers: { thisMac: { postMessage: async (ask) => (ask === "folder" ? { path: "/Volumes/Tiny/MOO CLASSIC", children: ["EXPORTS", "FOOTAGE"], siblings: [] } : {}) } } };
-      });
-      await setupOf(asMac).getByRole("button", { name: "Change…" }).first().click();
-      await asMac.waitForTimeout(500);
-      await capture(asMac, "S-setup-folders-found-mac", theme);
-      await setupOf(asMac).getByRole("button", { name: "Back" }).click();
-      await setupOf(asMac).getByRole("radio", { name: /Use my existing folders/ }).click();
-      await setupOf(asMac).getByRole("button", { name: "Continue" }).click();
-      await asMac.waitForTimeout(500);
-      await capture(asMac, "S-setup-folders-existing-mac", theme);
-      await asMac.close();
-    }
     await go(op, "/library");
     await setupSteps(op, theme);
     await go(op, "/settings/library");
@@ -179,8 +214,18 @@ try {
       await capture(op, `S1-models-${row.toLowerCase().replace(/ /g, "-")}-open`, theme);
       await btn.first().click();
     }
+    // D1: the three in one Library folder on the owner's Mac (seed.ts), folded and unrolled
+    await go(op, "/settings/library");
+    // Effort on the owner page: the setup's six stops (11-19 ruling 3)
+    await capture(op, "D-effort", theme, op.getByRole("radiogroup", { name: "Effort" }).first());
+    const folders = op.getByRole("button", { name: "Choose each folder" }).first();
+    await capture(op, "D1", theme, folders);
+    await folders.click();
+    await op.waitForTimeout(500);
+    await capture(op, "D1-unrolled", theme, folders);
     await go(op, "/library");
     await capture(op, "S3-library", theme);
+    if (await op.getByText("Drop media here").count()) await capture(op, "C1", theme);
     // the Library's ⋯ menu carries Redo (Rulings 11-19)
     const more = op.getByRole("button", { name: /^More/ });
     if (await more.count()) {
@@ -188,6 +233,40 @@ try {
       await op.waitForTimeout(400);
       await capture(op, "S3-library-more-menu", theme);
       await op.keyboard.press("Escape");
+    }
+    // C4 and C2 on the library with clips: Sort by closed and open; then a file on its way (its upload held, so it stays)
+    await op.getByRole("combobox", { name: "Library" }).selectOption({ label: "Tiny Acrobatics library" }).catch(() => {});
+    await op.waitForTimeout(1500);
+    await capture(op, "C4-closed", theme);
+    const sortBy = op.locator('button[aria-label^="Sort by"]');
+    if (await sortBy.count()) {
+      await sortBy.click();
+      await op.waitForTimeout(400);
+      await capture(op, "C4-open", theme);
+      await op.keyboard.press("Escape");
+    }
+    // C2 in the Gallery (tall clips, a cell each): seven files dropped beside the three portrait clips. Their sends are
+    // held (never answered), so four are on their way and two wait for a turn; the first is refused, so it failed. The
+    // cards' row holds both the drop's cards and the clips
+    await op.locator('button[title^="View:"]').click();
+    await op.getByRole("button", { name: "Gallery", exact: true }).click();
+    await op.keyboard.press("Escape");
+    await op.waitForTimeout(800);
+    // the sends answered here, never by the server: the first file is refused (failed); the others start in 1 MB parts,
+    // the first part of each taken, the rest held (never answered), so their bars stand part done
+    await op.route("**/api/library/*/uploads", async (route) => {
+      const name = String(route.request().postDataJSON?.()?.filename ?? "");
+      if (name.includes("01")) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "The share went away" }) });
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: `held-${name.replace(/\W/g, "")}`, offset: 0, chunkSize: 1 << 20 }) });
+    });
+    await op.route("**/api/library/uploads/held-*", (route) => {
+      if (route.request().method() === "PATCH" && route.request().headers()["upload-offset"] === "0") return route.fulfill({ status: 204, headers: { "upload-offset": String(1 << 20) } });
+    });
+    const input = op.locator('input[type="file"]').first();
+    if (await input.count()) {
+      await input.setInputFiles(Array.from({ length: 7 }, (_, i) => ({ name: `Tiny Acrobatics drop 0${i + 1}.mp4`, mimeType: "video/mp4", buffer: Buffer.alloc(3 * 1024 * 1024, i) })));
+      await op.waitForTimeout(2500);
+      await capture(op, "C2", theme);
     }
     await owner.close();
 

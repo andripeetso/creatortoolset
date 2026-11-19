@@ -122,7 +122,7 @@ export interface SearchQuery {
   limit?: number; // limit ≤ 200
 }
 
-export type LibrarySort = "new" | "old" | "name" | "longest" | "shortest" | "filmed";
+export type LibrarySort = "new" | "old" | "name" | "name-za" | "longest" | "shortest" | "filmed" | "filmed-old";
 
 /** GET /api/library/:id/tags */
 export interface TagCount {
@@ -819,12 +819,16 @@ export const LIBRARY_WORDS = {
   changeFolder: "Change…",
   removeFolder: "Remove",
   libraryFolder: { label: "Library folder", tip: "Source media, Project files and Final exports are kept inside this folder." },
-  folderFound: "Found",
   folderWillBeMade: "Will be created",
   chooseEachFolder: "Choose each folder",
-  customFolders: "Custom",
+  /** the line over the three folders in the Library folder (11-19 sign-off B2/B3/B5) */
+  foldersWillBeMade: "These folders will be created:",
+  foldersInIt: "Using the folders already in it:",
+  /** the owner page's box when the three are not in one Library folder */
+  foldersInUse: "Using these folders:",
+  foldersBeside: "Beside the first Source media folder:",
   dropMedia: "Drop media here",
-  orChooseFiles: "or click to choose files",
+  chooseFiles: "Choose files",
   noClipsYet: "No clips yet",
   analysisOff: "Analysis is Off",
   smartFoldersOff: "Smart folders sort clips by their descriptions, so Analysis has to be on.",
