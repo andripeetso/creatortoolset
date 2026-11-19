@@ -8,7 +8,7 @@ import type { AuthVars } from "../auth";
 import { LIBRARY_WORDS, type WatchFolder, type WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
-import { ensureLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
+import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
@@ -204,10 +204,15 @@ export async function defaultCopyTo(username: string): Promise<string> {
   return here?.origin.path ?? `~/Movies/${LIBRARY_NAME}/${LIBRARY_SUBFOLDERS.footage}`;
 }
 
-// GET /api/library/:id/watch → WatchStatus. The owner only: paths on the server are theirs to see.
+// GET /api/library/:id/watch → WatchStatus. The owner sees the folders (paths on the server are theirs to see); a member
+// the owner gave the workspace reads the state without them (UNIFIED-PRD §3.2: its page loads the owner's library).
 watchApp.get("/:id/watch", async (c) => {
-  const role = libraryRole(c.get("user").username, c.req.param("id"));
-  if (!role) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) {
+    if (!(await givenLibrary(user.username, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
+    return c.json({ ...(await status(libraryId, user.username)), folders: [] } satisfies WatchStatus);
+  }
   const s = await withFound(await status(c.req.param("id"), c.get("user").username));
   // a copy goes in a folder on this computer: offered where the server reads it, to a library that keeps files here
   const local = (db().prepare("SELECT storage_kind FROM libraries WHERE id = ?").get(c.req.param("id")) as { storage_kind: string }).storage_kind === "local";

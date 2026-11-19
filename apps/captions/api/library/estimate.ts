@@ -302,7 +302,26 @@ export async function estimate(libraryId: string, username: string, drop: Drop):
     const faster = total(steps.map((s) => (s.step === "describe" ? { ...s, seconds: (api.seconds * count.describe) / api.at } : s)));
     if (faster < seconds * 0.8) out.withApiKey = { seconds: faster, usd: api.usd * count.describe };
   }
+  // the Effort row (UNIFIED-PRD §3.1): the footage not analyzed yet at the library's level, and an hour's cost there
+  if (librarySetting(libraryId, "look") || librarySetting(libraryId, "describe")) {
+    const step = librarySetting(libraryId, "look") ? "look" : "describe";
+    // shortcut: an hour at Medium and up is priced from its shot descriptions alone (the timeline's cost is left out)
+    const hourUsd = step === "look" ? (out.lookLevels?.find((l) => l.level === libraryLookLevel(libraryId))?.usd ?? 0) : (await perClip(db, "describe", routes.describe.route, 3600, 0)).usd;
+    out.unanalyzed = { seconds: unanalyzedSeconds(db, libraryId, step), hourUsd };
+  }
   return out;
+}
+
+/** Seconds of this library's ready footage with no `step` job done yet, counted once per version. */
+function unanalyzedSeconds(db: DatabaseSync, libraryId: string, step: "describe" | "look"): number {
+  const row = db
+    .prepare(
+      `SELECT IFNULL(SUM(json_extract(v.probe, '$.duration')), 0) AS s FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'ready'
+       AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = ? AND j.state = 'done')`,
+    )
+    .get(libraryId, step) as { s: number };
+  return row.s;
 }
 
 /** The steps a person sees go by, in the order they run (worker.ts LANES); probe and wave take a moment and go unsaid. */

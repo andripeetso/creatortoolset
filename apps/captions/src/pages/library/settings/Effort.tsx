@@ -1,19 +1,21 @@
-import { useState } from "react";
-import { ANALYSIS_DEFAULT, ANALYSIS_LEVELS, LIBRARY_WORDS, LOOK_BUDGET_DEFAULT, flagsOf, levelOf, type LibrarySettings, type LibrarySummary } from "@contracts/library";
+import { useEffect, useState } from "react";
+import { ANALYSIS_DEFAULT, ANALYSIS_LEVELS, LIBRARY_WORDS, LOOK_BUDGET_DEFAULT, flagsOf, levelOf, type AnalysisLevel, type LibraryEstimate, type LibrarySettings, type LibrarySummary } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { Card, InfoTip, Row, TextField } from "@/components/settings/ui";
+import { getEstimate } from "@/lib/library";
 
 /** Analysis: one Effort slider over the existing flags (UNIFIED-PRD §4.4), and the monthly budget link under it (§4.5). */
 export function Effort({ library, save }: { library: LibrarySummary; save: (settings: Partial<LibrarySettings>) => Promise<unknown> }) {
   const [drag, setDrag] = useState<number | null>(null);
   const top = ANALYSIS_LEVELS.length - 1;
-  const at = drag ?? ANALYSIS_LEVELS.findIndex((l) => l.value === levelOf(library.settings));
+  const level = levelOf(library.settings);
+  const at = drag ?? ANALYSIS_LEVELS.findIndex((l) => l.value === level);
   return (
     <Card>
-      <Row title={LIBRARY_WORDS.effort}>
+      <Row title={LIBRARY_WORDS.effort} control={<EffortCost libraryId={library.id} level={level} />}>
         <div className="px-1">
           <Slider
             aria-label={LIBRARY_WORDS.effort}
@@ -49,6 +51,32 @@ export function Effort({ library, save }: { library: LibrarySummary; save: (sett
         </div>
       </Row>
     </Card>
+  );
+}
+
+/**
+ * "About $N" at the right of the Effort row (UNIFIED-PRD §3.1): what the footage not analyzed yet costs, from the
+ * library's estimate. Hidden at Off (and while the estimate is not there).
+ * shortcut: priced from the library's saved settings, so Setup (which holds its answer until Finish) shows the saved figure.
+ */
+export function EffortCost({ libraryId, level }: { libraryId: string; level: AnalysisLevel }) {
+  const [cost, setCost] = useState<LibraryEstimate["unanalyzed"] | null>(null);
+  useEffect(() => {
+    let live = true;
+    getEstimate(libraryId, { clips: 0, bytes: 0 })
+      .then((e) => live && setCost(e.unanalyzed ?? null))
+      .catch(() => live && setCost(null));
+    return () => {
+      live = false;
+    };
+  }, [libraryId]);
+  if (level === "off" || !cost) return null;
+  const hours = cost.seconds / 3600;
+  return (
+    <span className="inline-flex items-center text-xs text-muted-foreground">
+      {`About $${Math.round(hours * cost.hourUsd)}`}
+      <InfoTip text={`Cost to analyze the ${Math.round(hours)} hours not analyzed yet at this effort. New footage costs about $${cost.hourUsd.toFixed(2)} an hour.`} label={LIBRARY_WORDS.effort} />
+    </span>
   );
 }
 

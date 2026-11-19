@@ -351,6 +351,8 @@ export interface LibraryEstimate {
   proxies?: boolean;
   /** describe on the person's own Anthropic key instead (it runs six at once; a connected AI runs two): when that is faster */
   withApiKey?: { seconds: number; usd: number };
+  /** the Effort row: ready footage not analyzed yet at this library's level (seconds), and an hour of it there (dollars) */
+  unanalyzed?: { seconds: number; hourUsd: number };
   /** shot descriptions of one hour of footage at each level (LOOK_LEVELS), on the look's route; absent when it has none */
   lookLevels?: { level: LookLevel; seconds: number; usd: number }[];
   /** what shot descriptions cost this month in this library's workspace, in dollars */
