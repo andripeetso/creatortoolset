@@ -23,7 +23,6 @@ import type {
   WatchStatus,
   WhereAnswer,
 } from "@contracts/library";
-import { hostsOriginals, hostsProxies } from "@contracts/library";
 import type { MovesAnswer, PlacesAnswer, PlacesReport, PlacesReportAnswer } from "@contracts/places";
 import { useEffect, useRef } from "react";
 import { putDirect } from "@/lib/uploads";

@@ -62,7 +62,6 @@ import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./librar
 import { ClipMenu, ClipPick, offlineWords, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
 import { setOffline, useOffline } from "./library/offline-state";
 import { thisMacDevice } from "@/lib/providers";
-import { hostsOriginals, hostsProxies } from "@contracts/library";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { FoldersToAllow, useImportQuestion, type ImportLook } from "./library/Import";

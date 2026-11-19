@@ -53,7 +53,7 @@ describe("a drop follows the stored answer, with no question", () => {
 
   it("in place: a dropped folder becomes a Source media row on this computer, and its files are indexed where they are", async () => {
     const { fetchMock, addFiles } = await drop(lib("in-place"), { folders: ["/Volumes/Tiny/Shoot"], files: [inFolder("b.mp4", "Shoot/b.mp4")] });
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/devices/storage/folders"]);
+    expect((fetchMock.mock.calls as unknown as [string][]).map(([url]) => url)).toEqual(["/api/devices/storage/folders"]);
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({ role: "footage", host: "mac_1", path: "/Volumes/Tiny/Shoot" });
     expect(addFiles).not.toHaveBeenCalled();

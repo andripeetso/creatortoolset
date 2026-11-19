@@ -77,7 +77,7 @@ export async function hasMembers(libraryId: string): Promise<boolean> {
   return !!of && given.has(of(row.ws ?? undefined));
 }
 
-export const refuse = (message: string): Received => ({ ok: false, status: 409, body: { error: message, code: "upload_refused", message } });
+export const refuse = (message: string): Extract<Received, { ok: false }> => ({ ok: false, status: 409, body: { error: message, code: "upload_refused", message } });
 const HEX = /^[0-9a-f]{64}$/;
 /** A proxy no smaller than its original is not kept, from every sender (UNIFIED-PRD §4.1 rule 4). */
 export const proxyTooBig = (bytes: number, original: number | undefined): boolean => original !== undefined && bytes >= original;
