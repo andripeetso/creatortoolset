@@ -232,6 +232,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    /// The app's icon clicked (Dock, Finder, Spotlight) while it runs: the window back, also after the red button
+    /// closed it and took the app out of the Dock, when the system's own reopen did nothing.
+    @MainActor func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Self.shell?.showWindow()
+        return false
+    }
+
     @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         AppDelegate.quitting = true
         return .terminateNow
