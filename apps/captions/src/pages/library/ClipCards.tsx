@@ -10,6 +10,12 @@ import { placeLine } from "@/lib/wording";
 
 export const KIND_ICON: Record<AssetKind, typeof Video> = { video: Video, audio: AudioLines, image: ImageIcon, doc: FileText };
 
+/** A photo that is in, with no picture (the computer that has it couldn't make one yet): said on its card, quietly. */
+export const noPictureYet = (a: AssetCard) => a.kind === "image" && !a.thumbUrl && a.state !== "processing" && a.state !== "missing";
+export function NoPictureChip() {
+  return <span className="rounded-full border border-zinc-500/30 px-2 py-0.5 text-[11px] text-zinc-400">No picture yet</span>;
+}
+
 /** The small mark of a clip on this computer (its proxy cached here, or its file indexed here): the card's `here`. */
 export const HereMark = ({ className }: { className?: string }) => (
   <span role="img" aria-label={placeLine({ word: "here" })} title={placeLine({ word: "here" })} className={className}>
@@ -114,6 +120,7 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
             <Icon className="h-7 w-7" />
             {/* the clip's own step when the server says it ("Getting its picture"), else the plain word */}
             {preparing && (a.preparing ? <ClipStage card={a} /> : <span className="text-xs text-zinc-400">Preparing</span>)}
+            {noPictureYet(a) && <NoPictureChip />}
           </div>
         )}
         {strip && at !== null && (

@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type ReactNode } from "react";
-import type { LibrarySummary, WatchStatus } from "@contracts/library";
+import { PICTURE_FILE, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { THIS_COMPUTER } from "@contracts/storage";
 import { droppedFiles } from "@/components/assistant/draft";
 import { getWatch } from "@/lib/library";
@@ -17,7 +17,8 @@ import { pathsInDrop } from "@/lib/onMac";
  */
 
 /** The files the library takes from a folder (the server's own kinds, api/library/routes.ts kindOf; watch.ts filesIn skips the rest too). */
-export const MEDIA = /\.(mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|aac|ogg|opus|flac|jpe?g|png|heic|webp|gif|tiff?)$/i;
+const AV = /\.(mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|aac|ogg|opus|flac)$/i;
+export const MEDIA = { test: (name: string) => AV.test(name) || PICTURE_FILE.test(name) };
 
 /** A file of a dropped folder (a loose file's webkitRelativePath is empty or absent). */
 const inFolder = (f: File) => (f.webkitRelativePath || "").includes("/");

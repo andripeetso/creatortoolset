@@ -11,7 +11,7 @@ import type { AuthVars } from "../auth";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "no-picture-"));
 process.env.DATA_DIR = dir;
 const { libraryDb } = await import("./db");
-const { libraryApp } = await import("./routes");
+const { libraryApp, kindOf } = await import("./routes");
 const { pairDevice } = await import("../lib/devices");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -63,5 +63,38 @@ describe("photos with no picture", () => {
     expect((await put(grey.versionId, Buffer.from("not a jpeg").toString("base64"))).status).toBe(400);
     expect((await put("ver_not_here", JPEG)).status).toBe(400);
     expect((await put(grey.versionId, JPEG, "stranger")).status).toBe(404);
+  });
+});
+
+describe("a photo's stored type", () => {
+  it("HEIC comes in as image/heic; one stored before as application/octet-stream gets its type with its picture", async () => {
+    const mime = (v: string) => (libraryDb().prepare("SELECT mime FROM asset_versions WHERE id = ?").get(v) as { mime: string }).mime;
+    const fresh = await index("IMG_0004.HEIC");
+    expect(mime(fresh.versionId)).toBe("image/heic");
+    const old = await index("IMG_0005.heic");
+    libraryDb().prepare("UPDATE asset_versions SET mime = 'application/octet-stream' WHERE id = ?").run(old.versionId);
+    expect((await put(old.versionId, JPEG)).status).toBe(200);
+    expect(mime(old.versionId)).toBe("image/heic");
+  });
+});
+
+describe("camera RAW", () => {
+  it("indexed in place by a computer it is a photo; uploaded it is refused with one line, before anything is kept", async () => {
+    const raw = await index("DSC_0001.DNG");
+    const row = libraryDb().prepare("SELECT a.kind, v.mime FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(raw.versionId);
+    expect(row).toEqual({ kind: "image", mime: "image/x-adobe-dng" });
+    const up = await Promise.resolve(
+      app.request("/api/library/lib_p/uploads", { method: "POST", headers: { "x-user": "owner-p", "content-type": "application/json" }, body: JSON.stringify({ filename: "DSC_0002.dng", size: 30_000_000 }) }),
+    );
+    expect(up.status).toBe(400);
+    expect(await up.json()).toEqual({ error: "RAW photos are added from a folder on your computer", code: "invalid" });
+    expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM uploads WHERE filename = 'DSC_0002.dng'").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("what is a photo", () => {
+  it("camera RAW and HEIC are photos, so they get a picture like any other", () => {
+    for (const f of ["a.DNG", "b.cr2", "c.CR3", "d.arw", "e.nef", "f.raf", "g.rw2", "h.orf", "i.heic", "j.HEIF", "k.jpg", "l.tif"]) expect(kindOf(f)).toBe("image");
+    expect(kindOf("m.pdf")).toBe("doc");
   });
 });

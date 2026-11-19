@@ -30,6 +30,12 @@ final class MediaFilesTests: XCTestCase {
     }
 
     /// The same vector as src/lib/local-files.test.ts, so both sides agree on the encoding.
+    func testCameraRawAndHeifArePictures() {
+        for name in ["a.DNG", "b.cr2", "c.CR3", "d.arw", "e.nef", "f.raf", "g.rw2", "h.orf", "i.heif"] {
+            XCTAssertEqual(MediaFiles.types[(name as NSString).pathExtension.lowercased()]?.hasPrefix("image/"), true, name)
+        }
+    }
+
     func testURLRoundTrip() {
         let path = "/Volumes/Footage/Põhja rannik/A001 õhtu.MOV"
         let url = MediaFiles.url(path: path)

@@ -214,6 +214,20 @@ export const watchModelOf = (v: unknown): WatchModel => (WATCH_MODELS.some((m) =
 /** A new library's monthly cap on shot descriptions, in dollars (API-equivalent on an AI provider). */
 export const LOOK_BUDGET_DEFAULT = 20;
 
+/**
+ * The files the Library takes as pictures (photos): the web's own formats, HEIC, and camera RAW (11-19: RAW is read by
+ * the Mac app's own decoder, Import.swift thumb). One list for the server's kinds, the page's index and the drop.
+ */
+export const PICTURE_FILE = /\.(jpe?g|png|heic|heif|webp|gif|tiff?|dng|cr2|cr3|arw|nef|raf|rw2|orf)$/i;
+
+/**
+ * Camera RAW: a photo only when a computer indexes it in place and makes its picture there (POST /:id/on-mac); an
+ * upload, an add in place on the server or a save from the server is refused with RAW_FROM_COMPUTER, so a RAW file never
+ * reaches the server's own picture making (ffmpeg can't read it).
+ */
+export const RAW_FILE = /\.(dng|cr2|cr3|arw|nef|raf|rw2|orf)$/i;
+export const RAW_FROM_COMPUTER = "RAW photos are added from a folder on your computer";
+
 /** Hosted media: what the server keeps. Read only through hostsOriginals / hostsProxies (never `upload ===`). */
 export type LibraryUpload = "none" | "originals" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "originals", "proxies", "all"];

@@ -5,7 +5,7 @@ import { constants, copyFile, link, mkdir, readdir, readFile, realpath, rename, 
 import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "../auth";
-import { LIBRARY_WORDS, type WatchFolder, type WatchStatus } from "../../contracts/library";
+import { LIBRARY_WORDS, RAW_FILE, type WatchFolder, type WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
@@ -408,7 +408,8 @@ watchApp.post("/import-folder", async (c) => {
     const changed = s ? Math.max(s.mtimeMs, s.birthtimeMs, s.ctimeMs) : 0;
     if (s && s.size > 0 && changed >= since) fresh.push({ file, size: s.size, mtime: Math.floor(s.mtimeMs), changed });
   }
-  const media = fresh.filter((x) => kindOf(x.file) !== "doc");
+  // a RAW photo in a folder this server reads is left there: only a computer's own index takes one (RAW_FILE)
+  const media = fresh.filter((x) => kindOf(x.file) !== "doc" && !RAW_FILE.test(x.file));
   if (media.length > IMPORT_MAX) return c.json({ error: `${media.length} files: import at most ${IMPORT_MAX} at a time (a narrower folder or a later since)`, code: "invalid" }, 400);
   // a file that changed in the last few seconds may still be copying: it counts once its size holds for 2 s
   const recent = media.filter((m) => Date.now() - m.changed < 10_000);
@@ -602,7 +603,7 @@ export async function keepOutOf(user: string): Promise<string[]> {
 export async function filesIn(root: string, keepOut: string[] = []): Promise<string[]> {
   const all = await readdir(root, { recursive: true, withFileTypes: true });
   const seen = all
-    .filter((e) => e.isFile() && kindOf(e.name) !== "doc")
+    .filter((e) => e.isFile() && kindOf(e.name) !== "doc" && !RAW_FILE.test(e.name))
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
