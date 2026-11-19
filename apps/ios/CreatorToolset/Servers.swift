@@ -229,10 +229,10 @@ struct API {
         return data
     }
 
-    /// A 503 that says the server is too busy to check a signature now (`{code|error: "busy"}`).
+    /// A 503 that says the server is too busy to check a signature now (`{code: "BUSY"}`, older `{error: "busy"}`).
     static func busy(_ data: Data) -> Bool {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        return json?["code"] as? String == "busy" || json?["error"] as? String == "busy"
+        return [json?["code"], json?["error"]].contains { ($0 as? String)?.lowercased() == "busy" }
     }
 
     /// The server's `{ error }`, or its plain-text answer, or the status.

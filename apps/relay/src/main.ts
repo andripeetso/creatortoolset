@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createCloudflare } from './cloudflare.ts';
+import { cachedStatus, createCloudflare } from './cloudflare.ts';
 import { openDb } from './db.ts';
 import { loadSigningKey } from './keys.ts';
 import { freeLimit } from './limits.ts';
@@ -29,12 +29,16 @@ if (grantSecret && grantSecret.length < 32) throw new Error('RELAY_GRANT_SECRET 
 const keyFile = env.RELAY_APNS_KEY_FILE;
 const apns = apnsConfig(keyFile ? { ...env, RELAY_APNS_KEY: readFileSync(keyFile, 'utf8') } : env);
 
-const cf = createCloudflare({
-  accountId: need('CLOUDFLARE_ACCOUNT_ID'),
-  zoneId: need('CLOUDFLARE_ZONE_ID'),
-  token: need('CLOUDFLARE_API_TOKEN'),
-});
 const now = () => Math.floor(Date.now() / 1000);
+// tunnel status from memory for a minute, shared by the computers' lists and the reaper (cloudflare.ts cachedStatus)
+const cf = cachedStatus(
+  createCloudflare({
+    accountId: need('CLOUDFLARE_ACCOUNT_ID'),
+    zoneId: need('CLOUDFLARE_ZONE_ID'),
+    token: need('CLOUDFLARE_API_TOKEN'),
+  }),
+  now,
+);
 const deps = {
   db: openDb(join(dataDir, 'relay.sqlite')),
   cf,

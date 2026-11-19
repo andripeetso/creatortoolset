@@ -90,3 +90,29 @@ export function createCloudflare(cfg: CloudflareConfig): Cloudflare {
     },
   };
 }
+
+/** How long a tunnel's status is answered from memory. */
+export const STATUS_TTL = 60;
+
+/**
+ * `cf` with tunnelStatus answered from memory for STATUS_TTL seconds. Every computer lists the account's computers about
+ * every 30 s and the reaper sweeps them all; Cloudflare allows about 1200 calls per 5 minutes, so asking it for each
+ * would stop at about 100 computers. One cache for the server and the reaper: each sweep fills it for the lists.
+ * A failure is kept as long, so a Cloudflare outage is not asked again on every list.
+ */
+export function cachedStatus(cf: Cloudflare, now: () => number, ttl = STATUS_TTL): Cloudflare {
+  const seen = new Map<string, { at: number; status: Promise<string | null> }>();
+  return {
+    ...cf,
+    tunnelStatus(id) {
+      const t = now();
+      const hit = seen.get(id);
+      if (hit && t - hit.at < ttl) return hit.status;
+      if (seen.size > 10_000) for (const [k, v] of seen) if (t - v.at >= ttl) seen.delete(k);
+      const status = cf.tunnelStatus(id);
+      status.catch(() => {}); // a caller handles it; kept unhandled here it would end the process
+      seen.set(id, { at: t, status });
+      return status;
+    },
+  };
+}

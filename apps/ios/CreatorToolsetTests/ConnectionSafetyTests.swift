@@ -135,7 +135,8 @@ final class ConnectionSafetyTests: XCTestCase {
     // MARK: busy
 
     func testABusyServerIsAskedAgainLaterNotSignedOut() async throws {
-        Sequenced.reset([(503, #"{"code":"busy"}"#), (200, #"{"ok":true}"#)])
+        // the server's own code is BUSY (contract.md); older answers said "busy"
+        Sequenced.reset([(503, #"{"error":"This computer is busy. Try again in a minute.","code":"BUSY"}"#), (200, #"{"ok":true}"#)])
         var api = API(server: url("https://mac.example/"), cookie: nil)
         api.credential = Credential(kind: .dpop, token: "cts_d")
         let data = try await api.data(api.request("/api/library"), session: Sequenced.session)

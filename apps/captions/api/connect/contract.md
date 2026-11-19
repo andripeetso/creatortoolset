@@ -98,7 +98,8 @@ for the session making the call.
 Each event's `event:` is the type; its `data:` is `{ version: 1, revision: number, type, payload }`:
 `snapshot` (payload = the `/api/auth/access` body, always first), `pairingLinkUpserted` (PairingLink),
 `pairingLinkRemoved` (`{id}`), `clientUpserted` (ClientSession; `current` is from this stream's caller),
-`clientRemoved` (`{sessionId}`). A `ping` every 15 s. The stream ends at once when its own session is revoked.
+`clientRemoved` (`{sessionId}`). A `ping` every 15 s. The stream ends at once when its own session is revoked, and
+when that session expires (the device renews and opens it again).
 
 ### `POST /api/auth/pairing-links/revoke` `{ id }` · `POST /api/auth/clients/revoke` `{ sessionId }` · `POST /api/auth/clients/revoke-others`
 
@@ -150,9 +151,13 @@ Errors (400, `{ error, error_description }`):
 | `invalid_grant` | unknown, used, expired code; or a connect code without its key's proof | "That code is used or expired. Make a new one on the computer." |
 | `invalid_scope` | none of the requested scopes is in the grant, or an unknown scope | "That code doesn't allow what this device asked for." |
 
-A server holds at most 50 000 unexpired DPoP `jti`s. When full, a proof is refused, never let in by forgetting one:
-`/oauth/token` answers 503 `{ error: "temporarily_unavailable" }` with `Retry-After: 60`; a request on `/api/*` gets
-401 `INVALID_DPOP` (retry with a new proof). The connect service does the same with 503 `{ error: "busy" }`.
+A proof's `jti` is spent only once the rest went through: on `/oauth/token` after the code was (a proof sent with a
+bad code spends nothing). Each phone key holds at most 10 000 unexpired `jti`s; past that, that key's proofs are
+refused, never let in by forgetting one, and every other key goes on: `/oauth/token` answers 503
+`{ error: "temporarily_unavailable" }` with `Retry-After: 60`; a request on `/api/*` gets 503
+`{ error: "This computer is busy. Try again in a minute.", code: "BUSY" }` with `Retry-After: 60` (the session is
+fine: wait, then retry with a new proof). The connect service does the same, per key, with 503 `{ error: "busy" }`.
+Both check proofs with one shared check (`apps/relay/src/dpop-proof.ts`); `iat` may be a decimal (RFC 9449).
 
 ### Using a session on `/api/*`
 
@@ -170,12 +175,16 @@ A server holds at most 50 000 unexpired DPoP `jti`s. When full, a proof is refus
 | `SESSION_REVOKED` | "This device was signed out on the computer. Pair it again." |
 | `INVALID_DPOP` | "This device's signature didn't match. Try again." |
 
+503 `{ error: "This computer is busy. Try again in a minute.", code: "BUSY" }` + `Retry-After: 60`: this device's key
+spent its share of proofs (above). Not a sign-out.
+
 - 403 `{ error: "This device can look but not change things.", code: "SCOPE", requiredScope: "write" }` (or
   `"access"`, error "This device can't manage who has access.").
 - 403 `{ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }` on
-  `/api/admin`, `/api/workspace`, `/api/providers`, `/api/devices`, `/api/service-keys` and `/api/my-keys`, whatever
-  the session's scopes (the routes a Full AI key never reaches either).
-- `lastConnectedAt` is written at most once a minute per session. `connected` is true while a change stream of that
+  `/api/admin`, `/api/workspace`, `/api/providers`, `/api/devices`, `/api/service-keys` and `/api/my-keys` (the routes
+  a Full AI key never reaches either), and on `/api/connect/*` (this computer's own link, tunnel and AI key), whatever
+  the session's scopes. The connect service's signed `/api/connect/health` and `/mint` take no session and stay open.
+- `lastConnectedAt` is updated at most once a minute per session, and written for all sessions at once each minute. `connected` is true while a change stream of that
   session is open.
 
 ### `GET /api/auth/session` (no sign-in needed; reads the token or the cookie)
@@ -188,7 +197,8 @@ With a bad token: 401 as above.
 
 `[{ "kind": "lan" | "tailnet", "httpBaseUrl": "http://192.0.2.10:43128" }]`. LAN: the default route's address, when the
 server listens on every interface (`HOST` unset, `0.0.0.0` or `::`). Tailnet: an interface address in 100.64.0.0/10, same condition. Never
-loopback. The phone learns these after each connect; addresses it stops seeing are dropped.
+loopback, and none in hosted mode (`CT_MODE=hosted`: a container's addresses reach nobody; pairing links carry the
+public origin only). The phone learns these after each connect; addresses it stops seeing are dropped.
 
 ### `POST /api/connect/health` (connect service, through the tunnel; no sign-in)
 

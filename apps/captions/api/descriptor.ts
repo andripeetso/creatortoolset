@@ -48,9 +48,12 @@ export const listensEverywhere = (host = process.env.HOST) => !host || host === 
 const v4 = (a: string) => a.replace(/^::ffff:(?=\d+\.)/i, "");
 const TAILNET = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./; // 100.64.0.0/10
 
-/** The addresses other machines can reach this server on: the default route's (LAN) and a tailnet one. Never loopback. */
+/**
+ * The addresses other machines can reach this server on: the default route's (LAN) and a tailnet one. Never loopback,
+ * and none in hosted mode: there the container's own addresses reach nobody.
+ */
 export async function endpoints(port: string): Promise<ServerEndpoint[]> {
-  if (!listensEverywhere()) return [];
+  if (hostedMode() || !listensEverywhere()) return [];
   const out: ServerEndpoint[] = [];
   const lan = await routeAddress();
   if (lan && !/^127\./.test(lan) && !TAILNET.test(lan)) out.push({ kind: "lan", httpBaseUrl: `http://${lan}:${port}` });

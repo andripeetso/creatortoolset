@@ -114,7 +114,7 @@ describe("the tunnel process", () => {
   it("asks the broker for its tunnel when it starts, signed, and keeps the tunnel while it stands", () => {
     const ask = asks.find((a) => a.url.endsWith(`/v1/computers/${"a".repeat(32)}/tunnel`));
     expect(ask).toBeDefined();
-    expect(JSON.parse(ask!.body.payload)).toMatchObject({ purpose: "tunnel", computer_id: "a".repeat(32) });
+    expect(JSON.parse(ask!.body.payload)).toMatchObject({ purpose: "tunnel", computer_id: "a".repeat(32), jti: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     expect(connectState()?.tunnelToken).toBe("secret-tunnel-token");
   });
 

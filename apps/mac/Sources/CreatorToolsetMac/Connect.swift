@@ -87,6 +87,22 @@ struct BrokerClient {
         guard code == 204 || code == 404 else { throw BrokerError.status(code) }
     }
 
+    /// The Mac app's account is changing (`newToken` nil: signing out). When the new account doesn't have this computer,
+    /// the old account drops it first, with the old account's token, so it is never left behind there. True: it was
+    /// dropped, so the server forgets the link too. The new account's list not coming = nothing is done.
+    func leave(_ computerId: String, oldToken: String, newToken: String?) async -> Bool {
+        if let newToken {
+            guard let list = try? await computers(token: newToken) else { return false }
+            if list.contains(where: { $0.id == computerId }) { return false }
+        }
+        do {
+            try await unlink(computerId, token: oldToken)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// The link with the account token: the broker's challenge, the server's signed proof of it, the broker's link, and
     /// the server keeps what the broker answered (with the broker's address) and starts its tunnel. `local` posts JSON to
     /// this Mac's own server as its owner and returns the answer.
@@ -201,6 +217,23 @@ extension Shell {
         reach = reachState(signedIn: signedIn, on: reachSwitch, removed: removed, linked: linkedHere,
                            listed: list?.first { $0.id == linkedConfig?.computerId })
         pushThisMac()
+    }
+
+    /// Account.leaving: this Mac leaves the account it is linked to before the Mac app's sign-in becomes another one (or
+    /// none), using the old sign-in while it still has it. A Mac linked here then joins the new account by itself.
+    func leaveAccount(oldToken: String, newToken: String?) async {
+        guard let id = linkedConfig?.computerId, let base = connectService, let accountServer = account.server,
+              let old = try? await AccountClient(server: accountServer).relayToken(oldToken) else { return }
+        var new: String?
+        if let newToken {
+            new = try? await AccountClient(server: accountServer).relayToken(newToken)
+            if new == nil { return }
+        }
+        if await BrokerClient(base: base).leave(id, oldToken: old, newToken: new) {
+            try? await client().delete("/api/connect/relay-config")
+        } else if new == nil {
+            AppLog.write("this Mac stays on the account it was signed in to: the connect service couldn't be reached")
+        }
     }
 
     private func refreshedList() async throws -> [BrokerComputer]? {

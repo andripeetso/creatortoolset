@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -615,6 +615,9 @@ describe("a video dropped in the chat", () => {
     const { libraryDb } = await import("./library/db");
     SORT_WAIT_S.added = 0; // the line as it is the moment they are in
     const cookie = await cookieOf("ana");
+    // the library takes a person's files (Upload all); under none a chat's save is refused (upload-hardening.test.ts)
+    await (await import("./library/access")).ensureLibrary("ana");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all')`).run();
     const talk = await upload(cookie, "Talk.mp4", "video/mp4", Buffer.alloc(4096, 3));
     const sea = await upload(cookie, "Sea.mp4", "video/mp4", Buffer.alloc(4096, 4));
     const token = mintJobToken("ana", "turn-library");
@@ -640,6 +643,9 @@ describe("a video dropped in the chat", () => {
   it.skipIf(pluggedLibrary)("use_file with sound files a song in the Music folder, tagged, with no transcript queued; a second goes in the same folder", async () => {
     const { libraryDb } = await import("./library/db");
     const cookie = await cookieOf("ana");
+    // the library takes a person's files (Upload all); under none a chat's save is refused (upload-hardening.test.ts)
+    await (await import("./library/access")).ensureLibrary("ana");
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.upload', 'all')`).run();
     const token = mintJobToken("ana", "turn-sound");
     type Added = { said: string; files: { version_id: string }[] };
     const add = async (name: string, fill: number) =>
@@ -671,6 +677,13 @@ describe("a file on this computer, by its path", () => {
     delete process.env.CT_LOCAL;
     expect((await toolOf(token, "use_file", { path: clip, to: "review" })).text).toMatch(/isn't on your computer/);
     process.env.CT_LOCAL = "1";
+    // the Mac's server, but not the Mac's own account: another account there never reads its disk
+    expect((await toolOf(token, "use_file", { path: clip, to: "review" })).text).toMatch(/isn't on your computer/);
+    process.env.LIBRARY_WATCH_FOLDERS = "1";
+    // never the app's own data (another account's files live there), through a link to it either
+    const theirs = path.join(process.env.DATA_DIR!, "users.json");
+    symlinkSync(theirs, path.join(dir, "theirs.mov"));
+    expect((await toolOf(token, "use_file", { path: path.join(dir, "theirs.mov"), to: "review" })).text).toMatch(/app's own data/);
     expect((await toolOf(token, "use_file", { path: path.join(dir, "notes.txt"), to: "review" })).text).toMatch(/isn't a video/);
     expect((await toolOf(token, "use_file", { path: "Movies/x.mov", to: "review" })).text).toMatch(/full path/);
     const made = JSON.parse((await toolOf(token, "use_file", { path: clip, to: "review" })).text) as { href: string; name: string };
@@ -688,6 +701,7 @@ describe("a file on this computer, by its path", () => {
     expect(taken.needs).toBeUndefined();
     expect(taken.href).toMatch(/^\//);
     delete process.env.CT_LOCAL;
+    delete process.env.LIBRARY_WATCH_FOLDERS;
     revokeJobTokens("turn-path");
   });
 });

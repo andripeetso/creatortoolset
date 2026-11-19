@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { randomBytes, randomUUID } from "node:crypto";
-import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
@@ -12,9 +12,11 @@ import { addVersion, notifyNewVersion, readMeta as readReview } from "./review";
 import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
-import { ensureLibrary } from "./library/access";
+import { ensureLibrary, librariesHere } from "./library/access";
+import { mayReceive } from "./library/upload-gate";
 import { libraryDb } from "./library/db";
 import { saveToLibrary } from "./library/routes";
+import { watchAllowed } from "./library/watch";
 import { mainSource } from "./library/sources";
 import { FILE_USES, type AssistantFile, type AssistantFileUse } from "../contracts/assistant";
 import { SOUNDS, type Sound } from "../contracts/library";
@@ -93,7 +95,9 @@ assistantFilesApp.post("/", async (c) => {
   if (!isMedia(mime, name)) return c.json({ error: `${name} isn't a video or a recording` }, 400);
   await sweep(user.username);
   const id = randomUUID();
-  await startUpload(path.join(dirOf(user.username, id), "parts"), { total: size, partSize: PART_SIZE, name, mime: mime || "video/mp4", owner: user.username });
+  // the type it is kept and later served under: a footage type, else the name's (never what an upload claims, e.g. text/html)
+  const type = /^(video|audio)\/[\w.+-]+$/.test(mime) ? mime : mimeOf(name);
+  await startUpload(path.join(dirOf(user.username, id), "parts"), { total: size, partSize: PART_SIZE, name, mime: type, owner: user.username });
   return c.json({ id, partSize: PART_SIZE });
 });
 
@@ -178,15 +182,26 @@ export async function uploadOf(user: string, id: string): Promise<{ file: Assist
 /* ---- an upload by link: the user's own AI on a computer the server isn't on (MCP upload_file) sends a file with curl ---- */
 
 const LINK_MS = 3600_000;
-const links = new Map<string, { user: string; id: string; expires: number }>();
+const linkMac = (body: string) => createHmac("sha256", env.appSecret).update(`upload-link:${body}`).digest("base64url");
 
-/** A link for one upload of this account's, good for an hour after its last part. */
+/**
+ * A link for one upload of this account's, good for an hour after it is made or after its last part. Signed, not
+ * remembered, so it still works on the server process that answers after a restart or a swap.
+ */
 export function uploadLink(user: string, id: string): string {
-  const now = Date.now();
-  for (const [k, v] of links) if (v.expires <= now) links.delete(k);
-  const token = `ctu_${randomBytes(24).toString("hex")}`;
-  links.set(token, { user, id, expires: now + LINK_MS });
-  return token;
+  const body = Buffer.from(`${user}/${id}/${Date.now()}`).toString("base64url");
+  return `ctu_${body}.${linkMac(body)}`;
+}
+
+/** The upload a link names, while it is good; null for a link this server didn't sign, or one past its hour. */
+async function linkTarget(token: string): Promise<{ user: string; id: string } | null> {
+  const [body = "", mac = ""] = token.replace(/^ctu_/, "").split(".");
+  const want = Buffer.from(linkMac(body));
+  if (Buffer.byteLength(mac) !== want.length || !timingSafeEqual(Buffer.from(mac), want)) return null;
+  const [user = "", id = "", at = ""] = Buffer.from(body, "base64url").toString().split("/");
+  if (!UUID.test(id)) return null;
+  const last = (await stat(path.join(dirOf(user, id), "parts")).catch(() => null))?.mtimeMs ?? 0;
+  return Math.max(Number(at), last) + LINK_MS > Date.now() ? { user, id } : null;
 }
 
 /**
@@ -195,11 +210,10 @@ export function uploadLink(user: string, id: string): string {
  */
 export const uploadLinkApp = new Hono();
 uploadLinkApp.put("/:token/:partNumber", async (c) => {
-  const link = links.get(c.req.param("token"));
-  if (!link || link.expires <= Date.now()) return c.json({ error: "This upload link has expired: ask for a new one" }, 404);
+  const link = await linkTarget(c.req.param("token"));
+  if (!link) return c.json({ error: "This upload link has expired: ask for a new one" }, 404);
   const r = await receivePart(c, path.join(dirOf(link.user, link.id), "parts"), { username: link.user, role: "user" }, true);
   if (r.status !== 200) return r;
-  link.expires = Date.now() + LINK_MS;
   if (await allPartsIn(link.user, link.id)) await finishUpload(link.user, link.id);
   return r;
 });
@@ -219,20 +233,25 @@ const MIME: Record<string, string> = {
 export const mimeOf = (name: string) => MIME[path.extname(name).slice(1).toLowerCase()] ?? "video/mp4";
 
 /**
- * A file on this computer by its path, taken like a dropped one: only when the server runs on the user's own Mac
- * (CT_LOCAL=1), so the assistant can point at footage where it lies and nothing is uploaded. A hard link on the same
- * disk; a file on another drive is copied once.
+ * A file on this computer by its path, taken like a dropped one: only when the server runs on the user's own computer
+ * and this account may read its disk (watchAllowed, as a watch folder), so the assistant can point at footage where it
+ * lies and nothing is uploaded. Never a file in the app's own data. A hard link on the same disk; a file on another
+ * drive is copied once.
  */
 export async function fileFromPath(user: string, p: string): Promise<AssistantFile> {
-  if (process.env.CT_LOCAL !== "1") throw new Error("This server isn't on your computer: drop the file in the chat so it uploads, or send it with upload_file.");
+  if (!watchAllowed(user)) throw new Error("This server isn't on your computer: drop the file in the chat so it uploads, or send it with upload_file.");
   if (!path.isAbsolute(p)) throw new Error("Give the file's full path, such as /Users/you/Movies/clip.mov.");
-  const st = await stat(p).catch(() => null);
-  if (!st?.isFile() || !st.size) throw new Error(`There's no file at ${p}.`);
+  const real = await realpath(p).catch(() => null);
+  const st = real ? await stat(real).catch(() => null) : null;
+  if (!real || !st?.isFile() || !st.size) throw new Error(`There's no file at ${p}.`);
+  const data = await realpath(env.dataDir).catch(() => path.resolve(env.dataDir));
+  const fromData = path.relative(data, real);
+  if (fromData.split(path.sep)[0] !== ".." && !path.isAbsolute(fromData)) throw new Error(`${p} is in the app's own data: name a file of yours.`);
   const name = path.basename(p);
   // ponytail: footage by its extension only; probe the streams if something else ever passes for a video
   if (!isMedia("", name)) throw new Error(`${name} isn't a video or a recording.`);
   const id = randomUUID();
-  await linkOrCopy(p, fileOf(user, id));
+  await linkOrCopy(real, fileOf(user, id));
   const meta: AssistantFile = { id, name, mime: mimeOf(name), size: st.size };
   await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
   return meta;
@@ -292,7 +311,11 @@ export async function useFile(
     if (main) throw new Error(`On this server the Media Library is the ${main.label}, and files go in on its own page (/library): open it and add them there.`);
     // the library keeps its own copy (a dropped file goes after 7 days); it is prepared and sorted A-roll or B-roll there
     await ensureLibrary(user.username);
-    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], undefined, !sound, sound);
+    // the library saveToLibrary would pick, asked first: a chat file is a person's original, as on the library's own upload
+    const lib = (await librariesHere(user.username))[0]?.id;
+    const gate = lib ? mayReceive("original", { id: lib }, "person") : null;
+    if (gate && !gate.ok) throw new Error(gate.body.message);
+    const saved = await saveToLibrary(user.username, file, path.extname(title) ? title : `${title}${path.extname(meta.name)}`, [], lib, !sound, sound);
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
     const assetId = "duplicateOf" in saved ? saved.duplicateOf : saved.assetId;

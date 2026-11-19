@@ -224,6 +224,8 @@ export const UPLOAD_RELAY = new RegExp(`^/api/uploads/relay(?:/${PUBLIC_UUID}/(?
 // video or a new version (a final cut) for any account.
 const KEY_ROUTES: [string, RegExp][] = [["GET", REVIEW], ["PATCH", REVIEW_COMMENT], ["POST", REVIEW_UPLOAD], ["POST", UPLOAD_RELAY]];
 const FULL_KEY_NEVER = /^\/api\/(?:admin|workspace|providers|devices|service-keys|my-keys)(?:\/|$)/;
+// a phone's session reaches none of those, nor this computer's own connect settings (its link, tunnel and AI key)
+const CLIENT_NEVER = /^\/api\/(?:admin|workspace|providers|devices|service-keys|my-keys|connect)(?:\/|$)/;
 const keyRoute = (routes: [string, RegExp][], method: string, p: string) =>
   routes.some(([m, r]) => m === method && r.test(p));
 
@@ -355,7 +357,7 @@ app.use("/api/*", async (c, next) => {
   if (client.kind === "error") return sessionRefused(c, client.code);
   if (client.kind === "token") {
     // a device's session is never the account's keys, AI settings, computers or admin, whatever its scopes
-    if (FULL_KEY_NEVER.test(c.req.path)) return c.json({ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }, 403);
+    if (CLIENT_NEVER.test(c.req.path)) return c.json({ error: "A device signed in with a pairing link can't open this.", code: "NOT_FOR_CLIENTS" }, 403);
     const need = scopeFor(c.req.method, c.req.path);
     if (!client.row.scopes.includes(need)) return scopeRefused(c, need);
     c.set("clientSession", client.row.id);

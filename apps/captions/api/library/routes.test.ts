@@ -145,7 +145,11 @@ describe("library uploads", () => {
     // the reserve leaves room for one 1 GB upload, not two
     process.env.LIBRARY_DISK_RESERVE_GB = String(free - 1.5);
     try {
+      const first = await create("owner-a", GB);
+      expect(first.status).toBe(201);
+      // an empty start holds nothing; once its bytes come, what it may still write is held
       expect((await create("owner-a", GB)).status).toBe(201);
+      expect((await patch("owner-a", (await read(first)).id, 0, Buffer.from("w"), 1)).status).toBe(204);
       expect((await create("owner-a", GB)).status).toBe(507);
     } finally {
       process.env.LIBRARY_DISK_RESERVE_GB = "0";

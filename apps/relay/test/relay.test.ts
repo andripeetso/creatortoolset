@@ -2,7 +2,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import type { Server } from 'node:http';
-import { createCloudflare } from '../src/cloudflare.ts';
+import { cachedStatus, createCloudflare, STATUS_TTL, type Cloudflare } from '../src/cloudflare.ts';
 import { openDb } from '../src/db.ts';
 import { loadSigningKey, publicKeyB64 } from '../src/keys.ts';
 import { freeLimit } from '../src/limits.ts';
@@ -319,11 +319,11 @@ test('bad account tokens are 401 on every account route; unknown routes are 404'
 // --- reaper and tunnel renew ---
 
 // What the computer's server sends for its tunnel (api/connect/broker.ts renewTunnel).
-function tunnelProof(c: ReturnType<typeof computer>, id: string, o: { at?: number; purpose?: string } = {}) {
-  const payload = JSON.stringify({ purpose: o.purpose ?? 'tunnel', computer_id: id, at: o.at ?? clock });
+function tunnelProof(c: ReturnType<typeof computer>, id: string, o: { at?: number; purpose?: string; jti?: string | null } = {}) {
+  const payload = JSON.stringify({ purpose: o.purpose ?? 'tunnel', computer_id: id, at: o.at ?? clock, ...(o.jti === null ? {} : { jti: o.jti ?? randomBytes(16).toString('hex') }) });
   return { public_key: c.spki, payload, signature: sign(null, Buffer.from(payload), c.key).toString('base64') };
 }
-const renew = (c: ReturnType<typeof computer>, id: string, o: { at?: number; purpose?: string } = {}) =>
+const renew = (c: ReturnType<typeof computer>, id: string, o: { at?: number; purpose?: string; jti?: string | null } = {}) =>
   api('POST', `/v1/computers/${id}/tunnel`, { body: tunnelProof(c, id, o) });
 
 test('renew: a standing tunnel is unchanged, with no Cloudflare call; the ask marks the computer as one that recovers', async () => {
@@ -342,6 +342,14 @@ test('renew: another key, a stale or reused proof, a link payload, and an unknow
   assert.equal((await api('POST', `/v1/computers/${id}/tunnel`, { body: tunnelProof(other, id) })).json.error, 'bad_signature');
   assert.equal((await renew(c, id, { at: clock - 301 })).json.error, 'stale_proof');
   assert.equal((await renew(c, id, { purpose: 'link' })).json.error, 'bad_signature');
+  // the same signed ask twice: refused the second time
+  const body = tunnelProof(c, id);
+  assert.equal((await api('POST', `/v1/computers/${id}/tunnel`, { body })).status, 200);
+  const again = await api('POST', `/v1/computers/${id}/tunnel`, { body });
+  assert.equal(again.status, 409);
+  assert.equal(again.json.error, 'proof_replayed');
+  // a server from before the jti still gets its tunnel
+  assert.deepEqual((await renew(c, id, { jti: null })).json, { unchanged: true });
   const nonce = await challenge();
   assert.equal((await api('POST', `/v1/computers/${id}/tunnel`, { body: signedLink(c, nonce) })).status, 401);
   await api('DELETE', `/v1/computers/${id}`, { token: acct() });
@@ -482,4 +490,18 @@ test('stats: counts only, and only for the :stats token', async () => {
   assert.equal(r.json.linkedDaily.length, 30);
   assert.equal(r.json.linkedDaily[0].linked, 3);
   assert.ok(!r.text.includes('One') && !r.text.includes('acct-1'));
+});
+
+test('tunnel status: asked of Cloudflare once a minute per tunnel, however often lists and sweeps ask; failures kept as long', async () => {
+  let t = 1000;
+  const asked: string[] = [];
+  const base = { tunnelStatus: async (id: string) => { asked.push(id); if (id === 'bad') throw new Error('429'); return 'healthy'; } } as unknown as Cloudflare;
+  const cf = cachedStatus(base, () => t);
+  for (let i = 0; i < 5; i++) assert.equal(await cf.tunnelStatus('a'), 'healthy');
+  await assert.rejects(cf.tunnelStatus('bad'));
+  await assert.rejects(cf.tunnelStatus('bad'));
+  assert.deepEqual(asked, ['a', 'bad']);
+  t += STATUS_TTL;
+  await cf.tunnelStatus('a');
+  assert.deepEqual(asked, ['a', 'bad', 'a']);
 });

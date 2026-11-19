@@ -66,3 +66,18 @@ describe("resumable clip uploads", () => {
     expect((await parts("NOT AN ID")).status).toBe(404);
   });
 });
+
+describe("a clip's stored type", () => {
+  it("plays as footage only: a type the uploader named (text/html) goes as a download that never runs as a page", async () => {
+    const page = Buffer.from("<script>alert(document.cookie)</script>");
+    const res = await app.request("/api/clips?name=x&mime=text/html", { method: "POST", headers: { "content-length": String(page.length) }, body: page });
+    const { id } = (await res.json()) as { id: string };
+    const play = await app.request(`/api/clips/${id}/play`);
+    expect(play.headers.get("content-type")).toBe("application/octet-stream");
+    expect(play.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(play.headers.get("content-security-policy")).toBe("sandbox");
+    const down = await app.request(`/api/clips/${id}/download`);
+    expect(down.headers.get("content-type")).toBe("application/octet-stream");
+    expect(down.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});

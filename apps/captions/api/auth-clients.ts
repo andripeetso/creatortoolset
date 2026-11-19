@@ -5,7 +5,7 @@ import { endpoints } from "./descriptor";
 import { tunnelHostname } from "./connect/state";
 import { env, hostedMode } from "./lib/env";
 import { onLeave } from "./lib/sync";
-import { verifyDpop } from "./lib/dpop";
+import { spendJti, verifyDpop } from "./lib/dpop";
 import { ticketCaller } from "./media-ticket";
 import {
   ACCESS_TOKEN_TYPE,
@@ -83,7 +83,7 @@ export function callerOf(c: Context): Caller {
   if (row.method === "dpop-access-token" || t.scheme === "DPoP") {
     if (row.method !== "dpop-access-token" || t.scheme !== "DPoP") return { kind: "error", code: "INVALID_DPOP" };
     const v = verifyDpop({ proof: c.req.header("dpop"), method: c.req.method, url: requestUrl(c), expectedJkt: row.jkt, accessToken: t.token });
-    if (!v.ok) return { kind: "error", code: "INVALID_DPOP" };
+    if (!v.ok) return { kind: "error", code: v.code === "busy" ? "BUSY" : "INVALID_DPOP" };
   }
   const record = env.appSecret ? findUser(row.subject) : null;
   const user = env.appSecret ? (record ? sessionOf(record) : null) : LOCAL_USER;
@@ -97,12 +97,18 @@ const SESSION_WORDS: Record<SessionErrorCode, string> = {
   SESSION_EXPIRED: "This device's sign-in to the computer ran out. Pair it again.",
   SESSION_REVOKED: "This device was signed out on the computer. Pair it again.",
   INVALID_DPOP: "This device's signature didn't match. Try again.",
+  BUSY: "This computer is busy. Try again in a minute.",
 };
 
 export function sessionRefused(c: Context, code: SessionErrorCode) {
+  c.header("Cache-Control", "no-store");
+  // this device's key spent its share of proofs: wait, nothing is wrong with the session
+  if (code === "BUSY") {
+    c.header("Retry-After", "60");
+    return c.json({ error: SESSION_WORDS.BUSY, code }, 503);
+  }
   const scheme = /^DPoP /i.test(c.req.header("authorization") ?? "") ? "DPoP" : "Bearer";
   c.header("WWW-Authenticate", `${scheme} error="${code === "INVALID_DPOP" ? "invalid_dpop_proof" : "invalid_token"}"`);
-  c.header("Cache-Control", "no-store");
   return c.json({ error: SESSION_WORDS[code], code }, 401);
 }
 
@@ -122,14 +128,14 @@ const scopesOf = (k: Caller): readonly Scope[] => (k.kind === "token" ? k.row.sc
 /** An admin sees and revokes every account's links and sessions on its own server; anyone else only their own. */
 const mayFor = (user: SessionUser) => (subject: string) => subject === user.username || (!hostedMode() && user.role === "admin");
 
-type Signed = { user: SessionUser; scopes: readonly Scope[]; sessionId?: string };
+type Signed = { user: SessionUser; scopes: readonly Scope[]; sessionId?: string; expiresAt?: number };
 /** The caller of an access route: signed in and holding `access`, or the answer to send instead. */
 function accessCaller(c: Context): Signed | Response {
   const k = callerOf(c);
   if (k.kind === "error") return sessionRefused(c, k.code);
   if (k.kind === "none") return c.json({ error: "Sign in first" }, 401);
   if (!scopesOf(k).includes("access")) return scopeRefused(c, "access");
-  return { user: k.user, scopes: scopesOf(k), ...(k.kind === "token" ? { sessionId: k.row.id } : {}) };
+  return { user: k.user, scopes: scopesOf(k), ...(k.kind === "token" ? { sessionId: k.row.id, expiresAt: k.row.expiresAt } : {}) };
 }
 
 // ---- /api/auth/* ----------------------------------------------------------------------------------------------------
@@ -201,8 +207,11 @@ authClientsApp.get("/access/events", (c) => {
         }
       });
       const ping = setInterval(() => void stream.writeSSE({ event: "ping", data: "" }), 15_000);
+      // a session's line ends when the session does (capped at the longest wait a timer takes; the device reconnects)
+      const expiry = who.expiresAt === undefined ? undefined : setTimeout(() => void stream.close().finally(end), Math.min(Math.max(0, who.expiresAt - Date.now()), 2 ** 31 - 1));
       const end = () => {
         clearInterval(ping);
+        clearTimeout(expiry);
         off();
         release();
         leaveOff();
@@ -284,20 +293,24 @@ oauthTokenApp.post("/oauth/token", async (c) => {
   const requested = scopeField === undefined ? undefined : parseScopes(scopeField.split(/\s+/));
   if (requested === null) return refuse("invalid_scope");
 
-  // a proof that fails is an error, never a fall back to a Bearer token; checked before the code is looked at
-  let jkt: string | undefined;
+  // a proof that fails is an error, never a fall back to a Bearer token; checked before the code is looked at, its
+  // jti spent only once the code was: anyone may post a proof here, so a proof without a good code keeps nothing
+  let checked: { jkt: string; jti: string } | undefined;
   const proof = c.req.header("dpop");
   if (proof !== undefined) {
-    const v = verifyDpop({ proof, method: "POST", url: requestUrl(c) });
-    if (!v.ok && v.code === "busy") {
-      c.header("Retry-After", "60");
-      return c.json({ error: "temporarily_unavailable", error_description: "Too many sign-ins at once. Try again in a minute." }, 503);
-    }
+    const v = verifyDpop({ proof, method: "POST", url: requestUrl(c), spend: false });
     if (!v.ok) return refuse("invalid_dpop_proof");
-    jkt = v.jkt;
+    checked = v;
   }
+  const jkt = checked?.jkt;
   const r = redeemGrant(credential, { jkt, ...(requested ? { requested } : {}) });
   if (!r.ok) return refuse(r.error);
+  const spent = checked ? spendJti(checked.jkt, checked.jti) : "ok";
+  if (spent === "busy") {
+    c.header("Retry-After", "60");
+    return c.json({ error: "temporarily_unavailable", error_description: "Too many sign-ins at once. Try again in a minute." }, 503);
+  }
+  if (spent === "replay") return refuse("invalid_dpop_proof");
   if (env.appSecret && !findUser(r.grant.subject)) return refuse("invalid_grant");
 
   const label = (r.grant.kind === "pairing" && r.grant.label) || field("client_label");

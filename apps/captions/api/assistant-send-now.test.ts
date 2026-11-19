@@ -44,8 +44,8 @@ async function person(name: string) {
     open: (id: string) => app.request(`/api/assistant/past/${id}/open`, { method: "POST", headers: { cookie } }),
     stop: (body?: Record<string, unknown>) => app.request("/api/assistant/stop", { method: "POST", ...(body ? json(body, { cookie }) : { headers: { cookie } }) }),
     /** Starts an upload (one part of `size` bytes); returns its id and the calls that finish it. */
-    upload: async (name: string, size = 4096) => {
-      const { id, partSize } = (await (await app.request("/api/assistant/files", { method: "POST", ...json({ name, mime: "video/mp4", size }, { cookie }) })).json()) as { id: string; partSize: number };
+    upload: async (name: string, size = 4096, mime = "video/mp4") => {
+      const { id, partSize } = (await (await app.request("/api/assistant/files", { method: "POST", ...json({ name, mime, size }, { cookie }) })).json()) as { id: string; partSize: number };
       return {
         id,
         part: () =>
@@ -92,7 +92,7 @@ afterEach(() => {
 
 describe("a message sent while its video uploads", () => {
   it("is in the chat at once, waits for the last part, then runs with the video", async () => {
-    const p = await person("tia");
+    const p = await person("typed");
     const clip = await p.upload("Beach.mov");
     const r = await p.send({ text: "Caption this", files: [clip.id] });
     expect(r.status).toBe(202);
@@ -636,6 +636,16 @@ describe("an upload's X and Stop delete the server copy; nobody's upload stays",
   });
 });
 
+describe("a dropped file's type", () => {
+  it("is a footage type, never the page type an upload named (it is served under it later)", async () => {
+    const p = await person("mimetest");
+    const up = await p.upload("Clip.mp4", 4096, "text/html");
+    await up.part();
+    const done = (await (await up.complete()).json()) as { mime: string };
+    expect(done.mime).toBe("video/mp4");
+  });
+});
+
 describe("headless: the user's own AI sends a file with upload_file", () => {
   it("gets a command that PUTs the parts to a link; the file id then works in use_file", async () => {
     const p = await person("sol");
@@ -644,7 +654,7 @@ describe("headless: the user's own AI sends a file with upload_file", () => {
     const out = await tool(key, "upload_file", { path: "/Users/tiny/Movies/it's.mov", size });
     const { file, command } = JSON.parse(out.text) as { file: string; command: string };
     expect(command).toContain(`dd if='/Users/tiny/Movies/it'\\''s.mov'`);
-    const link = /(\/api\/upload\/ctu_[a-f0-9]+)\//.exec(command)![1]!;
+    const link = /(\/api\/upload\/ctu_[\w.-]+)\//.exec(command)![1]!;
     const put = (n: number, bytes: number, at = link) => app.request(`${at}/${n}`, { method: "PUT", headers: { "content-length": String(bytes), "content-type": "application/octet-stream" }, body: Buffer.alloc(bytes, 1) });
     expect((await put(1, 10)).status).toBe(400); // a part's length is checked
     expect((await put(1, size, "/api/upload/ctu_nope")).status).toBe(404);
