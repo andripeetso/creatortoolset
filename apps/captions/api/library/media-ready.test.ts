@@ -90,7 +90,7 @@ describe("mediaReady", () => {
 describe("a workspace a plug-in serves itself (its catalog)", () => {
   const setupAt = (id: string) => (libraryDb().prepare("SELECT json_extract(settings, '$.setupAt') AS s FROM libraries WHERE id = ?").get(id) as { s: string | null }).s;
   const add = (id: string, ws: string, settings: Record<string, unknown> = {}) =>
-    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'ana', 'Library', 'local', ?, 0)").run(id, JSON.stringify({ projectId: ws, ...settings }));
+    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'ws_p', 'Library', 'local', ?, 0)").run(id, JSON.stringify({ projectId: ws, ...settings })); // ana's home
 
   it("an empty core library there is ready: no setup card, and setupAt is written once (no dialog)", async () => {
     add("lib_cat", "ws_cat");
