@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Activity, MoreHorizontal, Music, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
-import { hostsOriginals, hostsProxies } from "@contracts/library";
+import { hostsOriginals, hostsProxies, LIBRARY_WORDS } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
@@ -16,7 +16,7 @@ import { FootageFolderCard } from "@/components/FootageFolderCard";
 import { LibrarySetup } from "./library/Setup";
 import { BIG_DROP, BigUploadDialog, LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import {
@@ -842,6 +842,18 @@ export default function LibraryPage() {
     );
     picks.clear();
   };
+  // the whole library (the owner's ⋯ menu): how many clips first, then asked once, as Redo all
+  const redoLibrary = (kind: string, label: string) => {
+    if (!libId) return;
+    redoMany(libId, [kind], undefined, true)
+      .then(async (r) => {
+        if (!r.clips) return toast("Nothing to redo");
+        if (!(await confirmDialog({ title: label, body: LIBRARY_WORDS.forClips(r.clips), ok: LIBRARY_WORDS.redoAll }))) return;
+        await redoMany(libId, [kind]);
+        toast(`Redoing ${label.toLowerCase()} for ${plural(r.clips)}`);
+      })
+      .catch((e: unknown) => setError(message(e)));
+  };
   const copyLink = (a: AssetCard) =>
     navigator.clipboard.writeText(new URL(clipHref(libId === libraries?.[0]?.id ? null : libId, a.id), window.location.origin).href).then(
       () => toast("Link copied"),
@@ -1024,6 +1036,17 @@ export default function LibraryPage() {
                           <DropdownMenuItem onSelect={() => setStatusOpen(true)}>
                             <Activity /> Library status
                           </DropdownMenuItem>
+                          {watch && !readOnly && !trash && library && redoKinds(library.settings).length > 0 && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuLabel>{LIBRARY_WORDS.redo}</DropdownMenuLabel>
+                              {redoKinds(library.settings).map((r) => (
+                                <DropdownMenuItem key={r.kind} onSelect={() => redoLibrary(r.kind, r.label)}>
+                                  <RefreshCw /> {r.label}
+                                </DropdownMenuItem>
+                              ))}
+                            </>
+                          )}
                           {changing && !firstScreen && (
                             <DropdownMenuItem asChild>
                               <Link to="/library?trash=1">

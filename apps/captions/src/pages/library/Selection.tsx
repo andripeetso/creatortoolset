@@ -104,11 +104,11 @@ export function ClipPick({ picked, onPick, menu, row, children }: { picked: bool
 
 export type MoveTarget = { id: string | null; name: string; depth: number };
 
-/** What can be made again on clips (api/library/bulk.ts); search data only while search by meaning is on (it reads nothing else). */
+/** What can be made again on clips (api/library/bulk.ts); only what the Analysis effort runs (Off runs none, so none is offered). */
 export const redoKinds = (settings: LibrarySummary["settings"]) => [
-  { kind: "describe", label: "Descriptions" },
+  ...(settings.describe ? [{ kind: "describe", label: "Descriptions" }] : []),
   ...(settings.look ? [{ kind: "look", label: "Shot descriptions" }] : []),
-  { kind: "transcribe", label: "Transcripts" },
+  ...(settings.transcribe !== false ? [{ kind: "transcribe", label: "Transcripts" }] : []),
   ...(settings.embed ? [{ kind: "embed", label: "Search data" }] : []),
 ];
 
@@ -296,20 +296,22 @@ export function PickBar({
         </Button>
         {!inTrash && !readOnly && (
           <>
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" className={barButton} title="Redo">
-                  <RefreshCw /> <span className="hidden sm:inline">Redo</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="center" side="top" className="w-48">
-                {redo.map((r) => (
-                  <DropdownMenuItem key={r.kind} onSelect={() => on.redo(r.kind)}>
-                    {r.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {redo.length > 0 && (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" className={barButton} title="Redo">
+                    <RefreshCw /> <span className="hidden sm:inline">Redo</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center" side="top" className="w-48">
+                  {redo.map((r) => (
+                    <DropdownMenuItem key={r.kind} onSelect={() => on.redo(r.kind)}>
+                      {r.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <Button size="sm" variant="ghost" className={cn(barButton, "text-red-400 hover:text-red-300")} title="Move to trash" aria-label="Move to trash" onClick={on.trash}>
               <Trash2 />
             </Button>
