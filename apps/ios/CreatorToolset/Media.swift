@@ -34,26 +34,25 @@ struct RemoteImage: View {
 
 extension API {
     /// A player for a media path. The cookie is scoped to the server's host, so a redirect to a bucket never gets it.
-    /// A DPoP session's player gets its item once its media ticket is in (`MediaTicket`): a moment later, playing if
-    /// `play()` was already asked.
+    /// A DPoP session's player carries a media ticket in a cookie (`TicketPlayer`).
     func player(_ path: String) -> AVPlayer {
-        guard needsTicket else { return AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url(path), options: playerOptions))) }
-        let player = AVPlayer()
-        Task { @MainActor in
-            guard let url = try? await ticketed(path) else { return }
-            player.replaceCurrentItem(with: AVPlayerItem(asset: AVURLAsset(url: url, options: playerOptions)))
-        }
-        return player
+        needsTicket ? TicketPlayer(api: self, path: path) : AVPlayer(playerItem: AVPlayerItem(asset: playerAsset(path)))
     }
 
-    /// The player's range requests: the cookie, and the workspace as a header (a header option is not scoped to the
-    /// host, so the cookie never rides in it).
-    var playerOptions: [String: Any] {
+    /// The asset for a media path: its URL as it is, never a credential in it (URLs end up in access logs).
+    func playerAsset(_ path: String, ticket: String? = nil) -> AVURLAsset {
+        AVURLAsset(url: url(path), options: playerOptions(ticket: ticket))
+    }
+
+    /// The player's range requests: the cookie (or a DPoP session's media ticket as a cookie), and the workspace as a
+    /// header (a header option is not scoped to the host, so neither cookie ever rides in it).
+    func playerOptions(ticket: String? = nil) -> [String: Any] {
         var cookies: [HTTPCookie] = []
         if let cookie, let host = server.host(),
            let c = HTTPCookie(properties: [.name: "cap_auth", .value: cookie, .domain: host, .path: "/"]) {
             cookies.append(c)
         }
+        if let ticket, let c = MediaTicket.cookie(ticket, for: server) { cookies.append(c) }
         var options: [String: Any] = [AVURLAssetHTTPCookiesKey: cookies]
         var fields: [String: String] = [:]
         // a paired route's bearer token; a DPoP session's proof is good for one request, so its players carry a ticket
@@ -61,6 +60,45 @@ extension API {
         if let workspace { fields[WorkspacePick.header] = workspace }
         if !fields.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = fields }
         return options
+    }
+}
+
+/// A DPoP session's player: its item comes once its media ticket is in, a moment later, playing if `play()` was already
+/// asked. A ticket lives 5 minutes, so an item that played and then fails (its range request got a 401) is loaded
+/// again with a new ticket from where it was. One that fails before it ever played stays failed (no loop).
+final class TicketPlayer: AVPlayer {
+    private let api: API
+    private let path: String
+    private var watch: NSKeyValueObservation?
+    /// The current item got to play once.
+    private var played = false
+
+    init(api: API, path: String) {
+        self.api = api
+        self.path = path
+        super.init()
+        load(at: .zero, playing: false)
+    }
+
+    private func load(at time: CMTime, playing: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self,
+                  let ticket = try? await api.mediaTicket(api.url(path).path(percentEncoded: false)) else { return }
+            let item = AVPlayerItem(asset: api.playerAsset(path, ticket: ticket))
+            watch = item.observe(\.status) { [weak self] item, _ in
+                DispatchQueue.main.async {
+                    guard let self, item === self.currentItem else { return }
+                    if item.status == .readyToPlay { self.played = true }
+                    if item.status == .failed, self.played {
+                        self.load(at: item.currentTime(), playing: self.rate != 0 || self.timeControlStatus != .paused)
+                    }
+                }
+            }
+            played = false
+            replaceCurrentItem(with: item)
+            if time != .zero { await seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) }
+            if playing { play() }
+        }
     }
 }
 
@@ -163,15 +201,27 @@ struct WebAppView: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .systemBackground
         let url = api.url(path)
-        // the cookie of a session from before pairing, or this device session's ticket (`MediaTicket`), then the page
-        Task { @MainActor in
-            _ = await api.signIn(view.configuration.websiteDataStore.httpCookieStore)
+        // the cookie of a session from before pairing, or this device session's ticket (`MediaTicket`), then the page;
+        // a ticket lives 5 minutes, so a new one goes in before it runs out while the view is open
+        let store = view.configuration.websiteDataStore.httpCookieStore
+        context.coordinator.signIn = Task { @MainActor [api] in
+            _ = await api.signIn(store)
             view.load(URLRequest(url: url))
+            guard api.webNeedsTicket else { return }
+            while (try? await Task.sleep(for: MediaTicket.refresh)) != nil { _ = await api.signIn(store) }
         }
         return view
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {}
+
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) { coordinator.signIn?.cancel() }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var signIn: Task<Void, Never>?
+    }
 }
 
 /// Reads the sign-in code the computer shows (Settings → Computers → Add your phone). In the app, not the

@@ -12,16 +12,25 @@ import { LOCAL_USER, findUser, type SessionUser } from "./users";
  * each request themselves (a video player's range requests, a web view's page and its calls, an upload the phone's
  * background transfer service sends later). A ticket is short-lived, scoped to one path prefix and to reading (or to
  * writing under that prefix), and lives no longer than the session that asked for it: a revoked or expired session
- * takes its tickets with it. Kept in memory only, so a restart ends them (the phone asks again).
+ * takes its tickets with it. Kept in memory only, so a restart ends them (the phone asks again). Never read from the
+ * URL: URLs end up in access logs.
  */
 
-export const TICKET_TTL_MS = 60 * 60_000;
-/** The query parameter, and the cookie a web view carries it in. */
-export const TICKET_PARAM = "ct_ticket";
+/** Holders ask again before it runs out (web view) or when it answers 401 (players, background upload steps). */
+export const TICKET_TTL_MS = 5 * 60_000;
+/**
+ * What a ticket is for, minted at its own path segment so the DPoP proof of the mint covers it. A ticket works only for
+ * its own use: `media` (players, pictures, web views) in the cookie, `upload` (background upload steps) in the header.
+ */
+export const TICKET_USES = ["media", "upload"] as const;
+export type TicketUse = (typeof TICKET_USES)[number];
+export const TICKET_COOKIE = "ct_ticket";
+export const TICKET_HEADER = "X-CT-Ticket";
 const TICKET_RE = /^ctm_[A-Za-z0-9_-]{43}$/;
 
 interface Ticket {
   sessionId: string;
+  use: TicketUse;
   prefix: string;
   write: boolean;
   expiresAt: number;
@@ -37,11 +46,13 @@ const under = (path: string, prefix: string) => path === prefix || path.startsWi
 /** Paths a ticket may never open: sign-in and access management stay with the session's own signed requests. */
 const closed = (path: string) => /^\/api\/auth(?:\/|$)/.test(path) || scopeFor("GET", path) === "access";
 
-/** The live ticket this request carries (query or cookie) and its account, or null. */
+/** The live ticket this request carries (header or cookie) and its account, or null. */
 function carried(c: Context, now: number): { t: Ticket; row: SessionRow; user: SessionUser } | null {
-  const raw = c.req.query(TICKET_PARAM) ?? getCookie(c, TICKET_PARAM);
+  const header = c.req.header(TICKET_HEADER);
+  const raw = header ?? getCookie(c, TICKET_COOKIE);
   if (!raw || !TICKET_RE.test(raw)) return null;
-  const t = tickets.get(sha(raw));
+  const found = tickets.get(sha(raw));
+  const t = found?.use === (header ? "upload" : "media") ? found : undefined;
   // the session as it is now (a revoke, an expiry, a password change all end it), never a copy kept at issue
   const row = t && t.expiresAt > now ? sessionById(t.sessionId) : undefined;
   if (!t || !row || row.revokedAt || row.expiresAt <= now) return null;
@@ -65,8 +76,10 @@ export const ticketUser = (c: Context, now = Date.now()): SessionUser | null => 
 
 export const mediaTicketApp = new Hono();
 
-/** `POST /api/auth/media-ticket {path, write?}` with the device's own signed request → `{ticket, path, write, expiresAt}`. */
-mediaTicketApp.post("/media-ticket", async (c) => {
+/** `POST /api/auth/media-ticket/:use {path, write?}` with the device's own signed request → `{ticket, use, path, write, expiresAt}`. */
+mediaTicketApp.post("/media-ticket/:use", async (c) => {
+  const use = c.req.param("use") as TicketUse;
+  if (!TICKET_USES.includes(use)) return c.json({ error: "Not Found" }, 404);
   const k = callerOf(c);
   if (k.kind === "error") return sessionRefused(c, k.code);
   if (k.kind === "none") return c.json({ error: "Sign in first" }, 401);
@@ -77,14 +90,15 @@ mediaTicketApp.post("/media-ticket", async (c) => {
   if (!prefix.startsWith("/api/") || prefix.length > 500 || prefix.includes("..") || /[?#]/.test(prefix) || closed(prefix)) {
     return c.json({ error: "Bad path" }, 400);
   }
-  const write = b.write === true;
+  // an upload step always writes
+  const write = use === "upload" || b.write === true;
   const need = write ? "write" : "read";
   if (!k.row.scopes.includes(need)) return scopeRefused(c, need);
   const now = Date.now();
   for (const [h, t] of tickets) if (t.expiresAt <= now) tickets.delete(h);
   const ticket = `ctm_${randomBytes(32).toString("base64url")}`;
   const expiresAt = Math.min(now + TICKET_TTL_MS, k.row.expiresAt);
-  tickets.set(sha(ticket), { sessionId: k.row.id, prefix, write, expiresAt });
+  tickets.set(sha(ticket), { sessionId: k.row.id, use, prefix, write, expiresAt });
   c.header("Cache-Control", "no-store");
-  return c.json({ ticket, path: prefix, write, expiresAt: new Date(expiresAt).toISOString() });
+  return c.json({ ticket, use, path: prefix, write, expiresAt: new Date(expiresAt).toISOString() });
 });
