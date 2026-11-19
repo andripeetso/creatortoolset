@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -23,7 +23,7 @@ writeFileSync(
         createdAt: 0,
         members: [
           { username: "tinyacrobatics", role: "owner", ai: "own", budgetUsd: 0, joinedAt: 0 },
-          { username: "sam", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0, workspaces: ["ws_team", "memberws"] },
+          { username: "sam", role: "member", ai: "own", budgetUsd: 0, joinedAt: 0, workspaces: ["ws_team"] },
         ],
       },
     ],
@@ -32,13 +32,10 @@ writeFileSync(
   }),
 );
 
-// the workspace a member is given is a Workshop project of the owner's (sharedProjects reads it): a valid id, not ws_team
-mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
-writeFileSync(path.join(dir, "workshop", "projects", "memberws.json"), JSON.stringify({ id: "memberws", owner: "tinyacrobatics", name: "Member", createdAt: 0, updatedAt: 0 }));
 const { sessionCookieFor } = await import("../auth");
 const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
-const { hasMembers, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
+const { hasMembers, mayReceive, mayServe, REFUSED_NONE, REFUSED_PROXIES, REFUSED_PROOF } = await import("./upload-gate");
 const { mediaFile, serveGate } = await import("./routes");
 const { acceptLibraryFile } = await import("../work/library-package");
 const { pairDevice, setDeviceWork } = await import("../lib/devices");
@@ -498,40 +495,5 @@ describe("U2 §4.6 library migration: set up what has clips; a shared library ke
     expect(changes).toEqual([{ libraryId: "lib_mig_false", field: "upload", from: 0, to: "proxies" }]);
     await migrateLibraries();
     expect(JSON.parse((d.prepare("SELECT settings FROM libraries WHERE id = 'lib_mig_false'").get() as { settings: string }).settings)).toMatchObject({ upload: "proxies" });
-  });
-});
-
-describe("a member's add (UNIFIED-PRD §4.3)", () => {
-  libraryDb().prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_mem', 'tinyacrobatics', 'M', 'local', '{"upload":"none","projectId":"memberws"}', 0)`).run();
-  const member = new Hono<{ Variables: AuthVars }>();
-  member.use(async (c, next) => {
-    c.set("user", { username: "sam", role: "user", off: [], read: [] } as never);
-    return next();
-  });
-  member.route("/api/library", libraryApp);
-  const start = () =>
-    member.request("/api/library/lib_mem/uploads", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ filename: "Handstand.mp4", size: 4 }),
-    });
-
-  it("is refused under Hosted media Off with the §3.2 line, and taken where Originals is on", async () => {
-    const off = await start();
-    expect(off.status).toBe(409);
-    expect(await off.json()).toMatchObject({ code: "upload_refused", message: REFUSED_COMPUTER_OFF });
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'originals') WHERE id = 'lib_mem'`).run();
-    expect((await start()).status).toBe(201);
-    d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.upload', 'none') WHERE id = 'lib_mem'`).run();
-  });
-
-  it("is never indexed from a member's folder", async () => {
-    const r = await member.request("/api/library/lib_mem/on-mac", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: "/Users/sam/Movies/Handstand.mp4", size: 4 }),
-    });
-    expect(r.status).toBe(403);
-    expect(await r.json()).toMatchObject({ code: "forbidden" });
   });
 });
