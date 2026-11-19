@@ -139,8 +139,26 @@ try {
     await setupSteps(op, theme);
     await go(op, "/settings/library");
     await capture(op, "S1-owner-media-library", theme);
+    // Models rows (Rulings 11-19): each row's value button opens its options as a radio list
+    for (const row of ["Descriptions", "Transcripts", "Video breakdown"]) {
+      const btn = op.getByRole("button", { name: row, exact: true });
+      if (!(await btn.count())) continue;
+      await btn.first().scrollIntoViewIfNeeded();
+      await btn.first().click();
+      await op.waitForTimeout(400);
+      await capture(op, `S1-models-${row.toLowerCase().replace(/ /g, "-")}-open`, theme);
+      await btn.first().click();
+    }
     await go(op, "/library");
     await capture(op, "S3-library", theme);
+    // the Library's ⋯ menu carries Redo (Rulings 11-19)
+    const more = op.getByRole("button", { name: /^More/ });
+    if (await more.count()) {
+      await more.first().click();
+      await op.waitForTimeout(400);
+      await capture(op, "S3-library-more-menu", theme);
+      await op.keyboard.press("Escape");
+    }
     await owner.close();
 
     // Member: its own page (no setup, no owner sections).
