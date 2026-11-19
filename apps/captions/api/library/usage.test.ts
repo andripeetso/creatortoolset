@@ -234,10 +234,11 @@ describe("library storage choice", () => {
     }
   });
 
-  // a workspace of owner-a's: a Source media row carries its workspace, so the folder lands in that library only
+  // a workspace of owner-a's: a Source media row carries its workspace, so the folder lands in that library only.
+  // ws_a is the first one made: the library with no workspace of its own (lib_a) is its, as the first brand's
   const workspace = (id: string, library: string) => {
     mkdirSync(path.join(process.env.DATA_DIR!, "workshop", "projects"), { recursive: true });
-    writeFileSync(path.join(process.env.DATA_DIR!, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "owner-a", name: id, updatedAt: 1 }));
+    writeFileSync(path.join(process.env.DATA_DIR!, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "owner-a", name: id, createdAt: id === "ws_a" ? 0 : 1, updatedAt: 1 }));
     libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.projectId', ?) WHERE id = ?").run(id, library);
   };
 
@@ -249,6 +250,7 @@ describe("library storage choice", () => {
     // copying into Source media is not on yet: refused, nothing written
     expect((await call("owner-a", "PUT", "/api/library/lib_a/watch", { folders: [{ path: folder, mode: "copy" }] })).status).toBe(400);
 
+    workspace("ws_a", "lib_a");
     workspace("ws_b", "lib_b");
     expect((await call("owner-a", "PUT", "/api/library/lib_b/watch", { folders: [{ path: folder, mode: "reference" }] })).status).toBe(200);
     expect((await call("owner-a", "PUT", "/api/library/lib_b/storage", own)).status).toBe(409);
