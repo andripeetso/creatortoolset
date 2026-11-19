@@ -306,15 +306,16 @@ describe("P2: proxies and the proxy proof", () => {
   it("a computer's proxy of a file the server holds (a phone's, held under none too) is kept only if smaller than the original", async () => {
     const { device } = pairDevice("tinyacrobatics", "Tiny Mac");
     setDeviceWork(device.id, proving.work);
-    d.prepare(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_held', 'lib_none', 'video', 'Flip', 'tinyacrobatics', 0)`).run();
+    d.prepare(`INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('a_phone_proxy', 'lib_none', 'video', 'Flip', 'tinyacrobatics', 0)`).run();
     d.prepare(
-      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES ('v_held', 'a_held', 1, 'phone:v_held', 500, 'phone:x', 'tinyacrobatics', 0, 'ready')`,
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, created_by, created_at, state) VALUES ('v_phone_proxy', 'a_phone_proxy', 1, 'phone:v_phone_proxy', 500, 'phone:y', 'tinyacrobatics', 0, 'ready')`,
     ).run();
-    const job = Number(d.prepare(`INSERT INTO jobs (library_id, version_id, kind, state, actor, held_by) VALUES ('lib_none', 'v_held', 'proxy', 'running', 'tinyacrobatics', ?) RETURNING id`).get(device.id)!.id);
+    const job = Number(d.prepare(`INSERT INTO jobs (library_id, version_id, kind, state, actor, held_by) VALUES ('lib_none', 'v_phone_proxy', 'proxy', 'running', 'tinyacrobatics', ?) RETURNING id`).get(device.id)!.id);
     expect(await acceptLibraryFile(job, device.id, "proxy", Readable.from([Buffer.alloc(500, 1)]))).toMatchObject({ ok: false, status: 409, body: { message: REFUSED_PROOF } });
     const inc = path.join(dir, "library", "incoming", String(job));
     expect(existsSync(inc) ? readdirSync(inc) : []).toEqual([]);
     expect(await acceptLibraryFile(job, device.id, "proxy", Readable.from([Buffer.alloc(499, 1)]))).toBe(true);
+    d.prepare("DELETE FROM jobs WHERE id = ?").run(job); // the R-A2 test counts the proxy jobs of none
   });
 
   it("R-A2 replaced: the team-proxy queue is gone, so a library under none never gets a proxy job from a computer's report", async () => {
