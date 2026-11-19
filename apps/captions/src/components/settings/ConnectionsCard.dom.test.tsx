@@ -109,7 +109,7 @@ it("in the Mac app with Network access on: the switch turns it off through the a
 it("Send notifications to your phones: only on a linked computer, and the switch saves through the server", async () => {
   let notify = { linked: false, on: true };
   const sent: unknown[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
     if (init?.method === "POST") sent.push(JSON.parse(String(init.body))), (notify = { linked: true, on: false });
     return new Response(JSON.stringify(notify), { headers: { "content-type": "application/json" } });
   }));

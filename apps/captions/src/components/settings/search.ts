@@ -93,6 +93,7 @@ const STATIC_ROWS = [
   { section: "devices", id: "connections", title: "This computer", keywords: ["network", "address", "reachable", "lan", "vpn"] },
   { section: "devices", id: "network-access", title: "Network access", description: "Other devices on your network reach this computer", keywords: ["network", "wifi", "wi-fi", "lan", "local network", "remote", "other devices"] },
   { section: "devices", id: "reach-from-anywhere", title: "Reach from anywhere", description: "Your other devices reach this Mac through your account", keywords: ["account", "anywhere", "remote", "tunnel", "connect", "away from home"], needs: "mac" },
+  { section: "devices", id: "phone-notifications", title: "Send notifications to your phones", description: "Your phones are told when something waits on you", keywords: ["notifications", "push", "phone", "iphone", "alerts"] },
   { section: "devices", id: "use-this-mac", title: "Take work from this server", keywords: ["mac app", "this mac", "switch", "use this mac", "ai on this mac", "ai jobs", "take work"], needs: "mac" },
   { section: "devices", id: "shared-drives", title: "Shared drives", keywords: ["nas", "network drive", "share", "smb", "connect", "reconnect", "office"], needs: "mac" },
   // Scheduled tasks
