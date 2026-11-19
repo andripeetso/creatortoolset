@@ -69,6 +69,8 @@ final class ConnectTests: XCTestCase {
         XCTAssertEqual(reachState(signedIn: true, on: true, removed: false, linked: true, listed: nil), .unreachable)
         XCTAssertEqual(Reach.removed.text, "This Mac was removed from your account. Turn it on to add it again.")
         XCTAssertEqual(Reach.signedOut.rawValue, "signed-out")
+        // the page (ConnectionsCard.tsx reachLine) knows exactly these five; the bridge sends the raw value
+        XCTAssertEqual(["signed-out", "off", "unreachable", "available", "removed"].compactMap(Reach.init(rawValue:)).count, 5)
     }
 
     func testOnlyAListThatCameAndLacksThisMacMeansTheAccountDroppedIt() {

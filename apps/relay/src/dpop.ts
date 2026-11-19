@@ -5,8 +5,8 @@ import { HttpError } from './errors.ts';
 // DPoP proofs (RFC 9449), ES256 only: a phone signs each request with its own P-256 key, so a token it holds is no use
 // to anyone without that key. The same checks the computer runs on its own /oauth/token.
 
-export const DPOP_SKEW = 60; // seconds a proof's iat may be off, either way
-const JTI_KEEP = 2 * DPOP_SKEW + 1; // a jti is remembered as long as its proof could still pass
+export const DPOP_SKEW = 300; // seconds a proof's iat may be off, either way (the computer's own rule, contract.md)
+const JTI_KEEP = 2 * DPOP_SKEW + 1; // a jti is remembered as long as its proof could still pass (about 10 min)
 
 type Jwk = { kty?: unknown; crv?: unknown; x?: unknown; y?: unknown; d?: unknown };
 

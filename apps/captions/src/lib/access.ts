@@ -3,59 +3,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export type AccessScope = "read" | "write" | "access";
+import type { AccessSnapshot, ClientSession, CreatedPairingLink, PairingLink, Scope, ServerEndpoint } from "../../api/lib/clients";
+
+// the server's own contract types (api/lib/clients.ts), under the names this page uses
+export type AccessScope = Scope;
+export type { ClientSession, PairingLink };
+export type CreatedLink = CreatedPairingLink;
+export type AccessView = AccessSnapshot;
+export type Endpoint = ServerEndpoint;
 export const READ_ONLY: AccessScope[] = ["read"];
 export const STANDARD: AccessScope[] = ["read", "write", "access"];
 
 /** A time from the server: ms since 1970 or an ISO string. */
 type When = number | string;
 export const ms = (t: When | null | undefined): number => (t == null ? NaN : new Date(t).getTime());
-
-export interface PairingLink {
-  id: string;
-  subject?: string;
-  label?: string | null;
-  scopes: AccessScope[];
-  createdAt?: When;
-  expiresAt: When;
-}
-export interface PairingUrl {
-  kind: string;
-  url: string;
-}
-export interface CreatedLink extends PairingLink {
-  credential: string;
-  urls: PairingUrl[];
-}
-export interface ClientSession {
-  sessionId: string;
-  subject?: string;
-  label?: string | null;
-  scopes: AccessScope[];
-  method?: string;
-  client: {
-    label?: string | null;
-    deviceType?: "desktop" | "mobile" | "tablet" | "bot" | "unknown";
-    os?: string | null;
-    model?: string | null;
-    appVersion?: string | null;
-    ipAddress?: string | null;
-    userAgent?: string | null;
-  };
-  issuedAt?: When;
-  expiresAt?: When;
-  lastConnectedAt?: When | null;
-  connected: boolean;
-  current: boolean;
-}
-export interface AccessView {
-  pairingLinks: PairingLink[];
-  clientSessions: ClientSession[];
-}
-export interface Endpoint {
-  kind: "lan" | "tailnet" | string;
-  httpBaseUrl: string;
-}
 
 async function send<T>(url: string, body?: unknown): Promise<T> {
   const r = await fetch(url, {

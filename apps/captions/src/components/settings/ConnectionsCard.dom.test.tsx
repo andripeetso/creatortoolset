@@ -27,30 +27,37 @@ afterEach(() => {
 
 const flush = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
 const text = () => document.body.textContent ?? "";
-const mac = (over: Partial<ThisMacState>) => ({ aiOn: false, paired: true, linked: false, account: true, reach: null, ...over }) as ThisMacState;
+const mac = (over: Partial<ThisMacState>) => ({ aiOn: false, paired: true, linked: false, reach: null, ...over }) as ThisMacState;
 
 it("says each Reach from anywhere state the Mac app reports", () => {
-  expect(reachLine(mac({ account: false }))).toBe("Sign in to make this Mac available to your other devices.");
-  expect(reachLine(mac({ linked: false }))).toBe("Make this Mac available to your other devices through your account.");
-  expect(reachLine(mac({ linked: true, reach: "unreachable" }))).toBe("On, but other devices can't reach this Mac.");
-  expect(reachLine(mac({ linked: true, reach: "reachable" }))).toBe("Available to your other devices through your account.");
-  expect(reachLine(mac({ linked: false, reach: "removed" }))).toBe("This Mac was removed from your account. Turn it on to add it again.");
+  // the Mac app's Reach raw values (apps/mac Connect.swift; ConnectTests checks the same five)
+  expect(reachLine("signed-out")).toBe("Sign in to make this Mac available to your other devices.");
+  expect(reachLine("off")).toBe("Make this Mac available to your other devices through your account.");
+  expect(reachLine("unreachable")).toBe("On, but other devices can't reach this Mac.");
+  expect(reachLine("available")).toBe("Available to your other devices through your account.");
+  expect(reachLine("removed")).toBe("This Mac was removed from your account. Turn it on to add it again.");
 });
 
 it("draws no Reach from anywhere outside the Mac app, or from an app that does not report it", async () => {
   act(() => root.render(<ReachFromAnywhereRow mac={null} />));
   expect(document.body.innerHTML).toBe("<div></div>");
-  act(() => root.render(<ReachFromAnywhereRow mac={mac({ linked: undefined })} />));
+  act(() => root.render(<ReachFromAnywhereRow mac={mac({ reach: undefined })} />));
   expect(document.body.innerHTML).toBe("<div></div>");
-  act(() => root.render(<ReachFromAnywhereRow mac={mac({ linked: true, reach: "reachable" })} />));
+  act(() => root.render(<ReachFromAnywhereRow mac={mac({ reach: null })} />));
+  expect(document.body.innerHTML).toBe("<div></div>");
+  act(() => root.render(<ReachFromAnywhereRow mac={mac({ linked: true, reach: "unreachable" })} />));
   expect(text()).toContain("Reach from anywhere");
   expect(document.querySelector('[aria-label="Reach from anywhere"]')!.getAttribute("aria-checked")).toBe("true");
+  act(() => root.render(<ReachFromAnywhereRow mac={mac({ reach: "removed" })} />));
+  expect(document.querySelector('[aria-label="Reach from anywhere"]')!.getAttribute("aria-checked")).toBe("false");
+  act(() => root.render(<ReachFromAnywhereRow mac={mac({ reach: "signed-out" })} />));
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Reach from anywhere"]')!.disabled).toBe(true);
 });
 
 it("turns Reach from anywhere on through the Mac app, and shows its problem", async () => {
   const postMessage = vi.fn(async () => ({ aiOn: false, paired: true, problem: "Your account has three computers already." }));
   (window as { webkit?: unknown }).webkit = { messageHandlers: { thisMac: { postMessage } } };
-  act(() => root.render(<ReachFromAnywhereRow mac={mac({ linked: false })} />));
+  act(() => root.render(<ReachFromAnywhereRow mac={mac({ reach: "off" })} />));
   act(() => document.querySelector<HTMLElement>('[aria-label="Reach from anywhere"]')!.click());
   await flush();
   expect(postMessage).toHaveBeenCalledWith("connect.link");
@@ -85,4 +92,15 @@ it("in the Mac app with Network access off: only this Mac can connect, and the s
   await flush();
   expect(postMessage).toHaveBeenCalledWith("access");
   expect(text()).toContain("Could not restart the server.");
+});
+
+it("in the Mac app with Network access on: the switch turns it off through the app", async () => {
+  endpoints = [{ kind: "lan", httpBaseUrl: "http://tiny-mac.local:3773" }];
+  const postMessage = vi.fn(async () => ({ aiOn: false, paired: true, problem: "Could not restart the server." }));
+  (window as { webkit?: unknown }).webkit = { messageHandlers: { thisMac: { postMessage } } };
+  act(() => root.render(<ConnectionsCard inMac mac={mac({})} />));
+  await flush();
+  act(() => document.querySelector<HTMLButtonElement>('[aria-label="Network access"]')!.click());
+  await flush();
+  expect(postMessage).toHaveBeenCalledWith("access:off");
 });

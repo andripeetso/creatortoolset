@@ -7,7 +7,7 @@ import Foundation
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
 /// "dropped" is answered by the window itself (AppWebView.dragItems). These have parts of their own:
 /// "install:<claude|codex>:<key>" (installAsk), "ai-install:<id>" (aiInstallAsk), and the Media Library's "import:…" (Import.swift).
-let thisMacAsks = ["state", "start", "access", "folder", "dropped", "files", "connect", "connect.link", "connect.unlink", "ai-install-progress", "pair"]
+let thisMacAsks = ["state", "start", "access", "access:off", "folder", "dropped", "files", "connect", "connect.link", "connect.unlink", "ai-install-progress", "pair"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
@@ -164,9 +164,9 @@ extension Shell {
             "pairs": true,
             // on an account through the connect service (setup's Add this computer hides once it is); none = no service set
             "linked": connectService == nil ? NSNull() : linkedHere,
-            // Settings → Computers → Reach from anywhere (Connect.swift): the switch, its state and the words under it;
-            // none = no connect service set
-            "reach": connectService == nil ? NSNull() : ["on": reachSwitch, "state": reach.rawValue, "text": reach.text] as [String: Any],
+            // Settings → Computers → Reach from anywhere (Connect.swift): signed-out | off | unreachable | available |
+            // removed (the page has the words); none = no connect service set
+            "reach": connectService == nil ? NSNull() : reach.rawValue,
             // this Mac's names as the site matches its records: the name it pairs with, and the host name its worker reports
             "computer": Host.current().localizedName ?? macHostName(),
             "host": macHostName(),

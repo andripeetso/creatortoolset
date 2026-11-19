@@ -250,8 +250,8 @@ test('dpop proof: wrong method, wrong URL, stale or future iat, a replayed jti, 
   await refused(p.proof('GET', url));
   await refused(p.proof('POST', 'http://relay.invalid/v1/client/dpop-token')); // the address the broker sees is not the one signed
   await refused(p.proof('POST', `${SELF}/v1/computers`));
-  await refused(p.proof('POST', url, { iat: clock - 61 }));
-  await refused(p.proof('POST', url, { iat: clock + 61 }));
+  await refused(p.proof('POST', url, { iat: clock - 301 }));
+  await refused(p.proof('POST', url, { iat: clock + 301 }));
   await refused(p.proof('POST', url, { header: { alg: 'RS256' } }));
   await refused(p.proof('POST', url, { header: { typ: 'jwt' } }));
   await refused(p.proof('POST', url, { header: { jwk: { ...p.jwk, d: 'secret' } } }));

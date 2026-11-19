@@ -268,6 +268,7 @@ final class Shell: NSObject, ObservableObject {
             case "state": done(self.thisMacState())
             case "ai-install-progress": done(AiInstall.shared.progress)
             case "access": Task { done(await self.accessFromOtherDevices()) }
+            case "access:off": Task { done(self.thisMacState(problem: await self.setOtherDevices(false))) }
             // setup's Add this computer: the same link as the Servers menu's; answers once it is done (linked) or not
             case "connect": Task { done(self.thisMacState(problem: await self.connectThisComputer())) }
             // Settings → Computers → Reach from anywhere: the switch, answered once the link (or unlink) is done

@@ -6,22 +6,25 @@ import { Card, Row, Section, Status } from "./ui";
 import type { ThisMacState } from "./ThisMacSection";
 
 /** Reach from anywhere's line for each state the Mac app reports. */
-export function reachLine(s: Pick<ThisMacState, "linked" | "account" | "reach">): string {
-  if (s.account === false) return "Sign in to make this Mac available to your other devices.";
-  if (s.reach === "removed") return "This Mac was removed from your account. Turn it on to add it again.";
-  if (!s.linked) return "Make this Mac available to your other devices through your account.";
-  if (s.reach === "unreachable") return "On, but other devices can't reach this Mac.";
-  return "Available to your other devices through your account.";
-}
+const REACH_LINES = {
+  "signed-out": "Sign in to make this Mac available to your other devices.",
+  off: "Make this Mac available to your other devices through your account.",
+  unreachable: "On, but other devices can't reach this Mac.",
+  available: "Available to your other devices through your account.",
+  removed: "This Mac was removed from your account. Turn it on to add it again.",
+} as const;
+export type ReachState = keyof typeof REACH_LINES;
+export const reachLine = (reach: ReachState) => REACH_LINES[reach];
 
 /**
  * The Mac app's account switch: links this Mac to the account (its tunnel) so the account's phones list it with no code.
- * Not drawn outside the Mac app, or by an app that does not report it.
+ * Not drawn outside the Mac app, or by an app that does not report it (or has no connect service).
  */
 export function ReachFromAnywhereRow({ mac }: { mac: ThisMacState | null }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  if (!mac || mac.linked === undefined || mac.linked === null) return null;
+  const reach = mac?.reach;
+  if (!reach || !(reach in REACH_LINES)) return null;
   const turn = async (on: boolean) => {
     setBusy(true);
     setProblem(await setReachFromAnywhere(on));
@@ -31,9 +34,9 @@ export function ReachFromAnywhereRow({ mac }: { mac: ThisMacState | null }) {
     <Row
       id="reach-from-anywhere"
       title="Reach from anywhere"
-      description={reachLine(mac)}
+      description={reachLine(reach)}
       status={problem ? <Status tone="broken">{problem}</Status> : undefined}
-      control={<Switch checked={!!mac.linked} disabled={busy || mac.account === false} aria-label="Reach from anywhere" onCheckedChange={(on) => void turn(on)} />}
+      control={<Switch checked={reach === "available" || reach === "unreachable"} disabled={busy || reach === "signed-out"} aria-label="Reach from anywhere" onCheckedChange={(on) => void turn(on)} />}
     />
   );
 }

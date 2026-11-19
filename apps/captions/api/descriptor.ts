@@ -30,6 +30,18 @@ descriptorApp.get("/.well-known/creator-toolset/server", (c) => {
   return c.json(descriptor());
 });
 
+/**
+ * The iPhone app that opens this server's pairing links (`https://host/#token=…`) straight from the Camera: Apple reads
+ * this file to let the app claim them. IOS_APP_IDS (comma-separated `<team id>.<bundle id>`) names a build of your own;
+ * the default is the public Creator Toolset app.
+ */
+export const IOS_APP_IDS = "8DB5KKMAS3.com.creatortoolset.ios";
+descriptorApp.get("/.well-known/apple-app-site-association", (c) => {
+  const appIDs = (process.env.IOS_APP_IDS || IOS_APP_IDS).split(",").map((s) => s.trim()).filter(Boolean);
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.json({ applinks: { details: [{ appIDs, components: [{ "/": "/", "#": "token=*", comment: "pairing link" }] }] } });
+});
+
 /** HOST unset, 0.0.0.0 or ::: the server listens on every interface, so other machines can reach it. */
 export const listensEverywhere = (host = process.env.HOST) => !host || host === "0.0.0.0" || host === "::";
 

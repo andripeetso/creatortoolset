@@ -61,6 +61,20 @@ then the tailnet address; never loopback). It may be empty: the code still works
 `credential` appears only in this response. The pairing signs in **as the account that made the link**.
 Errors: 401 `"Sign in first"`; 403 `{code: "SCOPE"}` (see below); 400 `"Unknown scope"`.
 
+### Pairing link shapes (what scans, opens and is typed)
+
+- **Link**: `<origin>/#token=<credential>` (the root page, the code in the fragment so no server log sees it). A phone
+  also accepts `?token=` on the root page, and a code typed with an address.
+- **App link**: `creatortoolset://pair?pairingUrl=<the link, URL-encoded>`. The browser landing's "Open in the app"
+  opens it; the phone reads the link out of it and pairs as if it were scanned.
+- **Opened in a browser**: the web app takes the code off the address bar before anything else runs and shows a landing
+  ("Open in the app", "Get the app on the App Store"). It never sends the code anywhere, so the link still works once
+  in the app.
+- **Universal link**: `GET /.well-known/apple-app-site-association` (public) lets the iPhone app claim
+  `/` with fragment `token=*`, for the app ids in `IOS_APP_IDS` (comma-separated `<team id>.<bundle id>`; default the
+  public app `8DB5KKMAS3.com.creatortoolset.ios`). Apple only honours it on an HTTPS domain the app lists under
+  Associated Domains (`applinks:`); a LAN or VPN address opens the browser landing instead.
+
 ### `GET /api/auth/access` (needs `access`)
 
 `{ "pairingLinks": PairingLink[], "clientSessions": ClientSession[] }`. An admin sees every account's; anyone else sees

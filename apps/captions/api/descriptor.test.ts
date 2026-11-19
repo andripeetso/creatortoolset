@@ -23,6 +23,22 @@ describe("the public descriptor", () => {
   });
 });
 
+describe("the iPhone app's link file", () => {
+  it("lets the public app claim pairing links, with no sign-in, or the builds IOS_APP_IDS names", async () => {
+    const read = async () => {
+      const r = await app.request("http://localhost/.well-known/apple-app-site-association");
+      expect(r.status).toBe(200);
+      expect(r.headers.get("content-type")).toContain("application/json");
+      return ((await r.json()) as { applinks: { details: { appIDs: string[]; components: Record<string, string>[] }[] } }).applinks.details[0];
+    };
+    const d = await read();
+    expect(d.appIDs).toEqual(["8DB5KKMAS3.com.creatortoolset.ios"]);
+    expect(d.components[0]).toMatchObject({ "/": "/", "#": "token=*" });
+    vi.stubEnv("IOS_APP_IDS", "ABCDE12345.com.example.app, FGHIJ67890.com.example.other");
+    expect((await read()).appIDs).toEqual(["ABCDE12345.com.example.app", "FGHIJ67890.com.example.other"]);
+  });
+});
+
 describe("endpoints", () => {
   it("lists nothing while the server listens on this computer only, and never loopback", async () => {
     vi.stubEnv("HOST", "127.0.0.1");
