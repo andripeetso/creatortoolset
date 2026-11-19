@@ -3,7 +3,7 @@ import { Bot, Laptop, Monitor, Plus, Smartphone, Tablet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { accessName, connectionLine, ms, revokeClient, revokeOtherClients, revokePairingLink, useAccess, type ClientSession, type CreatedLink } from "@/lib/access";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section, StatusDot } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Section } from "./ui";
 import { CreateLinkDialog, PairingLinkCard } from "./PairingLinks";
 
 const ICONS = { mobile: Smartphone, tablet: Tablet, desktop: Laptop, bot: Bot, unknown: Monitor } as const;
@@ -25,7 +25,6 @@ export function ClientRow({ session, now, onRevoke }: { session: ClientSession; 
   const [revoking, setRevoking] = useState(false);
   const { client } = session;
   const Icon = ICONS[client.deviceType ?? "unknown"] ?? Monitor;
-  const live = session.current || session.connected;
   const about = [client.os, client.appVersion ?? client.browser, session.scopes.includes("write") ? null : accessName(session.scopes)].filter(Boolean).join(" · ");
   const revoke = async () => {
     setRevoking(true);
@@ -42,12 +41,7 @@ export function ClientRow({ session, now, onRevoke }: { session: ClientSession; 
         </span>
       }
       subtitle={about || undefined}
-      status={
-        <span className="flex items-center gap-1.5">
-          {live && <StatusDot tone="ok" />}
-          {connectionLine(session, now)}
-        </span>
-      }
+      status={connectionLine(session, now)}
       actions={
         !session.current && (
           <Button size="sm" variant="outline" className="text-destructive" disabled={revoking} onClick={() => void revoke()}>

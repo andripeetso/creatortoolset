@@ -44,7 +44,7 @@ const ipad: ClientSession = {
 class FakeSource {
   static last: FakeSource | null = null;
   listeners = new Map<string, (e: MessageEvent) => void>();
-  constructor(public url: string) {
+  constructor() {
     FakeSource.last = this;
   }
   addEventListener(type: string, fn: (e: MessageEvent) => void) {

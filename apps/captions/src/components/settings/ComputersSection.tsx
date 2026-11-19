@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
 import { CopyBox } from "./copy-box";
 import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
