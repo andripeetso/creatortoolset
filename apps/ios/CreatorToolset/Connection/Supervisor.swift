@@ -925,6 +925,8 @@ extension API {
         var api = API(server: route?.url ?? entry.home, cookie: credential?.kind == .cookie ? credential?.token : nil, username: entry.username)
         if credential?.kind != .cookie { api.credential = credential }
         api.key = entry.key
+        // the phone's own pick of workspace on this server (`WorkspacePick`), on every request
+        api.workspace = WorkspacePick.get(server: entry.key, username: entry.username)
         return api
     }
 

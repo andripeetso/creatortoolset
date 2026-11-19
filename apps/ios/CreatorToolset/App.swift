@@ -238,6 +238,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         Keychain.moveToSharedGroup()
         #if DEBUG
         PhoneDemo.install()
+        // an end-to-end run pairs the simulator with no taps: -PairNow '<pairing link>' (a launch argument, never a link)
+        if let raw = debugArg("PairNow"), let target = PairingTarget.parse(raw) {
+            Task { @MainActor in
+                do { try await Pairing.pair(target) } catch { NSLog("PairNow: %@", error.localizedDescription) }
+            }
+        }
         #endif
         _ = Servers.shared   // first, so `API.current` reads what it saved (a debug -localServer too)
         AccountPush.relay = AccountServers.shared   // push through the account signs with the account's relay token

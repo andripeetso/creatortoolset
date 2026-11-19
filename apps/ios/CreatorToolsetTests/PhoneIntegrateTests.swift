@@ -91,9 +91,10 @@ final class PhoneIntegrateTests: XCTestCase {
     func testTheAppsSyncReadersOpenNoLineOfTheirOwn() {
         guard Connections.shared.live else { return }
         let before = Connections.shared.listenerCount
-        let task = Task { for await _ in ServerEvents.stream("/api/sync/events") { break } }
+        var stream: AsyncStream<ServerEvents.Event>? = ServerEvents.stream("/api/sync/events")
         XCTAssertEqual(Connections.shared.listenerCount, before + 1)
-        task.cancel()
+        XCTAssertNotNil(stream)
+        stream = nil
     }
 
     // MARK: media tickets
