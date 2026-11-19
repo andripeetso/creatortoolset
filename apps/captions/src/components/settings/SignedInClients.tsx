@@ -44,7 +44,7 @@ export function ClientRow({ session, now, onRevoke }: { session: ClientSession; 
       status={connectionLine(session, now)}
       actions={
         !session.current && (
-          <Button size="sm" variant="outline" className="text-destructive" disabled={revoking} onClick={() => void revoke()}>
+          <Button size="sm" variant="outline" className="text-red-600 dark:text-red-400" disabled={revoking} onClick={() => void revoke()}>
             Revoke
           </Button>
         )

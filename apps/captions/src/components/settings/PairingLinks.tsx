@@ -132,7 +132,7 @@ export function PairingLinkCard({ link, created, now, startOpen = false, onRevok
               Copy code
             </Button>
           )}
-          <Button size="sm" variant="outline" className="text-destructive" disabled={revoking} onClick={() => void revoke()}>
+          <Button size="sm" variant="outline" className="text-red-600 dark:text-red-400" disabled={revoking} onClick={() => void revoke()}>
             Revoke
           </Button>
         </div>
