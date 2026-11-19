@@ -1,137 +1,151 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { LIBRARY_SETUP_DONE, LIBRARY_WORDS, type ActionNeeded } from "@contracts/library";
+import { ChevronLeft } from "lucide-react";
+import { LIBRARY_WORDS, RETRY, type ActionNeeded, type CardAction } from "@contracts/library";
+import type { FolderBrowse } from "@contracts/devices";
 import { Button } from "@/components/ui/button";
-import { useLibraryChanges } from "@/lib/library";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { thisMacDevice } from "@/lib/providers";
 import { chooseFolderOnMac, thisMacBridge } from "@/lib/thisMac";
 
-/** Whether any library in the list is set up (setupAt, the library page's save; GET /api/library). */
-export const setUpIn = (libraries: { settings: { setupAt?: string } }[]): boolean => libraries.some((l) => !!l.settings?.setupAt);
+/** A card's request as the signed-in session; the answer's `error` when it was refused, else null. */
+async function send(call: NonNullable<CardAction["call"]>): Promise<string | null> {
+  const r = await fetch(call.path, {
+    method: call.method,
+    headers: { ...(call.body ? { "content-type": "application/json" } : {}), ...(call.workspace ? { "X-CT-Workspace": call.workspace } : {}) },
+    ...(call.body ? { body: JSON.stringify(call.body) } : {}),
+  }).catch(() => null);
+  if (r?.ok) return null;
+  const said = ((await r?.json().catch(() => null)) as { error?: string } | null)?.error ?? "";
+  // already there (a second tap, another window): what the card asked for
+  return /already/i.test(said) ? null : said || "That didn't work";
+}
+
+/** A folder picked in a `browse` action: the row Settings → Folders adds, on that computer, in that workspace. */
+const pickCall = (b: NonNullable<CardAction["browse"]>, path: string): NonNullable<CardAction["call"]> => ({
+  method: "POST",
+  path: "/api/devices/storage/folders",
+  body: { role: b.role, host: b.device, path, make: true },
+  workspace: b.workspace,
+});
 
 /**
- * The card under a reply whose tool needs the person first (ActionNeeded, contracts/library.ts): the Media Library's
- * setup (its owner sets it up on the page; a member gets no button) or the Downloads switch. The ask it stopped on
- * goes on by itself, once: when the library of its workspace is set up (LIBRARY_SETUP_DONE), or after Turn on.
+ * The card under a reply whose tool needs the person first (ActionNeeded, contracts/library.ts): drawn from its title,
+ * line and actions alone, the same card the phone draws. A press sends the action's request; the server then changes
+ * the message (the next card, or none) and the chat goes on by itself. Choose… opens the Mac app's folder window when
+ * this Mac is the computer, else the folder browser of that computer.
  */
-/** Whether a LIBRARY_SETUP_DONE for `workspace` is the one a setup card waits on. */
-export const resumesOn = (action: ActionNeeded, workspace: string): boolean => action.kind === "setup" && action.workspace === workspace;
-
-export function ActionCard({ action, ask, onContinue }: { action?: ActionNeeded; ask?: string; onContinue?: (text: string) => void }) {
+export function ActionCard({ action }: { action?: ActionNeeded }) {
   const navigate = useNavigate();
-  const [turned, setTurned] = useState<"busy" | "on" | "failed" | null>(null);
-  const continued = useRef(false);
-
-  // the library page saves the setup and the change stream says the library changed: then the list says whether it is set up
-  useLibraryChanges(() => {
-    if (action?.kind !== "setup" || !ask || continued.current) return;
-    void fetch("/api/library")
-      .then((r) => (r.ok ? (r.json() as Promise<{ libraries: { settings: { setupAt?: string } }[] }>) : null))
-      .then((b) => {
-        if (b && setUpIn(b.libraries)) window.dispatchEvent(new CustomEvent(LIBRARY_SETUP_DONE, { detail: { workspace: action.workspace } }));
-      })
-      .catch(() => undefined);
-  });
-
-  useEffect(() => {
-    if (action?.kind !== "setup" || !ask) return;
-    const onDone = (e: Event) => {
-      if (!resumesOn(action, (e as CustomEvent<{ workspace?: string }>).detail?.workspace ?? "")) return;
-      if (!continued.current) onContinue?.(ask);
-      continued.current = true;
-    };
-    window.addEventListener(LIBRARY_SETUP_DONE, onDone);
-    return () => window.removeEventListener(LIBRARY_SETUP_DONE, onDone);
-  }, [action, ask, onContinue]);
-
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<{ error: string; call: NonNullable<CardAction["call"]> } | null>(null);
+  const [browsing, setBrowsing] = useState<NonNullable<CardAction["browse"]> | null>(null);
   if (!action) return null;
 
-  if (action.kind === "setup") {
-    return (
-      <div className="my-1.5 flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm">
-        <p>{action.owner ? LIBRARY_WORDS.setupCard(action.workspaceName) : LIBRARY_WORDS.setupCardMember}</p>
-        {action.owner && (
-          <Button size="sm" onClick={() => navigate(action.href)}>
-            {LIBRARY_WORDS.setupButton}
-          </Button>
-        )}
-      </div>
-    );
-  }
-
-  if (action.kind === "projects") return <ProjectsCard action={action} />;
-
-  const turnOn = async () => {
-    setTurned("busy");
-    const r = await fetch("/api/library/offline/downloads", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ library: action.libraryId, mode: "needed" }),
-    }).catch(() => null);
-    if (!r?.ok) return setTurned("failed");
-    setTurned("on");
-    if (ask && !continued.current) {
-      continued.current = true;
-      onContinue?.(LIBRARY_WORDS.downloadsDone(ask));
-    }
+  const run = async (call: NonNullable<CardAction["call"]>) => {
+    setBusy(true);
+    setFailed(null);
+    const error = await send(call);
+    setBusy(false);
+    if (error) setFailed({ error, call });
+  };
+  const press = (a: CardAction) => {
+    if (a.call) return void run(a.call);
+    if (a.open) return navigate(a.open);
+    const b = a.browse;
+    if (!b) return;
+    if (thisMacBridge() && thisMacDevice() === b.device) return void chooseFolderOnMac().then((p) => void (p && run(pickCall(b, p))));
+    setBrowsing(b);
   };
 
-  // once it is on, the chat has gone on with the ask: the card has nothing left to say
-  if (turned === "on") return null;
   return (
-    <div className="my-1.5 flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm">
-      <p>{LIBRARY_WORDS.downloadsCard}</p>
-      <Button size="sm" disabled={turned === "busy"} onClick={() => void turnOn()}>
-        {LIBRARY_WORDS.downloadsButton}
-      </Button>
-      {turned === "failed" && <p className="text-xs text-destructive">Could not turn it on. Try again.</p>}
+    <div className="my-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border p-3 text-sm">
+      <p className="w-full font-medium">{action.title}</p>
+      <p className="w-full text-muted-foreground">{action.line}</p>
+      {action.actions.map((a) => (
+        // a long label (a folder's path) is cut with an ellipsis inside the card, never past its edge (the full label is the tooltip)
+        <Button key={a.id} size="sm" className="min-w-0 max-w-full" variant={a.primary ? "default" : "outline"} disabled={busy} onClick={() => press(a)} title={a.label}>
+          <span className="truncate">{a.label}</span>
+        </Button>
+      ))}
+      {failed && (
+        <p className="flex w-full items-center gap-2 text-xs text-destructive">
+          {failed.error}
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(failed.call)}>
+            {RETRY}
+          </Button>
+        </p>
+      )}
+      {browsing && (
+        <FolderBrowser
+          at={browsing}
+          onClose={() => setBrowsing(null)}
+          onPick={(path) => {
+            setBrowsing(null);
+            void run(pickCall(browsing, path));
+          }}
+        />
+      )}
     </div>
   );
 }
 
-/** The Project files row for the workspace on the computer doing the work, through Settings → Folders' own request. */
-export async function addProjectsFolder(action: Extract<ActionNeeded, { kind: "projects" }>, path: string): Promise<boolean> {
-  const r = await fetch("/api/devices/storage/folders", {
-    method: "POST",
-    headers: { "content-type": "application/json", "X-CT-Workspace": action.workspace },
-    body: JSON.stringify({ role: "projects", host: action.device, path }),
-  }).catch(() => null);
-  // already there (a second tap, another window): what the card asked for
-  return !!r && (r.ok || /already/i.test(((await r.json().catch(() => ({}))) as { error?: string }).error ?? ""));
-}
-
-/**
- * An edit waits for the workspace's Project files folder (contracts/library.ts ActionNeeded "projects"). Use <default>
- * makes it; Choose… opens the Mac app's folder window when this Mac is the computer doing the work, else Settings →
- * Folders. The waiting job is taken again once the row is there: nothing more to press.
- */
-function ProjectsCard({ action }: { action: Extract<ActionNeeded, { kind: "projects" }> }) {
-  const navigate = useNavigate();
-  const [state, setState] = useState<"busy" | "set" | "failed" | null>(null);
-  const use = async (path: string | null | undefined) => {
-    if (!path) return;
-    setState("busy");
-    setState((await addProjectsFolder(action, path)) ? "set" : "failed");
+/** One level of folders on a computer that is not this one (GET /api/devices/:id/browse): its roots, up, into, Use this folder. */
+function FolderBrowser({ at, onClose, onPick }: { at: NonNullable<CardAction["browse"]>; onClose: () => void; onPick: (path: string) => void }) {
+  const [shown, setShown] = useState<FolderBrowse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [asked, setAsked] = useState<string | null>(null);
+  const open = async (path: string) => {
+    setAsked(path);
+    setError(null);
+    const r = await fetch(`/api/devices/${encodeURIComponent(at.device)}/browse?path=${encodeURIComponent(path)}`).catch(() => null);
+    const b = (await r?.json().catch(() => null)) as (FolderBrowse & { error?: string }) | null;
+    if (r?.ok && b) setShown(b);
+    else setError(b?.error ?? "That computer did not answer");
   };
-  const here = !!thisMacBridge() && thisMacDevice() === action.device;
+  // the computer's home first (or the card's own start); shortcut: a slow answer that lands after a later click still shows
+  useEffect(() => void open(at.start || "~"), []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <div className="my-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border p-3 text-sm">
-      <p className="w-full">{LIBRARY_WORDS.projectsCard(action.workspaceName)}</p>
-      {state === "set" ? (
-        <p className="text-xs text-muted-foreground">{LIBRARY_WORDS.projectsSet}</p>
-      ) : (
-        <>
-          {/* a long path is cut with an ellipsis inside the card, never past its edge (the full path is the tooltip) */}
-          <Button size="sm" className="min-w-0 max-w-full" disabled={state === "busy"} onClick={() => void use(action.path)} title={action.path}>
-            <span className="truncate">{LIBRARY_WORDS.projectsUse(action.path)}</span>
-          </Button>
-          <Button size="sm" variant="outline" disabled={state === "busy"}
-            onClick={() => (here ? void chooseFolderOnMac().then(use) : navigate("/settings/folders"))}>
-            {LIBRARY_WORDS.projectsChoose}
-          </Button>
-        </>
-      )}
-      {state === "failed" && <p className="w-full text-xs text-destructive">{LIBRARY_WORDS.projectsFailed}</p>}
-    </div>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogTitle>{LIBRARY_WORDS.projectsChoose.replace("…", "")}</DialogTitle>
+        <DialogDescription className="truncate" title={shown?.path}>
+          {shown ? `${shown.deviceName}: ${shown.path}` : "…"}
+        </DialogDescription>
+        {shown && (
+          <div className="flex flex-wrap gap-1">
+            {shown.roots.map((r) => (
+              <Button key={r.path} size="sm" variant="outline" onClick={() => void open(r.path)}>
+                {r.name}
+              </Button>
+            ))}
+          </div>
+        )}
+        <div className="max-h-72 overflow-y-auto rounded-md border border-border">
+          {shown?.parent && (
+            <button type="button" className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-sm hover:bg-muted/50" onClick={() => void open(shown.parent!)}>
+              <ChevronLeft className="size-4" />
+              Up
+            </button>
+          )}
+          {shown?.dirs.map((d) => (
+            <button key={d.path} type="button" className="block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-muted/50" onClick={() => void open(d.path)}>
+              {d.name}
+            </button>
+          ))}
+        </div>
+        {error && (
+          <p className="flex items-center gap-2 text-xs text-destructive">
+            {error}
+            <Button size="sm" variant="outline" onClick={() => void open(asked ?? "~")}>
+              {RETRY}
+            </Button>
+          </p>
+        )}
+        <Button disabled={!shown} onClick={() => shown && onPick(shown.path)}>
+          Use this folder
+        </Button>
+      </DialogContent>
+    </Dialog>
   );
 }

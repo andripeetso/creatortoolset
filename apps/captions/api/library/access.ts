@@ -10,7 +10,9 @@ import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb, newLibrarySettings } from "./db";
 import { workspaceById } from "../lib/workspaces";
-import type { ActionNeeded } from "../../contracts/library";
+import { actionCard, quickSetup, type ActionNeeded } from "../../contracts/library";
+import { libraryBase, THIS_COMPUTER } from "../../contracts/storage";
+import { isOnline, listDevices } from "../lib/devices";
 import type { LibrarySource } from "../../contracts/library-source";
 import { assetRef, canSee, mainSource } from "./sources";
 
@@ -240,10 +242,20 @@ export async function mainSourceFor(username: string, projectId?: string): Promi
   }
 }
 
-/** The chat card's setup ask for a workspace whose Media Library is not set up (ActionNeeded), or null when it is. */
+/** The chat card's setup ask for a workspace whose Media Library is not set up (ActionNeeded), or null when it is.
+ *  Quick setup makes the folders on the asker's computer seen last (online first); on a server on the person's own
+ *  computer with none paired, on that computer. No computer at all: the card says so. */
 export async function setupNeeded(username: string, projectId?: string): Promise<ActionNeeded | null> {
   const m = await mediaReady(username, projectId);
   if (m.ready) return null;
   const ws = projectId === undefined ? undefined : workspaceById(projectId);
-  return { kind: "setup", workspace: projectId ?? "", workspaceName: ws?.name ?? "", owner: m.owner, href: "/library?setup=1" };
+  const name = ws?.name ?? "";
+  const libraryId = (m.owner && (m.libraryId ?? (await ensureLibrary(username, projectId)))) || m.libraryId || "";
+  const d = listDevices((x) => x.owner === username).sort((a, b) => Number(isOnline(b.id)) - Number(isOnline(a.id)) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
+  const device = d?.id ?? ((await import("./watch")).watchAllowed(username) ? THIS_COMPUTER : null);
+  return actionCard({
+    kind: "setup", workspace: projectId ?? "", workspaceName: name, owner: m.owner, href: "/library?setup=1", libraryId, device,
+    ...(d ? { deviceName: d.name } : device ? { deviceName: "this computer" } : {}),
+    defaults: quickSetup(libraryBase(name || "Media Library")),
+  });
 }

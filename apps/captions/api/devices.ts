@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device, type DeviceWaits } from "../contracts/providers";
 import { addAgain } from "../src/lib/wording";
-import { COPY_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
+import { COPY_KIND, CUTOUT_KIND, FOLDER_BROWSE_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
 import { fitsFor, footageFor, heldCopy } from "./editor/reach";
@@ -28,6 +28,7 @@ import { resolveGranted } from "./lib/packs";
 import { storageApp } from "./devices-storage";
 import { pluginDeviceJobs } from "./lib/plugin";
 import { folderListJob } from "./lib/folder-list";
+import { browseOn, folderBrowseJob } from "./lib/folder-browse";
 import { checkComputer, helperCheckJob } from "./lib/helper-check";
 import { lookSheetsClaim, macLookJob } from "./library/mac-look";
 import { copyFile, copyJob, copyRelayIn } from "./library/copies";
@@ -67,7 +68,7 @@ export const devicesApp = new Hono<{ Variables: AuthVars }>();
  * (lib/helper-check.ts), shot descriptions of a file on a Mac (library/mac-look.ts) and the Media Library's copies
  * (library/copies.ts), then each plug-in's.
  */
-const deviceJobs = () => [folderListJob, helperCheckJob, macLookJob, copyJob, ...pluginDeviceJobs()];
+const deviceJobs = () => [folderListJob, folderBrowseJob, helperCheckJob, macLookJob, copyJob, ...pluginDeviceJobs()];
 
 /** The device behind a ctd_ token on an editor route; a 401 when there is none. Keeps the device here (it is alive). */
 function deviceCaller(c: Context): Device | null {
@@ -404,6 +405,15 @@ devicesApp.put("/balance", async (c) => {
 });
 
 
+/** GET /api/devices/:id/browse?path= → FolderBrowse: one level of folders on the caller's own computer (a chat card's
+ *  Choose…, D14), asked of that computer. 404 for anyone else's; 400 outside its home and drives; 409 offline; 501 an older app. */
+devicesApp.get("/:id/browse", async (c) => {
+  const d = deviceOf(c.req.param("id"));
+  if (!d || d.owner !== c.get("user").username) return c.json({ error: "Not found" }, 404);
+  const r = await browseOn(d, c.req.query("path") || "~");
+  return c.json(r.body, r.status);
+});
+
 /**
  * POST /api/devices/:id/check {test?} → { check?, weight? }: the computer reads its disks again now (a shared drive
  * connected a moment ago counts at once); a test also reads a file in each folder it reaches and times an encode
@@ -454,7 +464,7 @@ async function balancedKinds(d: Device, kinds: string[]): Promise<string[]> {
   // a folder listing goes to the computer that holds it, a look is placed per file (library/mac-look.ts placedOn), a check to the computer checked (even one set to Off), and a step that reads footage is balanced per step among
   // the computers that get at its files (editor/reach.ts fitsFor): by kind, a stronger computer without the files would
   // hold it back from every one that has them
-  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === HELPER_CHECK_KIND || k === LIBRARY_LOOK_KIND || k === COPY_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
+  return kinds.filter((k) => k === TRANSCRIBE_KIND || k === FOLDER_LIST_KIND || k === FOLDER_BROWSE_KIND || k === HELPER_CHECK_KIND || k === LIBRARY_LOOK_KIND || k === COPY_KIND || usesFootage(k) || mayClaim(k, d.id, workers, balance, now, ONLINE_MS));
 }
 
 /** Accounts only: not a share-link visitor. */

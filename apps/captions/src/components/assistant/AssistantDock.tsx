@@ -997,7 +997,7 @@ export function AssistantDock() {
                 m.role === "user" && next?.wait
                   ? { text: next.wait.text, onSteer: next.wait.for === "reply" && all.find((x) => x.wait?.for === "reply") === next ? stop : undefined }
                   : undefined;
-              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onResume={(text) => submit({ ...EMPTY_DRAFT, text })} ask={all[i - 1]?.role === "user" ? all[i - 1]!.text : undefined} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} waiting={waiting} quiet={quiet} />;
+              return <Message key={m.id} m={m} onRetry={retry} onChoose={choose} onFolder={folder} onView={setView} sending={sendState[m.id]} onCancelSend={() => cancelSend(m.id)} onBranch={branch} waiting={waiting} quiet={quiet} />;
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
@@ -1123,8 +1123,6 @@ export function Message({
   m,
   onRetry,
   onChoose,
-  onResume,
-  ask,
   onFolder,
   onView,
   sending,
@@ -1136,10 +1134,6 @@ export function Message({
   m: AssistantMessage;
   onRetry?: () => void;
   onChoose?: (text: string) => void;
-  /** The chat goes on with this text (a card's ask, once its setup or download is done). */
-  onResume?: (text: string) => void;
-  /** The message this reply answers: the ask a card carries on. */
-  ask?: string;
   onFolder?: () => void;
   onView: (v: AssistantView) => void;
   /** How far this window's upload for the reply's send is (m.send). */
@@ -1241,7 +1235,7 @@ export function Message({
         <VideoCards media={m.media} />
         <ApprovalCards approvals={answered(m.approvals)} />
         <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
-        <ActionCard action={m.action} ask={ask} onContinue={onResume} />
+        <ActionCard action={m.action} />
         {m.send && sending ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="truncate" title={m.send.path}>
@@ -1303,7 +1297,7 @@ export function Message({
           written meanwhile go above them, and the list keeps to its end, so a card stays where it is pressed */}
       <ApprovalCards approvals={answered(m.approvals)} />
       <ConfirmCards confirms={answered(m.confirms)} onView={onView} />
-      <ActionCard action={m.action} ask={ask} onContinue={onResume} />
+      <ActionCard action={m.action} />
       {again}
       {onFolder && (
         <button
