@@ -47,7 +47,7 @@ function liveSounds(lib: string): { id: string; title: string; sha: string }[] {
   return libraryDb()
     .prepare(
       `SELECT a.id AS id, a.title AS title, v.sha256 AS sha FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND t.tag = ?)`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND t.tag = ?)`,
     )
     .all(lib, EFFECT) as { id: string; title: string; sha: string }[];
 }

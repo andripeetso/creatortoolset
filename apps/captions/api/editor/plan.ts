@@ -146,7 +146,7 @@ const songOf = (r: MusicRow, from: string): Song | null => {
  */
 export function songFor(edit: EditMeta, index: FootageIndex): Song | null {
   const db = libraryDb();
-  const row = db.prepare("SELECT v.id, a.title, v.probe, v.source_key, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL");
+  const row = db.prepare("SELECT v.id, a.title, v.probe, v.source_key, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL");
   const mine = (id: string) => sourcesWorkspace(ownerOf(edit), [id]) === edit.workspaceId;
   if (edit.song && mine(edit.song)) {
     const r = row.get(edit.song) as MusicRow | undefined;
@@ -162,7 +162,7 @@ export function songFor(edit: EditMeta, index: FootageIndex): Song | null {
   const lib = (row.get(edit.sources[0] ?? "") as { library_id: string } | undefined)?.library_id;
   if (!lib) return null;
   const rows = db
-    .prepare(`SELECT v.id, a.title, v.probe, v.source_key FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ${musicSql} ORDER BY a.created_at DESC LIMIT 200`)
+    .prepare(`SELECT v.id, a.title, v.probe, v.source_key FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND ${musicSql} ORDER BY a.created_at DESC LIMIT 200`)
     .all(lib) as unknown as MusicRow[];
   const brief = edit.brief.toLowerCase();
   const named = rows.find((r) => r.title.trim().length >= 3 && brief.includes(r.title.trim().toLowerCase()));

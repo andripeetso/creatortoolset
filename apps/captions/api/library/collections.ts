@@ -109,25 +109,25 @@ collectionApp.get("/:id/collections", async (c) => {
   const rows = db()
     .prepare(
       `SELECT c.*, (SELECT COUNT(*) FROM collection_items i JOIN assets a ON a.id = i.asset_id
-          WHERE i.collection_id = c.id AND a.trashed_at IS NULL AND NOT ${FINISHED}) AS n
+          WHERE i.collection_id = c.id AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}) AS n
        FROM collections c WHERE c.library_id = ? ORDER BY c.position IS NULL, c.position, c.created_at, c.id`,
     )
     .all(libraryId) as unknown as (Row & { n: number })[];
   const pictures = db().prepare(
     `SELECT a.current_version_id AS v FROM collection_items i JOIN assets a ON a.id = i.asset_id
-     WHERE i.collection_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}
+     WHERE i.collection_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}
        AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
      ORDER BY i.position, i.asset_id LIMIT 4`,
   );
   // a folder of songs or sounds has no pictures: its card names a few of them instead
   const soundRows = db().prepare(
     `SELECT a.title FROM collection_items i JOIN assets a ON a.id = i.asset_id
-     WHERE i.collection_id = ? AND a.trashed_at IS NULL AND a.kind = 'audio' ORDER BY i.position, i.asset_id LIMIT 3`,
+     WHERE i.collection_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind = 'audio' ORDER BY i.position, i.asset_id LIMIT 3`,
   );
   // the A-roll and B-roll folders list their roll: their count and pictures are the roll's
-  const rollCount = db().prepare(`SELECT COUNT(*) AS n FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}`);
+  const rollCount = db().prepare(`SELECT COUNT(*) AS n FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}`);
   const rollPictures = db().prepare(
-    `SELECT a.current_version_id AS v FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}
+    `SELECT a.current_version_id AS v FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}
        AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
      ORDER BY a.created_at DESC, a.id LIMIT 4`,
   );
@@ -330,7 +330,7 @@ collectionApp.get("/:id/counts", (c) => {
   const r = db()
     .prepare(
       `SELECT SUM(a.roll = 'a') AS a, SUM(a.roll = 'b') AS b, SUM(a.kind = 'image' AND NOT ${FINISHED}) AS image
-       FROM assets a WHERE a.library_id = ? AND a.trashed_at IS NULL`,
+       FROM assets a WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
     .get(libraryId) as { a: number | null; b: number | null; image: number | null };
   return c.json({ a: r.a ?? 0, b: r.b ?? 0, image: r.image ?? 0 });
@@ -357,7 +357,7 @@ async function changeItems(c: Ctx, add: boolean) {
   const d = db();
   if (roll) {
     // the A-roll folder lists the clips sorted or filed as A-roll: a clip put in it is filed so (roll.ts)
-    const video = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND kind = 'video'");
+    const video = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL AND kind = 'video'");
     const filed = ids.filter((id) => video.get(id, libraryId));
     if (!add) {
       // taken back out (the page's Undo): filed as nothing, and the sort decides again from what the clip has
@@ -397,7 +397,7 @@ async function changeItems(c: Ctx, add: boolean) {
   const mine = d.prepare("UPDATE collection_items SET by_ai = 0 WHERE collection_id = ? AND asset_id = ?");
   const back = d.prepare("DELETE FROM folder_out WHERE collection_id = ? AND asset_id = ?");
   // added at the end, in the order given; trashed or foreign assets are skipped
-  const ok = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL");
+  const ok = d.prepare("SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL");
   const ins = d.prepare("INSERT OR IGNORE INTO collection_items (collection_id, asset_id, position, added_by) VALUES (?, ?, ?, ?)");
   let pos = (d.prepare("SELECT COALESCE(MAX(position), 0) AS p FROM collection_items WHERE collection_id = ?").get(row.id) as { p: number }).p;
   let added = 0;
@@ -511,7 +511,7 @@ function pieceOf(p: PieceRow): Piece {
       `SELECT i.* FROM piece_items i
          LEFT JOIN asset_versions v ON v.id = i.version_id
          LEFT JOIN assets a ON a.id = v.asset_id
-       WHERE i.piece_id = ? AND (a.trashed_at IS NULL OR a.id IS NULL)
+       WHERE i.piece_id = ? AND (a.trashed_at IS NULL AND a.left_hidden_at IS NULL OR a.id IS NULL)
        ORDER BY i.position, i.id`,
     )
     .all(p.id) as unknown as ItemRow[];
@@ -689,7 +689,7 @@ collectionApp.post("/:id/pieces/:pid/items", async (c) => {
   const versionId = typeof body?.versionId === "string" ? body.versionId : "";
   const live = versionId
     ? (db()
-        .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL")
+        .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
         .get(versionId, libraryId) as { asset_id: string } | undefined)
     : undefined;
   if (!live || !(await mayWrite(c.get("user").username, libraryId, live.asset_id, versionId))) return notFound(c);
@@ -866,7 +866,7 @@ collectionApp.post("/:id/pieces/:pid/cover", async (c) => {
          JOIN asset_versions v ON v.id = i.version_id
          JOIN assets a ON a.id = v.asset_id
          LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy'
-       WHERE i.piece_id = ? AND i.version_id = ? AND a.trashed_at IS NULL`,
+       WHERE i.piece_id = ? AND i.version_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
     .get(piece.id, versionId) as { source_key: string; mac_path: string | null; mac_device: string | null; kind: AssetKind; proxy: string | null } | undefined;
   if (!v) return notFound(c);
@@ -925,7 +925,7 @@ collectionApp.get("/:id/pieces/:pid/cover", async (c) => {
   const row = viewer ? pieceIn(libraryId, c.req.param("pid")) : undefined;
   if (!viewer || !row?.cover_key || !row.cover_version_id) return notFound(c);
   const v = db()
-    .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
+    .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
     .get(row.cover_version_id) as { asset_id: string } | undefined;
   if (!v || !(await canSee(viewer, assetRef(libraryId, v.asset_id, row.cover_version_id)))) return notFound(c);
   // Blur faces: a cover cut from a clip not blurred (picked before it was on) stays stored and is not shown

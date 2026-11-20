@@ -1375,7 +1375,12 @@ export async function serveBlob(c: Context, key: string, type: string, download?
 }
 
 // GET /api/library/media/:versionId/:kind: thumb | sprite | play (the proxy when there is one, else the source) | source
-libraryApp.get("/media/:versionId/:kind", (c) => libraryMedia(c, c.get("user").username, c.req.param("versionId"), c.req.param("kind")));
+// a clip hidden while it waits on Folders left out (report.ts) plays for nobody
+libraryApp.get("/media/:versionId/:kind", (c) =>
+  libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.left_hidden_at IS NOT NULL").get(c.req.param("versionId"))
+    ? c.json({ error: "Not found", code: "not_found" }, 404)
+    : libraryMedia(c, c.get("user").username, c.req.param("versionId"), c.req.param("kind")),
+);
 
 /**
  * One item's picture or file for an account: a version the account may see, or an external ref whose source's policies

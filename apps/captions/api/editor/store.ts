@@ -313,7 +313,7 @@ const libraryOf = (versionId: string) =>
   libraryDb()
     .prepare(
       `SELECT l.id AS library_id, l.workspace_id, a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.trashed_at IS NULL`,
+       JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
     .get(versionId) as { library_id: string; workspace_id: string; asset_id: string } | undefined;
 

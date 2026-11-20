@@ -115,7 +115,7 @@ export function tagsOf(db: DatabaseSync, versionId: string): NonNullable<Describ
   const list = db
     .prepare(
       `SELECT t.tag, COUNT(*) AS count FROM asset_tags t JOIN assets a ON a.id = t.asset_id
-       WHERE a.library_id = ? AND a.id <> ? AND a.trashed_at IS NULL GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT ${VOCABULARY}`,
+       WHERE a.library_id = ? AND a.id <> ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT ${VOCABULARY}`,
     )
     .all(at.lib, at.asset) as { tag: string; count: number }[];
   return { clips, list };

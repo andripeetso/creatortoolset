@@ -43,7 +43,7 @@ const effectSql = `(EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id A
 export function librarySounds(libraryId: string): SfxSound[] {
   const db = libraryDb();
   const rows = db
-    .prepare(`SELECT v.id, a.title, v.probe, v.source_key FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ${effectSql} ORDER BY a.created_at DESC LIMIT 200`)
+    .prepare(`SELECT v.id, a.title, v.probe, v.source_key FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND ${effectSql} ORDER BY a.created_at DESC LIMIT 200`)
     .all(libraryId) as Array<{ id: string; title: string; probe: string | null }>;
   const tagsOf = db.prepare("SELECT tag FROM asset_tags WHERE asset_id = (SELECT asset_id FROM asset_versions WHERE id = ?)");
   const out: SfxSound[] = [];

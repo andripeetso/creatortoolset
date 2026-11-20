@@ -360,9 +360,10 @@ export function leftOutBy(folders: ReadonlyArray<Pick<StorageFolder, "origin" | 
 /** At most this many names in a Media folder's leaveOut. */
 export const LEAVE_OUT_MAX = 50;
 
-/** A leaveOut list as sent (one folder name each, trimmed, no path), or null when it is not one; [] leaves nothing out. */
-export function parseLeaveOut(v: unknown): string[] | null {
-  if (!Array.isArray(v) || v.length > LEAVE_OUT_MAX) return null;
+/** A leaveOut list as sent (one folder name each, trimmed, no path), or null when it is not one; [] leaves nothing out.
+ *  `max`: the most names it may hold (a list an inner folder's merged into may hold more than LEAVE_OUT_MAX already). */
+export function parseLeaveOut(v: unknown, max = LEAVE_OUT_MAX): string[] | null {
+  if (!Array.isArray(v) || v.length > max) return null;
   const names = v.map((n) => (typeof n === "string" ? n.trim().normalize("NFC") : ""));
   if (names.some((n) => !n || n.length > 255 || n === "." || n === ".." || /[\\/\0]/.test(n))) return null;
   return [...new Set(names)];

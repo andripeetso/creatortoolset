@@ -676,4 +676,7 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE uploads ADD COLUMN blurred_of TEXT;`,
   // a file by its size and fingerprint (report.ts: a scan's match, a file moved into a left-out folder)
   `CREATE INDEX IF NOT EXISTS versions_quick ON asset_versions(quick);`,
+  // Folders left out (report.ts): a clip whose only known place is in a left-out folder, while it waits to be trashed or
+  // kept, is hidden from every view, search, AI, player and share link (a privacy list, owner 2026-11-20). Not the trash
+  `ALTER TABLE assets ADD COLUMN left_hidden_at INTEGER;`,
 ];

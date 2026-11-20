@@ -50,3 +50,16 @@ it("a second pass never reads the left-out files again", async () => {
   await scanWatchFolders((t += 10 * SETTLE_MS));
   expect(leftOut()).toBe(first);
 });
+
+it("a file moved into a left-out folder over one read before is read again: its clip leaves", async () => {
+  const { utimesSync, renameSync } = await import("node:fs");
+  put("C0001.mp4", "c1");
+  utimesSync(path.join(footage, "C0001.mp4"), 1_700_000_000, 1_700_000_000);
+  put("Private/C0001.mp4", "older one");
+  await scanWatchFolders((t += 10 * SETTLE_MS));
+  await scanWatchFolders((t += 10 * SETTLE_MS));
+  const id = (libraryDb().prepare("SELECT asset_id FROM asset_versions WHERE source_path = ?").get(path.join(footage, "C0001.mp4")) as { asset_id: string }).asset_id;
+  renameSync(path.join(footage, "C0001.mp4"), path.join(footage, "Private", "C0001.mp4"));
+  await scanWatchFolders((t += 10 * SETTLE_MS));
+  expect((libraryDb().prepare("SELECT trashed_at FROM assets WHERE id = ?").get(id) as { trashed_at: number | null }).trashed_at).not.toBeNull();
+});

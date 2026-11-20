@@ -42,7 +42,8 @@ export function trashHeld(assetId: string, now = Date.now()): string | null {
 /** Moves an asset into the library's trash (`at` a time) or back out (null): the one writer of assets.trashed_at
  *  besides Empty trash. */
 export function setTrashedAt(assetId: string, at: number | null): void {
-  libraryDb().prepare("UPDATE assets SET trashed_at = ? WHERE id = ?").run(at, assetId);
+  // into the trash or back out: no longer only hidden (report.ts, Folders left out)
+  libraryDb().prepare("UPDATE assets SET trashed_at = ?, left_hidden_at = NULL WHERE id = ?").run(at, assetId);
 }
 
 const inList = (n: number) => Array(n).fill("?").join(", ");

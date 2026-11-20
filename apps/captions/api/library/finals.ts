@@ -94,7 +94,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
       if (!(await externalCanSee({ username: input.owner, role }, ref, input.libraryId))) return { ok: false, code: "no_access", error: "Not allowed" };
     } else if ("versionId" in source) {
       const row = d
-        .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL")
+        .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
         .get(source.versionId, input.libraryId) as { asset_id: string } | undefined;
       if (!row) return { ok: false, code: "not_found", error: "That video is not in the Media Library" };
       if (!(await mayWrite(input.owner, input.libraryId, row.asset_id, source.versionId))) return { ok: false, code: "no_access", error: "Not allowed" };
@@ -192,7 +192,7 @@ export function finalsLinkedTo(sessionId: string, docId: string, mainDocId: stri
         `SELECT i.id, i.label, a.title, a.kind, v.n FROM piece_items i
            LEFT JOIN asset_versions v ON v.id = i.version_id
            LEFT JOIN assets a ON a.id = v.asset_id
-         WHERE i.piece_id = ? AND (a.trashed_at IS NULL OR a.id IS NULL) ORDER BY i.position, i.id`,
+         WHERE i.piece_id = ? AND (a.trashed_at IS NULL AND a.left_hidden_at IS NULL OR a.id IS NULL) ORDER BY i.position, i.id`,
       )
       .all(p.id) as { id: string; label: string | null; title: string | null; kind: string | null; n: number | null }[];
     // the mechanical facts the writer is given: file name, kind, which version (no content of the file)

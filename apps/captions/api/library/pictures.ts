@@ -245,7 +245,7 @@ function libraryRows(libraryId: string, where: { sql: string; params: (string | 
     libraryDb()
       .prepare(
         `SELECT p.version_id, p.seg, p.start_s, p.vec FROM pictures p JOIN assets a ON a.current_version_id = p.version_id
-         WHERE a.library_id = ? AND a.trashed_at IS NULL AND p.model = ? AND length(p.vec) > 0${where.map((w) => ` AND ${w.sql}`).join("")}`,
+         WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND p.model = ? AND length(p.vec) > 0${where.map((w) => ` AND ${w.sql}`).join("")}`,
       )
       .all(libraryId, PICTURE_MODEL, ...where.flatMap((w) => w.params)) as (Omit<Row, "vec"> & { vec: Uint8Array })[]
   ).map((r) => ({ ...r, vec: vecOf(r.vec) }));

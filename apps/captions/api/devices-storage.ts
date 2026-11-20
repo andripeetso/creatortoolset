@@ -497,8 +497,11 @@ storageApp.patch("/folders/:id", async (c) => {
 storageApp.put("/folders/:id/leave-out", async (c) => {
   const user = c.get("user").username;
   const id = c.req.param("id");
-  const names = parseLeaveOut(((await c.req.json().catch(() => null)) as { leaveOut?: unknown } | null)?.leaveOut);
-  if (!names) return c.json({ error: `Folder names only, at most ${LEAVE_OUT_MAX}` }, 400);
+  // a list an inner folder's was merged into (lib/storage.ts mediaFolders) may hold more than LEAVE_OUT_MAX: kept, never grown
+  const had = (await readStorage(user)).folders.find((x) => x.id === id)?.leaveOut?.length ?? 0;
+  const max = Math.max(had, LEAVE_OUT_MAX);
+  const names = parseLeaveOut(((await c.req.json().catch(() => null)) as { leaveOut?: unknown } | null)?.leaveOut, max);
+  if (!names) return c.json({ error: `Folder names only, at most ${max}` }, 400);
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     const f = st.folders.find((x) => x.id === id && x.role === "footage");

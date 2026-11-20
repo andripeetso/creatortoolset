@@ -25,7 +25,7 @@ async function readable(username: string, assetId: string, versionId: string): P
   const row = libraryDb()
     .prepare(
       `SELECT a.library_id, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE v.id = ? AND a.id = ? AND a.trashed_at IS NULL`,
+       WHERE v.id = ? AND a.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
     .get(versionId, assetId) as Row | undefined;
   const role = row ? libraryRole(username, row.library_id) : null;

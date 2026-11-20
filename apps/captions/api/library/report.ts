@@ -201,12 +201,16 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string):
   );
   const moved: string[] = [];
   for (const id of assets) {
-    if (live.get(id)) continue;
+    if (live.get(id)) {
+      showLeft(id);
+      continue;
+    }
     const held = trashHeld(id, now);
     if (held) {
       // said once per clip: the watch asks again every pass
       if (!heldSaid.has(id)) console.log(`[library] ${what}: ${id} stays in the library (${held}), not moved to the trash`);
       heldSaid.add(id);
+      showLeft(id);
       continue;
     }
     setTrashedAt(id, now);
@@ -217,13 +221,56 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string):
 
 const heldSaid = new Set<string>();
 
+/** A clip kept: shown again where it was hidden while it waited (left_hidden_at, schema.ts). */
+export const showLeft = (id: string) => db().prepare("UPDATE assets SET left_hidden_at = NULL WHERE id = ? AND left_hidden_at IS NOT NULL").run(id);
+
 /**
- * Clips a listing found only where they are not footage whose own place that same listing turned gone: their file may
- * have moved into another Media folder of the computer, read in a later report. Each waits, by computer, with when it
- * was found, until every Media folder of that computer has finished a listing that started then or later (`listed`);
- * a folder not read (its drive away) never finishes, so nothing leaves on what is unknown.
+ * Whether a clip has a place known now outside the folders left out: a verified or found one, not one of the library's
+ * copies (a drive away is unknown: no known place).
+ */
+const knownPlace = (id: string): boolean =>
+  !!db()
+    .prepare(
+      `SELECT 1 FROM version_places p JOIN asset_versions v ON v.id = p.version_id
+        WHERE v.asset_id = ? AND p.kind = 'original' AND p.state IN ('verified','found') AND NOT ${COPY_PLACE} LIMIT 1`,
+    )
+    .get(id);
+
+/**
+ * Folders left out are a privacy list (owner, 2026-11-20): a clip waiting on computer `device` whose only known place is
+ * in a left-out folder is hidden at once (left_hidden_at), and shown again once a known place turns up. Hidden is not the
+ * trash: it is trashed or kept when it settles. A hidden clip a restart forgot waits again from now.
+ */
+function hideLeft(device: string, now: number): string[] {
+  const d = db();
+  const waiting = leftWaiting.get(device) ?? new Map<string, number>();
+  const hidden = d
+    .prepare(
+      `SELECT DISTINCT a.id FROM assets a JOIN asset_versions v ON v.asset_id = a.id JOIN version_places p ON p.version_id = v.id
+        WHERE a.left_hidden_at IS NOT NULL AND a.trashed_at IS NULL AND p.device = ?`,
+    )
+    .all(device) as { id: string }[];
+  for (const h of hidden) if (!waiting.has(h.id)) waiting.set(h.id, now);
+  if (waiting.size) leftWaiting.set(device, waiting);
+  // the libraries whose clips turned hidden or shown
+  const changed: string[] = [];
+  for (const id of waiting.keys()) {
+    const r = knownPlace(id) ? showLeft(id) : d.prepare("UPDATE assets SET left_hidden_at = ? WHERE id = ? AND left_hidden_at IS NULL AND trashed_at IS NULL").run(now, id);
+    if (Number(r.changes)) changed.push((d.prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string }).library_id);
+  }
+  return changed;
+}
+
+/**
+ * Clips matched by size and fingerprint to a file in a left-out folder while they had a place elsewhere on the computer:
+ * moved in there, or a copy, while their own file may have moved into another Media folder read later. Each waits, by
+ * computer, from when it was first found, until every Media folder of that computer has finished a listing that started
+ * then or later (`listed`); a folder not read (its drive away) never finishes, so nothing leaves on what is unknown. A
+ * restart forgets them; the next listing of the left-out file finds them again.
  */
 const leftWaiting = new Map<string, Map<string, number>>();
+/** A server restart, for tests: what waits is forgotten. */
+export const forgetLeftWaiting = () => leftWaiting.clear();
 /** When the last finished listing of each folder started, by `${device}|${folder id}`. */
 const listed = new Map<string, number>();
 
@@ -293,19 +340,24 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         // a copy of it is found elsewhere (never while in Review or shared); the file on the computer stays
         // a locate-only library is never trashed into
         leaveLibrary(dev, folder.id, inLibs, own, now, "p.path = ?", [f.path], left, out);
-        // moved into a left-out folder: the clip at this file's size and fingerprint with a place on this computer (in any
-        // of its Media folders) is a candidate too (its old place turns gone when the listing completes; a real second copy still keeps it).
-        // An uploaded clip's file gone from where it was is no move: the server keeps its bytes, wherever its computer copy went
+        // moved into a left-out folder: the clip at this file's size and fingerprint with a place elsewhere on this computer
+        // (in any of its Media folders). Where its file went may be a folder read later or one whose drive is away, so it
+        // waits for every Media folder of the computer (leftWaiting), from when it was first found. An uploaded clip's file
+        // gone from where it was is no move: the server keeps its bytes, wherever its computer copy went
         if (out && f.quick) {
           const moved = d
             .prepare(
               `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-               WHERE p.device = ? AND p.kind = 'original' AND v.bytes = ? AND v.quick = ? AND a.trashed_at IS NULL
+               WHERE p.device = ? AND p.kind = 'original' AND p.path <> ? AND v.bytes = ? AND v.quick = ? AND a.trashed_at IS NULL
                  AND (v.source_key LIKE 'mac:%' OR p.state <> 'gone')
                  AND a.library_id IN (SELECT value FROM json_each(?)) AND NOT ${COPY_PLACE}`,
             )
-            .all(device, f.bytes, f.quick, inOwn) as { id: string }[];
-          for (const m of moved) left.add(m.id);
+            .all(device, f.path, f.bytes, f.quick, inOwn) as { id: string }[];
+          if (moved.length) {
+            const waiting = leftWaiting.get(device) ?? new Map<string, number>();
+            for (const m of moved) if (!waiting.has(m.id)) waiting.set(m.id, now);
+            leftWaiting.set(device, waiting);
+          }
         }
         continue;
       }
@@ -357,18 +409,6 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         .run(now, device, folder.id, dir, dir, dir);
     }
     const start = scans.get(key);
-    // the candidates whose own place this listing's end is about to turn gone (moved, or gone for good: not known yet)
-    const moved = new Set<string>();
-    if (r.complete && start !== undefined && left.size) {
-      const rows = d
-        .prepare(
-          `SELECT DISTINCT v.asset_id FROM version_places p JOIN asset_versions v ON v.id = p.version_id
-            WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.state <> 'gone' AND (p.checked_at IS NULL OR p.checked_at < ?)
-              AND v.asset_id IN (SELECT value FROM json_each(?))`,
-        )
-        .all(device, folder.id, start, JSON.stringify([...left])) as { asset_id: string }[];
-      for (const x of rows) moved.add(x.asset_id);
-    }
     if (r.complete) editorSeen.delete(key);
     if (r.complete && start !== undefined) {
       const gone = d
@@ -383,15 +423,11 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       scans.delete(key);
     }
     // a page of no listing, or the last page of one: its clips found only where they are not footage leave once the whole
-    // report is read (applyReport), so a copy in a later folder of it keeps the clip; one whose own place this listing
-    // turned gone waits for every Media folder of the computer (leftWaiting)
+    // report is read (applyReport), so a copy in a later folder of it keeps the clip; one waiting for the computer's
+    // folders (moved in) leaves only from there
     if (!r.scan || r.complete) {
-      const waiting = leftWaiting.get(device) ?? new Map<string, number>();
-      for (const a of left) {
-        if (moved.has(a)) waiting.set(a, now);
-        else settle.add(a);
-      }
-      if (waiting.size) leftWaiting.set(device, waiting);
+      const waiting = leftWaiting.get(device);
+      for (const a of left) if (!waiting?.has(a)) settle.add(a);
       leftSeen.delete(key);
       listed.set(`${device}|${folder.id}`, start ?? now);
     } else if (left.size) leftSeen.set(key, left);
@@ -436,6 +472,7 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     const lib = db().prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;
     if (lib) touched.add(lib.library_id);
   }
+  for (const l of hideLeft(dev.id, now)) touched.add(l);
   for (const l of touched) libraryChanged(l);
   return { ok: true, index, ...(filmed?.length ? { filmed } : {}) };
 }

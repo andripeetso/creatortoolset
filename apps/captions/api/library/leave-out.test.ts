@@ -298,6 +298,9 @@ describe("every way a left-out file could come in or stay", () => {
       applyReport(mac, [{ id, state: "ok", scan, complete: true, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1, quick: quick(620) })), unreadable: [] }], at);
     await list("fold_f2", F2, [], "mx-a", t0 + 1000);
     await list("fold_f1", F1, ["- NO SHARE/mx.mov"], "mx-b", t0 + 2000);
+    // matched in a left-out folder: it waits for every Media folder of the Mac, hidden meanwhile
+    expect(asset(620).trashed_at).toBeNull();
+    await listRest(t0 + 3000);
     expect(asset(620).trashed_at).not.toBeNull();
   });
 
@@ -426,6 +429,17 @@ describe("PUT /api/devices/storage/folders/:id/leave-out", () => {
     expect(await leftOutOn("tia", `${PLAIN}/Tiny Archive/c.mov`)).toBe(true);
     expect((await put("fold_plain", [])).status).toBe(200);
     expect((await listed())?.leaveOut).toBeUndefined();
+  });
+
+  it("a list an inner folder's was merged into may keep more than 50 names, never grow past them", async () => {
+    const many = Array.from({ length: 52 }, (_, i) => `Tiny ${i}`);
+    await changeStorage("tia", (st) => {
+      st.folders.find((f) => f.id === "fold_plain")!.leaveOut = many;
+    });
+    expect((await put("fold_plain", many)).status).toBe(200);
+    expect((await put("fold_plain", many.slice(1))).status).toBe(200);
+    expect((await put("fold_plain", [...many, "Tiny 52"])).status).toBe(400);
+    expect((await put("fold_plain", [])).status).toBe(200);
   });
 
   it("refuses another account, a guest, a path or a list that is not names", async () => {

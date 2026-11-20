@@ -194,7 +194,7 @@ export async function semanticHits(
     db
       .prepare(
         `SELECT e.version_id, e.chunk, e.start_s, e.vec FROM embeddings e JOIN assets a ON a.current_version_id = e.version_id
-         WHERE a.library_id = ? AND a.trashed_at IS NULL AND e.model = ? AND e.dims > 0${where.map((w) => ` AND ${w.sql}`).join("")}
+         WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND e.model = ? AND e.dims > 0${where.map((w) => ` AND ${w.sql}`).join("")}
          ORDER BY e.version_id, e.chunk`,
       )
       .all(libraryId, route.model, ...where.flatMap((w) => w.params)) as { version_id: string; chunk: number; start_s: number; vec: Uint8Array }[]

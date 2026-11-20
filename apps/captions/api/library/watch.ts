@@ -12,7 +12,7 @@ import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
-import { copyFilesOn, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft } from "./report";
+import { copyFilesOn, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, showLeft } from "./report";
 import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
@@ -750,6 +750,8 @@ export async function copyInto(root: string, copyTo: string, file: string, size:
  */
 /** Each library's left-out files as last read, `${size}:${mtime}` by path (leaveWatched's moved-in look). */
 const droppedSeen = new Map<string, Map<string, string>>();
+/** Each library's files gone from where they were at its last pass (leaveWatched): a new one clears droppedSeen. */
+const vanishedSeen = new Map<string, Set<string>>();
 
 async function leaveWatched(
   libraryId: string,
@@ -782,6 +784,10 @@ async function leaveWatched(
   // `vanished` non-empty: no pass reads thousands of left-out files again)
   const known = droppedSeen.get(libraryId) ?? new Map<string, string>();
   droppedSeen.set(libraryId, known);
+  // a file that went this pass may have gone into a left-out folder in place of one read before: all are read again then
+  const before = vanishedSeen.get(libraryId);
+  if (vanished.some((r) => !before?.has(r.path))) known.clear();
+  vanishedSeen.set(libraryId, new Set(vanished.map((r) => r.path)));
   const still = new Set(dropped);
   for (const p of known.keys()) if (!still.has(p)) known.delete(p);
   for (const p of vanished.length ? dropped : []) {
@@ -793,19 +799,30 @@ async function leaveWatched(
     }
     for (const r of vanished) if (`${r.size}:${r.mtime}` === at) out.add(r.path);
   }
+  // a clip hidden while it waited (report.ts hideLeft) with a copy read here now: shown again
+  const hidden = new Set((db().prepare("SELECT id FROM assets WHERE library_id = ? AND left_hidden_at IS NOT NULL").all(libraryId) as { id: string }[]).map((x) => x.id));
+  if (hidden.size) for (const r of rows) if (hidden.has(r.asset_id) && live.has(r.path) && !out.has(r.path) && !copies.has(r.path)) showLeft(r.asset_id);
   if (!out.size) return false;
   const assets = new Set(rows.filter((r) => out.has(r.path)).map((r) => r.asset_id));
   // a clip with a copy read here stays, and so does one with a file in a folder not read this pass (its drive away: unknown,
   // never gone); each version reads its own copy (never another version's, never one of the library's copies)
+  // (`sure`: kept on a copy known now; one kept only on a folder not read is hidden until it is: a privacy list)
   const kept = new Set<string>();
+  const sure = new Set<string>();
   const copyOf = new Map<string, string>();
   const inUnread = (p: string) => unread.some((root) => p.startsWith(root + path.sep));
   for (const r of rows) {
     if (out.has(r.path) || copies.has(r.path) || !assets.has(r.asset_id)) continue;
-    if (inUnread(r.path) || renamed(r)) kept.add(r.asset_id);
+    if (inUnread(r.path)) kept.add(r.asset_id);
+    if (renamed(r)) [kept, sure].forEach((s) => s.add(r.asset_id));
     if (!live.has(r.path)) continue;
-    kept.add(r.asset_id);
+    [kept, sure].forEach((s) => s.add(r.asset_id));
     if (!copyOf.has(r.version_id)) copyOf.set(r.version_id, r.path);
+  }
+  const hide = db().prepare("UPDATE assets SET left_hidden_at = ? WHERE id = ? AND left_hidden_at IS NULL");
+  for (const a of kept) {
+    if (sure.has(a)) showLeft(a);
+    else hide.run(now, a);
   }
   // the place this computer had at that file (serverPlace): by its version, so the key finds it; one gone already stays
   const gone = db().prepare("UPDATE version_places SET state = 'gone', gone_at = ? WHERE version_id = ? AND kind = 'original' AND source = 'server-disk' AND path = ? AND state <> 'gone'");
