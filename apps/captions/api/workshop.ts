@@ -41,6 +41,7 @@ import { partialTurn } from "./lib/workshop/stream-json";
 import { bumpUsage, findUser } from "./users";
 import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
 import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
+import { mayLeave, workspaceLibrary } from "./library/upload-gate";
 import { deleteWorkspaceContents, workspaceContents } from "./lib/workspace-delete";
 import type { ClaudeSession, ClipRef, FileRef, GenerateInput, ImageRef, PastedRef, TurnStep } from "./lib/workshop/types";
 import { ATTACH_EXT, attachedFile, messageAttachments } from "./lib/workshop/attached";
@@ -3754,6 +3755,10 @@ workshopApp.post("/sessions/:id/chat", async (c) => {
     await writeFile(pastedPath(meta.id, id), p.text);
     pasted.push({ id, name: p.name, chars: p.text.length });
   }
+  if (input.images?.length) {
+    const left = await picturesLeave(meta);
+    if (!left.ok) return c.json(left.body, left.status);
+  }
   const images: ImageRef[] = [];
   for (const r of input.imageRefs ?? []) {
     if (await stat(imagePath(meta.id, r)).then(() => true, () => false)) images.push(r);
@@ -3870,10 +3875,18 @@ workshopApp.get("/sessions/:id/images/:iid", async (c) => {
   return sendFile(c, imagePath(meta.id, im), im.type);
 });
 
+/**
+ * Blur faces in the session's workspace (upload-gate.ts mayLeave): a picture sent here is not known to be blurred, so it
+ * is not kept (a piece's picture, one sent with a message). The refusal, else ok.
+ */
+const picturesLeave = async (meta: { owner: string; projectId?: string }) => mayLeave(await workspaceLibrary(meta.owner, meta.projectId), {});
+
 /** A picture for a piece: the editor's Add picture, a paste or a drop. Stored with the session's pictures; the piece's text holds its URL. */
 workshopApp.post("/sessions/:id/media", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
+  const left = await picturesLeave(meta);
+  if (!left.ok) return c.json(left.body, left.status);
   let up: ReturnType<typeof parsePictureUpload>;
   try {
     up = parsePictureUpload(await c.req.json().catch(() => null));
