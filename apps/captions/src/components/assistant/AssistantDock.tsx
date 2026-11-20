@@ -54,7 +54,7 @@ import { useFollowEnd } from "@/components/chat/useFollowEnd";
 import { ScrollToEnd } from "@/components/chat/ScrollToEnd";
 import { CiteButton, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
 import { CopyButton } from "@/components/workshop/CopyButton";
-import { VideoCards } from "./VideoCard";
+import { AskChanges, VideoCards } from "./VideoCard";
 import { ApprovalCards } from "./ApprovalCards";
 import { LimitBanner } from "./LimitBanner";
 import { FeedbackBar, FeedbackSlot } from "./FeedbackBar";
@@ -414,6 +414,8 @@ export function AssistantDock() {
   // The queue, as in the Workshop's chat: Enter while a reply runs adds the message here, and the first one sends
   // when the reply is done. Steer stops the reply and sends that one now; Edit puts it back in the box.
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  // Request changes under a ready cut: the box's question until the next message goes
+  const [ask, setAsk] = useState<{ text: string } | null>(null);
   // the AI picked in a chat's message box (null: back to the default), by chat, until a message takes it to the server
   const [picks, setPicks] = useState<Record<string, Selection | null>>({});
   const draftRef = useRef(draft);
@@ -1010,6 +1012,7 @@ export function AssistantDock() {
         )}
 
         {chatting && !empty && (
+          <AskChanges.Provider value={(text) => setAsk({ text })}>
           <div className="flex flex-col gap-3">
             {view.messages.map((m, i, all) => {
               const asked = all[i - 1];
@@ -1042,6 +1045,7 @@ export function AssistantDock() {
             })}
             {notice && <NoticeLine notice={notice} onChip={chipSend} />}
           </div>
+          </AskChanges.Provider>
         )}
 
         {pending && (
@@ -1111,6 +1115,7 @@ export function AssistantDock() {
                 return;
               }
               setDraft(EMPTY_DRAFT);
+              setAsk(null);
               submit(d);
             }}
             onStop={stop}
@@ -1119,6 +1124,7 @@ export function AssistantDock() {
             onPaste={handlePaste}
             quote={quote}
             onDropQuote={() => setQuote(null)}
+            ask={ask}
             waiting={busy || thinking}
             autoFocus
             aiPicker={
