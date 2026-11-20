@@ -102,14 +102,14 @@ async function account(name: string, upload: string, role: "user" | "admin" = "u
     setDeviceWork(mac.device.id, { v: WORK_V, steps: [], tasks: ["library-save"] });
     touchDevice(mac.device.id);
   };
-  /** The Mac's worker takes the next save and runs it. */
-  const takes = async () => {
-    for (let i = 0; i < 400; i++) {
+  /** The Mac's worker takes the next save and runs it; `stop`: a worker loop that ends gives up waiting at once. */
+  const takes = async (stop?: () => boolean) => {
+    for (let i = 0; i < 400 && !stop?.(); i++) {
       const t = (await c.post<{ task?: TaskPackage }>("work/claim", { v: WORK_V, steps: [], tasks: ["library-save"] })).task;
       if (t) return runTaskJob(t, c, o);
       await new Promise((r) => setTimeout(r, 25));
     }
-    throw new Error("no save to take");
+    if (!stop?.()) throw new Error("no save to take");
   };
   return { lib, mac, media, finished, online, takes };
 }
@@ -214,7 +214,8 @@ describe("Upload none: a save lands on the computer, indexed in place", () => {
     // one task per sound: the Mac takes them as they come
     let done = false;
     const worker = (async () => {
-      while (!done) await tina.takes().catch(() => {});
+      // a takes() still waiting when the sounds are in ends at once (it waited out its 10 s before: past the 5 s limit)
+      while (!done) await tina.takes(() => done).catch(() => {});
     })();
     const r = await findAndAdd("tina", { count: 2 });
     done = true;
