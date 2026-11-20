@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { ChevronRight, Gauge, Link2, Loader2, Magnet, MousePointer2, MoveHorizontal, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { ChevronRight, Gauge, Keyboard, Link2, Loader2, Magnet, MousePointer2, MoveHorizontal, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histGo, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, blade, clipOfPart, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
@@ -13,7 +13,8 @@ import { clientId, onTopic } from "@/lib/sync";
 import { dragging, type Dragged } from "@/lib/nle/drag";
 import { fingerprint, keepUnsaved, readUnsaved } from "@/lib/nle/unsaved";
 import { cn } from "@/lib/utils";
-import { commandOfKey, keyAction } from "@/lib/nle/keys";
+import { chordLabel, chordsOf, commandOfKey } from "@/lib/nle/keys";
+import { NleKeyboard, useKeymap } from "./NleKeyboard";
 import { CAMERA_FILE, readCamera, rangeReader } from "@/lib/nle/camera";
 import { downloadText } from "@/lib/download";
 import { NleMarkerDialog } from "./NleMarkerDialog";
@@ -188,6 +189,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   }, []);
   // the marker open in its dialog (its frame)
   const [markerEdit, setMarkerEdit] = useState<number | null>(null);
+  const keys = useKeymap();
+  const [keysOpen, setKeysOpen] = useState(false);
   const [tool, setTool] = useState<Tool>("select");
   const [snap, setSnap] = useState(true);
   const [linkSel, toggleLinkSel] = useLinkedSelection();
@@ -449,11 +452,11 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
-      const a = keyAction(e);
-      if (!a) return;
+      const k = commandOfKey(e, keys);
+      const c = k && COMMANDS[k.id];
+      if (!c) return;
       const zoom = (key: string) => zoomKeys.current?.(new KeyboardEvent("keydown", { key }));
-      const { id, params } = commandOfKey(a);
-      const c = COMMANDS[id];
+      const { id, params } = k;
       // Q in the source viewer: back to the timeline (the owner's Q ripples on the timeline)
       if (id === "rippleStart" && inSource) show("timeline");
       else if (id === "addMarker") marker();
@@ -498,6 +501,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         case "zoomFit": zoom("\\"); break;
         case "mediaPool": panelKeys.current?.("media"); break;
         case "inspector": panelKeys.current?.("inspector"); break;
+        case "keyboard": setKeysOpen(true); break;
       }
       e.preventDefault();
     };
@@ -505,6 +509,9 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  /** a command's first chord, as the menus write it ("" when it has none) */
+  const kl = (id: string) => chordLabel(chordsOf(keys, id)[0] ?? "");
+  const tip = (id: string) => (kl(id) ? ` (${kl(id)})` : "");
   const menuRow = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
   const linked = sel.some((k) => find(tl, k)?.item.link !== undefined);
   const iconBtn = (on: boolean) => cn("inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[11px]", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
@@ -533,7 +540,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
             {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}
             {!readOnly && (
               <button type="button" disabled={!dirty || !!saving} onClick={() => void save()}
-                title={dirty ? "Save (⌘S): this timeline as this version's newest draft" : "Saved"}
+                title={dirty ? `Save${tip("save")}: this timeline as this version's newest draft` : "Saved"}
                 className="relative inline-flex h-5 shrink-0 items-center gap-1.5 overflow-hidden rounded px-2 text-[12px] text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-100 disabled:text-zinc-500 disabled:hover:bg-transparent">
                 {saving?.done ? <span className="absolute inset-y-0 left-0 bg-white/10" style={{ width: `${Math.round(saving.done * 100)}%` }} /> : null}
                 <span className="relative inline-flex items-center gap-1.5">
@@ -593,7 +600,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                     {T.playing ? <Pause className="size-3.5 fill-current" /> : <Play className="size-3.5 translate-x-px fill-current" />}
                   </button>
                   <button type="button" aria-label="End" title="End (End)" onClick={() => T.seek(inSource ? (srcFrames - 1) / sfps : last)} className={cn(iconBtn(false), "w-7 justify-center")}><SkipForward className="size-3.5" /></button>
-                  <button type="button" aria-label="Loop" aria-pressed={loop} title="Loop (⌘/): plays In to Out, or all of it, round and round" onClick={toggleLoop}
+                  <button type="button" aria-label="Loop" aria-pressed={loop} title={`Loop${tip("loop")}: plays In to Out, or all of it, round and round`} onClick={toggleLoop}
                     className={cn(iconBtn(loop), "w-7 justify-center", loop && "text-violet-300")}><Repeat className="size-3.5" /></button>
                 </>
               } />
@@ -628,10 +635,11 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                   ))}
                 </span>
                 <button type="button" aria-pressed={snap} aria-label="Snapping" title="Snapping (N)" onClick={() => setSnap(!snap)} className={iconBtn(snap)}><Magnet className="size-3.5" /></button>
-                <button type="button" aria-pressed={linkSel} aria-label="Linked Selection" title="Linked Selection (⇧⌘L)" onClick={toggleLinkSel} className={iconBtn(linkSel)}><Link2 className="size-3.5" /></button>
+                <button type="button" aria-pressed={linkSel} aria-label="Linked Selection" title={`Linked Selection${tip("linkedSelection")}`} onClick={toggleLinkSel} className={iconBtn(linkSel)}><Link2 className="size-3.5" /></button>
                 {sep}
-                <button type="button" aria-label="Undo" title="Undo (⌘Z)" disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
-                <button type="button" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
+                <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
+                <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
+                <button type="button" aria-label="Keyboard Customization" title={`Keyboard Customization${tip("keyboard")}`} onClick={() => setKeysOpen(true)} className={iconBtn(false)}><Keyboard className="size-3.5" /></button>
               </>
             }
             end={<span className="flex min-w-0 items-center gap-2 truncate">{status}</span>} />
@@ -649,26 +657,26 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               <div className="group/sub relative">
                 <button type="button" role="menuitem" aria-haspopup="menu" className={menuRow}><span>Add Transition</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
                 <div role="menu" aria-label="Add Transition" className="absolute -top-1 left-full hidden w-44 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl group-focus-within/sub:block group-hover/sub:block">
-                  {(isVideo(find(tl, menu.cut)?.track ?? "V") ? [["Cross Dissolve", "addDissolve", "⌘T"], ["Dip to Black", "addDipToBlack", ""], ["Dip to White", "addDipToWhite", ""]] : [["Cross Fade", "addDissolve", "⌘T"]]).map(([l, id, k]) => (
+                  {(isVideo(find(tl, menu.cut)?.track ?? "V") ? [["Cross Dissolve", "addDissolve"], ["Dip to Black", "addDipToBlack"], ["Dip to White", "addDipToWhite"]] : [["Cross Fade", "addDissolve"]]).map(([l, id]) => (
                     <button key={id} type="button" role="menuitem" className={menuRow} onClick={() => { setMenu(null); runAtCut(id, menu.cut!); }}>
-                      <span>{l}</span><span className="text-zinc-500">{k}</span>
+                      <span>{l}</span><span className="text-zinc-500">{kl(id)}</span>
                     </button>
                   ))}
                 </div>
               </div>
             )}
-            {(menu.on === "gap" ? [["Close Gap", "", () => run("closeGap"), false] as MenuRow]
+            {(menu.on === "gap" ? [["Close Gap", kl("closeGap"), () => run("closeGap"), false] as MenuRow]
               : menu.on === "ruler" ? [
-                ["Add Marker", "M", marker, false],
-                ["Export Markers…", "", exportMarkers, !markersOf(tl).length],
+                ["Add Marker", kl("addMarker"), marker, false],
+                ["Export Markers…", kl("exportMarkers"), exportMarkers, !markersOf(tl).length],
               ] as MenuRow[]
               : [
-              ["Cut", "⌘X", () => run("cut"), false],
-              ["Copy", "⌘C", () => run("copy"), false],
-              ["Paste", "⌘V", () => run("paste"), !clipboard.length],
-              ["Duplicate", "⌘D", () => run("duplicate"), false],
-              ["Delete", "⌫", () => run("delete"), false],
-              ["Ripple delete", "S", () => run("rippleDelete"), false],
+              ["Cut", kl("cut"), () => run("cut"), false],
+              ["Copy", kl("copy"), () => run("copy"), false],
+              ["Paste", kl("paste"), () => run("paste"), !clipboard.length],
+              ["Duplicate", kl("duplicate"), () => run("duplicate"), false],
+              ["Delete", kl("delete"), () => run("delete"), false],
+              ["Ripple delete", kl("rippleDelete"), () => run("rippleDelete"), false],
               [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), !linked && sel.length < 2],
               ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !soundKeys(tl, sel).length],
             ] as MenuRow[]).map(([l, key, fn, off]) => (
@@ -679,6 +687,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
           </div>
         </div>
       )}
+      {keysOpen && <NleKeyboard onClose={() => setKeysOpen(false)} />}
       {markerEdit !== null && markersOf(tl).some((m) => m.frame === markerEdit) && (
         <NleMarkerDialog key={markerEdit} marker={markersOf(tl).find((m) => m.frame === markerEdit)!} fps={fps} onClose={() => setMarkerEdit(null)}
           onDone={(patch) => { commit(setMarker(tl, markerEdit, patch), "Edit marker"); setMarkerEdit(null); }}
