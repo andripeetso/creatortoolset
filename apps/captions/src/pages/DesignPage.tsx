@@ -1199,30 +1199,32 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           </Button>
         )}
       </AppBar>
-      {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
-      {macNote && (
-        <div role="status" className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-sm text-amber-700 dark:text-amber-300">
-          <span className="min-w-0 flex-1">{macNote.text}</span>
-          {macNote.stop && (
-            <Button size="sm" variant="ghost" className="h-7" onClick={macNote.stop}>
-              Stop
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" className="h-7" onClick={() => navigate("/settings/devices")}>
-            Settings
-          </Button>
-          {!macNote.stop && (
-            <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Close" onClick={() => setMacNote(null)}>
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      )}
-
       <div className="flex min-h-0 flex-1">
         <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} onZoomTo={zoomTo} />
 
         <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
+          {/* messages lie over the canvas, never above it: the canvas never moves under the pointer when one comes or goes */}
+          <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-col items-center gap-2">
+            {error && <p role="alert" className="pointer-events-auto w-full max-w-2xl rounded-md border border-red-500/40 bg-red-50 px-4 py-2 text-sm text-red-700 shadow-md dark:bg-[#3a2222] dark:text-red-300">{error}</p>}
+            {macNote && (
+              <div role="status" className="pointer-events-auto flex w-full max-w-2xl items-center gap-2 rounded-md border border-amber-500/40 bg-amber-50 px-4 py-1.5 text-sm text-amber-800 shadow-md dark:bg-[#3a3122] dark:text-amber-200">
+                <span className="min-w-0 flex-1">{macNote.text}</span>
+                {macNote.stop && (
+                  <Button size="sm" variant="ghost" className="h-7" onClick={macNote.stop}>
+                    Stop
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" className="h-7" onClick={() => navigate("/settings/devices")}>
+                  Settings
+                </Button>
+                {!macNote.stop && (
+                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Close" onClick={() => setMacNote(null)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
           {onDone && <h3 className="sr-only">Design open over the video editor: {design.name} (design id {design.id}, as in /design/{design.id})</h3>}
           <h3 data-picked className="sr-only">
