@@ -1389,6 +1389,28 @@ describe("designs: styles", () => {
     expect(got.how).toContain('"colorStyle":"accent"');
   });
 
+  it("an id every object has names no style unless the design has it, a patch that breaks a style keeps it, and a frame given whole keeps its styles", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const odd = await write(d.id, { styles: { colors: { accent: { name: "Accent", color: "#ff5500" } } }, frames: [{ id: "p1", layers: [rect("a", { fill: "#123456", colorStyle: "constructor" }), { id: "t", type: "text", text: "Hi", font: "Inter", size: 40, color: "#222222", textStyle: "constructor", align: "left", x: 0, y: 0, w: 200, h: 60 }, rect("b", { colorStyle: "accent" })] }] });
+    expect(odd.status).toBe(200);
+    let now = odd.body.design;
+    expect([layer(now, 0, "a").fill, layer(now, 0, "a").colorStyle, layer(now, 0, "t").color, layer(now, 0, "t").font, layer(now, 0, "t").size]).toEqual(["#123456", undefined, "#222222", "Inter", 40]);
+    expect(odd.body.notes).toEqual(expect.arrayContaining(['frames[0], frame p1 (Frame 1): layer a names no colour style "constructor": its own colour kept']));
+    const put = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: now.pages.map((p) => ({ ...p, layers: [...p.layers, rect("c", { colorStyle: "constructor" })] })), styles: now.styles, since: now.updatedAt });
+    expect([put.status, layer(put.body, 0, "c").colorStyle]).toEqual([200, undefined]);
+    // a patch that leaves a style broken: the style stays as it was
+    const bad = await write(d.id, { styles: { colors: { accent: { color: "blue" } } } });
+    // (nothing else in the call: nothing was changed, and it says why)
+    expect([bad.status, (bad.body as unknown as { error: string }).error]).toEqual([400, 'Nothing was changed: styles.colors.accent: a colour style\'s "color" is "#rrggbb" or "#rrggbbaa": left out; styles.colors.accent: kept as it was']);
+    now = (await call<Design>("GET", `/api/designs/${d.id}`)).body;
+    expect([now.styles!.colors!.accent!.color, layer(now, 0, "b").colorStyle]).toEqual(["#ff5500", "accent"]);
+    // the style changed, then the frame given whole again as it was read before: its layer keeps the style (and its colour)
+    const stale = structuredClone(now.pages[0]!);
+    now = (await write(d.id, { styles: { colors: { accent: { color: "#0000ff" } } } })).body.design;
+    now = (await write(d.id, { frames: [{ id: "p1", layers: stale.layers }] })).body.design;
+    expect([layer(now, 0, "b").fill, layer(now, 0, "b").colorStyle]).toEqual(["#0000ff", "accent"]);
+  });
+
   it("checks what an AI sends: a style it cannot be is said and left out, a layer naming none there keeps its own value", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
     const out = await write(d.id, {

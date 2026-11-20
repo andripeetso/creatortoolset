@@ -160,3 +160,38 @@ describe("what the panels do with styles", () => {
     expect(onText).toMatchObject({ text: "Other", textStyle: "headline", colorStyle: "accent" });
   });
 });
+
+describe("a style id that is a name every object has", () => {
+  it("is no style unless the design has it, and one the design has is its own", () => {
+    const pages = [page("p1", [rect("a", { fill: "#123456", colorStyle: "constructor" }), text("t", "x", { color: "#222222", textStyle: "constructor", runs: [{ start: 0, end: 1, textStyle: "tostring" }] })])];
+    const out = styled(pages, styles);
+    expect(at(out, "p1", "a")).toMatchObject({ fill: "#123456" });
+    expect([at(out, "p1", "a").colorStyle, at(out, "p1", "t").textStyle]).toEqual([undefined, undefined]);
+    expect(at(out, "p1", "t")).toMatchObject({ color: "#222222", font: "Inter", size: 40 });
+    const own = { colors: { constructor: { name: "Odd", color: "#abcdef" } } } as DesignStyles;
+    expect(at(styled(pages, own), "p1", "a").fill).toBe("#abcdef");
+    expect(mergeStyles(own, {}, {})).toEqual(own);
+    expect(mergeStyles({}, {}, own)).toEqual(own);
+  });
+});
+
+describe("found in review", () => {
+  it("a colour given to part of a run naming a style leaves the style there, and the rest keeps it", async () => {
+    const { patchRange } = await import("./runs");
+    const pages = styled([page("p1", [text("t", "Hello world", { runs: [{ start: 0, end: 11, colorStyle: "accent" }] })])], styles);
+    const t = at(pages, "p1", "t") as unknown as TextLayer;
+    const out = change(pages, styles, (l) => (l.id === "t" ? patchRange(t, (x) => ({ ...x, color: "#00ff00" }), 3, 5) : l));
+    expect((at(out, "p1", "t") as unknown as TextLayer).runs).toEqual([{ start: 0, end: 3, color: "#ff5500", colorStyle: "accent" }, { start: 3, end: 5, color: "#00ff00" }, { start: 5, end: 11, color: "#ff5500", colorStyle: "accent" }]);
+  });
+
+  it("a colour changed while a line is added in the same change still leaves the style", () => {
+    const pages = styled([page("p1", [text("t", "Hi", { colorStyle: "accent" })])], styles);
+    const out = change(pages, styles, (l) => ({ ...l, color: "#00ff00", strokes: [{ color: "#000000", width: 2 }] }) as Layer);
+    expect([at(out, "p1", "t").color, at(out, "p1", "t").colorStyle]).toEqual(["#00ff00", undefined]);
+  });
+
+  it("a run naming a style the design has not, with no colour of its own, keeps none", () => {
+    const out = styled([page("p1", [text("t", "Hi", { runs: [{ start: 0, end: 1, colorStyle: "gone", size: 50 }] })])], styles);
+    expect((at(out, "p1", "t") as unknown as TextLayer).runs).toEqual([{ start: 0, end: 1, size: 50 }]);
+  });
+});

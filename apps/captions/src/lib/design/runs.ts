@@ -160,6 +160,12 @@ export function patchRange(l: TextLayer, fn: (l: TextLayer) => TextLayer, start:
   const after = fn(shown);
   const style: TextStyle = {};
   for (const k of STYLE_KEYS) if (plain(k, after[k]) !== plain(k, shown[k])) (style as Record<string, unknown>)[k] = after[k] ?? plain(k, undefined);
+  // a part of the text given a colour (a size, a font…) of its own leaves the style its run named (lib/design/styles.ts);
+  // all of it is the layer's to leave (styles.ts unlinked)
+  if (start > 0 || end < l.text.length) {
+    if ("color" in style && !("colorStyle" in style)) style.colorStyle = undefined;
+    if ((["font", "size", "weight", "italic", "spacing"] as const).some((k) => k in style) && !("textStyle" in style)) style.textStyle = undefined;
+  }
   const rest = { ...after } as Record<string, unknown>;
   for (const k of STYLE_KEYS) {
     if (l[k] === undefined) delete rest[k];

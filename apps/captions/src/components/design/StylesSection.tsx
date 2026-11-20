@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { effectsOf, withEffects } from "@/lib/design/effects";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { useOwnFonts } from "@/lib/design/own-fonts";
-import { coloursOf, styleId, stylesFull, swapColour, textStyleOf, withStyle } from "@/lib/design/styles";
+import { coloursOf, styleId, styleOf, stylesFull, swapColour, textStyleOf, withStyle } from "@/lib/design/styles";
 import { cn } from "@/lib/utils";
 import { CHECKS } from "./ColourPicker";
 import { Colour, DIM, Effects, FIELD, fieldsFor, Num, PickOne, Section, Tap } from "./Inspector";
@@ -85,7 +85,7 @@ export function ColourStyles({ style, color, onPick }: { style?: string; color: 
     <div className="flex w-[208px] flex-col gap-1 text-[11px]">
       <div className="flex h-6 items-center justify-between">
         <p className={DIM}>Colour styles</p>
-        {style && ctx.styles.colors?.[style] && !ctx.locked && (
+        {style && styleOf(ctx.styles, "colors", style) && !ctx.locked && (
           <Tap label="Detach style" onClick={() => onPick({ color })}>
             <Unlink2 className="h-3.5 w-3.5" />
           </Tap>
@@ -119,7 +119,7 @@ export function ColourStyles({ style, color, onPick }: { style?: string; color: 
 }
 
 /** The name of the colour style a colour names, when there is one. */
-export const colourStyleName = (ctx: StylesCtx | null, style: string | undefined) => (style ? ctx?.styles.colors?.[style]?.name : undefined);
+export const colourStyleName = (ctx: StylesCtx | null, style: string | undefined) => (style ? styleOf(ctx?.styles, "colors", style)?.name : undefined);
 
 const without = <L extends Layer>(l: L, ...keys: string[]): L => {
   const out = { ...l } as Record<string, unknown>;
@@ -135,7 +135,7 @@ export function TextStyleRow({ picked, onPatch }: { picked: Layer[]; onPatch: (f
   const texts = picked.filter((l): l is TextLayer => l.type === "text");
   const ids = new Set(texts.map((t) => t.textStyle ?? ""));
   const now = ids.size === 1 ? [...ids][0]! : null;
-  const st = now ? ctx.styles.text?.[now] : undefined;
+  const st = now ? styleOf(ctx.styles, "text", now) : undefined;
   const own = texts.some((t) => t.styleOwn?.length);
   const list = Object.entries(ctx.styles.text ?? {});
   const apply = (id: string) => onPatch((l) => (l.type === "text" ? without({ ...l, textStyle: id }, "styleOwn") : l));
@@ -217,7 +217,7 @@ export function EffectStyleRow({ picked, onPatch }: { picked: Layer[]; onPatch: 
   if (!ctx) return null;
   const ids = new Set(picked.map((l) => l.effectStyle ?? ""));
   const now = ids.size === 1 ? [...ids][0]! : null;
-  const st = now ? ctx.styles.effects?.[now] : undefined;
+  const st = now ? styleOf(ctx.styles, "effects", now) : undefined;
   const list = Object.entries(ctx.styles.effects ?? {});
   const one = picked.length === 1 ? picked[0]! : null;
   if (!list.length && !(one && effectsOf(one).length)) return null;

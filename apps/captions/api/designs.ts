@@ -147,7 +147,7 @@ async function save(given: Design, by?: { by: string; n?: number }): Promise<Des
  * and each frame whose instances were made again checked as any frame is, so an override is held to what a layer may be.
  * `ai`: an AI's write, its words laid out by their guessed widths (a window's are laid out by the browser).
  */
-async function settle(d: Design, was: readonly DesignPage[], notes?: string[], ai = false, renamed = notes): Promise<Design> {
+async function settle(d: Design, was: readonly DesignPage[], notes?: string[], ai = false, renamed = notes, guess = ai): Promise<Design> {
   // every frame with its styles' values: a style this write changed reaches the frames it did not touch (and a style
   // taken away leaves its values on them)
   const restyled = styled(d.pages, d.styles);
@@ -162,7 +162,7 @@ async function settle(d: Design, was: readonly DesignPage[], notes?: string[], a
   const changed = synced.filter((p, i) => p !== d.pages[i]);
   if (!changed.length) return d;
   // (checked again: an AI's words laid out again with a text style's size)
-  const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), styles: d.styles, before: beforeIn(was), ...(ai ? {} : { measure: null, own: true }) });
+  const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), styles: d.styles, before: beforeIn(was), ...(guess ? {} : { measure: null }), ...(ai ? {} : { own: true }) });
   notes?.push(...again.notes);
   const kept = new Map(overridesAsKept(again.pages).map((p) => [p.id, p]));
   // a frame the check took away (a loose piece left empty) is gone, never kept unchecked
@@ -180,7 +180,7 @@ const withStyles = (d: Design, styles: Design["styles"]): Design => {
  * part (the fields it gives over the ones it has), or null to take it away (what names it keeps its values). Checked
  * as a window's are (cleanStyles).
  */
-function stylesFor(had: Design["styles"], given: unknown, fonts: readonly string[]): { styles: Design["styles"]; notes: string[]; changed: boolean } {
+function stylesFor(had: Design["styles"], given: unknown, fonts: readonly string[]): { styles: Design["styles"]; notes: string[]; changed: boolean; before?: Design["styles"] } {
   const g = raw(given);
   if (!g) return { styles: had, notes: ['"styles" is an object of colors, text and effects, each by a style\'s id: left out'], changed: false };
   const next: Record<string, Record<string, unknown>> = {};
@@ -193,8 +193,15 @@ function stylesFor(had: Design["styles"], given: unknown, fonts: readonly string
     next[kind] = list;
   }
   const out = cleanStyles(next, fonts);
+  // a style it had that a patch made into one that cannot be (a colour that is none, a name taken away) stays as it was
+  for (const kind of STYLE_KINDS)
+    for (const [id, was] of Object.entries(had?.[kind] ?? {}))
+      if (!Object.hasOwn(out.styles[kind] ?? {}, id) && raw(g[kind])?.[id] !== null) {
+        out.styles[kind] = { ...(out.styles[kind] ?? {}), [id]: was } as never;
+        out.notes.push(`styles.${kind}.${id}: kept as it was`);
+      }
   const styles = STYLE_KINDS.some((k) => out.styles[k]) ? out.styles : undefined;
-  return { styles, notes: out.notes, changed: JSON.stringify(styles ?? {}) !== JSON.stringify(had ?? {}) };
+  return { styles, notes: out.notes, changed: JSON.stringify(styles ?? {}) !== JSON.stringify(had ?? {}), before: had };
 }
 
 /** The styles a new design of a brand project starts with: the project's design (of this account) changed last that has any. */
@@ -366,7 +373,7 @@ ${DESIGN_LAYERS}
 
 A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
-STYLES: "styles" are this design's brand colours, type and effects, each by its id: {"colors":{"accent":{"name":"Accent","color":"#ff5500"}},"text":{"headline":{"name":"Headline","font":"Anton","size":120,"weight":700,"lineHeight":1,"spacing":0,"case":"upper"}},"effects":{"card":{"name":"Card shadow","effects":[…effects…]}}}. Use them for every brand colour and every heading, body and caption text: a layer names a colour style where it gives a colour ("colorStyle":"accent" beside "color" on a text, "fill" on a shape or path, "background" on a frame, or inside a solid fill or a stroke: {"type":"solid","color":"#ff5500","colorStyle":"accent"}), a text or a part of one names a text style ("textStyle":"headline": its ${["font", "size", "weight", "italic", "lineHeight", "spacing", "case"].join(", ")} are the style's), and any layer an effect style ("effectStyle":"card"). The style's value is put on the layer, so the colour or font you give beside it does not count; give the layer a value of its own by leaving the style out. A field you set on a styled text stays its own on top of its style ("styleOwn" lists them). Make or change styles with "styles" in a change (each style by its id, given whole or in part; null takes it away and its layers keep its value), in the same call as the layers that name it: {"styles":{"colors":{"accent":{"name":"Accent","color":"#ff5500"},"ink":{"name":"Ink","color":"#111111"}},"text":{"body":{"name":"Body","font":"Inter","size":40}}},"changes":[{"frame":"p1","layer":"l2","set":{"textStyle":"body","colorStyle":"ink"}}]}. To recolour the whole design, change the style once: {"styles":{"colors":{"accent":{"color":"#2255ff"}}}}. Without styles yet, make them first from the brand (its colours and type), then design with them.
+STYLES: "styles" are this design's brand colours, type and effects, each by its id: {"colors":{"accent":{"name":"Accent","color":"#ff5500"}},"text":{"headline":{"name":"Headline","font":"Anton","size":120,"weight":700,"lineHeight":1,"spacing":0,"case":"upper"}},"effects":{"card":{"name":"Card shadow","effects":[…effects…]}}}. Use them for every brand colour and every heading, body and caption text: a layer names a colour style where it gives a colour ("colorStyle":"accent" beside "color" on a text, "fill" on a shape or path, "background" on a frame, or inside a solid fill or a stroke: {"type":"solid","color":"#ff5500","colorStyle":"accent"}), a text or a part of one names a text style ("textStyle":"headline": its ${["font", "size", "weight", "italic", "lineHeight", "spacing", "case"].join(", ")} are the style's), and any layer an effect style ("effectStyle":"card"). The style's value is put on the layer, so the colour or font you give beside it does not count; give the layer a value of its own by leaving the style out (a "set" of a colour or effects alone on a layer naming a style does that: it gives the layer that value and takes the style off). A field you set on a styled text stays its own on top of its style ("styleOwn" lists them). Make or change styles with "styles" in a change (each style by its id, given whole or in part; null takes it away and its layers keep its value), in the same call as the layers that name it: {"styles":{"colors":{"accent":{"name":"Accent","color":"#ff5500"},"ink":{"name":"Ink","color":"#111111"}},"text":{"body":{"name":"Body","font":"Inter","size":40}}},"changes":[{"frame":"p1","layer":"l2","set":{"textStyle":"body","colorStyle":"ink"}}]}. To recolour the whole design, change the style once: {"styles":{"colors":{"accent":{"color":"#2255ff"}}}}. Without styles yet, make them first from the brand (its colours and type), then design with them.
 
 To change a design, give either or both of:
 - "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id; give it "as":"<a name of yours>" and the changes in the same call use that name as its "frame".
@@ -861,8 +868,9 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       say,
       before: pastIds,
       styles: d.styles,
-      // a colour it set on a layer naming a style leaves the style
-      was: (f) => d.pages.find((p) => p.id === f),
+      // a colour it set on a layer naming a style leaves the style; a frame given whole is as it says (a layer naming a
+      // style has the style's value, whatever colour it gives beside it)
+      ...(t.whole ? {} : { was: (f: string) => d.pages.find((p) => p.id === f) }),
       // a box it gives that was not laid out at that size before is new: its layers out of the flow keep their place
       settled,
     });
@@ -933,7 +941,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   );
   // the names that became another id: a new frame's, and a layer's that was taken or could not be an id
   const renamed = Object.fromEntries([...named].map(([name, id]) => [name.slice(name.indexOf("\0") + 1), id] as const).filter(([name, id]) => name !== id));
-  const saved = await save(await settle({ ...withStyles(now, d.styles), pages, updatedAt: stamp(now) }, now.pages, notes, true));
+  // (a frame a colour style reached keeps its layout; a text style changed lays out its words again)
+  const saved = await save(await settle({ ...withStyles(now, d.styles), pages, updatedAt: stamp(now) }, now.pages, notes, true, notes, !restyle || JSON.stringify(restyle.before?.text ?? {}) !== JSON.stringify(d.styles?.text ?? {})));
   // a style changed: the frames whose layers took its new value were written too (and are shown)
   if (restyle?.changed)
     for (const p of saved.pages) {
@@ -1423,7 +1432,7 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
     try {
       const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
       // made small enough to keep outside the turn (ffmpeg takes a while): the biggest pieces there may be room for
-      const bySize = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, DESIGN_LIMITS.pictures - 1);
+      const bySize = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, Math.max(0, DESIGN_LIMITS.pictures - 1 - d.pictures.length));
       const behind = await keepable(made.background, tmp, "The picture behind");
       const kept: Buffer[] = [];
       for (const { n } of bySize) kept[n] = await keepable(made.pieces[n]!, tmp, "A piece");

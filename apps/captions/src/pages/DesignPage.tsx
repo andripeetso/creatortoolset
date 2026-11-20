@@ -22,7 +22,7 @@ import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
 import { detached, plainOf, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
 import { ComponentSection } from "@/components/design/ComponentSection";
-import { depthOf, everyLayer, keepNext, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
+import { depthOf, everyLayer, keepNext, same, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
@@ -365,7 +365,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
             // changed somewhere else while this save was on its way (an AI's frames): nothing was written. This
             // window's changes are done again on the design as it is now, and that is saved: a moment later when
             // the canvas changed with it (as any change is), at once when it did not
-            if (e instanceof DesignChanged) return void (remote.current(e.design) || ((JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) || JSON.stringify(stylesNow.current) !== JSON.stringify(e.design.styles ?? {})) && send(latest.current)));
+            if (e instanceof DesignChanged) return void (remote.current(e.design) || ((JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) || !same(stylesNow.current, e.design.styles ?? {})) && send(latest.current)));
             failed.current = true;
             // what is on the canvas now, never an older save (a newer one may be on its way already)
             unsaved.current ??= latest.current;
@@ -398,6 +398,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // (and this window's styles onto the server's: each style by its id, each field from the side that changed it)
     const onto = (pages: Page[], base: Page[], theirs: Design) => {
       stylesNow.current = mergeStyles(stylesNow.current, server.current.styles, theirs.styles);
+      // what the server has now is the base of the next try (a second refusal merges against it, not the first one's)
+      server.current = { ...server.current, styles: theirs.styles ?? {} };
       return styled(syncInstances(mergeFrames(pages, base, layoutPages(theirs.pages, measureWords), sent.current)), stylesNow.current);
     };
     // on the way out of the page: refused for a change made elsewhere, merged onto it and sent again (three times at
@@ -547,18 +549,22 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       const merged = layoutPages(styled(syncInstances(mergeFrames(had, server.current.pages, theirs, sent.current)), mergedStyles), measureWords);
       server.current = { pages: theirs, styles: d.styles ?? {}, at: d.updatedAt };
       setDesign(d);
-      const text = JSON.stringify([merged, mergedStyles]);
+      // (styles told apart whatever order their fields were written in: the server writes its own)
+      const text = JSON.stringify(merged);
+      const isTheirs = text === JSON.stringify(theirs) && same(mergedStyles, d.styles ?? {});
       // nothing of this window's is left to send: what is on the canvas is what the server has
-      if (text === JSON.stringify([theirs, d.styles ?? {}])) {
+      if (isTheirs) {
         unsaved.current = null;
         setSaved("saved");
       }
-      if (text === JSON.stringify([had, hadStyles])) return false;
-      if (text === JSON.stringify([theirs, d.styles ?? {}])) first.current = true;
+      if (text === JSON.stringify(had) && same(mergedStyles, hadStyles)) return false;
+      if (isTheirs) first.current = true;
       // at once for whatever is sent before the canvas is drawn again
-      latest.current = merged;
+      // a loose piece kept to the box round it, and how far each frame's ids went remembered, as any change does
+      const kept = keepNext(hugLoose(merged), had);
+      latest.current = kept;
       stylesNow.current = mergedStyles;
-      changeDoc({ pages: merged, styles: mergedStyles });
+      changeDoc({ pages: kept, styles: mergedStyles });
       // frames arriving on a canvas that had none (the assistant designing it): shown whole, no closer than their own
       // pixels, and the frame tool (out on an empty canvas) put away
       if (!had.length && merged.length) {
@@ -1271,7 +1277,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // the change the blur made, and one merged in from a refused save, reach `unsaved` once the page has drawn them
     const drawn = () => new Promise((r) => setTimeout(r, 0));
     /** The canvas is what the server has: a change merged in from a refused save reaches `unsaved` only when its timer's effect runs. */
-    const sent = () => JSON.stringify(latest.current) === JSON.stringify(server.current.pages) && JSON.stringify(stylesNow.current) === JSON.stringify(server.current.styles);
+    const sent = () => JSON.stringify(latest.current) === JSON.stringify(server.current.pages) && same(stylesNow.current, server.current.styles);
     failed.current = false;
     try {
       await drawn();

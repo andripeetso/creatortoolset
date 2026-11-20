@@ -19,11 +19,20 @@ export const STYLE_ID = /^[a-z0-9-]{1,24}$/;
 /** What a run of a text takes from a text style (a run has no line height or case of its own). */
 const RUN_FIELDS = ["font", "size", "weight", "italic", "spacing"] as const;
 
+/** A style of a kind by its id: only one of the design's own (an id like "constructor" is no style of an object's). */
+export const styleOf = <K extends DesignStyleKind>(s: DesignStyles | undefined, kind: K, id: string): NonNullable<DesignStyles[K]>[string] | undefined => {
+  const list = s?.[kind];
+  return list && Object.hasOwn(list, id) ? (list[id] as NonNullable<DesignStyles[K]>[string]) : undefined;
+};
+const ownOf = (r: Record<string, Rec>, id: string): Rec | undefined => (Object.hasOwn(r, id) ? r[id] : undefined);
+
 /** One colour of a layer or a frame: its value, the style it names, and whether that place can name one at all. */
 export interface Colour {
   color: string;
   style?: string;
   slot: boolean;
+  /** where it is on the layer ("own", "fills.0", "runs.2"…): the same place on another version of it */
+  at?: string;
 }
 
 /** A copy of `o` with `k` set to `v` (absent when undefined); `o` itself when that is what it has. */
@@ -55,25 +64,29 @@ const each = <T>(v: unknown, fn: (x: T) => T): unknown => {
  * names none). The same object when nothing changed.
  */
 export function mapColours<T extends Layer | DesignPage>(l: T, fn: (c: Colour) => { color: string; style?: string }): T {
-  const one = <O>(o: O, key: string, styleKey: string | null, six = false): O => {
+  const one = <O>(o: O, key: string, styleKey: string | null, six = false, at = key): O => {
     const r = o as Rec;
     const style = r && styleKey && typeof r[styleKey] === "string" ? (r[styleKey] as string) : undefined;
     // (a run naming a colour style may have no colour of its own yet)
     if (!r || (typeof r[key] !== "string" && style === undefined)) return o;
     const color = typeof r[key] === "string" ? (r[key] as string) : "";
-    const got = fn({ color, ...(style !== undefined ? { style } : {}), slot: !!styleKey });
-    const out = field(o, key, six ? got.color.slice(0, 7) : got.color);
+    const got = fn({ color, ...(style !== undefined ? { style } : {}), slot: !!styleKey, at });
+    // (no colour at all: a run that named a style it could not have keeps none of its own)
+    const out = field(o, key, (six ? got.color.slice(0, 7) : got.color) || undefined);
     return styleKey ? field(out, styleKey, got.style) : out;
   };
   let o = l;
   const page = !("type" in l);
   const own = page ? "background" : l.type === "text" ? "color" : l.type === "shape" || l.type === "path" ? "fill" : null;
-  if (own) o = one(o, own, "colorStyle");
+  if (own) o = one(o, own, "colorStyle", false, "own");
   const r = () => o as unknown as Rec;
-  o = field(o, "fills", each<Rec>(r().fills, (p) => (p.type === "solid" ? one(p, "color", "colorStyle") : p.type === "gradient" ? field(p, "stops", each<Rec>(p.stops, (s) => one(s, "color", null))) : p)));
-  o = field(o, "strokes", each<Rec>(r().strokes, (s) => one(s, "color", "colorStyle")));
-  if (r().stroke) o = field(o, "stroke", one(r().stroke, "color", "colorStyle"));
-  o = field(o, "runs", each<Rec>(r().runs, (x) => one(x, "color", "colorStyle", true)));
+  let n = 0;
+  o = field(o, "fills", each<Rec>(r().fills, (p) => (n++, p.type === "solid" ? one(p, "color", "colorStyle", false, `fills.${n}`) : p.type === "gradient" ? field(p, "stops", each<Rec>(p.stops, (s) => one(s, "color", null))) : p)));
+  n = 0;
+  o = field(o, "strokes", each<Rec>(r().strokes, (s) => one(s, "color", "colorStyle", false, `strokes.${n++}`)));
+  if (r().stroke) o = field(o, "stroke", one(r().stroke, "color", "colorStyle", false, "stroke"));
+  n = 0;
+  o = field(o, "runs", each<Rec>(r().runs, (x) => one(x, "color", "colorStyle", true, `runs.${n++}`)));
   if (r().gradient) o = field(o, "gradient", one(one(r().gradient, "to", null, true), "via", null, true));
   if (r().outline) o = field(o, "outline", one(r().outline, "color", null));
   o = field(o, "marks", each<Rec>(r().marks, (m) => one(m, "color", null, true)));
@@ -110,7 +123,7 @@ function styledLayer<L extends Layer | DesignPage>(l: L, s: DesignStyles, say?: 
   const who = "type" in l ? `layer ${l.id}` : "the frame";
   let o = mapColours(l, (c) => {
     if (c.style === undefined) return c;
-    const st = s.colors?.[c.style];
+    const st = styleOf(s, "colors", c.style);
     if (!st) {
       say?.(`${who} names no colour style "${c.style}": its own colour kept`);
       return { color: c.color };
@@ -120,7 +133,7 @@ function styledLayer<L extends Layer | DesignPage>(l: L, s: DesignStyles, say?: 
   if (!("type" in o)) return o;
   const r = () => o as unknown as Rec;
   if (typeof r().effectStyle === "string") {
-    const st = s.effects?.[r().effectStyle as string];
+    const st = styleOf(s, "effects", r().effectStyle as string);
     if (!st) {
       say?.(`${who} names no effect style "${String(r().effectStyle)}": its own effects kept`);
       o = field(o, "effectStyle", undefined);
@@ -129,7 +142,7 @@ function styledLayer<L extends Layer | DesignPage>(l: L, s: DesignStyles, say?: 
   if ((o as Layer).type !== "text") return o;
   let t = o as TextLayer;
   if (t.textStyle !== undefined) {
-    const st = s.text?.[t.textStyle];
+    const st = styleOf(s, "text", t.textStyle);
     if (!st) {
       say?.(`${who} names no text style "${t.textStyle}": its own font and size kept`);
       t = field(field(t, "textStyle", undefined), "styleOwn", undefined);
@@ -142,7 +155,7 @@ function styledLayer<L extends Layer | DesignPage>(l: L, s: DesignStyles, say?: 
   } else if (t.styleOwn) t = field(t, "styleOwn", undefined);
   t = field(t, "runs", each<Rec>(t.runs, (run) => {
     if (typeof run.textStyle !== "string") return run;
-    const st = s.text?.[run.textStyle];
+    const st = styleOf(s, "text", run.textStyle);
     if (!st) {
       say?.(`a part of ${who} names no text style "${run.textStyle}": its own look kept`);
       return field(run, "textStyle", undefined);
@@ -180,26 +193,24 @@ const coloursIn = (l: Layer | DesignPage): Colour[] => {
 
 /** A layer as `was` had it, with what was changed on it since that is a style's leaving that style (unlinked). */
 function unlinkedLayer<L extends Layer | DesignPage>(l: L, b: L, s: DesignStyles): L {
-  const had = coloursIn(b);
-  let n = 0;
-  const count = coloursIn(l).length;
-  // a colour changed here (not to the style's own) names that style no more; told place by place, so only where the places are the same
-  let o = count !== had.length ? l : mapColours(l, (c) => {
-    const w = had[n++]!;
-    const st = c.style !== undefined ? s.colors?.[c.style] : undefined;
-    return st && c.style === w.style && c.color.toLowerCase() !== w.color.toLowerCase() && c.color.toLowerCase() !== st.color.toLowerCase().slice(0, c.color.length) ? { color: c.color } : c;
+  // a colour changed here (not to the style's own) names that style no more: each told from what was at the same place
+  const had = new Map(coloursIn(b).flatMap((c) => (c.style !== undefined && c.at ? [[c.at, c] as const] : [])));
+  let o = mapColours(l, (c) => {
+    const w = c.at !== undefined ? had.get(c.at) : undefined;
+    const st = c.style !== undefined ? styleOf(s, "colors", c.style) : undefined;
+    return st && w && c.style === w.style && c.color.toLowerCase() !== w.color.toLowerCase() && c.color.toLowerCase() !== st.color.toLowerCase().slice(0, c.color.length) ? { color: c.color } : c;
   });
   if (!("type" in o) || !("type" in b)) return o;
   const r = o as unknown as Rec;
   const q = b as unknown as Rec;
   if (typeof r.effectStyle === "string" && r.effectStyle === q.effectStyle) {
-    const st = s.effects?.[r.effectStyle];
+    const st = styleOf(s, "effects", r.effectStyle);
     if (st && !same(r.effects, q.effects) && !same(r.effects, st.effects)) o = field(o, "effectStyle", undefined);
   }
   if ((o as Layer).type !== "text" || (b as Layer).type !== "text") return o;
   let t = o as TextLayer;
   const tb = b as TextLayer;
-  const st = t.textStyle !== undefined && t.textStyle === tb.textStyle ? s.text?.[t.textStyle] : undefined;
+  const st = t.textStyle !== undefined && t.textStyle === tb.textStyle ? styleOf(s, "text", t.textStyle) : undefined;
   if (st) {
     const own = new Set(t.styleOwn ?? []);
     const before = own.size;
@@ -210,7 +221,7 @@ function unlinkedLayer<L extends Layer | DesignPage>(l: L, b: L, s: DesignStyles
     let k = 0;
     t = field(t, "runs", each<Rec>(t.runs, (run) => {
       const was = tb.runs![k++] as unknown as Rec;
-      const rs = typeof run.textStyle === "string" && run.textStyle === was.textStyle ? s.text?.[run.textStyle] : undefined;
+      const rs = typeof run.textStyle === "string" && run.textStyle === was.textStyle ? styleOf(s, "text", run.textStyle) : undefined;
       return rs && RUN_FIELDS.some((f) => !same(run[f], was[f]) && !same(run[f], rs[f])) ? field(run, "textStyle", undefined) : run;
     }));
   }
@@ -256,7 +267,7 @@ export function mergeStyles(mine: DesignStyles | undefined, base: DesignStyles |
     const t = (theirs?.[kind] ?? {}) as unknown as Record<string, Rec>;
     const merged: Record<string, Rec> = {};
     for (const id of new Set([...Object.keys(t), ...Object.keys(m)])) {
-      const [mi, bi, ti] = [m[id], b[id], t[id]];
+      const [mi, bi, ti] = [ownOf(m, id), ownOf(b, id), ownOf(t, id)];
       let v: Rec | undefined;
       if (same(mi, bi)) v = ti;
       else if (same(ti, bi) || !ti) v = mi;
