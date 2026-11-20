@@ -17,12 +17,12 @@ import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuS
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, measureWords, sourceOf, type Loaded } from "@/lib/design/draw";
 import { fillsOf, paintPictures, strokesOf } from "@/lib/design/paint";
-import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
+import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, carryLayer, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
 import { detached, plainOf, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
 import { ComponentSection } from "@/components/design/ComponentSection";
-import { depthOf, everyLayer, keepNext, same, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, moveRow, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
+import { depthOf, everyLayer, keepNext, same, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
@@ -675,19 +675,13 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const carry = (from: number, id: string, to: number, by: string | null, how: "front" | "behind" | "into") => {
     const src = pages[from];
     const dst = pages[to];
-    const me = src && dst && frames[from] && frames[to] ? inFrame(src.layers, id) : undefined;
-    if (!me || locked) return;
-    if (everyLayer(dst!.layers).length + everyLayer([me]).length > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups`);
-    // from a loose piece (its box is on the canvas): where it lies on the canvas, in the frame's pixels
-    const moved = src!.loose || dst!.loose ? { ...me, x: me.x + frames[from]!.x - frames[to]!.x, y: me.y + frames[from]!.y - frames[to]!.y } : me;
-    // an id of its own there (every frame has its own l1), and in no group of that frame's (as a layer dragged there on the canvas)
-    const fresh = everyLayer(dst!.layers).some((x) => x.id === moved.id) ? freshIds(dst!, 1)[0]! : moved.id;
-    const [placed] = regroup(reid([moved], [fresh], dst!.layers), dst!.layers);
-    const there = { ...dst!, layers: [...dst!.layers, placed!] };
-    const rest = mapLayers(src!.layers, (l) => (l.id === id ? null : l));
-    setPages([{ ...src!, layers: rest }, (by && moveRow(there, placed!.id, by, how)) || there]);
+    if (!src || !dst || !frames[from] || !frames[to] || locked) return;
+    const done = carryLayer(src, frames[from]!, id, dst, frames[to]!, by, how);
+    if (done === "full") return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups`);
+    if (!done) return;
+    setPages([done.from, done.to]);
     // a loose piece left empty is gone (hugLoose): the frames after it move up one
-    pick(src!.loose && !rest.length && from < to ? to - 1 : to, [placed!.id]);
+    pick(src.loose && !done.from.layers.length && from < to ? to - 1 : to, [done.id]);
   };
   const movePage = (from: number, to: number) => {
     if (from === to) return;

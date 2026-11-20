@@ -1059,9 +1059,9 @@ export function Inspector({
           </Section>
           <Section title="Layout">
             <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
-              {/* a text's box is for its words: the lock leaves it be, as on the canvas */}
-              {num("W", "Width", box.w, (n) => sized(n, ratio && !texts ? (box.h * n) / box.w : box.h), { min: 1 })}
-              {num("H", "Height", box.h, (n) => sized(ratio && !texts ? (box.w * n) / box.h : box.w, n), { min: 1 })}
+              {/* a text's box is for its words, and a side that hugs or fills keeps doing so: the lock leaves them be */}
+              {num("W", "Width", box.w, (n) => sized(n, ratio && !texts && !picked.some((l) => l.sizing?.h) ? (box.h * n) / box.w : box.h), { min: 1 })}
+              {num("H", "Height", box.h, (n) => sized(ratio && !texts && !picked.some((l) => l.sizing?.w) ? (box.w * n) / box.h : box.w, n), { min: 1 })}
               <Tap label={ratio ? "Unlock the shape" : "Keep the shape"} on={ratio} onClick={() => onRatio(!ratio)}>
                 {ratio ? <Link2 className="h-3.5 w-3.5" /> : <Unlink2 className="h-3.5 w-3.5" />}
               </Tap>
