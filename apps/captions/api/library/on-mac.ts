@@ -345,6 +345,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
         WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL
+          ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no strip of a clip not blurred is made again here (putSprite) */ : ""}
         ORDER BY a.created_at DESC LIMIT 500`,
     )
     .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null }[];
@@ -358,7 +359,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
 
 /** A video's strip made on the computer that has it (a JPEG under 2 MB), for a version of `libraryId`: false when it isn't one. */
 export async function putSprite(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
-  if (!jpeg(b64, 2 * MB)) return false;
+  if (!jpeg(b64, 2 * MB) || !mayLeave(libraryId, { versionId }).ok) return false;
   const own = libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.kind = 'video'").get(versionId, libraryId);
   if (!own) return false;
   await keepJpeg(libraryId, versionId, "sprite", b64 as string);

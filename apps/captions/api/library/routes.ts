@@ -9,7 +9,7 @@ import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { BLUR_UPLOADS, hasMembers, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
-import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
+import { accountOf, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
@@ -488,7 +488,7 @@ const receives = (row: UploadRow, got?: string) => {
   const made = madeOf(row)?.proxy;
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
   // a blurred render is declared only by a computer of the uploader's own (startUpload checks it too)
-  const blurredOf = sender?.owner === row.created_by ? row.blurred_of : null;
+  const blurredOf = sender?.owner === row.created_by && sender.owner === libraryAccount(row.library_id) ? row.blurred_of : null;
   const into = { id: row.library_id, collectionId: row.collection_id, blurredOf };
   const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
   // at the finish: bytes that are the original itself, or any clip of the library not blurred, are not its blurred render
@@ -496,6 +496,12 @@ const receives = (row: UploadRow, got?: string) => {
   if (!made) return mayReceive("original", into, origin, { sender });
   // the size check runs for every sender, a computer without the proof included (UNIFIED-PRD §4.1 rule 4)
   return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got } : {}), bytes: row.size, original: made.size } });
+};
+
+/** The account a library is (libraries.workspace_id read back as its account, access.ts accountOf). */
+const libraryAccount = (libraryId: string): string | null => {
+  const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
+  return row ? accountOf(row.workspace_id) : null;
 };
 
 /** Whether `sha256` is the bytes of a clip of `libraryId` that is not a blurred render (its upload's or its full SHA-256). */
@@ -708,7 +714,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   // only from the computer itself, signed in with its own device token: never the body's word, never a browser or a key
   // that names a computer of the account (a re-encode of an original would pass the hash check)
   const computer = deviceForToken(c.req.header("authorization"));
-  const blurredOf = from && computer && computer.id === fromDevice && computer.owner === user.username && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
+  // and only the library's own account's computer: a member's computer is not where the originals are kept
+  const blurredOf = from && computer && computer.id === fromDevice && computer.owner === user.username && computer.owner === libraryAccount(libraryId) && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
   const into = { id: libraryId, collectionId: collection, blurredOf };
   // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
   // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isPhoneSession), never a browser's or a Mac's

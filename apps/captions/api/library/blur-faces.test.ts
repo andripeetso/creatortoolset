@@ -41,7 +41,7 @@ const { libraryDb } = await import("./db");
 const { libraryApp, serveGate, mediaFile } = await import("./routes");
 const { shareApp, publicShareApp } = await import("./shares");
 const { mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_NOT_BLURRED, BLUR_UPLOADS, workspaceLibrary } = await import("./upload-gate");
-const { macFrames, dropHeldCopy, dropMacFrames, noPicture, putThumb, holdStills, HELD_STILLS_BYTES, HELD_STILLS_MS } = await import("./on-mac");
+const { macFrames, dropHeldCopy, dropMacFrames, noPicture, putSprite, putThumb, strayStrips, holdStills, HELD_STILLS_BYTES, HELD_STILLS_MS } = await import("./on-mac");
 const { versionSource } = await import("./access");
 const { lightKey } = await import("../editor/reach");
 const { useFile } = await import("../assistant-files");
@@ -260,6 +260,15 @@ describe("a blurred render is a computer's own, and never the original's bytes",
     // another computer of the account signed in, naming this one
     const second = pairDevice("tinyacrobatics", "Tiny Laptop");
     expect((await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, MAC, { authorization: `Bearer ${second.token}` })).status).toBe(409);
+    // a member's own computer, signed in as itself, uploading as that member: not where the originals are kept
+    const member = pairDevice("sam", "Sam Mac");
+    const r2 = await app.request("/api/library/lib_kids/uploads", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-as": "sam", authorization: `Bearer ${member.token}` },
+      body: JSON.stringify({ filename: "Lunge blurred.mp4", size: 4, fromPath: "/Volumes/Sam/Lunge blurred.mp4", fromDevice: member.device.id, blurredOf: OF }),
+    });
+    expect(r2.status).toBe(409);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_kids' AND blurred_of IS NOT NULL").get()).toEqual({ n: 0 });
     // another account's computer is not this account's either
     const other = pairDevice("sam", "Sam Mac").device.id;
     expect((await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, other)).status).toBe(409);
@@ -326,6 +335,20 @@ describe("files stored before Blur faces was turned on stay, and leave no more",
     expect((await serveGate("v_late", "proxy", { key: "k-late-proxy", what: "proxy" })).ok).toBe(false);
     // still stored: deleting them is the owner's call
     expect(d.prepare("SELECT storage_key FROM derivatives WHERE version_id = 'v_late'").get()).toEqual({ storage_key: "k-late-proxy" });
+  });
+});
+
+describe("a strip made again on the Mac (an old 16:9 strip)", () => {
+  it("is not asked for, nor kept, for a clip not blurred: its old strip stays stored and is not served", async () => {
+    lib("lib_strips", { upload: "all" });
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_strip', 'lib_strips', 'video', 'Strip', 'v_strip', 'tinyacrobatics', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe, mac_path, mac_device) VALUES ('v_strip', 'a_strip', 1, 'mac:v_strip', 9, 'h', 'ready', 'tinyacrobatics', 0, ?, '/Volumes/Tiny Footage/Strip.mov', ?)").run(JSON.stringify({ duration: 3, width: 1080, height: 1920 }), MAC);
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('v_strip', 'sprite', 'k-old-strip', 1)").run();
+    expect(strayStrips("lib_strips", MAC).map((x) => x.versionId)).toEqual(["v_strip"]);
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.blurFaces', json('true'), '$.upload', 'proxies') WHERE id = 'lib_strips'").run();
+    expect(strayStrips("lib_strips", MAC)).toEqual([]);
+    expect(await putSprite("lib_strips", "v_strip", JPEG)).toBe(false);
+    expect(d.prepare("SELECT storage_key FROM derivatives WHERE version_id = 'v_strip' AND kind = 'sprite'").get()).toEqual({ storage_key: "k-old-strip" });
   });
 });
 

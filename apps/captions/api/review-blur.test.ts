@@ -13,17 +13,21 @@ process.env.DATA_DIR = dataDir;
 afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
 const STORE = "eeeeeeee-0000-4000-8000-0000000000b1";
 const OWN = "eeeeeeee-0000-4000-8000-0000000000b2";
+// a workspace a plug-in serves itself (a footage store, the studio's catalog), with no Blur faces of its own yet
+const PLUGGED = "eeeeeeee-0000-4000-8000-0000000000b3";
 
 const { reviewApp, addVersion, reviewJobsDone } = await import("./review");
 const { inRequestWorkspace } = await import("./lib/workspace-scope");
 const { libraryDb } = await import("./library/db");
 const { REFUSED_BLUR } = await import("./library/upload-gate");
+const { workspaceScope } = await import("./lib/workshop/workspace");
+(await import("./lib/plugin")).mountPlugins(new Hono(), [{ id: "store", uploadsTo: async () => (workspaceScope.getStore()?.id === PLUGGED ? "store" : null) }]);
 // the STORE workspace's Media Library, whose Blur faces each test turns on or off
 libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_store', 'ana', 'Library', 'local', ?, 0)").run(JSON.stringify({ projectId: STORE, upload: "none" }));
 const blurFaces = (on: boolean) => libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.blurFaces', json(?)) WHERE id = 'lib_store'").run(on ? "true" : "false");
 
 mkdirSync(path.join(dataDir, "workshop", "projects"), { recursive: true });
-for (const [id, at] of [[STORE, 1], [OWN, 2]] as const)
+for (const [id, at] of [[STORE, 1], [OWN, 2], [PLUGGED, 3]] as const)
   writeFileSync(path.join(dataDir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "ana", name: id, createdAt: at, updatedAt: at }));
 
 const app = new Hono<{ Variables: AuthVars }>();
@@ -110,6 +114,22 @@ it("turns no share link or download on for an unblurred cut once Blur faces is o
   await app.request(`/assets/${id}`, send("PATCH", { projectId: project.id }));
   expect((await app.request(`/projects/${project.id}`, send("PATCH", { share: { enabled: true } }))).status).toBe(409);
   blurFaces(false);
+});
+
+it("turns no share link or download on for an unblurred cut where a plug-in serves the workspace, Blur faces or not; one already on stays", async () => {
+  const id = await cut(PLUGGED, false);
+  const share = (s: Record<string, unknown>) => app.request(`/assets/${id}`, send("PATCH", { share: s }));
+  expect((await share({ enabled: true })).status).toBe(200);
+  await cut(PLUGGED, true, id);
+  for (const s of [{ enabled: true }, { download: true }]) {
+    const r = await share(s);
+    expect(r.status).toBe(409);
+    expect((await json(r)).error).toBe("Blur the faces first: this cut uses clips that aren't blurred yet");
+  }
+  expect((await asset(id)).share).toMatchObject({ enabled: true, download: false });
+  const project = await json(app.request("/projects", { ...send("POST", { name: "Shoot" }), headers: { "content-type": "application/json", "x-ct-workspace": PLUGGED } }));
+  await app.request(`/assets/${id}`, send("PATCH", { projectId: project.id }));
+  expect((await app.request(`/projects/${project.id}`, send("PATCH", { share: { enabled: true } }))).status).toBe(409);
 });
 
 it("under Blur faces a video filed before it with no word on its faces is neither shared nor shown on its link", async () => {

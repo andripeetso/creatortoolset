@@ -31,7 +31,7 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
 import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
-import { ensureLibrary } from "./library/access";
+import { ensureLibrary, servedByPlugin } from "./library/access";
 import { blursFaces } from "./library/db";
 import { mayLeave, workspaceLibrary } from "./library/upload-gate";
 import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
@@ -173,6 +173,12 @@ const waitsOnBlur = (m: Meta) => {
 /** A version with its files plays faces nobody has blurred: a share link shows every version. */
 /** Under Blur faces: a version with its files was not filed as blurred (one from before the switch, or not declared). */
 const showsUnblurred = (m: Meta) => m.versions.some((v) => !v.blurred && !v.removed);
+/**
+ * No share link or download goes on for this video: under Blur faces, a version not filed as blurred; where a plug-in
+ * serves the workspace (its own footage store, before Blur faces is on there), a version filed as not blurred.
+ */
+const keepsLinksOff = async (m: Meta, owner: string, workspace?: string) =>
+  (showsUnblurred(m) && (await blurFacesIn(owner, workspace))) || (m.versions.some((v) => v.notBlurred && !v.removed) && (await servedByPlugin(owner, workspace)));
 const NOT_BLURRED_SHARE = "Blur the faces first: this cut uses clips that aren't blurred yet";
 /** Blur faces is on for the workspace a cut is filed in (contracts LibrarySettings.blurFaces). */
 const blurFacesIn = async (owner: string, workspace?: string) => {
@@ -1574,7 +1580,7 @@ reviewApp.patch("/assets/:id", async (c) => {
     return c.json({ error: "Project not found" }, 404);
   }
   // an existing link stays on (Review warns on it); only turning a link or its download on is refused
-  if ((share?.enabled === true || share?.download === true) && showsUnblurred(v.meta) && (await blurFacesIn(v.meta.owner, v.meta.workspace))) {
+  if ((share?.enabled === true || share?.download === true) && (await keepsLinksOff(v.meta, v.meta.owner, v.meta.workspace))) {
     return c.json({ error: NOT_BLURRED_SHARE }, 409);
   }
   let oldToken: string | undefined;
@@ -2058,8 +2064,8 @@ reviewApp.patch("/projects/:pid", async (c) => {
   const pid = c.req.param("pid");
   if (body?.share?.enabled === true || body?.share?.download === true) {
     const p = (await readProjects()).find((x) => x.id === pid && x.owner === user.username);
-    const unblurred = p && (await allMetas()).some((m) => m.projectId === pid && m.owner === user.username && showsUnblurred(m));
-    if (unblurred && (await blurFacesIn(user.username, p.workspace))) return c.json({ error: NOT_BLURRED_SHARE }, 409);
+    for (const m of p ? (await allMetas()).filter((m) => m.projectId === pid && m.owner === user.username) : [])
+      if (await keepsLinksOff(m, user.username, p!.workspace)) return c.json({ error: NOT_BLURRED_SHARE }, 409);
   }
   let oldToken: string | undefined;
   const project = await updateProjects((list) => {
