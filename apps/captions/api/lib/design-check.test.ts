@@ -520,6 +520,11 @@ describe("fills and lines as lists", () => {
     expect(layer.runs).toEqual([{ start: 1, end: 8, italic: true }, { start: 9, end: 12, color: "#ff0000" }]);
   });
 
+  it("finds a run's Greek words whatever sigma ends them", () => {
+    const layer = cleanPages([{ layers: [text({ text: "ΟΔΟΣ ΚΑΙ", runs: [{ words: "οδος", italic: true }] })] }], rules).pages[0]!.layers[0] as { runs?: object[] };
+    expect(layer.runs).toEqual([{ start: 0, end: 4, italic: true }]);
+  });
+
   it("checks a text with hundreds of runs over every letter in well under a second", () => {
     const long = "Roll the mat out ".repeat(120).slice(0, DESIGN_LIMITS.text);
     const runs = Array.from({ length: 200 }, (_, n) => (n % 2 ? { start: 0, end: long.length, color: "#ff0000" } : { words: "o", weight: 700 }));

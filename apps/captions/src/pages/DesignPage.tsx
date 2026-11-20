@@ -828,9 +828,11 @@ function DesignPage({ id }: { id: string }) {
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      // words being typed with focus on a button of the style panel: their keys are not the canvas's (Backspace, the tool letters)
-      if (typingIn(e.target) || !design || editing) return;
       const mod = e.metaKey || e.ctrlKey;
+      // words being typed with focus on a button of the style panel: their keys are not the canvas's (Backspace, Delete, the
+      // tool letters); ⌘Z, the arrows and Escape still reach the canvas
+      const wordKey = !mod && !e.altKey && (e.key === "Backspace" || e.key === "Delete" || e.key.length === 1);
+      if (typingIn(e.target) || !design || (editing && wordKey)) return;
       const c = e.code;
       const has = mine.length > 0;
       const run = (fn: () => unknown) => (e.preventDefault(), void fn());

@@ -597,8 +597,9 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   ctx.translate(-l.w / 2, -l.h / 2);
   ctx.globalAlpha = l.opacity ?? 1;
   const fx = effectsOf(l).filter((e) => !e.hidden);
-  // a shadow is thrown by the layer drawn whole in a box of its own: its fills and lines cast one shadow together, not one each
-  const own = worksPixels(fx) || fx.some((e) => e.type === "shadow") ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
+  // a shadow is thrown by the layer drawn whole in a box of its own only when it has lines too: its fills and lines cast one
+  // shadow together; fills alone already cast one (castFills), and the box would soften a hard shadow when zoomed in
+  const own = worksPixels(fx) || (fx.some((e) => e.type === "shadow") && strokesOf(l).some((st) => !st.hidden)) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
   const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
   const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
   for (const e of fx) {

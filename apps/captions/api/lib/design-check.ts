@@ -176,7 +176,8 @@ function textRuns(v: unknown, text: string, fonts: readonly string[]): { runs?: 
 }
 
 /** Lower case letter by letter, a letter whose lower case is longer ("İ") kept as it is: every place in it is the same place in the text. */
-const fold = (s: string): string => Array.from(s, (ch) => (ch.toLowerCase().length === ch.length ? ch.toLowerCase() : ch)).join("");
+// a final sigma folds to σ like any sigma (both one unit long): "ΟΔΟΣ" lowers to "οδοσ" letter by letter, words say "οδος"
+const fold = (s: string): string => Array.from(s, (ch) => (ch.toLowerCase().length === ch.length ? ch.toLowerCase() : ch)).join("").replace(/ς/g, "σ");
 
 /** A text's highlighter strokes as they may be saved: a few, each a colour and (or not) the words it goes behind. */
 function marks(v: unknown): { marks?: { color: string; words?: string; low?: true }[] } {
