@@ -21,6 +21,7 @@ import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
 import { hostsNone } from "../../contracts/library";
 import { mayLeave } from "./upload-gate";
+import { showHidden } from "./trash";
 
 /**
  * A file indexed where it is on the person's Mac, for a server that is not on that Mac (the Mac app's Media Library
@@ -201,6 +202,8 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     const viewer = await readerOf(by, libraryId);
     if (!viewer || !(await canSee(viewer, assetRef(libraryId, dup.id, dup.version)))) return { duplicate: true };
     if (mine) await confirmPlaces(libraryId, viewer, mine, [{ versionId: dup.version, path: x.path, quick: x.quick }]);
+    // a file outside the folders left out (route and indexForDevice refuse those): one hidden while it waited is here after all
+    showHidden(dup.id);
     return { duplicateOf: dup.id };
   }
   const at = mine && rootAt(x.path, mine.report?.machine?.disks);
@@ -293,7 +296,7 @@ export function noPicture(libraryId: string, device: string, limit = 500): { ver
     .prepare(
       `SELECT v.id AS versionId, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-        WHERE a.library_id = ? AND a.kind = 'image' AND a.trashed_at IS NULL
+        WHERE a.library_id = ? AND a.kind = 'image' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
           ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no picture of a photo not blurred is kept (putThumb) */ : ""}
         ORDER BY a.created_at DESC LIMIT ?`,
@@ -344,7 +347,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
       `SELECT v.id AS versionId, v.probe, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
-        WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL
+        WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
           ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no strip of a clip not blurred is made again here (putSprite) */ : ""}
         ORDER BY a.created_at DESC LIMIT 500`,
     )

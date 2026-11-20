@@ -185,7 +185,7 @@ export function nextFor(device: string, owner: string) {
     .prepare(
       `SELECT j.id, j.library_id, j.actor, ${PLACE_COLS}, v.probe FROM jobs j
          JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
-       WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.created_by = ? AND a.trashed_at IS NULL
+       WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.created_by = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
        ORDER BY v.id IN (SELECT value FROM json_each(?)) DESC, j.id LIMIT 200`,
     )
     .all(MAC_WAITS, owner, JSON.stringify(firstClips())) as (PlaceRow & { id: number; library_id: string; actor: string | null; probe: string | null })[];

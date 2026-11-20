@@ -66,7 +66,7 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
   const assets = db()
     .prepare(
       `SELECT ${CARD} FROM search_assets s JOIN assets a ON a.id = s.asset_id JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE search_assets MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       WHERE search_assets MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL${fsql}
        ORDER BY bm25(search_assets, 0, 0, 5, 2, 1) LIMIT ?`,
     )
     .all(fts, libraryId, ...fparams, limit) as unknown as CardRow[];
@@ -74,7 +74,7 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
     .prepare(
       `SELECT ${CARD}, s.seg AS seg, snippet(search_segments, 2, '', '', '…', 16) AS snippet
        FROM search_segments s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
-       WHERE search_segments MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       WHERE search_segments MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL${fsql}
        ORDER BY bm25(search_segments) LIMIT ?`,
     )
     .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { seg: number; snippet: string })[];
@@ -88,7 +88,7 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
       `SELECT ${CARD}, (SELECT st.a FROM stretches st WHERE st.version_id = s.version_id AND st.seg = s.seg LIMIT 1) AS at,
          snippet(search_stretches, 2, '', '', '…', 16) AS snippet
        FROM search_stretches s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
-       WHERE search_stretches MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       WHERE search_stretches MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL${fsql}
        ORDER BY bm25(search_stretches) LIMIT ?`,
     )
     .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
@@ -97,7 +97,7 @@ export function searchLibrary(libraryId: string, q: string, limit = LIMIT, fx: C
     .prepare(
       `SELECT ${CARD}, s.a AS at, snippet(search_timeline, 2, '', '', '…', 16) AS snippet
        FROM search_timeline s JOIN asset_versions v ON v.id = s.version_id JOIN assets a ON a.current_version_id = v.id
-       WHERE search_timeline MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL${fsql}
+       WHERE search_timeline MATCH ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL${fsql}
        ORDER BY bm25(search_timeline) LIMIT ?`,
     )
     .all(fts, libraryId, ...fparams, limit) as unknown as (CardRow & { at: number | null; snippet: string })[];
@@ -145,7 +145,8 @@ function storedCopyPath(v: { source_key: string; storage_kind: string }): string
 /** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. `user`: the admin also gets sourcePath. */
 export function assetDetail(libraryId: string, assetId: string, user?: Pick<SessionUser, "role">, device?: string): AssetDetail | null {
   const row = db()
-    .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?`)
+    // a clip hidden while it waits on Folders left out is no clip to see (report.ts); a trashed one is (the trash view)
+    .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ? AND a.left_hidden_at IS NULL`)
     .get(assetId, libraryId) as CardRow | undefined;
   if (!row) return null;
   const versions = db()
@@ -223,7 +224,7 @@ searchApp.get("/:id/tags", async (c) => {
   const tags = db()
     .prepare(
       `SELECT t.tag, COUNT(*) AS count FROM asset_tags t JOIN assets a ON a.id = t.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED} GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT 500`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED} GROUP BY t.tag ORDER BY count DESC, t.tag LIMIT 500`,
     )
     .all(libraryId) as { tag: string; count: number }[];
   return c.json({ tags });
@@ -237,7 +238,7 @@ searchApp.get("/:id/countries", async (c) => {
   const places = db()
     .prepare(
       `SELECT json_extract(v.probe, '$.country') AS place, COUNT(*) AS count FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED} AND place != '' GROUP BY place ORDER BY count DESC, place`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED} AND place != '' GROUP BY place ORDER BY count DESC, place`,
     )
     .all(libraryId) as { place: string; count: number }[];
   return c.json({ places });
@@ -270,7 +271,7 @@ searchApp.post("/:id/assets/:assetId/jobs", async (c) => {
   const libraryId = c.req.param("id");
   const role = libraryRole(user.username, libraryId);
   const a = role
-    ? (db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(c.req.param("assetId"), libraryId) as
+    ? (db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(c.req.param("assetId"), libraryId) as
         | { created_by: string; current_version_id: string | null }
         | undefined)
     : undefined;
@@ -299,7 +300,7 @@ searchApp.patch("/:id/assets/:assetId", async (c) => {
   const role = libraryRole(user.username, libraryId);
   const assetId = c.req.param("assetId");
   const a = role
-    ? (db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(assetId, libraryId) as
+    ? (db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(assetId, libraryId) as
         | { created_by: string; current_version_id: string | null }
         | undefined)
     : undefined;
@@ -370,7 +371,7 @@ searchApp.patch("/:id/assets/:assetId/shots/:seg", async (c) => {
   const libraryId = c.req.param("id");
   const assetId = c.req.param("assetId");
   const a = libraryRole(user.username, libraryId)
-    ? (db().prepare("SELECT current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(assetId, libraryId) as { current_version_id: string | null } | undefined)
+    ? (db().prepare("SELECT current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(assetId, libraryId) as { current_version_id: string | null } | undefined)
     : undefined;
   if (!a?.current_version_id || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return notFound(c);
   const seg = Number(c.req.param("seg"));
@@ -390,7 +391,7 @@ async function writableVersion(c: Ctx): Promise<{ versionId: string; duration: n
   const versionId = c.req.param("versionId") ?? "";
   const v = libraryRole(user.username, libraryId)
     ? (db()
-        .prepare("SELECT a.id AS asset_id, a.kind, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL")
+        .prepare("SELECT a.id AS asset_id, a.kind, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
         .get(versionId, libraryId) as { asset_id: string; kind: string; probe: string | null } | undefined)
     : undefined;
   if (!v || v.kind !== "video" || !(await mayWrite(user.username, libraryId, v.asset_id, versionId))) return null;
@@ -441,7 +442,7 @@ searchApp.post("/:id/assets/:assetId/captions", async (c) => {
   const row = db()
     .prepare(
       `SELECT a.title, a.kind, v.id AS version_id, v.probe FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE a.id = ? AND a.library_id = ? AND a.trashed_at IS NULL`,
+       WHERE a.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
     .get(c.req.param("assetId"), libraryId) as { title: string; kind: string; version_id: string; probe: string | null } | undefined;
   if (!row) return notFound(c);

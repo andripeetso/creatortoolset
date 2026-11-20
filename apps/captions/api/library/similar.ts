@@ -58,7 +58,7 @@ export function similarTo(username: string, phashes: string[], exclude?: string,
       `SELECT a.id AS asset_id, a.library_id, a.title, v.id AS version_id, f.inline FROM assets a
        JOIN libraries l ON l.id = a.library_id JOIN asset_versions v ON v.id = a.current_version_id
        LEFT JOIN derivatives f ON f.version_id = v.id AND f.kind = 'fingerprint'
-       WHERE l.workspace_id = ? AND a.trashed_at IS NULL AND a.kind = 'video' AND v.state = 'ready'`,
+       WHERE l.workspace_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind = 'video' AND v.state = 'ready'`,
     )
     .all(homeOf(username)) as { asset_id: string; library_id: string; title: string; version_id: string; inline: string | null }[]
   ).filter((r) => !libraries || libraries.includes(r.library_id));

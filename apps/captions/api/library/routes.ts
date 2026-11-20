@@ -18,7 +18,7 @@ import { blobs, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, library
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { BLURRED_UPLOADS, cantFind, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { BLURRED_UPLOADS, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -295,7 +295,8 @@ export async function saveToLibrary(
     await copyFile(file, staged);
     const sha256 = await sha256File(staged);
     const dup = db()
-      .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1")
+      // a clip hidden while it waits on Folders left out (report.ts) is no duplicate: the file is really added
+      .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 1")
       .get(lib, sha256) as { id: string } | undefined;
     if (dup) return { duplicateOf: dup.id };
     const versionId = randomUUID();
@@ -394,7 +395,9 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const quick = await quickPrint(file);
   if (!quick) return { error: "The file could not be read", code: "failed" };
   const dup = db()
-    .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ((v.quick = ? AND v.bytes = ?) OR v.sha256 = ?) LIMIT 1")
+    // one hidden while it waits on Folders left out is no copy to point at: the file goes to the computer, which indexes
+    // it there (on-mac.ts: a place of that clip, shown again)
+    .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND ((v.quick = ? AND v.bytes = ?) OR v.sha256 = ?) LIMIT 1")
     .get(lib, quick, size, `mac:${quick}`) as { id: string } | undefined;
   if (dup) return { duplicateOf: dup.id };
   // held here only until a computer has fetched it (the task removes it)
@@ -445,10 +448,11 @@ const madeOf = (row: UploadRow): Made | null => (row.made ? (JSON.parse(row.made
 function duplicateOf(row: UploadRow, sha256: string): { id: string; current: string | null } | undefined {
   if (row.replaces_asset_id) return undefined;
   const made = madeOf(row);
+  // one hidden while it waits on Folders left out is no copy to keep instead: the upload is kept, the file really added
   return db()
     .prepare(
       `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
     )
     .get(row.library_id, sha256, made?.quick ?? null, made?.proxy?.size ?? row.size) as { id: string; current: string | null } | undefined;
 }
@@ -633,7 +637,8 @@ libraryApp.post("/:id/uploads/check", async (c) => {
   const b = (await c.req.json().catch(() => null)) as { size?: unknown; sha256?: unknown; quick?: unknown } | null;
   const size = Number(b?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
-  const live = "FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL";
+  // a clip hidden while it waits on Folders left out is no copy here: the file is sent (duplicateOf, saveOnComputer)
+  const live = "FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL";
   if (typeof b?.sha256 !== "string") return c.json({ maybe: !!db().prepare(`SELECT 1 ${live} AND v.bytes = ? LIMIT 1`).get(libraryId, size) });
   const quick = typeof b.quick === "string" && /^[0-9a-f]{64}$/.test(b.quick) ? b.quick : null;
   const dup = db()
@@ -700,6 +705,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const from = typeof body?.fromPath === "string" && body.fromPath.startsWith("/") && body.fromPath.length <= 2048 && !body.fromPath.split("/").includes("..") ? body.fromPath : null;
   const fromDevice = from && typeof body?.fromDevice === "string" && body.fromDevice ? body.fromDevice.slice(0, 100) : null;
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
+  // a file from a folder one of the person's Media folders leaves out is not sent either: the list keeps it private
+  if (from && (await leftOut(user.username, libraryId, from, fromDevice))) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (
     body?.send === true && from && !replaces && sender?.owner === user.username && (sender.work?.v ?? 0) >= WORK_MIN &&
     typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
@@ -765,6 +772,9 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
 }
 
+/** Whether a list leaves out the file `user` brings into `libraryId` (report.ts leftOutFor; loaded late: it loads this file). */
+const leftOut = async (user: string, libraryId: string, file: string, device?: string | null) => (await (await import("./report")).leftOutFor(user, libraryId, device))(file);
+
 /**
  * POST /api/library/:id/in-place { path, size, collectionId?, again? } → { assetId, versionId } | { duplicateOf } |
  * 202 { working } (still hashing after IMPORT_WAIT_MS: ask again with `again`). A file the person picked on their own
@@ -786,6 +796,8 @@ libraryApp.post("/:id/in-place", async (c) => {
   const real = await realpath(given).catch(() => null);
   const s = real ? await stat(real).catch(() => null) : null;
   if (!real || !s?.isFile()) return refuse(`File not found on this computer: ${given}`);
+  const out = await (await import("./report")).leftOutFor(user.username, libraryId);
+  if (out(given) || out(real)) return refuse(LIBRARY_WORDS.notFootage);
   if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
   if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
   if (RAW_FILE.test(real)) return refuse(RAW_FROM_COMPUTER);
@@ -843,6 +855,8 @@ libraryApp.post("/:id/on-mac", async (c) => {
   }
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
+  // inside a folder one of the caller's Media folders leaves out: never indexed, a scan's file or a drop alike
+  if (await leftOut(user.username, libraryId, x.path, x.device)) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (x.collectionId) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(x.collectionId, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);
@@ -1366,7 +1380,12 @@ export async function serveBlob(c: Context, key: string, type: string, download?
 }
 
 // GET /api/library/media/:versionId/:kind: thumb | sprite | play (the proxy when there is one, else the source) | source
-libraryApp.get("/media/:versionId/:kind", (c) => libraryMedia(c, c.get("user").username, c.req.param("versionId"), c.req.param("kind")));
+// a clip hidden while it waits on Folders left out (report.ts) plays for nobody
+libraryApp.get("/media/:versionId/:kind", (c) =>
+  libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.left_hidden_at IS NOT NULL").get(c.req.param("versionId"))
+    ? c.json({ error: "Not found", code: "not_found" }, 404)
+    : libraryMedia(c, c.get("user").username, c.req.param("versionId"), c.req.param("kind")),
+);
 
 /**
  * One item's picture or file for an account: a version the account may see, or an external ref whose source's policies

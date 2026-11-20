@@ -835,9 +835,9 @@ def folder_state(path, known, mounted):
 
 def scan_pages(f, cache, known, mounted, quick=quick_print, pause=QUICK_PAUSE_S):
     """One folder from the server listed: its report pages (contracts/places.ts ReportFolder), each at most PAGE files
-    sharing one scan id, `complete` on the last. Never into hidden entries or links; media files only. A file's
+    sharing one scan id, numbered from 0 (`page`, so the server knows the listing came whole), `complete` on the last. Never into hidden entries or links; media files only. A file's
     fingerprint is read once per size and time (`cache`: path here → [bytes, mtime, quick, sha256]), one at a time."""
-    top, scan, seen = f["mountPath"], uuid.uuid4().hex, set()
+    top, scan, seen, page = f["mountPath"], uuid.uuid4().hex, set(), 0
     host = lambda p: to_host(p, [f])
     # ponytail: an empty folder reads as not there (an unmounted share's mount point is empty too); a folder emptied on
     # purpose shows "not checked" instead of "missing" until a file is in it again
@@ -876,11 +876,11 @@ def scan_pages(f, cache, known, mounted, quick=quick_print, pause=QUICK_PAUSE_S)
             seen.add(e.path)
             files.append({"path": host(e.path), "bytes": size, "mtime": mtime, **({"quick": c[2]} if c[2] else {}), **({"sha256": c[3]} if c[3] else {})})
             if len(files) == PAGE:
-                yield {"id": f["id"], "state": "ok", "scan": scan, "files": files, **({"unreadable": unreadable} if unreadable else {})}
-                files, unreadable = [], []
+                yield {"id": f["id"], "state": "ok", "scan": scan, "page": page, "files": files, **({"unreadable": unreadable} if unreadable else {})}
+                files, unreadable, page = [], [], page + 1
     for k in [k for k in list(cache) if under(k, top) is not None and k not in seen]:
         cache.pop(k, None)
-    yield {"id": f["id"], "state": "ok", "scan": scan, "complete": True, "files": files, **({"unreadable": unreadable} if unreadable else {})}
+    yield {"id": f["id"], "state": "ok", "scan": scan, "page": page, "complete": True, "files": files, **({"unreadable": unreadable} if unreadable else {})}
 
 
 def probe(p):

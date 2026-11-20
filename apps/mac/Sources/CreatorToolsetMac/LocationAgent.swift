@@ -180,12 +180,13 @@ final class LocationAgent: @unchecked Sendable {
         return (files.sorted { $0.path < $1.path }, unreadable.sorted())
     }
 
-    /// One folder's listing as report folders: pages of `pageSize` files with one scan id, the last `complete`.
+    /// One folder's listing as report folders: pages of `pageSize` files with one scan id, numbered from 0 (`page`, so the
+    /// server knows the listing came whole), the last `complete`.
     /// A directory that didn't answer makes the listing incomplete in part only: its rows stay as they were (unchecked).
     static func pages(id: String, files: [ListedFile], unreadable: [String], scan: String, size: Int = pageSize) -> [[String: Any]] {
         let count = max(1, (files.count + size - 1) / size)
         return (0..<count).map { i in
-            var page: [String: Any] = ["id": id, "state": "ok", "scan": scan,
+            var page: [String: Any] = ["id": id, "state": "ok", "scan": scan, "page": i,
                                        "files": files[min(files.count, i * size)..<min(files.count, (i + 1) * size)].map(\.body)]
             if i == 0, !unreadable.isEmpty { page["unreadable"] = unreadable }
             if i == count - 1 { page["complete"] = true }

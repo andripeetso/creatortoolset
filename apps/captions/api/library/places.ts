@@ -347,7 +347,11 @@ placesApp.post("/:id/places", async (c) => {
   if (confirmed.length > PLACES_MAX || gone.length > PLACES_MAX) return c.json({ error: `At most ${PLACES_MAX} versions`, code: "invalid" }, 400);
   if (!gone.every(isId) || !confirmed.every((x) => x && isId(x.versionId) && isPath(x.path) && (x.quick === undefined || (typeof x.quick === "string" && /^[0-9a-f]{64}$/.test(x.quick)))))
     return c.json({ error: "Invalid entry", code: "invalid" }, 400);
-  const list = confirmed.map((x) => ({ versionId: x.versionId as string, path: (x.path as string).normalize("NFC"), ...(x.quick ? { quick: x.quick as string } : {}) }));
+  // a file in a folder a Media folder leaves out is no place of a clip (report.ts mediaForLibrary: the person's and the owner's lists)
+  const out = await (await import("./report")).leftOutFor(c.get("user").username, a.libraryId, a.dev.id);
+  const list = confirmed
+    .map((x) => ({ versionId: x.versionId as string, path: (x.path as string).normalize("NFC"), ...(x.quick ? { quick: x.quick as string } : {}) }))
+    .filter((x) => !out(x.path));
   return c.json(await confirmPlaces(a.libraryId, a.viewer, a.dev, list, gone));
 });
 

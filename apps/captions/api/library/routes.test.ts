@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -300,6 +301,37 @@ describe("library: a file added where it is (picked in the Mac app on its own se
     }
   });
 
+  it("refuses a file inside a folder one of the person's Media folders leaves out: picked, sent or indexed from a Mac alike", async () => {
+    const { changeStorage } = await import("../devices-storage");
+    const hidden = path.join(footage, "Day 1", "- No Share", "x.mp4");
+    mkdirSync(path.dirname(hidden), { recursive: true });
+    writeFileSync(hidden, clip(700, 34));
+    // a Media folder of another computer that holds the same path: no computer named is no way around its list
+    await changeStorage("owner-a", (st) => {
+      st.folders.push({ id: "m_lo", role: "footage", name: "Footage", origin: { host: "mac_elsewhere", path: footage }, make: false, createdAt: 0, reach: {}, leaveOut: ["- NO SHARE"] });
+    });
+    try {
+      const words = "Inside Source media: not imported as footage";
+      const picked = await add({ path: hidden, size: 700 });
+      expect(picked.status).toBe(400);
+      expect(await read(picked)).toMatchObject({ error: words });
+      const sent = await create("owner-a", 700, { fromPath: hidden, fromDevice: "mac_elsewhere" });
+      expect(sent.status).toBe(400);
+      expect(await read(sent)).toMatchObject({ error: words });
+      const indexed = await app.request("/api/library/lib_a/on-mac", {
+        method: "POST",
+        headers: { ...who("owner-a"), "content-type": "application/json" },
+        body: JSON.stringify({ name: "x.mp4", path: hidden, size: 700, quick: "c".repeat(64), frames: [] }),
+      });
+      expect(indexed.status).toBe(400);
+      expect(await read(indexed)).toMatchObject({ error: words });
+    } finally {
+      await changeStorage("owner-a", (st) => {
+        st.folders = st.folders.filter((f) => f.id !== "m_lo");
+      });
+    }
+  });
+
   it("turns missing while its drive is away, deletes nothing, comes back with it, and says when it is in the trash", async () => {
     const { scanWatchFolders } = await import("./watch");
     const moved = path.join(footage, "Away.MP4");
@@ -317,6 +349,23 @@ describe("library: a file added where it is (picked in the Mac app on its own se
     const r = await add({ path: moved, size: 3000 });
     expect(r.status).toBe(409);
     expect(await read(r)).toMatchObject({ error: expect.stringMatching(/trash/) });
+  });
+});
+
+describe("a clip hidden while it waits on Folders left out (report.ts)", () => {
+  it("is no duplicate: the same file is really added, so the content keeps a copy", async () => {
+    const data = clip(1300, 41);
+    const hash = createHash("sha256").update(data).digest("hex");
+    libraryDb().prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, left_hidden_at) VALUES ('hid_lo', 'lib_a', 'video', 'Waiting', 'hid_lo_v', 'owner-a', 0, 1)").run();
+    libraryDb().prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('hid_lo_v', 'hid_lo', 1, 'mac:hid_lo_v', 1300, ?, 'ready', 'owner-a', 0)").run(hash);
+    const check = await read(app.request("/api/library/lib_a/uploads/check", { method: "POST", headers: { ...who("owner-a"), "content-type": "application/json" }, body: JSON.stringify({ size: 1300, sha256: hash }) }));
+    expect(check.duplicateOf).toBeUndefined();
+    const init = await read(create("owner-a", data.length));
+    await patch("owner-a", init.id, 0, data, data.length);
+    const done = await read(finish("owner-a", init.id));
+    expect(done.duplicateOf).toBeUndefined();
+    expect(done.assetId).toBeTruthy();
+    expect(done.assetId).not.toBe("hid_lo");
   });
 });
 

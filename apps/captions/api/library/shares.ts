@@ -60,9 +60,9 @@ interface ShareDb {
 function targetExists(libraryId: string, kind: string, id: string): boolean {
   const sql =
     kind === "asset"
-      ? "SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL"
+      ? "SELECT 1 FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL"
       : kind === "version"
-        ? "SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL"
+        ? "SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL"
         : kind === "piece"
           ? "SELECT 1 FROM pieces WHERE id = ? AND library_id = ?"
           : "SELECT 1 FROM collections WHERE id = ? AND library_id = ?";
@@ -104,16 +104,16 @@ async function sharedCards(s: ShareDb): Promise<AssetCard[]> {
 function targetCards(libraryId: string, kind: ShareDb["target_kind"], id: string): AssetCard[] {
   const d = db();
   if (kind === "asset") {
-    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.trashed_at IS NULL`).all(id) as unknown as CardRow[]).map(toCard);
+    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`).all(id) as unknown as CardRow[]).map(toCard);
   }
   if (kind === "version") {
-    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ? AND a.trashed_at IS NULL`).all(id) as unknown as CardRow[]).map(toCard);
+    return (d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`).all(id) as unknown as CardRow[]).map(toCard);
   }
   if (kind === "piece") {
     return (
       d.prepare(
         `SELECT ${CARD} FROM piece_items pi JOIN asset_versions v ON v.id = pi.version_id JOIN assets a ON a.id = v.asset_id
-         WHERE pi.piece_id = ? AND a.trashed_at IS NULL ORDER BY pi.position LIMIT ?`,
+         WHERE pi.piece_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL ORDER BY pi.position LIMIT ?`,
       ).all(id, MAX_LIMIT) as unknown as CardRow[]
     ).map(toCard);
   }
@@ -125,7 +125,7 @@ function targetCards(libraryId: string, kind: ShareDb["target_kind"], id: string
   return (
     d.prepare(
       `SELECT ${CARD} FROM collection_items ci JOIN assets a ON a.id = ci.asset_id JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE ci.collection_id = ? AND a.trashed_at IS NULL ORDER BY ci.position LIMIT ?`,
+       WHERE ci.collection_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL ORDER BY ci.position LIMIT ?`,
     ).all(id, MAX_LIMIT) as unknown as CardRow[]
   ).map(toCard);
 }

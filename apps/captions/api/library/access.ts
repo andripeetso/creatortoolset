@@ -174,7 +174,7 @@ export async function mayWrite(username: string, libraryId: string, assetId: str
  */
 export async function versionSource(username: string, versionId: string): Promise<string | null> {
   const v = libraryDb()
-    .prepare("SELECT a.id AS asset_id, a.library_id, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
+    .prepare("SELECT a.id AS asset_id, a.library_id, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
     .get(versionId) as { asset_id: string; library_id: string; source_key: string } | undefined;
   const role = v ? libraryRole(username, v.library_id) : null;
   if (!v || !role || !(await canSee({ username, role }, assetRef(v.library_id, v.asset_id, versionId)))) return null;
@@ -193,7 +193,7 @@ export async function clipsHere(username: string, versionIds: string[]): Promise
   const out: Array<{ id: string; versionId: string; title: string }> = [];
   for (const versionId of versionIds) {
     const v = libraryDb()
-      .prepare("SELECT a.id, a.title, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
+      .prepare("SELECT a.id, a.title, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
       .get(versionId) as { id: string; title: string; library_id: string } | undefined;
     if (!v || !here.has(v.library_id)) return null;
     const role = libraryRole(username, v.library_id);

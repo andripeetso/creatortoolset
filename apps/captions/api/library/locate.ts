@@ -217,5 +217,7 @@ locateApp.post("/:id/locate", async (c) => {
   if (!(await mayAdd(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const x = parseLocate(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
-  return c.json({ reconnected: await reconnect(libraryId, user.username, x) });
+  // a file in a folder a Media folder leaves out is never located (report.ts mediaForLibrary; loaded late: it loads this file)
+  const out = await (await import("./report")).leftOutFor(user.username, libraryId, x.device);
+  return c.json({ reconnected: await reconnect(libraryId, user.username, { ...x, files: x.files.filter((f) => !out(f.path)) }) });
 });
