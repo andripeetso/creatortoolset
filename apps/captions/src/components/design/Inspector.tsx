@@ -1214,9 +1214,12 @@ function StrokeList({ strokes, colours, onSet, onLive, onDropper, max, text, box
         onSet={onSet}
         row={(s, set) => (
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <div className="flex items-center gap-1">
+            {/* its colour on a line of its own: beside the width and the settings there is no room left for the hex code */}
+            <div className="flex">
               <Colour alpha title="Stroke" value={s.color} colours={colours} onDropper={onDropper} onSet={(color, merge) => set({ ...s, color }, merge)} />
-              <div className="w-14 shrink-0">
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="min-w-0 flex-1">
                 <Num label="≡" title="Stroke width" value={s.width} min={0} max={max} onLive={(n) => onLive(n === null || !strokes ? null : strokes.map((x) => (x === s ? { ...x, width: n } : x)))} onCommit={(width) => set({ ...s, width })} />
               </div>
               {!text && (

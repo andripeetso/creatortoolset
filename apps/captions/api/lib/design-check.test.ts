@@ -411,7 +411,7 @@ describe("fills and lines as lists", () => {
     const [p] = pages;
     expect(p!.fills).toEqual([{ type: "solid", color: "#ffffff80" }, { type: "image", picture: "ab12cd34.jpg", mode: "tile", scale: 4, opacity: 0.4, blend: "multiply" }]);
     expect(p!.strokes).toEqual([{ color: "#ff0000", width: 12, side: "inside", sides: [0, 0, 12, 0] }]);
-    const [shape, words, path, picture] = p!.layers as Record<string, unknown>[];
+    const [shape, words, path, picture] = p!.layers as unknown as Record<string, unknown>[];
     expect(shape!.smooth).toBe(1);
     expect(shape!.fills).toEqual([
       { type: "gradient", kind: "diamond", angle: 360, stops: [{ at: 0, color: "#ffffff00" }, { at: 0.5, color: "#000000" }, { at: 1, color: "#000000" }], hidden: true },
@@ -435,7 +435,7 @@ describe("fills and lines as lists", () => {
     const { pages } = cleanPages([old], rules);
     expect(pages[0]!.layers[0]).toEqual({ id: "l1", type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10, stroke: { color: "#000000", width: 2 } });
     expect("fills" in pages[0]!).toBe(false);
-    const none = cleanPages([{ ...old, layers: [{ ...old.layers[0], fills: [] }] }], rules).pages[0]!.layers[0] as Record<string, unknown>;
+    const none = cleanPages([{ ...old, layers: [{ ...old.layers[0], fills: [] }] }], rules).pages[0]!.layers[0] as unknown as Record<string, unknown>;
     expect(none.fills).toEqual([]);
   });
 });
