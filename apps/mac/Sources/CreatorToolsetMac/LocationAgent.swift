@@ -199,7 +199,7 @@ final class LocationAgent: @unchecked Sendable {
         return list.compactMap { f in
             guard let id = f["id"] as? String, let path = (f["hostPath"] ?? f["path"]) as? String else { return nil }
             let ws = (f["workspaces"] as? [String]) ?? ((f["workspaces"] as? String) == "*" ? ["*"] : [])
-            return MediaFiles.ServerFolder(id: id, path: path, workspaces: ws, use: f["use"] as? String ?? "media")
+            return MediaFiles.ServerFolder(id: id, path: path, workspaces: ws, use: f["use"] as? String ?? "media", guarded: f["guarded"] as? [String])
         }
     }
 

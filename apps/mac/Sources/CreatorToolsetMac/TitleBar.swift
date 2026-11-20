@@ -114,8 +114,24 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
 
     // before super: the page's drop event (and its "dropped" ask) comes from inside super's handling
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        // footage of another server's Blur faces workspace never reaches this page, which would upload it unblurred
+        let paths = droppedItems(sender.draggingPasteboard).compactMap { $0["path"] as? String }
+        if let site, let refused = MediaFiles.blurredElsewhere(paths, server: MediaFiles.serverKey(site())) {
+            drag.exited()
+            super.draggingExited(sender)   // the page's drop zone lets go, as when the drag leaves
+            refuse(refused)
+            return false
+        }
         drag.dropped()
         return super.performDragOperation(sender)
+    }
+
+    /// One line in a sheet over this window: why a drop or a pick didn't reach the page.
+    func refuse(_ line: String) {
+        let alert = NSAlert()
+        alert.messageText = line
+        alert.addButton(withTitle: "OK")
+        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
     }
 
     // A wheel mouse's steps glide instead of jumping the page (WheelGlide.swift).

@@ -10,6 +10,7 @@ import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
 import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { blursFaces, libraryDb } from "./db";
+import { workspaceLibrary } from "./upload-gate";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
@@ -44,13 +45,28 @@ async function workspacesOf(owner: string, f: StorageFolder): Promise<string[] |
   return [...new Set((f.workspaces ?? [f.workspace]).map((w) => (w ? w : of(undefined))))];
 }
 
-/** The folders computer `d` holds itself (it added them in Settings → Folders), with their workspaces. */
+/** The folders computer `d` holds itself (it added them in Settings → Folders), with their workspaces; a Media folder
+ *  also with those whose footage leaves only blurred (RelayFolder.guarded). */
 export async function relayFolders(d: Device): Promise<RelayFolder[]> {
   if (d.owner === "workspace") return [];
   const st = await storageOf(d.owner);
   const mine = st.folders.filter((f) => f.origin.host === d.id);
+  const owned = await ownedProjects(d.owner);
+  const name = new Map([...owned, ...(await sharedProjects(d.owner))].map((p) => [p.id, p.name]));
+  const blurs = new Map<string, Promise<boolean>>();
+  const guarded = (id: string) => {
+    if (!blurs.has(id)) blurs.set(id, workspaceLibrary(d.owner, id).then(async (lib) => (!!lib && blursFaces(lib)) || servedByPlugin(d.owner, id)));
+    return blurs.get(id)!;
+  };
   return Promise.all(
-    mine.map(async (f) => ({ id: f.id, path: f.origin.path, hostPath: f.origin.path, mountPath: f.mountPath ?? f.origin.path, workspaces: await workspacesOf(d.owner, f), use: useOf(f) })),
+    mine.map(async (f) => {
+      const workspaces = await workspacesOf(d.owner, f);
+      const out: RelayFolder = { id: f.id, path: f.origin.path, hostPath: f.origin.path, mountPath: f.mountPath ?? f.origin.path, workspaces, use: useOf(f) };
+      if (out.use !== "media") return out;
+      const ids = workspaces === "*" ? owned.map((p) => p.id) : workspaces;
+      const kept = await Promise.all(ids.map(async (id) => ((await guarded(id)) ? (name.get(id) ?? id) : null)));
+      return { ...out, guarded: kept.filter((n): n is string => !!n) };
+    }),
   );
 }
 

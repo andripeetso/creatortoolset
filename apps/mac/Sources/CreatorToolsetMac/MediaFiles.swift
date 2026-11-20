@@ -84,6 +84,9 @@ enum MediaFiles {
         /// workspace ids; ["*"] for every workspace
         let workspaces: [String]
         let use: String
+        /// a Media folder's workspaces whose footage leaves only blurred, by name (RelayFolder.guarded); nil: the server
+        /// didn't say (an older one), read as guarded (blurredElsewhere fails closed)
+        var guarded: [String]? = nil
     }
 
     /// The store; the tests give their own.
@@ -138,10 +141,38 @@ enum MediaFiles {
     /// every workspace, allowed here or not: a file inside one is never copied into any library (Import.swift copy), so
     /// one server's footage never lands in another's. A server with no sign-in left never blocks a drop.
     static func signedInMediaFolders(signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil }) -> [String] {
-        (decoded(serversKey) as [String: [ServerFolder]])
-            // the key is host or host:port; an IPv6 host has colons of its own, so both readings are asked (never fails open)
-            .filter { key, _ in signedIn(key) || key.lastIndex(of: ":").map { signedIn(String(key[..<$0])) } == true }
-            .values.flatMap { $0.filter { $0.use == "media" }.map(\.path) }
+        signedInServers(signedIn).values.flatMap { $0.filter { $0.use == "media" }.map(\.path) }
+    }
+
+    /// Each stored server's folder list, of the servers this Mac has a sign-in for (a device token for the host). The key
+    /// is host or host:port; an IPv6 host has colons of its own, so both readings are asked (never fails open).
+    static func signedInServers(_ signedIn: (String) -> Bool) -> [String: [ServerFolder]] {
+        (decoded(serversKey) as [String: [ServerFolder]]).filter { key, _ in signedIn(key) || key.lastIndex(of: ":").map { signedIn(String(key[..<$0])) } == true }
+    }
+
+    /// Why a drop or pick of `paths` on a page of `server` is refused: one of them lies in (or holds) a Media folder of a
+    /// workspace whose footage leaves only blurred (Blur faces, or a plug-in serves its media) on ANOTHER server this Mac
+    /// is signed in to: the page would upload it there unblurred. Nil when none does. A drag into that workspace's own
+    /// server is its own gate's (P2). A server that doesn't say which of its workspaces blur counts as all of them. Real
+    /// paths for a folder whose disk answers; by name for one that doesn't (a NAS away never holds the window up).
+    static func blurredElsewhere(_ paths: [String], server: String, signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil },
+                                 reachable: (String) -> Bool = { Places.shared.reachable($0) }) -> String? {
+        let page = server.lowercased()
+        for (key, folders) in signedInServers(signedIn) where key.lowercased() != page {
+            for f in folders where f.use == "media" && f.guarded != [] {
+                let real = reachable(f.path)
+                let under = { (p: String, root: String) in real ? Imports.inside(p, [root]) != nil : underByName(p, [root]) }
+                let workspace = f.guarded?.first
+                for p in paths {
+                    let into = under(p, f.path), holds = !into && under(f.path, p)
+                    guard into || holds else { continue }
+                    let what = holds ? "\(p) holds" : "\(p) is in"
+                    guard let workspace else { return "\(what) a Media folder on \(key) that hasn't said whether it must be blurred: add it from that server's own page" }
+                    return "\(what) \(workspace)'s Media folder on \(key): blurred footage only leaves through \(workspace)"
+                }
+            }
+        }
+        return nil
     }
 
     /// "Allow on this Mac" (the page's folderGrant, a press): only a folder the server lists for this Mac.
