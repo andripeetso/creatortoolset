@@ -1,4 +1,4 @@
-import type { DesignPage, DesignShape, Effect, ImageLayer, Layer, Radius, ShapeLayer, TextLayer } from "@contracts/design";
+import type { DesignPage, DesignShape, Effect, GroupLayer, ImageLayer, Layer, Radius, ShapeLayer, TextLayer } from "@contracts/design";
 import { faceOf } from "./fonts";
 import { fillsOf, strokesOf } from "./paint";
 import { castFills, eachStroke, fillWith, strokeWith } from "./paint-draw";
@@ -8,6 +8,7 @@ import { blurPixels, retouch, retouches } from "./retouch";
 import { balancedWidth, casedText, fitScale, pieceFont, setRuns, usesRuns, type RunLine } from "./runs";
 import { paintedBox } from "./hands";
 import { boundsOf, everyLayer, into, isGroup } from "./tree";
+import { areaOf, combine, masked, newCanvas, type Area } from "./compose";
 
 /**
  * Draws a design's page (contracts/design.ts) on a 2D canvas, in the design's own pixels. The editor's stage and the
@@ -583,26 +584,84 @@ function placePicture(ctx: Ctx, l: Pick<ImageLayer, "w" | "h" | "fit" | "zoom" |
 /** How far off the canvas a layer is drawn to throw its shadow alone back onto it, in canvas pixels. */
 const FAR = 30_000;
 
-/** A box in the canvas's own pixels: the frame's, where a background blur may read what is under it. */
-type Area = { x: number; y: number; w: number; h: number };
-/** The box round a w × h box drawn with this transform, in the canvas's own pixels. */
-function areaOf(t: DOMMatrix, w: number, h: number): Area {
-  const xs = [t.e, t.a * w + t.e, t.c * h + t.e, t.a * w + t.c * h + t.e];
-  const ys = [t.f, t.b * w + t.f, t.d * h + t.f, t.b * w + t.d * h + t.f];
-  const x = Math.floor(Math.min(...xs));
-  const y = Math.floor(Math.min(...ys));
-  return { x, y, w: Math.ceil(Math.max(...xs)) - x, h: Math.ceil(Math.max(...ys)) - y };
-}
 
 /** What the page being drawn shows of a container's layers: reference layers only on the designer's canvas, and where a background blur reads (drawPage sets them; drawing is never interrupted). */
 const drawing = { designing: false, area: { x: 0, y: 0, w: Infinity, h: Infinity } as Area };
 
-function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean, area: Area) {
-  ctx.save();
+/** The canvas set to draw in a layer's own box: placed, turned and mirrored. */
+function place(ctx: Ctx, l: Layer) {
   ctx.translate(l.x + l.w / 2, l.y + l.h / 2);
   if (l.rotate) ctx.rotate((l.rotate * Math.PI) / 180);
   if (l.flipX || l.flipY) ctx.scale(l.flipX ? -1 : 1, l.flipY ? -1 : 1);
   ctx.translate(-l.w / 2, -l.h / 2);
+}
+
+/**
+ * A container's layers (or a frame's), bottom first, but those not shown (hidden; a reference one in a saved picture).
+ * A mask is not drawn: the layers above it, up to the next mask, are cut to it (a hidden one masks nothing).
+ */
+function drawLayers(ctx: Ctx, layers: readonly Layer[], loaded: Loaded, frame: string, exact: boolean, area: Area) {
+  const shown = (k: Layer) => !k.hidden && (drawing.designing || !k.reference);
+  let mask: Layer | null = null;
+  let run: Layer[] = [];
+  const flush = () => {
+    const m = mask;
+    if (m && run.length) {
+      const under = run;
+      masked(ctx, paintedBox(m), m.mask!, (g) => (m.mask === "vector" ? shapeOf(g, m, loaded, frame, exact) : drawLayer(g, { ...m, mask: undefined }, loaded, frame, exact, area)), (g, s) => {
+        // a background blur in the masked layers reads what is under it on their own sheet
+        const was = drawing.area;
+        drawing.area = { ...area, x: area.x - s.x, y: area.y - s.y };
+        try {
+          for (const k of under) drawLayer(g, k, loaded, frame, exact, drawing.area);
+        } finally {
+          drawing.area = was;
+        }
+      });
+    }
+    run = [];
+  };
+  for (const k of layers) {
+    if (k.mask) {
+      flush();
+      mask = shown(k) ? k : null;
+    } else if (shown(k)) {
+      if (mask) run.push(k);
+      else drawLayer(ctx, k, loaded, frame, exact, area);
+    }
+  }
+  flush();
+}
+
+/** What a layer's shape alone covers, solid, as it lies (a combined shape's part, a shape mask): no lines, effects or fade. */
+const SOLID = [{ type: "solid", color: "#000000" }] as const;
+function shapeOf(g: Ctx, k: Layer, loaded: Loaded, frame: string, exact: boolean) {
+  g.save();
+  place(g, k);
+  paintLayer(g, { ...k, fills: [...SOLID], strokes: [], effects: [], shadow: undefined, blur: undefined } as Layer, loaded, true, frame, exact);
+  g.restore();
+}
+
+/** A boolean group: its shown layers' shapes combined (compose.ts), in its own fills and lines. */
+function combined(ctx: Ctx, l: GroupLayer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
+  const parts = l.layers.filter((k) => !k.hidden && (drawing.designing || !k.reference));
+  const lines = strokesOf(l).filter((s) => !s.hidden && s.width > 0);
+  const reach = Math.max(0, ...lines.map((s) => (s.side === "inside" ? 0 : s.width)));
+  const box = { x: -reach, y: -reach, w: l.w + 2 * reach, h: l.h + 2 * reach };
+  combine(
+    ctx,
+    box,
+    l.boolean!,
+    parts.map((k) => (g: Ctx) => shapeOf(g, k, loaded, frame, exact)),
+    (g) => fillWith(g, cast ? castFills(fillsOf(l)) : fillsOf(l), l.w, l.h, loaded, () => g.fillRect(box.x, box.y, box.w, box.h)),
+    lines,
+    (each) => eachStroke(ctx, lines, each),
+  );
+}
+
+function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean, area: Area) {
+  ctx.save();
+  place(ctx, l);
   ctx.globalAlpha = l.opacity ?? 1;
   const fx = effectsOf(l).filter((e) => !e.hidden);
   // a shadow is thrown by the layer drawn whole in a box of its own only when it has lines too: its fills and lines cast one
@@ -610,7 +669,8 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   // soften a hard shadow when zoomed in
   // a container that fades or blends does so as one: its layers are drawn together first, and laid down at once
   // and throws its shadow once, from all its layers together (each layer's own would darken where they overlap)
-  const whole = isGroup(l) && ((l.opacity ?? 1) < 1 || !!l.blend || fx.some((e) => e.type === "shadow"));
+  // (a combined shape with lines is made once and kept: its lines are worked from its pixels)
+  const whole = isGroup(l) && ((l.opacity ?? 1) < 1 || !!l.blend || fx.some((e) => e.type === "shadow") || (!!l.boolean && strokesOf(l).some((s) => !s.hidden)));
   const own = whole || worksPixels(fx) || fx.some((e) => e.type === "shadow" && ((e.spread ?? 0) !== 0 || strokesOf(l).some((st) => !st.hidden))) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
   const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
   const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
@@ -650,8 +710,6 @@ function castShadow(ctx: Ctx, s: { color: string; opacity: number; blur: number;
 const WORK_PIXELS = 3_000_000;
 const EXACT_WORK_PIXELS = 24_000_000;
 const KEPT_WORK = 16_000_000;
-const newCanvas = (w: number, h: number): Canvas | null =>
-  typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(w, h) : typeof document !== "undefined" ? Object.assign(document.createElement("canvas"), { width: w, height: h }) : null;
 
 /** A layer worked in a box of its own: its canvas, the room round its box (`m`, design pixels) and the box's size with that room. */
 type Piece = { canvas: Canvas; m: number; bw: number; bh: number };
@@ -686,7 +744,8 @@ function inkOf(ctx: Ctx, l: Layer): number {
     // a container's layers, and its own lines, past its box (none past the edge that cuts them)
     const own = Math.max(0, ...strokesOf(l).filter((s) => !s.hidden).map((s) => Math.max(s.width * 1.5, ...(s.sides ?? [0]))));
     const inner = l.layers.filter((k) => !k.hidden);
-    if (l.clip || !inner.length) return own;
+    // a combined shape is drawn in its box (shapeBounds) but for its lines
+    if (l.clip || l.boolean || !inner.length) return own;
     const b = boundsOf(inner.map(paintedBox));
     return Math.max(own, -b.x, -b.y, b.x + b.w - l.w, b.y + b.h - l.h);
   }
@@ -864,6 +923,7 @@ function finishFrame(ctx: Ctx, page: Pick<DesignPage, "grain" | "vignette">, w: 
 function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
   if (l.type === "text") drawText(ctx, l, cast, loaded);
   else if (l.type === "group") {
+    if (l.boolean) return combined(ctx, l, loaded, cast, frame, exact);
     const edge = () => roundedRect(ctx, 0, 0, l.w, l.h, l.radius, l.smooth);
     if (l.box) {
       ctx.beginPath();
@@ -876,7 +936,7 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: st
       edge();
       ctx.clip();
     }
-    for (const k of l.layers) if (!k.hidden && (drawing.designing || !k.reference)) drawLayer(ctx, k, loaded, frame, exact, drawing.area);
+    drawLayers(ctx, l.layers, loaded, frame, exact, drawing.area);
     ctx.restore();
     if (l.box) strokeWith(ctx, strokesOf(l), () => edge(), l.w, l.h, "miter", { box: true });
   } else if (l.type === "shape") {
@@ -929,7 +989,7 @@ export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loade
   const was = { ...drawing };
   Object.assign(drawing, { designing, area });
   try {
-    for (const l of page.layers) if (!l.hidden && (designing || !l.reference)) drawLayer(ctx, l, loaded, page.id, exact, area);
+    drawLayers(ctx, page.layers, loaded, page.id, exact, area);
   } finally {
     Object.assign(drawing, was);
   }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DesignPage, GroupLayer, Layer } from "@contracts/design";
 import { boundsOf, mergeFrames, resizeBox } from "./hands";
 import { fitContents } from "./resize";
-import { depthOf, dropInto, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
+import { depthOf, dropInto, shapeBounds, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
 
 const rect = (id: string, x: number, y: number, w = 20, h = 10, more: object = {}): Layer => ({ id, type: "shape", shape: "rect", fill: "#ff0000", x, y, w, h, ...more }) as Layer;
 const group = (id: string, x: number, y: number, w: number, h: number, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x, y, w, h, layers, ...more });
@@ -145,5 +145,22 @@ describe("containers: layers that hold layers", () => {
     const merged = mergeFrames(mine, base, theirs);
     expect(onFrame(merged[0]!.layers, "c")[0]).toBe(300);
     expect(merged[1]!.name).toBe("Renamed");
+  });
+});
+
+describe("a boolean group's box", () => {
+  const a = rect("a", 0, 0, 100, 100);
+  const b = rect("b", 60, 40, 100, 100);
+  it("is its shape's: the bottom layer's for subtract, the overlap for intersect, all of them else", () => {
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, b], { boolean: "subtract" }))).toEqual({ x: 0, y: 0, w: 100, h: 100 });
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, b], { boolean: "intersect" }))).toEqual({ x: 60, y: 40, w: 40, h: 60 });
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, b], { boolean: "exclude" }))).toEqual({ x: 0, y: 0, w: 160, h: 140 });
+    // nothing overlaps: a pixel, never no size; a hidden layer is not in the shape
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, rect("c", 300, 300)], { boolean: "intersect" }))).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [{ ...a, hidden: true }, b], { boolean: "subtract" }))).toEqual({ x: 60, y: 40, w: 100, h: 100 });
+  });
+  it("is hugged as it is drawn: its layers keep their place on the frame", () => {
+    const [g] = hug([group("g", 10, 10, 500, 500, [a, b], { boolean: "subtract" })]) as GroupLayer[];
+    expect([g!.x, g!.y, g!.w, g!.h, g!.layers[1]!.x]).toEqual([10, 10, 100, 100, 60]);
   });
 });

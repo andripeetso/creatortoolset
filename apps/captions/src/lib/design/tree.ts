@@ -163,14 +163,33 @@ export function withScope(layers: readonly Layer[], scope: string | null, inner:
 }
 
 /**
+ * The box round what a plain group draws: its layers', or a boolean group's shape's (its shown layers, the bottom one
+ * alone when the rest are taken from it, where they all overlap when only that is kept), in its own pixels.
+ */
+export function shapeBounds(g: GroupLayer): Rect {
+  const shown = g.layers.filter((l) => !l.hidden);
+  const ls = g.boolean && shown.length ? shown : g.layers;
+  if (g.boolean === "subtract") return boundsOf(ls.slice(0, 1));
+  if (g.boolean !== "intersect") return boundsOf(ls);
+  const all = ls.map((k) => boundsOf([k]));
+  const x = Math.max(...all.map((b) => b.x));
+  const y = Math.max(...all.map((b) => b.y));
+  // nothing overlaps: a pixel where the bottom one starts, so the group is never of no size
+  const w = Math.min(...all.map((b) => b.x + b.w)) - x;
+  const h = Math.min(...all.map((b) => b.y + b.h)) - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : { x: all[0]!.x, y: all[0]!.y, w: 1, h: 1 };
+}
+
+/**
  * Every plain group kept to its layers: its box made the box round them (they keep their place in the frame), and one
- * with no layer left taken out. A box keeps its own size. The same list when nothing changed.
+ * with no layer left taken out (a boolean group: the box round its shape, shapeBounds). A box keeps its own size. The
+ * same list when nothing changed.
  */
 export function hug(layers: readonly Layer[]): Layer[] {
   return mapLayers(layers, (l) => {
     if (!isGroup(l) || l.box) return l;
     if (!l.layers.length) return null;
-    const b = boundsOf(l.layers);
+    const b = shapeBounds(l);
     if (Math.abs(b.x) < 0.02 && Math.abs(b.y) < 0.02 && Math.abs(b.w - l.w) < 0.02 && Math.abs(b.h - l.h) < 0.02) return l;
     const m = outOf(l, { x: b.x + b.w / 2, y: b.y + b.h / 2 });
     return { ...l, x: round(m.x - b.w / 2), y: round(m.y - b.h / 2), w: round(b.w), h: round(b.h), layers: l.layers.map((k) => ({ ...k, x: round(k.x - b.x), y: round(k.y - b.y) })) };

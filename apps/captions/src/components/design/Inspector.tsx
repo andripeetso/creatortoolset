@@ -43,14 +43,14 @@ import { CtMark } from "@/components/CtMark";
 import type { AutoLayout, Design, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke, TextLayer } from "@contracts/design";
 import { fixedBy, flows, padOf, withSizing, withoutLayout } from "@/lib/design/layout";
 import { toast } from "sonner";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES, EFFECT_PRESETS, EFFECTS_MAX } from "@contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_BOOLEANS, DESIGN_EFFECTS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES, EFFECT_PRESETS, EFFECTS_MAX } from "@contracts/design";
 import { effectsOf, withEffects } from "@/lib/design/effects";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { alphaOf, typedHex, withAlpha } from "@/lib/design/colour";
 import { colourAt, fillsOf, moved, solidGround, strokesOf, takesFills, takesStrokes, withFills, withStrokes } from "@/lib/design/paint";
 import { pictureUrl } from "@/lib/designs";
-import { boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
+import { BOOLEAN_NAMES, boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight, faceOf, WEIGHT_NAMES, weightsOf } from "@/lib/design/fonts";
 import { caseOf, diffText, editRuns, retext } from "@/lib/design/runs";
 import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
@@ -226,6 +226,8 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
 );
 
 const CORNERS = [["◜", "Top left corner"], ["◝", "Top right corner"], ["◞", "Bottom right corner"], ["◟", "Bottom left corner"]] as const;
+/** What a mask cuts by, as the Mask picker names it (contracts/design.ts Box `mask`). */
+const MASK_NAMES = { none: "Not a mask", alpha: "Alpha mask", vector: "Shape mask", luminance: "Luminance mask" } as const;
 const BLEND_NAMES = { multiply: "Multiply", screen: "Screen", overlay: "Overlay", darken: "Darken", lighten: "Lighten", "soft-light": "Soft light" } as const;
 /** How a frame or the picked layers are saved as pictures: PNG or JPEG, at their size or twice it. */
 export interface ExportAs {
@@ -926,7 +928,7 @@ export function Inspector({
   return (
     <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l pb-20 border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? (groupName(picked[0]!.group) ?? `Group of ${picked.length}`) : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : one.type === "group" ? (one.box ? "Frame" : "Group") : SHAPE_NAMES[one.shape]) : framesPicked.length > 1 ? `${framesPicked.length} frames` : "Frame"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? (groupName(picked[0]!.group) ?? `Group of ${picked.length}`) : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : one.type === "group" ? (one.box ? "Frame" : one.boolean ? BOOLEAN_NAMES[one.boolean] : "Group") : SHAPE_NAMES[one.shape]) : framesPicked.length > 1 ? `${framesPicked.length} frames` : "Frame"}</h2>
         <div className="flex items-center">
           {picked.some((l) => l.type === "group" || (l.group && page.layers.filter((x) => x.group === l.group).length > 1)) && (
             <Tap label="Ungroup" onClick={onUngroup}>
@@ -1114,6 +1116,27 @@ export function Inspector({
                 Clip content
               </label>
             )}
+            {/* a boolean group: how its layers make one shape */}
+            {every((l) => l.type === "group" && !!l.boolean) && (
+              <PickOne
+                label="Combine"
+                value={(() => {
+                  const b = same((l) => (l.type === "group" ? l.boolean : undefined));
+                  return b === null ? "Mixed" : BOOLEAN_NAMES[b];
+                })()}
+                options={DESIGN_BOOLEANS.map((b) => [b, BOOLEAN_NAMES[b]] as const)}
+                onPick={(b) => onPatch((l) => (l.type === "group" && l.boolean ? { ...l, boolean: b } : l))}
+              />
+            )}
+            <PickOne
+              label="Mask"
+              value={(() => {
+                const m = same((l) => l.mask ?? "none");
+                return m === null ? "Mixed" : MASK_NAMES[m];
+              })()}
+              options={(["none", "alpha", "vector", "luminance"] as const).map((m) => [m, MASK_NAMES[m]] as const)}
+              onPick={(m) => onPatch((l) => ({ ...l, mask: m === "none" ? undefined : m }) as Layer)}
+            />
             {shape && (
               <PickOne
                 label="Shape"

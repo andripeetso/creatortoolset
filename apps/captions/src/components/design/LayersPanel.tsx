@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, Star, Triangle, Type } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, Circle, Contrast, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { groupName, layerName, pageName } from "@/lib/design/hands";
 import { isGroup, mapLayers, moveRow, parentOf, pathTo } from "@/lib/design/tree";
@@ -22,6 +22,18 @@ const ROW = "group relative flex h-8 w-full cursor-default items-center gap-1.5 
 const ON = "bg-[#0d99ff]/20";
 const KIND = { text: Type, image: Image, drawing: PenTool, path: Spline, group: Group } as const;
 const SHAPE = { rect: Square, ellipse: Circle, triangle: Triangle, star: Star, arrow: ArrowRight } as const;
+const BOOLEAN = { union: SquaresUnite, subtract: SquaresSubtract, intersect: SquaresIntersect, exclude: SquaresExclude } as const;
+
+/** The layers of a list a mask under them cuts (up to the next mask; a hidden mask cuts nothing). None in a boolean group: its layers are its shape. */
+export function maskedIn(list: readonly Layer[], combined = false): Set<string> {
+  const out = new Set<string>();
+  let on = false;
+  for (const l of combined ? [] : list) {
+    if (l.mask) on = !l.hidden;
+    else if (on) out.add(l.id);
+  }
+  return out;
+}
 
 /** Where a dragged row goes: above or below row `key`, or (`into`) into the container it is the row of. */
 type Drop = { key: string; after: boolean; into?: boolean };
@@ -158,9 +170,10 @@ export function LayersPanel({
   const line = (key: string) => drop?.key === key && (drop.into ? <span className="pointer-events-none absolute inset-0 rounded-sm border-2 border-[#0d99ff]" /> : <span className={cn("pointer-events-none absolute inset-x-2 h-0.5 bg-[#0d99ff]", drop.after ? "bottom-0" : "top-0")} />);
 
   /** The rows of `list` (layers of frame `k`, or of a container in it), front first, each container's own under it. */
-  const rows = (p: DesignPage, k: number, list: readonly Layer[], depth: number) => {
+  const rows = (p: DesignPage, k: number, list: readonly Layer[], depth: number, combined = false) => {
     const layerKey = `l:${p.id}:`;
     const shown = [...list].reverse();
+    const cut = maskedIn(list, combined);
     return shown.map((l, n) => {
       const key = layerKey + l.id;
       // the first of a run of one older group's layers (a shared name) gets the group's own row above it
@@ -170,11 +183,12 @@ export function LayersPanel({
       const heads = grouped && shown[n - 1]?.group !== l.group;
       const allOn = k === at && members.length > 0 && members.every((id) => selected.includes(id));
       const on = k === at && selected.includes(l.id);
-      const Icon = l.type === "shape" ? SHAPE[l.shape] : l.type === "group" && l.box ? Frame : KIND[l.type];
+      const Icon = l.mask && !combined ? Contrast : l.type === "shape" ? SHAPE[l.shape] : l.type === "group" && l.box ? Frame : l.type === "group" && l.boolean ? BOOLEAN[l.boolean] : KIND[l.type];
       const set = (patch: Partial<Layer>) => onPage({ ...p, layers: mapLayers(p.layers, (x) => (x.id === l.id ? ({ ...x, ...patch } as Layer) : x)) });
       const shutKey = `${p.id}/${l.id}`;
       const inner = isGroup(l) && !shut.includes(shutKey);
-      const indent = { paddingLeft: p.loose ? 16 + depth * 14 : 36 + depth * 14 + (grouped ? 20 : 0) };
+      // a layer a mask cuts sits in under it
+      const indent = { paddingLeft: (p.loose ? 16 + depth * 14 : 36 + depth * 14 + (grouped ? 20 : 0)) + (cut.has(l.id) ? 12 : 0) };
       return (
         <div key={l.id}>
           {heads && (
@@ -220,7 +234,7 @@ export function LayersPanel({
                 {inner ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               </button>
             )}
-            <span data-icon onDoubleClick={zoomOn(k, l.id)} className="flex shrink-0">
+            <span data-icon onDoubleClick={zoomOn(k, l.id)} className="flex shrink-0" {...(l.mask && !combined ? { title: "Mask" } : cut.has(l.id) ? { "data-masked": "" } : {})}>
               <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
             </span>
             {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}
@@ -234,7 +248,7 @@ export function LayersPanel({
             </button>
             {line(key)}
           </div>
-          {inner && <div role="group">{rows(p, k, l.layers, depth + 1)}</div>}
+          {inner && <div role="group">{rows(p, k, l.layers, depth + 1, !!l.boolean)}</div>}
         </div>
       );
     });

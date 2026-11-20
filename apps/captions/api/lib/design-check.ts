@@ -1,10 +1,11 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, DESIGN_FLOW_ALIGNS, DESIGN_SIZINGS, type AutoLayout, type DesignPage, type Sizing, type Effect, type Pin, type Gradient, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_BOOLEANS, DESIGN_EFFECTS, DESIGN_MASKS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, DESIGN_FLOW_ALIGNS, DESIGN_SIZINGS, type AutoLayout, type DesignPage, type Sizing, type Effect, type Pin, type Gradient, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
 import { guessWidth, layoutLayers } from "../../src/lib/design/layout";
 import type { Measure } from "../../src/lib/design/runs";
 import { everyLayer } from "../../src/lib/design/tree";
+import { fillsOf, strokesOf } from "../../src/lib/design/paint";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
 import { cleanAids } from "./design-aids";
 
@@ -441,7 +442,9 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...(raw.reference === true ? { reference: true as const } : {}),
     ...pin(raw.pin),
     ...sizes(raw, r),
+    ...(DESIGN_MASKS.includes(raw.mask as never) ? { mask: raw.mask as (typeof DESIGN_MASKS)[number] } : {}),
   };
+  if (raw.mask !== undefined && raw.mask !== null && raw.mask !== false && !box.mask) say(`a mask is "alpha", "vector" or "luminance": ${JSON.stringify(raw.mask).slice(0, 30)} left out`);
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
   if (raw.type === "text") {
     const text = typeof raw.text === "string" ? raw.text.replace(/\r\n/g, "\n").trim().slice(0, DESIGN_LIMITS.text) : "";
@@ -515,12 +518,17 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     // an auto layout makes it a box of its own
     const layout = autoLayout(raw.layout);
     if (raw.layout !== undefined && raw.layout !== null && !layout) say('an auto layout needs "dir": "row" or "column": left out');
-    const own = raw.box === true || !!layout;
+    const boolean = DESIGN_BOOLEANS.includes(raw.boolean as never) ? (raw.boolean as (typeof DESIGN_BOOLEANS)[number]) : undefined;
+    if (raw.boolean !== undefined && raw.boolean !== null && !boolean) say(`"boolean" is "union", "subtract", "intersect" or "exclude": ${JSON.stringify(raw.boolean).slice(0, 30)} left out`);
+    // a boolean group is a plain group whose layers make one shape: its own fills and lines are that shape's
+    if (boolean && (raw.box === true || layout)) say('a boolean group is a plain group: its "box" and "layout" left out');
+    const own = !boolean && (raw.box === true || !!layout);
     // a plain group is only what holds its layers: no fill, no line, no corners, no clip of its own
     return {
       type: "group",
       ...box,
       layers: [],
+      ...(boolean ? { boolean, ...fillList(raw.fills, r, say), ...strokeList(raw.strokes, 200) } : {}),
       ...(own ? { box: true as const, ...fillList(raw.fills, r, say), ...strokeList(raw.strokes, 200), ...corners(raw.radius), ...smoothed(raw.smooth), ...(raw.clip === true ? { clip: true as const } : {}), ...(layout ? { layout } : {}) } : {}),
     };
   }
@@ -656,7 +664,9 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
           sayL("a group with no layers in it: left out");
           continue;
         }
-        out.push({ ...clean, id, layers: inner });
+        // a boolean group given no fills is drawn in its bottom layer's fills and lines, as one made by hand is
+        const look = clean.boolean && !clean.fills && inner[0] ? { ...(fillsOf(inner[0]).length ? { fills: fillsOf(inner[0]) } : {}), ...(!clean.strokes && strokesOf(inner[0]).length ? { strokes: strokesOf(inner[0]) } : {}) } : {};
+        out.push({ ...clean, id, layers: inner, ...look });
       }
       return out;
     };

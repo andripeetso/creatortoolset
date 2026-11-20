@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2, X } from "lucide-react";
-import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer, type TextLayer } from "@contracts/design";
+import { DESIGN_BOOLEANS, DESIGN_LIMITS, type Design, type DesignBoolean, type DesignPage as Page, type GroupLayer, type Layer, type TextLayer } from "@contracts/design";
 import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -16,8 +16,8 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, measureWords, sourceOf, type Loaded } from "@/lib/design/draw";
-import { paintPictures } from "@/lib/design/paint";
-import { alignLayers, besideFrames, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
+import { fillsOf, paintPictures, strokesOf } from "@/lib/design/paint";
+import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
 import { depthOf, everyLayer, findLayer, inFrame, inScope, isGroup, mapLayers, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
@@ -76,6 +76,9 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
 ];
 /** The tools that work on a canvas with no frame yet: the others draw a layer, and a layer lies on a frame. */
 const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text", KeyP: "pen" };
+/** ⌥⌘ and these combine the picked shapes (contracts/design.ts GroupLayer `boolean`). */
+const BOOLEAN_KEYS: Record<string, DesignBoolean> = { KeyU: "union", KeyS: "subtract", KeyI: "intersect", KeyX: "exclude" };
+const BOOLEAN_KEY_NAMES: Record<DesignBoolean, string> = { union: "⌥⌘U", subtract: "⌥⌘S", intersect: "⌥⌘I", exclude: "⌥⌘X" };
 const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 /** Where the canvas was left in this browser, by design. */
@@ -620,7 +623,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
    * The picked layers made one layer that holds them (tree.ts wrap): a plain group, or with `box` a frame round them
    * (⌥⌘G), lying where the frontmost of them was, they in the order they had and where they were. It is picked.
    */
-  const group = (box = false) => {
+  const group = (box = false, made?: (g: GroupLayer) => GroupLayer) => {
     if (!base || !top || !mine.length) return;
     // containers go so deep at most, counting the one they are in
     if ((pathTo(top.layers, mine[0]!.id)?.length ?? 0) + 1 + depthOf(mine) > DESIGN_LIMITS.depth) return setError(`Groups go at most ${DESIGN_LIMITS.depth} deep`);
@@ -628,8 +631,26 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     const [id] = freshIds(top, 1);
     const next = wrap(base.layers, selected, id!, box);
     if (!next) return;
-    setPage({ ...base, layers: next });
+    setPage({ ...base, layers: made ? next.map((l) => (l.id === id && isGroup(l) ? made(l) : l)) : next });
     pick(k, [id!]);
+  };
+  /**
+   * The picked layers made one shape (⌥⌘U, ⌥⌘S, ⌥⌘I, ⌥⌘X): a boolean group of them in the bottom one's fills and lines,
+   * they still there to change inside it. A picked boolean group alone is changed to combine that way.
+   */
+  const combineShapes = (op: DesignBoolean) => {
+    if (mine.length === 1 && isGroup(mine[0]) && mine[0].boolean) return patch((l) => (isGroup(l) && l.boolean ? { ...l, boolean: op } : l));
+    if (mine.length < 2) return;
+    group(false, (g) => {
+      const fills = fillsOf(g.layers[0]!);
+      const strokes = strokesOf(g.layers[0]!);
+      return { ...g, boolean: op, fills: fills.length ? fills : [{ type: "solid", color: "#d9d9d9" }], ...(strokes.length ? { strokes } : {}) };
+    });
+  };
+  /** The picked layer made a mask of what lies above it, or a mask no more (⌃⌘M); several: grouped, the bottom one their mask. */
+  const useAsMask = () => {
+    if (mine.length === 1) return patch((l) => ({ ...l, mask: l.mask ? undefined : "alpha" }) as Layer);
+    group(false, (g) => ({ ...g, name: "Mask group", layers: g.layers.map((l, n) => (n ? l : ({ ...l, mask: "alpha" } as Layer))) }));
   };
   /**
    * Auto layout added to the picked layers (⇧A, layout.ts addAutoLayout): one group or box is given it in place, else
@@ -660,7 +681,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const convert = (box: boolean) =>
     patch((l) => {
       if (!isGroup(l)) return l;
-      if (box) return { ...l, box: true };
+      if (box) {
+        // a frame of its own is no combined shape: its layers are drawn as they are
+        const { boolean: _o, ...rest } = l;
+        return { ...rest, box: true };
+      }
       // its auto layout goes with it (its layers stay where they are)
       const { box: _b, fills: _f, strokes: _s, radius: _r, smooth: _m, clip: _c, ...plain } = withoutLayout(l);
       return plain;
@@ -972,6 +997,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         else if (c === "Digit0") run(() => zoom(1));
         else if (c === "KeyD") run(duplicate);
         else if (e.altKey && c === "KeyT") run(tidyUp);
+        else if (e.altKey && BOOLEAN_KEYS[c] && has) run(() => combineShapes(BOOLEAN_KEYS[c]!));
+        else if (e.ctrlKey && e.metaKey && c === "KeyM" && has) run(useAsMask);
         else if (c === "KeyG") run(() => (e.shiftKey ? ungroup() : group(e.altKey)));
         else if (c === "KeyA") run(() => pick(k, base.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id)));
         else if (c === "KeyC") copy(); // not stopped: words picked in a panel are still the browser's to copy
@@ -1151,7 +1178,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
 
   const piece = design.from && "session" in design.from ? `/workshop/sessions/${design.from.session}` : null;
   const item = (label: string, keys: string, onSelect: () => void, disabled = false) => (
-    <ContextMenuItem disabled={disabled} onSelect={onSelect}>
+    <ContextMenuItem key={label} disabled={disabled} onSelect={onSelect}>
       {label}
       {keys && <ContextMenuShortcut>{keys}</ContextMenuShortcut>}
     </ContextMenuItem>
@@ -1326,6 +1353,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
                   {item("Group selection", "⌘G", () => group(), none)}
                   {item("Frame selection", "⌥⌘G", () => group(true), none)}
                   {item("Add auto layout", "⇧A", autoLayout, none || (mine.length === 1 && flows(mine[0])))}
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={mine.length < 2 && !(isGroup(mine[0]) && mine[0].boolean)} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Combine shapes</ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-48">{DESIGN_BOOLEANS.map((op) => item(BOOLEAN_NAMES[op], BOOLEAN_KEY_NAMES[op], () => combineShapes(op), false))}</ContextMenuSubContent>
+                  </ContextMenuSub>
+                  {item(mine.length === 1 && mine[0]!.mask ? "Stop using as mask" : "Use as mask", "⌃⌘M", useAsMask, none)}
                   {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => isGroup(l) || (l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1)))}
                   {mine.some(isGroup) && (mine.filter(isGroup).every((l) => l.box) ? item("Convert to group", "", () => convert(false), false) : item("Convert to frame", "", () => convert(true), false))}
                   <ContextMenuSeparator />

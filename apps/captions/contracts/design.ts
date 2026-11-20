@@ -196,7 +196,20 @@ interface Box {
   max?: { w?: number; h?: number };
   /** in an auto layout box: kept out of its flow, where it is (it follows the box's edges by its pin) */
   absolute?: true;
+  /**
+   * it is a mask: not drawn itself, it cuts the layers above it in its container (up to the next mask) to itself. "alpha":
+   * they show where it is drawn, as solid as it is; "vector": where its shape is, solid whatever its fills; "luminance":
+   * where it is light (white shows them whole, black hides them). A photo shown only inside big letters: the text a mask
+   * under the photo
+   */
+  mask?: DesignMask;
 }
+/** What a mask cuts by (Box `mask`). */
+export const DESIGN_MASKS = ["alpha", "vector", "luminance"] as const;
+export type DesignMask = (typeof DESIGN_MASKS)[number];
+/** How a group's layers are combined into one shape (GroupLayer `boolean`), the bottom one first. */
+export const DESIGN_BOOLEANS = ["union", "subtract", "intersect", "exclude"] as const;
+export type DesignBoolean = (typeof DESIGN_BOOLEANS)[number];
 
 export const DESIGN_SIZINGS = ["hug", "fill"] as const;
 export type Sizing = (typeof DESIGN_SIZINGS)[number];
@@ -375,7 +388,13 @@ export interface GroupLayer extends Box {
   layers: Layer[];
   /** a box of its own (a frame-like container); absent = a plain group, its box the box round its layers */
   box?: true;
-  /** a box's fills and lines, bottom first: its fills under its layers, its lines over them */
+  /**
+   * a plain group whose layers make one shape, drawn in the group's own fills and lines (the layers' own are not drawn):
+   * "union" all of them, "subtract" the bottom one less the others (a ring: a circle less a smaller one), "intersect"
+   * where all overlap, "exclude" where an odd number of them are. Its box is the shape's box. Not with `box`
+   */
+  boolean?: DesignBoolean;
+  /** a box's (or a boolean group's) fills and lines, bottom first: a box's fills under its layers, its lines over them */
   fills?: Paint[];
   strokes?: Stroke[];
   radius?: Radius;

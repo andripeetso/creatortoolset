@@ -287,6 +287,21 @@ describe("designs: an AI that designs", () => {
     expect(at(wide, "card").h - at(wide, "tag").y - at(wide, "tag").h).toBeCloseTo(gap, 1);
   });
 
+  it("an AI writes a ring as a subtract group and a picture inside the headline's letters, and reads how", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const how = (await call<{ how: string }>("GET", `/api/designs/${d.id}/pages`)).body.how;
+    for (const part of ['"boolean":"subtract"', '"mask":"alpha"', "luminance"]) expect(how).toContain(part);
+    const disc = (x: number, w: number) => ({ type: "shape", shape: "ellipse", x, y: x, w, h: w, fill: "#000000" });
+    const ring = { type: "group", id: "ring", boolean: "subtract", x: 600, y: 600, w: 10, h: 10, fills: [{ type: "solid", color: "#ff5a36" }], layers: [disc(0, 300), disc(75, 150)] };
+    const words = { type: "text", id: "head", text: "SUMMER", mask: "alpha", font: "Inter", size: 200, color: "#000000", align: "center", x: 0, y: 0, w: 1000, h: 240 };
+    const photo = { type: "shape", id: "photo", shape: "rect", x: 0, y: 0, w: 1000, h: 240, fills: [{ type: "gradient", angle: 0, stops: [{ at: 0, color: "#ff0000" }, { at: 1, color: "#0000ff" }] }] };
+    const r = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [ring, { type: "group", id: "inwords", x: 40, y: 80, w: 10, h: 10, layers: [words, photo] }] }] })).body;
+    const [g, m] = r.design.pages[0]!.layers as GroupLayer[];
+    expect([g!.boolean, g!.x, g!.y, g!.w, g!.h, g!.layers.length]).toEqual(["subtract", 600, 600, 300, 300, 2]);
+    expect(m!.layers.map((l) => [l.id, l.mask])).toEqual([["head", "alpha"], ["photo", undefined]]);
+    expect(r.notes).toEqual([]);
+  });
+
   it("reads every frame with its id, size, words and layers, and how a design is changed", async () => {
     const d = await fromPiece();
     const got = await read(d.id);

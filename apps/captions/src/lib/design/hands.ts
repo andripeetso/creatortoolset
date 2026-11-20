@@ -255,7 +255,9 @@ export function regroup<T extends Layer>(coming: readonly T[], there: readonly L
 
 export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle", star: "Star", arrow: "Arrow" } as const;
 /** What the layers list calls a layer: its own name, or what it is. */
-export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : l.type === "group" ? (l.box ? "Frame" : "Group") : SHAPE_NAMES[l.shape]);
+/** What each way of combining shapes is called (contracts/design.ts GroupLayer `boolean`). */
+export const BOOLEAN_NAMES = { union: "Union", subtract: "Subtract", intersect: "Intersect", exclude: "Exclude" } as const;
+export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : l.type === "group" ? (l.box ? "Frame" : l.boolean ? BOOLEAN_NAMES[l.boolean] : "Group") : SHAPE_NAMES[l.shape]);
 export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame ${k + 1}`;
 
 /**
@@ -321,7 +323,7 @@ export const rehome = <L extends { x: number; y: number }>(layers: readonly L[],
  */
 export function paintedBox(l: Layer): Rect {
   // a container paints its layers too (through its turn), past its box unless it cuts them there
-  const b = isGroup(l) && !l.clip && l.layers.some((k) => !k.hidden) ? boundsOf([l, ...l.layers.filter((k) => !k.hidden).map((k) => layerOut(l, paintedBox(k)))]) : boundsOf([l]);
+  const b = isGroup(l) && !l.clip && !l.boolean && l.layers.some((k) => !k.hidden) ? boundsOf([l, ...l.layers.filter((k) => !k.hidden).map((k) => layerOut(l, paintedBox(k)))]) : boundsOf([l]);
   const fx = effectsOf(l).filter((e) => !e.hidden);
   const lines = Math.max(0, ...strokesOf(l).map((s) => Math.max(s.width, ...(s.sides ?? [])) * (s.join === "miter" ? 5 : 1) + (s.start || s.end ? Math.max(s.width, 2) * 5 : 0)));
   // words may run a little past their box, and sticker letters by their outline
