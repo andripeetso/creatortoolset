@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { currentWorkspace, onWorkspaceChange, workspaceFor } from "./current-workspace";
 import { useAuth } from "./auth";
+import { openStore } from "./idb";
 import { boot, onTopic, seqNow, syncReady, topicOf, whenVisible } from "./sync";
 
 /**
@@ -58,20 +59,7 @@ const touch = (k: string) => versions.set(k, (versions.get(k) ?? 0) + 1);
 // ---- disk (IndexedDB), write-behind
 let dbp: Promise<IDBDatabase | null> | null = null;
 function db(): Promise<IDBDatabase | null> {
-  if (dbp) return dbp;
-  dbp = new Promise((resolve) => {
-    try {
-      if (typeof indexedDB === "undefined") return resolve(null);
-      const open = indexedDB.open(DB, 1);
-      open.onupgradeneeded = () => open.result.createObjectStore(STORE);
-      open.onsuccess = () => resolve(open.result);
-      open.onerror = () => resolve(null);
-      open.onblocked = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-  return dbp;
+  return (dbp ??= openStore(DB, STORE));
 }
 
 const dirty = new Set<string>();

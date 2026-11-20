@@ -11,7 +11,7 @@ import { COMMANDS, runAll, stateView, type NleRun, type NleState } from "@/lib/n
 import { nlePending, nleReply, type NleAsk } from "@/lib/editor";
 import { clientId, onTopic } from "@/lib/sync";
 import { dragging, type Dragged } from "@/lib/nle/drag";
-import { fingerprint, keepUnsaved, readUnsaved } from "@/lib/nle/unsaved";
+import { addAutosave, AUTOSAVE_MS, fingerprint, LIVE_MS, markSaved, readAutosaves, sealAutosave, toRestore, type Autosave } from "@/lib/nle/autosave";
 import { cn } from "@/lib/utils";
 import { commandOfKey, keyAction } from "@/lib/nle/keys";
 import { CAMERA_FILE, readCamera, rangeReader } from "@/lib/nle/camera";
@@ -75,12 +75,8 @@ const PAGE = /^\/editor\/(?!p\/)([^/?#]+)\/([^/?#]+)/;
 /** The chat's requests already taken by this window: one delivered twice is run once. */
 const taken = new Set<string>();
 
-/** What a timeline opens as: as saved, and with the edits this browser kept unsaved on that same timeline (unsaved.ts). */
-const openOf = (initial: NleTimeline, key: string) => {
-  const saved = withKeys(initial);
-  const base = fingerprint(initial);
-  return { key, base, saved, now: readUnsaved(key, base) ?? saved };
-};
+/** What a timeline opens as: as saved (its autosaves come back a moment later: lib/nle/autosave.ts). */
+const openOf = (initial: NleTimeline, key: string) => ({ key, base: fingerprint(initial), saved: withKeys(initial) });
 
 /** A playhead and its clock (lib/nle/audio.ts NleClock): played on the sound's time (backwards for J), it stops on the
  *  last frame, or with `loop` (seconds) goes round that part. `time` is React's only at a pause, a seek or a stop; while
@@ -167,7 +163,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [first] = useState(() => openOf(initial, resetKey));
   // the timeline open now (its key and fingerprint), for keeping its unsaved edits
   const opened = useRef(first);
-  const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(first.now));
+  const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(first.saved));
   const [saved, setSaved] = useState<NleTimeline>(first.saved);
   const [live, setLive] = useState<NleTimeline | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -209,20 +205,55 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
-  // every edit kept in this browser until it is saved, so a reload or the page opened again never loses it. Before the
-  // effect below: on another version it still keeps the last edits under the timeline they were made on
-  useEffect(() => keepUnsaved(opened.current.key, opened.current.base, hist.now === saved ? null : hist.now), [hist.now, saved]);
-  // said once when a timeline opens with edits that were never saved
-  const back = opened.current.now !== opened.current.saved;
+  // autosaves: unsaved edits kept in this browser a moment after each change (the live one, rewritten), sealed every
+  // 30 s, on leaving the window and on closing the timeline when they changed, so a reload, a crash or the page opened
+  // again never loses them
+  const [autosaves, setAutosaves] = useState<Autosave[]>([]);
+  const latest = useRef({ hist, saved });
+  latest.current = { hist, saved };
+  const snapped = useRef<NleTimeline | null>(null);
+  const keep = useCallback((live: boolean) => {
+    const { hist: h, saved: s } = latest.current;
+    const o = opened.current;
+    const p = h.now !== s && h.now !== snapped.current
+      ? ((snapped.current = h.now), addAutosave(o.key, { at: Date.now(), base: o.base, label: h.labels?.[h.past.length], tl: h.now, ...(live ? { live: true as const } : {}) }))
+      : live ? null : sealAutosave(o.key);
+    void p?.then((r) => opened.current.key === o.key && setAutosaves(r.list));
+  }, []);
+  const autosave = useCallback(() => keep(false), [keep]);
   useEffect(() => {
-    if (back) toast("Your edits that weren't saved are back", { description: "Save keeps them in this version" });
-  }, [back, resetKey]);
+    if (hist.now === saved) return;
+    const t = setTimeout(() => keep(true), LIVE_MS);
+    return () => clearTimeout(t);
+  }, [hist.now, saved, keep]);
+  useEffect(() => {
+    if (hist.now === saved) return;
+    const t = setInterval(autosave, AUTOSAVE_MS);
+    return () => clearInterval(t);
+  }, [hist.now === saved, autosave]); // eslint-disable-line react-hooks/exhaustive-deps -- unsaved or not only
+  useEffect(() => {
+    window.addEventListener("blur", autosave);
+    window.addEventListener("pagehide", autosave);
+    return () => {
+      window.removeEventListener("blur", autosave);
+      window.removeEventListener("pagehide", autosave);
+      autosave();
+    };
+  }, [autosave]);
+  // a timeline opened with unsaved edits on it: the newest autosave since its last save comes back, said once
+  const [back, setBack] = useState<NleTimeline | null>(null);
+  useEffect(() => {
+    if (back && latest.current.hist.now === back) toast("Your edits that weren't saved are back", { description: "Save keeps them in this version" });
+  }, [back]);
 
   useEffect(() => {
     if (opened.current.key === resetKey) return; // opened with the page
+    autosave(); // the one closing
     const o = openOf(initial, resetKey);
     opened.current = o;
-    setHist(freshHist(o.now));
+    snapped.current = null;
+    setAutosaves([]);
+    setHist(freshHist(o.saved));
     setSaved(o.saved);
     setLive(null);
     setSelected([]);
@@ -230,6 +261,27 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     tln.seek(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a new version only
   }, [resetKey]);
+  useEffect(() => {
+    const o = opened.current;
+    let on = true;
+    void readAutosaves(o.key).then((r) => {
+      if (!on) return;
+      setAutosaves(r.list);
+      const last = toRestore(r, o.base);
+      if (!last) return;
+      snapped.current = last.tl;
+      // only on a timeline not edited yet
+      setHist((h) => (h.past.length || h.future.length || h.now !== o.saved ? h : freshHist(last.tl)));
+      setBack(last.tl);
+    });
+    return () => void (on = false);
+  }, [resetKey]);
+  /** An autosave picked in History: back to it as one step, so undo goes back to where it was left. */
+  const restore = (a: Autosave) => {
+    autosave(); // where it was stays an autosave too
+    snapped.current = a.tl;
+    setHist((h) => histChange(h, () => a.tl, "Restore autosave"));
+  };
 
   const tl = hist.now;
   const sel = selected.filter((k) => find(tl, k));
@@ -439,6 +491,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     try {
       await onSave(toSaved(now));
       setSaved(now);
+      void markSaved(opened.current.key);
     } catch {
       // not saved: the page says why, and the timeline stays as it is to save again
     }
@@ -600,7 +653,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
           </Panel>
         }
         inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} playhead={Math.round(tln.time * fps)}
-          transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => setHist((h) => histGo(h, i))} />}
+          transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => setHist((h) => histGo(h, i))}
+          autosaves={autosaves} onAutosave={restore} />}
         timeline={
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>

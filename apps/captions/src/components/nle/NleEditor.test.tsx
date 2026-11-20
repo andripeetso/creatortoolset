@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NleAsk } from "@/lib/editor";
 import { lengthOf, withKeys, type NleTimeline } from "@/lib/nle/model";
+import { setAutosaveStore, type Ring } from "@/lib/nle/autosave";
 import type { NleControl } from "./NleEditor";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -235,6 +236,99 @@ describe("markers, transitions, lift and extract on the page", () => {
     const src = Object.values(p.now().sources).find((x) => x.path === "/m/slog.mp4")!;
     expect(src.camera).toEqual({ curve: "slog3", from: "file", on: true });
     vi.unstubAllGlobals();
+    p.done();
+  });
+});
+
+describe("autosaves", () => {
+  const disk = new Map<string, Ring>();
+  const puts: Ring[] = [];
+  const store = () => setAutosaveStore({ get: async (k) => structuredClone(disk.get(k)), put: async (k, r) => void (puts.push(r), disk.set(k, structuredClone(r))) });
+  const longer = (id: string, seconds: number) => ask({ id, commands: [{ id: "setLength", params: { seconds } }] });
+  const blur = async () => { act(() => void window.dispatchEvent(new Event("blur"))); await flush(); };
+  const wait = async (ms: number) => { act(() => void vi.advanceTimersByTime(ms)); await flush(); };
+  beforeEach(() => { disk.clear(); puts.length = 0; store(); });
+  afterEach(() => { vi.useRealTimers(); setAutosaveStore(); });
+
+  it("write the live one a moment after each change, seal it every 30 s and on leaving the window, only when it changed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    const p = await mount(tl, { resetKey: "tiny/a1" });
+    const ring = () => puts.at(-1)!.list.map((a) => `${lengthOf(a.tl)}${a.live ? "*" : ""}`);
+    await wait(60_000);
+    expect(puts).toHaveLength(0);
+    await p.deliver(longer("a1", 5));
+    await wait(500);
+    expect(puts).toHaveLength(0);
+    await wait(500);
+    expect(ring()).toEqual(["125*"]);
+    await wait(29_000); // the 30 s tick seals it
+    expect(ring()).toEqual(["125"]);
+    await wait(90_000); // nothing changed since
+    expect(puts).toHaveLength(2);
+    await p.deliver(longer("a2", 4));
+    await wait(1_000);
+    await p.deliver(longer("a3", 6));
+    await wait(1_000);
+    expect(ring()).toEqual(["125", "150*"]);
+    await blur();
+    expect(ring()).toEqual(["125", "150"]);
+    await blur();
+    expect(puts).toHaveLength(5);
+    p.done();
+    expect(puts).toHaveLength(5);
+  });
+
+  it("a crash a second after a change loses nothing: the reopen gives it back with no 30 s wait", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    const p = await mount(tl, { resetKey: "tiny/a4" });
+    await p.deliver(longer("d1", 5));
+    await wait(1_000);
+    const crashed = structuredClone(disk.get("tiny/a4"));
+    p.done();
+    disk.set("tiny/a4", crashed!); // nothing written on closing: the app was gone
+    store();
+    const again = await mount(tl, { resetKey: "tiny/a4" });
+    expect(again.length()).toBe(125);
+    again.done();
+  });
+
+  it("a reopen gives the unsaved edits back, on that same timeline only and never from before a save", async () => {
+    let p = await mount(tl, { resetKey: "tiny/a2" });
+    await p.deliver(longer("b1", 5));
+    p.done(); // closing takes one
+    await flush();
+    store(); // a reload: only what is on disk
+    p = await mount(tl, { resetKey: "tiny/a2" });
+    expect(p.length()).toBe(125);
+    p.done();
+    const other = withKeys({ ...tl, timeline: { fps: 25, name: "Flips" } } as NleTimeline);
+    p = await mount(other, { resetKey: "tiny/a2" });
+    expect(p.length()).toBe(75);
+    p.done();
+    p = await mount(tl, { resetKey: "tiny/a2" });
+    expect(p.length()).toBe(125);
+    await key("s", { metaKey: true, code: "KeyS" });
+    await flush();
+    p.done();
+    await flush();
+    p = await mount(tl, { resetKey: "tiny/a2" });
+    expect(p.length()).toBe(75);
+    expect(disk.get("tiny/a2")!.list).toHaveLength(1); // still there to restore by hand
+    p.done();
+  });
+
+  it("with storage refused, editing and undo go on", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const no = () => { throw new Error("QuotaExceededError"); };
+    setAutosaveStore({ get: no, put: no });
+    const p = await mount(tl, { resetKey: "tiny/a3" });
+    await p.deliver(longer("c1", 5));
+    await blur();
+    await wait(30_000);
+    await p.deliver(longer("c2", 6));
+    expect(p.length()).toBe(150);
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(p.length()).toBe(125);
     p.done();
   });
 });

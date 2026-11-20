@@ -201,6 +201,26 @@ describe("Inspector Color and History", () => {
   });
 });
 
+describe("Inspector Autosaves", () => {
+  it("lists the autosaves under the steps; picking one restores it as one step that undo takes back", async () => {
+    const p = await mount();
+    await p.chat([{ id: "setLength", params: { seconds: 6 } }]);
+    await act(async () => void window.dispatchEvent(new Event("blur")));
+    await flush();
+    await p.chat([{ id: "setLength", params: { seconds: 2 } }]);
+    await click(tabOf("History"));
+    const saves = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Autosaves"] button')];
+    expect(saves.map((b) => b.textContent)).toEqual([expect.stringMatching(/^just now.*Set the timeline's length/)]);
+    await click(saves[0]);
+    expect(p.v1().len).toBe(150);
+    const steps = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="History"] button')];
+    expect(steps.at(-1)!.textContent).toBe("4Restore autosave");
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(p.v1().len).toBe(50);
+    p.done();
+  });
+});
+
 describe("Inspector transition", () => {
   // two shots, each with its voice; the later one starts 10 frames into the file (its head room), a centred dissolve on it
   const two = (): NleTimeline => {
