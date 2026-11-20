@@ -156,9 +156,21 @@ final class Shell: NSObject, ObservableObject {
         recorderWatch = recorder.$phase.sink { [weak self] phase in
             DispatchQueue.main.async { self?.pushRecorderState(phase) }
         }
-        recorder.upload = { [weak self] project, destination, progress in
+        recorder.upload = { [weak self] project, destination, workspace, progress in
             guard let self else { throw SiteError.status(0) }
-            return try await self.client().uploadRecording(project, to: destination, progress: progress)
+            var site = await self.client()
+            site.workspace = workspace
+            if workspace == nil { site.workspace = await self.pageWorkspace() }   // the /record page's Share: the window's workspace
+            let page = try await site.uploadRecording(project, to: destination, progress: progress)
+            // picked on the panel: the page opens in that workspace (src/lib/workspace.ts openedIn), so a guide made there lands there too
+            guard let workspace, let ws = workspace.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(.init(charactersIn: "-_"))) else { return page }
+            return page + (page.contains("?") ? "&" : "?") + "ws=\(ws)"
+        }
+        recorder.workspaces = { [weak self] in
+            guard let self else { return ([], nil) }
+            let got: RecordWorkspaces? = try? await self.client().get("/api/workshop/workspace", timeout: 10)
+            let here = await self.pageWorkspace()
+            return (got?.projects ?? [], here ?? got?.currentProjectId)
         }
         recorder.onRecordingsChanged = { [weak self] in self?.pushRecordings() }
         recorder.pageAlert = { [weak self] title, text, done in
@@ -818,6 +830,12 @@ final class Shell: NSObject, ObservableObject {
         }
     }
 
+    /// The workspace the window's page is in (src/lib/current-workspace.ts sets window.ctWorkspace); nil for a page from before.
+    func pageWorkspace() async -> String? {
+        let id = (try? await webView.evaluateJavaScript("typeof window.ctWorkspace === 'string' ? window.ctWorkspace : ''")) as? String
+        return id?.isEmpty == false ? id : nil
+    }
+
     /// The site's cookies from the web view's store, for the requests below.
     func client() async -> Site {
         let base = self.base   // the site open when asked, not the one opened while the cookies were read
@@ -1318,10 +1336,17 @@ final class NoteCenter: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
+private struct RecordWorkspaces: Decodable {
+    let currentProjectId: String?
+    let projects: [RecordWorkspace]
+}
+
 /// The site's API with the window's own session: cookies from WebKit, nothing stored here.
 struct Site {
     let base: URL
     let cookies: [HTTPCookie]
+    /// The workspace a recording's upload goes to (X-CT-Workspace, api/lib/workspace-scope.ts); nil: the person's stored one.
+    var workspace: String? = nil
 
     /// `timeout`: the longest wait for the server (a server that doesn't answer is a URLError); the system's 60 s by default.
     func get<T: Decodable>(_ path: String, timeout: TimeInterval? = nil) async throws -> T {

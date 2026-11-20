@@ -11,6 +11,8 @@ export const currentWorkspace = () => current;
 export function setCurrentWorkspace(id: string | null) {
   if (id === current) return;
   current = id;
+  // the Mac app reads it to send a recording to this window's workspace (Shell.swift pageWorkspace)
+  (globalThis as { ctWorkspace?: string | null }).ctWorkspace = id;
   for (const l of listeners) l();
 }
 

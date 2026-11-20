@@ -25,6 +25,13 @@ enum SourceKind: String, CaseIterable { case display, window, area, device }
 /// Where a finished recording is sent from the preview or the /record page.
 enum ShareDestination: String { case review, notes, guide }
 
+/// One of the person's workspaces on the window's server (GET /api/workshop/workspace): the panel after Stop asks which
+/// one a share goes to.
+struct RecordWorkspace: Decodable, Equatable, Identifiable {
+    let id: String
+    let name: String
+}
+
 /// How the recorder's files are encoded (the screen and the camera): H.264, High profile, a key frame every 2 s
 /// (Review seeks fast), and every frame in the order it is shown. Never with the encoder's frame reordering: the
 /// files are written in fragments (movieFragmentInterval, so a crash leaves a playable file), and a file written
