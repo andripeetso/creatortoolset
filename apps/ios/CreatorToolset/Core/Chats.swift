@@ -33,6 +33,8 @@ struct ChatRow: Identifiable, Hashable {
     var pinned: Double?
     /// Snoozed until then: it is back in the list at that time.
     var snoozedUntil: Date?
+    /// Settled on any device (folded only while it neither asks nor works).
+    var settled = false
 
     /// Where a row sits: with the ones in play, under "Working" while a job runs, under "Done" when it is over.
     enum Shelf: String { case active, working, done }
@@ -474,7 +476,23 @@ final class ChatsModel: ObservableObject {
 
     // MARK: A chat's own controls, as on the desktop
 
-    enum ChatAction { case settle(Bool), pin(Bool), snooze(Date?), rename(String), unread, delete }
+    /// The whole chat as text, as the desktop copies it: "Me:", "Assistant:" or "Note:" above each message.
+    func text(of id: String) async throws -> String {
+        guard let api = ToolsetAPI.current else { throw Refusal(text: "No computer is connected.") }
+        let view: AssistantView = try await api.get("/api/assistant/chats/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)")
+        return ChatList.text(view.messages)
+    }
+
+    /// The chat's address on its server, as the desktop's Copy → Chat link gives it.
+    func link(of id: String) -> String? {
+        guard let api = ToolsetAPI.current, let id = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        let url = api.url("/?chat=\(id)")
+        // shortcut: the address this phone reaches the server at; one only the phone uses (a LAN or relay route) can differ
+        // from the desktop's. Upgrade when the server says its own public address.
+        return url.host?.hasSuffix(".invalid") == true ? nil : url.absoluteString
+    }
+
+    enum ChatAction { case settle(Bool), pin(Bool, at: Double? = nil), snooze(Date?), rename(String), unread, delete }
     struct Refusal: LocalizedError { let text: String; var errorDescription: String? { text } }
 
     /// What the desktop's menu on a chat does, from the phone. The server tells every device's list.
@@ -483,7 +501,7 @@ final class ChatsModel: ObservableObject {
         let chat = "/api/assistant/chats/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
         switch action {
         case .settle(let on): _ = try await api.send("\(chat)/settle", json: ["settled": on])
-        case .pin(let on): _ = try await api.send("\(chat)/pin", json: ["pinned": on])
+        case .pin(let on, let at): _ = try await api.send("\(chat)/pin", json: at.map { ["pinned": on, "at": $0] } ?? ["pinned": on])
         case .snooze(let until):
             _ = try await api.send("\(chat)/snooze", json: ["until": until.map { ($0.timeIntervalSince1970 * 1000).rounded() as Any } ?? NSNull()])
         case .rename(let name): _ = try await api.send("\(chat)/title", json: ["title": name])
@@ -727,6 +745,17 @@ struct ChatsView: View {
     @State private var name = ""
     @State private var deleting: ChatRow?
     @State private var failed: String?
+    @State private var customSnooze: ChatRow?
+    @State private var customWhen = Date()
+    /// What was just done, said at the bottom for a few seconds, with Undo when it can be taken back.
+    @State private var done: Done?
+
+    struct Done: Equatable {
+        let id = UUID()
+        let text: String
+        var back: (() async throws -> Void)? = nil
+        static func == (a: Done, b: Done) -> Bool { a.id == b.id }
+    }
 
     var body: some View {
         Group {
@@ -792,9 +821,60 @@ struct ChatsView: View {
         .confirmationDialog("Snooze until", isPresented: Binding(get: { snoozing != nil }, set: { if !$0 { snoozing = nil } }),
                             titleVisibility: .visible, presenting: snoozing) { row in
             ForEach(SnoozeChoice.all(), id: \.label) { choice in
-                Button("\(choice.label) · \(choice.when)") { act(.snooze(choice.until), row) }
+                Button("\(choice.label) · \(choice.when)") { snooze(row, until: choice.until) }
+            }
+            Button("Custom…") {
+                // a sheet asked for while the dialog is still closing may not show
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { custom(row) }
             }
         }
+        .sheet(item: $customSnooze) { row in
+            NavigationStack {
+                DatePicker("Snooze until", selection: $customWhen, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                    .datePickerStyle(.graphical)
+                    .padding()
+                    .navigationTitle("Snooze until")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { customSnooze = nil } }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Snooze") {
+                                customSnooze = nil
+                                snooze(row, until: customWhen)
+                            }
+                        }
+                    }
+            }
+            .presentationDetents([.large])
+        }
+        .overlay(alignment: .bottom) {
+            if let done {
+                HStack(spacing: 12) {
+                    Text(done.text).font(.subheadline.weight(.medium)).lineLimit(1)
+                    if let back = done.back {
+                        Button("Undo") {
+                            self.done = nil
+                            Task {
+                                do { try await back() } catch { failed = error.localizedDescription }
+                            }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                }
+                .padding(.horizontal, 18)
+                .frame(minHeight: 44)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color(.separator), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.1), radius: 8, y: 3)
+                .padding(.bottom, 90)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task(id: done.id) {
+                    try? await Task.sleep(for: .seconds(5))
+                    if self.done?.id == done.id { self.done = nil }
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: done)
         .alert("Rename chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { row in
             TextField("Name", text: $name)
             Button("Save") {
@@ -817,11 +897,14 @@ struct ChatsView: View {
         }
     }
 
-    /// A chat's row, with the desktop's controls: swipe left to Settle or Delete, right to Snooze or Pin, and a long press
-    /// for all of them with Rename and Mark as unread.
+    /// A chat's row, with the desktop's controls. Swipe left: Settle (a full swipe) or Delete. Swipe right: Snooze and Pin.
+    /// A long press: the desktop's whole menu (New chat, Pin, Settle, Snooze, Rename, Mark unread, Copy, Workspace settings,
+    /// Delete). Settle, Snooze and Unpin can be taken back for a few seconds.
     private func chatRow(_ row: ChatRow, many: Bool) -> some View {
-        var busy = row.status.waitsOnYou
-        if case .working = row.status { busy = true }
+        var working = false
+        if case .working = row.status { working = true }
+        let id: String = { if case .chat(let id) = row.route { return id } else { return "" } }()
+        let open = AssistantModel.shared.view?.id == id
         let detail = row.snoozedUntil.map { "Snoozed until \(SnoozeChoice.when($0))" } ?? row.detail
         return Button { AppNavigator.shared.open(row.route) } label: {
             ChatListRow(title: row.title, detail: detail, status: row.status,
@@ -833,56 +916,120 @@ struct ChatsView: View {
         }
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-        .swipeActions(edge: .trailing, allowsFullSwipe: !busy) {
-            if row.fold == .settled {
+        .swipeActions(edge: .trailing, allowsFullSwipe: !working) {
+            if row.settled {
                 Button("Un-settle", systemImage: "arrow.uturn.backward") { act(.settle(false), row) }.tint(.blue)
-            } else if !busy {
-                // a chat that asks or is writing can't be settled
-                Button("Settle", systemImage: "checkmark") { act(.settle(true), row) }.tint(.green)
+            } else if !working {
+                // a chat with a reply being written can't be settled
+                Button("Settle", systemImage: "checkmark") { settle(row) }.tint(.green)
             }
             Button("Delete", systemImage: "trash") { deleting = row }.tint(.red)
         }
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            if row.fold == .snoozed {
+            if row.snoozedUntil != nil {
                 Button("Wake", systemImage: "alarm") { act(.snooze(nil), row) }.tint(.indigo)
-            } else if row.fold == nil {
+            } else if !row.settled, !row.status.waitsOnYou {
+                // one that asks is back the moment it is put away
                 Button("Snooze", systemImage: "clock") { snoozing = row }.tint(.indigo)
             }
-            Button(row.pinned == nil ? "Pin" : "Unpin", systemImage: row.pinned == nil ? "pin" : "pin.slash") {
-                act(.pin(row.pinned == nil), row)
-            }
-            .tint(.orange)
+            Button(row.pinned == nil ? "Pin" : "Unpin", systemImage: row.pinned == nil ? "pin" : "pin.slash") { pin(row) }
+                .tint(.orange)
         }
         .contextMenu {
-            Button(row.pinned == nil ? "Pin" : "Unpin", systemImage: row.pinned == nil ? "pin" : "pin.slash") { act(.pin(row.pinned == nil), row) }
-            Button("Rename", systemImage: "pencil") {
+            Button("New chat", systemImage: "square.and.pencil") { AppNavigator.shared.newChat() }
+            Button(row.pinned == nil ? "Pin chat" : "Unpin chat", systemImage: row.pinned == nil ? "pin" : "pin.slash") { pin(row) }
+            if row.settled {
+                Button("Un-settle chat", systemImage: "arrow.uturn.backward") { act(.settle(false), row) }
+            } else if !working {
+                Button("Settle chat", systemImage: "checkmark") { settle(row) }
+            }
+            if row.snoozedUntil != nil {
+                Button("Wake chat", systemImage: "alarm") { act(.snooze(nil), row) }
+            } else if !row.status.waitsOnYou {
+                Menu("Snooze", systemImage: "clock") {
+                    ForEach(SnoozeChoice.all(), id: \.label) { choice in
+                        Button("\(choice.label) · \(choice.when)") { snooze(row, until: choice.until) }
+                    }
+                    Divider()
+                    Button("Custom…") { custom(row) }
+                }
+            }
+            Divider()
+            Button("Rename chat", systemImage: "pencil") {
                 name = row.title
                 renaming = row
             }
-            Button("Mark as unread", systemImage: "circlebadge") { act(.unread, row) }
-            if row.fold == .snoozed {
-                Button("Wake now", systemImage: "alarm") { act(.snooze(nil), row) }
-            } else if row.fold == nil {
-                Menu("Snooze", systemImage: "clock") {
-                    ForEach(SnoozeChoice.all(), id: \.label) { choice in
-                        Button("\(choice.label) · \(choice.when)") { act(.snooze(choice.until), row) }
+            // the open chat is being looked at: it cannot be not looked at
+            if !open, !working, row.status != .done {
+                Button("Mark unread", systemImage: "circlebadge") { act(.unread, row) }
+            }
+            Divider()
+            Menu("Copy", systemImage: "doc.on.doc") {
+                if let link = model.link(of: id) {
+                    Button("Chat link") { copy(link, "Chat link") }
+                }
+                Button("Chat ID") { copy(id, "Chat ID") }
+                Button("Whole chat") {
+                    Task {
+                        do { copy(try await model.text(of: id), "Whole chat") } catch { failed = error.localizedDescription }
                     }
                 }
             }
-            if row.fold == .settled {
-                Button("Un-settle", systemImage: "arrow.uturn.backward") { act(.settle(false), row) }
-            } else if !busy {
-                Button("Settle", systemImage: "checkmark") { act(.settle(true), row) }
+            Button("Workspace settings", systemImage: "gearshape") {
+                let ws = row.workspace?.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+                AppNavigator.shared.open(.page(ws.map { "/projects?edit=\($0)" } ?? "/projects"))
             }
             Divider()
-            Button("Delete", systemImage: "trash", role: .destructive) { deleting = row }
+            Button("Delete chat", systemImage: "trash", role: .destructive) { deleting = row }
         }
     }
 
-    private func act(_ action: ChatsModel.ChatAction, _ row: ChatRow) {
+    private func copy(_ text: String, _ what: String) {
+        UIPasteboard.general.string = text
+        done = Done(text: "\(what) copied")
+    }
+
+    private func custom(_ row: ChatRow) {
+        customWhen = Date().addingTimeInterval(3600)
+        customSnooze = row
+    }
+
+    /// Settled, and its pin and snooze with it; Undo gives them back.
+    private func settle(_ row: ChatRow) {
+        act(.settle(true), row, done: "Chat settled") { [model] id in
+            try await model.act(.settle(false), on: id)
+            if let at = row.pinned { try await model.act(.pin(true, at: at), on: id) }
+            if let until = row.snoozedUntil, until > Date() { try await model.act(.snooze(until), on: id) }
+        }
+    }
+
+    private func snooze(_ row: ChatRow, until: Date) {
+        guard until > Date() else { return failed = "That time has passed." }
+        act(.snooze(until), row, done: "Snoozed until \(SnoozeChoice.when(until))") { [model] id in
+            try await model.act(.snooze(row.snoozedUntil.flatMap { $0 > Date() ? $0 : nil }), on: id)
+        }
+    }
+
+    private func pin(_ row: ChatRow) {
+        guard let at = row.pinned else { return act(.pin(true), row) }
+        act(.pin(false), row, done: "Chat unpinned") { [model] id in try await model.act(.pin(true, at: at), on: id) }
+    }
+
+    /// `done` and `back`: what is said at the bottom once it went, and how Undo takes it back.
+    private func act(_ action: ChatsModel.ChatAction, _ row: ChatRow, done text: String? = nil,
+                     back: ((String) async throws -> Void)? = nil) {
         guard case .chat(let id) = row.route else { return }
         Task {
-            do { try await model.act(action, on: id) } catch { failed = error.localizedDescription }
+            do {
+                try await model.act(action, on: id)
+                if let text {
+                    var undo: (() async throws -> Void)?
+                    if let back { undo = { try await back(id) } }
+                    done = Done(text: text, back: undo)
+                }
+            } catch {
+                failed = error.localizedDescription
+            }
         }
     }
 

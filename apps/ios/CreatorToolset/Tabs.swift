@@ -43,10 +43,16 @@ extension ChatList {
         Dictionary(chats.compactMap { c in c.workspace.map { (c.id, $0) } }, uniquingKeysWith: { first, _ in first })
     }
 
+    /// A chat as text, as the desktop's Copy → Whole chat: each message under "Me:", "Assistant:" or "Note:".
+    static func text(_ messages: [AssistantMessage]) -> String {
+        messages.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { "\($0.role == "user" ? "Me" : $0.role == "note" ? "Note" : "Assistant"):\n\($0.text.trimmingCharacters(in: .whitespacesAndNewlines))" }
+            .joined(separator: "\n\n")
+    }
+
     /// Every chat row, each marked with its own workspace (from the list of chats, or the open chat's own); none is
-    /// left out, whatever workspace the app is in.
-    /// What the list of chats says of each (`chats`, by id) goes on its row too: its name, its pin, and whether it is put away
-    /// (settled, or snoozed till a time still to come) or unread.
+    /// left out, whatever workspace the app is in. What the list of chats says of each (`chats`, by id) goes on its row
+    /// too: its name, its pin, whether it is settled or snoozed (till a time still to come), and whether it is unread.
     static func placed(_ rows: [ChatRow], spaces: [String: String], chats: [String: ChatSummary] = [:], open: AssistantView?,
                        now: Date = Date()) -> [ChatRow] {
         rows.map { row in
@@ -56,16 +62,15 @@ extension ChatList {
             guard let info = chats[id] else { return row }
             if let name = info.title, !name.isEmpty { row.title = name }
             row.pinned = info.pinned
+            row.settled = info.settled == true
+            if !row.settled, let ms = info.snoozed, Date(timeIntervalSince1970: ms / 1000) > now {
+                row.snoozedUntil = Date(timeIntervalSince1970: ms / 1000)
+            }
             // a chat that asks or works again is in play, whatever an older read of the list said
             var busy = row.status.waitsOnYou
             if case .working = row.status { busy = true }
             guard !busy else { return row }
-            if info.settled == true {
-                row.fold = .settled
-            } else if let ms = info.snoozed, Date(timeIntervalSince1970: ms / 1000) > now {
-                row.fold = .snoozed
-                row.snoozedUntil = Date(timeIntervalSince1970: ms / 1000)
-            }
+            row.fold = row.settled ? .settled : row.snoozedUntil != nil ? .snoozed : nil
             if info.unread == true, case .time = row.status { row.status = .done }
             return row
         }

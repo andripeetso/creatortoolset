@@ -179,7 +179,16 @@ final class WorkspaceTests: XCTestCase {
         // one that asks since that list was read is in play again
         var asks = rows[0]
         asks.status = .approval
-        XCTAssertNil(ChatList.placed([asks], spaces: [:], chats: chats, open: nil, now: now)[0].fold)
+        let asking = ChatList.placed([asks], spaces: [:], chats: chats, open: nil, now: now)[0]
+        XCTAssertNil(asking.fold)
+        // still settled: its menu says Un-settle
+        XCTAssertTrue(asking.settled)
+    }
+
+    func testWholeChatCopiesAsTheDesktopDoes() throws {
+        let json = #"[{"id":"1","role":"user","text":" Hi ","at":1},{"id":"2","role":"assistant","text":"","at":2},{"id":"3","role":"assistant","text":"Hello","at":3},{"id":"4","role":"note","text":"Saved","at":4}]"#
+        let messages = try JSONDecoder().decode([AssistantMessage].self, from: Data(json.utf8))
+        XCTAssertEqual(ChatList.text(messages), "Me:\nHi\n\nAssistant:\nHello\n\nNote:\nSaved")
     }
 
     func testSnoozeChoicesAreTheDesktopsInOrderWithoutPastOnes() throws {
