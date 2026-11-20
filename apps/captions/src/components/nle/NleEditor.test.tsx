@@ -5,9 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_WORK_PREFS } from "@contracts/work-prefs";
 import type { NleAsk } from "@/lib/editor";
 import { useWorkPrefs } from "@/lib/setup";
-import { lengthOf, withKeys, type NleTimeline } from "@/lib/nle/model";
+import { lengthOf, setItems, withKeys, type NleTimeline } from "@/lib/nle/model";
 import { setAutosaveStore, type Ring } from "@/lib/nle/autosave";
-import type { NleControl, NleFoot } from "./NleEditor";
+import type { NleControl, NleFoot, NleSide } from "./NleEditor";
+import { viewerBeside } from "./NleLayout";
 import { useChatMode } from "@/lib/chat-mode";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -191,6 +192,43 @@ describe("beside the chats (chat mode)", () => {
     expect(ok).toBe(true);
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(last!.dirty).toBe(false);
+    p.done();
+  });
+});
+
+describe("the side panel beside the viewer (chat mode)", () => {
+  afterEach(() => useChatMode.setState({ on: false, shown: false }));
+
+  it("a portrait cut's viewer is as wide as its frame drawn as tall as the row; a landscape one keeps the width unless there is room", () => {
+    // a 1000 px row 600 tall: the 9:16 frame is (600 - 102) * 9/16 = 280 wide, 316 with its padding
+    expect(viewerBeside({ w: 1000, h: 600 }, { w: 1080, h: 1920 })).toBe(316);
+    expect(viewerBeside({ w: 1000, h: 300 }, { w: 1080, h: 1920 })).toBe(260);
+    expect(viewerBeside({ w: 1000, h: 900 }, { w: 1080, h: 1920 })).toBe(485);
+    // narrow: the portrait viewer gives way to the panel's least; too narrow for both: no panel
+    expect(viewerBeside({ w: 600, h: 900 }, { w: 1080, h: 1920 })).toBe(340);
+    expect(viewerBeside({ w: 500, h: 900 }, { w: 1080, h: 1920 })).toBeNull();
+    // landscape: beside only with the room left over
+    expect(viewerBeside({ w: 1000, h: 600 }, { w: 1920, h: 1080 })).toBeNull();
+    expect(viewerBeside({ w: 1400, h: 600 }, { w: 1920, h: 1080 })).toBe(921);
+  });
+
+  it("gets the timeline, a hand edit as one undo step, and opens a part in the viewer as Source", async () => {
+    useChatMode.setState({ on: true, shown: true });
+    let s: NleSide | null = null;
+    const foots: NleFoot[] = [];
+    const p = await mount(tl, { side: (x) => ((s = x), null), foot: (f) => (foots.push(f), null) });
+    expect(s!.tl.tracks.V1.items).toHaveLength(1);
+    act(() => s!.source({ path: "/m/a.mp4", name: "Take 2", from: 2, to: 4 }));
+    expect(p.host.querySelector('[aria-label="Viewer shows"] button[aria-pressed="true"]')?.textContent).toBe("source");
+    const k = s!.tl.tracks.V1.items[0]._k!;
+    act(() => s!.commit(setItems(s!.tl, [k], { in: 50 }), "Use take 2"));
+    expect(foots.at(-1)).toMatchObject({ changes: 1, dirty: true });
+    expect(p.now().tracks.V1.items[0].in).toBe(50);
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(p.now().tracks.V1.items[0].in).toBe(0);
+    // F9 lays the part the viewer opened on, as marked: 2 s to 4 s of the file
+    await key("F9", { code: "F9" });
+    expect(p.length()).toBe(125);
     p.done();
   });
 });
