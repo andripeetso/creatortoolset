@@ -1,11 +1,10 @@
+import { LOUD_WAIT_MS } from "../../editor/sound-wait";
 import { taskKind } from "../tasks";
 
 /** The kind's name (editor/analyze.ts LOUDNESS_TASK). The editor's code is loaded only when a task runs: importing it here
  *  would pull the editor and the library into the task kinds and close an import loop (library/worker → … → here). */
 const LOUDNESS_TASK = "nle-loudness";
 
-/** How long a measuring task may wait for a computer with the file before it is dropped (editor/sound.ts answers then). */
-export const LOUD_WAIT_MS = 10 * 60_000;
 
 /**
  * A library version's sound measured for the editor's Normalize and Lower Under Voice (editor/analyze.ts measureLoud,
