@@ -26,7 +26,18 @@ const coverOf = (d: Design | null) => d?.pages.find((p) => !p.loose) ?? d?.pages
 const fontLoads = new Map<string, Promise<void>>();
 export const fontLoad = (f: string): Promise<void> => {
   let p = fontLoads.get(f);
-  if (!p) fontLoads.set(f, (p = document.fonts.load(f).then(() => forgetWords())));
+  // a fetch that failed is forgotten, so the next card asks again (a blip leaves no fallback widths until reload)
+  if (!p)
+    fontLoads.set(
+      f,
+      (p = document.fonts.load(f).then(
+        () => forgetWords(),
+        (e) => {
+          fontLoads.delete(f);
+          throw e;
+        },
+      )),
+    );
   return p;
 };
 
