@@ -546,7 +546,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     const part: Marks | null = d.from !== undefined ? [Math.round(d.from * f), d.to !== undefined ? Math.max(Math.round(d.from * f), Math.round(d.to * f) - 1) : null] : null;
     if (part) setSrcMarks((all) => ({ ...all, [d.path]: part }));
     if (part || d.path !== source?.path) srcT.seek(((part ?? srcMarks[d.path])?.[0] ?? 0) / f);
-    setSource(d);
+    // the part is the marks from here on: moved, they decide what is laid
+    setSource(part ? { ...d, from: undefined, to: undefined } : d);
     setView("source");
   };
   const dropOfSrc = (src: string): NleDrop | null => {

@@ -226,6 +226,9 @@ describe("the side panel beside the viewer (chat mode)", () => {
     expect(p.now().tracks.V1.items[0].in).toBe(50);
     await key("z", { metaKey: true, code: "KeyZ" });
     expect(p.now().tracks.V1.items[0].in).toBe(0);
+    // F9 lays the part the viewer opened on, as marked: 2 s to 4 s of the file
+    await key("F9", { code: "F9" });
+    expect(p.length()).toBe(125);
     p.done();
   });
 });
