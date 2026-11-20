@@ -491,7 +491,7 @@ struct UploadView: View {
         // the picks can mix videos and photos: fetched by id
         PHAsset.fetchAssets(withLocalIdentifiers: toSend().fresh, options: nil).enumerateObjects { asset, _, _ in chosen.append(asset) }
         engine.add(chosen, server: server)
-        engine.uploadAll(blur: blur ? nil : false)
+        engine.uploadAll(blur: blur ? nil : false, server: server)
         picked.removeAll()
         blur = true
     }
@@ -726,8 +726,8 @@ struct PickedFile: Transferable {
     }
 }
 
-/// Blur faces for the uploads about to start: shown where they are blurred unless it is off (`blursByDefault`), and to
-/// an admin or an account not known yet (the server ignores anyone else's off). Turning it off asks first.
+/// Blur faces for the uploads about to start, where it applies (`UploadEngine.BlurSwitch`). Turning it off asks first.
+/// `on` is false only while the switch is on screen: another server or workspace, or the switch hidden, turns it back on.
 struct BlurFacesToggle: View {
     @Binding var on: Bool
     var edit = false
@@ -736,12 +736,14 @@ struct BlurFacesToggle: View {
     @EnvironmentObject private var servers: Servers
     @EnvironmentObject private var engine: UploadEngine
     @ObservedObject private var access = ToolsetAccess.shared
-    @State private var blurs = false
+    @State private var known = UploadEngine.BlurSwitch()
     @State private var asking = false
+
+    private var shown: Bool { known.shows(me: access.me) }
 
     var body: some View {
         VStack(spacing: 0) {
-            if blurs, access.me.map({ $0.role == "admin" }) ?? true {
+            if shown {
                 let toggle = Toggle("Blur faces", isOn: Binding(get: { on }, set: { if $0 { on = true } else { asking = true } }))
                 if pill {
                     toggle.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).frame(height: 44).chatSurface(cornerRadius: 22)
@@ -751,10 +753,13 @@ struct BlurFacesToggle: View {
             }
         }
         .task(id: "\(servers.currentId ?? "") \(servers.api?.workspace ?? "")") {
-            guard let server = servers.currentId else { return blurs = false }
-            let answer = await engine.blursByDefault(server: server, edit: edit)
-            if !Task.isCancelled { blurs = answer }   // another server or workspace picked meanwhile: its own task answers
+            on = true
+            known = UploadEngine.BlurSwitch()
+            guard let server = servers.currentId else { return }
+            let answer = await engine.blurSwitch(server: server, edit: edit)
+            if !Task.isCancelled { known = answer }   // another server or workspace picked meanwhile: its own task answers
         }
+        .onChange(of: shown) { _, shown in if !shown { on = true } }
         .alert("Turn off Blur faces?", isPresented: $asking) {
             Button("Turn off", role: .destructive) { on = false }
             Button("Cancel", role: .cancel) {}

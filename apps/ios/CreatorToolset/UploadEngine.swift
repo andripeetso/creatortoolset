@@ -77,10 +77,11 @@ final class UploadEngine: ObservableObject {
     }
 
     /// Upload everything picked, and everything that failed before (a New edit's clips go with their edit). `blur`
-    /// (false: Blur faces turned off) is stamped on the picked ones; one that failed keeps what it was sent with.
-    func uploadAll(blur: Bool? = nil) {
+    /// (false: Blur faces turned off) is stamped on the picked ones of `server`, the one whose switch was on screen;
+    /// one that failed, or is queued on another server, keeps what it has.
+    func uploadAll(blur: Bool? = nil, server: String? = nil) {
         for item in store.items where (item.state == .picked || item.state == .failed) && item.edit == nil {
-            if item.state == .picked { store.update(item.id) { $0.blur = blur } }
+            if item.state == .picked, item.server == server { store.update(item.id) { $0.blur = blur } }
             retry(item.id)
         }
     }
@@ -295,18 +296,28 @@ final class UploadEngine: ObservableObject {
         return route
     }
 
-    /// Whether uploads from the workspace picked on `server` now are blurred unless Blur faces is turned off: they go
-    /// to a plug-in's library (the studio's), or to a library with Blur faces on. A New edit's go to the own library.
-    /// false when the server can't say (nothing is offered; the server's default holds).
-    func blursByDefault(server: String, edit: Bool = false) async -> Bool {
-        guard let api = Servers.shared.list.first(where: { $0.id == server }).flatMap(API.connected) else { return false }
-        do {
-            if !edit, try await route(server: server, api: api) == .catalog { return true }
-            let libraries = try JSONDecoder().decode(Libraries.self, from: try await api.data(api.request("/api/library"), session: session))
-            return libraries.libraries.first?.settings?.blurFaces == true
-        } catch {
-            return false
+    /// What the Blur faces switch needs to know of the workspace picked on `server` now.
+    struct BlurSwitch: Equatable {
+        /// Its uploads are blurred unless the switch is off: they go to a plug-in's library (the studio's), or to a
+        /// library with Blur faces on. A New edit's go to the own library.
+        var blurs = false
+        /// The server's `mayKeepAsFilmed` for this account (the workspace's owner and admins); nil from an older server.
+        var mayKeepAsFilmed: Bool?
+
+        /// Shown where the uploads are blurred and the server lets this account turn it off. An older server doesn't
+        /// say: then to an admin or an account not known yet (it ignores anyone else's off).
+        func shows(me: ToolsetAccess.Me?) -> Bool {
+            blurs && (mayKeepAsFilmed ?? me.map { $0.role == "admin" } ?? true)
         }
+    }
+
+    /// Nothing blurred when the server can't say: no switch, and the server's default holds.
+    func blurSwitch(server: String, edit: Bool = false) async -> BlurSwitch {
+        guard let api = Servers.shared.list.first(where: { $0.id == server }).flatMap(API.connected) else { return BlurSwitch() }
+        let catalog = edit ? false : (try? await route(server: server, api: api)) == .catalog
+        let library = try? JSONDecoder().decode(Libraries.self, from: try await api.data(api.request("/api/library"), session: session))
+            .libraries.first
+        return BlurSwitch(blurs: catalog || library?.settings?.blurFaces == true, mayKeepAsFilmed: library?.mayKeepAsFilmed)
     }
 
     func note(_ id: UUID, _ text: String?) {
@@ -376,6 +387,8 @@ final class UploadEngine: ObservableObject {
             }
             let id: String
             let settings: Settings?
+            /// This account may turn Blur faces off on its uploads (absent on an older server).
+            let mayKeepAsFilmed: Bool?
         }
         let libraries: [Library]
         /// What an upload start takes besides the name and size (`PhoneMade`); nil on a server from before it.
