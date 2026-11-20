@@ -119,21 +119,23 @@ final class ImportTests: XCTestCase {
         let media = at("Tiny Footage")
         try FileManager.default.createDirectory(atPath: media, withIntermediateDirectories: true)
         MediaFiles.setServerFolders([.init(id: "f1", path: media, workspaces: ["*"], use: "media"), .init(id: "f2", path: at("Gone"), workspaces: ["*"], use: "media")], server: "s")
-        XCTAssertTrue(MediaFiles.importsFolders.isEmpty)   // not allowed on this Mac yet
+        XCTAssertTrue(MediaFiles.importsFolders(server: "s").isEmpty)   // not allowed on this Mac yet
         MediaFiles.allow(media, server: "s")
         MediaFiles.allow(at("Gone"), server: "s")
-        XCTAssertEqual(Set(MediaFiles.importsFolders), [media + "/Imports", at("Gone") + "/Imports"])
+        XCTAssertEqual(Set(MediaFiles.importsFolders(server: "s")), [media + "/Imports", at("Gone") + "/Imports"])
+        XCTAssertEqual(MediaFiles.importsFolders(server: "other"), [])   // another server's page never copies into them
+        XCTAssertNil(Imports.destination(media + "/Imports/x/A001.mov", Imports.copyDestinations(server: "other")))
         let a = try write("Downloads/A001.mov", Data(repeating: 1, count: 10))
         let into = media + "/Imports/Summer reel/A001.mov"
         let reply = Imports().copy(id: "m1", [ImportPair(from: a, to: into), ImportPair(from: a, to: at("Gone/Imports/Summer reel/A001.mov"))],
-                                   sources: [at("Downloads")], destinations: MediaFiles.importsFolders) { _ in }
+                                   sources: [at("Downloads")], destinations: MediaFiles.importsFolders(server: "s")) { _ in }
         XCTAssertEqual((reply["copied"] as? [[String: String]])?.map { $0["to"] }, [into])
         XCTAssertEqual((reply["failed"] as? [[String: String]])?.map { $0["error"] }, ["Gone isn't connected."])
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("Gone")))
-        XCTAssertNil(Imports.destination(media + "/A001.mov", MediaFiles.importsFolders))   // the Media folder itself: never
+        XCTAssertNil(Imports.destination(media + "/A001.mov", MediaFiles.importsFolders(server: "s")))   // the Media folder itself: never
         // a picked folder around a Media folder whose drive is away: still refused by the Media folder, never its parent
         let picked = Imports().copy(id: "m2", [ImportPair(from: a, to: at("Gone/Imports/Summer reel/A001.mov"))],
-                                    sources: [at("Downloads")], destinations: MediaFiles.importsFolders + [root.path]) { _ in }
+                                    sources: [at("Downloads")], destinations: MediaFiles.importsFolders(server: "s") + [root.path]) { _ in }
         XCTAssertEqual((picked["failed"] as? [[String: String]])?.map { $0["error"] }, ["Gone isn't connected."])
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("Gone")))
     }

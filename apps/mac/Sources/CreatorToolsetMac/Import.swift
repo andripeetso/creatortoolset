@@ -8,8 +8,9 @@ import UniformTypeIdentifiers
 // - import:copy:{"id","files":[{"from","to"}]} copies dropped or picked files into the library's folder on this Mac and
 //   answers when it is done with { copied:[{from,to}], failed:[{from,error}], stopped? }. `from` must lie under a recent
 //   drop or pick of this window; `to` under ~/Movies/Creator Toolset, a folder chosen in this app's folder picker, or a
-//   listed Media folder's Imports/ (MediaFiles.importsFolders). The folder a destination is in must be there: a Media
-//   folder whose drive isn't connected is never made on the internal disk, its copy fails and the page offers Retry.
+//   listed Media folder's Imports/ of the page's own server (MediaFiles.importsFolders). The folder a destination is in
+//   must be there: a Media folder whose drive isn't connected is never made on the internal disk, its copy fails and the
+//   page offers Retry.
 //   A file is never overwritten: the same name and size there is taken as copied already, another file gets " 2", " 3"…
 //   A cancelled or failed copy removes its partial file. The destination joins the folders whose media the page may
 //   play and scan (MediaFiles).
@@ -92,9 +93,11 @@ final class Imports: @unchecked Sendable {
     /// The library's default folder on this Mac: every copy destination under it is allowed.
     static var home = FileManager.default.homeDirectoryForCurrentUser
     static var defaultRoot: String { home.appendingPathComponent("Movies/Creator Toolset").path }
-    /// The folders a copy may write into: each Media folder's Imports/ first (so a copy there checks that Media folder is
-    /// there, never a picked folder around it), the default, each one chosen in this app's folder picker.
-    static var destinations: [String] { MediaFiles.importsFolders + [defaultRoot] + (UserDefaults.standard.stringArray(forKey: chosenKey) ?? []) }
+    /// The folders a copy may write into: the default and each one chosen in this app's folder picker.
+    static var destinations: [String] { [defaultRoot] + (UserDefaults.standard.stringArray(forKey: chosenKey) ?? []) }
+    /// A copy from `server`'s page: that server's Media folders' Imports/ first (so a copy there checks that Media folder
+    /// is there, never a picked folder around it), then `destinations`.
+    static func copyDestinations(server: String) -> [String] { MediaFiles.importsFolders(server: server) + destinations }
     static func chose(_ folder: String) {
         let old = UserDefaults.standard.stringArray(forKey: chosenKey) ?? []
         if !old.contains(folder) { UserDefaults.standard.set(old + [folder], forKey: chosenKey) }
@@ -130,7 +133,7 @@ final class Imports: @unchecked Sendable {
             if !taken { jobs[id] = Job() }
             lock.unlock()
             if taken { return done(["error": "That copy is running already."]) }
-            DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.destinations)) }
+            DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.copyDestinations(server: server))) }
         case .progress(let id)?:
             done(with(id) { j in ["bytes": j.bytes, "of": j.of, "file": j.file ?? NSNull()] as [String: Any] } ?? ["bytes": 0, "of": 0])
         case .cancel(let id)?:

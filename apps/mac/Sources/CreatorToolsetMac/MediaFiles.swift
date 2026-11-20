@@ -127,12 +127,11 @@ enum MediaFiles {
         return list
     }
 
-    /// Each Settings → Folders Media folder this Mac may read, of every server it is on, with "Imports" after it: where the
-    /// page copies a file from outside the Media folders (the import rule, contracts/storage.ts importTarget).
-    static var importsFolders: [String] {
-        (decoded(serversKey) as [String: [ServerFolder]]).flatMap { server, list in
-            list.filter { $0.use == "media" && isAllowed($0.path, server: server) }.map { ($0.path as NSString).appendingPathComponent("Imports") }
-        }
+    /// Each Settings → Folders Media folder of `server` this Mac may read, with "Imports" after it: where that server's
+    /// page copies a file from outside the Media folders (the import rule, contracts/storage.ts importTarget). Never
+    /// another server's: a page from one server never fills another's library.
+    static func importsFolders(server: String) -> [String] {
+        serverFolders(server).filter { $0.use == "media" && isAllowed($0.path, server: server) }.map { ($0.path as NSString).appendingPathComponent("Imports") }
     }
 
     /// "Allow on this Mac" (the page's folderGrant, a press): only a folder the server lists for this Mac.
