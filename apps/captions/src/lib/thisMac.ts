@@ -1,6 +1,7 @@
 // This Mac's AI, as the Mac app reports it to the page. Only the Mac app has the bridge ("thisMac" handler, TitleBar.swift);
 // in a browser there is none and the functions answer null.
 
+import { currentWorkspace } from "@/lib/current-workspace";
 import type { PlacesCheckAnswer, PlacesCheckAsk, PlacesConnectAnswer, PlacesConnectAsk, PlacesSearchAsk, PlacesSearchState } from "@contracts/places";
 
 /** `device`: this Mac's device id on the open server, once paired (null before that). */
@@ -172,7 +173,11 @@ export async function droppedOnMac(): Promise<Array<{ path: string; folder: bool
   try {
     const r = ((await bridge.postMessage("dropped")) ?? {}) as unknown as { items?: Array<{ path?: unknown; folder?: unknown }> };
     if (!Array.isArray(r.items)) return undefined;
-    return r.items.flatMap((x) => (typeof x.path === "string" ? [{ path: x.path, folder: x.folder === true }] : []));
+    const items = r.items.flatMap((x) => (typeof x.path === "string" ? [{ path: x.path, folder: x.folder === true }] : []));
+    // the drop's workspace, so the AI Editor copies these in only for an edit of it (MediaFiles.chosen); an older app ignores it
+    const workspace = currentWorkspace();
+    if (workspace && items.length) void bridge.postMessage(`import:chosen:${JSON.stringify({ workspace, paths: items.map((i) => i.path) })}`).catch(() => {});
+    return items;
   } catch {
     return undefined;
   }
@@ -461,6 +466,10 @@ async function importAsk<T>(ask: string, on = macImports()): Promise<T> {
   if (typeof r.error === "string") throw new Error(r.error);
   return r as T;
 }
+
+/** The Mac app's answer to a copy into a folder it doesn't copy into (Import.swift): a release before a Media folder's
+ *  Imports/ was one, for a Media folder added with Allow on this Mac. The file is then used where it is. */
+export const NOT_A_COPY_FOLDER = "Not a folder this app copies into.";
 
 export type ImportCopied = { copied: { from: string; to: string }[]; failed: { from: string; error: string }[]; stopped?: boolean };
 /** Copies each `from` to `to` ("~/" is this Mac's home folder), never over another file; answers when all are done. */

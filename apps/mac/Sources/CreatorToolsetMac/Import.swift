@@ -19,6 +19,9 @@ import UniformTypeIdentifiers
 // - import:print:{"paths":[…]} → { prints:{ path: hex } }: each granted file's quick fingerprint, the same as the page's
 //   quickPrint (src/lib/onMac.ts), which the server's duplicate check compares.
 // - import:locate:{"folder"?,"files":[…]} → Locate… in the Media Library (Locate.swift).
+// - import:chosen:{"workspace","paths":[…]} → { kept }: the page's own drop, in its workspace: each path that is exactly a
+//   recent drop or pick of this window is remembered for that server and workspace (MediaFiles.chosen, the AI Editor's
+//   copyFrom). A path the page names that this window wasn't given is left out.
 // - import:make:{"in","names":[…]} → { made:[path], failed:[{name,error}], children:[name] }: setup's Library folder on
 //   Done. Each named folder missing in `in` is made (an existing one is left as it is); `children` are the folders in `in`
 //   after (no names: only that, for a dropped folder's Found). `in` must be a folder this app may write or read (a pick, a
@@ -40,6 +43,7 @@ enum ImportAsk: Equatable {
     case locate(folder: String?, files: [LocateFile])
     case make(in: String, names: [String])
     case thumb(path: String, max: Int)
+    case chosen(workspace: String, paths: [String])
 }
 
 /// An `import:` ask as its parts; nil when it is malformed.
@@ -63,6 +67,9 @@ func importAsk(_ ask: String) -> ImportAsk? {
     case "make":
         guard let folder = json["in"] as? String, let names = json["names"] as? [String], names.count <= 10 else { return nil }
         return .make(in: (folder as NSString).expandingTildeInPath, names: names)
+    case "chosen":
+        guard let ws = json["workspace"] as? String, !ws.isEmpty, ws.count <= 200, let paths = json["paths"] as? [String], paths.count <= 500 else { return nil }
+        return .chosen(workspace: ws, paths: paths)
     case "thumb":
         guard let path = json["path"] as? String else { return nil }
         let max = (json["max"] as? NSNumber)?.intValue ?? 480
@@ -113,7 +120,7 @@ final class Imports: @unchecked Sendable {
 
     /// One ask answered: `sources` are this window's recent drops and picks. A copy, a scan and prints run off the
     /// main thread, and `done` is called on the main thread.
-    func answer(_ ask: String, sources: [String], done: @escaping ([String: Any]) -> Void) {
+    func answer(_ ask: String, sources: [String], server: String = "", done: @escaping ([String: Any]) -> Void) {
         let main = { (reply: [String: Any]) in DispatchQueue.main.async { done(reply) } }
         switch importAsk(ask) {
         case .copy(let id, let files)?:
@@ -144,6 +151,10 @@ final class Imports: @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).async { main(Self.make(in: folder, names: names, allowed: MediaFiles.granted + Self.destinations + sources)) }
         case .thumb(let path, let max)?:
             DispatchQueue.global(qos: .userInitiated).async { main(Self.thumb(path, max: max, allowed: MediaFiles.granted + Self.destinations + sources)) }
+        case .chosen(let workspace, let paths)?:
+            let kept = paths.map { URL(fileURLWithPath: $0).path }.filter(sources.contains)   // the window's drops are kept as URL paths
+            if !server.isEmpty, !kept.isEmpty { MediaFiles.chosen(kept, server: server, workspace: workspace) }
+            done(["kept": kept.count])
         case nil: done(["error": "Not an import this app knows."])
         }
     }

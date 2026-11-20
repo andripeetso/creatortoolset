@@ -4,10 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import type { PlacesReport } from "@contracts/places";
-import { copyAvailable, copyInto, FoldersToAllow, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, waitingFolders } from "./Import";
+import { copyAvailable, copyInto, FoldersToAllow, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, waitingFolders } from "./Import";
 
-const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn() }));
-vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint }));
+const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn() }));
+vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint, importCopy: m.importCopy, pathOnMac: m.pathOnMac }));
 vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/library")>()), checkUpload: m.checkUpload, versionPlaces: m.versionPlaces, reportPlaces: m.reportPlaces }));
 vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant }));
 vi.mock("@/lib/onMac", async (orig) => ({ ...(await orig<typeof import("@/lib/onMac")>()), indexOnMac: m.indexOnMac }));
@@ -224,5 +224,32 @@ describe("the import rule, with no question", () => {
     const { result, onError } = await answerWith(mac, [file]);
     expect(result).toBeNull();
     expect(onError).toHaveBeenCalledWith("Add a Media folder in Settings → Folders");
+  });
+});
+
+describe("an edit's footage from this Mac (importPlace)", () => {
+  const file = new File(["x"], "a.mp4");
+  beforeEach(() => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    m.pathOnMac.mockResolvedValue("/Users/tiny/Downloads/a.mp4");
+    m.checkUpload.mockResolvedValue({});
+  });
+
+  it("copies a file from outside into Imports/<edit name>", async () => {
+    m.importCopy.mockResolvedValue({ copied: [{ from: "/Users/tiny/Downloads/a.mp4", to: "/Volumes/Tiny/Footage/Imports/Summer reel/a.mp4" }], failed: [] });
+    expect(await importPlace("lib", file, "Summer reel")).toBe("/Volumes/Tiny/Footage/Imports/Summer reel/a.mp4");
+    expect(m.importCopy.mock.calls.at(-1)![1]).toEqual([{ from: "/Users/tiny/Downloads/a.mp4", to: "/Volumes/Tiny/Footage/Imports/Summer reel/a.mp4" }]);
+  });
+
+  it("a Mac app that doesn't copy into that Imports/ yet: the file is used where it is, never refused", async () => {
+    m.importCopy.mockResolvedValue({ copied: [], failed: [{ from: "/Users/tiny/Downloads/a.mp4", error: "Not a folder this app copies into." }] });
+    expect(await importPlace("lib", file, "Summer reel")).toBe("/Users/tiny/Downloads/a.mp4");
+  });
+
+  it("its drive away: the copy fails and says so", async () => {
+    m.importCopy.mockResolvedValue({ copied: [], failed: [{ from: "/Users/tiny/Downloads/a.mp4", error: "Footage isn't connected." }] });
+    await expect(importPlace("lib", file, "Summer reel")).rejects.toThrow("Footage isn't connected.");
   });
 });

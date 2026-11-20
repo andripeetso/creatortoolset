@@ -100,18 +100,33 @@ final class MediaFilesTests: XCTestCase {
         XCTAssertTrue(isFile(MediaFiles.gate(file.path, granted: [composed])))
     }
 
-    /// What the AI Editor may copy from (copyFrom) is exactly what was dropped: a dropped file, never its folder, while the
-    /// folder is still granted for playing (pickedFolders).
-    func testDropRemembersExactlyWhatWasDroppedToCopyFrom() {
+    /// What the AI Editor may copy from (copyFrom): only what this window was given by a drop, exactly, and only for the
+    /// server and workspace the page said it was dropped in. A drop alone grants it nothing.
+    func testCopyFromIsTheDropExactlyForItsServerAndWorkspace() {
         let suite = "media-files-tests-\(UUID().uuidString)"
         let was = MediaFiles.defaults
         MediaFiles.defaults = UserDefaults(suiteName: suite)!
         defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
-        MediaFiles.grantDropped([["path": "/Users/tiny/Downloads/A001.mov"], ["path": "/Volumes/Tiny/Card", "folder": true]])
-        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: MediaFiles.copyFromKey), ["/Users/tiny/Downloads/A001.mov", "/Volumes/Tiny/Card"])
-        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: "pickedFolders"), ["/Users/tiny/Downloads", "/Volumes/Tiny/Card"])
-        MediaFiles.grantPicked([URL(fileURLWithPath: "/Users/tiny/Movies/B.mov")])
-        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: MediaFiles.copyFromKey)?.last, "/Users/tiny/Movies/B.mov")
+        MediaFiles.grantDropped([["path": "/Users/tiny/Downloads/A001.mov"]])
+        XCTAssertNil(MediaFiles.defaults.array(forKey: MediaFiles.copyFromKey))   // played from its folder, never copied by that
+        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: "pickedFolders"), ["/Users/tiny/Downloads"])
+        let sources = ["/Users/tiny/Downloads/A001.mov", "/Volumes/Tiny/Card"]
+        let ask = #"import:chosen:{"workspace":"ws-tiny","paths":["/Users/tiny/Downloads/A001.mov","/Users/tiny/Downloads/other.mov"]}"#
+        let got = expectation(description: "answered")
+        Imports.shared.answer(ask, sources: sources, server: "studio.tiny.test") { reply in
+            XCTAssertEqual(reply["kept"] as? Int, 1)   // other.mov was never dropped here
+            got.fulfill()
+        }
+        wait(for: [got], timeout: 2)
+        let entries = MediaFiles.defaults.array(forKey: MediaFiles.copyFromKey) as? [[String: Any]] ?? []
+        XCTAssertEqual(entries.map { $0["path"] as? String }, ["/Users/tiny/Downloads/A001.mov"])
+        XCTAssertEqual(entries.first?["server"] as? String, "studio.tiny.test")
+        XCTAssertEqual(entries.first?["workspace"] as? String, "ws-tiny")
+        XCTAssertNotNil(entries.first?["at"] as? Double)
+        // the same drop again in another workspace is another entry; in the same one it replaces its own
+        MediaFiles.chosen(["/Users/tiny/Downloads/A001.mov"], server: "studio.tiny.test", workspace: "ws-other")
+        MediaFiles.chosen(["/Users/tiny/Downloads/A001.mov"], server: "studio.tiny.test", workspace: "ws-tiny")
+        XCTAssertEqual((MediaFiles.defaults.array(forKey: MediaFiles.copyFromKey) as? [[String: Any]])?.compactMap { $0["workspace"] as? String }, ["ws-other", "ws-tiny"])
     }
 
     func testPickGrantsWhatWasPicked() throws {

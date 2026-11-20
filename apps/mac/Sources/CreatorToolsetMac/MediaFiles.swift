@@ -34,23 +34,25 @@ enum MediaFiles {
     /// A video, sound or picture file by its name.
     static func isMedia(_ path: String) -> Bool { type(of: path) != nil }
 
-    /// A drop on the window: each dropped folder, and each loose file's folder, may be played and scanned from then on;
-    /// what was dropped itself, exactly, is remembered as a place the AI Editor may copy from (`chosen`).
+    /// A drop on the window: each dropped folder, and each loose file's folder, may be played and scanned from then on.
     static func grantDropped(_ items: [[String: Any]]) {
         for item in items {
             guard let path = item["path"] as? String else { continue }
             add(item["folder"] as? Bool == true ? path : (path as NSString).deletingLastPathComponent)
-            chosen(path)
         }
     }
 
-    /// The files and folders a person dropped on or picked in this app, exactly (never the folder a dropped file is in):
-    /// the only places outside the Media folders the AI Editor's worker copies a source in from (apps/editor worker.py
-    /// dropped_here), so a path an AI typed is never copied. The newest 2000.
+    /// What a person dropped on this app's window, exactly (a dropped file itself, never its folder), with the server and
+    /// workspace the page it was dropped on is in, and when (import:chosen, Import.swift): the only places outside the
+    /// Media folders the AI Editor's worker copies a source in from, and only for an edit of that server's workspace
+    /// within a week (apps/editor worker.py dropped_here). [{path, server, workspace, at}], the newest 500.
     static let copyFromKey = "copyFrom"
-    static func chosen(_ path: String) {
-        let old = defaults.stringArray(forKey: copyFromKey) ?? []
-        if !old.contains(path) { defaults.set(Array((old + [path]).suffix(2000)), forKey: copyFromKey) }
+    static func chosen(_ paths: [String], server: String, workspace: String, now: Date = Date()) {
+        let same = { (e: [String: Any]) in paths.contains(e["path"] as? String ?? "") && e["server"] as? String == server && e["workspace"] as? String == workspace }
+        // an entry from before (a bare path, no workspace) is dropped: it never let anything be copied
+        let old = (defaults.array(forKey: copyFromKey) ?? []).compactMap { $0 as? [String: Any] }.filter { !same($0) }
+        let new: [[String: Any]] = paths.map { ["path": $0, "server": server, "workspace": workspace, "at": now.timeIntervalSince1970] }
+        defaults.set(Array((old + new).suffix(500)), forKey: copyFromKey)
     }
 
     /// The granted folders, as chosen in the open panel.
@@ -58,7 +60,7 @@ enum MediaFiles {
     /// picked folder, and each picked file by itself, never the folder it is in (that holds files nobody picked). A
     /// file indexed in the Media Library from there is read on this Mac later (its shot descriptions, its transcript,
     /// playing its original), so the pick is the grant. `gate` takes a granted path that is the file itself.
-    static func grantPicked(_ urls: [URL], grant: (String) -> Void = { add($0); chosen($0) }) {
+    static func grantPicked(_ urls: [URL], grant: (String) -> Void = add) {
         for url in urls { grant(url.path) }
     }
 

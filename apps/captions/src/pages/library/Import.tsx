@@ -8,7 +8,7 @@ import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
 import { allGranted, folderGrant, listMediaFolders } from "@/lib/local-files";
 import { indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
-import { importCopy, importPrint, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { importCopy, importPrint, importScan, macImports, macMediaUrl, NOT_A_COPY_FOLDER, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { WORDS } from "@/lib/wording";
 
 /**
@@ -54,6 +54,8 @@ export async function importPlace(libraryId: string, file: File, name?: string):
   const dir = importTarget(rows, name);
   if (!dir) throw new Error("Add a Media folder in Settings → Folders");
   const r = await importCopy(`copy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, [{ from: at, to: copyInto(dir, file) }]);
+  // shortcut: a Mac app that doesn't copy into Imports/ yet uses the file where it is, as an older app does; gone once every Mac has the release
+  if (!r.copied[0] && r.failed[0]?.error === NOT_A_COPY_FOLDER) return at;
   if (!r.copied[0]) throw new Error(r.failed[0]?.error ?? "Could not copy the file");
   return r.copied[0].to;
 }
