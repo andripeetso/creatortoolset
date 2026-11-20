@@ -558,7 +558,8 @@ function retouchedPicture(l: ImageLayer, pic: CanvasImageSource & { width: numbe
   if (!exact && l.w * l.h * scale * scale > LIVE_PIXELS) scale = Math.sqrt(LIVE_PIXELS / (l.w * l.h));
   const w = Math.max(1, Math.round(l.w * scale));
   const h = Math.max(1, Math.round(l.h * scale));
-  const key = JSON.stringify([l.picture, pic.width, pic.height, w, h, l.fit, l.zoom, l.focus, l.adjust, l.duotone, l.vignette, l.grain, l.blur]);
+  // the picture itself by its own number: another put under the same id at the same size is retouched again (readyOf)
+  const key = JSON.stringify([l.picture, pictureNumber(pic), pic.width, pic.height, w, h, l.fit, l.zoom, l.focus, l.adjust, l.duotone, l.vignette, l.grain, l.blur]);
   let mine = retouched.get(loaded);
   if (!mine) retouched.set(loaded, (mine = new Map()));
   return keptOr(mine, place, key, w * h, KEPT_PIXELS, (old) => {

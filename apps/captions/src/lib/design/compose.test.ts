@@ -4,6 +4,7 @@ import type { DesignPage, Layer } from "@contracts/design";
 import { drawPage, hits, layerAt, type Loaded } from "./draw";
 import { ringSteps } from "./compose";
 import { masksOf } from "./tree";
+import { paintedBox } from "./hands";
 
 /** Combined shapes and masks drawn on a real canvas and read back pixel by pixel (the sheets they are made on are the same kind). */
 beforeAll(() => {
@@ -449,5 +450,28 @@ describe("follow-ups 2: a picture in an effect's piece, clip only on a box", () 
   it("a plain group's clip is not drawn, so it does not limit where it is clicked", () => {
     const g = { id: "g", type: "group", clip: true, x: 0, y: 0, w: 20, h: 20, layers: [{ id: "r", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 60, h: 60 }] } as Layer;
     expect([hits(g, 40, 40), hits({ ...g, box: true } as Layer, 40, 40)]).toEqual([true, false]);
+  });
+
+  it("a plain group's clip does not cut what it paints either: only a box's does", () => {
+    const g = { id: "g", type: "group", clip: true, x: 0, y: 0, w: 20, h: 20, layers: [{ id: "r", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 60, h: 60 }] } as Layer;
+    expect([paintedBox(g).w, paintedBox({ ...g, box: true } as Layer).w, paintedBox({ ...g, clip: undefined } as Layer).w]).toEqual([60, 20, 60]);
+  });
+
+  it("a retouched picture is made again when another picture is put under its id at the same size", () => {
+    const pics = new Map<string, Canvas>();
+    const paint = (colour: string) => {
+      const c = new Canvas(30, 30);
+      const g = c.getContext("2d");
+      g.fillStyle = colour;
+      g.fillRect(0, 0, 30, 30);
+      pics.set("swapped", c);
+      const photo = { id: "ph", type: "image", picture: "swapped", fit: "cover", x: 0, y: 0, w: W, h: H, adjust: { exposure: 5 } } as Layer;
+      const canvas = new Canvas(W, H);
+      const ctx = canvas.getContext("2d");
+      drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "retouched", background: "#ffffff", layers: [photo] } as DesignPage, W, H, pics as unknown as Loaded, false);
+      return Array.from(ctx.getImageData(20, 30, 1, 1).data);
+    };
+    expect(paint("#ff0000")[0]).toBeGreaterThan(200);
+    expect(paint("#0000ff")[2]).toBeGreaterThan(200);
   });
 });
