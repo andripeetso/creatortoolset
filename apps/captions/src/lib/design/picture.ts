@@ -1,7 +1,7 @@
 import { PICTURE_SIDE_MAX, type PictureSpec } from "@contracts/design";
 import { everyLayer } from "./tree";
 import { drawingUrl, drawPage, fontsOfText, measureWords, sourceOf, textBlock, type Loaded } from "./draw";
-import { layoutLayers } from "./layout";
+import { forgetWords, layoutLayers } from "./layout";
 import { setOwnFamilies } from "./fonts";
 import { paintPictures } from "./paint";
 
@@ -27,6 +27,7 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg?: string; p
   setOwnFamilies(Object.keys(spec.fonts ?? {}));
   await Promise.all([...new Set(layers.flatMap((l) => (l.type === "text" ? fontsOfText(l) : [])))].map((f) => document.fonts.load(f).catch(() => [])));
   // laid out again with the real widths of its words, now its fonts are here (the server only guessed them)
+  forgetWords();
   spec = { ...spec, page: { ...spec.page, layers: layoutLayers(spec.page.layers, measureWords) } };
   layers = everyLayer(spec.page.layers).filter((l) => !l.hidden && !l.reference);
   const loaded: Loaded = new Map();

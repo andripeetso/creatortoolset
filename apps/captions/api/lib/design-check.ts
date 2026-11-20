@@ -194,7 +194,6 @@ function marks(v: unknown): { marks?: { color: string; words?: string; low?: tru
   return list.length ? { marks: list } : {};
 }
 
-/** A layer's pin as it may be saved: each side one of its own words, and none when neither is. */
 /** A layer's sizing, least and most size and place out of an auto layout's flow, as given (cleanPages keeps each only where it applies). */
 function sizes(raw: Record<string, unknown>, r: { w: number; h: number }) {
   const side = (v: unknown, ax: "w" | "h") => (typeof v === "number" && Number.isFinite(v) ? round(num(v, 0, 2 * r[ax], 0)) : undefined);
@@ -205,8 +204,10 @@ function sizes(raw: Record<string, unknown>, r: { w: number; h: number }) {
   };
   const min = pair(raw.min);
   // a most below the least is the least
-  const most = pair(raw.max);
-  const max = most && { ...(most.w !== undefined ? { w: Math.max(most.w, min?.w ?? 0) } : {}), ...(most.h !== undefined ? { h: Math.max(most.h, min?.h ?? 0) } : {}) };
+  // a most of nothing is none (a layer 0 wide is no layer)
+  const given = pair(raw.max);
+  const most = given && Object.fromEntries(Object.entries(given).filter(([, n]) => n! > 0));
+  const max = most && (most.w !== undefined || most.h !== undefined) ? { ...(most.w !== undefined ? { w: Math.max(most.w, min?.w ?? 0) } : {}), ...(most.h !== undefined ? { h: Math.max(most.h, min?.h ?? 0) } : {}) } : undefined;
   const sw = obj(raw.sizing) && DESIGN_SIZINGS.includes(raw.sizing.w as Sizing) ? (raw.sizing.w as Sizing) : undefined;
   const sh = obj(raw.sizing) && DESIGN_SIZINGS.includes(raw.sizing.h as Sizing) ? (raw.sizing.h as Sizing) : undefined;
   return {
@@ -235,6 +236,7 @@ function autoLayout(v: unknown): AutoLayout | null {
   };
 }
 
+/** A layer's pin as it may be saved: each side one of its own words, and none when neither is. */
 function pin(v: unknown): { pin?: Pin } {
   if (!obj(v)) return {};
   const x = DESIGN_PINS_X.find((p) => p === v.x);
@@ -579,13 +581,12 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
   return null;
 }
 
-/** Pages as they may be saved: at most the limits' count of pages and layers, every id its page's own. */
 /** Hug kept to texts and auto layout boxes, fill and a place out of the flow to an auto layout box's layers (each said when given elsewhere). */
 function fitSizing(l: { type: string; sizing?: Layer["sizing"]; absolute?: true; box?: true; layout?: AutoLayout }, flowing: boolean, say: (why: string) => void): void {
   const hugs = l.type === "text" || !!l.layout;
   for (const ax of ["w", "h"] as const) {
     const s = l.sizing?.[ax];
-    if ((s === "hug" && !hugs) || (s === "fill" && !flowing)) {
+    if ((s === "hug" && !hugs) || (s === "fill" && (!flowing || (l.type === "group" && !l.box)))) {
       say(s === "hug" ? `"hug" is for a text or a box with an auto layout: ${ax === "w" ? "width" : "height"} kept fixed` : `"fill" is for a layer of a box with an auto layout: ${ax === "w" ? "width" : "height"} kept fixed`);
       delete l.sizing![ax];
     }
@@ -594,6 +595,7 @@ function fitSizing(l: { type: string; sizing?: Layer["sizing"]; absolute?: true;
   if (l.absolute && !flowing) delete l.absolute;
 }
 
+/** Pages as they may be saved: at most the limits' count of pages and layers, every id its page's own. */
 export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; notes: string[] } {
   const notes: string[] = [];
   const pages: DesignPage[] = [];

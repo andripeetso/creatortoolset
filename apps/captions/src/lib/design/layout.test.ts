@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { GroupLayer, Layer, ShapeLayer, TextLayer } from "../../../contracts/design";
-import { addAutoLayout, fixedBy, flowInsert, flowSlot, guessWidth, layoutLayers, withSizing, withoutLayout, wordsSize } from "./layout";
+import { addAutoLayout, dropSlot, fixedBy, forgetWords, flowInsert, flowSlot, guessWidth, layoutLayers, layoutPages, withSizing, withoutLayout, wordsSize } from "./layout";
+import { mergeFrames } from "./hands";
+import { fitContents } from "./resize";
 import { sizedCopy } from "./resize";
 
 // every letter half its size wide: "Hi" at 20px is 20 wide; a line is 20 × 1.15 = 23 high
@@ -156,7 +158,7 @@ describe("auto layout", () => {
     expect(flowSlot(g.layout!, others, { x: 26, y: 0, w: 10, h: 10 }).index).toBe(1);
     expect(flowSlot(g.layout!, others, { x: 26, y: 0, w: 10, h: 10 }).line).toEqual({ x1: 35, y1: 0, x2: 35, y2: 10 });
     expect(flowSlot(g.layout!, others, { x: 60, y: 0, w: 10, h: 10 }).index).toBe(2);
-    const moved = flowInsert([{ ...g, layers: g.layers.map((l) => (l.id === "a" ? { ...l, x: 60 } : l)) }], "b", ["a"]);
+    const moved = flowInsert([{ ...g, layers: g.layers.map((l) => (l.id === "a" ? { ...l, x: 60 } : l)) }], "b", ["a"], measure);
     expect((moved[0] as GroupLayer).layers.map((l) => l.id)).toEqual(["b2", "c", "a"]);
   });
 
@@ -167,6 +169,83 @@ describe("auto layout", () => {
     const laid = layoutLayers(copy.layers, measure)[0] as GroupLayer;
     expect(laid.w).toBe(500);
     expect(laid.layers.map((l) => [l.x, l.w])).toEqual([[0, 240], [260, 240]]);
+  });
+
+  it("measures words once while they and their font's widths are the same", () => {
+    let calls = 0;
+    let wide = 0.5;
+    const counted = (font: string, s: string) => (calls++, Number(/([\d.]+)px/.exec(font)![1]) * wide * Array.from(s).length);
+    const pill = () => box([text("t", "Hello there")], { dir: "row", pad: 8 }, { sizing: { w: "hug", h: "hug" } });
+    const a = layoutLayers([pill()], counted)[0] as GroupLayer;
+    const first = calls;
+    // a copy of the same words (new objects, as every edit makes) is not measured again
+    expect(layoutLayers([pill()], counted)[0]).toEqual(a);
+    expect(calls).toBe(first);
+    // a font that arrived and draws them wider: measured again once the sizes are forgotten
+    wide = 0.6;
+    expect(layoutLayers([pill()], counted)[0]).toEqual(a);
+    forgetWords();
+    expect((layoutLayers([pill()], counted)[0] as GroupLayer).w).toBeGreaterThan(a.w);
+    expect(calls).toBeGreaterThan(first);
+  });
+
+  it("places a dragged layer by the others as they are shown without it, not where they were", () => {
+    // A B C, 100 wide each: A dragged, B shows at 0 and C at 100; let go with its middle at 110 it goes before C
+    const g = one(box([rect("a", 100, 10), rect("b2", 100, 10), rect("c", 100, 10)], { dir: "row" }, { sizing: { w: "hug", h: "hug" } }));
+    const at = dropSlot(g as Parameters<typeof dropSlot>[0], ["a"], { x: 60, y: 0, w: 100, h: 10 }, measure);
+    expect([at.index, at.line.x1]).toEqual([1, 100]);
+    const moved = flowInsert([{ ...g, layers: g.layers.map((l) => (l.id === "a" ? { ...l, x: 60 } : l)) }], "b", ["a"], measure);
+    expect((moved[0] as GroupLayer).layers.map((l) => l.id)).toEqual(["b2", "a", "c"]);
+  });
+
+  it("takes fill and a place out of the flow from a layer that is in no flow (moved out, ungrouped, pasted)", () => {
+    const loose = layoutLayers([rect("a", 10, 10, { sizing: { w: "fill", h: "fill" }, absolute: true }), { id: "g", type: "group", box: true, x: 0, y: 0, w: 50, h: 50, layers: [rect("b2", 10, 10, { sizing: { w: "fill" } })] }], measure);
+    expect([loose[0]!.sizing, loose[0]!.absolute, (loose[1] as GroupLayer).layers[0]!.sizing]).toEqual([undefined, undefined, undefined]);
+    // and a plain group never fills
+    expect(withSizing({ id: "g", type: "group", x: 0, y: 0, w: 1, h: 1, layers: [rect("a", 1, 1)] }, "w", "fill", true).sizing).toBeUndefined();
+  });
+
+  it("moves only what lies out of the flow by its pin when an auto layout box is resized; the layout places the rest", () => {
+    const g = one(box([rect("a", 100, 10, { pin: { x: "both" } }), rect("tag", 10, 10, { x: 390, absolute: true, pin: { x: "right" } })], { dir: "row" }, { w: 400, h: 10 }));
+    const wider = one(fitContents(g, { ...g, w: 600 }));
+    expect([wider.layers[0]!.w, wider.layers[1]!.x]).toEqual([100, 590]);
+  });
+
+  it("a copy in another size scales the layout's gaps, padding, least and most with it", () => {
+    const g = box([text("t", "Hi", { max: { w: 600 } })], { dir: "row", gap: 10, pad: [14, 32, 14, 32] }, { x: 100, y: 100, w: 400, h: 100, sizing: { w: "hug", h: "hug" } });
+    const copy = sizedCopy({ id: "p", w: 1080, h: 1080, background: "#ffffff", layers: [g] }, { w: 540, h: 540 }, "q").layers[0] as GroupLayer;
+    expect([copy.layout, copy.layers[0]!.max]).toEqual([{ dir: "row", gap: 5, pad: [7, 16, 7, 16] }, { w: 300 }]);
+  });
+
+  it("a text held to a number of lines hugs the height of those lines", () => {
+    const t = layoutLayers([text("t", "aaaa bbbb cccc dddd", { w: 45, lines: 2, sizing: { h: "hug" } })], measure)[0]!;
+    expect(t.h).toBeLessThanOrEqual(46);
+  });
+
+  it("a fixed box past its own most settles in one pass, its layers fitted to the size it is held to", () => {
+    const a = layoutLayers([box([rect("a", 10, 10, { sizing: { w: "fill" } })], { dir: "column" }, { w: 100, max: { w: 80 } })], measure);
+    expect([(a[0] as GroupLayer).w, (a[0] as GroupLayer).layers[0]!.w]).toEqual([80, 80]);
+    expect(layoutLayers(a, measure)).toBe(a);
+  });
+
+  it("lays a turned layer out by the upright box round it", () => {
+    const g = one(box([rect("a", 300, 50, { rotate: 90 }), rect("b2", 10, 10)], { dir: "row", gap: 10 }, { sizing: { w: "hug", h: "hug" } }));
+    // 50 along the row, 300 across: its middle at 25, 150
+    expect([g.layers[0]!.x + 150, g.layers[0]!.y + 25, g.layers[1]!.x, g.w, g.h]).toEqual([25, 150, 60, 70, 300]);
+  });
+
+  it("an empty box with a gap below 0 is only its padding", () => {
+    expect(one(box([], { dir: "row", gap: -20, pad: 5 }, { sizing: { w: "hug", h: "hug" } })).w).toBe(10);
+  });
+
+  it("frames laid out as the window lays them out: a second AI write to a frame is taken, not mistaken for this window's change", () => {
+    const page = (word: string) => ({ id: "p", w: 500, h: 500, background: "#ffffff", layers: [box([text("t", word, { w: 10 })], { dir: "row", pad: 8 }, { sizing: { w: "hug", h: "hug" } })] });
+    // the server's guess of the words' widths is not this window's
+    const v1 = layoutPages([page("NEW")], guessWidth);
+    const v2 = layoutPages([page("LIMITED OFFER")], guessWidth);
+    const mine = layoutPages(v1, measure);
+    expect(JSON.stringify(mergeFrames(mine, v1, v2))).toBe(JSON.stringify(mine));
+    expect(mergeFrames(mine, layoutPages(v1, measure), layoutPages(v2, measure))[0]!.layers).toEqual(layoutPages(v2, measure)[0]!.layers);
   });
 
   it("guesses words wider for wide letters and capitals", () => {

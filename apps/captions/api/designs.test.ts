@@ -206,7 +206,7 @@ describe("designs: an AI that designs", () => {
     const word = { type: "text", font: "Inter", size: 40, color: "#ffffff", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" } };
     const badge = { type: "group", box: true, id: "badge", x: 80, y: 80, w: 10, h: 10, radius: 999, layout: { dir: "row", pad: [14, 32, 14, 32] }, sizing: { w: "hug", h: "hug" }, layers: [{ ...word, id: "word", text: "NEW" }] };
     const point = (id: string, t: string) => ({ ...word, id, text: t, sizing: { w: "fill", h: "hug" } });
-    const list = { type: "group", box: true, id: "list", x: 80, y: 300, w: 900, h: 10, layout: { dir: "column", gap: 32 }, sizing: { h: "hug" }, layers: [point("a", "One"), point("b", "Two"), point("c", "Three")] };
+    const list = { type: "group", box: true, id: "list", x: 80, y: 300, w: 900, h: 10, layout: { dir: "column", gap: 32 }, sizing: { h: "hug" }, layers: [{ ...point("a", "One"), max: { w: 0 } }, point("b", "Two"), point("c", "Three")] };
     const odd = [{ type: "shape", shape: "rect", id: "bar", x: 0, y: 0, w: 50, h: 50, fill: "#000000", sizing: { w: "fill", h: "hug" } }, { type: "group", box: true, id: "bad", x: 0, y: 900, w: 50, h: 50, layout: { dir: "diagonal" }, layers: [] }];
     const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [badge, list, ...odd] }] })).body;
     const at = (b: typeof first, id: string) => everyLayer(b.design.pages[0]!.layers).find((l) => l.id === id)! as GroupLayer;
@@ -218,6 +218,8 @@ describe("designs: an AI that designs", () => {
     expect(ys[1]! - ys[0]!).toBe(ys[2]! - ys[1]!);
     expect(at(first, "list").layers.every((l) => l.w === 900)).toBe(true);
     expect(at(first, "bar").sizing).toBeUndefined();
+    // a most of 0 is none: the point still fills its line
+    expect(at(first, "a").max).toBeUndefined();
     expect(at(first, "bad").layout).toBeUndefined();
     expect(first.notes.join(" ")).toMatch(/"fill" is for a layer of a box with an auto layout/);
     expect(first.notes.join(" ")).toMatch(/"hug" is for a text or a box with an auto layout/);

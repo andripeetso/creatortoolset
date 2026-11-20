@@ -32,7 +32,7 @@ import { downloadBlob } from "@/lib/download";
 import { addStylePictures, createAnimationStyle, listAnimationStyles } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
-import { addAutoLayout, flows, layoutPages } from "@/lib/design/layout";
+import { addAutoLayout, flows, forgetWords, layoutPages, withoutLayout } from "@/lib/design/layout";
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
@@ -161,9 +161,12 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   useEffect(() => {
     getDesign(id).then(
       (d) => {
-        server.current = { pages: d.pages, at: d.updatedAt };
+        // the server's pages as this window lays them out (its widths of the words, not the server's guess): what the
+        // window changes is told from what the server has by that, never by the measuring alone
+        const pages = layoutPages(d.pages, measureWords);
+        server.current = { pages, at: d.updatedAt };
         setDesign(d);
-        setHist(freshHist(d.pages));
+        setHist(freshHist(pages));
         // a canvas with no frame yet opens with the frame tool out: its sizes are in the panel, and a drag draws one
         if (!d.pages.length) setTool("frame");
       },
@@ -175,6 +178,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const ready = hist !== null;
   useEffect(() => {
     if (!version || !ready) return;
+    forgetWords();
+    // what the server has, too: told apart from this window's changes as they both are laid out now (on load, below)
+    server.current = { ...server.current, pages: layoutPages(server.current.pages, measureWords) };
     setHist((h) => {
       const now = h && layoutPages(h.now, measureWords);
       return !h || now === h.now ? h : { ...h, now: now! };
@@ -352,7 +358,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       saving.current = saving.current.then(() =>
         saveDesign(id, { pages, since: server.current.at }).then(
           () => {},
-          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: mergeFrames(pages, server.current.pages, e.design.pages), since: e.design.updatedAt }).then(() => {}, () => {}) : undefined),
+          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: mergeFrames(pages, server.current.pages, layoutPages(e.design.pages, measureWords)), since: e.design.updatedAt }).then(() => {}, () => {}) : undefined),
         ),
       );
     };
@@ -444,17 +450,19 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     remote.current = (d) => {
       if (d.updatedAt <= server.current.at) return false;
       const had = latest.current;
-      const merged = mergeFrames(had, server.current.pages, d.pages);
-      server.current = { pages: d.pages, at: d.updatedAt };
+      // laid out as this window lays out (on load, above)
+      const theirs = layoutPages(d.pages, measureWords);
+      const merged = mergeFrames(had, server.current.pages, theirs);
+      server.current = { pages: theirs, at: d.updatedAt };
       setDesign(d);
       const text = JSON.stringify(merged);
       // nothing of this window's is left to send: what is on the canvas is what the server has
-      if (text === JSON.stringify(d.pages)) {
+      if (text === JSON.stringify(theirs)) {
         unsaved.current = null;
         setSaved("saved");
       }
       if (text === JSON.stringify(had)) return false;
-      if (text === JSON.stringify(d.pages)) first.current = true;
+      if (text === JSON.stringify(theirs)) first.current = true;
       // at once for whatever is sent before the canvas is drawn again
       latest.current = merged;
       change(() => merged);
@@ -650,7 +658,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     patch((l) => {
       if (!isGroup(l)) return l;
       if (box) return { ...l, box: true };
-      const { box: _b, fills: _f, strokes: _s, radius: _r, smooth: _m, clip: _c, ...plain } = l;
+      // its auto layout goes with it (its layers stay where they are)
+      const { box: _b, fills: _f, strokes: _s, radius: _r, smooth: _m, clip: _c, ...plain } = withoutLayout(l);
       return plain;
     });
   /** Up a level: the container the picked layers lie in, picked. */

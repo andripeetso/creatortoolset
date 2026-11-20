@@ -60,6 +60,12 @@ function scaled<L extends Layer>(l: L, k: number): L {
   if ((out.type === "shape" || out.type === "path") && out.stroke) out.stroke = { ...out.stroke, width: round(out.stroke.width * k) };
   if (out.type !== "drawing" && out.strokes) out.strokes = out.strokes.map((s) => ({ ...s, width: round(s.width * k), ...(s.sides ? { sides: s.sides.map((n) => round(n * k)) as [number, number, number, number] } : {}) }));
   if ((out.type === "shape" || out.type === "image" || out.type === "group") && out.radius !== undefined) out.radius = typeof out.radius === "number" ? round(out.radius * k) : (out.radius.map((r) => round(r * k)) as [number, number, number, number]);
+  // an auto layout's spacing and a layer's least and most, in proportion
+  if (out.type === "group" && out.layout) {
+    const a = out.layout;
+    out.layout = { ...a, ...(a.gap ? { gap: round(a.gap * k) } : {}), ...(a.lineGap ? { lineGap: round(a.lineGap * k) } : {}), ...(a.pad ? { pad: typeof a.pad === "number" ? round(a.pad * k) : (a.pad.map((n) => round(n * k)) as [number, number, number, number]) } : {}) };
+  }
+  for (const end of ["min", "max"] as const) if (out[end]) out[end] = Object.fromEntries(Object.entries(out[end]!).map(([ax, n]) => [ax, round(n! * k)]));
   return out as L;
 }
 
@@ -99,6 +105,11 @@ export function fitContents<L extends Placed>(was: Placed, now: L, unpinned: "st
   if (!("type" in now) || g.type !== "group" || (was.w === now.w && was.h === now.h)) return now;
   const from = { w: was.w, h: was.h };
   const to = { w: now.w, h: now.h };
+  // in an auto layout box only what lies out of its flow follows the pins; the layout places the rest (layout.ts)
+  if (g.box && g.layout) {
+    const k = Math.min(to.w / (from.w || 1), to.h / (from.h || 1));
+    return { ...now, layers: g.layers.map((l) => (l.absolute ? placeLayers([l], from, to, unpinned)[0]! : unpinned === "share" ? scaled({ ...l, w: round(l.w * k), h: round(l.h * k) }, k) : l)) };
+  }
   const inner =
     unpinned === "share" || g.box
       ? placeLayers(g.layers, from, to, unpinned)

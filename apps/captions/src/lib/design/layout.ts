@@ -32,9 +32,31 @@ export const clampTo = (l: Pick<Layer, "min" | "max">, axis: Axis, n: number): n
 
 /** How big a text's words are set at their own size: unwrapped, or wrapped at `width`. Rounded up, so they fit the box made from it. */
 export function wordsSize(l: TextLayer, measure: Measure, width?: number): { w: number; h: number } {
-  const set = setRuns({ ...l, w: width ?? 1e6, h: 1e6, fit: undefined, lines: undefined }, measure);
-  return { w: Math.ceil(Math.max(0, ...set.lines.map((r) => r.width))), h: Math.ceil(set.lines.reduce((n, r) => n + r.height, 0)) };
+  // a pass runs on every move of a drag: words are measured once while they and the width they wrap at are the same
+  // (the same layer, or a copy of it with the same words), until forgetWords
+  let kept = measured.get(measure);
+  if (!kept) measured.set(measure, (kept = { by: new WeakMap(), words: new Map() }));
+  const at = String(width ?? "");
+  const mine = kept.by.get(l);
+  if (mine?.has(at)) return mine.get(at)!;
+  const { id: _i, x: _x, y: _y, w: _w, h: _h, ...words } = l;
+  const key = `${at}|${JSON.stringify(words)}`;
+  let size = kept.words.get(key);
+  if (!size) {
+    // held to a number of lines it is drawn shrunk to them: as high as those lines
+    const set = setRuns({ ...l, w: width ?? 1e6, h: 1e6, fit: undefined, lines: width === undefined ? undefined : l.lines }, measure);
+    size = { w: Math.ceil(Math.max(0, ...set.lines.map((r) => r.width))), h: Math.ceil(set.lines.reduce((n, r) => n + r.height, 0)) };
+    if (kept.words.size > 4000) kept.words.clear();
+    kept.words.set(key, size);
+  }
+  if (!mine) kept.by.set(l, new Map([[at, size]]));
+  else mine.set(at, size);
+  return size;
 }
+type Kept = { w: number; h: number };
+let measured = new WeakMap<Measure, { by: WeakMap<TextLayer, Map<string, Kept>>; words: Map<string, Kept> }>();
+/** Every measured size forgotten: words are measured again (a font arrived, and draws them at other widths). */
+export const forgetWords = () => void (measured = new WeakMap());
 
 /**
  * A string's width guessed from its letters' kinds: the server has no fonts to measure with.
@@ -68,6 +90,21 @@ function resizeTo(k: Layer, w: number, h: number, m: Measure | null, say?: Say):
 }
 
 const atPlace = (k: Layer, x: number, y: number): Layer => (k.x === x && k.y === y ? k : { ...k, x, y });
+/** A layer with its sizing set to `sizing`, a side without one left out (none: the field gone). */
+function sized<L extends Layer>(l: L, sizing: Layer["sizing"]): L {
+  const { sizing: _old, ...rest } = l;
+  const w = sizing?.w;
+  const h = sizing?.h;
+  return (w || h ? { ...rest, sizing: { ...(w ? { w } : {}), ...(h ? { h } : {}) } } : rest) as L;
+}
+/** A layer out of any auto layout's flow: it neither fills nor lies out of a flow (it keeps its size). */
+function outOfFlow(l: Layer): Layer {
+  if (l.sizing?.w !== "fill" && l.sizing?.h !== "fill" && !l.absolute) return l;
+  const { absolute: _a, ...rest } = sized(l, { w: l.sizing?.w === "fill" ? undefined : l.sizing?.w, h: l.sizing?.h === "fill" ? undefined : l.sizing?.h });
+  return rest as Layer;
+}
+/** How far a layer reaches along a side as it is drawn: a turned one by the upright box round it. */
+const reach = (k: Layer, ax: Axis): number => (k.rotate ? boundsOf([k])[ax] : k[ax]);
 
 /** A box's layers placed by its auto layout, and its size where it hugs them. The same box when nothing moved. */
 function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
@@ -93,8 +130,12 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
   const hugC = sizing[C] === "hug";
   const gap = a.gap ?? 0;
   const lineGap = a.lineGap ?? gap;
-  const innerM = g[M] - m0 - m1;
-  const innerC = g[C] - c0 - c1;
+  // its own size kept to its least and most and never under its padding, before anything is placed in it
+  const floor = (ax: Axis, n: number) => Math.max(ax === M ? m0 + m1 : c0 + c1, clampTo(g, ax, n));
+  const fixedM = floor(M, g[M]);
+  const fixedC = floor(C, g[C]);
+  const innerM = fixedM - m0 - m1;
+  const innerC = fixedC - c0 - c1;
   const items = flow.slice();
   const put = (i: number, ax: Axis, n: number) => {
     const k = items[i]!;
@@ -104,7 +145,7 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
   const lines: number[][] = [[]];
   let used = 0;
   items.forEach((k, i) => {
-    const s = fills(k, M) && !hugM ? (k.min?.[M] ?? 0) : k[M];
+    const s = fills(k, M) && !hugM ? (k.min?.[M] ?? 0) : reach(k, M);
     const line = lines.at(-1)!;
     if (a.wrap && !hugM && line.length && used + gap + s > innerM + 0.5) {
       lines.push([i]);
@@ -115,7 +156,7 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
     }
   });
   // a line is as thick across as its thickest layer that does not fill across (one that does counts its least)
-  const thick = (line: number[]) => Math.max(0, ...line.map((i) => (fills(items[i]!, C) ? (items[i]!.min?.[C] ?? 0) : items[i]![C])));
+  const thick = (line: number[]) => Math.max(0, ...line.map((i) => (fills(items[i]!, C) ? (items[i]!.min?.[C] ?? 0) : reach(items[i]!, C))));
   const crossOf = (line: number[]) => (lines.length === 1 && !hugC ? innerC : thick(line));
   const stretch = () => lines.forEach((line) => line.forEach((i) => fills(items[i]!, C) && put(i, C, clampTo(items[i]!, C, Math.max(0, crossOf(line))))));
   stretch();
@@ -123,7 +164,7 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
   if (!hugM)
     for (const line of lines) {
       let open = line.filter((i) => fills(items[i]!, M));
-      let free = innerM - gap * (line.length - 1) - line.filter((i) => !fills(items[i]!, M)).reduce((n, i) => n + items[i]![M], 0);
+      let free = innerM - gap * (line.length - 1) - line.filter((i) => !fills(items[i]!, M)).reduce((n, i) => n + reach(items[i]!, M), 0);
       while (open.length) {
         const each = Math.max(0, free / open.length);
         const held = open.find((i) => clampTo(items[i]!, M, each) !== each);
@@ -139,23 +180,27 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
     }
   // a text given a width is as high as its words then: across again
   stretch();
-  const along = (line: number[]) => line.reduce((n, i) => n + items[i]![M], 0);
-  const floor = (ax: Axis, n: number) => Math.max(ax === M ? m0 + m1 : c0 + c1, clampTo(g, ax, n));
-  const sizeM = R(floor(M, hugM ? Math.max(0, ...lines.map((l) => along(l) + gap * (l.length - 1))) + m0 + m1 : g[M]));
-  const crosses = lines.map((l) => (lines.length === 1 && !hugC ? Math.max(0, floor(C, g[C]) - c0 - c1) : thick(l)));
+  const along = (line: number[]) => line.reduce((n, i) => n + reach(items[i]!, M), 0);
+  // the gaps between a line's layers (none in an empty box)
+  const gaps = (line: number[]) => gap * Math.max(0, line.length - 1);
+  const sizeM = R(hugM ? floor(M, Math.max(0, ...lines.map((l) => along(l) + gaps(l))) + m0 + m1) : fixedM);
+  const crosses = lines.map((l) => (lines.length === 1 && !hugC ? Math.max(0, innerC) : thick(l)));
   const block = crosses.reduce((n, c) => n + c, 0) + lineGap * (lines.length - 1);
-  const sizeC = R(floor(C, hugC ? block + c0 + c1 : g[C]));
+  const sizeC = R(hugC ? floor(C, block + c0 + c1) : fixedC);
   const roomM = sizeM - m0 - m1;
   let at = c0 + (sizeC - c0 - c1 - block) * PLACE[a.cross ?? "start"];
   lines.forEach((line, n) => {
     const spread = a.between && !hugM;
     const space = spread ? (line.length > 1 ? Math.max(0, (roomM - along(line)) / (line.length - 1)) : 0) : gap;
-    let p = m0 + (spread ? 0 : (roomM - along(line) - gap * (line.length - 1)) * PLACE[a.align ?? "start"]);
+    let p = m0 + (spread ? 0 : (roomM - along(line) - gaps(line)) * PLACE[a.align ?? "start"]);
     for (const i of line) {
       const k = items[i]!;
-      const q = at + (crosses[n]! - k[C]) * PLACE[a.cross ?? "start"];
-      items[i] = row ? atPlace(k, R(p), R(q)) : atPlace(k, R(q), R(p));
-      p += k[M] + space;
+      const [rm, rc] = [reach(k, M), reach(k, C)];
+      // a turned layer: the upright box round it is placed, the layer turning about its middle in it
+      const q = at + (crosses[n]! - rc) * PLACE[a.cross ?? "start"] + (rc - k[C]) / 2;
+      const pm = p + (rm - k[M]) / 2;
+      items[i] = row ? atPlace(k, R(pm), R(q)) : atPlace(k, R(q), R(pm));
+      p += rm + space;
     }
     at += crosses[n]! + lineGap;
   });
@@ -172,20 +217,24 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
     return n;
   });
   if (!changed) return g;
-  const { sizing: _was, ...rest } = g;
-  return { ...rest, ...size, layers, ...(sizing.w || sizing.h ? { sizing: { ...(sizing.w ? { w: sizing.w } : {}), ...(sizing.h ? { h: sizing.h } : {}) } } : {}) };
+  return sized({ ...g, ...size, layers }, sizing);
 }
 
 /** One layer settled, its own layers settled before it: a hugging text, a plain group round its layers, a box laid out. */
 function settle(l: Layer, m: Measure | null, say?: Say): Layer | null {
   if (l.type === "text") return settleText(l, m);
   if (flows(l)) return arrange(l, m, say);
-  if (isGroup(l) && !l.box) return hug([l])[0] ?? null;
-  return l;
+  // a container with no flow: what fills or lies out of a flow in it (a layer moved out of one, ungrouped, pasted) no longer does
+  const g = isGroup(l) && l.layers.some((k) => outOfFlow(k) !== k) ? { ...l, layers: l.layers.map(outOfFlow) } : l;
+  if (isGroup(g) && !g.box) return hug([g])[0] ?? null;
+  return g;
 }
 
 /** Every layer laid out (see above), deepest first. The same list when nothing changed. */
-export const layoutLayers = (layers: readonly Layer[], m: Measure | null, say?: Say): Layer[] => mapLayers(layers, (l) => settle(l, m, say));
+export function layoutLayers(layers: readonly Layer[], m: Measure | null, say?: Say): Layer[] {
+  const top = layers.some((k) => outOfFlow(k) !== k) ? layers.map(outOfFlow) : layers;
+  return mapLayers(top, (l) => settle(l, m, say));
+}
 
 /** Every frame's layers laid out (layoutLayers); the same list when nothing changed. */
 export function layoutPages<P extends DesignPage>(pages: readonly P[], m: Measure | null, say?: Say): P[] {
@@ -207,8 +256,7 @@ export function fixedBy<L extends Layer>(was: Layer, now: L, say?: Say): L {
   drop.forEach((ax) => say?.(`${AXIS_NAME[ax]} set to Fixed for ${nameOf(now)}`));
   const sizing = { ...now.sizing };
   drop.forEach((ax) => delete sizing[ax]);
-  const { sizing: _old, ...rest } = now;
-  return (sizing.w || sizing.h ? { ...rest, sizing } : rest) as L;
+  return sized(now, sizing);
 }
 
 /**
@@ -217,10 +265,9 @@ export function fixedBy<L extends Layer>(was: Layer, now: L, say?: Say): L {
  * way fixed (each named in a notice).
  */
 export function withSizing(l: Layer, axis: Axis, to: "fixed" | "hug" | "fill", inFlow: boolean, say?: Say): Layer {
-  if ((to === "hug" && l.type !== "text" && !flows(l)) || (to === "fill" && !inFlow)) return l;
-  const sizing = { ...l.sizing, [axis]: to === "fixed" ? undefined : to };
-  const { sizing: _old, ...rest } = l;
-  let out = (sizing.w || sizing.h ? { ...rest, sizing: { ...(sizing.w ? { w: sizing.w } : {}), ...(sizing.h ? { h: sizing.h } : {}) } } : rest) as Layer;
+  // a plain group is only the box round its layers: it never fills
+  if ((to === "hug" && l.type !== "text" && !flows(l)) || (to === "fill" && (!inFlow || (isGroup(l) && !l.box)))) return l;
+  let out = sized(l, { ...l.sizing, [axis]: to === "fixed" ? undefined : to });
   if (to === "hug" && flows(out) && (out.layout.dir === "row") === (axis === "w"))
     out = { ...out, layers: out.layers.map((k) => (k.sizing?.[axis] === "fill" ? (say?.(`${AXIS_NAME[axis]} set to Fixed for ${nameOf(k)}`), withSizing(k, axis, "fixed", true)) : k)) };
   return out;
@@ -229,7 +276,7 @@ export function withSizing(l: Layer, axis: Axis, to: "fixed" | "hug" | "fill", i
 /** A box's auto layout taken off: its layers stay where they are, those that filled keep their size. */
 export function withoutLayout(g: GroupLayer): GroupLayer {
   const { layout: _l, sizing: _s, ...rest } = g;
-  return { ...rest, layers: g.layers.map((k) => (["w", "h"] as const).reduce((n, ax) => (n.sizing?.[ax] === "fill" ? withSizing(n, ax, "fixed", false) : n), k)) };
+  return { ...rest, layers: g.layers.map(outOfFlow) };
 }
 
 /**
@@ -316,13 +363,22 @@ export function flowSlot(layout: AutoLayout, others: readonly Layer[], at: Rect)
   return { index, line: row ? { x1: p, y1: span[0]!, x2: p, y2: span[1]! } : { x1: span[0]!, y1: p, x2: span[1]!, y2: p } };
 }
 
-/** Layers `ids` of auto layout box `boxId` (found anywhere in `layers`) put where they lie now in its flow (flowSlot). */
-export function flowInsert(layers: readonly Layer[], boxId: string, ids: readonly string[]): Layer[] {
+/**
+ * Where layers `ids` of an auto layout box, moving at `at` (in its own pixels), go in its flow (flowSlot): measured
+ * against the box laid out without them, as it is shown while they move.
+ */
+export function dropSlot(box: Flowing, ids: readonly string[], at: Rect, m: Measure | null): ReturnType<typeof flowSlot> {
+  const shown = layoutLayers([{ ...box, layers: box.layers.map((l) => (ids.includes(l.id) ? { ...l, absolute: true as const } : l)) }], m)[0] as GroupLayer;
+  return flowSlot(box.layout, shown.layers.filter((l) => !ids.includes(l.id)), at);
+}
+
+/** Layers `ids` of auto layout box `boxId` (found anywhere in `layers`) put where they lie now in its flow (dropSlot). */
+export function flowInsert(layers: readonly Layer[], boxId: string, ids: readonly string[], m: Measure | null): Layer[] {
   const box = findLayer(layers, boxId);
   if (!flows(box)) return layers as Layer[];
   const moving = box.layers.filter((l) => ids.includes(l.id));
   if (!moving.length) return layers as Layer[];
   const others = box.layers.filter((l) => !ids.includes(l.id));
-  const { index } = flowSlot(box.layout, others, boundsOf(moving));
+  const { index } = dropSlot(box, ids, boundsOf(moving), m);
   return editIn(layers, boxId, () => [...others.slice(0, index), ...moving, ...others.slice(index)]);
 }

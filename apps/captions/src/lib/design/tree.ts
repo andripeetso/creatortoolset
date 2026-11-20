@@ -176,16 +176,6 @@ export function hug(layers: readonly Layer[]): Layer[] {
     return { ...l, x: round(m.x - b.w / 2), y: round(m.y - b.h / 2), w: round(b.w), h: round(b.h), layers: l.layers.map((k) => ({ ...k, x: round(k.x - b.x), y: round(k.y - b.y) })) };
   });
 }
-/** Every frame's plain groups kept to their layers (hug); the same list when nothing changed. */
-export function hugPages<P extends DesignPage>(pages: readonly P[]): P[] {
-  let changed = false;
-  const out = pages.map((p) => {
-    const layers = hug(p.layers);
-    return layers === p.layers ? p : ((changed = true), { ...p, layers });
-  });
-  return changed ? out : (pages as P[]);
-}
-
 /**
  * Layers (siblings, in the frame's pixels as scopeLayers gives them) made one container in their place: a plain group,
  * or with `box` a box round them. It lies where the frontmost of them was, they keep their order and their place in

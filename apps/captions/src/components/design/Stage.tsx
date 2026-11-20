@@ -6,7 +6,8 @@ import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, mapLa
 import { solidGround } from "@/lib/design/paint";
 import { boundsOf, boxPick, dropTarget, frameOf, hovers, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
-import { fixedBy, flowInsert, flowSlot, flows } from "@/lib/design/layout";
+import { dropSlot, fixedBy, flowInsert, flows } from "@/lib/design/layout";
+import { measureWords } from "@/lib/design/draw";
 import { toast } from "sonner";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, zoomStop, type KeptFrame, type ViewStore } from "@/lib/design/view";
@@ -615,15 +616,20 @@ export function Stage({
         const fresh = freshIds(real[to] ?? host, moving.length);
         inFlow = flows(flowing) && to === k && !out;
         const moved = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id, ...(inFlow ? { absolute: true as const } : {}) }));
-        // the line shows while their middle is over the box (let go outside it, they leave it: dropInto)
+        // the line shows where they go in the box as it is shown without them, while their middle is over it (let go
+        // outside it, they leave it: dropInto)
+        // shortcut: in the box's unturned pixels: an open turned box shows the line off its place; upgrade with into()
         const flowRect = flows(flowing) ? inFrame(real[k]!.layers, flowing.id)! : null;
         const held = boundsOf(moved);
-        const cx = held.x + held.w / 2;
-        const cy = held.y + held.h / 2;
-        const over = !!flowRect && cx >= flowRect.x && cx <= flowRect.x + flowRect.w && cy >= flowRect.y && cy <= flowRect.y + flowRect.h;
-        if (flows(flowing) && inFlow && over) {
-          const at = flowSlot(flowing.layout, p.layers.filter((l) => !ids.includes(l.id)), held).line;
-          setSlot({ x1: at.x1 + g.x, y1: at.y1 + g.y, x2: at.x2 + g.x, y2: at.y2 + g.y });
+        const slotNow = flows(flowing) && flowRect ? dropSlot(flowing, ids, { ...held, x: held.x - flowRect.x, y: held.y - flowRect.y }, measureWords) : null;
+        const cx = held.x + held.w / 2 - (flowRect?.x ?? 0);
+        const cy = held.y + held.h / 2 - (flowRect?.y ?? 0);
+        // over the box as dropInto reads it (its size before the drag), so the line shows exactly when they would go in
+        if (slotNow && inFlow && cx >= 0 && cx <= flowRect!.w && cy >= 0 && cy <= flowRect!.h) {
+          const at = slotNow.line;
+          const ox = g.x + flowRect!.x;
+          const oy = g.y + flowRect!.y;
+          setSlot({ x1: at.x1 + ox, y1: at.y1 + oy, x2: at.x2 + ox, y2: at.y2 + oy });
         } else setSlot(null);
         // a copy, or a container landing in another frame: every layer inside it an id of its own there
         const placed = copy || to !== k ? reid(moved, moved.map((l) => l.id), [...(real[to] ?? host).layers, ...(copy ? [] : moving)]) : moved;
@@ -656,7 +662,7 @@ export function Stage({
           // let go in the same frame: into the box under their middle, or out of the container they were in
           const mid = boundsOf(last.pages[0]!.layers.filter((l) => last!.ids.includes(l.id)));
           const into_ = last.to === k && !copy && !p.loose ? dropInto(real[k]!.layers, last.ids, { x: mid.x + mid.w / 2, y: mid.y + mid.h / 2 }, open, DESIGN_LIMITS.depth) : open;
-          const inFlowOf = (layers: Layer[], box: string | null) => (box && flows(findLayer(layers, box)) ? flowInsert(layers, box, last!.ids) : layers);
+          const inFlowOf = (layers: Layer[], box: string | null) => (box && flows(findLayer(layers, box)) ? flowInsert(layers, box, last!.ids, measureWords) : layers);
           if (into_ !== open) {
             const whole = unscopeOne(last.pages[0]!);
             onCommit([{ ...whole, layers: inFlowOf(moveInto(whole.layers, last.ids, into_), into_) }]);
