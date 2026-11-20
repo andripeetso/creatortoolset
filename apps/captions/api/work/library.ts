@@ -18,7 +18,7 @@ import { soundArgs } from "../library/transcribe";
 import { cutStills } from "../library/describe";
 import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
 import { SHEET_FORMAT, type LookSheet } from "../library/shots";
-import { keepProxy, proxiesDir, sizeOf } from "./cache";
+import { keepProxy, proxiesDir, proxyBytes, roomFor, sizeOf } from "./cache";
 import { machineDisks } from "./disks";
 import { client, type WorkerOptions } from "./computer";
 import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
@@ -103,6 +103,8 @@ async function derive(lib: LibraryPackage, src: string, dir: string, hear?: (sou
   // as a Mac's stills: cut upright from the file as it is, the clip's own turn added by the server (describe.ts)
   if (kind === "describe") return { files: Object.fromEntries((await cutStills(src, p.duration, 0, dir)).map((f, i) => [`still${i}`, f])) };
   // no proxy when it is no smaller than the original: the server then keeps the original as its light copy
+  // one kept on this computer leaves the disk its free-space floor (cache.ts roomFor), else none is made and the original plays
+  if (kind === "proxy" && lib.keepProxy && !roomFor(proxyBytes(sizeOf(src) ?? 0, p.duration, lib.proxy?.quality))) return { files: {} };
   if (kind === "proxy") return { files: (await makeProxy(src, out("proxy.mp4"), !!p.cover || !p.vcodec, lib.proxy?.quality, p.duration)) ? { proxy: out("proxy.mp4") } : {} };
   if (kind === "wave") return { files: { wave: (await makeWave(src, out("wave.json"), !!p.acodec), out("wave.json")) } };
   if (kind === "sprite") return { files: { sprite: (await makeSprite(src, out("sprite.jpg"), p.duration, p.turn), out("sprite.jpg")) } };

@@ -44,6 +44,18 @@ describe("a plug-in's proxies made on the computer", () => {
     expect(await makeKept([{ id: "ext_master", path: master, under: censored }])).toBe(false);
   }, 60_000);
 
+  it("leaves the disk its free-space floor: with too little free even after trimming, no proxy is written and the original plays", async () => {
+    process.env.CT_PROXY_FLOOR = String(Number.MAX_SAFE_INTEGER); // no disk has this much free
+    try {
+      expect(await makeKept([{ id: "ext_full", path: master, under: censored }])).toBe(false);
+      expect(existsSync(proxyPath("ext_full"))).toBe(false);
+      expect(madeProxies().ext_full).toBeUndefined(); // not skipped for good: made once there is room
+      expect(existsSync(proxyPath("ext_master"))).toBe(true); // and nothing was trimmed for a proxy that could never fit
+    } finally {
+      delete process.env.CT_PROXY_FLOOR;
+    }
+  }, 60_000);
+
   it("only for a heavy file when asked so: a light one is recorded as skipped and never asked again", async () => {
     const light = path.join(censored, "light.mp4");
     execFileSync(ffmpegCommand(), ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=duration=1:size=1280x720:rate=30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", light]);

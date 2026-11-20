@@ -13,7 +13,7 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, madeProxies, moveFile, noteMade, proxiesDir, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
+import { cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, madeProxies, moveFile, noteMade, proxiesDir, proxyBytes, proxyPath, roomFor, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
 import { makeProxy, needsProxy } from "../library/media/proxy";
 import { probe } from "../library/media/probe";
 import { proxySize } from "../../contracts/library";
@@ -299,6 +299,11 @@ export async function makeKept(list: ComputerProxy[]): Promise<boolean> {
       return true;
     }
     const quality = m.quality ?? "standard";
+    // the disk keeps its floor free (cache.ts roomFor): not enough even after trimming, and the original plays
+    if (!roomFor(proxyBytes(sizeOf(m.path) ?? 0, p.duration, quality))) {
+      console.warn(`[work] proxy ${m.id}: not made, the disk would have less than its free-space floor left`);
+      return false;
+    }
     if (await makeProxy(m.path, part, false, quality, p.duration)) {
       // a cache file like any other proxy: it counts toward the size limit (cacheLimit) and the oldest go first
       moveFile(part, proxyPath(m.id));
