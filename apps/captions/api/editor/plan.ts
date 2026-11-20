@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import path from "node:path";
-import type { Coverage, Critique, EditPlan, Focus, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
+import type { Coverage, EditPlan, Focus, FootageIndex, GenSpec, IndexShot, IndexSource, PlanEffect, PlanFrame, PlanShot, PlanText, SongBeats } from "../../contracts/edit-plan";
 import type { EditFeedback, Item, Sentence, Timeline, TimelineSource } from "../../contracts/editor";
 import { SOUNDS } from "../../contracts/library";
 import { aiFor, completeWithFallback } from "../ai-complete";
@@ -359,8 +359,6 @@ export interface PlanInput {
 export interface Revise {
   notes: EditFeedback[];
   last: { name: string; plan: EditPlan; marked: number[] }[];
-  /** the fix round (critique.ts): the shots the look at the last cut found don't hold up, by number from 1. The check's words, never the person's */
-  findings?: Critique["fails"];
 }
 
 /** S1, S2, … for the sources in index order. */
@@ -440,21 +438,14 @@ export function notesPrompt(notes: EditFeedback[]): string {
   return `What the person said about the versions so far, oldest first, in their own words (the newest says what they want now):\n${noteLines(notes).join("\n")}`;
 }
 
-/** The fix round's ask: only the shots the check named change. */
-const FIX_ASK =
-  'A check looked at the last version before the person saw it and found the shots marked "the check" don\'t hold up (the check\'s findings, not the person\'s words). Replace those shots and nothing else: in "shots", {"keep": n} for every other shot, and in place of each marked one a new shot from the footage, {"src": "S2", "in": 31.5, "why": "a few words"}, that holds up against the brief, the person\'s notes and the setup and shows a moment the version doesn\'t show yet. A new shot takes the marked shot\'s place, length and effects.';
-
-/** The revise's part of the prompt: the person's notes word for word, the last version shot by shot, and in the fix round what the check found. */
+/** The revise's part of the prompt: the person's notes word for word and the last version shot by shot. */
 function revisePrompt(r: Revise, index: FootageIndex): string[] {
-  const found = new Map((r.findings ?? []).map((f) => [f.n - 1, f.why]));
   const shot = (s: PlanShot, k: number, marked: number[]) =>
-    `  ${k + 1}. ${"source" in s.src ? `${tagOf(index, s.src.source)} in ${s.src.inS.toFixed(1)}` : `generated ${s.src.generate.style}`}, ${s.dur.toFixed(2)} s${s.fx?.length ? `, ${s.fx.map((f) => f.type).join(" + ")}` : ""}${s.why ? `: ${s.why}` : ""}${marked.includes(k) ? "  ← a note sits on this shot" : ""}${found.has(k) ? `  ← the check: ${found.get(k)}` : ""}`;
+    `  ${k + 1}. ${"source" in s.src ? `${tagOf(index, s.src.source)} in ${s.src.inS.toFixed(1)}` : `generated ${s.src.generate.style}`}, ${s.dur.toFixed(2)} s${s.fx?.length ? `, ${s.fx.map((f) => f.type).join(" + ")}` : ""}${s.why ? `: ${s.why}` : ""}${marked.includes(k) ? "  ← a note sits on this shot" : ""}`;
   return [
     ...(r.notes.length ? [notesPrompt(r.notes)] : []),
     `The last version${r.last.length > 1 ? "s" : ""}, shot by shot:\n${r.last.map((l) => `${l.name}:\n${l.plan.shots.map((s, k) => shot(s, k, l.marked)).join("\n")}`).join("\n")}`,
-    r.findings
-      ? FIX_ASK
-      : 'Make the next version from the last one and change what the notes speak to, nothing else: in each plan\'s "shots", {"keep": n} keeps shot n of that version as it is (its source, timing and effects), and a new shot takes the place of each one that changes. Plans are in the same order as the versions above. When a note asks for a different whole (shorter, another order, another song), write all of its shots new.',
+    'Make the next version from the last one and change what the notes speak to, nothing else: in each plan\'s "shots", {"keep": n} keeps shot n of that version as it is (its source, timing and effects), and a new shot takes the place of each one that changes. Plans are in the same order as the versions above. When a note asks for a different whole (shorter, another order, another song), write all of its shots new.',
   ];
 }
 
@@ -1310,53 +1301,6 @@ async function planContext(edit: EditMeta, actor: string, sentences: Sentence[],
 }
 
 /**
- * The fix round (tasks/flywheel/PLAN.md 4.2): the shots the look at a version's cut named (critique.ts) go back through
- * the revise with the check's findings, apart from the person's notes and never among them. Null when the AI's answer
- * changes no shot.
- */
-export async function fixPlan(edit: EditMeta, actor: string, variant: string, last: EditPlan, fails: Critique["fails"], signal: AbortSignal): Promise<{ plan: EditPlan; notes: string[] } | null> {
-  const { route, input, repair } = await planContext(edit, actor, readStep(edit.id, "analysis")?.sentences ?? [], signal, false);
-  if (signal.aborted) return null;
-  const { system, user } = planPrompt({ ...input, versions: 1, revise: { notes: edit.feedback ?? [], last: [{ name: variant, plan: last, marked: [] }], findings: fails } });
-  let raws: Record<string, unknown>[];
-  try {
-    raws = await completeWithFallback(system, user, signal, parsePlans, route);
-  } catch (e) {
-    const away = macAway(e);
-    if (away) throw new NeedsKey(away.message);
-    throw e;
-  }
-  if (signal.aborted) return null;
-  const fixed = swapShots(raws[0]!, last, fails.map((f) => f.n), repair);
-  // the new shots get the last look a plan's shots get (the ones kept passed it already)
-  const swapped = fixed ? await lastLook(fixed.plan, repair.index, signal, last.shots) : 0;
-  if (swapped) fixed!.notes.push(lookedNote(swapped));
-  return fixed;
-}
-
-/**
- * The fix round's answer laid into the last version: each shot the check named takes the AI's next new shot, checked
- * like any shot (a source that exists, a moment and a picture not shown yet) and given the slot's place, length, speed
- * and effects; every other shot stays exactly as it was. Null when no shot changed.
- */
-export function swapShots(raw: Record<string, unknown>, last: EditPlan, named: number[], c: RepairContext): { plan: EditPlan; notes: string[] } | null {
-  const given = (Array.isArray(raw.shots) ? raw.shots : []).filter(obj);
-  const usable = (s: Record<string, unknown> | undefined) => !!s && s.keep === undefined && typeof srcOf(s, c.index) !== "string";
-  // an answer with every slot is read slot by slot; a shorter one gives its new shots to the named slots in turn
-  const whole = given.length === last.shots.length;
-  const fresh = given.filter(usable);
-  const shots = last.shots.map((s, k) => {
-    const pick = !named.includes(k + 1) ? undefined : whole ? (usable(given[k]) ? given[k] : undefined) : fresh.shift();
-    return pick ? { ...pick, dur: s.dur, speed: s.speed ?? 1, ramp: s.ramp, fx: s.fx ?? [], enter: s.enter, frame: s.frame, scale: s.scale, sound: s.sound } : { keep: k + 1 };
-  });
-  if (shots.every((s) => "keep" in s)) return null;
-  // laid with no song, length or opener to fit again (those made the last version's timing): then given that timing, slot for slot
-  const r = repairPlan({ shots }, { ...c, song: undefined, brief: "", targetS: 0, last });
-  if (r.plan.shots.length !== last.shots.length) return null;
-  return { plan: { ...last, shots: r.plan.shots.map((s, k) => ({ ...s, at: last.shots[k]!.at, dur: last.shots[k]!.dur })) }, notes: r.notes };
-}
-
-/**
  * A version after the first (tasks/flywheel/PLAN.md 3.5): the person's notes, oldest first, and each version's last
  * plan with the shots a Review note made since sits on. Null for a first plan, or with no notes: planned as before.
  */
@@ -1413,7 +1357,7 @@ export async function lastLook(plan: EditPlan, index: FootageIndex, signal?: Abo
   const byId = new Map(index.sources.map((s) => [s.id, s]));
   const used = new Map<string, Array<[number, number]>>();
   const span = (s: PlanShot) => sourceSpan(s.dur, s.speed ?? 1, s.ramp);
-  // the pictures the cut shows: a shot moved here never brings one of them back (the fix round's new shot, say)
+  // the pictures the cut shows: a shot moved here never brings one of them back
   const pictures: string[] = [];
   for (const s of plan.shots) {
     if (!("source" in s.src)) continue;

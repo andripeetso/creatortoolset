@@ -22,7 +22,7 @@ import { gates } from "./place";
 // the gates a claim runs on the server for a computer's step; their output is its pkg.gate (on-computer.ts gateOf)
 gates.analyze = (ctx) => analyzeGate(ctx);
 gates.script = (ctx) => indexGate(ctx.edit, ctx.signal);
-// critique's fix round plans again (plan.ts fixPlan) and reads the index the same way
+// critique reads the index the same way (shownStretches: what each shot of the cut shows)
 gates.critique = (ctx) => indexGate(ctx.edit, ctx.signal);
 
 /** A call the job may not make: not its account's edit, or a read that isn't on the list. */
