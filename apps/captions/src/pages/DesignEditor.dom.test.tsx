@@ -104,6 +104,27 @@ it("a save refused because the design changed elsewhere is merged and sent again
   expect(onDone).toHaveBeenCalledTimes(1);
   expect(saveDesign.mock.invocationCallOrder[1]!).toBeLessThan(onDone.mock.invocationCallOrder[0]!);
 });
+it("leaving the page: a save refused twice for changes made elsewhere is merged and sent again until it goes through", async () => {
+  const { DesignChanged } = await import("@/lib/designs");
+  const one: Design = { ...design, updatedAt: 5, pages: [{ ...design.pages[0]!, name: "One" }] };
+  const two: Design = { ...design, updatedAt: 6, pages: [{ ...design.pages[0]!, name: "One", background: "#ff0000" }] };
+  saveDesign.mockRejectedValueOnce(new DesignChanged(one)).mockRejectedValueOnce(new DesignChanged(two));
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  act(() => root!.render(<MemoryRouter><DesignEditor id="d1" onDone={vi.fn()} /></MemoryRouter>));
+  await settle();
+  const transparent = [...document.querySelectorAll("label")].find((l) => l.textContent?.includes("Transparent background"))!.querySelector<HTMLElement>("[role=checkbox]")!;
+  act(() => transparent.click());
+  await settle();
+  // leaving before the save a moment later: the leaving save is refused twice
+  act(() => root!.unmount());
+  root = undefined;
+  for (let i = 0; i < 5; i++) await settle();
+  expect(saveDesign).toHaveBeenCalledTimes(3);
+  const last = saveDesign.mock.calls[2]![1].pages![0]!;
+  expect([last.name, last.background, last.fills]).toEqual(["One", "#ff0000", []]);
+});
 it("combines and masks layers picked inside a group in a group, where they are", async () => {
   const sq = (id: string, x: number) => ({ id, type: "shape" as const, shape: "rect" as const, fill: "#ff0000", x, y: 0, w: 100, h: 100 });
   const was = design.pages;

@@ -388,9 +388,38 @@ describe("designs: an AI that designs", () => {
     expect(everyLayer(again.pages.find((p) => p.id === p2)!.layers).find((l) => l.id === "i.n.o1")).toMatchObject({ fill: "#0000ff" });
     // an AI's main with a key the design has, and other layers: a main of its own, said
     const clash = (await write(d.id, { changes: [{ frame: p2, add: { type: "group", box: true, component: "dot", x: 500, y: 500, w: 50, h: 50, layers: [shape("q", "#00ff00")] } }] })).body;
-    expect(clash.notes.join("\n")).toMatch(/has a main component "dot" already/);
+    expect(clash.notes.join("\n")).toMatch(/a second "dot" main is now "c1"/);
     const mains = everyLayer(clash.design.pages.flatMap((p) => p.layers)).filter((l) => (l as GroupLayer).component);
     expect(mains.map((l) => (l as GroupLayer).component).sort()).toEqual(["c1", "chip", "dot"]);
+  });
+
+  it("never gives an AI's new layer an id a layer had, so the person's edit of the old one never lands on it", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const p1 = d.pages[0]!.id;
+    const t = (id: string, text: string) => ({ type: "text", id, text, font: "Inter", size: 40, color: "#000000", align: "left", x: 0, y: 0, w: 400, h: 60 });
+    await write(d.id, { frames: [{ id: p1, layers: [t("l1", "One"), t("l9", "Old nine")] }] });
+    const r = (await write(d.id, { changes: [{ frame: p1, layer: "l9", remove: true }, { frame: p1, add: t("l9", "New text") }, { frame: p1, add: t("", "Another") }] })).body;
+    const texts = Object.fromEntries(r.design.pages[0]!.layers.map((l) => [l.id, (l as { text: string }).text]));
+    expect(texts.l9).toBeUndefined();
+    expect(Object.values(texts).sort()).toEqual(["Another", "New text", "One"]);
+    expect(Object.keys(texts).every((id) => id === "l1" || Number(id.slice(1)) >= 10)).toBe(true);
+    // the highest one taken out: the frame remembers it, and the next new layer goes past it
+    const top = Math.max(...Object.keys(texts).map((id) => Number(id.slice(1))));
+    const gone = (await write(d.id, { changes: [{ frame: p1, layer: `l${top}`, remove: true }] })).body.design.pages[0]!;
+    expect(gone.next).toBe(top + 1);
+    const again = (await write(d.id, { changes: [{ frame: p1, add: t(`l${top}`, "Later") }] })).body.design.pages[0]!;
+    expect(again.layers.find((l) => (l as { text: string }).text === "Later")!.id).toBe(`l${top + 1}`);
+  });
+
+  it("tells the person's window of a second main given a key of its own apart from what was left out", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, pages: 2 })).body;
+    const [p1, p2] = d.pages.map((p) => p.id);
+    const card = (id: string, fill: string, x: number) => ({ type: "group", id, box: true, component: "card", x, y: 0, w: 100, h: 100, layers: [{ type: "shape", id: `${id}s`, shape: "rect", fill, x: 0, y: 0, w: 100, h: 100 }, { type: "shape", id: `${id}t`, shape: "ellipse", fill, x: 10, y: 10, w: 20, h: 20 }] });
+    const first = (await write(d.id, { frames: [{ id: p1, layers: [card("a", "#ff0000", 0)] }] })).body.design;
+    const mine = first.pages.map((p) => (p.id === p2 ? { ...p, layers: [{ ...card("b", "#00ff00", 300), layers: [card("b", "#00ff00", 300).layers[0]] }] } : p));
+    const saved = (await call<Design & { notes?: string[]; changes?: string[] }>("PUT", `/api/designs/${d.id}`, { pages: mine, since: first.updatedAt })).body;
+    expect(saved.notes).toBeUndefined();
+    expect(saved.changes?.join()).toMatch(/a second "card" main is now "c1"/);
   });
 
   it("an AI fills a slide whose number chip is a main: each copy gets an instance with its own number, the main stays one", async () => {

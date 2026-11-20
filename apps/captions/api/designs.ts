@@ -7,7 +7,7 @@ import { DESIGN_FONTS, weightsOf } from "../src/lib/design/fonts";
 import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
 import { carrySettled, flows, settleAt, settledBoxes } from "../src/lib/design/layout";
 import { retext } from "../src/lib/design/runs";
-import { everyLayer, layerIn, layerOut, unwrap } from "../src/lib/design/tree";
+import { everyLayer, idsBefore, layerIn, layerOut, takeId, unwrap, type IdsBefore } from "../src/lib/design/tree";
 import { asInstances, componentCheck, overridesAsKept, syncInstances, usesComponents } from "../src/lib/design/components";
 import type { AuthVars } from "./auth";
 import type { AnimationStyle } from "../contracts/editor-styles";
@@ -138,19 +138,27 @@ async function save(d: Design): Promise<Design> {
  * and each frame whose instances were made again checked as any frame is, so an override is held to what a layer may be.
  * `ai`: an AI's write, its words laid out by their guessed widths (a window's are laid out by the browser).
  */
-async function settle(d: Design, was: readonly DesignPage[], notes?: string[], ai = false): Promise<Design> {
+async function settle(d: Design, was: readonly DesignPage[], notes?: string[], ai = false, renamed = notes): Promise<Design> {
   if (!usesComponents(d.pages)) return d;
   const checked = componentCheck(d.pages, DESIGN_LIMITS.components);
   notes?.push(...checked.notes);
-  const synced = syncInstances(checked.pages, was, (n) => notes?.push(n));
+  // a second main of a key given one of its own: nothing is lost, so said apart from what was left out (`renamed`)
+  const synced = syncInstances(checked.pages, was, (n) => renamed?.push(n));
   const changed = synced.filter((p, i) => p !== d.pages[i]);
   if (!changed.length) return d;
-  const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), ...(ai ? {} : { measure: null }) });
+  const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), before: beforeIn(was), ...(ai ? {} : { measure: null }) });
   notes?.push(...again.notes);
   const kept = new Map(overridesAsKept(again.pages).map((p) => [p.id, p]));
   // a frame the check took away (a loose piece left empty) is gone, never kept unchecked
   return { ...d, pages: synced.flatMap((p) => (!changed.includes(p) ? [p] : kept.has(p.id) ? [kept.get(p.id)!] : [])) };
 }
+
+/** What each frame of a design had (tree.ts IdsBefore), by its id: what a write may not give again. */
+const beforeIn = (pages: readonly DesignPage[]) => {
+  const of = new Map(pages.map((p) => [p.id, p]));
+  const memo = new Map<string, IdsBefore | undefined>();
+  return (id: string) => (memo.has(id) ? memo.get(id) : memo.set(id, idsBefore(of.get(id))).get(id));
+};
 
 /** When a design is changed now: always after its last change, so a window can tell that it has not seen this one (`since`, on a save). */
 const stamp = (d: Design): number => Math.max(Date.now(), d.updatedAt + 1);
@@ -457,6 +465,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   const start = await framesForAi(user, d);
   // the auto layout boxes as saved, each at the size it was laid out at (layout.ts settledBoxes)
   const settled = settledBoxes(d.pages);
+  // what each frame had: an id another layer had is never given again (tree.ts takeId)
+  const pastIds = beforeIn(d.pages);
   const next = [...start.pages];
   const words = [...start.words];
   const notes: string[] = [];
@@ -559,33 +569,29 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   const outOfPath = (l: Raw, path: readonly Raw[]): Raw => [...path].reverse().reduce((m, g) => layerOut(placed(g), placed(m)), l);
   const intoPath = (l: Raw, path: readonly Raw[]): Raw => path.reduce((m, g) => layerIn(placed(g), placed(m)), l);
   /** An id no layer in `list` has, however deep: the one asked for, else l1, l2… */
-  const freeId = (list: readonly unknown[], asked: unknown) => {
+  const freeId = (list: readonly unknown[], asked: unknown, frame?: string) => {
     const all = allRaw(list);
-    const ids = new Set(all.map((l) => String(l.id)));
-    let id = typeof asked === "string" && LAYER_ID.test(asked) && !ids.has(asked) ? asked : "";
-    for (let n = all.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
-    return id;
+    return takeId(asked, new Set(all.map((l) => String(l.id))), (id) => LAYER_ID.test(id), frame ? pastIds(frame) : undefined, all.length + 1, true);
   };
   /**
    * Layers coming into a frame inside a group (added, or a group's layers given whole), each with an id of its own in
    * the frame (the one asked for when `taken` does not have it): an id given out here never takes one a layer of the
    * frame has, so the layers there keep theirs.
    */
-  const ownIds = (list: unknown, taken: Set<string>, d = 0): unknown[] =>
+  const ownIds = (list: unknown, taken: Set<string>, frame?: string, d = 0): unknown[] =>
     (Array.isArray(list) ? list : []).map((x) => {
       const r = raw(x);
       if (!r || d > DEEP) return x;
-      let id = typeof r.id === "string" && LAYER_ID.test(r.id) && !taken.has(r.id) ? r.id : "";
-      for (let n = taken.size + 1; !id; n++) if (!taken.has(`l${n}`)) id = `l${n}`;
+      const id = takeId(r.id, taken, (i) => LAYER_ID.test(i), frame ? pastIds(frame) : undefined, taken.size + 1);
       taken.add(id);
-      return { ...r, id, ...(Array.isArray(r.layers) ? { layers: ownIds(r.layers, taken, d + 1) } : {}) };
+      return { ...r, id, ...(Array.isArray(r.layers) ? { layers: ownIds(r.layers, taken, frame, d + 1) } : {}) };
     });
   /** A layer into a frame (or into its container `inside`), on top (or at the back), under an id of its own there: the layer as it is placed. */
   const into = (page: DesignPage, layer: Raw, back: boolean, inside?: Raw): Raw => {
     const t = open(page);
-    const done: Raw & { id: string } = { ...layer, id: freeId(t.layers, layer.id) };
+    const done: Raw & { id: string } = { ...layer, id: freeId(t.layers, layer.id, page.id) };
     // every layer inside it an id of its own in the frame too
-    if (Array.isArray(done.layers)) done.layers = ownIds(done.layers, new Set([...allRaw(t.layers).map((l) => String(l.id)), done.id]));
+    if (Array.isArray(done.layers)) done.layers = ownIds(done.layers, new Set([...allRaw(t.layers).map((l) => String(l.id)), done.id]), page.id);
     const list = inside ? (inside.layers as unknown[]) : t.layers;
     if (back) list.unshift(done);
     else list.push(done);
@@ -734,7 +740,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     // no more of them than the frame has room for
     const given = raw(c.set)?.layers;
     if (page && changed.type === "group" && Array.isArray(given)) {
-      changed = { ...changed, layers: ownIds(given, new Set([...allRaw(top).map((l) => String(l.id)), String(layer.id)])) };
+      changed = { ...changed, layers: ownIds(given, new Set([...allRaw(top).map((l) => String(l.id)), String(layer.id)]), page.id) };
       if (allRaw(top).length + allRaw([changed]).length > DESIGN_LIMITS.layers) {
         notes.push(`${here}, layer ${String(lid)}: a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: its layers were not changed`);
         list.splice(k, 0, layer);
@@ -795,6 +801,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       fonts,
       words: [words[k]],
       say,
+      before: pastIds,
       // a box it gives that was not laid out at that size before is new: its layers out of the flow keep their place
       settled,
     });
@@ -831,8 +838,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       const used = new Set<string>();
       const layers = sized.map((l, n) => {
         const want = entries[n]!.real ?? String(entries[n]!.layer.id);
-        let id = LAYER_ID.test(want) && !used.has(want) ? want : "";
-        for (let k = 1; !id || used.has(id); k++) id = `l${k}`;
+        const id = takeId(want, used, (i) => LAYER_ID.test(i), pastIds(home));
         used.add(id);
         entries[n]!.real = id;
         const out = { ...l, id, x: l.x - x0, y: l.y - y0 };
@@ -840,7 +846,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         return out;
       });
       const say = (_: number, why: string, layer?: unknown) => notes.push(`${[givenAt.get(layer), "the canvas"].filter(Boolean).join(", ")}: ${why}`);
-      const made = cleanPages([{ id: home, loose: true, x: x0, y: y0, w: x1 - x0, h: y1 - y0, background: "#ffffff", layers }], { w: d.width, h: d.height, pictures: d.pictures, fonts, words: [undefined], say, settled });
+      const made = cleanPages([{ id: home, loose: true, x: x0, y: y0, w: x1 - x0, h: y1 - y0, background: "#ffffff", layers }], { w: d.width, h: d.height, pictures: d.pictures, fonts, words: [undefined], say, settled, before: pastIds });
       if (made.pages[0]) pieces.push(made.pages[0]);
       for (const e of entries) if (!made.pages[0]?.layers.some((l) => l.id === e.real)) e.real = undefined;
     }
@@ -1161,14 +1167,16 @@ designsApp.put("/:id", (c) =>
     // a design made before frames knew their slides: each frame is its slide's by the order the design was in
     const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
     // laid out by the browser with the real widths of its words: a text keeps the size it was saved at
-    const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), measure: null });
+    const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), measure: null, before: beforeIn(d.pages) });
     const pages = withFrames(checked.pages, d.width, d.height, was);
     // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
     // could be kept is not, and nothing is saved over what is there
     if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
-    const saved = await save(await settle({ ...d, name, pages, updatedAt: stamp(d) }, d.pages, checked.notes));
+    const changed: string[] = [];
+    const saved = await save(await settle({ ...d, name, pages, updatedAt: stamp(d) }, d.pages, checked.notes, false, changed));
     // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
-    return checked.notes.length ? { ...saved, notes: checked.notes } : saved;
+    // `changes`: what the save changed of what was sent that loses nothing (a second main given a key of its own)
+    return { ...saved, ...(checked.notes.length ? { notes: checked.notes } : {}), ...(changed.length ? { changes: changed } : {}) };
   }),
 );
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, GroupLayer, Layer } from "@contracts/design";
-import { boundsOf, mergeFrames, resizeBox } from "./hands";
+import { boundsOf, freshIds, mergeFrames, resizeBox } from "./hands";
 import { fitContents } from "./resize";
 import { guessWidth, layoutLayers } from "./layout";
-import { depthOf, dropInto, maskWithNext, seenBox, shapeBounds, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
+import { idsBefore, keepNext, takeId, depthOf, dropInto, maskWithNext, seenBox, shapeBounds, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
 
 const rect = (id: string, x: number, y: number, w = 20, h = 10, more: object = {}): Layer => ({ id, type: "shape", shape: "rect", fill: "#ff0000", x, y, w, h, ...more }) as Layer;
 const group = (id: string, x: number, y: number, w: number, h: number, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x, y, w, h, layers, ...more });
@@ -200,5 +200,15 @@ describe("fresh ids", () => {
   it("never gives again an id below the highest a frame has (one deleted in the middle)", () => {
     const r = (id: string): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 1, h: 1 });
     expect(freshLayerIds([r("l1"), r("l2"), r("l9")], 1)).toEqual(["l10"]);
+  });
+});
+
+describe("ids given once", () => {
+  it("gives a frame's new ids past its next, and keeps next past an id taken out", () => {
+    const r = (id: string): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 1, h: 1 });
+    expect(freshIds({ id: "p", background: "#ffffff", layers: [r("l1")], next: 12 }, 1)).toEqual(["l12"]);
+    const before: DesignPage = { id: "p", background: "#ffffff", layers: [r("l1"), r("l9")] };
+    expect(keepNext([{ ...before, layers: [r("l1")] }], [before])[0]!.next).toBe(10);
+    expect(takeId("l9", new Set(["l1"]), () => true, idsBefore(before) && { next: 10, ids: new Set(["l1"]) })).toBe("l10");
   });
 });

@@ -22,7 +22,7 @@ import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
 import { detached, plainOf, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
 import { ComponentSection } from "@/components/design/ComponentSection";
-import { depthOf, everyLayer, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
+import { depthOf, everyLayer, keepNext, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
@@ -307,6 +307,13 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const server = useRef<{ pages: Page[]; at: number }>({ pages: [], at: 0 });
   /** The pages not sent yet. */
   const unsaved = useRef<Page[] | null>(null);
+  /** The pages of the save on its way: the server may have them before this window hears so (mergeFrames `sent`). */
+  const sent = useRef<Page[]>([]);
+  /** What a save said: what the server left out, and what it changed that loses nothing. */
+  const told = useCallback((d: Design & { notes?: string[]; changes?: string[] }, quiet = false) => {
+    if (d.notes?.length) (quiet ? (n: string) => toast(n, { id: "design-not-saved" }) : setError)(`Not saved: ${d.notes.join("; ")}`);
+    if (d.changes?.length) toast(`Saved, with a change: ${d.changes.join("; ")}`, { id: "design-saved-changed" });
+  }, []);
   /** What a change made somewhere else does with the design as the server has it now (set further down, once it can be). */
   const remote = useRef<(d: Design) => boolean>(() => false);
   /** The saves, one after another: each says the design's last change this window knows of, which the one before it may have made. */
@@ -317,13 +324,15 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     (pages: Page[]) => {
       unsaved.current = null;
       setSaved("saving");
-      saving.current = saving.current.then(() =>
-        saveDesign(id, { pages, since: server.current.at }).then(
+      saving.current = saving.current.then(() => {
+        sent.current = pages;
+        return saveDesign(id, { pages, since: server.current.at }).then(
           (d) => {
             server.current = { pages, at: d.updatedAt };
+            sent.current = [];
             setSaved(unsaved.current ? "unsaved" : "saved");
-            // the server kept less than was sent: said, so nothing goes missing unseen
-            if (d.notes?.length) setError(`Not saved: ${d.notes.join("; ")}`);
+            // the server kept less than was sent, or changed what loses nothing: said, so nothing goes missing unseen
+            told(d);
           },
           (e) => {
             // changed somewhere else while this save was on its way (an AI's frames): nothing was written. This
@@ -335,10 +344,10 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
             setSaved("unsaved");
             setError(message(e));
           },
-        ),
-      );
+        );
+      });
     },
-    [id],
+    [id, told],
   );
   // saved a moment after the last change
   const first = useRef(true);
@@ -357,23 +366,38 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   // made again on top of that change. The window closing: a save the browser carries on with after the page is gone,
   // which it only does for a small one (64 KB); a bigger design is sent the plain way, and may not get there.
   useEffect(() => {
-    const told = (d: Design & { notes?: string[] }) => void (d.notes?.length && toast(`Not saved: ${d.notes.join("; ")}`, { id: "design-not-saved" }));
+    /** This window's pages put onto the design as the server has it now (`theirs`), from what it had as `base`. */
+    const onto = (pages: Page[], base: Page[], theirs: Page[]) => syncInstances(mergeFrames(pages, base, layoutPages(theirs, measureWords), sent.current));
+    // on the way out of the page: refused for a change made elsewhere, merged onto it and sent again (three times at
+    // most); what the server kept less of, or never took, is said where it still shows, as a notice
+    const leave = (pages: Page[], base: Page[], since: number, tries = 0): Promise<void> =>
+      saveDesign(id, { pages, since }).then(
+        (d) => told(d, true),
+        (e) => {
+          if (e instanceof DesignChanged && tries < 3) return leave(onto(pages, base, e.design.pages), layoutPages(e.design.pages, measureWords), e.design.updatedAt, tries + 1);
+          toast(`Not saved: the last changes to this design (${message(e)})`, { id: "design-not-saved" });
+        },
+      );
     const flush = (closing: boolean) => {
       const pages = unsaved.current;
       unsaved.current = null;
       if (!pages) return;
       if (closing) {
-        const body = JSON.stringify({ pages });
-        return void fetch(`/api/designs/${id}`, { method: "PUT", keepalive: body.length < 60_000, headers: { "content-type": "application/json" }, body }).catch(() => {});
+        // the window closing: one the browser carries on with after the page is gone, with what this window knew of
+        // the design, so it never writes over a change made since; refused, merged onto that and sent once more
+        const put = (p: Page[], since: number) => {
+          const body = JSON.stringify({ pages: p, since });
+          return fetch(`/api/designs/${id}`, { method: "PUT", keepalive: body.length < 60_000, headers: { "content-type": "application/json" }, body });
+        };
+        return void put(pages, server.current.at)
+          .then(async (r) => {
+            if (r.status !== 409) return;
+            const d = ((await r.json()) as { design: Design }).design;
+            await put(onto(pages, server.current.pages, d.pages), d.updatedAt);
+          })
+          .catch(() => {});
       }
-      saving.current = saving.current.then(() =>
-        // on the way out of the page: what the server kept less of (a merged frame past its layers) is said where it
-        // still shows, as a notice
-        saveDesign(id, { pages, since: server.current.at }).then(
-          told,
-          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: syncInstances(mergeFrames(pages, server.current.pages, layoutPages(e.design.pages, measureWords))), since: e.design.updatedAt }).then(told, () => {}) : undefined),
-        ),
-      );
+      saving.current = saving.current.then(() => leave(pages, server.current.pages, server.current.at));
     };
     const closing = () => flush(true);
     window.addEventListener("pagehide", closing);
@@ -381,7 +405,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       window.removeEventListener("pagehide", closing);
       flush(false);
     };
-  }, [id]);
+  }, [id, told]);
 
   // the pages as of the last drawing, for what finishes later (an upload)
   const latest = useRef(pages);
@@ -403,7 +427,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // a frame still showing an open container's layers (tree.ts inScope) is made whole before it is kept
     // and every auto layout laid out (lib/design/layout.ts), what it fixed said once the step is drawn
     // and every instance made again from its main, what was changed on one kept as its override (lib/design/components.ts)
-    const whole = (all: Page[]) => hugLoose(layoutPages(syncInstances(unscope(fn(all), all), all), measureWords, (n) => queueMicrotask(() => toast(n, { id: n }))));
+    // and a frame that changed remembers how far its ids went (tree.ts nextOf): one taken out is never given again
+    const whole = (all: Page[]) => keepNext(hugLoose(layoutPages(syncInstances(unscope(fn(all), all), all), measureWords, (n) => queueMicrotask(() => toast(n, { id: n })))), all);
     setHist((h) => (!h ? h : join ? { ...h, now: whole(h.now) } : histChange(h, whole)));
   }, [locked]);
   /** Frames changed in one step: each takes the place of the one with its id, and one with a new id is added (a picture dragged out of its frame). */
@@ -467,7 +492,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       // laid out as this window lays out (on load, above)
       const theirs = layoutPages(d.pages, measureWords);
       // instances made again: a main changed on one side reaches the instances the other side changed
-      const merged = layoutPages(syncInstances(mergeFrames(had, server.current.pages, theirs)), measureWords);
+      const merged = layoutPages(syncInstances(mergeFrames(had, server.current.pages, theirs, sent.current)), measureWords);
       server.current = { pages: theirs, at: d.updatedAt };
       setDesign(d);
       const text = JSON.stringify(merged);

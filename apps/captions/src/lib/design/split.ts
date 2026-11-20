@@ -115,7 +115,7 @@ export function splitLayers(page: DesignPage, layerId: string, pic: { width: num
   const words = Math.max(0, Math.min(paras.length, room - 1));
   const kept = pieces.map((p, n) => ({ p, n })).sort((x, y) => y.p.w * y.p.h - x.p.w * x.p.h).slice(0, Math.max(0, room - 1 - words)).sort((x, y) => x.n - y.n).map((x) => x.p);
   const original = room - 1 - words - kept.length > 0;
-  const ids = freshLayerIds(taken, 1 + kept.length + words);
+  const ids = freshLayerIds(taken, 1 + kept.length + words, [], page.next);
   const made: Layer[] = [
     ...(original ? [{ ...l, hidden: true, name: "Original" } as Layer] : []),
     { ...l, id: ids[0]!, picture: a.background, uncut: undefined, hidden: undefined, name: "Background" },

@@ -520,6 +520,8 @@ export interface DesignPage {
   safe?: DesignSafe[];
   /** bottom first: a later layer is drawn over an earlier one */
   layers: Layer[];
+  /** the number its next new layer id starts from (l<n>): ids are never given again once a layer had one (src/lib/design/tree.ts nextOf) */
+  next?: number;
 }
 
 /** What a design was made from: a Workshop carousel piece (its slides are the pages' words) or a moment of a video. */

@@ -4,7 +4,7 @@ import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
 import { guessWidth, layoutLayers } from "../../src/lib/design/layout";
 import type { Measure } from "../../src/lib/design/runs";
-import { everyLayer } from "../../src/lib/design/tree";
+import { everyLayer, nextOf, takeId, type IdsBefore } from "../../src/lib/design/tree";
 import { fillsOf, strokesOf } from "../../src/lib/design/paint";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
 import { cleanAids } from "./design-aids";
@@ -382,6 +382,8 @@ export function safeSvg(svg: unknown): string | null {
 }
 
 export interface PageRules {
+  /** what each frame (by its id) had before this write: no layer gets an id another one had (tree.ts takeId) */
+  before?: (frame: string) => IdsBefore | undefined;
   /** a frame's size when it gives none of its own */
   w: number;
   h: number;
@@ -687,6 +689,9 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       ...(sized ? size : {}),
       ...(typeof p.block === "string" && ID.test(p.block) ? { block: p.block } : {}),
     };
+    // what the frame had before this write: an id another layer had is never given again (tree.ts takeId)
+    const before = typeof p.id === "string" ? r.before?.(p.id) : undefined;
+    const next = Math.max(typeof p.next === "number" && Number.isInteger(p.next) && p.next > 0 ? Math.min(p.next, 1_000_000) : 0, before?.next ?? 0);
     // every layer of the frame, however deep in its containers, counts once against the limit and has an id of its own in it
     let held = 0;
     let full = false;
@@ -710,9 +715,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         held++;
         // an id in parts only under the group it starts with (an instance's, or one's that was): no other layer may take one
         const ok = (id: string) => LAYER_ID.test(id) && (!id.includes(".") || (!!owner && id.startsWith(`${owner}.`)));
-        const given = obj(l) && typeof l.id === "string" && ok(l.id) && !ids.has(l.id) ? l.id : "";
-        let id = given;
-        for (let n = held; !id || ids.has(id); n++) id = `l${n}`;
+        const id = takeId(obj(l) ? l.id : undefined, ids, ok, before, held);
         ids.add(id);
         fitSizing(clean, flowing, sayL);
         // in a flow a mask takes a place of its own, beside what it cuts (which is then cut away)
@@ -752,7 +755,9 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     }
     // a loose piece with nothing left on it is gone
     if (loose && !layers.length) continue;
-    pages.push({ id: pid, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, sayPage), ...strokeList(p.strokes, 200), ...finish(p), ...cleanAids(p), layers });
+    // `next` kept only where it remembers more than the layers show (an id taken out), so an untouched frame stays as it was
+    const remembers = next > nextOf({ layers });
+    pages.push({ id: pid, ...(remembers ? { next } : {}), ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, sayPage), ...strokeList(p.strokes, 200), ...finish(p), ...cleanAids(p), layers });
   }
   // loose layers after the frames: a frame's place in the list is its number
   return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };

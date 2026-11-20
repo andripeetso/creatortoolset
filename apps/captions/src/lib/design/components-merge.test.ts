@@ -200,3 +200,101 @@ describe("third review", () => {
     expect(renamed.layers[0]!.id).toBe(`${renamed.id}.bg`);
   });
 });
+
+describe("third review: never lose the person's work", () => {
+  const g = (id: string, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x: 100, y: 100, w: 300, h: 100, layers, ...more });
+  const f = (layers: Layer[], more: Partial<DesignPage> = {}) => ({ ...page("p1", layers), ...more });
+  const merge1 = (mine: DesignPage, base: DesignPage, theirs: DesignPage, sent?: DesignPage) => mergeFrames([mine], [base], [theirs], sent ? [sent] : [])[0]!;
+  const find = (p: DesignPage, id: string) => findLayer(p.layers, id) as Layer & Record<string, unknown>;
+  const parentOfId = (p: DesignPage, id: string): string | null => {
+    const walk = (ls: Layer[], parent: string | null): string | null | undefined => {
+      for (const l of ls) {
+        if (l.id === id) return parent;
+        if (l.type === "group") {
+          const r = walk(l.layers, l.id);
+          if (r !== undefined) return r;
+        }
+      }
+      return undefined;
+    };
+    return walk(p.layers, null) ?? null;
+  };
+
+  it("keeps this window's edit of a layer the server moved into another group, grouped or ungrouped", () => {
+    const base = f([g("g", [shape("a", "#ff0000")]), g("g2", [], { x: 500 })]);
+    const mine = f([g("g", [shape("a", "#0000ff")]), g("g2", [], { x: 500 })]);
+    const moved = merge1(mine, base, f([g("g", []), g("g2", [shape("a", "#ff0000", { x: 7 })], { x: 500 })]));
+    expect([parentOfId(moved, "a"), find(moved, "a").fill, find(moved, "a").x]).toEqual(["g2", "#0000ff", 7]);
+    const tBase = f([g("g", [text("a", "Hi")])]);
+    const ungrouped = merge1(f([g("g", [text("a", "Hello")])]), tBase, f([text("a", "Hi", { x: 110, y: 110 })]));
+    expect([parentOfId(ungrouped, "a"), find(ungrouped, "a").text, find(ungrouped, "a").x]).toEqual([null, "Hello", 110]);
+    const grouped = merge1(f([shape("a", "#0000ff"), shape("b")]), f([shape("a"), shape("b")]), f([g("G", [shape("a"), shape("b")])]));
+    expect([parentOfId(grouped, "a"), find(grouped, "a").fill, find(grouped, "b").fill]).toEqual(["G", "#0000ff", "#111111"]);
+  });
+
+  it("keeps a frame the server deleted that this window changed", () => {
+    const base = [page("A", [text("t", "Old")])];
+    const out = mergeFrames([page("A", [text("t", "Mine")])], base, []);
+    expect(out.map((p) => [p.id, (p.layers[0] as TextLayer).text])).toEqual([["A", "Mine"]]);
+    expect(mergeFrames(base, base, [])).toEqual([]);
+  });
+
+  it("lifts out what the server added to a group this window took apart or deleted, and keeps the server's edit of a layer this window moved", () => {
+    const base = f([g("g", [shape("a")])]);
+    const theirs = f([g("g", [shape("a"), shape("c", "#00ff00", { x: 5, y: 6 })])]);
+    const ungrouped = merge1(f([shape("a", "#111111", { x: 100, y: 100 })]), base, theirs);
+    expect([parentOfId(ungrouped, "c"), find(ungrouped, "c").fill, find(ungrouped, "c").x, find(ungrouped, "c").y]).toEqual([null, "#00ff00", 105, 106]);
+    const deleted = merge1(f([]), base, theirs);
+    expect(find(deleted, "c")?.fill).toBe("#00ff00");
+    const movedOut = merge1(f([g("g", []), shape("a", "#111111", { x: 100, y: 100 })]), base, f([g("g", [shape("a", "#ff0000")])]));
+    expect([parentOfId(movedOut, "a"), find(movedOut, "a").fill, find(movedOut, "a").x]).toEqual([null, "#ff0000", 100]);
+  });
+
+  it("takes this window's own save come back from the server, written in the server's order and rounding, as one layer", () => {
+    const base = f([shape("l1")]);
+    const sent = f([shape("l1"), shape("l9", "#ff0000", { x: 10.004 })]);
+    const echoed = f([shape("l1"), { fill: "#ff0000", y: 0, x: 10, id: "l9", type: "shape", shape: "rect", w: 220, h: 70 } as Layer, shape("l10", "#00ff00")]);
+    const out = merge1(sent, base, echoed, sent);
+    expect(everyLayer(out.layers).map((l) => [l.id, (l as { x: number }).x])).toEqual([["l1", 0], ["l9", 10], ["l10", 0]]);
+  });
+
+  it("goes on from the higher next of the two sides", () => {
+    expect(merge1(f([], { next: 12 }), f([]), f([], { next: 20 })).next).toBe(20);
+  });
+
+  it("is the server's when this window changed nothing, this window's when the server changed nothing, and the same merged again", () => {
+    const deep = (n: number): Layer => (n ? g(`g${n}`, [deep(n - 1), shape(`s${n}`)]) : shape("leaf"));
+    const base = f([deep(5)]);
+    const mine = f([deep(5)].map((l) => mapAll([l], (k) => (k.id === "leaf" ? ({ ...k, fill: "#0000ff" } as Layer) : k))[0]!));
+    const theirs = f([deep(5)].map((l) => mapAll([l], (k) => (k.id === "s3" ? ({ ...k, fill: "#00ff00" } as Layer) : k))[0]!));
+    expect(merge1(mine, base, mine)).toEqual(mine);
+    expect(merge1(base, base, theirs)).toEqual(theirs);
+    const once = merge1(mine, base, theirs);
+    expect([find(once, "leaf").fill, find(once, "s3").fill, parentOfId(once, "leaf")]).toEqual(["#0000ff", "#00ff00", "g1"]);
+    expect(merge1(once, theirs, theirs)).toEqual(once);
+  });
+
+  it("puts a layer twice when the server moved it to another frame while this window changed it (frames are merged one by one)", () => {
+    const base = [page("A", [shape("x", "#ff0000")])];
+    const out = mergeFrames([page("A", [shape("x", "#0000ff")])], base, [page("A", []), { ...page("loose1", [shape("x", "#ff0000")]), loose: true }]);
+    expect(out.map((p) => [p.id, (p.layers[0] as { fill?: string })?.fill])).toEqual([["A", "#0000ff"], ["loose1", "#ff0000"]]);
+  });
+});
+
+describe("third review: keys", () => {
+  it("makes a main copied and changed in one write an instance with that change as its override", () => {
+    const was = [page("p1", [pill()]), page("p2", [])];
+    const copy = { ...pill(), id: "k", layers: [shape("bg2", "#ff0000"), text("label2", "@tinyacrobatics", { bind: { text: "Handle" } })] };
+    const out = syncInstances([was[0]!, page("p2", [copy])], was);
+    expect(at(out, "p2", "k").instance).toEqual({ of: "pill", overrides: { bg: { fill: "#ff0000" } } });
+    expect(at(out, "p2", "k.bg").fill).toBe("#ff0000");
+  });
+
+  it("keeps a new instance whose overrides name the first main's layers on the first main", () => {
+    const was = [page("p1", [pill()]), page("p2", [])];
+    const other = main("x", "pill", [shape("other", "#00ff00")], { x: 600 });
+    const out = syncInstances([was[0]!, page("p2", [other, inst("j", "pill", { instance: { of: "pill", overrides: { bg: { fill: "#ff0000" } } } }), inst("j2", "pill")])], was);
+    const renamed = at(out, "p2", "x").component as string;
+    expect([(at(out, "p2", "j") as GroupLayer).instance!.of, (at(out, "p2", "j2") as GroupLayer).instance!.of]).toEqual(["pill", renamed]);
+  });
+});

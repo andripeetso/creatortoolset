@@ -216,8 +216,21 @@ function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly
   const keeper = new Map<string, { at: string; main: Main }>();
   for (const pass of [true, false])
     for (const p of pages) for (const l of everyLayer(p.layers)) if (isMain(l) && !keeper.has(l.component) && (!pass || before.has(`${p.id}/${l.id}/${l.component}`))) keeper.set(l.component, { at: `${p.id}/${l.id}`, main: l });
-  // a copy is the same layers but for their ids, at the same size
-  const shape = (m: GroupLayer) => stable([m.w, m.h, mapLayers(m.layers, (k) => ({ ...k, id: "" }))]);
+  // a copy (and one changed since it was copied) has the same layers in the same places, whatever their looks and ids
+  const skeleton = (m: GroupLayer) => stable([m.w, m.h, everyLayer(m.layers).map((k) => [k.type, k.name ?? "", k.x, k.y, k.w, k.h])]);
+  /** A copy of main `k` as an instance of it: what its layers look like that the main's do not, its overrides. */
+  const asInstance = (l: Main, k: Main): Instance => {
+    const theirs = everyLayer(k.layers);
+    const overrides: Record<string, Rec> = {};
+    everyLayer(l.layers).forEach((c, n) => {
+      const m = theirs[n] as unknown as Rec | undefined;
+      if (!m) return;
+      const r = c as unknown as Rec;
+      for (const f of new Set([...Object.keys(r), ...Object.keys(m)])) if (!FIXED.has(f) && f !== "instance" && !same(r[f], m[f])) (overrides[m.id as string] ??= {})[f] = r[f] === undefined ? null : r[f];
+    });
+    const { component, set: _s, variant: _v, ...rest } = l;
+    return { ...rest, layers: [], instance: { of: component, ...(Object.keys(overrides).length ? { overrides } : {}) } };
+  };
   const taken = new Set<string>();
   const fresh = () => {
     let n = 1;
@@ -226,8 +239,9 @@ function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly
     return `c${n}`;
   };
   let changed = false;
-  // a main made a key of its own: the new instances of its old key are its (made with it, in that window or that write)
-  const moved = new Map<string, string>();
+  // a main made a key of its own: the new instances of its old key are its (made with it, in that window or that write),
+  // but for one whose overrides name only the first main's layers
+  const moved = new Map<string, { key: string; mine: Set<string>; first: Set<string> }>();
   const placed = new Set(was?.flatMap((p) => everyLayer(p.layers).flatMap((l) => (isInstance(l) ? [`${p.id}/${l.id}`] : []))));
   const out = pages.map((p) => {
     // a frame copied whole (in another size too) keeps its layers' ids: its main is a copy whatever its size
@@ -235,19 +249,25 @@ function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly
     const layers = mapLayers(p.layers, (l) => {
       const k = isMain(l) ? keeper.get(l.component) : undefined;
       if (!isMain(l) || !k || k.at === `${p.id}/${l.id}`) return l;
-      if (shape(l) !== shape(k.main) && !(copied && l.id === k.main.id)) {
-        const key = fresh();
-        if (!moved.has(l.component)) moved.set(l.component, key);
-        say?.(`frame ${p.id}, layer ${l.id}: the design has a main component "${l.component}" already: this one is "${key}"`);
-        return { ...l, component: key };
+      if (copied && l.id === k.main.id) {
+        const { component, set: _s, variant: _v, ...rest } = l;
+        return { ...rest, instance: { of: component } };
       }
-      const { component, set: _s, variant: _v, ...rest } = l;
-      return { ...rest, instance: { of: component } };
+      if (skeleton(l) === skeleton(k.main)) return asInstance(l, k.main);
+      const key = fresh();
+      if (!moved.has(l.component)) moved.set(l.component, { key, mine: new Set(everyLayer(l.layers).map((x) => x.id)), first: new Set(everyLayer(k.main.layers).map((x) => x.id)) });
+      say?.(`frame ${p.id}, layer ${l.id}: a second "${l.component}" main is now "${key}"`);
+      return { ...l, component: key };
     });
     return layers === p.layers ? p : ((changed = true), { ...p, layers });
   });
   if (!changed) return pages as P[];
-  return !moved.size ? out : out.map((p) => ({ ...p, layers: mapLayers(p.layers, (l) => (isInstance(l) && moved.has(l.instance.of) && !placed.has(`${p.id}/${l.id}`) ? { ...l, instance: { ...l.instance, of: moved.get(l.instance.of)! } } : l)) }));
+  const follows = (l: Instance) => {
+    const m = moved.get(l.instance.of)!;
+    const keys = Object.keys(l.instance.overrides ?? {}).filter(Boolean);
+    return !(keys.length && keys.every((k) => m.first.has(k)) && !keys.every((k) => m.mine.has(k)));
+  };
+  return !moved.size ? out : out.map((p) => ({ ...p, layers: mapLayers(p.layers, (l) => (isInstance(l) && moved.has(l.instance.of) && !placed.has(`${p.id}/${l.id}`) && follows(l) ? { ...l, instance: { ...l.instance, of: moved.get(l.instance.of)!.key } } : l)) }));
 }
 
 /** Every instance of a list that lies in no instance, through `fn`; the same list when nothing changed. */

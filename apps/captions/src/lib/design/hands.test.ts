@@ -85,8 +85,10 @@ describe("the hands on the canvas", () => {
     expect(mergeFrame(mine, base, theirs)).toEqual({ ...theirs, x: 900, y: -50 });
     // the same layer changed in both: this window's stays, and the layer added there is there too
     expect(mergeFrame({ ...base, layers: [l("l1", 7)] }, base, theirs).layers).toEqual([l("l1", 7), l("l2", 80)]);
-    // one taken out here stays out; one added here goes in where it lies here
-    expect(mergeFrame({ ...base, layers: [l("l3", 5)] }, base, theirs).layers).toEqual([l("l3", 5), l("l2", 80)]);
+    // one added here goes in where it lies here; one taken out here that the server changed stays, with its change
+    expect(mergeFrame({ ...base, layers: [l("l3", 5)] }, base, theirs).layers).toEqual([l("l3", 5), l("l1", 40), l("l2", 80)]);
+    // one taken out here that the server left as it was stays out
+    expect(mergeFrame({ ...base, layers: [l("l3", 5)] }, base, { ...theirs, layers: [l("l1", 0), l("l2", 80)] }).layers).toEqual([l("l3", 5), l("l2", 80)]);
     // reordered here while the server changed a layer: this window's order, the server's change
     const two: DesignPage = { ...base, layers: [l("l1", 0), l("l2", 0)] };
     expect(mergeFrame({ ...two, layers: [l("l2", 0), l("l1", 0)] }, two, { ...two, layers: [l("l1", 0), l("l2", 50)] }).layers).toEqual([l("l2", 50), l("l1", 0)]);

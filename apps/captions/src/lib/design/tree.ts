@@ -276,13 +276,52 @@ export function unwrap(inner: readonly Layer[], ids: readonly string[]): Layer[]
   });
 }
 
-/** Ids a frame does not use yet, however deep (nor any in `also`): l1, l2 … */
-export function freshLayerIds(layers: readonly Layer[], count: number, also: readonly string[] = []): string[] {
+/**
+ * The number a frame's next new layer id starts from (l<n>): past its `next` and every l<n> it has, so an id is never
+ * given again once a layer had it (another window, an AI, an instance's override may still name it).
+ */
+export const nextOf = (p: Pick<DesignPage, "layers" | "next">): number => Math.max(p.next ?? 0, ...everyLayer(p.layers).map((l) => Number(/^l(\d+)$/.exec(l.id)?.[1] ?? 0) + 1));
+
+/** Frames after a change, each that changed with `next` past every id it or its version before had (nextOf). The same list when none needs it. */
+export function keepNext<P extends DesignPage>(pages: P[], was: readonly DesignPage[]): P[] {
+  let changed = false;
+  const out = pages.map((p) => {
+    const q = was.find((x) => x.id === p.id);
+    if (!q || q === p) return p;
+    const n = Math.max(nextOf(p), nextOf(q));
+    return n === (p.next ?? 0) || n === nextOf({ layers: p.layers }) ? p : ((changed = true), { ...p, next: n });
+  });
+  return changed ? out : pages;
+}
+
+/** What a frame had before a write: its nextOf and its layers' ids (an id below `next` it no longer has was another layer's). */
+export interface IdsBefore {
+  next: number;
+  ids: ReadonlySet<string>;
+}
+export const idsBefore = (p: DesignPage | undefined): IdsBefore | undefined => p && { next: nextOf(p), ids: new Set(everyLayer(p.layers).map((l) => l.id)) };
+
+/**
+ * The id a layer coming into a frame gets: the one asked for when `ok` takes it, no layer has it and it was no other
+ * layer's before (`before`), else l<n> from `from` and past the frame's next. `added`: the layer is new, so an id the
+ * frame had (one taken out in this same write too) is another layer's; else it may be its own, kept.
+ */
+export function takeId(asked: unknown, taken: ReadonlySet<string>, ok: (id: string) => boolean, before?: IdsBefore, from = 1, added = false): string {
+  const reused = (id: string) => {
+    const n = /^l(\d+)$/.exec(id)?.[1];
+    return !!before && ((added && before.ids.has(id)) || (n !== undefined && Number(n) < before.next && !before.ids.has(id)));
+  };
+  if (typeof asked === "string" && ok(asked) && !taken.has(asked) && !reused(asked)) return asked;
+  for (let n = Math.max(from, before?.next ?? 0); ; n++) if (!taken.has(`l${n}`)) return `l${n}`;
+}
+
+/** Ids a frame does not use yet, however deep (nor any in `also`), from `floor` up (its nextOf): l1, l2 … */
+export function freshLayerIds(layers: readonly Layer[], count: number, also: readonly string[] = [], floor = 0): string[] {
   const all = everyLayer(layers);
   const taken = new Set([...all.map((l) => l.id), ...also]);
   const out: string[] = [];
   // past the highest l<n> it has, so one taken out in the middle is never given again (another window may still edit it)
-  const top = Math.max(all.length, ...[...taken].map((id) => Number(/^l(\d+)$/.exec(id)?.[1] ?? 0)));
+  const top = Math.max(all.length, floor - 1, ...[...taken].map((id) => Number(/^l(\d+)$/.exec(id)?.[1] ?? 0)));
   for (let n = top + 1; out.length < count; n++) if (!taken.has(`l${n}`)) out.push(`l${n}`);
   return out;
 }
