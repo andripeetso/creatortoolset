@@ -60,4 +60,24 @@ describe("a new chat's name", () => {
     expect(next.user).not.toMatch(/^User message:/);
     await done(next.id, "Shorter.");
   });
+
+  it("is asked again after the first answer when the first ask failed, with that answer", async () => {
+    const id = ((await (await app.request("/api/assistant/chats", { method: "POST", ...json({}, { cookie }) })).json()) as { id: string }).id;
+    await app.request(`/api/assistant/chats/${id}/turn`, { method: "POST", ...json({ text: "fix this" }, { cookie }) });
+    const { name, turn } = await twoJobs();
+    await app.request(`/api/devices/relay/${name.id}/fail`, { method: "POST", ...json({ error: "busy" }, macAuth) });
+    await done(turn.id, "I trimmed the pauses in the floor time reel.");
+    const again = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, macAuth) })).json()) as Job;
+    expect(again.user).toContain("User message:\nfix this");
+    expect(again.user).toContain("The assistant's first answer:\nI trimmed the pauses in the floor time reel.");
+    // that one fails too: opening the chat asks once more
+    await app.request(`/api/devices/relay/${again.id}/fail`, { method: "POST", ...json({ error: "busy" }, macAuth) });
+    await new Promise((r) => setTimeout(r, 20));
+    await app.request(`/api/assistant/chats/${id}`, { headers: { cookie } });
+    const opened = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, macAuth) })).json()) as Job;
+    expect(opened.user).toContain("The assistant's first answer:");
+    await done(opened.id, "Floor time reel pauses");
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await chats()).find((c) => c.id === id)!.title).toBe("Floor time reel pauses");
+  });
 });
