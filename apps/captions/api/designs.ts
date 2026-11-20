@@ -5,6 +5,7 @@ import { Hono, type Context } from "hono";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_HEADS, DESIGN_FORMATS, DESIGN_GAP, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_LIMITS, DESIGN_SAFE, DESIGN_SHAPES, formatOf, PICTURE_SIDE_MAX, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type Layer, type SplitAnswer, type TextLayer } from "../contracts/design";
 import { DESIGN_FONTS, weightsOf } from "../src/lib/design/fonts";
 import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
+import { settledBoxes } from "../src/lib/design/layout";
 import { retext } from "../src/lib/design/runs";
 import { everyLayer, layerIn, layerOut, unwrap } from "../src/lib/design/tree";
 import type { AuthVars } from "./auth";
@@ -432,6 +433,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   const changes = Array.isArray(body.changes) ? body.changes.map(raw) : [];
   if (!frames.length && !changes.length) throw new DesignError('Give "frames" (whole frames) or "changes" (single layers): design_get says how each is written');
   const start = await framesForAi(user, d);
+  // the auto layout boxes as saved, each at the size it was laid out at (layout.ts settledBoxes)
+  const settled = settledBoxes(d.pages);
   const next = [...start.pages];
   const words = [...start.words];
   const notes: string[] = [];
@@ -754,6 +757,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       fonts,
       words: [words[k]],
       say,
+      // a box it gives that was not laid out at that size before is new: its layers out of the flow keep their place
+      settled,
     });
     const page = made.pages[0]!;
     // layers were given and none of them could be drawn: the frame is as it was (a new one stays, empty)
@@ -797,7 +802,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         return out;
       });
       const say = (_: number, why: string, layer?: unknown) => notes.push(`${[givenAt.get(layer), "the canvas"].filter(Boolean).join(", ")}: ${why}`);
-      const made = cleanPages([{ id: home, loose: true, x: x0, y: y0, w: x1 - x0, h: y1 - y0, background: "#ffffff", layers }], { w: d.width, h: d.height, pictures: d.pictures, fonts, words: [undefined], say });
+      const made = cleanPages([{ id: home, loose: true, x: x0, y: y0, w: x1 - x0, h: y1 - y0, background: "#ffffff", layers }], { w: d.width, h: d.height, pictures: d.pictures, fonts, words: [undefined], say, settled });
       if (made.pages[0]) pieces.push(made.pages[0]);
       for (const e of entries) if (!made.pages[0]?.layers.some((l) => l.id === e.real)) e.real = undefined;
     }

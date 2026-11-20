@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Design } from "@contracts/design";
-import { drawingUrl, drawPage, fontsOfText, sourceOf, type Loaded } from "@/lib/design/draw";
+import { drawingUrl, drawPage, fontsOfText, measureWords, sourceOf, type Loaded } from "@/lib/design/draw";
+import { forgetWords, layoutLayers } from "@/lib/design/layout";
 import { frameOf } from "@/lib/design/hands";
 import { paintPictures } from "@/lib/design/paint";
 import { everyLayer } from "@/lib/design/tree";
@@ -44,7 +45,8 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
         img.onload = again;
         img.src = l.type === "image" ? pictureUrl(design.id, src) : drawingUrl(src);
       }
-      if (l.type === "text") for (const f of fontsOfText(l)) void document.fonts.load(f).then(again, () => {});
+      // a font that arrives sets its words at other widths: measured again (layout.ts)
+      if (l.type === "text") for (const f of fontsOfText(l)) void document.fonts.load(f).then(() => (forgetWords(), again()), () => {});
     }
     for (const src of paintPictures(page)) {
       if (loaded.has(src)) continue;
@@ -66,7 +68,8 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
     c.height = Math.round(f.h * k);
     const ctx = c.getContext("2d")!;
     ctx.setTransform(k, 0, 0, k, 0, 0);
-    drawPage(ctx, page, f.w, f.h, loaded);
+    // laid out with the widths of its words here: the server only guessed them for an AI's write (layout.ts)
+    drawPage(ctx, { ...page, layers: layoutLayers(page.layers, measureWords) }, f.w, f.h, loaded);
   }, [design, drawn, loaded]);
 
   const cover = coverOf(design);

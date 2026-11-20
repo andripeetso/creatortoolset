@@ -1,7 +1,7 @@
 import type { AutoLayout, DesignPage, GroupLayer, Layer, TextLayer } from "../../../contracts/design";
 import { fitContents, placeLayers } from "./resize";
 import { setRuns, type Measure } from "./runs";
-import { boundsOf, editIn, findLayer, hug, isGroup, mapLayers, wrap, type Rect } from "./tree";
+import { boundsOf, editIn, everyLayer, findLayer, hug, isGroup, mapLayers, wrap, type Rect } from "./tree";
 
 /**
  * Auto layout (contracts/design.ts AutoLayout, Box `sizing`, `min`, `max`, `absolute`) as pure maths, read by the
@@ -80,12 +80,12 @@ function settleText(l: TextLayer, m: Measure | null): TextLayer {
 }
 
 /** A layer given a size by its box (it fills): what it holds follows, a text that hugs its height is set again at the new width. */
-function resizeTo(k: Layer, w: number, h: number, m: Measure | null, say?: Say): Layer {
+function resizeTo(k: Layer, w: number, h: number, m: Measure | null, say?: Say, settled?: Settled): Layer {
   if (k.w === w && k.h === h) return k;
   let n: Layer = { ...k, w, h };
   if (n.type === "text" && m && n.sizing?.h === "hug" && w !== k.w) n = { ...n, h: clampTo(n, "h", wordsSize(n, m, w).h) };
   if (isGroup(n)) n = fitContents(k, n);
-  if (flows(n)) n = arrange(n, m, say);
+  if (flows(n)) n = arrange(n, m, say, settled);
   return n;
 }
 
@@ -107,7 +107,7 @@ function outOfFlow(l: Layer): Layer {
 const reach = (k: Layer, ax: Axis): number => (k.rotate ? boundsOf([k])[ax] : k[ax]);
 
 /** A box's layers placed by its auto layout, and its size where it hugs them. The same box when nothing moved. */
-function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
+function arrange(g: Flowing, m: Measure | null, say?: Say, settled?: Settled): GroupLayer {
   const a = g.layout;
   const row = a.dir === "row";
   const M: Axis = row ? "w" : "h";
@@ -139,7 +139,7 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
   const items = flow.slice();
   const put = (i: number, ax: Axis, n: number) => {
     const k = items[i]!;
-    items[i] = resizeTo(k, ax === "w" ? R(n) : k.w, ax === "h" ? R(n) : k.h, m, say);
+    items[i] = resizeTo(k, ax === "w" ? R(n) : k.w, ax === "h" ? R(n) : k.h, m, say, settled);
   };
   // lines: one, or (wrapping at a fixed size) as many as it takes; a layer that fills counts as its least
   const lines: number[][] = [[]];
@@ -206,9 +206,11 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
   });
   const size = row ? { w: sizeM, h: sizeC } : { w: sizeC, h: sizeM };
   const resized = size.w !== g.w || size.h !== g.h;
-  // what is out of the flow follows the box's edges by its pin when the box takes another size
+  // what is out of the flow follows the box's edges by its pin when the box takes another size than it was laid out
+  // at; a box with no such size yet (an AI's new one, its size only a start) has its layers where they were given
   const out = g.layers.filter((k) => k.absolute && !k.hidden);
-  const moved = resized && out.length ? placeLayers(out, { w: g.w, h: g.h }, size, "stay") : out;
+  const laidOut = !settled || settled.has(sizeKey(g));
+  const moved = resized && laidOut && out.length ? placeLayers(out, { w: g.w, h: g.h }, size, "stay") : out;
   let changed = resized || sizing.w !== g.sizing?.w || sizing.h !== g.sizing?.h;
   const layers = g.layers.map((k) => {
     const i = flow.indexOf(k);
@@ -221,19 +223,29 @@ function arrange(g: Flowing, m: Measure | null, say?: Say): GroupLayer {
 }
 
 /** One layer settled, its own layers settled before it: a hugging text, a plain group round its layers, a box laid out. */
-function settle(l: Layer, m: Measure | null, say?: Say): Layer | null {
+function settle(l: Layer, m: Measure | null, say?: Say, settled?: Settled): Layer | null {
   if (l.type === "text") return settleText(l, m);
-  if (flows(l)) return arrange(l, m, say);
+  if (flows(l)) return arrange(l, m, say, settled);
   // a container with no flow: what fills or lies out of a flow in it (a layer moved out of one, ungrouped, pasted) no longer does
   const g = isGroup(l) && l.layers.some((k) => outOfFlow(k) !== k) ? { ...l, layers: l.layers.map(outOfFlow) } : l;
   if (isGroup(g) && !g.box) return hug([g])[0] ?? null;
   return g;
 }
 
-/** Every layer laid out (see above), deepest first. The same list when nothing changed. */
-export function layoutLayers(layers: readonly Layer[], m: Measure | null, say?: Say): Layer[] {
+/** A box as laid out at its size: its id and size, as `settled` holds them. */
+export const sizeKey = (g: Pick<Layer, "id" | "w" | "h">): string => `${g.id} ${g.w} ${g.h}`;
+type Settled = ReadonlySet<string>;
+/** The auto layout boxes of frames, each at the size it was laid out at (sizeKey). */
+export const settledBoxes = (pages: readonly DesignPage[]): Set<string> => new Set(pages.flatMap((p) => everyLayer(p.layers).filter(flows).map(sizeKey)));
+
+/**
+ * Every layer laid out (see above), deepest first. The same list when nothing changed. `settled` (an AI's write on the
+ * server): the boxes laid out before at their size (settledBoxes of what was saved); any other box is new, and its
+ * layers out of the flow stay where they were given. Absent: every box was laid out at its size.
+ */
+export function layoutLayers(layers: readonly Layer[], m: Measure | null, say?: Say, settled?: Settled): Layer[] {
   const top = layers.some((k) => outOfFlow(k) !== k) ? layers.map(outOfFlow) : layers;
-  return mapLayers(top, (l) => settle(l, m, say));
+  return mapLayers(top, (l) => settle(l, m, say, settled));
 }
 
 /** Every frame's layers laid out (layoutLayers); the same list when nothing changed. */

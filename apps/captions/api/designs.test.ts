@@ -236,6 +236,22 @@ describe("designs: an AI that designs", () => {
     expect([everyLayer(put.pages[0]!.layers).find((l) => l.id === "word")!.w, put.pages[0]!.layers.find((l) => l.id === "badge")!.w]).toEqual([500, 564]);
   });
 
+  it("an AI's new auto layout box keeps its layer out of the flow where it was given; a longer word later moves it by its pin", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const word = { type: "text", id: "w", font: "Inter", size: 40, color: "#ffffff", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" }, text: "NEW" };
+    // a dot at the badge's top right, placed in the box as it will be laid out; the box's own size is only a start
+    const dot = { type: "shape", shape: "ellipse", id: "dot", fill: "#ff0000", x: 100, y: -6, w: 12, h: 12, absolute: true, pin: { x: "right" } };
+    const badge = { type: "group", box: true, id: "badge", x: 80, y: 80, w: 10, h: 10, layout: { dir: "row", pad: [14, 32, 14, 32] }, sizing: { w: "hug", h: "hug" }, layers: [word, dot] };
+    const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [badge] }] })).body;
+    const at = (b: typeof first, id: string) => everyLayer(b.design.pages[0]!.layers).find((l) => l.id === id)! as GroupLayer;
+    expect([at(first, "dot").x, at(first, "dot").y]).toEqual([100, -6]);
+    // the box laid out now: a longer word grows it, and the dot keeps its distance to the right edge
+    const second = (await write(d.id, { changes: [{ frame: d.pages[0]!.id, layer: "w", set: { text: "LIMITED OFFER" } }] })).body;
+    const grew = at(second, "badge").w - at(first, "badge").w;
+    expect(grew).toBeGreaterThan(100);
+    expect(at(second, "dot").x).toBeCloseTo(100 + grew, 1);
+  });
+
   it("reads every frame with its id, size, words and layers, and how a design is changed", async () => {
     const d = await fromPiece();
     const got = await read(d.id);

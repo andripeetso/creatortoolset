@@ -396,6 +396,8 @@ export interface PageRules {
    * absent, a guess (an AI's work); null, every text keeps the size it has (a save by hand, laid out by the browser).
    */
   measure?: Measure | null;
+  /** An AI's write: the auto layout boxes as saved before it (layout.ts settledBoxes); a box not among them is new */
+  settled?: ReadonlySet<string>;
   /**
    * Where a note goes instead of the notes list: the page's place in the list, the note, and the layer as it was given
    * (for a note about one layer), so a caller can say which of the things it sent the note is about.
@@ -659,7 +661,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       return out;
     };
     // a plain group's box is the box round its layers, whatever it was given, and every auto layout laid out
-    const layers = layoutLayers(take(p.layers, 0), r.measure === undefined ? guessWidth : r.measure, sayPage);
+    const layers = layoutLayers(take(p.layers, 0), r.measure === undefined ? guessWidth : r.measure, sayPage, r.settled);
     // an AI's page says all of its words: any it left off are named, so it can put them back (a page with nothing
     // on it is said so by whoever asked for it)
     if (r.words?.[k] !== undefined && layers.length) {
