@@ -124,8 +124,11 @@ function folderMade(user: string, role: string, workspace: string | undefined, h
 
 /**
  * The workspace's Projects or Exports folder for work on computer `device` (AI Editor working files; finished videos):
- * the one it has. None is ever made here: a folder is made only when the person picks or confirms one (setup, Settings
- * → Folders, a card's tap; owner, 2026-11-19). Without one, a named workspace's job pauses (`wait`) on a card: the
+ * the one it has, also under another registration of the same machine. No record is ever made here: a folder row is made
+ * only when the person picks or confirms one (setup, Settings → Folders, a card's tap; owner, 2026-11-19). Projects on a
+ * computer that only helps (the workspace's Project files are on another one) is a folder of its own under its home,
+ * with no card (owner, 2026-11-20); a workspace with no Project files anywhere goes to its Media Library setup.
+ * Otherwise a named workspace's job pauses (`wait`) on a card: the
  * setup card while its Media Library is not set up, else the folder card (the workspace's default
  * ~/Movies/Creator Toolset/<workspace>/Project files, or Choose…), and the job goes on once the row is there. A `device`
  * that is no known computer (a worker's host name nothing matched) is a card that says so (`missing: "computer"`).
@@ -137,14 +140,29 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
   const ws = workspace ?? (owned.length === 1 ? owned[0]!.id : undefined);
   const label = FOLDER_LABELS[role];
   if (!workspace && owned.length > 1) return { error: `Choose a ${label} folder in Settings → Media Library.` };
-  const has = (await readStorage(user)).folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, (w) => w === ws));
+  const mine = (await readStorage(user)).folders.filter((f) => f.role === role && folderIn(f, (w) => w === ws));
+  // the same machine under another registration (its app and its worker, a re-pair) has the folder it was given too
+  const machine = (id: string) => deviceOf(id)?.report?.machine?.host?.toLowerCase().replace(/\.local$/, "");
+  const here = machine(device);
+  const has = mine.find((f) => f.origin.host === device) ?? (here ? mine.find((f) => machine(f.origin.host) === here) : undefined);
   if (has) return has;
+  // another computer's folder this one reaches too (a shared drive): that folder, at its path here
+  const shared = mine.find((f) => f.reach[device]?.path);
+  if (shared) return { ...shared, origin: { host: device, path: shared.reach[device]!.path } };
   if (!ws) return { error: `Choose a ${label} folder in Settings → Media Library.` };
+  const computer = deviceOf(device);
+  const name = owned.find((x) => x.id === ws)?.name || workspaceById(ws)?.name || ws;
+  if (role === "projects") {
+    // the workspace's Project files are on another computer: this one is helping (load balancing), so it keeps its
+    // working files in a folder of its own, never asked for and never written as a record (owner, 2026-11-20)
+    if (mine.length) return { id: `helper:${device}`, role, name: label, origin: { host: device, path: `${libraryBase(name)}/${label}` }, make: true, createdAt: Date.now(), reach: {}, workspace: ws };
+    // none anywhere: the Media Library was never set up through its setup, which is where Project files are chosen
+    const setup = await setupNeeded(user, ws, true);
+    if (setup) return { wait: setup as FolderAsk };
+  }
   // a Media Library not set up goes to its setup first (a member's card says the owner sets it up)
   const setup = await setupNeeded(user, ws);
   if (setup) return { wait: setup as FolderAsk };
-  const computer = deviceOf(device);
-  const name = owned.find((x) => x.id === ws)?.name || workspaceById(ws)?.name || ws;
   return { wait: actionCard({ kind: role === "projects" ? "projects" : "exports", workspace: ws, workspaceName: name, device: computer ? device : null, deviceName: computer?.name ?? device, path: `${libraryBase(name)}/${label}` }) as FolderAsk };
 }
 

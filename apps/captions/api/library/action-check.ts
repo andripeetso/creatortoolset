@@ -13,6 +13,11 @@ const askOf = ({ title: _t, line: _l, actions: _a, missing: _m, ...ask }: Action
  * reached. A computer it could not find is looked for again by the name it had; found, its folder is asked for there.
  */
 export async function recheckAction(username: string, a: ActionNeeded): Promise<ActionNeeded | null> {
+  if (a.kind === "setup" && a.again) {
+    // asked again for a set-up library with no Project files anywhere (ensureUseFolder): done once it has one
+    const has = (await storageOf(username)).folders.some((f) => f.role === "projects" && folderIn(f, (w) => w === a.workspace));
+    return has ? null : actionCard(askOf(a));
+  }
   if (a.kind === "setup") return setupNeeded(username, a.workspace || undefined);
   if (a.kind === "downloads") return (offlineOf(username).downloads?.[a.libraryId]?.mode ?? "none") === "none" ? a : null;
   const role = a.kind === "projects" ? "projects" : "library";

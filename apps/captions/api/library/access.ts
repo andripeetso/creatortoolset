@@ -270,9 +270,10 @@ export async function mainSourceFor(username: string, projectId?: string): Promi
 /** The chat card's setup ask for a workspace whose Media Library is not set up (ActionNeeded), or null when it is.
  *  Quick setup makes the folders on the asker's computer seen last (online first); on a server on the person's own
  *  computer with none paired, on that computer. No computer at all: the card says so. */
-export async function setupNeeded(username: string, projectId?: string): Promise<ActionNeeded | null> {
+export async function setupNeeded(username: string, projectId?: string, evenIfReady = false): Promise<ActionNeeded | null> {
   const m = await mediaReady(username, projectId);
-  if (m.ready) return null;
+  // evenIfReady: marked set up, yet what setup chooses is missing (no Project files anywhere): its setup again (?setup=1)
+  if (m.ready && !evenIfReady) return null;
   // the workspace's name from wherever it is known: Settings → Team, else its Workshop project (own or given); never an
   // empty slot in the card ("the Media Library of  to be set up", 11-19)
   const name =
@@ -289,5 +290,6 @@ export async function setupNeeded(username: string, projectId?: string): Promise
     kind: "setup", workspace: projectId ?? "", workspaceName: name || LIBRARY_WORDS.thisWorkspace, owner: m.owner, href: "/library?setup=1", libraryId, device,
     ...(d ? { deviceName: d.name } : device ? { deviceName: "this computer" } : {}),
     defaults: quickSetup(libraryBase(name || "Media Library")),
+    ...(m.ready ? { again: true as const } : {}),
   });
 }

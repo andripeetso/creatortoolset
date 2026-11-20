@@ -925,6 +925,7 @@ export const LIBRARY_WORDS = {
   quickSetupLine: (base: string, computer?: string) =>
     `Makes Source media, Project files and Final exports in ${base} on ${computer || "your computer"}, copies imports in, with 720p proxies, High analysis and Smart folders.`,
   quickSetupButton: "Set up",
+  setupAgainLine: "No Project files folder was chosen for it yet. Choose one in the Media Library's setup, and the edit carries on by itself.",
   customiseButton: "Customise",
   redo: "Redo",
   redoAll: "Redo all",
@@ -943,7 +944,8 @@ export type ActionAsk =
   // account's matched (`deviceName` is what it was called), and the card says so
   | { kind: "projects" | "exports"; workspace: string; workspaceName: string; device: string | null; deviceName?: string; path: string }
   | { kind: "downloads"; libraryId: string; workspace: string }
-  | { kind: "setup"; workspace: string; workspaceName: string; owner: boolean; href: string; libraryId: string; device: string | null; deviceName?: string; defaults: QuickSetup };
+  | { kind: "setup"; workspace: string; workspaceName: string; owner: boolean; href: string; libraryId: string; device: string | null; deviceName?: string; defaults: QuickSetup; again?: true };
+  // again: marked set up, but what setup chooses is missing (no Project files anywhere): only its sheet, never Quick setup
 export type CardAction = {
   id: "use_default" | "choose" | "turn_on" | "quick_setup" | "customise" | "retry";
   label: string;
@@ -976,10 +978,11 @@ export function actionCard(a: ActionAsk): ActionNeeded {
     return {
       ...a,
       title: LIBRARY_WORDS.setupCard(a.workspaceName),
-      line: LIBRARY_WORDS.quickSetupLine(a.defaults.base, a.deviceName),
+      line: a.again ? LIBRARY_WORDS.setupAgainLine : LIBRARY_WORDS.quickSetupLine(a.defaults.base, a.deviceName),
       actions: [
-        { id: "quick_setup", label: LIBRARY_WORDS.quickSetupButton, primary: true, call: { method: "POST", path: `/api/library/${a.libraryId}/setup/quick`, body: { device: a.device }, workspace: a.workspace } },
-        { id: "customise", label: LIBRARY_WORDS.customiseButton, open: a.href },
+        // Quick setup again would add a second Source media folder and reset the library's settings
+        ...(a.again ? [] : [{ id: "quick_setup", label: LIBRARY_WORDS.quickSetupButton, primary: true, call: { method: "POST", path: `/api/library/${a.libraryId}/setup/quick`, body: { device: a.device }, workspace: a.workspace } } as CardAction]),
+        { id: "customise", label: LIBRARY_WORDS.customiseButton, open: a.href, ...(a.again ? { primary: true } : {}) },
       ],
     };
   }
