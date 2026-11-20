@@ -15,6 +15,8 @@ import { runAll, type NleRun } from "@/lib/nle/commands";
 import { onKey, soundsAtCut } from "@/lib/nle/inspector-commands";
 import { keysIn, valueOn } from "@/lib/nle/keyframes";
 import type { Hist } from "@/lib/edit-history";
+import type { Autosave } from "@/lib/nle/autosave";
+import { fmtAgo } from "@/components/settings/helpers";
 import { addLut, listLuts } from "@/lib/editor";
 import { cn } from "@/lib/utils";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuRadioGroup, ContextMenuRadioItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
@@ -45,7 +47,7 @@ const folded = new Set<string>();
 const parked = new Map<string, Record<string, Partial<NleItem>> | null>();
 let lastTab: Tab = "video";
 
-export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory }: {
+export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave }: {
   /** the timeline as committed (what a change is made from) */
   tl: NleTimeline;
   keys: string[];
@@ -63,6 +65,9 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
   hist?: Hist<NleTimeline>;
   /** back or on to place `i` of the history */
   onHistory?: (i: number) => void;
+  /** this timeline's autosaves, oldest first, listed under the steps; a click restores one as a step */
+  autosaves?: Autosave[];
+  onAutosave?: (a: Autosave) => void;
 }) {
   const [pref, setPref] = useState<Tab>(lastTab);
   const fps = tl.timeline.fps;
@@ -101,7 +106,7 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
       </div>
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-scroll bg-[#19191c] pb-4 text-[11.5px]" role="tabpanel">
         {tab === "timeline" ? <TimelineTab tl={tl} onCommit={onCommit} notes={notes} onRun={e.onRun} />
-          : tab === "history" ? <HistoryTab hist={hist!} onHistory={onHistory ?? (() => {})} />
+          : tab === "history" ? <HistoryTab hist={hist!} onHistory={onHistory ?? (() => {})} autosaves={autosaves} onAutosave={onAutosave ?? (() => {})} />
           : tab === "video" ? (trans ? <TransitionTab {...e} k={trans} /> : <VideoTab {...e} keys={videos} />)
           : tab === "audio" ? <AudioTab {...e} keys={sounds} />
           : tab === "color" ? <ColorTab {...e} keys={videos} nameOf={nameOf} onClose={() => pick("video")} />
@@ -716,11 +721,15 @@ const MARKER_CSS: Record<string, string> = {
 };
 const markerColor = (c: unknown) => MARKER_CSS[String(c).toLowerCase()] ?? "#3b82f6";
 
-/** The undo steps, oldest first: a click goes back (or on) to that one; the ones after it stay grey until a new edit. */
-function HistoryTab({ hist, onHistory }: { hist: Hist<NleTimeline>; onHistory: (i: number) => void }) {
+/** The undo steps, oldest first: a click goes back (or on) to that one; the ones after it stay grey until a new edit.
+ *  Under them the autosaves, newest first: a click restores one as a new step. */
+function HistoryTab({ hist, onHistory, autosaves, onAutosave }: {
+  hist: Hist<NleTimeline>; onHistory: (i: number) => void; autosaves: Autosave[]; onAutosave: (a: Autosave) => void;
+}) {
   const here = hist.past.length;
   const rows = hist.past.length + 1 + hist.future.length;
   return (
+    <>
     <ol aria-label="History" className="py-1">
       {Array.from({ length: rows }, (_, i) => {
         const l = hist.labels?.[i];
@@ -738,5 +747,21 @@ function HistoryTab({ hist, onHistory }: { hist: Hist<NleTimeline>; onHistory: (
         );
       })}
     </ol>
+    {autosaves.length > 0 && (
+      <section className="border-t border-white/10 py-1">
+        <h3 className="px-3 py-1 text-[11px] text-zinc-500">Autosaves</h3>
+        <ol aria-label="Autosaves">
+          {[...autosaves].reverse().map((a, i) => (
+            <li key={`${a.at}:${i}`}>
+              <button type="button" onClick={() => onAutosave(a)} className="flex h-6 w-full min-w-0 items-center gap-2 px-3 text-left text-zinc-200 hover:bg-white/5">
+                <span className="w-20 shrink-0 tabular-nums text-zinc-500">{fmtAgo(a.at)}</span>
+                <span className="min-w-0 flex-1 truncate">{a.label?.startsWith(CHAT_STEP) ? a.label.slice(CHAT_STEP.length) : a.label || "Edit"}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
+    )}
+    </>
   );
 }
