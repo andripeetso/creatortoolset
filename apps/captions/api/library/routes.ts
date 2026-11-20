@@ -41,7 +41,7 @@ import { buildAssetQuery, indexAsset, macPlace, markHere, pageOf, parseSearch, t
 import { fileRoll, rollFolder } from "./roll";
 // watch.ts imports from this file too: its functions are only called inside handlers, never while the files load
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
-import { indexOnMac, noPicture, parseOnMac, putSprite, putThumb, strayStrips } from "./on-mac";
+import { dropMacFrames, indexOnMac, noPicture, parseOnMac, putSprite, putThumb, strayStrips } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
 import { deviceForToken, deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
@@ -185,7 +185,7 @@ export function recordVersion(
     origin?: string | null;
     /** a blurred render: its original's full SHA-256. It becomes a version of that original's clip, and its current one */
     blurredOf?: string | null;
-    /** a new clip's blur answer (upload-gate.ts blurAtIntake); none: its library's Blur faces. A new version keeps its clip's */
+    /** a new clip's blur answer when someone chose one (upload-gate.ts blurAtIntake); none: null, read as its library's Blur faces. A new version keeps its clip's */
     blur?: Blur | null;
   },
 ): string {
@@ -200,7 +200,7 @@ export function recordVersion(
       path.parse(o.filename).name.slice(0, 160) || "Untitled",
       o.by,
       now,
-      o.blur ?? (blursFaces(o.libraryId) ? "yes" : "no"),
+      o.blur ?? null,
     );
   }
   const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
@@ -268,8 +268,10 @@ export async function saveToLibrary(
   sound?: Sound,
   /** finals: a final, which follows the library's Finals setting, not its Upload; after: what runs once a save that
    *  waited for a computer lands there (work/tasks/library-save.ts); importName: the chat or edit it came from, whose
-   *  Imports/ folder a save on a computer goes into (contracts/storage.ts importTarget) */
-  opts: { finals?: boolean; after?: SaveAfter; importName?: string; blur?: Blur } = {},
+   *  Imports/ folder a save on a computer goes into (contracts/storage.ts importTarget); blur: the new clip's answer;
+   *  blurredOf: the file is a blurred render of the original with this full SHA-256, trusted by the caller (Face Blur's
+   *  covered copy, only for the library's own account): it becomes that clip's current version, as a computer's upload does */
+  opts: { finals?: boolean; after?: SaveAfter; importName?: string; blur?: Blur; blurredOf?: string } = {},
 ): Promise<SavedTo | null> {
   const lib =
     libraryId ??
@@ -287,18 +289,22 @@ export async function saveToLibrary(
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here
   // (under Blur faces Upload reads none for anything not blurred, so it goes there too)
   // a file kept as filmed follows the Upload the owner chose (upload-gate.ts uploadFor)
-  const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" ? libraryUploadStored(lib) : libraryUpload(lib);
-  if (serverKind() !== "local" && hostsNone(upload)) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after, opts.importName, opts.blur);
+  // a file kept as filmed, and a blurred render, follow the Upload the owner chose (upload-gate.ts uploadFor)
+  const { blurredOf } = opts;
+  const from = blurredOf ? [] : sources; // a blurred render is a version of its original's clip, never a file made from it
+  const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" || blurredOf ? libraryUploadStored(lib) : libraryUpload(lib);
+  if (serverKind() !== "local" && hostsNone(upload)) return saveOnComputer(username, lib, file, filename, from, footage, sound, opts.after, opts.importName, opts.blur, blurredOf);
   // kept here: under Blur faces only a file made wholly of blurred renders (a sound has no picture); the rule said once more
   // where the routing above changes. This Mac keeps its own (the server is the owner's computer, as mayReceive reads it)
   if (serverKind() !== "local" && kindOf(filename) !== "audio") {
-    const left = mayLeave(lib, { blurred: sources.length > 0 && sources.every((v) => isBlurred(v)), ...(opts.blur ? { blur: opts.blur } : {}) });
+    const left = mayLeave(lib, blurredOf ? { blurredOf } : { blurred: sources.length > 0 && sources.every((v) => isBlurred(v)), ...(opts.blur ? { blur: opts.blur } : {}) });
     if (!left.ok) return { error: left.body.message, code: "failed" };
   }
   const staged = path.join(stagingDir(), `save-${randomUUID()}`);
   try {
     await copyFile(file, staged);
     const sha256 = await sha256File(staged);
+    if (blurredOf === sha256) return { error: REFUSED_NOT_BLURRED, code: "failed" };
     const dup = db()
       // a clip hidden while it waits on Folders left out (report.ts) is no duplicate: the file is really added
       .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 1")
@@ -311,9 +317,9 @@ export async function saveToLibrary(
     d.exec("BEGIN");
     try {
       const collectionId = sound ? soundFolder(d, lib, sound, username) : undefined;
-      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId, blur: opts.blur ?? null });
+      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId, blur: opts.blur ?? null, blurredOf: blurredOf ?? null });
       // before the probe runs (same commit): the tag is what keeps the worker's AI steps off it
-      fileSaved(d, assetId, versionId, username, { footage, sound, sources });
+      fileSaved(d, assetId, versionId, username, { footage, sound, sources: from });
       d.exec("COMMIT");
       return { assetId, versionId };
     } catch (e) {
@@ -378,7 +384,7 @@ export const COMPUTER_SAVE = { ms: 30_000 };
  * Source media folder (the import rule, importTarget; a finished file: its Final exports folder) on whichever of the asker's computers takes the task (work/tasks/library-save.ts), which
  * indexes it there in place. With none online it waits for one, and the answer is the one line naming the folder.
  */
-async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter, importName?: string, blur?: Blur): Promise<SavedTo> {
+async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter, importName?: string, blur?: Blur, blurredOf?: string): Promise<SavedTo> {
   const { librariesOf, useOf } = await import("./report");
   const { storageOf } = await import("../devices-storage");
   const { awaitTask, startTask, taskOf } = await import("../work/tasks");
@@ -409,7 +415,7 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const staged = path.join(stagingDir(), `computer-${lib}-${quick}`);
   await copyFile(file, staged);
   const ref = `${lib}:${quick}`;
-  const started = await startTask("library-save", ref, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, folders, footage, ...(sound ? { sound } : {}), ...(blur ? { blur } : {}), sources, ...(after ? { after } : {}) });
+  const started = await startTask("library-save", ref, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, folders, footage, ...(sound ? { sound } : {}), ...(blur ? { blur } : {}), ...(blurredOf ? { blurredOf } : {}), sources, ...(after ? { after } : {}) });
   const name = (id: string) => deviceOf(id)?.name ?? "Your computer";
   const where = (id: string) => `${label} (${folders[id]!.path})`;
   if (started.state === "queued" && started.line) return { waiting: `${name(first[0])} is offline. I'll save it to ${where(first[0])} when it's back.`, save: ref };
@@ -510,7 +516,7 @@ const receives = (row: UploadRow, got?: string) => {
 };
 
 /** The account a library is (libraries.workspace_id read back as its account, access.ts accountOf). */
-const libraryAccount = (libraryId: string): string | null => {
+export const libraryAccount = (libraryId: string): string | null => {
   const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
   return row ? accountOf(row.workspace_id) : null;
 };
@@ -1488,6 +1494,24 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
   return c.json({ ok: true });
 }
 
+/** What the server keeps cut from a version: what dropUnblurred takes away. */
+const UNBLURRED_KINDS = ["proxy", "thumb", "sprite", "looksheets"];
+/**
+ * A file switched to Blur faces (orchestrator, 2026-11-20): what the server holds cut from its unblurred version goes, its
+ * proxy, card picture, strip, look sheets and held stills. Not a copy that is the version's own source, nor the original:
+ * it may be the only copy anywhere, and mayLeave refuses it to everyone until the blurred render is in.
+ */
+export async function dropUnblurred(versionId: string): Promise<void> {
+  const d = db();
+  const v = d.prepare("SELECT source_key, blurred_of FROM asset_versions WHERE id = ?").get(versionId) as { source_key: string; blurred_of: string | null } | undefined;
+  if (!v || v.blurred_of) return;
+  const where = `version_id = ? AND kind IN (${UNBLURRED_KINDS.map(() => "?").join(", ")}) AND (storage_key IS NULL OR storage_key <> ?)`;
+  const rows = d.prepare(`SELECT storage_key FROM derivatives WHERE ${where}`).all(versionId, ...UNBLURRED_KINDS, v.source_key) as { storage_key: string | null }[];
+  d.prepare(`DELETE FROM derivatives WHERE ${where}`).run(versionId, ...UNBLURRED_KINDS, v.source_key);
+  for (const r of rows) if (r.storage_key) await blobs.delete(r.storage_key).catch(() => {});
+  await dropMacFrames(versionId);
+}
+
 /**
  * PUT /api/library/:id/assets/:assetId/blur { blur: "yes" | "no" } → { blur }: a file's blur answer changed later (contracts
  * Blur). Anyone who may change the file marks it yes, which queues its blur; only the owner or an admin keeps it as filmed.
@@ -1504,6 +1528,7 @@ libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
   if (!a || !(await mayAdd(user, libraryId)) || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (blur === "no" && !mayKeepAsFilmed(user.username, libraryId)) return c.json({ error: "Only the workspace owner or an admin can keep a file as filmed", code: "forbidden" }, 403);
   db().prepare("UPDATE assets SET blur = ? WHERE id = ?").run(blur, assetId);
+  if (blur === "yes") await dropUnblurred(a.current_version_id);
   if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });
   return c.json({ blur });
 });

@@ -103,13 +103,20 @@ export const proxyTooBig = (bytes: number, original: number | undefined): boolea
  * proxy, and a thumbnail, strip or still cut from it never leave the owner's computers. Asked by every route that takes
  * or hands out a clip's bytes or pictures, the plug-ins' too (upload-gate.test.ts).
  */
-export function mayLeave(libraryId: string | null | undefined, file: { versionId?: string; blurredOf?: string | null; blurred?: boolean; blur?: Blur }): Received {
+export function mayLeave(
+  libraryId: string | null | undefined,
+  /** asFilmed: a new file with nothing left to blur and some of it as filmed (an AI Editor cut of blurred renders and files
+   *  kept as filmed, editor/preview.ts editLeaves), computed on the server, never a client's word; blurred stays "every
+   *  picture is a blurred render" (SPEC "Honest marks") */
+  file: { versionId?: string; blurredOf?: string | null; blurred?: boolean; blur?: Blur; asFilmed?: boolean },
+): Received {
   if (!libraryId) return { ok: true };
   if (file.versionId) {
     const f = fileBlur(file.versionId);
-    return !f || f.blur === "no" || f.blurredVersionId === file.versionId ? { ok: true } : refuse(REFUSED_BLUR);
+    if (!f) return blursFaces(libraryId) ? refuse(REFUSED_BLUR) : { ok: true };
+    return f.blur === "no" || f.blurredVersionId === file.versionId ? { ok: true } : refuse(REFUSED_BLUR);
   }
-  if ((file.blur ?? (blursFaces(libraryId) ? "yes" : "no")) === "no") return { ok: true };
+  if (file.asFilmed || (file.blur ?? (blursFaces(libraryId) ? "yes" : "no")) === "no") return { ok: true };
   return file.blurred || (!!file.blurredOf && HEX.test(file.blurredOf)) ? { ok: true } : refuse(REFUSED_BLUR);
 }
 
@@ -117,12 +124,13 @@ export function mayLeave(libraryId: string | null | undefined, file: { versionId
 export const mayKeepAsFilmed = (username: string, libraryId: string): boolean => findUser(username)?.role === "admin" || libraryRole(username, libraryId) === "owner";
 
 /**
- * The blur answer a new file of `libraryId` gets (contracts Blur): `asked` false (kept as filmed) only where
- * mayKeepAsFilmed, ignored from anyone else; true is yes; else the library's Blur faces.
+ * The blur answer a new file of `libraryId` is stored with (contracts Blur): `asked` false (kept as filmed) only where
+ * mayKeepAsFilmed, ignored from anyone else; true is yes. Null when nobody chose: it reads the library's Blur faces
+ * (db.ts BLUR_SQL), so that switch still decides for files nobody answered for.
  */
-export function blurAtIntake(username: string, libraryId: string, asked: unknown): Blur {
+export function blurAtIntake(username: string, libraryId: string, asked: unknown): Blur | null {
   if (asked === false && mayKeepAsFilmed(username, libraryId)) return "no";
-  return asked === true || blursFaces(libraryId) ? "yes" : "no";
+  return asked === true ? "yes" : null;
 }
 
 /**

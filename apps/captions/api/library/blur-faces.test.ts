@@ -314,11 +314,41 @@ describe("the public AI Editor follows each source's blur answer", () => {
     const ORIG = sha("Editor original bytes");
     const yes = (await body(onMac("lib_kids", "Editor take.mov", { sha256: ORIG }))) as { assetId: string; versionId: string };
     const no = (await body(onMac("lib_kids", "Editor talk.mov", { blur: false }))) as { assetId: string; versionId: string };
-    const e = (await createEdit("tinyacrobatics", { name: "Tiny Acrobatics cut", sources: [yes.versionId, no.versionId] }))!;
+    const e = (await createEdit("tinyacrobatics", { name: "Tiny Acrobatics cut", sources: [yes.versionId, no.versionId] }, false, "ws_kids"))!;
     expect(e).toBeTruthy();
     expect(editLeaves(e.id, "")).toMatchObject({ ok: false, body: { message: "Waiting for blur on Editor take" } });
+    // nothing of the yes-original goes to a computer: the step's package is refused before any path is in it
+    const { buildPackage } = await import("../work/package");
+    const job = { id: 1, kind: "preview", version_id: `${e.id}:`, actor: "tinyacrobatics", state: "running" } as never;
+    await expect(buildPackage(job, { id: MAC, owner: "tinyacrobatics" })).rejects.toThrow("Waiting for blur on Editor take");
+    // a cut filed now is refused by Review (Blur faces is on in its workspace)
+    const { fileInReview, previewFile } = await import("../editor/preview");
+    const empty = { name: "Speaker", items: [] };
+    const TIMELINE = { name: "v1", fps: 25, width: 1080, height: 1920, sources: {}, tracks: { V1: empty, V2: empty, A1: empty, A2: empty, A3: empty }, markers: [] } as never;
+    const file = async () => {
+      mkdirSync(path.dirname(previewFile(e.id, "")), { recursive: true });
+      writeFileSync(previewFile(e.id, ""), "a-rendered-cut");
+    };
+    await file();
+    await expect(fileInReview(e, "", TIMELINE)).rejects.toThrow(REFUSED_BLUR);
     const b = await sendBlurred("lib_kids", "Editor take blurred.mp4", "editor-blurred-bytes", ORIG);
     expect(editLeaves(e.id, "").ok).toBe(true);
+    // with the blurred render in, the cut reaches Review: nothing in it needs blurring, and it says honestly what it is
+    const { readStep } = await import("../editor/store");
+    const { readMeta } = await import("../review");
+    const filed = async (edit: typeof e) => {
+      mkdirSync(path.dirname(previewFile(edit.id, "")), { recursive: true });
+      writeFileSync(previewFile(edit.id, ""), "a-rendered-cut");
+      await fileInReview(edit, "", TIMELINE);
+      const m = await readMeta(readStep(edit.id, "review")![""]!.assetId);
+      const v = m!.versions.at(-1)!;
+      return { blurred: !!v.blurred, asFilmed: !!v.asFilmed };
+    };
+    // a blurred render with a file kept as filmed: as filmed, never "blurred"
+    expect(await filed(e)).toEqual({ blurred: false, asFilmed: true });
+    const only = async (sources: string[]) => filed((await createEdit("tinyacrobatics", { name: "Tiny Acrobatics one", sources }, false, "ws_kids"))!);
+    expect(await only([no.versionId])).toEqual({ blurred: false, asFilmed: true }); // only files kept as filmed
+    expect(await only([yes.versionId])).toEqual({ blurred: true, asFilmed: false }); // only blurred renders
     // what the AI Editor's worker is told of each Library source (the SPEC's contract)
     expect(fileBlur(yes.versionId)).toEqual({ blur: "yes", blurredVersionId: b.versionId });
     expect(fileBlur(no.versionId)).toEqual({ blur: "no", blurredVersionId: null });
@@ -380,6 +410,14 @@ describe("the chat dock under Blur faces", () => {
     writeFileSync(path.join(at, "meta.json"), JSON.stringify({ id, name: "Drop.mov", mime: "video/quicktime", size: 18, at: Date.now() }));
     const user = { username: "tinyacrobatics", role: "user", cloud: false, off: [] } as never;
     expect(await useFile(user, id, "captions")).toMatchObject({ to: "captions" });
+    // into the Media Library (This Mac keeps it here): the owner's drop is stored no
+    process.env.CT_LOCAL = "1";
+    try {
+      const into = await useFile(user, id, "library");
+      expect(d.prepare("SELECT blur FROM assets WHERE id = ?").get(into.id)).toEqual({ blur: "no" });
+    } finally {
+      delete process.env.CT_LOCAL;
+    }
     // the chat's save into the library (useFile "library" → saveToLibrary): marked no, kept under the Upload chosen (Blurred)
     const { saveToLibrary } = await import("./routes");
     const file = path.join(dir, "chat-drop.mov");
@@ -399,13 +437,13 @@ describe("the chat dock under Blur faces", () => {
 describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)", () => {
   const blurOf = (assetId: string) => (d.prepare("SELECT blur FROM assets WHERE id = ?").get(assetId) as { blur: string | null }).blur;
 
-  it("an import is yes where the library has Blur faces on, no where it is off", async () => {
+  it("an import nobody answered for is stored null and reads its library's Blur faces: yes there, no elsewhere", async () => {
     const yesFile = await body(onMac("lib_kids", "Intake take.mov"));
     const plain = await body(onMac("lib_plain", "Intake plain.mov"));
-    expect([blurOf(yesFile.assetId), blurOf(plain.assetId)]).toEqual(["yes", "no"]);
-    // a file from before it was asked (null) reads its library's Blur faces
-    d.prepare("UPDATE assets SET blur = NULL WHERE id IN (?, ?)").run(yesFile.assetId, plain.assetId);
+    expect([blurOf(yesFile.assetId), blurOf(plain.assetId)]).toEqual([null, null]);
     expect([fileBlur(yesFile.versionId)?.blur, fileBlur(plain.versionId)?.blur]).toEqual(["yes", "no"]);
+    // the box ticked on purpose is a yes of its own
+    expect(blurOf((await body(onMac("lib_plain", "Ticked.mov", { blur: true }))).assetId)).toBe("yes");
   });
 
   it("only the owner or an admin keeps a file as filmed: anyone else's blur:false is ignored", async () => {
@@ -413,10 +451,10 @@ describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)
     expect([mayKeepAsFilmed("tinyacrobatics", "lib_kids"), mayKeepAsFilmed("tinyadmin", "lib_kids"), mayKeepAsFilmed("sam", "lib_kids")]).toEqual([true, true, false]);
     expect(blurAtIntake("tinyacrobatics", "lib_kids", false)).toBe("no");
     expect(blurAtIntake("tinyadmin", "lib_kids", false)).toBe("no");
-    expect(blurAtIntake("sam", "lib_kids", false)).toBe("yes");
-    expect(blurAtIntake("sam", "lib_kids", undefined)).toBe("yes");
+    // a member's "no" is no answer at all: the library's Blur faces decides (yes in lib_kids)
+    expect(blurAtIntake("sam", "lib_kids", false)).toBeNull();
+    expect(blurAtIntake("sam", "lib_kids", undefined)).toBeNull();
     expect(blurAtIntake("sam", "lib_plain", true)).toBe("yes");
-    expect(blurAtIntake("sam", "lib_plain", undefined)).toBe("no");
     const kept = await body(onMac("lib_kids", "Kept as filmed.mov", { blur: false }));
     expect(blurOf(kept.assetId)).toBe("no");
   });
@@ -446,13 +484,14 @@ describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)
     const put = (blur: unknown, who?: string) =>
       app.request(`/api/library/lib_kids/assets/${f.assetId}/blur`, { method: "PUT", headers: { "content-type": "application/json", ...(who ? { "x-as": who } : {}) }, body: JSON.stringify({ blur }) });
     expect((await put("maybe")).status).toBe(400);
-    expect((await put("no", "sam")).status).not.toBe(200);
-    expect(blurOf(f.assetId)).toBe("yes");
     expect(await body(put("no"))).toEqual({ blur: "no" });
     expect(blurOf(f.assetId)).toBe("no");
     expect(queued).toEqual([]);
+    // what the server cut from it while it was kept as filmed goes when it is marked yes
+    for (const kind of ["thumb", "sprite", "proxy"]) d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, 1)").run(f.versionId, kind, `libraries/lib_kids/v/${f.versionId}/${kind}`);
     expect(await body(put("yes"))).toEqual({ blur: "yes" });
     expect(queued).toEqual([f.versionId]);
+    expect(pictures(f.versionId).filter((k) => ["thumb", "sprite", "proxy"].includes(k))).toEqual([]);
   });
 });
 

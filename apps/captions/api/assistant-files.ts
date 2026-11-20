@@ -13,8 +13,8 @@ import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary, librariesHere, mainSourceFor } from "./library/access";
-import { mayReceive } from "./library/upload-gate";
-import { libraryDb, libraryUploadStored } from "./library/db";
+import { blurAtIntake, mayReceive } from "./library/upload-gate";
+import { libraryDb, libraryUpload, libraryUploadStored } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { watchAllowed } from "./library/watch";
 import { pluginReceiveFile } from "./lib/plugin";
@@ -320,10 +320,12 @@ export async function useFile(
     // the library saveToLibrary would pick, asked first: a chat file is a person's original, as on the library's own upload
     const lib = (await librariesHere(user.username))[0]?.id;
     // a file dropped in a chat is kept as filmed (owner, 2026-11-20): marked no, it plays as filmed and nothing blurs it.
+    // Only the owner or an admin keeps a file as filmed: a member's drop is marked yes (blurAtIntake)
+    const blur = lib ? blurAtIntake(user.username, lib, false) : undefined;
     // Under Upload none it goes to their computer instead (saveToLibrary): nothing is refused for it
-    const gate = lib && !hostsNone(libraryUploadStored(lib)) ? mayReceive("original", { id: lib, blur: "no" }, "person") : null;
+    const gate = lib && !hostsNone(blur === "no" ? libraryUploadStored(lib) : libraryUpload(lib)) ? mayReceive("original", { id: lib, ...(blur ? { blur } : {}) }, "person") : null;
     if (gate && !gate.ok) throw new Error(gate.body.message);
-    const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound, { blur: "no", ...(importName ? { importName } : {}) });
+    const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound, { ...(blur ? { blur } : {}), ...(importName ? { importName } : {}) });
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
     // id: the save's own, which names the chat's card for it (library-save:<id>): it ends when the file lands, or is dropped

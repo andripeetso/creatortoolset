@@ -83,6 +83,27 @@ it("says who may keep a file as filmed (Blur faces off): the owner, never a plai
   expect(own.libraries).toEqual([expect.objectContaining({ id: "lib_old", mayKeepAsFilmed: true })]);
 });
 
+it("a member's chat drop is never kept as filmed in the owner's Blur faces library", async () => {
+  const { useFile } = await import("../assistant-files");
+  const { workspaceScope } = await import("../lib/workshop/workspace");
+  const d = libraryDb();
+  d.prepare("UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.blurFaces', json('true')) WHERE id = 'lib_old'").run();
+  const id = "0b5e7f3e-1c2d-4e5f-8a9b-0c1d2e3f4a6c";
+  const at = path.join(dir, "assistant", "files", "bo", id);
+  mkdirSync(at, { recursive: true });
+  writeFileSync(path.join(at, "file"), "member-chat-drop");
+  writeFileSync(path.join(at, "meta.json"), JSON.stringify({ id, name: "Member drop.mov", mime: "video/quicktime", size: 16, at: Date.now() }));
+  process.env.CT_LOCAL = "1";
+  try {
+    // the owner's library is not the member's to save into, or the file is saved as a yes-file: never "no"
+    await workspaceScope.run({ id: FIRST }, () => useFile({ username: "bo", role: "user", cloud: false, off: [] } as never, id, "library")).catch(() => null);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE blur = 'no'").get()).toEqual({ n: 0 });
+  } finally {
+    delete process.env.CT_LOCAL;
+    d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.blurFaces') WHERE id = 'lib_old'").run();
+  }
+});
+
 it("only the owner deletes footage: a member (an admin account too) never trashes, restores or empties the trash", async () => {
   const d = libraryDb();
   d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('ast_m', 'lib_old', 'video', 'Master', 'v_m', 'ana', 0)").run();

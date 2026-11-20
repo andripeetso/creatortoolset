@@ -99,16 +99,21 @@ export function editFiles(editId: string, more: string[] = []): FileRow[] {
   if (!e) return [];
   const ids = [...new Set([...e.sources, ...(typeof e.song === "string" ? [e.song] : []), ...more])];
   if (!ids.length) return [];
-  // a file marked Blur faces is read as its blurred render, under its own id (the editor source rule, db.ts playOf)
-  const play = new Map(ids.map((id) => [playOf(id), id]));
+  // a file marked Blur faces is read as its blurred render, under its own id (the editor source rule, db.ts playOf); an
+  // original and its blurred render may both be sources, each keeps its row
+  const plays = [...new Set(ids.map(playOf))];
   const rows = libraryDb()
     .prepare(
       `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.probe, a.library_id,
          (SELECT storage_key FROM derivatives WHERE version_id = v.id AND kind = 'proxy') AS proxy
-       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (${[...play.keys()].map(() => "?").join(", ")})`,
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (${plays.map(() => "?").join(", ")})`,
     )
-    .all(...play.keys()) as unknown as FileRow[];
-  return rows.map((r) => (play.get(r.id) === r.id ? r : { ...r, id: play.get(r.id)!, play: r.id }));
+    .all(...plays) as unknown as FileRow[];
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.flatMap((id) => {
+    const r = byId.get(playOf(id));
+    return r ? [r.id === id ? r : { ...r, id, play: r.id }] : [];
+  });
 }
 
 /** The files a step reads: the edit's sources and song, and for a version's step its draft's other sources (B-roll). */

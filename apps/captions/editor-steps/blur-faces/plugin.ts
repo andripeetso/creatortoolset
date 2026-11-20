@@ -18,7 +18,7 @@ import { currentWorkspaceId } from "../../api/lib/workspace-scope";
 import type { SessionUser } from "../../api/users";
 import { blobs, fileBlur, libraryDb } from "../../api/library/db";
 import { writeJsonAtomic } from "../../api/library/media/run";
-import { saveToLibrary } from "../../api/library/routes";
+import { libraryAccount, saveToLibrary } from "../../api/library/routes";
 import { mainSourceFor } from "../../api/library/access";
 import { EXAMPLE_JPEG } from "./example";
 
@@ -342,7 +342,13 @@ export const autoJobs = {
     await fh.read(head, 0, 12, 0).finally(() => fh.close());
     const right = j.kind === "video" ? head.toString("latin1", 4, 8) === "ftyp" : head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
     if (!right) return { error: j.kind === "video" ? "Send the covered copy as an MP4." : "Send the covered copy as a JPEG.", status: 400 };
-    const saved = await saveToLibrary(j.owner, file, `${j.title} blurred.${j.kind === "video" ? "mp4" : "jpg"}`, [j.versionId], j.libraryId, true);
+    // the original's full SHA-256: the covered copy becomes its clip's blurred render (api/library/db.ts fileBlur), trusted
+    // only for the library's own account, as a computer's blurred upload is. Else (no full hash known) a copy beside it
+    const v = libraryDb().prepare("SELECT sha256, full_sha256 FROM asset_versions WHERE id = ?").get(j.versionId) as { sha256: string; full_sha256: string | null } | undefined;
+    const of = [v?.full_sha256, v?.sha256].find((h) => !!h && /^[0-9a-f]{64}$/.test(h));
+    const blurredOf = of && j.owner === libraryAccount(j.libraryId) ? of : undefined;
+    const name = `${j.title} blurred.${j.kind === "video" ? "mp4" : "jpg"}`;
+    const saved = await saveToLibrary(j.owner, file, name, blurredOf ? [] : [j.versionId], j.libraryId, true, undefined, blurredOf ? { blurredOf } : {});
     if (!saved) {
       end(j, "failed", "The covered copy could not be added: no access to the Media Library.");
       return { error: "Not yours", status: 403 };

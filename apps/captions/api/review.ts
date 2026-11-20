@@ -155,6 +155,9 @@ interface Version {
   notBlurred?: boolean;
   /** Its filer blurred every face in it (an editor that blurs): under Blur faces only such a version is shared or shown. */
   blurred?: true;
+  /** Nothing in it is left to blur, and some of it plays as filmed (a file kept as filmed), as the server worked out (an
+   *  AI Editor cut, editor/preview.ts editLeaves): the team sees it; a share link under Blur faces does not (only `blurred`). */
+  asFilmed?: true;
   /** Its owner approved it with the faces as filmed. */
   approvedAsFilmed?: { by: string; at: number };
   /** What approving it starts, in a word ("B-roll", "cards"): an edit in passes sets it on each pass's cut but the last. */
@@ -188,7 +191,7 @@ const blurFacesIn = async (owner: string, workspace?: string) => {
   return !!lib && blursFaces(lib);
 };
 /** Under Blur faces Review keeps only a cut its filer blurred (an editor that blurs its render): upload-gate.ts mayLeave. */
-const takesCut = async (owner: string, workspace: string | undefined, blurred: boolean) => mayLeave(await workspaceLibrary(owner, workspace), { blurred });
+const takesCut = async (owner: string, workspace: string | undefined, blurred: boolean, asFilmed = false) => mayLeave(await workspaceLibrary(owner, workspace), { blurred, asFilmed });
 const AS_FILMED_ASK = "The faces in this cut aren't blurred. Approve it as filmed?";
 const AS_FILMED_OWNER = "Only the owner can approve a cut whose faces aren't blurred";
 const NOT_NEWEST = "A newer version is in Review: open it there";
@@ -998,6 +1001,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred ? { blurred: true } : {}),
+      ...(v.asFilmed ? { asFilmed: true } : {}),
       ...(v.approvedAsFilmed ? { approvedAsFilmed: v.approvedAsFilmed } : {}),
       ...(v.next ? { next: v.next } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
@@ -1130,7 +1134,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean; blurred?: boolean; next?: string },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean; blurred?: boolean; asFilmed?: boolean; next?: string },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1138,7 +1142,7 @@ export async function addVersion(
   const now = Date.now();
   const workspace = v.workspace ?? (await folderWorkspace(v.projectId));
   // Blur faces: a cut whose filer did not blur every face in it is never kept (`blurred`: an editor that blurred it)
-  const left = await takesCut(v.owner, (assetId && (await readMeta(assetId))?.workspace) || workspace, !!v.blurred && !v.notBlurred);
+  const left = await takesCut(v.owner, (assetId && (await readMeta(assetId))?.workspace) || workspace, !!v.blurred && !v.notBlurred, !!v.asFilmed && !v.notBlurred);
   if (!left.ok) throw new Error(left.body.message);
   if (!assetId) {
     await mkdir(assetDir(id), { recursive: true });
@@ -1180,6 +1184,7 @@ export async function addVersion(
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred && !v.notBlurred ? { blurred: true as const } : {}),
       ...(v.next ? { next: v.next } : {}),
+      ...(v.asFilmed && !v.blurred && !v.notBlurred ? { asFilmed: true as const } : {}),
       createdAt: now,
     });
   });

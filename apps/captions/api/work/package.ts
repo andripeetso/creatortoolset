@@ -14,6 +14,7 @@ import { atFor, foldersOf, lightKey } from "../editor/reach";
 import { downloadsAllowFor } from "./offline";
 import { serverOpen } from "./place";
 import { editDir, editRole, ownerOf, readDraft, readEdit, seesEdit, sourcesWorkspace, type EditMeta } from "../editor/store";
+import { editLeaves } from "../editor/preview";
 
 /** The server's copy of a package handed out: what the result is merged against. */
 export const keptPath = (jobId: number) => path.join(env.dataDir, "work", `${jobId}.json`);
@@ -85,6 +86,9 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
   // own account only: a computer never runs another person's step (design 4.3)
   if (!job.actor || job.actor !== device.owner) throw new Error("This step is not this computer's account's");
   const ids = jobFiles(edit, variant);
+  // the editor source rule: no path or copy of a file marked Blur faces goes out before its blurred render is in
+  const left = editLeaves(editId, variant);
+  if (!left.ok) throw new Error(left.body.message);
   // the access rule the worker checks at every step (worker.ts stillReadable), over every file the step may read
   // and the library's own per-clip check for a teammate (store.ts seesEdit: a clip a library policy hides from them never goes down)
   if (sourcesWorkspace(ownerOf(edit), ids) !== edit.workspaceId || !(await editRole(job.actor, edit)) || !(await seesEdit(job.actor, edit))) throw new Error("Some footage was deleted or cannot be read by this account");

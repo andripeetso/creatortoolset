@@ -418,6 +418,7 @@ export default function LibraryPage() {
   const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
     if (!libId) return;
     addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, blur: !!library?.settings.blurFaces, asFilmed: keepsAsFilmed, cost: levelOf(library?.settings ?? {}) !== "off" });
+    setAsFilmed(null); // the box is ticked again for the next drop
   };
   // a file of this library went in: its clips (and the folder's count) read again
   useEffect(

@@ -33,7 +33,9 @@ import { showHidden } from "./trash";
 
 export interface OnMacIndex {
   /** the new clip's blur answer (upload-gate.ts blurAtIntake), set by the caller, never parsed from the body; none: the library's Blur faces */
-  blur?: Blur;
+  blur?: Blur | null;
+  /** a blurred render of the original with this full SHA-256, set by the server's own save (library-save task), never parsed */
+  blurredOf?: string;
   name: string;
   path: string;
   size: number;
@@ -228,7 +230,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     : undefined;
   d.exec("BEGIN IMMEDIATE");
   try {
-    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId, blur: x.blur ?? null, ...(blurred ? { assetId: blurred.asset_id } : {}) });
+    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId, blur: x.blur ?? null, blurredOf: x.blurredOf ?? null, ...(blurred ? { assetId: blurred.asset_id } : {}) });
     if (blurred) d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(blurred.id, assetId);
     if (x.sha256) d.prepare("UPDATE asset_versions SET full_sha256 = ? WHERE id = ?").run(x.sha256, versionId);
     // the Mac probed it: no probe here (it would read a file this server does not have)

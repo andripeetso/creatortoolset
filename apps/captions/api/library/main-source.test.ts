@@ -43,7 +43,7 @@ const { createUser, newApiKey } = await import("../users");
 const { workspaceScope } = await import("../lib/workshop/workspace");
 const { mainSourceFor } = await import("./access");
 const { mainSource } = await import("./sources");
-const { libraryDb } = await import("./db");
+const { fileBlur, libraryDb } = await import("./db");
 const { saveToLibrary } = await import("./routes");
 const { saveMyKey } = await import("../my-keys");
 const { useFile } = await import("../assistant-files");
@@ -109,7 +109,9 @@ describe("the Media Library's main source, per workspace", () => {
     const copy = path.join(dir, "covered.jpg");
     writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 7, 7]));
     expect(await autoJobs.file("mac-1", Number(job.id), copy, "covered.jpg")).toEqual({ reply: { ok: true } });
-    const made = d.prepare("SELECT a.library_id FROM derived_from f JOIN asset_versions v ON v.id = f.version_id JOIN assets a ON a.id = v.asset_id WHERE f.source_version_id = ?").get(v) as { library_id: string };
+    // the covered copy is the original's blurred render: a version of its clip, so in that workspace's library
+    const blurred = fileBlur(v)?.blurredVersionId;
+    const made = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(blurred ?? "") as { library_id: string };
     expect(made.library_id).toBe("lib_b");
     expect(autoJobs.claim(mac)).toBeNull(); // nothing from the plug-in's workspace was queued
   });

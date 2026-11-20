@@ -57,11 +57,13 @@ const incoming = (editId: string, jobId: number) => path.join(editDir(editId), "
 
 /** Streams one result file into editor/<editId>/.incoming/<jobId>/ when `rel` is allowed; false when it is not. */
 export async function acceptUpload(jobId: number, deviceId: string, rel: string, body: Readable): Promise<boolean> {
-  if (!heldBy(jobId, deviceId)) return false;
+  const job = heldBy(jobId, deviceId);
+  if (!job) return false;
   const ok = allowed(jobId, rel);
   if (!ok) return false;
-  // a preview with a source marked Blur faces that has no blurred render yet is not kept (editor/preview.ts editLeaves)
-  if (rel.startsWith(`editor/${ok.editId}/previews/`) && !editLeaves(ok.editId, path.basename(rel, ".mp4")).ok) return false;
+  // no media of a step whose sources include a file marked Blur faces with no blurred render yet (editor/preview.ts
+  // editLeaves), read by the job's own version, never by the file's name (a preview's sheets are previews/<v>.sheets/<n>.jpg)
+  if (rel.startsWith(`editor/${ok.editId}/`) && !editLeaves(ok.editId, splitJob(job).variant).ok) return false;
   const out = path.join(incoming(ok.editId, jobId), rel);
   await mkdir(path.dirname(out), { recursive: true });
   let n = 0;

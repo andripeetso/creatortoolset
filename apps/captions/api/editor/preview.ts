@@ -5,7 +5,7 @@ import type { Item, Renders, Timeline } from "../../contracts/editor";
 import { addVersion, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
-import { blobs, fileBlur, libraryDb, playOf } from "../library/db";
+import { blobs, fileBlur, isBlurred, libraryDb, playOf } from "../library/db";
 import { readable } from "./media";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
@@ -25,6 +25,7 @@ import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISH
 import { nextPass, PASS_WORD } from "./passes";
 import { refuse, type Received } from "../library/upload-gate";
 import { jobFiles } from "./reach";
+import { emitEvent } from "../lib/events";
 import type { StepContext } from "./worker";
 
 /**
@@ -287,24 +288,46 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
 /** Where a version's preview is rendered, before Review takes it. */
 export const previewFile = (editId: string, variant: string) => path.join(editDir(editId), "previews", `${variant}.mp4`);
 
+/** What a cut honestly is (SPEC "Honest marks"): every picture in it a blurred render, or some of it as filmed. */
+export type CutMark = "blurred" | "asFilmed";
+const AUDIO_FILE = /\.(mp3|m4a|wav|aac|flac|ogg|opus)$/i;
+
+/**
+ * The editor source rule (owner, 2026-11-20) for one cut of an edit: a source marked Blur faces is read as its blurred
+ * render (playOf); one with none yet stops the cut, which is never rendered from its original nor kept here, and Face Blur
+ * is asked for it (library.version.blur: an old file, or one from before Face Blur was on, gets its job; it is queued once).
+ * Every other file plays as filmed. This editor runs no face detection of its own. A cut that may go answers its mark:
+ * "blurred" only when every picture source is a blurred render, else "asFilmed" (a file kept as filmed, one of the edit's own).
+ */
+export function editLeaves(editId: string, variant: string): { ok: true; mark: CutMark } | Extract<Received, { ok: false }> {
+  const files = jobFiles({ version_id: `${editId}:${variant}` });
+  const waiting = files.find((r) => {
+    const f = fileBlur(r.id);
+    return f?.blur === "yes" && !f.blurredVersionId;
+  })?.id;
+  if (waiting) {
+    const a = libraryDb().prepare("SELECT a.title, a.library_id, a.created_by FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(waiting) as
+      | { title: string; library_id: string; created_by: string }
+      | undefined;
+    if (a) emitEvent("library.version.blur", { libraryId: a.library_id, versionId: waiting, owner: a.created_by });
+    return refuse(`Waiting for blur on ${a?.title ?? "a clip"}`);
+  }
+  const kind = libraryDb().prepare("SELECT a.kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?");
+  const pictures = files.filter((r) => (kind.get(r.id) as { kind: string } | undefined)?.kind !== "audio");
+  // the edit's own files (a voice take, a made clip): outside the Library, so as filmed unless only sound
+  const own = Object.values(readDraft(editId, variant)?.timeline.sources ?? {}).filter((s) => s.file && !AUDIO_FILE.test(s.file));
+  const blurred = pictures.length > 0 && !own.length && pictures.every((r) => isBlurred(r.play ?? r.id));
+  return { ok: true, mark: blurred ? "blurred" : "asFilmed" };
+}
+
 /**
  * The preview step (one version): render, then into Review as the next version of the draft's Review video. A planned
  * cut the AI made waits for its look (critique.ts), which files it.
  */
-/**
- * The editor source rule (owner, 2026-11-20) for one cut of an edit: a source marked Blur faces is read as its blurred
- * render (playOf); one with none yet stops the cut, which is never rendered from its original nor kept here. Every other
- * file plays as filmed. This editor runs no face detection of its own.
- */
-export function editLeaves(editId: string, variant: string): Received {
-  const waiting = jobFiles({ version_id: `${editId}:${variant}` }).find((r) => {
-    const f = fileBlur(r.id);
-    return f?.blur === "yes" && !f.blurredVersionId;
-  })?.id;
-  if (!waiting) return { ok: true };
-  const title = (libraryDb().prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(waiting) as { title: string } | undefined)?.title;
-  return refuse(`Waiting for blur on ${title ?? "a clip"}`);
-}
+const markOf = (editId: string, variant: string): { blurred?: true; asFilmed?: true } => {
+  const left = editLeaves(editId, variant);
+  return !left.ok ? {} : left.mark === "blurred" ? { blurred: true } : { asFilmed: true };
+};
 
 export async function previewStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   // on the server only: a computer's render is refused where its files arrive (work/result.ts)
@@ -369,7 +392,10 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   const pass = nextPass(edit, variant);
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
-  const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId, ...(pass ? { next: PASS_WORD[pass] } : {}) };
+  const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId, ...(pass ? { next: PASS_WORD[pass] } : {}),
+    // honest marks (SPEC), computed here, never a computer's word: blurred only when every picture is a blurred render;
+    // a cut with nothing left to blur but some of it as filmed passes as asFilmed; one still waiting for a blur, neither
+    ...markOf(edit.id, variant) };
   // `given`: the thumbnail and waveform made where the preview was rendered (a computer, api/work/result.ts), so Review
   // and the library take them instead of decoding the preview again
   const place = async (dest: string) => {
