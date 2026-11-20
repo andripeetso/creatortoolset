@@ -1,7 +1,9 @@
 import { keepLoud, LOUDNESS_TASK, measureLoud } from "../../editor/analyze";
 import { measurable } from "../../editor/media";
-import { LOUD_WAIT_MS } from "../../editor/sound";
 import { taskKind } from "../tasks";
+
+/** How long a measuring task may wait for a computer with the file before it is dropped (editor/sound.ts answers then). */
+export const LOUD_WAIT_MS = 10 * 60_000;
 
 /**
  * A library version's sound measured for the editor's Normalize and Lower Under Voice (editor/analyze.ts measureLoud,

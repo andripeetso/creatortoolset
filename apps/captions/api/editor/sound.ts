@@ -2,7 +2,7 @@ import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { libraryDb } from "../library/db";
 import { wordsOf } from "../library/transcribe";
 import { dropTask, startTask, TASK_EXPIRED, taskFor, taskWaitLine } from "../work/tasks";
-import type { LoudnessInput } from "../work/tasks/loudness";
+import { LOUD_WAIT_MS, type LoudnessInput } from "../work/tasks/loudness";
 import { LOUDNESS_TASK, readLoud } from "./analyze";
 import { fileFor, foldersOf, type FileRow } from "./reach";
 import { editSources } from "./store";
@@ -21,8 +21,6 @@ export interface SourceSound {
 
 /** The most sources one call asks about. */
 export const SOUND_MAX = 50;
-/** How long a source's measuring waits for a computer that has its file before it is given up. */
-export const LOUD_WAIT_MS = 10 * 60_000;
 export const NO_COMPUTER = "No computer with this file answered: open Creator Toolset on the computer that has it, then try again";
 const MEASURING = "Measuring the sound";
 
