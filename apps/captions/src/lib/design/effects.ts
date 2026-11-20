@@ -1,5 +1,5 @@
 import type { Effect, Layer } from "@contracts/design";
-import { blurPixels, mixed } from "./retouch";
+import { blurPixels, blurredRows, mixed } from "./retouch";
 
 /**
  * A layer's effects (contracts/design.ts Effect), worked pixel by pixel: the Mac app's browser has no blur of a
@@ -20,7 +20,7 @@ export function effectsOf(l: Layer): Effect[] {
 export const withEffects = (l: Layer, list: Effect[]): Layer => ({ ...l, effects: list.length ? list : undefined, shadow: undefined, ...(l.type === "image" ? {} : { blur: undefined }) }) as Layer;
 
 /** Whether a layer with these (shown) effects is painted in a box of its own and worked there: a shadow and a background blur alone are not. */
-export const worksPixels = (fx: readonly Effect[]): boolean => fx.some((e) => e.type === "inner-shadow" || e.type === "blur" || e.type === "progressive-blur" || e.type === "noise");
+export const worksPixels = (fx: readonly Effect[]): boolean => fx.some((e) => e.type === "inner-shadow" || e.type === "noise" || ((e.type === "blur" || e.type === "progressive-blur") && e.blur > 0));
 
 /** How far a layer's own pixels spread past its box: what its blurs reach, in design pixels. */
 export const reachOf = (fx: readonly Effect[]): number => Math.ceil(Math.max(0, ...fx.map((e) => (e.type === "blur" ? Math.min(200, e.blur) * 3 : 0))));
@@ -115,15 +115,16 @@ export function addNoise(data: Uint8ClampedArray, w: number, h: number, amount: 
  * A blur that grows across the layer: none up to `from` and all of `blur` from `to`, as parts of the box (x0, y0,
  * bw, bh in these pixels) along `angle` (0 left to right, 90 top to bottom). Worked as the layer blurred a quarter, a
  * half and fully, each pixel taken between the two nearest, so the blur grows and no picture shows through another.
- * The layer's edges stay where they are (its alpha is kept).
+ * The layer's edges stay where they are (its alpha is kept). The blurred levels are read a row at a time (retouch.ts
+ * blurredRows) and the sharp one is the layer itself, so a wide blur keeps no full-size copy (a saved file may be
+ * worked at tens of millions of pixels).
  */
 export function progressiveBlur(data: Uint8ClampedArray, w: number, h: number, e: { blur: number; from: number; to: number; angle: number }, box: { x: number; y: number; w: number; h: number }): void {
   if (e.blur <= 0) return;
-  const levels = [data.slice(), ...[0.25, 0.5, 1].map((f) => {
-    const copy = data.slice();
-    blurPixels(copy, w, h, e.blur * f);
-    return copy;
-  })];
+  // every level made from the layer before any pixel of it changes
+  const levels = [0.25, 0.5, 1].map((f) => blurredRows(data, w, h, e.blur * f));
+  const rows = levels.map(() => new Uint8ClampedArray(w * 4));
+  const ts = new Float32Array(w);
   const a = (e.angle * Math.PI) / 180;
   const cos = Math.cos(a);
   const sin = Math.sin(a);
@@ -133,19 +134,34 @@ export function progressiveBlur(data: Uint8ClampedArray, w: number, h: number, e
   const from = Math.min(e.from, e.to);
   const to = Math.max(e.from, e.to);
   for (let y = 0; y < h; y++) {
+    let any = false;
     for (let x = 0; x < w; x++) {
       const along = ((x + 0.5 - cx) * cos + (y + 0.5 - cy) * sin) / (2 * half) + 0.5;
-      const t = to > from ? Math.min(1, Math.max(0, (along - from) / (to - from))) : along >= from ? 1 : 0;
+      ts[x] = to > from ? Math.min(1, Math.max(0, (along - from) / (to - from))) : along >= from ? 1 : 0;
+      if (ts[x]) any = true;
+    }
+    if (!any) continue;
+    const row = y * w * 4;
+    // a level's row starts as the layer's own, as a blurred copy of the whole layer did where it blurred to nothing
+    rows.forEach((r, j) => {
+      r.set(data.subarray(row, row + w * 4));
+      levels[j]!(y, r, 0);
+    });
+    for (let x = 0; x < w; x++) {
+      const t = ts[x]!;
       if (!t) continue;
-      const i = (y * w + x) * 4;
+      const i = row + x * 4;
       const at = t * 3;
       const lo = Math.min(2, Math.floor(at));
       const f = at - lo;
-      const p = levels[lo]!;
-      const q = levels[lo + 1]!;
-      data[i] = p[i]! + (q[i]! - p[i]!) * f;
-      data[i + 1] = p[i + 1]! + (q[i + 1]! - p[i + 1]!) * f;
-      data[i + 2] = p[i + 2]! + (q[i + 2]! - p[i + 2]!) * f;
+      // the sharp level is the layer's own pixel, not yet changed
+      const p = lo ? rows[lo - 1]! : data;
+      const pi = lo ? x * 4 : i;
+      const q = rows[lo]!;
+      const qi = x * 4;
+      data[i] = p[pi]! + (q[qi]! - p[pi]!) * f;
+      data[i + 1] = p[pi + 1]! + (q[qi + 1]! - p[pi + 1]!) * f;
+      data[i + 2] = p[pi + 2]! + (q[qi + 2]! - p[pi + 2]!) * f;
     }
   }
 }

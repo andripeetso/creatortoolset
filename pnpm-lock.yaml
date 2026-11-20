@@ -235,6 +235,9 @@ importers:
       '@hono/vite-dev-server':
         specifier: ^0.19.0
         version: 0.19.1(hono@4.12.31)
+      '@napi-rs/canvas':
+        specifier: 1.1.0
+        version: 1.1.0
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.4
@@ -6623,7 +6626,6 @@ snapshots:
       '@napi-rs/canvas-linux-x64-musl': 1.1.0
       '@napi-rs/canvas-win32-arm64-msvc': 1.1.0
       '@napi-rs/canvas-win32-x64-msvc': 1.1.0
-    optional: true
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:

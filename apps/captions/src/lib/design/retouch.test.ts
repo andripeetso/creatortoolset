@@ -138,6 +138,14 @@ describe("a picture layer's colour changes", () => {
     expect(at(cut, 40, 38, 5)[3]).toBe(0);
   });
 
+  it("a blur of 0 leaves every pixel as it was", () => {
+    const d = flat(5, 5, [0, 0, 0, 255]);
+    d.set([255, 255, 255, 255], (2 * 5 + 2) * 4);
+    blurPixels(d, 5, 5, 0);
+    expect(at(d, 5, 2, 2)).toEqual([255, 255, 255, 255]);
+    expect(at(d, 5, 1, 2)).toEqual([0, 0, 0, 255]);
+  });
+
   it("a wide blur, worked on a smaller copy: a flat picture stays flat, an edge becomes an even slope, about as wide as the same blur worked whole", () => {
     // sizes that are no multiple of what it is made smaller by
     const even = flat(61, 43, [90, 120, 150, 255]);
