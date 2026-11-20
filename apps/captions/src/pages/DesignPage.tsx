@@ -20,7 +20,7 @@ import { fillsOf, paintPictures, strokesOf } from "@/lib/design/paint";
 import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
-import { depthOf, everyLayer, findLayer, inFrame, inScope, isGroup, mapLayers, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
+import { depthOf, everyLayer, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
@@ -76,6 +76,7 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
 ];
 /** The tools that work on a canvas with no frame yet: the others draw a layer, and a layer lies on a frame. */
 const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text", KeyP: "pen" };
+const ON_A_MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
 /** ⌥⌘ and these combine the picked shapes (contracts/design.ts GroupLayer `boolean`). */
 const BOOLEAN_KEYS: Record<string, DesignBoolean> = { KeyU: "union", KeyS: "subtract", KeyI: "intersect", KeyX: "exclude" };
 const BOOLEAN_KEY_NAMES: Record<DesignBoolean, string> = { union: "⌥⌘U", subtract: "⌥⌘S", intersect: "⌥⌘I", exclude: "⌥⌘X" };
@@ -623,13 +624,13 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
    * The picked layers made one layer that holds them (tree.ts wrap): a plain group, or with `box` a frame round them
    * (⌥⌘G), lying where the frontmost of them was, they in the order they had and where they were. It is picked.
    */
-  const group = (box = false, made?: (g: GroupLayer) => GroupLayer) => {
-    if (!base || !top || !mine.length) return;
+  const group = (box = false, made?: (g: GroupLayer) => GroupLayer, wrapped: (inner: Layer[], id: string) => Layer[] | null = (inner, id) => wrap(inner, selected, id, box), these = mine) => {
+    if (!base || !top || !these.length) return;
     // containers go so deep at most, counting the one they are in
-    if ((pathTo(top.layers, mine[0]!.id)?.length ?? 0) + 1 + depthOf(mine) > DESIGN_LIMITS.depth) return setError(`Groups go at most ${DESIGN_LIMITS.depth} deep`);
+    if ((pathTo(top.layers, these[0]!.id)?.length ?? 0) + 1 + depthOf(these) > DESIGN_LIMITS.depth) return setError(`Groups go at most ${DESIGN_LIMITS.depth} deep`);
     if (everyLayer(top.layers).length >= DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups`);
     const [id] = freshIds(top, 1);
-    const next = wrap(base.layers, selected, id!, box);
+    const next = wrapped(base.layers, id!);
     if (!next) return;
     setPage({ ...base, layers: made ? next.map((l) => (l.id === id && isGroup(l) ? made(l) : l)) : next });
     pick(k, [id!]);
@@ -647,9 +648,15 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       return { ...g, boolean: op, fills: fills.length ? fills : [{ type: "solid", color: "#d9d9d9" }], ...(strokes.length ? { strokes } : {}) };
     });
   };
-  /** The picked layer made a mask of what lies above it, or a mask no more (⌃⌘M); several: grouped, the bottom one their mask. */
+  /**
+   * The picked layer made a mask of what lies above it, or a mask no more (⌃⌘M, Ctrl+Alt+M); several: grouped, the
+   * bottom one their mask. In an auto layout box it is grouped with the layer above it (tree.ts maskWithNext).
+   */
   const useAsMask = () => {
-    if (mine.length === 1) return patch((l) => ({ ...l, mask: l.mask ? undefined : "alpha" }) as Layer);
+    const one = mine.length === 1 ? mine[0]! : null;
+    const above = one && base ? base.layers[base.layers.findIndex((l) => l.id === one.id) + 1] : undefined;
+    if (one && !one.mask && above && top && flows(parentOf(top.layers, one.id))) return group(false, undefined, (inner, id) => maskWithNext(inner, one.id, id), [one, above]);
+    if (one) return patch((l) => ({ ...l, mask: l.mask ? undefined : "alpha" }) as Layer);
     group(false, (g) => ({ ...g, name: "Mask group", layers: g.layers.map((l, n) => (n ? l : ({ ...l, mask: "alpha" } as Layer))) }));
   };
   /**
@@ -998,7 +1005,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         else if (c === "KeyD") run(duplicate);
         else if (e.altKey && c === "KeyT") run(tidyUp);
         else if (e.altKey && BOOLEAN_KEYS[c] && has) run(() => combineShapes(BOOLEAN_KEYS[c]!));
-        else if (e.ctrlKey && e.metaKey && c === "KeyM" && has) run(useAsMask);
+        // ⌃⌘M; Ctrl+Alt+M where there is no ⌘ (the Windows key is not the page's)
+        else if (c === "KeyM" && has && (ON_A_MAC ? e.ctrlKey && e.metaKey : e.ctrlKey && e.altKey)) run(useAsMask);
         else if (c === "KeyG") run(() => (e.shiftKey ? ungroup() : group(e.altKey)));
         else if (c === "KeyA") run(() => pick(k, base.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id)));
         else if (c === "KeyC") copy(); // not stopped: words picked in a panel are still the browser's to copy
@@ -1357,7 +1365,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
                     <ContextMenuSubTrigger disabled={mine.length < 2 && !(isGroup(mine[0]) && mine[0].boolean)} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Combine shapes</ContextMenuSubTrigger>
                     <ContextMenuSubContent className="w-48">{DESIGN_BOOLEANS.map((op) => item(BOOLEAN_NAMES[op], BOOLEAN_KEY_NAMES[op], () => combineShapes(op), false))}</ContextMenuSubContent>
                   </ContextMenuSub>
-                  {item(mine.length === 1 && mine[0]!.mask ? "Stop using as mask" : "Use as mask", "⌃⌘M", useAsMask, none)}
+                  {item(mine.length === 1 && mine[0]!.mask ? "Stop using as mask" : "Use as mask", ON_A_MAC ? "⌃⌘M" : "Ctrl+Alt+M", useAsMask, none)}
                   {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => isGroup(l) || (l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1)))}
                   {mine.some(isGroup) && (mine.filter(isGroup).every((l) => l.box) ? item("Convert to group", "", () => convert(false), false) : item("Convert to frame", "", () => convert(true), false))}
                   <ContextMenuSeparator />
@@ -1458,6 +1466,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           onGroup={() => group()}
           onUngroup={ungroup}
           onAutoLayout={autoLayout}
+          onCombine={combineShapes}
           flow={(() => {
             const c = top && scope ? findLayer(top.layers, scope) : null;
             return flows(c) ? c.layout : null;

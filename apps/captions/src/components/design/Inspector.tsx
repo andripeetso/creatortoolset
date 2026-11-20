@@ -38,9 +38,13 @@ import {
   WrapText,
   X,
   LayoutGrid,
+  SquaresExclude,
+  SquaresIntersect,
+  SquaresSubtract,
+  SquaresUnite,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import type { AutoLayout, Design, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke, TextLayer } from "@contracts/design";
+import type { AutoLayout, Design, DesignBoolean, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke, TextLayer } from "@contracts/design";
 import { fixedBy, flows, padOf, withSizing, withoutLayout } from "@/lib/design/layout";
 import { toast } from "sonner";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_BOOLEANS, DESIGN_EFFECTS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES, EFFECT_PRESETS, EFFECTS_MAX } from "@contracts/design";
@@ -226,6 +230,7 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
 );
 
 const CORNERS = [["◜", "Top left corner"], ["◝", "Top right corner"], ["◞", "Bottom right corner"], ["◟", "Bottom left corner"]] as const;
+const BOOLEAN_ICONS = { union: SquaresUnite, subtract: SquaresSubtract, intersect: SquaresIntersect, exclude: SquaresExclude } as const;
 /** What a mask cuts by, as the Mask picker names it (contracts/design.ts Box `mask`). */
 const MASK_NAMES = { none: "Not a mask", alpha: "Alpha mask", vector: "Shape mask", luminance: "Luminance mask" } as const;
 const BLEND_NAMES = { multiply: "Multiply", screen: "Screen", overlay: "Overlay", darken: "Darken", lighten: "Lighten", "soft-light": "Soft light" } as const;
@@ -819,6 +824,7 @@ export function Inspector({
   onGroup,
   onUngroup,
   onAutoLayout,
+  onCombine,
   flow,
   colours,
   onDropper,
@@ -863,6 +869,8 @@ export function Inspector({
   onUngroup: () => void;
   /** auto layout added to the picked layers (layout.ts addAutoLayout) */
   onAutoLayout: () => void;
+  /** the picked shapes combined into one (a boolean group), or a picked boolean group combined another way */
+  onCombine: (op: DesignBoolean) => void;
   /** the auto layout of the box the picked layers lie in; null: they lie in none */
   flow: AutoLayout | null;
   /** the colours the design already uses, for the picker */
@@ -1116,17 +1124,19 @@ export function Inspector({
                 Clip content
               </label>
             )}
-            {/* a boolean group: how its layers make one shape */}
-            {every((l) => l.type === "group" && !!l.boolean) && (
-              <PickOne
-                label="Combine"
-                value={(() => {
-                  const b = same((l) => (l.type === "group" ? l.boolean : undefined));
-                  return b === null ? "Mixed" : BOOLEAN_NAMES[b];
-                })()}
-                options={DESIGN_BOOLEANS.map((b) => [b, BOOLEAN_NAMES[b]] as const)}
-                onPick={(b) => onPatch((l) => (l.type === "group" && l.boolean ? { ...l, boolean: b } : l))}
-              />
+            {/* several layers: combined into one shape; a boolean group alone: how its layers make it */}
+            {(picked.length > 1 || (picked.length === 1 && one?.type === "group" && !!one.boolean)) && (
+              <div role="group" aria-label="Combine shapes" className="flex items-center gap-1">
+                <span className="flex-1 text-xs text-zinc-500 dark:text-[#b3b3b3]">Combine</span>
+                {DESIGN_BOOLEANS.map((b) => {
+                  const Icon = BOOLEAN_ICONS[b];
+                  return (
+                    <Tap key={b} label={BOOLEAN_NAMES[b]} on={picked.length === 1 && one?.type === "group" && one.boolean === b} onClick={() => onCombine(b)}>
+                      <Icon className="h-3.5 w-3.5" />
+                    </Tap>
+                  );
+                })}
+              </div>
             )}
             <PickOne
               label="Mask"

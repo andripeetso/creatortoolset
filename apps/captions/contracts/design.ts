@@ -200,7 +200,7 @@ interface Box {
    * it is a mask: not drawn itself, it cuts the layers above it in its container (up to the next mask) to itself. "alpha":
    * they show where it is drawn, as solid as it is; "vector": where its shape is, solid whatever its fills; "luminance":
    * where it is light (white shows them whole, black hides them). A photo shown only inside big letters: the text a mask
-   * under the photo
+   * under the photo, the two in a plain group of their own (in an auto layout box each layer takes a place in the flow)
    */
   mask?: DesignMask;
 }

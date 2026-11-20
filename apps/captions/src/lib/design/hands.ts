@@ -2,7 +2,7 @@ import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer, type PathLayer 
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
-import { boundsOf, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, outOf, parentOf } from "./tree";
+import { boundsOf, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, outOf, parentOf, seenBox } from "./tree";
 import { pathBounds } from "./path";
 
 /**
@@ -217,7 +217,8 @@ export function boxPick(frames: readonly { rect: Rect; layers: readonly Layer[];
     const f = frames[k];
     if (!f) continue;
     const inFrame = { ...box, x: box.x - f.rect.x, y: box.y - f.rect.y };
-    const layers = f.layers.filter((l) => pickable(l) && intersects(boundsOf([l]), inFrame)).map((l) => l.id);
+    // a layer a mask cuts is touched where it is seen
+    const layers = f.layers.filter((l) => pickable(l) && intersects(seenBox(f.layers, l), inFrame)).map((l) => l.id);
     if (layers.length) return { at: k, layers };
   }
   return null;

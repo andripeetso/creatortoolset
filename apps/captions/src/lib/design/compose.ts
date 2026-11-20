@@ -77,32 +77,35 @@ const OPS: Record<DesignBoolean, GlobalCompositeOperation> = { union: "source-ov
 /**
  * Shapes combined into one (each of `shapes` draws one solid, as it lies, the bottom one first), painted by `fill`
  * and lined by `lines` (each with its colour; `paint` sets the canvas's fade and blend for one as eachStroke does),
- * over `box` in ctx's units: where the shape and its lines may reach.
+ * over `box` in ctx's units: where the shape and its lines may reach. False when a canvas could not be made (the
+ * browser out of canvas memory): nothing was drawn, and the caller draws something in its place.
  */
-export function combine(ctx: Ctx, box: Area, op: DesignBoolean, shapes: readonly ((g: Ctx) => void)[], fill: (g: Ctx) => void, lines: readonly Stroke[], paint: (each: (s: Stroke) => void) => void): void {
+export function combine(ctx: Ctx, box: Area, op: DesignBoolean, shapes: readonly ((g: Ctx) => void)[], fill: (g: Ctx) => void, lines: readonly Stroke[], paint: (each: (s: Stroke) => void) => void): boolean {
   const s = sheetOf(ctx, box);
-  const cover = s && blank(ctx, s);
-  if (!s || !cover || !shapes.length) return;
+  if (!s || !shapes.length) return true;
+  const cover = blank(ctx, s);
+  if (!cover) return false;
   shapes[0]!(cover.g);
   // one canvas for every shape after the first, emptied before each
   const one = shapes.length > 1 ? blank(ctx, s) : null;
   for (const draw of shapes.slice(1)) {
-    if (!one) return;
+    if (!one) return false;
     clear(one.g, s);
     draw(one.g);
     lay(cover.g, one.canvas, OPS[op]);
   }
   const filled = blank(ctx, s);
-  if (!filled) return;
+  if (!filled) return false;
   fill(filled.g);
   lay(filled.g, cover.canvas, "destination-in");
   put(ctx, s, filled.canvas);
-  if (!lines.length) return;
+  if (!lines.length) return true;
   const t = ctx.getTransform();
   const k = Math.hypot(t.a, t.b);
+  let whole = true;
   paint((line) => {
     const band = lineOf(ctx, s, cover.canvas, line.width * k, line.side);
-    if (!band) return;
+    if (!band) return void (whole = false);
     band.g.save();
     band.g.setTransform(1, 0, 0, 1, 0, 0);
     band.g.globalCompositeOperation = "source-in";
@@ -111,6 +114,7 @@ export function combine(ctx: Ctx, box: Area, op: DesignBoolean, shapes: readonly
     band.g.restore();
     put(ctx, s, band.canvas);
   });
+  return whole;
 }
 
 /**
@@ -135,6 +139,9 @@ function lineOf(ctx: Ctx, s: Area, cover: Canvas, w: number, side: Stroke["side"
   return outer;
 }
 
+/** Steps on a ring of radius k close enough that its edge between two is at most half a pixel in from it: k (1 - cos(π / n)) ≤ ½. */
+export const ringSteps = (k: number): number => Math.max(8, Math.ceil(Math.PI * Math.sqrt(k)));
+
 /**
  * `src` grown by r pixels every way, in steps of 1, 1, 2, 4 … (the last what is left): each step lays what is grown so
  * far round a ring of its own size, and is never wider than what it lays is thick, so no part, however thin, is left
@@ -151,8 +158,7 @@ function grow(ctx: Ctx, s: Area, src: Canvas, r: number) {
     const k = Math.min(Math.max(1, done), r - done);
     clear(was.g, s);
     lay(was.g, out.canvas, "source-over");
-    // steps close enough on the ring that its edge between two is well under a pixel off it
-    const n = Math.min(32, Math.max(8, Math.ceil(k * 1.5)));
+    const n = ringSteps(k);
     for (let i = 0; i < n; i++) lay(out.g, was.canvas, "source-over", k * Math.cos((2 * Math.PI * i) / n), k * Math.sin((2 * Math.PI * i) / n));
     done += k;
   }
@@ -161,13 +167,15 @@ function grow(ctx: Ctx, s: Area, src: Canvas, r: number) {
 
 /**
  * Layers (`run` draws them, given the sheet it draws on) cut to a mask (`mask` draws it: as it is, or solid for a
- * "vector" one), over `box` in ctx's units: where the mask may reach, since nothing shows past it.
+ * "vector" one), over `box` in ctx's units: where the mask may reach, since nothing shows past it. False when a canvas
+ * could not be made (nothing was drawn).
  */
-export function masked(ctx: Ctx, box: Area, mode: DesignMask, mask: (g: Ctx) => void, run: (g: Ctx, sheet: Area) => void): void {
+export function masked(ctx: Ctx, box: Area, mode: DesignMask, mask: (g: Ctx) => void, run: (g: Ctx, sheet: Area) => void): boolean {
   const s = sheetOf(ctx, box);
-  const top = s && blank(ctx, s);
-  const cut = s && blank(ctx, s, mode === "luminance");
-  if (!s || !top || !cut) return;
+  if (!s) return true;
+  const top = blank(ctx, s);
+  const cut = blank(ctx, s, mode === "luminance");
+  if (!top || !cut) return false;
   run(top.g, s);
   mask(cut.g);
   if (mode === "luminance") {
@@ -179,4 +187,5 @@ export function masked(ctx: Ctx, box: Area, mode: DesignMask, mask: (g: Ctx) => 
   }
   lay(top.g, cut.canvas, "destination-in");
   put(ctx, s, top.canvas);
+  return true;
 }

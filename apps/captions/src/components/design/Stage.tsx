@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
-import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, moveInto, reid, scopeOf, withScope } from "@/lib/design/tree";
+import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, moveInto, reid, scopeOf, seenBox, withScope } from "@/lib/design/tree";
 import { solidGround } from "@/lib/design/paint";
 import { boundsOf, boxPick, dropTarget, frameOf, hovers, withoutTyped, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
@@ -597,7 +597,7 @@ export function Stage({
         // a loose picture's own box is where it was: nothing to catch on
         // inside an open container its own box is caught on too
         const shell = to === k && open ? inFrame(real[k]!.layers, open) : undefined;
-        const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l])), ...(shell ? [boundsOf([shell])] : [])];
+        const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => seenBox(host.layers, l)), ...(shell ? [boundsOf([shell])] : [])];
         const near = SNAP / live.current.z;
         const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
         // and on the host frame's guides, grids and safe parts (lib/design/aids.ts)

@@ -654,6 +654,8 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         for (let n = held; !id || ids.has(id); n++) id = `l${n}`;
         ids.add(id);
         fitSizing(clean, flowing, sayL);
+        // in a flow a mask takes a place of its own, beside what it cuts (which is then cut away)
+        if (flowing && clean.mask) sayL("a mask in an auto layout box takes a place in its flow like any layer, so what it cuts lies beside it: put the mask and what it cuts in a plain group of their own in the box");
         if (clean.type !== "group") {
           out.push({ ...clean, id } as Layer);
           continue;

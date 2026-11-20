@@ -1,8 +1,9 @@
 import { Canvas, DOMMatrix } from "@napi-rs/canvas";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { drawPage, type Loaded } from "./draw";
-import { maskedIn } from "@/components/design/LayersPanel";
+import { drawPage, hits, layerAt, type Loaded } from "./draw";
+import { ringSteps } from "./compose";
+import { masksOf } from "./tree";
 
 /** Combined shapes and masks drawn on a real canvas and read back pixel by pixel (the sheets they are made on are the same kind). */
 beforeAll(() => {
@@ -21,12 +22,14 @@ const photo = () => {
   g.fillRect(0, 0, 40, 40);
   return c;
 };
-function draw(layers: Layer[], more: Partial<DesignPage> = {}, scale = 1) {
+/** One set of loaded pictures for every drawing: what the canvas keeps is kept for it. */
+let loaded: Loaded | undefined;
+function draw(layers: Layer[], more: Partial<DesignPage> = {}, scale = 1, exact = true) {
+  loaded ??= new Map([["pic", photo()]]) as unknown as Loaded;
   const canvas = new Canvas(W * scale, H * scale);
   const ctx = canvas.getContext("2d");
   ctx.scale(scale, scale);
-  const loaded = new Map([["pic", photo()]]) as unknown as Loaded;
-  drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "p", background: "#ffffff", layers, ...more } as DesignPage, W, H, loaded, true);
+  drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "p", background: "#ffffff", layers, ...more } as DesignPage, W, H, loaded, exact);
   const data = ctx.getImageData(0, 0, W * scale, H * scale).data;
   return { data, at: (x: number, y: number) => Array.from(data.slice((y * scale * W * scale + x * scale) * 4, (y * scale * W * scale + x * scale) * 4 + 4)) };
 }
@@ -92,7 +95,8 @@ describe("combined shapes: lines, parts and cost", () => {
     const bar = { id: "bar", type: "shape", shape: "rect", fill: "#000000", x: 10, y: 30, w: 60, h: 1 } as Layer;
     for (const scale of [1, 2]) {
       const d = draw([combined("union", [bar], { strokes: [BLUE_LINE({ width: 16, side: "outside" })] })], {}, scale);
-      for (let y = 15; y <= 46; y++) if (y !== 30) expect(d.at(40, y), `y ${y} at ${scale}×`).toEqual(BLUE);
+      // (its outermost row, at the line's very edge, is soft)
+      for (let y = 15; y <= 45; y++) if (y !== 30) expect(d.at(40, y), `y ${y} at ${scale}×`).toEqual(BLUE);
     }
   });
 
@@ -194,7 +198,96 @@ describe("the layers list", () => {
   it("sits in the layers a shown mask cuts, up to the next mask, none in a boolean group", () => {
     const l = (id: string, more: object = {}) => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 1, h: 1, ...more }) as Layer;
     const list = [l("under"), l("m1", { mask: "alpha" }), l("a"), l("b"), l("m2", { mask: "vector", hidden: true }), l("c")];
-    expect([...maskedIn(list)]).toEqual(["a", "b"]);
-    expect([...maskedIn(list, true)]).toEqual([]);
+    expect([...masksOf(list)].map(([id, m]) => [id, m.id])).toEqual([["a", "m1"], ["b", "m1"]]);
+    expect([...masksOf(list, true)]).toEqual([]);
+  });
+});
+
+/** OffscreenCanvas counted while `fn` runs; `broken`: none gives a 2D context (a browser out of canvas memory). */
+function counting<T>(fn: () => T, broken = false): { made: number; out: T } {
+  let made = 0;
+  vi.stubGlobal("OffscreenCanvas", class extends Canvas {
+    constructor(w: number, h: number) {
+      super(w, h);
+      made++;
+      if (broken) Object.defineProperty(this, "getContext", { value: () => null });
+    }
+  });
+  try {
+    const out = fn();
+    return { made, out };
+  } finally {
+    vi.stubGlobal("OffscreenCanvas", Canvas);
+  }
+}
+
+describe("clicks on combined shapes and masks", () => {
+  const big = circle("a", 10, 10, 40);
+  const small = circle("b", 20, 20, 20);
+  const page = (layers: Layer[]) => ({ layers });
+  it("a ring is picked on its band, not in its hole; intersect only in the overlap; exclude not in it", () => {
+    const ring = combined("subtract", [big, small]);
+    expect(layerAt(page([ring]), 30, 30)).toBeNull();
+    expect(layerAt(page([ring]), 14, 30)?.id).toBe("g");
+    const left = circle("l", 5, 10, 40);
+    const right = circle("r", 35, 10, 40);
+    const at = (op: string, x: number) => layerAt(page([combined(op, [left, right])]), x, 30)?.id ?? null;
+    expect([at("union", 12), at("union", 40), at("intersect", 12), at("intersect", 40), at("exclude", 12), at("exclude", 40)]).toEqual(["g", "g", null, "g", "g", null]);
+  });
+  it("a layer a mask cuts is picked only where the mask is, in a frame and in a group", () => {
+    const strip = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 20, h: 60, mask: "alpha" } as Layer;
+    const photo = { id: "ph", type: "shape", shape: "rect", fill: "#0000ff", x: 0, y: 0, w: 80, h: 60 } as Layer;
+    expect([layerAt(page([strip, photo]), 10, 30)?.id, layerAt(page([strip, photo]), 50, 30) ?? null]).toEqual(["ph", null]);
+    const g = { id: "g", type: "group", x: 0, y: 0, w: 80, h: 60, layers: [strip, photo] } as Layer;
+    expect([hits(g, 10, 30), hits(g, 50, 30)]).toEqual([true, false]);
+  });
+  it("double-clicked into, a boolean group's layers are each picked by their own shape (the hole too)", () => {
+    expect(layerAt(combined("subtract", [big, small]) as never, 30, 30)?.id).toBe("b");
+  });
+});
+
+describe("combined shapes and masks kept, and never lost", () => {
+  const ring = combined("subtract", [circle("a", 10, 10, 40), circle("b", 20, 20, 20)], { strokes: [{ color: "#0000ff", width: 4 }] });
+  const strip = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 20, h: 60, mask: "luminance" } as Layer;
+  const white = { ...strip, fill: "#ffffff" } as Layer;
+  const photo = { id: "ph", type: "image", picture: "pic", fit: "cover", x: 0, y: 0, w: W, h: H } as Layer;
+
+  it("on the canvas a combined shape and a masked layer are made once and laid again, the same as a saved picture", () => {
+    const layers = [ring, white, photo];
+    const first = counting(() => draw(layers, {}, 1, false));
+    const again = counting(() => draw(layers, {}, 1, false));
+    // the second drawing makes no canvas of its own: both are laid from what was kept
+    expect(first.made).toBeGreaterThan(0);
+    expect(again.made).toBe(0);
+    const saved = draw(layers);
+    for (const [x, y] of [[30, 30], [14, 30], [30, 20], [5, 50], [50, 50]] as const) expect(first.out.at(x, y)).toEqual(saved.at(x, y));
+  });
+
+  it("with no canvas to work on, its layers are drawn as they are and the masked photo whole, not nothing", () => {
+    const { out } = counting(() => draw([ring, strip, photo]), true);
+    // the ring's own parts in their own green, the photo uncut over the right side
+    expect(out.at(30, 30)).toEqual(BLUE);
+    const parts = counting(() => draw([ring]), true);
+    expect(parts.out.at(14, 30)).toEqual([0, 255, 0, 255]);
+  });
+
+  it("a mask inside a group used as a part cuts that group's shape", () => {
+    const cut = { id: "inner", type: "group", x: 0, y: 0, w: 80, h: 60, layers: [{ ...strip, mask: "alpha" } as Layer, { id: "ph2", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 80, h: 60 } as Layer] } as Layer;
+    const d = draw([combined("union", [cut])]);
+    expect([d.at(10, 30), d.at(50, 30)]).toEqual([RED, WHITE]);
+  });
+
+  it("throws its drop shadow from the combined shape", () => {
+    const shadowed = combined("subtract", [circle("a", 10, 10, 40), circle("b", 20, 20, 20)], { effects: [{ type: "shadow", color: "#000000", opacity: 1, blur: 0, x: 25, y: 0 }] });
+    for (const exact of [true, false]) {
+      const d = draw([shadowed], { fills: [] }, 1, exact);
+      // right of the ring (x 55..75 at y 30) is the shadow; in the shadow of the hole (x 55) none
+      expect(d.at(72, 30)[3], `exact ${exact}`).toBeGreaterThan(200);
+      expect(d.at(55, 30)[3], `exact ${exact}`).toBe(0);
+    }
+  });
+
+  it("steps round a ring close enough to stay round at any size", () => {
+    for (const k of [1, 3, 10, 64, 100, 256, 500, 1000, 4000]) expect(k * (1 - Math.cos(Math.PI / ringSteps(k))), `k ${k}`).toBeLessThanOrEqual(0.5);
   });
 });

@@ -163,12 +163,41 @@ export function withScope(layers: readonly Layer[], scope: string | null, inner:
 }
 
 /**
- * The box round what a plain group draws: its layers', or a boolean group's shape's (its shown layers, the bottom one
- * alone when the rest are taken from it, where they all overlap when only that is kept), in its own pixels.
+ * The mask each layer of a list is cut by: a mask cuts the layers above it up to the next mask, a hidden one cuts
+ * nothing. None in a boolean group (`combined`): its layers are its shape.
+ */
+export function masksOf(list: readonly Layer[], combined = false): Map<string, Layer> {
+  const out = new Map<string, Layer>();
+  let on: Layer | null = null;
+  for (const l of combined ? [] : list) {
+    if (l.mask) on = l.hidden ? null : l;
+    else if (on) out.set(l.id, on);
+  }
+  return out;
+}
+
+/** A layer's box as it is seen among the layers of its list: one a mask cuts, only where the mask's box is too. */
+export function seenBox(list: readonly Layer[], l: Layer): Rect {
+  const b = boundsOf([l]);
+  const m = masksOf(list).get(l.id);
+  if (!m) return b;
+  const c = boundsOf([m]);
+  const x = Math.max(b.x, c.x);
+  const y = Math.max(b.y, c.y);
+  const w = Math.min(b.x + b.w, c.x + c.w) - x;
+  const h = Math.min(b.y + b.h, c.y + c.h) - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : { x: c.x, y: c.y, w: 0, h: 0 };
+}
+
+/**
+ * The box round what a plain group draws: its layers' (a layer a mask cuts is seen only in the mask's box, so a group
+ * with a mask at the bottom is the mask's box), or a boolean group's shape's (its shown layers, the bottom one alone
+ * when the rest are taken from it, where they all overlap when only that is kept), in its own pixels.
  */
 export function shapeBounds(g: GroupLayer): Rect {
   const shown = g.layers.filter((l) => !l.hidden);
-  const ls = g.boolean && shown.length ? shown : g.layers;
+  const cut = g.boolean ? null : masksOf(g.layers);
+  const ls = g.boolean && shown.length ? shown : cut?.size ? g.layers.filter((l) => !cut.has(l.id)) : g.layers;
   if (g.boolean === "subtract") return boundsOf(ls.slice(0, 1));
   if (g.boolean !== "intersect") return boundsOf(ls);
   const all = ls.map((k) => boundsOf([k]));
@@ -212,16 +241,32 @@ export function wrap(inner: readonly Layer[], ids: readonly string[], id: string
 }
 
 /**
+ * Layer `id` of a scope's layers (siblings, as scopeLayers gives them) made a mask of the layer just above it, the two
+ * in a plain group `gid` of their own: in an auto layout box the group is one place in the flow, so the mask never lies
+ * beside what it cuts. Null when nothing lies above it.
+ */
+export function maskWithNext(inner: readonly Layer[], id: string, gid: string): Layer[] | null {
+  const at = inner.findIndex((l) => l.id === id);
+  const next = at < 0 ? undefined : inner[at + 1];
+  const out = next && !next.mask ? wrap(inner, [id, next.id], gid) : null;
+  return out && out.map((l) => (l.id === gid && isGroup(l) ? { ...l, layers: l.layers.map((k) => (k.id === id ? ({ ...k, mask: "alpha" } as Layer) : k)) } : l));
+}
+
+/**
  * Containers taken apart (siblings in the frame's pixels): each one's layers lie where it was, where they are, in its
  * place in the order. What the container was is kept by them: its fade (times their own), hidden, locked, and its blend
  * on those that have none (each then blends alone, which is near what the whole did).
  */
+const unmasked = ({ mask: _m, ...rest }: Layer): Layer => rest as Layer;
 export function unwrap(inner: readonly Layer[], ids: readonly string[]): Layer[] {
-  return inner.flatMap((l) => {
+  return inner.flatMap((l, i) => {
     if (!isGroup(l) || !ids.includes(l.id)) return [l];
     const o = l.opacity ?? 1;
+    // a mask freed from it would cut the layers after the group too: it stays a mask only when none come after (or a
+    // mask of their own starts there), else it is a plain layer again
+    const ends = i === inner.length - 1 || !!inner[i + 1]?.mask;
     return l.layers.map((k): Layer => ({
-      ...layerOut(l, k),
+      ...layerOut(l, k.mask && !ends ? unmasked(k) : k),
       ...(o < 1 ? { opacity: round((k.opacity ?? 1) * o) } : {}),
       ...(l.hidden ? { hidden: true } : {}),
       ...(l.locked ? { locked: true } : {}),

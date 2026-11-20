@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronRight, Circle, Contrast, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { groupName, layerName, pageName } from "@/lib/design/hands";
-import { isGroup, mapLayers, moveRow, parentOf, pathTo } from "@/lib/design/tree";
+import { isGroup, mapLayers, masksOf, moveRow, parentOf, pathTo } from "@/lib/design/tree";
 import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
 
@@ -24,16 +24,6 @@ const KIND = { text: Type, image: Image, drawing: PenTool, path: Spline, group: 
 const SHAPE = { rect: Square, ellipse: Circle, triangle: Triangle, star: Star, arrow: ArrowRight } as const;
 const BOOLEAN = { union: SquaresUnite, subtract: SquaresSubtract, intersect: SquaresIntersect, exclude: SquaresExclude } as const;
 
-/** The layers of a list a mask under them cuts (up to the next mask; a hidden mask cuts nothing). None in a boolean group: its layers are its shape. */
-export function maskedIn(list: readonly Layer[], combined = false): Set<string> {
-  const out = new Set<string>();
-  let on = false;
-  for (const l of combined ? [] : list) {
-    if (l.mask) on = !l.hidden;
-    else if (on) out.add(l.id);
-  }
-  return out;
-}
 
 /** Where a dragged row goes: above or below row `key`, or (`into`) into the container it is the row of. */
 type Drop = { key: string; after: boolean; into?: boolean };
@@ -173,7 +163,7 @@ export function LayersPanel({
   const rows = (p: DesignPage, k: number, list: readonly Layer[], depth: number, combined = false) => {
     const layerKey = `l:${p.id}:`;
     const shown = [...list].reverse();
-    const cut = maskedIn(list, combined);
+    const cut = masksOf(list, combined);
     return shown.map((l, n) => {
       const key = layerKey + l.id;
       // the first of a run of one older group's layers (a shared name) gets the group's own row above it

@@ -344,3 +344,11 @@ it("a path's painted box reaches where its curve swings past its box", () => {
   // the curve's top is half the height above the box
   expect(paintedBox(bulge)).toEqual({ x: 20, y: 20, w: 40, h: 30 });
 });
+
+it("a box drawn across picks a masked layer only where it is seen", () => {
+  const mask = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 50, h: 50, mask: "alpha" } as Layer;
+  const photo = { id: "ph", type: "shape", shape: "rect", fill: "#0000ff", x: 0, y: 0, w: 400, h: 400 } as Layer;
+  const frames = [{ rect: { x: 0, y: 0, w: 1000, h: 1000 }, layers: [mask, photo] }];
+  expect(boxPick(frames, { x: 200, y: 200, w: 50, h: 50 }, { home: 0 })).toBeNull();
+  expect(boxPick(frames, { x: 20, y: 20, w: 10, h: 10 }, { home: 0 })).toEqual({ at: 0, layers: ["m", "ph"] });
+});
