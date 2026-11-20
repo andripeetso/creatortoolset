@@ -5,7 +5,7 @@ import { env } from "../lib/env";
 import { pluginMainSource, pluginUploadsTo } from "../lib/plugin";
 import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
-import { sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
+import { ownedProject, sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb, newLibrarySettings } from "./db";
@@ -194,7 +194,8 @@ export async function mediaReady(username: string, projectId?: string): Promise<
     return settled(row, true, username, undefined);
   }
   const ws = workspaceById(projectId);
-  const owner = !!ws?.members.some((m) => m.username === username && m.role === "owner");
+  // the owner: of the team, or of the workspace itself (a person's own workspace is in no team)
+  const owner = !!ws?.members.some((m) => m.username === username && m.role === "owner") || !!(await ownedProject(projectId, { username } as SessionUser));
   const row =
     (d.prepare(`${cols} json_extract(settings, '$.projectId') = ? ORDER BY created_at, id LIMIT 1`).get(projectId) as Row | undefined) ??
     // a library from before workspaces kept their own: the first brand's, as librariesIn reads it

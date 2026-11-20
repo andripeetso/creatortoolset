@@ -880,7 +880,7 @@ export const LIBRARY_WORDS = {
   downloading: "Downloading",
   downloadsTitle: "Downloads",
   setupCard: (workspace: string) => `Set up the Media Library for ${workspace} first`,
-  setupCardMember: "This Media Library isn't set up yet.",
+  setupCardMember: "This Media Library isn't set up yet: the workspace's owner sets it up.",
   setupButton: "Set up",
   downloadsCard: "This edit needs the files on your computer, and Automatic downloads is off. Turn it on?",
   downloadsButton: "Turn on",
@@ -909,7 +909,7 @@ export const LIBRARY_WORDS = {
  */
 export type ActionAsk =
   // an AI Editor job waits for the workspace's Project files (or Final exports) folder on `device` (api/devices-storage.ts
-  // ensureUseFolder); `path` is the default offered (libraryBase/<folder> on that computer). null: no computer of the
+  // ensureUseFolder; never made by itself, only by the person's tap); `path` is the default offered (libraryBase/<folder> on that computer). null: no computer of the
   // account's matched (`deviceName` is what it was called), and the card says so
   | { kind: "projects" | "exports"; workspace: string; workspaceName: string; device: string | null; deviceName?: string; path: string }
   | { kind: "downloads"; libraryId: string; workspace: string }
@@ -925,7 +925,9 @@ export type CardAction = {
   open?: string;
 };
 export type ActionNeeded = ActionAsk & { title: string; line: string; missing?: "computer"; actions: CardAction[] };
-export type FolderAsk = Extract<ActionNeeded, { kind: "projects" | "exports" }>;
+/** What an AI Editor job waits on for its Project files or Final exports folder: that folder's card, or the setup card
+ *  while the workspace's Media Library is not set up (ensureUseFolder). */
+export type FolderAsk = Extract<ActionNeeded, { kind: "projects" | "exports" | "setup" }>;
 /** The setup card's defaults (Quick setup), as the card shows them; POST /api/library/:id/setup/quick stores them. */
 export type QuickSetup = { base: string; importMode: "copy"; proxy: true; proxyQuality: "720p"; effort: "high"; organize: "smart"; hosted: HostedMix };
 export const quickSetup = (base: string): QuickSetup => ({ base, importMode: "copy", proxy: true, proxyQuality: "720p", effort: "high", organize: "smart", hosted: HOSTED_DEFAULT });
