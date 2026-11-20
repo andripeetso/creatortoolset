@@ -267,8 +267,8 @@ final class NativeToolsTests: XCTestCase {
         XCTAssertEqual(after[0].status, .review)
         let then = AppNotifications.fresh(after, shown: first.shown)
         XCTAssertTrue(then.notes.isEmpty)
-        // the pass he started waits again later under the same name: it is news again, because it left in between
-        XCTAssertEqual(AppNotifications.fresh(rows, shown: then.shown).notes.map(\.title), ["Tummy time: 3 mistakes"])
+        // the same wait seen again later is told once only, whatever loads came between
+        XCTAssertTrue(AppNotifications.fresh(rows, shown: then.shown).notes.isEmpty)
         // a video in Review with no edit behind it
         let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1}]}"#.utf8))
         XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1", title: "Teaser", body: "Needs your review", path: "/review/r1")])

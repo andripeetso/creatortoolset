@@ -2120,6 +2120,8 @@ interface Note {
   read?: boolean;
   /** The workspace of what it is about (the bell shows the current workspace's); none on a note from before. */
   workspace?: string;
+  /** What it is about, the same for the same thing told again (a version filed, a job's failure): it is told once. */
+  key?: string;
 }
 
 const INBOX_CAP = 100;
@@ -2139,6 +2141,20 @@ function updateInbox(user: string, fn: (list: Note[]) => void): Promise<void> {
     await mkdir(path.dirname(inboxPath(user)), { recursive: true });
     await writeJson(inboxPath(user), list.slice(0, INBOX_CAP));
   });
+}
+
+/**
+ * Adds a note unless the same thing (`key`) is in the inbox already: a cut filed again, a restart or a sweep telling the
+ * same failure. A filed cut is told once; anything else again only after the last one was read. Whether it was added.
+ */
+async function addNote(user: string, note: Omit<Note, "id" | "at">): Promise<boolean> {
+  let added = false;
+  await updateInbox(user, (list) => {
+    if (note.key && list.some((x) => x.key === note.key && (note.kind === "ready" || !x.read))) return;
+    list.unshift({ id: randomUUID(), ...note, at: Date.now() });
+    added = true;
+  });
+  return added;
 }
 
 async function openPath(user: string, m: Meta): Promise<string | null> {
@@ -2187,12 +2203,14 @@ async function notify(
 /** A freelancer on a Content Workshop share link started or delivered, a Workshop reply finished, or a job failed: tell the owner. */
 export async function notifyWorkshopOwner(owner: string, note: { kind: "producing" | "delivered" | "workshop" | "failed" | "waiting"; by: string; name: string; text?: string; href: string; ref: string; workspace?: string }): Promise<void> {
   if (!USERNAME_RE.test(owner)) return;
-  await updateInbox(owner, (list) => {
-    list.unshift({ id: randomUUID(), kind: note.kind, by: note.by, assetId: note.ref, name: note.name, ...(note.text ? { text: note.text.slice(0, 140) } : {}), href: note.href, at: Date.now(), ...(note.workspace ? { workspace: note.workspace } : {}) });
-  }).catch(() => {});
-  // the notes that wait on the owner (a job failed, an edit waits, a final came in) reach their phones too
+  const text = note.text?.slice(0, 140);
+  const added = await addNote(owner, { kind: note.kind, by: note.by, assetId: note.ref, name: note.name, ...(text ? { text } : {}), href: note.href,
+    ...(note.workspace ? { workspace: note.workspace } : {}),
+    // a failure or a wait a sweep or a restart can tell again; a reply or a delivery is new each time
+    ...(note.kind === "failed" || note.kind === "waiting" ? { key: `${note.kind}:${note.ref}:${text ?? ""}` } : {}) }).catch(() => false);
+  // the notes that wait on the owner (a job failed, an edit waits, a final came in) reach their phones too; once, as the note
   const kind = note.kind === "failed" ? "failed" : note.kind === "waiting" ? "go" : note.kind === "delivered" ? "final" : null;
-  if (kind) emitEvent("waiting", { owner, kind, title: note.name, headline: note.text || (kind === "final" ? `${note.by} delivered` : "Failed"), path: note.href, ...(note.workspace ? { workspace: note.workspace } : {}) });
+  if (kind && added) emitEvent("waiting", { owner, kind, title: note.name, headline: note.text || (kind === "final" ? `${note.by} delivered` : "Failed"), path: note.href, ...(note.workspace ? { workspace: note.workspace } : {}) });
 }
 
 /** Sets a video's approval. With `only`, the move happens only when the video is in that status now. */
@@ -2256,15 +2274,16 @@ export async function refLooks(assetId: string, n: number, refs: Ref[] = []) {
   return looks.flat();
 }
 
-/** Tells the owner a version is ready for review (only the owner: nobody else has seen it yet). */
-export async function notifyReady(id: string, by: string, text: string): Promise<void> {
+/** Tells the owner a version is ready for review (only the owner: nobody else has seen it yet). Its newest version is
+ *  the one: an edit's draft filed again, or the same version told twice, is told once. `name`: what it is called where
+ *  it is told (an edit's own name), in place of the video's file name. */
+export async function notifyReady(id: string, by: string, text: string, name?: string): Promise<void> {
   const m = await readMeta(id);
   if (!m || !USERNAME_RE.test(m.owner)) return;
   const workspace = await workspaceOfVideo(m);
-  await updateInbox(m.owner, (list) => {
-    list.unshift({ id: randomUUID(), kind: "ready", by, assetId: m.id, name: m.name, text: text.slice(0, 140),
-      href: `/review/${m.id}`, at: Date.now(), ...(workspace ? { workspace } : {}) });
-  }).catch(() => {});
+  const v = m.versions.at(-1);
+  await addNote(m.owner, { kind: "ready", by, assetId: m.id, name: name || m.name, text: text.slice(0, 140), href: `/review/${m.id}`,
+    ...(workspace ? { workspace } : {}), key: `ready:${m.id}:${v?.edit?.draft ?? `v${v?.n ?? 0}`}` }).catch(() => {});
 }
 
 /** The owner's videos marked Needs review: the home page's to-do list. */
