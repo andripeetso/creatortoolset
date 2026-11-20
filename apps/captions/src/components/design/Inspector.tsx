@@ -995,7 +995,8 @@ function ListRows<T extends PaintLook>({ what, items, onSet, row }: { what: stri
         const shift = drag && to !== null && n !== drag.from ? (drag.from < n && n <= to ? -drag.step : to <= n && n < drag.from ? drag.step : 0) : 0;
         return (
           <div key={n} data-row className={cn("flex flex-col gap-2", drag?.from === n && "relative z-10")} style={{ transform: `translateY(${drag?.from === n ? drag.dy : shift}px)` }}>
-            <div className={cn("flex items-center gap-1", item.hidden && "opacity-50")}>
+            {/* the grip, eye and minus beside its first line, however many lines its settings take */}
+            <div className={cn("flex items-start gap-1", item.hidden && "opacity-50")}>
               <button type="button" aria-label={`Drag the ${what} to another place`} onPointerDown={(e) => grab(e, n)} className={cn("flex h-6 w-3 shrink-0 cursor-grab touch-none items-center justify-center", DIM)}>
                 <GripVertical className="h-3 w-3" />
               </button>
@@ -1274,7 +1275,7 @@ function StrokeMore({ s, box, open, max, set }: { s: Stroke; box?: boolean; open
         </div>
       )}
       {open && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-2">
           <PickOne label="Start" value={`Start: ${HEAD_NAMES[s.start ?? "none"]}`} options={(["none", ...DESIGN_HEADS] as const).map((h) => [h, HEAD_NAMES[h]] as const)} onPick={(h) => set({ ...s, start: h === "none" ? undefined : h })} />
           <PickOne label="End" value={`End: ${HEAD_NAMES[s.end ?? "none"]}`} options={(["none", ...DESIGN_HEADS] as const).map((h) => [h, HEAD_NAMES[h]] as const)} onPick={(h) => set({ ...s, end: h === "none" ? undefined : h })} />
         </div>
