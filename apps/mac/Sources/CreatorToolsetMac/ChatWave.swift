@@ -426,6 +426,13 @@ enum WaveClock {
     /// within three frames it is out past the bar, so the wave follows the pull with no pause between them.
     static let behind: Float = 0.5
 
+    /// When the front may leave (ms): as soon as there is a new screen behind it, the page drawn or its picture, whichever
+    /// came first. Never moved later once it is set: the picture coming after the page was drawn sent the front back to the
+    /// button to go out again, a second wave (owner, 11-19: "the effect triggers twice in a row").
+    static func leaves(drawn: Double?, picture: Double?) -> Double? {
+        [drawn, picture].compactMap { $0 }.min()
+    }
+
     /// How hard the screen is drawn in `ms` after the press, the button held until `held` (ms; under `holdFrom`: a
     /// click). Held, it is on its way within a few frames and quick from the start (owner, 11-14: "make the sucking
     /// stronger right off the bat"), and goes on deeper as long as it is held, never resting. Let go, what the front
@@ -733,7 +740,7 @@ final class ChatWaveView: NSView, CAMetalDisplayLinkDelegate {
         }
         // the button let go (a click: at once), or held so long it pops by itself
         let held = hold ? min(goAt ?? WaveClock.longest, WaveClock.longest) : 0
-        let shown = state.newAt ?? state.drawnAt
+        let shown = WaveClock.leaves(drawn: state.drawnAt, picture: state.newAt)
         if shown == nil && ms > held + wait { return end() }
         // the front leaves then, once there is a new screen to show behind it (the page itself, or a picture of it); until
         // then the screen goes on falling in, never held

@@ -21,6 +21,13 @@ final class ChatWaveTests: XCTestCase {
     }
 
     /// A click draws nothing in: the screen is as it was until the wave pops, and stays so where the front has not been.
+    func testThePictureComingAfterThePageDoesNotSendTheWaveOutAgain() {
+        XCTAssertEqual(WaveClock.leaves(drawn: 55, picture: nil), 55)
+        XCTAssertEqual(WaveClock.leaves(drawn: 55, picture: 275), 55)
+        XCTAssertEqual(WaveClock.leaves(drawn: nil, picture: 275), 275)
+        XCTAssertNil(WaveClock.leaves(drawn: nil, picture: nil))
+    }
+
     func testAClickOnlyPops() {
         let click = 100.0, release = 180.0
         for ms in stride(from: 0, through: release + 400, by: frame) {
