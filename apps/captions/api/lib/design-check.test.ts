@@ -282,9 +282,9 @@ describe("the designer's own fonts and a layer's shadow", () => {
 describe("what the layers list keeps", () => {
   it("a layer's name, hidden and locked and a page's name are saved; anything else in their place is not", () => {
     const shape = { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10 };
-    const { pages } = cleanPages([{ name: "  The  hook ", background: "#ffffff", layers: [{ ...shape, id: "a", name: " Red\n box ", hidden: true, locked: true }, { ...shape, id: "b", name: 7, hidden: "yes", locked: 1 }, { ...shape, id: "c", name: "x".repeat(200) }] }, { name: "", layers: [] }], { w: 100, h: 100, pictures: [] });
+    const { pages } = cleanPages([{ name: "  The  hook ", background: "#ffffff", layers: [{ ...shape, id: "a", name: " Red\n box ", hidden: true, locked: true, reference: true }, { ...shape, id: "b", name: 7, hidden: "yes", locked: 1, reference: "yes" }, { ...shape, id: "c", name: "x".repeat(200) }] }, { name: "", layers: [] }], { w: 100, h: 100, pictures: [] });
     expect(pages[0]!.name).toBe("The hook");
-    expect(pages[0]!.layers[0]).toEqual({ ...shape, id: "a", name: "Red box", hidden: true, locked: true });
+    expect(pages[0]!.layers[0]).toEqual({ ...shape, id: "a", name: "Red box", hidden: true, locked: true, reference: true });
     expect(pages[0]!.layers[1]).toEqual({ ...shape, id: "b" });
     expect(pages[0]!.layers[2]!.name).toHaveLength(60);
     expect("name" in pages[1]!).toBe(false);

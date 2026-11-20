@@ -385,6 +385,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...(named(raw.name) ? { name: named(raw.name) } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),
     ...(raw.locked === true ? { locked: true } : {}),
+    ...(raw.reference === true ? { reference: true as const } : {}),
     ...pin(raw.pin),
   };
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);

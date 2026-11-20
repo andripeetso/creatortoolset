@@ -1,15 +1,18 @@
-import type { PictureSpec } from "@contracts/design";
+import { PICTURE_SIDE_MAX, type PictureSpec } from "@contracts/design";
 import { drawingUrl, drawPage, fontsOfText, sourceOf, textBlock, type Loaded } from "./draw";
 import { setOwnFamilies } from "./fonts";
 import { paintPictures } from "./paint";
 
 /**
- * A page as a small JPEG, drawn by the same function as the designer's canvas and the saved PNG, and the words on it
- * that do not fit their box (measured with the real fonts). An AI that designs the pages is shown this, so it sees
- * what it made and what to fix. Run in the server's drawing browser (render-entry.tsx), never in the app's own page.
+ * A page as a JPEG (small, for an AI that designs the pages: it sees what it made and what to fix), or with `png` as a
+ * PNG that keeps what is see-through (a title over a video, at the video's size times its zoom), drawn by the same
+ * function as the designer's canvas and the saved PNG, and the words on it that do not fit their box (measured with the
+ * real fonts). Hidden and reference layers are left out. Run in the server's drawing browser (render-entry.tsx), or in
+ * the app's own page for a picture of its own.
  */
-export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; spills: string[]; drawn: string[] }> {
-  const layers = spec.page.layers.filter((l) => !l.hidden);
+export async function pagePicture(spec: PictureSpec): Promise<{ jpeg?: string; png?: string; spills: string[]; drawn: string[] }> {
+  if (!(spec.scale > 0) || Math.round(spec.width * spec.scale) > PICTURE_SIDE_MAX || Math.round(spec.height * spec.scale) > PICTURE_SIDE_MAX) throw new Error(`A page's picture is at most ${PICTURE_SIDE_MAX} pixels a side`);
+  const layers = spec.page.layers.filter((l) => !l.hidden && !l.reference);
   // the person's own fonts first: each from its file, once (one that cannot be read is drawn in the fallback face)
   await Promise.all(
     Object.entries(spec.fonts ?? {}).map(async ([family, address]) => {
@@ -47,6 +50,8 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
   c.width = Math.round(spec.width * spec.scale);
   c.height = Math.round(spec.height * spec.scale);
   const ctx = c.getContext("2d")!;
+  // a JPEG has nothing see-through: a see-through frame is white there, never black
+  if (!spec.png) (ctx.fillStyle = "#ffffff"), ctx.fillRect(0, 0, c.width, c.height);
   ctx.setTransform(spec.scale, 0, 0, spec.scale, 0, 0);
   drawPage(ctx, spec.page, spec.width, spec.height, loaded, true);
   const spills: string[] = [];
@@ -72,5 +77,6 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
       if (left < -1 || top < -1 || left + wide > spec.width + 1 || top + tall > spec.height + 1) spills.push(`${said} is cut off at the frame's edge: the words run from ${Math.round(left)}, ${Math.round(top)} to ${Math.round(left + wide)}, ${Math.round(top + tall)}, and the frame is ${spec.width} × ${spec.height}`);
     }
   }
-  return { jpeg: c.toDataURL("image/jpeg", 0.82).split(",")[1] ?? "", spills, drawn: worked };
+  const data = (type: string) => c.toDataURL(type, 0.82).split(",")[1] ?? "";
+  return { ...(spec.png ? { png: data("image/png") } : { jpeg: data("image/jpeg") }), spills, drawn: worked };
 }

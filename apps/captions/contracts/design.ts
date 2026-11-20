@@ -181,6 +181,8 @@ interface Box {
   hidden?: boolean;
   /** drawn, but a press on the page goes through it: it is picked in the layers list only */
   locked?: boolean;
+  /** something to design over (a video's frame under its titles): drawn while designing, never in a saved picture, a thumbnail or a picture the AI or the video editor is given */
+  reference?: true;
   /** how it follows the frame's edges when the frame changes size; absent = it stays where it is on the canvas (a copy in another size places it by its share of the frame) */
   pin?: Pin;
 }
@@ -391,7 +393,7 @@ export interface DesignPage {
   /** "#rrggbb" */
   background: string;
   gradient?: Gradient;
-  /** its fills, bottom first, in place of `background` and `gradient` */
+  /** its fills, bottom first, in place of `background` and `gradient`. None (`[]`): the frame is see-through, a checkerboard while designing, see-through in a PNG and white in a JPG */
   fills?: Paint[];
   /** lines round its edge, over everything on it */
   strokes?: Stroke[];
@@ -486,6 +488,9 @@ export interface SplitAnswer {
   lines: SplitLine[];
 }
 
+/** The most pixels a side of a page's picture (PictureSpec): 7680 is a UHD frame at twice its size; a browser's canvas tops out at 16384. */
+export const PICTURE_SIDE_MAX = 8192;
+
 export interface PictureSpec {
   width: number;
   height: number;
@@ -494,8 +499,10 @@ export interface PictureSpec {
   fonts?: Record<string, string>;
   /** each picture the page shows, by its id, as a data address (the server made each small first) */
   pictures: Record<string, string>;
-  /** picture pixels a design pixel */
+  /** picture pixels a design pixel (a frame of up to DESIGN_LIMITS.frameMax at up to 4: a UHD title at the editor's 2× zoom) */
   scale: number;
+  /** a PNG that keeps what is see-through, in place of the JPEG */
+  png?: true;
 }
 
 /** The AI's design, checked: the design as saved, and what was left out of the answer and why. */

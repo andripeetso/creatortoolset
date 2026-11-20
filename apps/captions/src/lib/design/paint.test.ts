@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer, Paint, Stroke } from "@contracts/design";
-import { colourAt, fillsOf, hexOf, moved, paintPictures, rgba, strokesOf, withFills, withStrokes } from "./paint";
+import { colourAt, fillsOf, hexOf, moved, paintPictures, rgba, solidGround, strokesOf, withFills, withStrokes } from "./paint";
 import { pathEnds, picturePlace } from "./paint-draw";
 
 const shape = (more: Partial<Layer> = {}) => ({ id: "s", type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 50, ...more }) as Extract<Layer, { type: "shape" }>;
@@ -90,5 +90,17 @@ describe("fills and lines as lists", () => {
     // a curve comes into its end along its last handle
     const curved = pathEnds([{ x: 0, y: 0 }, { x: 1, y: 1, in: [0, -0.5] }], 100, 100)!;
     expect(curved.end.dir).toEqual([0, 1]);
+  });
+});
+
+describe("a frame's ground", () => {
+  const page = (more: Partial<DesignPage>) => ({ id: "p", background: "#ffffff", layers: [], ...more }) as DesignPage;
+  it("hides what is under it only with a solid fill of full colour", () => {
+    expect(solidGround(page({}))).toBe(true);
+    expect(solidGround(page({ background: "#ffffffff" }))).toBe(true);
+    expect(solidGround(page({ fills: [] }))).toBe(false);
+    expect(solidGround(page({ background: "#ffffff80" }))).toBe(false);
+    expect(solidGround(page({ fills: [{ type: "solid", color: "#000000", hidden: true }] }))).toBe(false);
+    expect(solidGround(page({ fills: [{ type: "solid", color: "#000000", opacity: 0.5 }] }))).toBe(false);
   });
 });

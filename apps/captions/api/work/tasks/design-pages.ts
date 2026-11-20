@@ -2,7 +2,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Browser } from "playwright-chromium";
-import type { DesignPage, PictureSpec } from "../../../contracts/design";
+import { PICTURE_SIDE_MAX, type DesignPage, type PictureSpec } from "../../../contracts/design";
 import { installExportBrowser, rendererUrl } from "../../caption-frames";
 import { FETCHING, NO_BROWSER, type DesignPagesInput, type Look, type PagePicture } from "../../lib/design-picture";
 import { ffmpeg } from "../../library/media/run";
@@ -24,21 +24,21 @@ const WIDTH = 560;
 const SMALL = 1024;
 const TIMEOUT_MS = 25_000;
 
-type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<{ jpeg: string; spills: string[]; drawn: string[] }> } };
+type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<Omit<PagePicture, "page">> } };
 
-/** The page's pictures as data addresses of their small copies (made once a run, in `dir`). */
-async function smallPictures(page: DesignPage, dir: string, file: (name: string) => Promise<string>): Promise<Record<string, string>> {
+/** The page's pictures as data addresses of their copies (made once a run, in `dir`): small ones, or up to `most` a side for a big PNG. */
+async function smallPictures(page: DesignPage, dir: string, file: (name: string) => Promise<string>, most = SMALL): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  // the image layers' pictures and the pictures that fill shapes, words and the frame
-  for (const picture of new Set([...page.layers.flatMap((l) => (l.type === "image" && !l.hidden ? [l.picture] : [])), ...paintPictures(page)])) {
+  // the image layers' pictures and the pictures that fill shapes, words and the frame (a reference's never: it is not drawn)
+  for (const picture of new Set([...page.layers.flatMap((l) => (l.type === "image" && !l.hidden && !l.reference ? [l.picture] : [])), ...paintPictures({ ...page, layers: page.layers.filter((l) => !l.reference) })])) {
     if (out[picture]) continue;
     // a JPEG stays a JPEG; a PNG or a WebP becomes a PNG, which keeps what is see-through
     const jpeg = picture.endsWith(".jpg");
-    const small = path.join(dir, "small", `${picture.split(".")[0]}.${jpeg ? "jpg" : "png"}`);
+    const small = path.join(dir, most === SMALL ? "small" : `up-to-${most}`, `${picture.split(".")[0]}.${jpeg ? "jpg" : "png"}`);
     try {
       if (!(await stat(small).then(() => true, () => false))) {
         await mkdir(path.dirname(small), { recursive: true });
-        await ffmpeg(["-i", await file(`pic-${picture}`), "-frames:v", "1", "-vf", `scale=w='min(${SMALL},iw)':h='min(${SMALL},ih)':force_original_aspect_ratio=decrease`, ...(jpeg ? ["-q:v", "4", "-f", "mjpeg"] : ["-f", "image2", "-c:v", "png"]), small], true);
+        await ffmpeg(["-i", await file(`pic-${picture}`), "-frames:v", "1", "-vf", `scale=w='min(${most},iw)':h='min(${most},ih)':force_original_aspect_ratio=decrease`, ...(jpeg ? ["-q:v", "4", "-f", "mjpeg"] : ["-f", "image2", "-c:v", "png"]), small], true);
       }
       out[picture] = `data:image/${jpeg ? "jpeg" : "png"};base64,${(await readFile(small)).toString("base64")}`;
     } catch {
@@ -69,7 +69,10 @@ async function draw(input: DesignPagesInput, dir: string, file: (name: string) =
       const own: Record<string, string> = {};
       // (every face the pages ask for: a run's font, and the faces of a family a weight or a slant is drawn in)
       for (const f of input.fonts) if (!own[f]) own[f] = pathToFileURL(await file(`font-${f}`)).href;
-      const spec: PictureSpec = { width, height: page.h ?? input.height, page, pictures: await smallPictures(page, dir, file), ...(Object.keys(own).length ? { fonts: own } : {}), scale: Math.min(1, WIDTH / width) };
+      const height = page.h ?? input.height;
+      // a PNG at the size asked for, its pictures as sharp as it shows them; else a small JPEG for the AI
+      const most = input.png ? Math.min(PICTURE_SIDE_MAX, Math.ceil(Math.max(width, height) * input.png.scale)) : SMALL;
+      const spec: PictureSpec = { width, height, page, pictures: await smallPictures(page, dir, file, most), ...(Object.keys(own).length ? { fonts: own } : {}), ...(input.png ? { scale: input.png.scale, png: true as const } : { scale: Math.min(1, WIDTH / width) }) };
       pictures.push({ page: n, ...(await tab.evaluate((s) => (globalThis as unknown as RendererWindow).designRenderer!.draw(s), spec)) });
     }
     return { pictures };
