@@ -245,7 +245,9 @@ describe("auto layout", () => {
     const v1 = layoutPages([page("NEW")], guessWidth);
     const v2 = layoutPages([page("LIMITED OFFER")], guessWidth);
     const mine = layoutPages(v1, measure);
-    expect(JSON.stringify(mergeFrames(mine, v1, v2))).toBe(JSON.stringify(mine));
+    // against frames laid out otherwise, the sizes the window worked out look like its own change: merged field by field,
+    // the AI's words still come through (and the next layout sizes them)
+    expect(JSON.stringify(mergeFrames(mine, v1, v2))).toContain("LIMITED OFFER");
     expect(mergeFrames(mine, layoutPages(v1, measure), layoutPages(v2, measure))[0]!.layers).toEqual(layoutPages(v2, measure)[0]!.layers);
   });
 

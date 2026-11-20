@@ -365,7 +365,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       saving.current = saving.current.then(() =>
         saveDesign(id, { pages, since: server.current.at }).then(
           () => {},
-          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: mergeFrames(pages, server.current.pages, layoutPages(e.design.pages, measureWords)), since: e.design.updatedAt }).then(() => {}, () => {}) : undefined),
+          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: syncInstances(mergeFrames(pages, server.current.pages, layoutPages(e.design.pages, measureWords))), since: e.design.updatedAt }).then(() => {}, () => {}) : undefined),
         ),
       );
     };
@@ -381,7 +381,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const latest = useRef(pages);
   useEffect(() => void (latest.current = pages), [pages]);
   /** Frames while a drag or a preview is under way, put back whole (a container's layers back into it). */
-  const setLive = useCallback((next: Page[] | null) => setLiveRaw(next && layoutPages(unscope(next, latest.current), measureWords)), []);
+  const setLive = useCallback((next: Page[] | null) => setLiveRaw(next && layoutPages(syncInstances(unscope(next, latest.current), latest.current), measureWords)), []);
   /**
    * One step to undo. With `merge`, a change that follows another of the same name joins it: a colour dragged about
    * in the picker is one step, not one for every shade it passed.
@@ -396,7 +396,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // and a plain group to the box round its layers
     // a frame still showing an open container's layers (tree.ts inScope) is made whole before it is kept
     // and every auto layout laid out (lib/design/layout.ts), what it fixed said once the step is drawn
-    const whole = (all: Page[]) => hugLoose(layoutPages(unscope(fn(all), all), measureWords, (n) => queueMicrotask(() => toast(n, { id: n }))));
+    // and every instance made again from its main, what was changed on one kept as its override (lib/design/components.ts)
+    const whole = (all: Page[]) => hugLoose(layoutPages(syncInstances(unscope(fn(all), all), all), measureWords, (n) => queueMicrotask(() => toast(n, { id: n }))));
     setHist((h) => (!h ? h : join ? { ...h, now: whole(h.now) } : histChange(h, whole)));
   }, [locked]);
   /** Frames changed in one step: each takes the place of the one with its id, and one with a new id is added (a picture dragged out of its frame). */
@@ -459,7 +460,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       const had = latest.current;
       // laid out as this window lays out (on load, above)
       const theirs = layoutPages(d.pages, measureWords);
-      const merged = mergeFrames(had, server.current.pages, theirs);
+      // instances made again: a main changed on one side reaches the instances the other side changed
+      const merged = layoutPages(syncInstances(mergeFrames(had, server.current.pages, theirs)), measureWords);
       server.current = { pages: theirs, at: d.updatedAt };
       setDesign(d);
       const text = JSON.stringify(merged);

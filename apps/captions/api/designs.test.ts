@@ -302,6 +302,69 @@ describe("designs: an AI that designs", () => {
     expect(r.notes).toEqual([]);
   });
 
+  it("an AI makes a handle pill once and places it on every slide; a change to the main reaches all of them, an override stays", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true, pages: 3 })).body;
+    const [p1, p2, p3] = d.pages.map((p) => p.id);
+    const how = (await read(d.id)).how;
+    for (const part of ['"component":"<key>"', '"instance":{"of":"<key>"', '"bind":{"text":"Number"}', "never as copies of its layers"]) expect(how).toContain(part);
+    const label = { type: "text", id: "label", text: "@tinyacrobatics", bind: { text: "Handle" }, font: "Inter", size: 36, color: "#ffffff", align: "center", x: 0, y: 0, w: 360, h: 80 };
+    const pill = { type: "group", id: "pill", box: true, component: "handle", name: "Handle pill", x: 80, y: 1200, w: 360, h: 80, radius: 40, fills: [{ type: "solid", color: "#111111" }], layers: [label] };
+    const place = (id: string, more: object = {}) => ({ type: "group", id, instance: { of: "handle", ...more }, x: 80, y: 1200 });
+    let r = (await write(d.id, { frames: [{ id: p1, layers: [pill] }, { id: p2, layers: [place("h2")] }, { id: p3, layers: [place("h3", { props: { Handle: "@tiny" } })] }] })).body;
+    const at = (frame: string, id: string) => everyLayer(r.design.pages.find((p) => p.id === frame)!.layers).find((l) => l.id === id) as GroupLayer & Record<string, unknown>;
+    expect(r.notes).toEqual([]);
+    expect(at(p2!, "h2")).toMatchObject({ w: 360, h: 80, box: true, name: "Handle pill" });
+    expect(at(p2!, "h2.label")).toMatchObject({ text: "@tinyacrobatics" });
+    expect(at(p3!, "h3.label")).toMatchObject({ text: "@tiny" });
+    // one instance's words coloured, then the main's colour changed once
+    r = (await write(d.id, { changes: [{ frame: p2, layer: "h2.label", set: { color: "#ffcc00" } }] })).body;
+    expect(at(p2!, "h2").instance).toEqual({ of: "handle", overrides: { label: { color: "#ffcc00" } } });
+    r = (await write(d.id, { changes: [{ frame: p1, layer: "pill", set: { fills: [{ type: "solid", color: "#ff3366" }] } }, { frame: p1, layer: "label", set: { size: 40 } }] })).body;
+    for (const [f, i] of [[p2, "h2"], [p3, "h3"]] as const) expect((at(f!, i).fills as { color: string }[])[0]!.color).toBe("#ff3366");
+    expect(at(p2!, "h2.label")).toMatchObject({ color: "#ffcc00", size: 40 });
+    expect(at(p3!, "h3.label")).toMatchObject({ color: "#ffffff", size: 40, text: "@tiny" });
+    // its overrides taken back
+    r = (await write(d.id, { changes: [{ frame: p2, layer: "h2", set: { instance: { overrides: null, props: null } } }] })).body;
+    expect(at(p2!, "h2.label")).toMatchObject({ color: "#ffffff" });
+  });
+
+  it("holds an AI's components to what a layer may be: overrides checked, a loop refused, an instance of no main kept and said", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, pages: 2 })).body;
+    const [p1, p2] = d.pages.map((p) => p.id);
+    const chip = { type: "group", id: "chip", box: true, component: "chip", x: 900, y: 40, w: 120, h: 60, layers: [{ type: "text", id: "n", text: "1/2", font: "Inter", size: 30, color: "#000000", align: "center", x: 0, y: 0, w: 120, h: 60 }, { type: "group", id: "self", instance: { of: "chip" }, x: 0, y: 0 }] };
+    const odd = { type: "group", id: "c2", instance: { of: "chip", overrides: { n: { text: "x".repeat(5000), x: 999, component: "evil", color: "red" }, "../bad": { color: "#000000" } } }, x: 40, y: 40 };
+    const r = (await write(d.id, { frames: [{ id: p1, layers: [chip] }, { id: p2, layers: [odd, { type: "group", id: "lost", instance: { of: "nowhere" }, x: 0, y: 0, w: 100, h: 100 }] }] })).body;
+    const all = everyLayer(r.design.pages.flatMap((p) => p.layers));
+    expect(all.some((l) => l.id === "self")).toBe(false);
+    expect(r.notes.join("\n")).toMatch(/inside main "chip", which it would hold: left out/);
+    expect(r.notes.join("\n")).toMatch(/an instance of "nowhere", which this design has no main component of/);
+    const c2 = all.find((l) => l.id === "c2") as GroupLayer;
+    const n = all.find((l) => l.id === "c2.n") as unknown as Record<string, unknown>;
+    // the words held to the text limit, a colour it cannot be made one it can, the place and the key never taken from an override
+    expect((n.text as string).length).toBe(2000);
+    expect([n.x, n.color]).toEqual([0, "#111111"]);
+    expect(c2.instance!.overrides).toEqual({ n: { text: "x".repeat(2000), color: "#111111" } });
+    expect(all.find((l) => l.id === "lost")).toMatchObject({ instance: { of: "nowhere" }, layers: [] });
+  });
+
+  it("keeps what the person changed on an instance as its override, and makes a stale one from its main", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, pages: 2 })).body;
+    const [p1, p2] = d.pages.map((p) => p.id);
+    const badge = { type: "group", id: "b", box: true, component: "badge", x: 40, y: 40, w: 200, h: 80, fills: [{ type: "solid", color: "#111111" }], layers: [{ type: "shape", id: "dot", shape: "ellipse", fill: "#00ff00", x: 10, y: 10, w: 20, h: 20 }] };
+    const first = (await write(d.id, { frames: [{ id: p1, layers: [badge] }, { id: p2, layers: [{ type: "group", id: "i", instance: { of: "badge" }, x: 300, y: 300 }] }] })).body.design;
+    // the window: the instance's dot coloured by hand, saved
+    const mine = first.pages.map((p) => (p.id !== p2 ? p : { ...p, layers: p.layers.map((l) => ({ ...l, layers: (l as GroupLayer).layers.map((k) => ({ ...k, fill: "#0000ff" })) })) }));
+    const saved = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: mine, since: first.updatedAt })).body;
+    const inst = saved.pages.find((p) => p.id === p2)!.layers[0] as GroupLayer;
+    expect(inst.instance).toEqual({ of: "badge", overrides: { dot: { fill: "#0000ff" } } });
+    // a window that did not see the main's change sends the old instance with it: it is made from the main as it is now
+    const main = saved.pages.find((p) => p.id === p1)!;
+    const now = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...main, layers: [{ ...main.layers[0]!, fills: [{ type: "solid", color: "#ff0000" }] }] }, saved.pages.find((p) => p.id === p2)], since: saved.updatedAt })).body;
+    const after = now.pages.find((p) => p.id === p2)!.layers[0] as GroupLayer;
+    expect(after.fills).toEqual([{ type: "solid", color: "#ff0000" }]);
+    expect(after.instance).toEqual({ of: "badge", overrides: { dot: { fill: "#0000ff" } } });
+  });
+
   it("reads every frame with its id, size, words and layers, and how a design is changed", async () => {
     const d = await fromPiece();
     const got = await read(d.id);

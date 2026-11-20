@@ -83,8 +83,12 @@ describe("the hands on the canvas", () => {
     const mine: DesignPage = { ...base, x: 900, y: -50 };
     const theirs: DesignPage = { ...base, background: "#111111", layers: [l("l1", 40), l("l2", 80)] };
     expect(mergeFrame(mine, base, theirs)).toEqual({ ...theirs, x: 900, y: -50 });
-    // the same thing changed in both: this window's stays
-    expect(mergeFrame({ ...base, layers: [l("l1", 7)] }, base, theirs).layers).toEqual([l("l1", 7)]);
+    // the same layer changed in both: this window's stays, and the layer added there is there too
+    expect(mergeFrame({ ...base, layers: [l("l1", 7)] }, base, theirs).layers).toEqual([l("l1", 7), l("l2", 80)]);
+    // one taken out here stays out; one added here goes in where it lies here
+    expect(mergeFrame({ ...base, layers: [l("l3", 5)] }, base, theirs).layers).toEqual([l("l3", 5), l("l2", 80)]);
+    // both added a layer of one id: this window's layers whole, as before
+    expect(mergeFrame({ ...base, layers: [l("l1", 0), l("l2", 1)] }, base, theirs).layers).toEqual([l("l1", 0), l("l2", 1)]);
     // a name taken off here stays off; a frame this window made (the server never had it) is this window's whole
     expect(mergeFrame({ ...base, name: undefined }, { ...base, name: "Cover" }, { ...theirs, name: "Cover" }).name).toBeUndefined();
     expect(mergeFrame(mine, undefined, theirs)).toBe(mine);

@@ -384,10 +384,15 @@ export const hovers = (buttons: number, tool: string, space: boolean) => !button
  * A frame as the server has it now (`theirs`) and as this window changed it meanwhile (`mine`, from `base`): what was
  * changed here stays, everything else is the server's. So a frame dragged aside while its layers were designed
  * somewhere else keeps both its new place and its new layers.
- * ponytail: the layers are one thing; both sides changing the same frame's layers keeps this window's. Layer by layer when that bites.
+ * Both sides changing its layers: layer by layer (mergeLayers), so a main changed here and an instance's override set
+ * there (lib/design/components.ts) both stay.
  */
 export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
-  if (!base) return mine;
+  return base ? mergeFields(mine, base, theirs) : mine;
+}
+
+/** A frame or a layer changed on both sides: each field this window changed is its own, every other the server's; layers held, layer by layer (mergeLayers). */
+function mergeFields<T extends { id: string; layers?: Layer[] }>(mine: T, base: T, theirs: T): T {
   const out: Record<string, unknown> = { ...theirs };
   const m = mine as unknown as Record<string, unknown>;
   const b = base as unknown as Record<string, unknown>;
@@ -395,9 +400,33 @@ export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, their
   for (const f of new Set([...Object.keys(m), ...Object.keys(b)])) {
     if (f === "id" || JSON.stringify(m[f]) === JSON.stringify(b[f])) continue;
     if (m[f] === undefined) delete out[f];
-    else out[f] = m[f];
+    else out[f] = f === "layers" && Array.isArray(theirs.layers) && JSON.stringify(theirs.layers) !== JSON.stringify(base.layers) ? mergeLayers(mine.layers ?? [], base.layers ?? [], theirs.layers) : m[f];
   }
-  return out as unknown as DesignPage;
+  return out as T;
+}
+
+/**
+ * Layers changed on both sides, one by one: one this window changed is merged field by field with the server's (so a
+ * main changed here and an instance's override set there both stay, lib/design/components.ts), any other is the
+ * server's; one taken out on either side is gone; one added on either side is there. Both adding a layer of the same
+ * id: this window's layers, as they were before layers were merged one by one.
+ */
+export function mergeLayers(mine: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[]): Layer[] {
+  const was = new Map(base.map((l) => [l.id, l]));
+  const here = new Map(mine.map((l) => [l.id, l]));
+  const there = new Set(theirs.map((l) => l.id));
+  const added = mine.filter((l) => !was.has(l.id));
+  if (added.some((l) => there.has(l.id))) return [...mine];
+  const out = theirs.flatMap((t) => {
+    const me = here.get(t.id);
+    const b = was.get(t.id);
+    if (!b) return [t];
+    if (!me) return [];
+    return [JSON.stringify(me) === JSON.stringify(b) ? t : (mergeFields(me, b, t) as Layer)];
+  });
+  // what was added here goes in where it lies among this window's layers
+  for (const l of added) out.splice(Math.min(mine.indexOf(l), out.length), 0, l);
+  return out;
 }
 
 /**

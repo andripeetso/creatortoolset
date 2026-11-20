@@ -43,10 +43,10 @@ async function seen(ctx: ToolContext, at: string, frames: readonly Frame[], only
   };
 }
 
-/** A frame as an outline: its size and words, and each layer's id, kind, name, group, auto layout and sizing, how it combines or masks, and words (cut at 120 letters), a group's own layers inside it, without how anything looks. */
+/** A frame as an outline: its size and words, and each layer's id, kind, name, group, auto layout and sizing, how it combines or masks, what component it is or shows, and words (cut at 120 letters), a group's own layers inside it, without how anything looks. */
 const outlineLayers = (layers: unknown): Args[] =>
   ((Array.isArray(layers) ? layers : []) as Args[]).map((l) => ({
-    ...pick(l, ["id", "type", "name", "group", "box", "boolean", "mask", "layout", "sizing", "absolute"]),
+    ...pick(l, ["id", "type", "name", "group", "box", "boolean", "mask", "layout", "sizing", "absolute", "component", "set", "variant", "instance", "bind"]),
     ...(typeof l.text === "string" ? { text: l.text.length > 120 ? `${l.text.slice(0, 120)}…` : l.text } : {}),
     ...(l.hidden ? { hidden: true } : {}),
     ...(Array.isArray(l.layers) ? { layers: outlineLayers(l.layers) } : {}),
@@ -68,7 +68,7 @@ export const designTools: ToolModule = {
     },
     {
       name: "design_update",
-      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers (as names a new frame or layer for the changes after it), sizes copies frames into other sizes, fill copies a frame once per row of words, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). The answer shows the changed frames as pictures and names each change left out (changes[2]) and why.",
+      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers (as names a new frame or layer for the changes after it), sizes copies frames into other sizes, fill copies a frame once per row of words, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). A part that repeats on several frames (a handle, a slide number, a badge) is one main component placed as instances, with properties for what differs: design_get says how. The answer shows the changed frames as pictures and names each change left out (changes[2]) and why.",
       inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, sizes: { type: "object" }, fill: { type: "object" }, picture: { type: "object" }, name: str }, required: ["id"] },
     },
     {

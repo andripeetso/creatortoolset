@@ -135,7 +135,8 @@ export function sizedCopy(page: DesignPage, size: { w: number; h: number }, id: 
 }
 
 /**
- * One row of data onto a copy of a frame: each key but `name` names layers (by their name, any case), and a string or
+ * One row of data onto a copy of a frame: each key but `name` names layers (by their name or the component property they
+ * show, any case), and a string or
  * number sets a text's words, `{ text?, visible?, color? }` more. `name` names the copy. Answers the keys no layer has.
  */
 export function fillRow(page: DesignPage, row: Record<string, unknown>): { page: DesignPage; missing: string[] } {
@@ -144,7 +145,8 @@ export function fillRow(page: DesignPage, row: Record<string, unknown>): { page:
   for (const [key, v] of Object.entries(row)) {
     if (key === "name") continue;
     const want = key.trim().toLowerCase();
-    const hit = (l: Layer) => (l.name ?? "").trim().toLowerCase() === want;
+    // or by the component property a layer shows (an instance's words are its property's value then: lib/design/components.ts)
+    const hit = (l: Layer) => [l.name, l.bind?.text, l.bind?.visible].some((n) => (n ?? "").trim().toLowerCase() === want);
     if (!everyLayer(layers).some(hit)) {
       missing.push(key);
       continue;

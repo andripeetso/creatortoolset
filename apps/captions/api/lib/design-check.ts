@@ -1,4 +1,4 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_BOOLEANS, DESIGN_EFFECTS, DESIGN_MASKS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, DESIGN_FLOW_ALIGNS, DESIGN_SIZINGS, type AutoLayout, type DesignPage, type Sizing, type Effect, type Pin, type Gradient, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_BOOLEANS, DESIGN_EFFECTS, DESIGN_MASKS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, INSTANCE_FIXED, INSTANCE_FROM_MAIN, DESIGN_FLOW_ALIGNS, DESIGN_SIZINGS, type AutoLayout, type DesignPage, type Sizing, type Effect, type Pin, type Gradient, type GroupLayer, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
@@ -20,6 +20,12 @@ const FONTS = DESIGN_FONTS.map((f) => f.family);
 export const DEFAULT_FONT = "Inter";
 const COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const ID = /^[a-z0-9-]{1,24}$/;
+/** A layer's id: an instance's layers are `<instance id>.<main layer id>` (lib/design/components.ts), so ids may have parts. */
+const LAYER_ID = /^[a-z0-9-]{1,24}(\.[a-z0-9-]{1,24}){0,5}$/;
+/** A main component's key, what an instance's "of" names. */
+const KEY = /^[\w-]{1,40}$/;
+/** A component property's or a variant property's name. */
+const propName = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 40) : "");
 
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const num = (v: unknown, lo: number, hi: number, or: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : or);
@@ -410,6 +416,53 @@ export interface PageRules {
 type Unnamed = Layer extends infer L ? (L extends Layer ? Omit<L, "id"> : never) : never;
 
 /** `deep`: a layer inside a container, placed in the container's own pixels. A container comes back with no layers: cleanPages checks them. */
+/** A layer's bindings to its main's properties (Box `bind`), each a property's name. */
+function bindOf(v: unknown): { bind?: NonNullable<Layer["bind"]> } {
+  if (!obj(v)) return {};
+  const b = Object.fromEntries((["text", "visible", "swap"] as const).flatMap((k) => (propName(v[k]) ? [[k, propName(v[k])]] : [])));
+  return Object.keys(b).length ? { bind: b } : {};
+}
+
+const FIXED = new Set(INSTANCE_FIXED);
+const FROM_MAIN = new Set(INSTANCE_FROM_MAIN);
+/**
+ * A group as a main component (`component`, a set's `set` and `variant`) or an instance (`instance`: the main's key, its
+ * property values, its overrides). Overrides are kept as given here, only fields an override may change and at most so
+ * much of them: their values are checked as the instance's layers are, once it is made from its main (api/designs.ts).
+ */
+function componentOf(raw: Record<string, unknown>, say: (why: string) => void): Pick<GroupLayer, "component" | "set" | "variant" | "instance"> {
+  if (raw.instance !== undefined && raw.instance !== null) {
+    const i = raw.instance;
+    if (!obj(i) || typeof i.of !== "string" || !KEY.test(i.of)) {
+      say('an instance needs "instance": {"of": a main component\'s "component" key}: it is a plain group');
+      return {};
+    }
+    const props = Object.fromEntries(
+      (obj(i.props) ? Object.entries(i.props) : [])
+        .flatMap(([k, v]): [string, string | boolean][] => (propName(k) && (typeof v === "boolean" || typeof v === "string") ? [[propName(k), typeof v === "string" ? v.slice(0, DESIGN_LIMITS.text) : v]] : []))
+        .slice(0, DESIGN_LIMITS.props),
+    );
+    const overrides: Record<string, Record<string, unknown>> = {};
+    for (const [k, v] of (obj(i.overrides) ? Object.entries(i.overrides) : []).slice(0, DESIGN_LIMITS.layers + 1)) {
+      if ((k !== "" && !LAYER_ID.test(k)) || !obj(v)) continue;
+      const kept = Object.fromEntries(Object.entries(v).filter(([f]) => (k ? !FIXED.has(f) : FROM_MAIN.has(f))));
+      if (Object.keys(kept).length) overrides[k] = kept;
+    }
+    const big = JSON.stringify(overrides).length > DESIGN_LIMITS.overrideBytes;
+    if (big) say(`an instance's overrides run past ${DESIGN_LIMITS.overrideBytes} characters: left out`);
+    return { instance: { of: i.of, ...(Object.keys(props).length ? { props } : {}), ...(!big && Object.keys(overrides).length ? { overrides } : {}) } };
+  }
+  if (raw.component === undefined || raw.component === null) return {};
+  if (typeof raw.component !== "string" || !KEY.test(raw.component)) {
+    say(`"component" is a key of letters, digits, "-" and "_" (at most 40): ${JSON.stringify(raw.component).slice(0, 30)} left out`);
+    return {};
+  }
+  const variant = Object.fromEntries(
+    (obj(raw.variant) ? Object.entries(raw.variant) : []).flatMap(([k, v]): [string, string][] => (propName(k) && named(v) ? [[propName(k), named(v)]] : [])).slice(0, DESIGN_LIMITS.props),
+  );
+  return { component: raw.component, ...(named(raw.set) ? { set: named(raw.set) } : {}), ...(named(raw.set) && Object.keys(variant).length ? { variant } : {}) };
+}
+
 function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own: string | undefined, deep = false): Unnamed | null {
   if (!obj(raw)) {
     say("a layer that is not an object: left out");
@@ -443,6 +496,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...pin(raw.pin),
     ...sizes(raw, r),
     ...(DESIGN_MASKS.includes(raw.mask as never) ? { mask: raw.mask as (typeof DESIGN_MASKS)[number] } : {}),
+    ...bindOf(raw.bind),
   };
   if (raw.mask !== undefined && raw.mask !== null && raw.mask !== false && !box.mask) say(`a mask is "alpha", "vector" or "luminance": ${JSON.stringify(raw.mask).slice(0, 30)} left out`);
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
@@ -530,6 +584,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       layers: [],
       ...(boolean ? { boolean, ...fillList(raw.fills, r, say), ...strokeList(raw.strokes, 200) } : {}),
       ...(own ? { box: true as const, ...fillList(raw.fills, r, say), ...strokeList(raw.strokes, 200), ...corners(raw.radius), ...smoothed(raw.smooth), ...(raw.clip === true ? { clip: true as const } : {}), ...(layout ? { layout } : {}) } : {}),
+      ...componentOf(raw, say),
     };
   }
   if (raw.type === "shape") {
@@ -649,7 +704,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         const clean = cleanLayer(l, { ...r, ...size }, sayL, r.words ? r.words[k] : undefined, depth > 0);
         if (!clean) continue;
         held++;
-        const given = obj(l) && typeof l.id === "string" && ID.test(l.id) && !ids.has(l.id) ? l.id : "";
+        const given = obj(l) && typeof l.id === "string" && LAYER_ID.test(l.id) && !ids.has(l.id) ? l.id : "";
         let id = given;
         for (let n = held; !id || ids.has(id); n++) id = `l${n}`;
         ids.add(id);
@@ -662,7 +717,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         }
         const inner = take(obj(l) ? l.layers : [], depth + 1, !!clean.layout);
         // a plain group with nothing in it is nothing (a box may be empty: a card waiting for its words)
-        if (!inner.length && !clean.box) {
+        if (!inner.length && !clean.box && !clean.instance) {
           sayL("a group with no layers in it: left out");
           continue;
         }

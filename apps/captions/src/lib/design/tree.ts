@@ -217,7 +217,8 @@ export function shapeBounds(g: GroupLayer): Rect {
 export function hug(layers: readonly Layer[]): Layer[] {
   return mapLayers(layers, (l) => {
     if (!isGroup(l) || l.box) return l;
-    if (!l.layers.length) return null;
+    // an instance waiting for its main's layers keeps its place (lib/design/components.ts)
+    if (!l.layers.length) return l.instance ? l : null;
     const b = shapeBounds(l);
     if (Math.abs(b.x) < 0.02 && Math.abs(b.y) < 0.02 && Math.abs(b.w - l.w) < 0.02 && Math.abs(b.h - l.h) < 0.02) return l;
     const m = outOf(l, { x: b.x + b.w / 2, y: b.y + b.h / 2 });

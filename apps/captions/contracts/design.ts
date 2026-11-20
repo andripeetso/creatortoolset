@@ -41,7 +41,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, depth: 4, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, depth: 4, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16, components: 60, props: 12, overrideBytes: 60_000 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -203,6 +203,12 @@ interface Box {
    * under the photo, the two in a plain group of their own (in an auto layout box each layer takes a place in the flow)
    */
   mask?: DesignMask;
+  /**
+   * in a main component (GroupLayer `component`): the component properties this layer shows, by name. `text`: its words
+   * are the property's (a text); `visible`: shown when the property is on; `swap`: the component it shows (an instance).
+   * An instance's `props` set them; one it leaves out is as the main has it
+   */
+  bind?: { text?: string; visible?: string; swap?: string };
 }
 /** What a mask cuts by (Box `mask`). */
 export const DESIGN_MASKS = ["alpha", "vector", "luminance"] as const;
@@ -403,7 +409,34 @@ export interface GroupLayer extends Box {
   clip?: true;
   /** a box: its layers placed one after another by auto layout, not by their own x and y */
   layout?: AutoLayout;
+  /**
+   * a main component: made once, placed anywhere in the design as instances that follow it (src/lib/design/components.ts).
+   * Its key, unique in the design (what an instance's `of` names); the main lies on the canvas like any group
+   */
+  component?: string;
+  /** a main that is one variant of a set: the set's name, and this variant's value of each of the set's properties ({ State: "Hover" }) */
+  set?: string;
+  variant?: Record<string, string>;
+  /** an instance of a main component: its layers are the main's, with what it changes (DesignInstance) */
+  instance?: DesignInstance;
 }
+
+/**
+ * What an instance is: the main it shows (`of`, a main's `component` key), the values it gives the main's properties
+ * (Box `bind`; one it leaves out is as the main has it), and what it changes on the main's layers: by the main's layer id
+ * ("" the instance itself), each a set of fields (null: taken away). Where a layer lies and what it is made of always
+ * follow the main (contracts' INSTANCE_FIXED); every other field may be changed. The instance's layers are kept as the main
+ * makes them: id `<instance id>.<main layer id>`.
+ */
+export interface DesignInstance {
+  of: string;
+  props?: Record<string, string | boolean>;
+  overrides?: Record<string, Record<string, unknown>>;
+}
+/** What a layer inside an instance never changes on its own: its place, its size, and what it is made of. */
+export const INSTANCE_FIXED: readonly string[] = ["id", "type", "x", "y", "w", "h", "rotate", "flipX", "flipY", "pin", "sizing", "min", "max", "absolute", "layers", "mask", "boolean", "box", "clip", "points", "closed", "layout", "component", "set", "variant", "bind", "group", "locked", "reference"];
+/** What an instance takes from its main's own box (beside its layers); the rest of its box (where it lies, its fade) is its own. */
+export const INSTANCE_FROM_MAIN: readonly string[] = ["name", "box", "boolean", "fills", "strokes", "radius", "smooth", "clip", "layout", "effects", "shadow", "blur", "w", "h", "sizing", "min", "max"];
 
 export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer | GroupLayer;
 
