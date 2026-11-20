@@ -24,6 +24,22 @@ final class ProxyCacheTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
+    /// A picked Download location: the page plays from where the worker downloads to, its folder for that server (it
+    /// looked in the default folder, so nothing downloaded there played).
+    func testAPickedDownloadLocationPlaysFromWhereTheWorkerDownloads() throws {
+        let location = root.appendingPathComponent("picked", isDirectory: true)
+        UserDefaults.standard.set(location.path, forKey: DownloadLocation.key)
+        defer { UserDefaults.standard.removeObject(forKey: DownloadLocation.key) }
+        let server = URL(string: "https://studio.example.com")!
+        let file = try proxy(server, "tinyacrobatics", "v1")
+        let worker = try XCTUnwrap(ProxyCache.workerDir(server: server))
+        XCTAssertEqual(file, "\(worker)/tinyacrobatics/v1.mp4")
+        XCTAssertTrue(file.hasPrefix(location.path + "/"))
+        XCTAssertNotNil(ProxyCache.url("v1", in: try XCTUnwrap(ProxyCache.folder(server: server, account: "tinyacrobatics"))))
+        // another server's worker gets its own folder: two accounts of one name never share one
+        XCTAssertNotEqual(ProxyCache.workerDir(server: URL(string: "http://10.0.0.5:3000")!), worker)
+    }
+
     /// A proxy in an account's cache for a server, as the worker leaves it.
     @discardableResult
     private func proxy(_ server: URL, _ account: String, _ version: String) throws -> String {

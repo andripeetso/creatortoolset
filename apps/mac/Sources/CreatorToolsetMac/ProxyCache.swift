@@ -59,6 +59,16 @@ enum ProxyCache {
     /// A server's relay folder (ClaudeRequest.swift relayFolder); the tests give their own.
     static var relay: (URL) -> URL = { relayFolder(for: $0, localData: nil) }
 
+    /// The worker's CT_PROXY_DIR for `server`: its folder in the Download location; nil for its default (DATA_DIR/proxies).
+    static func workerDir(server: URL) -> String? { DownloadLocation.path().map { root(server: server, location: $0).path } }
+
+    /// Where a server's worker keeps its cache and the page plays it from: its folder in the Download location, named as
+    /// its relay folder (two servers' accounts of one name never share one), else its default folder.
+    static func root(server: URL, location: String? = DownloadLocation.path()) -> URL {
+        guard let location else { return relay(server).appendingPathComponent("work/proxies", isDirectory: true) }
+        return URL(fileURLWithPath: location).appendingPathComponent(relay(server).lastPathComponent, isDirectory: true)
+    }
+
     private static let lock = NSLock()
     /// per server (its relay folder's path): the account the window was last signed in to there
     private static var accounts: [String: String] = [:]
@@ -98,7 +108,7 @@ enum ProxyCache {
     static func folder(server: URL, account: String) -> URL? {
         guard !account.isEmpty, account.count <= 100,
               account.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else { return nil }
-        return relay(server).appendingPathComponent("work/proxies/\(account)", isDirectory: true)
+        return root(server: server).appendingPathComponent(account, isDirectory: true)
     }
 
     /// The cache folder a page at `page` may play from: its server's, of the account last said signed in there.

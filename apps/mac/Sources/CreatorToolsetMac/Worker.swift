@@ -140,7 +140,7 @@ final class Worker: ObservableObject {
         p.currentDirectoryURL = folder
         p.environment = workerEnvironment(server: server, token: token, data: data, folder: folder,
                                           inherited: ProcessInfo.processInfo.environment, plugins: plugins,
-                                          release: releaseEnv(Bundle.main.infoDictionary), proxyDir: DownloadLocation.path())
+                                          release: releaseEnv(Bundle.main.infoDictionary), proxyDir: ProxyCache.workerDir(server: server))
         // stdin stays open while the app runs (CT_EXIT_WITH_PARENT); stdout carries the status lines
         let stdin = Pipe(), output = Pipe()
         p.standardInput = stdin
