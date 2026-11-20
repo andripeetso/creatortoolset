@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import type { KeyProp } from "@contracts/editor";
+import { KEY_STATIC } from "./keyframes";
 import { withKeys, type NleItem, type NleTimeline } from "./model";
-import { chains, continues, drawScale, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, steer } from "./picture";
+import { chains, continues, drawScale, envPoints, keyed, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, steer } from "./picture";
 
 type Case = { name: string; timeline: [number, number]; track: string; source: [number, number]; item: object; place: { matrix: number[]; crop: number[]; opacity: number } };
 // the renderer's own answers for these clips (its geometry check writes them)
@@ -125,5 +127,100 @@ describe("one plain picture shows as its <video>", () => {
       expect(plainVideo(on(more))).toBeNull();
     expect(plainVideo([...on({}), ...on({}, "V2")])).toBeNull();
     expect(plainVideo([])).toBeNull();
+  });
+});
+
+// the player's per-frame values against the golden vectors the studio engine renders from (contracts/edj-golden.json)
+type GoldenKey = { name: string; fps: number; sfps: number; prop: string; item: NleItem; frames: number[]; values: number[] };
+type GoldenTrans = { name: string; type: string; len: number; at: string; cut: number; start: number; frames: number[] } & Record<string, unknown>;
+const golden = JSON.parse(readFileSync(new URL("../../../contracts/edj-golden.json", import.meta.url), "utf8")) as { keys: GoldenKey[]; trans: GoldenTrans[] };
+const gainAt = (p: { env?: [number, number][]; gain: number }, secs: number) => (p.env ? envPoints(p.env, 0, secs, 1)[0][1] : p.gain);
+
+describe("the player's frame against the golden vectors", () => {
+  it("draws keyed zoom, pan, tilt, rotation and opacity and plays keyed gain at the golden's values", () => {
+    for (const c of golden.keys) {
+      const sound = c.prop === "gain_db";
+      const tl = withKeys({ timeline: { fps: c.fps }, sources: { s: { fps: c.sfps } }, tracks: { [sound ? "A1" : "V2"]: { items: [c.item] } } });
+      const it = Object.values(tl.tracks)[0].items[0];
+      c.frames.forEach((f, i) => {
+        if (sound) {
+          const p = soundPieces(tl)[0];
+          expect(20 * Math.log10(gainAt(p, (f - c.item.rec) / c.fps)), `${c.name} @${f}`).toBeCloseTo(c.values[i], 5);
+        } else expect((keyed(tl, it, f)[c.prop] ?? KEY_STATIC[c.prop as KeyProp]) as number, `${c.name} @${f}`).toBeCloseTo(c.values[i], 6);
+      });
+    }
+  });
+
+  it("mixes a transition's two clips at the golden's shares on V1 and V2, and crossfades their sound", () => {
+    for (const c of golden.trans) {
+      const trans = { type: c.type, len: c.len, at: c.at } as NleItem["trans"];
+      const pair = () => ({ items: [{ src: "s", rec: c.cut - 40, len: 40, in: 100 }, { src: "s", rec: c.cut, len: 40, in: 300, trans }] });
+      const sound = c.type === "crossfade";
+      const tl = withKeys({ timeline: { fps: 25 }, sources: { s: { fps: 25 } }, tracks: sound ? { A1: pair() } : { V1: pair(), V2: pair() } });
+      c.frames.forEach((f, i) => {
+        const w = (k: string) => (c[k] as number[])[i];
+        if (sound) {
+          const [a, b] = soundPieces(tl);
+          expect(gainAt(a, (f - (c.cut - 40)) / 25), `${c.name} a @${f}`).toBeCloseTo(w("a"), 5);
+          expect(gainAt(b, (f - c.start) / 25), `${c.name} b @${f}`).toBeCloseTo(w("b"), 5);
+          return;
+        }
+        for (const track of ["V1", "V2"]) {
+          const on = picturesAt(tl, f).filter((p) => p.track === track);
+          expect(on.map((p) => p.item.rec), `${c.name} ${track} @${f}`).toEqual([c.cut - 40, c.cut]);
+          const [a, b] = on;
+          if (c.type === "dissolve") {
+            expect(a.seen).toBe(1);
+            expect(b.seen, `${c.name} @${f}`).toBeCloseTo(w("alpha"), 5);
+          } else {
+            expect(a.seen, `${c.name} a @${f}`).toBeCloseTo(w("a"), 5);
+            expect(b.seen, `${c.name} b @${f}`).toBeCloseTo(w("b"), 5);
+            expect(a.under).toBe(c.type === "dip_white" ? "white" : "black");
+          }
+        }
+      });
+      if (sound) continue;
+      // before the transition only the earlier clip, after it only the later, each at full
+      expect(picturesAt(tl, c.start - 1).filter((p) => p.track === "V1").map((p) => [p.item.rec, p.seen])).toEqual([[c.cut - 40, 1]]);
+      expect(picturesAt(tl, c.start + c.len).filter((p) => p.track === "V1").map((p) => [p.item.rec, p.seen])).toEqual([[c.cut, 1]]);
+    }
+  });
+
+  it("plays both clips of a transition from their handles, each its own element, never as the plain <video>", () => {
+    const tl = withKeys({
+      timeline: { fps: 25 },
+      sources: { s: { fps: 25 } },
+      tracks: { V1: { items: [{ src: "s", rec: 0, len: 50, in: 0 }, { src: "s", rec: 50, len: 50, in: 50, trans: { type: "dissolve", len: 10, at: "center" } }] } },
+    });
+    const [a, b] = tl.tracks.V1.items;
+    // the same file straight on, but a transition between: two elements
+    expect(continues(tl, a, b)).toBe(false);
+    expect(plainVideo(picturesAt(tl, 47))).toBeNull();
+    expect(plainVideo(picturesAt(tl, 60))).toBe("cover");
+    // the later clip opens before its transition starts, at frame 45
+    expect(picturesSoon(tl, 40, 5, chains(tl)).map((p) => p.item.rec)).toEqual([50]);
+    expect(picturesSoon(tl, 40, 4, chains(tl))).toEqual([]);
+    // a keyed clip is drawn on the canvas
+    expect(plainVideo([{ track: "V1", item: { ...a, keys: { zoom: [[0, 1, "linear"], [10, 2, "linear"]] } } }])).toBeNull();
+  });
+
+  it("adds norm_db to a clip's gain, keyed or not, and leaves the fades to the sound engine without keys", () => {
+    const tl = withKeys({
+      timeline: { fps: 25 },
+      sources: { s: { fps: 25 } },
+      tracks: {
+        A1: { items: [{ src: "s", rec: 0, len: 50, in: 0, gain_db: -6, norm_db: -3, fade_in: 5 }] },
+        A2: { items: [{ src: "s", rec: 0, len: 50, in: 0, norm_db: 4, keys: { gain_db: [[0, -10, "linear"], [10, 0, "linear"]] } }] },
+      },
+    });
+    const [p1, p2] = soundPieces(tl);
+    expect(20 * Math.log10(p1.gain)).toBeCloseTo(-9, 6);
+    expect(p1).toMatchObject({ fadeIn: 0.2 });
+    expect(p1.env).toBeUndefined();
+    expect(20 * Math.log10(gainAt(p2, 0))).toBeCloseTo(-6, 6);
+    expect(20 * Math.log10(gainAt(p2, 5 / 25))).toBeCloseTo(-1, 6);
+    expect(20 * Math.log10(gainAt(p2, 1))).toBeCloseTo(4, 6);
+    // a run of the same value is two points, not one a frame
+    expect(p2.env!.length).toBeLessThan(15);
   });
 });

@@ -31,10 +31,21 @@ struct ProjectsView: View {
         let words = query.trimmingCharacters(in: .whitespaces).lowercased()
         let edits = chats.rows.filter { !$0.route.isAssistant }
         let sessions = model.sessions.filter { $0.shows(kind: kind.isEmpty ? nil : kind, words: words) }
-        let others = ChatList.others(edits, sessions: model.sessions).filter { words.isEmpty || $0.title.lowercased().contains(words) }
         let reviews = edits.filter { $0.shelf == .active && $0.status == .review }
+        // a review sits under To review, not twice on one screen
+        let others = ChatList.others(edits, sessions: model.sessions)
+            .filter { row in (words.isEmpty || row.title.lowercased().contains(words)) && !reviews.contains { $0.id == row.id } }
+        let toReview = reviews.filter { words.isEmpty || $0.title.lowercased().contains(words) }
         return List {
             header
+            // every video that waits for his review, first, whatever project it is of (it stays on its project too)
+            if !toReview.isEmpty {
+                Section {
+                    EditRows(rows: toReview, deleting: $deleting, stopped: $stopped)
+                } header: {
+                    Text("To review (\(toReview.count))").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                }
+            }
             if !model.sessions.isEmpty {
                 Picker("Type", selection: $kind) {
                     ForEach(Self.kinds, id: \.1) { Text($0.0).tag($0.1) }
@@ -66,7 +77,7 @@ struct ProjectsView: View {
         .overlay {
             if model.loading && model.sessions.isEmpty {
                 ProgressView()
-            } else if sessions.isEmpty, others.isEmpty, model.error == nil, !model.needsSignIn {
+            } else if sessions.isEmpty, others.isEmpty, toReview.isEmpty, model.error == nil, !model.needsSignIn {
                 Text(words.isEmpty && kind.isEmpty ? "No projects yet" : "No match").foregroundStyle(.secondary)
             }
         }
