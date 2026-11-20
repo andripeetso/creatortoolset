@@ -369,3 +369,60 @@ describe("held review: outlines, kept pieces off the frame's corner, stale pictu
     expect(paint("#00ff00", 80)).toEqual([0, 255, 0, 255]);
   });
 });
+
+describe("follow-ups: a line-only part, a group part's clip and masks, a piece's area, a same-size picture", () => {
+  it("a closed path with only a line counts by its fill in a combined shape: a click near its edge outside it is on the shape", () => {
+    const h = 0.276;
+    const hole = { id: "o", type: "path", x: 100, y: 100, w: 200, h: 200, closed: true, stroke: { color: "#000000", width: 4 }, points: [{ x: 0.5, y: 0, in: [-h, 0], out: [h, 0] }, { x: 1, y: 0.5, in: [0, -h], out: [0, h] }, { x: 0.5, y: 1, in: [h, 0], out: [-h, 0] }, { x: 0, y: 0.5, in: [0, h], out: [0, -h] }] } as Layer;
+    const frame = combined("subtract", [{ id: "r", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 400, h: 400 } as Layer, hole], { w: 400, h: 400 });
+    // 6 above the hole's top: on the shape; in the hole: not
+    expect([layerAt({ layers: [frame] }, 200, 94)?.id, layerAt({ layers: [frame] }, 200, 200) ?? null]).toEqual(["g", null]);
+  });
+
+  it("a group part is where its clip and its masks let it be seen", () => {
+    const clipped = { id: "c", type: "group", box: true, clip: true, x: 0, y: 0, w: 100, h: 100, layers: [circle("e", 0, 0, 300)] } as Layer;
+    const u = combined("union", [clipped], { w: 300, h: 300 });
+    expect([layerAt({ layers: [u] }, 50, 50)?.id, layerAt({ layers: [u] }, 200, 200) ?? null]).toEqual(["g", null]);
+    const maskedPart = { id: "mg", type: "group", x: 0, y: 0, w: 300, h: 300, layers: [{ id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 100, h: 100, mask: "alpha" } as Layer, { id: "big", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 300, h: 300 } as Layer] } as Layer;
+    const v = combined("union", [maskedPart], { w: 300, h: 300 });
+    expect([layerAt({ layers: [v] }, 50, 50)?.id, layerAt({ layers: [v] }, 250, 250) ?? null]).toEqual(["g", null]);
+  });
+
+  it("a background blur inside a faded group blurs on the canvas and in a saved picture, the frame away from the canvas's corner", () => {
+    const OFF = 100;
+    for (const exact of [true, false]) {
+      const canvas = new Canvas(OFF + W, H);
+      const ctx = canvas.getContext("2d");
+      ctx.translate(OFF, 0);
+      const faded = {
+        id: "fg", type: "group", x: 0, y: 0, w: W, h: H, opacity: 0.9,
+        layers: [
+          { id: "dark", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 40, h: H },
+          { id: "glass", type: "shape", shape: "rect", fill: "#ffffff00", x: 20, y: 10, w: 40, h: 40, effects: [{ type: "background-blur", blur: 8 }] },
+        ],
+      } as Layer;
+      drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "fade", background: "#ffffff", layers: [faded] } as DesignPage, W, H, new Map() as Loaded, exact);
+      // just right of the dark half's edge, under the glass: the dark blurred into it
+      expect(Array.from(ctx.getImageData(OFF + 42, 30, 1, 1).data)[0], `exact ${exact}`).toBeLessThan(230);
+    }
+  });
+
+  it("a picture of the same size put in the place of another under the same id is drawn again", () => {
+    const strip = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 40, h: H, mask: "alpha" } as Layer;
+    const pic = { id: "ph", type: "image", picture: "same", fit: "cover", x: 0, y: 0, w: W, h: H } as Layer;
+    const pics = new Map<string, Canvas>();
+    const paint = (colour: string) => {
+      const c = new Canvas(30, 30);
+      const g = c.getContext("2d");
+      g.fillStyle = colour;
+      g.fillRect(0, 0, 30, 30);
+      pics.set("same", c);
+      const canvas = new Canvas(W, H);
+      const ctx = canvas.getContext("2d");
+      drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "same", background: "#ffffff", layers: [strip, pic] } as DesignPage, W, H, pics as unknown as Loaded, false);
+      return Array.from(ctx.getImageData(20, 30, 1, 1).data);
+    };
+    expect(paint("#ff0000")).toEqual(RED);
+    expect(paint("#00ff00")).toEqual([0, 255, 0, 255]);
+  });
+});

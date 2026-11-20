@@ -596,10 +596,6 @@ function place(ctx: Ctx, l: Layer) {
   ctx.translate(-l.w / 2, -l.h / 2);
 }
 
-/**
- * A container's layers (or a frame's), bottom first, but those not shown (hidden; a reference one in a saved picture).
- * A mask is not drawn: the layers above it, up to the next mask, are cut to it (a hidden one masks nothing).
- */
 /** An area that holds nothing back (finite: its right edge is summed). */
 const ANYWHERE: Area = { x: -1e9, y: -1e9, w: 2e9, h: 2e9 };
 
@@ -623,14 +619,18 @@ function runs(layers: readonly Layer[], one: (k: Layer) => void, cut: (mask: Lay
   flush();
 }
 
+/**
+ * A container's layers (or a frame's), bottom first, but those not shown (hidden; a reference one in a saved picture).
+ * A mask is not drawn: the layers above it, up to the next mask, are cut to it (a hidden one masks nothing).
+ */
 function drawLayers(ctx: Ctx, layers: readonly Layer[], loaded: Loaded, frame: string, exact: boolean, area: Area) {
   const draw = (g: Ctx, k: Layer, a: Area) => drawLayer(g, k, loaded, frame, exact, a);
   runs(layers, (k) => draw(ctx, k, area), (m, run) => {
     const plain = (g: Ctx) => run.forEach((k) => draw(g, k, area));
     // shortcut: the masked layers are drawn together on a sheet of their own, so a blend or a background blur among them mixes only with what is cut with them; lay them on the canvas one by one if that is ever missed
     const cut = (g: Ctx) => {
-      // the frame's area is in ctx's pixels; a kept piece has none of its own to keep to (it is cut where it is laid)
-      const base = g === ctx ? area : ANYWHERE;
+      // the area being drawn in now: the frame's on the canvas, none in a piece (pieceOf: cut where it is laid)
+      const base = drawing.area;
       return masked(g, paintedBox(m), m.mask!, (h) => (m.mask === "vector" ? shapeOf(h, m, loaded, frame, exact) : draw(h, { ...m, mask: undefined }, base)), (h, s) => {
         // a background blur in the masked layers reads what is under it on their own sheet
         const was = drawing.area;
@@ -691,10 +691,18 @@ function combined(ctx: Ctx, l: GroupLayer, loaded: Loaded, cast: boolean, frame:
   if (!keptPaint(ctx, `${frame}/${l.id}`, [{ ...l, x: 0, y: 0 }, cast, readyOf(ctx, loaded, parts)], box, exact, loaded, made)) drawLayers(ctx, l.layers, loaded, frame, exact, drawing.area);
 }
 
+/** Each loaded picture's own number, so a kept drawing knows which picture it was made from. */
+const pictureNumbers = new WeakMap<object, number>();
+let picturesNumbered = 0;
+const pictureNumber = (pic: object): number => pictureNumbers.get(pic) ?? (pictureNumbers.set(pic, ++picturesNumbered), picturesNumbered);
+
 /** Whether the pictures and fonts of these layers (and of every layer in them) have arrived: a kept drawing of them is made again when one does. */
 function readyOf(ctx: Ctx, loaded: Loaded, layers: readonly Layer[]): unknown[] {
-  // a picture's size, not only whether it is there: one put in the place of another under the same id is drawn again
-  const size = (id: string) => `${loaded.get(id)?.width ?? 0}x${loaded.get(id)?.height ?? 0}`;
+  // the picture itself (and its size, which it has once it is there): one put in the place of another under the same id is drawn again
+  const size = (id: string) => {
+    const pic = loaded.get(id);
+    return pic ? `${pictureNumber(pic)}:${pic.width}x${pic.height}` : "";
+  };
   return everyLayer(layers).map((k) => [sourceOf(k) ? size(sourceOf(k)!) : "", k.type === "text" ? fontsOfText(k).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", fillsOf(k).map((p) => (p.type === "image" ? size(p.picture) : ""))]);
 }
 
@@ -793,7 +801,14 @@ function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) 
   const g = canvas?.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
   if (!canvas || !g) return null;
   g.setTransform(scale, 0, 0, scale, m * scale, m * scale);
-  draw(g);
+  // the frame's area is in the canvas's pixels, not the piece's: in a piece nothing is held back (it is cut where it is laid)
+  const was = drawing.area;
+  drawing.area = ANYWHERE;
+  try {
+    draw(g);
+  } finally {
+    drawing.area = was;
+  }
   // nothing to work (a shadow with no spread): its pixels are not read back
   if (!work) return { canvas, m, bw, bh };
   const pixels = g.getImageData(0, 0, pw, ph);
@@ -1085,22 +1100,21 @@ export const layerAt = (page: Pick<DesignPage, "layers"> & { boolean?: unknown }
 const seen = (cut: ReadonlyMap<string, Layer>, l: Layer, px: number, py: number, near: number) => !cut.has(l.id) || hits(cut.get(l.id)!, px, py, near);
 
 /**
- * Whether a point (in the pixels the layer lies in) is on it. A path is under the pointer where its line or its fill is
- * (or within `near` of its line: a few pixels of the screen, whatever the zoom), not anywhere in the box round it. A
- * container is where one of its layers is, and a box anywhere in its box too (nowhere past it when it cuts its layers);
- * a layer a mask cuts only where the mask is too, a boolean group where its shape is (by its layers as they are hit).
- */
-/**
  * Whether a point (in the pixels a layer lies in) is in a combined shape's part as it is drawn there: an ellipse, a
- * triangle, a star or an arrow by its outline, a path by its fill or line, a group by its layers' (and a box's own
- * box); a rectangle, words, a picture or a drawing by their box.
+ * triangle, a star or an arrow by its outline, a path by its fill, a group by its layers' (and a box's own box, which
+ * cuts them when it clips); a rectangle, words, a picture or a drawing by their box.
  */
 function inShape(k: Layer, px: number, py: number, near: number): boolean {
   if (isGroup(k) && !k.boolean) {
-    if (k.box && inLayer(k, px, py).inside) return true;
+    const inBox = inLayer(k, px, py).inside;
+    if (k.box && (inBox || k.clip)) return inBox;
+    // its layers' shapes, each a mask cuts only where the mask is (a mask itself is not drawn)
     const p = into(k, { x: px, y: py });
-    return k.layers.some((c) => !c.hidden && inShape(c, p.x, p.y, near));
+    const cut = masksOf(k.layers);
+    return k.layers.some((c) => !c.hidden && !c.mask && inShape(c, p.x, p.y, near) && (!cut.has(c.id) || inShape(cut.get(c.id)!, p.x, p.y, near)));
   }
+  // a path's fill, filled as its shape is drawn (closed), never its line: a part's lines are not drawn
+  if (k.type === "path") return onPath({ ...k, fill: "#000000", strokes: [], stroke: undefined }, px, py, 0);
   if (k.type !== "shape" || k.shape === "rect") return hits(k, px, py, near);
   const q = inLayer(k, px, py);
   const x = k.flipX ? k.w - q.x : q.x;
@@ -1117,6 +1131,12 @@ function inShape(k: Layer, px: number, py: number, near: number): boolean {
   return inside;
 }
 
+/**
+ * Whether a point (in the pixels the layer lies in) is on it. A path is under the pointer where its line or its fill is
+ * (or within `near` of its line: a few pixels of the screen, whatever the zoom), not anywhere in the box round it. A
+ * container is where one of its layers is, and a box anywhere in its box too (nowhere past it when it cuts its layers);
+ * a layer a mask cuts only where the mask is too, a boolean group where its shape is (by its layers as they are hit).
+ */
 export function hits(l: Layer, px: number, py: number, near = 8): boolean {
   if (l.type === "path") return onPath(l, px, py, near);
   if (!isGroup(l)) return inLayer(l, px, py).inside;
