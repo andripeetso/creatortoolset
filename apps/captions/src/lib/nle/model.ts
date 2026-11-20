@@ -14,7 +14,7 @@
 // every unlocked track by one amount (as far as every track can go, so they stay in sync); clips that share a `link`
 // move and trim together.
 
-import type { EdjTrans, Key, KeyProp } from "@contracts/editor";
+import type { EdjMarker, EdjTrans, Key, KeyProp } from "@contracts/editor";
 
 export type Flip = "h" | "v" | "hv";
 
@@ -933,3 +933,53 @@ export function fixTrans(tl: NleTimeline): NleTimeline {
   }
   return tl;
 }
+
+// Timeline markers (contracts/editor.ts EdjMarker): one on a frame, kept in order. Ripples move them (ripple above).
+
+export const markersOf = (tl: NleTimeline): EdjMarker[] => (tl.markers ?? []) as unknown as EdjMarker[];
+const asMarkers = (list: EdjMarker[]) => list as unknown as NleTimeline["markers"];
+const sortedMarkers = (tl: NleTimeline, list: EdjMarker[]): NleTimeline => ({ ...tl, markers: asMarkers([...list].sort((a, b) => a.frame - b.frame)) });
+
+/** The marker frame `f` is on (its first frame or within its duration), or null. */
+export const markerAt = (tl: NleTimeline, f: number): EdjMarker | null =>
+  markersOf(tl).find((m) => f >= m.frame && f < m.frame + Math.max(1, m.dur ?? 1)) ?? null;
+
+/** A marker put on frame `f` (Resolve's: blue, "Marker n"); the timeline as it is when one is on that frame already. */
+export function addMarker(tl: NleTimeline, f: number, m: Partial<EdjMarker> = {}): NleTimeline {
+  const frame = Math.max(0, Math.round(f));
+  const list = markersOf(tl);
+  if (list.some((x) => x.frame === frame)) return tl;
+  return sortedMarkers(tl, [...list, { name: `Marker ${list.length + 1}`, color: "Blue", ...m, frame }]);
+}
+
+/** The marker on `frame` changed; a new `frame` moves it, never onto another marker's frame. */
+export function setMarker(tl: NleTimeline, frame: number, patch: Partial<EdjMarker>): NleTimeline {
+  const list = markersOf(tl);
+  const i = list.findIndex((m) => m.frame === frame);
+  if (i < 0) return tl;
+  const next: EdjMarker = { ...list[i], ...patch, frame: Math.max(0, Math.round(patch.frame ?? frame)) };
+  if (next.frame !== frame && list.some((m) => m.frame === next.frame)) return tl;
+  if (!next.note) delete next.note;
+  if (!(Number(next.dur) > 1)) delete next.dur;
+  else next.dur = Math.round(next.dur!);
+  return sortedMarkers(tl, list.map((m, j) => (j === i ? next : m)));
+}
+
+export function removeMarker(tl: NleTimeline, frame: number): NleTimeline {
+  const list = markersOf(tl);
+  return list.some((m) => m.frame === frame) ? { ...tl, markers: asMarkers(list.filter((m) => m.frame !== frame)) } : tl;
+}
+
+/** hh:mm:ss:ff, as an edit list writes it */
+const tc4 = (f: number, fps: number) => {
+  const r = Math.round(fps);
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const s = Math.floor(f / r);
+  return `${p2(Math.floor(s / 3600))}:${p2(Math.floor(s / 60) % 60)}:${p2(s % 60)}:${p2(f % r)}`;
+};
+const csvCell = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+
+/** Export Markers: a CSV, a row for each marker (timecode, name, colour, note, duration as timecodes). */
+export const markersCsv = (tl: NleTimeline): string =>
+  [["Timecode", "Name", "Colour", "Note", "Duration"], ...markersOf(tl).map((m) => [tc4(m.frame, tl.timeline.fps), m.name ?? "", m.color ?? "", m.note ?? "", tc4(Math.max(1, m.dur ?? 1), tl.timeline.fps)])]
+    .map((r) => r.map(csvCell).join(",")).join("\n") + "\n";

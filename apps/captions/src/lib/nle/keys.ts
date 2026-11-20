@@ -12,7 +12,8 @@ export type KeyAction =
   | "frameBack" | "frameOn" | "secondBack" | "secondOn" | "prevEdit" | "nextEdit" | "start" | "end"
   | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector"
   | `lock:V${number}`
-  | "clearIn" | "clearOut" | "insertEdit" | "overwriteEdit" | "loop";
+  | "clearIn" | "clearOut" | "insertEdit" | "overwriteEdit" | "loop"
+  | "addMarker" | "prevMarker" | "nextMarker" | "addDissolve";
 
 type KeyLike = Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
 
@@ -44,6 +45,7 @@ export const KEYS: Record<string, KeyAction> = {
   Tab: "mediaPool", "⇧Tab": "inspector",
   ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`⌥⇧${n}`, `lock:V${n}` as const])),
   "⌥I": "clearIn", "⌥O": "clearOut", F9: "insertEdit", F10: "overwriteEdit", "⌘/": "loop",
+  M: "addMarker", "⇧ArrowUp": "prevMarker", "⇧ArrowDown": "nextMarker", "⌘T": "addDissolve",
 };
 
 export const keyAction = (e: KeyLike): KeyAction | null => KEYS[chordOf(e)] ?? null;

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Link2, Loader2, Magnet, MousePointer2, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { ChevronRight, Gauge, Link2, Loader2, Magnet, MousePointer2, MoveHorizontal, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histGo, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, blade, clipOfPart, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
-  loopNext, loopPart, markedPart, NO_MARKS, place, setTrack, sourceTimeline,
+  loopNext, loopPart, markedPart, markerAt, markersCsv, markersOf, NO_MARKS, place, removeMarker, setMarker, setTrack, sourceTimeline,
   timecode, toSaved, unlink, withKeys, type Gap, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { COMMANDS, runAll, stateView, type NleRun, type NleState } from "@/lib/nle/commands";
@@ -14,6 +14,9 @@ import { dragging, type Dragged } from "@/lib/nle/drag";
 import { fingerprint, keepUnsaved, readUnsaved } from "@/lib/nle/unsaved";
 import { cn } from "@/lib/utils";
 import { commandOfKey, keyAction } from "@/lib/nle/keys";
+import { CAMERA_FILE, readCamera, rangeReader } from "@/lib/nle/camera";
+import { downloadText } from "@/lib/download";
+import { NleMarkerDialog } from "./NleMarkerDialog";
 import { CHAT_STEP, NleInspector } from "./NleInspector";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
@@ -26,7 +29,7 @@ import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
 import { NleViewer, SoundCard, SourceStrip, Timecode } from "./NleViewer";
 
 export type { NleFile };
-import { NleTracks as Timeline, useLinkedSelection, type Tool } from "./NleTracks";
+import { NleTracks as Timeline, useLinkedSelection, type MenuAt, type Tool } from "./NleTracks";
 
 // A non-linear editor for one timeline, laid out as editors are (NleLayout): the Media Pool on the left (the timeline's own
 // sources, then the page's media bin), the viewer in the middle playing the timeline live from its files (or, as Source,
@@ -65,6 +68,8 @@ const STEPS = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "prevEd
 /** Home and End go there even from within the frame they are on. */
 const HOME_END = new Set(["start", "end"]);
 const VIEWER = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "start", "end", "markIn", "markOut", "clearMarks", "clearIn", "clearOut"]);
+/** a row of the editor's menu: its words, its key, what it does, greyed */
+type MenuRow = [string, string, () => void, boolean];
 /** The edit and draft a timeline page's path shows, as api/editor/nle-bridge.ts reads it. */
 const PAGE = /^\/editor\/(?!p\/)([^/?#]+)\/([^/?#]+)/;
 /** The chat's requests already taken by this window: one delivered twice is run once. */
@@ -172,11 +177,17 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [transPick, pickTrans] = useState<string | null>(null);
   const pick = useCallback((keys: string[]) => {
     setSelected(keys);
-    if (keys.length) {
-      setGap(null);
-      pickTrans(null);
-    }
+    pickTrans(null);
+    if (keys.length) setGap(null);
   }, []);
+  // a double click on a transition's band picks it alone
+  const pickTransAt = useCallback((k: string) => {
+    setSelected([]);
+    setGap(null);
+    pickTrans(k);
+  }, []);
+  // the marker open in its dialog (its frame)
+  const [markerEdit, setMarkerEdit] = useState<number | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [snap, setSnap] = useState(true);
   const [linkSel, toggleLinkSel] = useLinkedSelection();
@@ -193,7 +204,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       return false;
     }
   });
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<MenuAt | null>(null);
   const [sound, setSound] = useState<{ normalize: string[] } | { duck: string } | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
@@ -295,6 +306,17 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     const made = place(next, clips, how);
     commit(made.tl);
     setSelected(made.keys.slice(0, 1));
+    if (isVideo(at.track)) lookCamera(s.src, d.path, made.tl);
+  };
+  // the camera curve its file names, read in the background onto its source: never in the way of laying the clip, and a
+  // failed read records nothing
+  const lookCamera = (src: string, path: string, at: NleTimeline) => {
+    const f = urlOf(src, at);
+    if (!f?.url || f.frame || f.why || !CAMERA_FILE.test(path) || at.sources[src]?.camera) return;
+    void readCamera(rangeReader(f.url)).then((camera) => camera && setHist((h) => {
+      const x = h.now.sources[src];
+      return x?.path === path && !x.camera ? { ...h, now: { ...h.now, sources: { ...h.now.sources, [src]: { ...x, camera } } } } : h;
+    }));
   };
   // a drop with the marks its file has in the source viewer: their part only
   const marked = (d: NleDrop): NleDrop => (d.from !== undefined || d.to !== undefined ? d : { ...d, ...markedPart(srcMarks[d.path], sfpsOf(d), d.seconds) });
@@ -336,6 +358,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     } else if (next.gap !== s.gap) setGap(next.gap ?? null);
     if (next.sel !== s.sel) setSelected(next.sel);
     if ((next.trans ?? null) !== (s.trans ?? null)) pickTrans(next.trans ?? null);
+    // picking clips (⌘A, Escape, the chat's ref) lets go of a picked transition
+    else if (next.sel !== s.sel) pickTrans(null);
     if (next.marks !== s.marks) setMarks(next.marks);
     if (next.clipboard !== s.clipboard) clipboard = next.clipboard ?? [];
     if (next.playhead !== s.playhead) seek(next.playhead / fps);
@@ -354,6 +378,19 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       toast.error((e as Error).message);
     }
   };
+  /** a command on one cut (the clip after it), from its menu: the picks and the playhead stay */
+  const runAtCut = (id: string, cut: string) => {
+    const s = stateNow();
+    const c = find(tl, cut);
+    if (c) apply(s, { ...COMMANDS[id].run({ ...s, sel: [cut], playhead: c.item.rec }, {}), sel: s.sel, playhead: s.playhead }, COMMANDS[id].title);
+  };
+  // M: a marker at the playhead, or the one there opened
+  const marker = () => {
+    const m = markerAt(tl, Math.round(now() * fps));
+    if (m) setMarkerEdit(m.frame);
+    else run("addMarker");
+  };
+  const exportMarkers = () => downloadText(`${tl.timeline.name || "Timeline"} Markers.csv`, markersCsv(tl), "text/csv;charset=utf-8");
 
   // The chat's editor commands (api/editor/nle-bridge.ts): asked for on topic nle:<this window>, taken once each, and run
   // here on the timeline as it is now, with its unsaved edits: a run is one undo step, unsaved like his own (Save stays his).
@@ -419,6 +456,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       const c = COMMANDS[id];
       // Q in the source viewer: back to the timeline (the owner's Q ripples on the timeline)
       if (id === "rippleStart" && inSource) show("timeline");
+      else if (id === "addMarker") marker();
       else if (c.chat) {
         // playing, stepping and marks go to what the viewer shows (Source or Timeline)
         const X = VIEWER.has(id) ? T : tln;
@@ -450,6 +488,9 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         case "toolSelect": setTool("select"); break;
         case "toolTrim": setTool("trim"); break;
         case "toolBlade": setTool("blade"); break;
+        case "toolSlide": setTool("slide"); break;
+        case "toolStretch": setTool("stretch"); break;
+        case "exportMarkers": exportMarkers(); break;
         case "snap": setSnap((s) => !s); break;
         case "linkedSelection": toggleLinkSel(); break;
         case "zoomIn": zoom("="); break;
@@ -564,6 +605,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>
           <Timeline tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
+            trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}
@@ -575,6 +617,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                 <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there. W or ⌘B splits at the playhead" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "slide"} aria-label="Slide" title="Slide: drag a clip between its neighbours, they trim" onClick={() => setTool("slide")} className={iconBtn(tool === "slide")}><MoveHorizontal className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "stretch"} aria-label="Rate Stretch" title="Rate Stretch: drag an end, the clip plays faster or slower" onClick={() => setTool("stretch")} className={iconBtn(tool === "stretch")}><Gauge className="size-3.5" /></button>
                 {sep}
                 <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Edit mode">
                   {(["overwrite", "insert"] as const).map((m) => (
@@ -601,7 +645,24 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         <div className="fixed inset-0 z-50" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
           <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 300) }}
             onPointerDown={(e) => e.stopPropagation()}>
-            {([
+            {menu.on === "clip" && menu.cut && (
+              <div className="group/sub relative">
+                <button type="button" role="menuitem" aria-haspopup="menu" className={menuRow}><span>Add Transition</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
+                <div role="menu" aria-label="Add Transition" className="absolute -top-1 left-full hidden w-44 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl group-focus-within/sub:block group-hover/sub:block">
+                  {(isVideo(find(tl, menu.cut)?.track ?? "V") ? [["Cross Dissolve", "addDissolve", "⌘T"], ["Dip to Black", "addDipToBlack", ""], ["Dip to White", "addDipToWhite", ""]] : [["Cross Fade", "addDissolve", "⌘T"]]).map(([l, id, k]) => (
+                    <button key={id} type="button" role="menuitem" className={menuRow} onClick={() => { setMenu(null); runAtCut(id, menu.cut!); }}>
+                      <span>{l}</span><span className="text-zinc-500">{k}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(menu.on === "gap" ? [["Close Gap", "", () => run("closeGap"), false] as MenuRow]
+              : menu.on === "ruler" ? [
+                ["Add Marker", "M", marker, false],
+                ["Export Markers…", "", exportMarkers, !markersOf(tl).length],
+              ] as MenuRow[]
+              : [
               ["Cut", "⌘X", () => run("cut"), false],
               ["Copy", "⌘C", () => run("copy"), false],
               ["Paste", "⌘V", () => run("paste"), !clipboard.length],
@@ -610,13 +671,18 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               ["Ripple delete", "S", () => run("rippleDelete"), false],
               [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), !linked && sel.length < 2],
               ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !soundKeys(tl, sel).length],
-            ] as const).map(([l, key, fn, off]) => (
+            ] as MenuRow[]).map(([l, key, fn, off]) => (
               <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
                 <span>{l}</span><span className="text-zinc-500">{key}</span>
               </button>
             ))}
           </div>
         </div>
+      )}
+      {markerEdit !== null && markersOf(tl).some((m) => m.frame === markerEdit) && (
+        <NleMarkerDialog key={markerEdit} marker={markersOf(tl).find((m) => m.frame === markerEdit)!} fps={fps} onClose={() => setMarkerEdit(null)}
+          onDone={(patch) => { commit(setMarker(tl, markerEdit, patch), "Edit marker"); setMarkerEdit(null); }}
+          onDelete={() => { commit(removeMarker(tl, markerEdit), "Delete marker"); setMarkerEdit(null); }} />
       )}
     </>
   );

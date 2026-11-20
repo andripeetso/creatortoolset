@@ -3,7 +3,7 @@ import {
   addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, deleteTrack, roll,
   fadeAt, setFade, setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
   NO_MARKS, clipOfPart, editTracks, loopNext, loopPart, markedPart, setMark, sourceTimeline, type Marks,
-  closeGap, extract, lift, rateStretch, slide, type NleItem,
+  closeGap, extract, lift, rateStretch, slide, type NleItem, addMarker, markerAt, markersCsv, removeMarker, setMarker,
 } from "./model";
 import { valueAt } from "./keyframes";
 
@@ -528,5 +528,29 @@ describe("nle model: keys, transitions and markers through every edit", () => {
     expect(marks(ex)).toEqual([0, 40, 50, 120]);
     expect(at(ex, "V1", 2).trans?.len).toBe(10);
     expect(lift(tl, 200, 210)).toBe(tl);
+  });
+});
+
+describe("nle model: timeline markers", () => {
+  const tl = (): NleTimeline => withKeys({ timeline: { fps: 25, name: "Tiny Acrobatics" }, sources: {}, tracks: { V1: { items: [] } } });
+
+  it("adds one a frame, in order, and edits, moves and deletes it", () => {
+    let t = addMarker(addMarker(tl(), 50), 10.4, { name: "Hook", color: "Red" });
+    expect(t.markers).toEqual([{ frame: 10, name: "Hook", color: "Red" }, { frame: 50, name: "Marker 1", color: "Blue" }]);
+    expect(addMarker(t, 50)).toBe(t);
+    t = setMarker(t, 50, { note: "breath", dur: 12, color: "Lavender" });
+    expect(markerAt(t, 61)?.frame).toBe(50);
+    expect(markerAt(t, 62)).toBeNull();
+    // never onto another marker
+    expect(setMarker(t, 50, { frame: 10 })).toBe(t);
+    t = setMarker(t, 50, { frame: 5, note: "", dur: 1 });
+    expect(t.markers).toEqual([{ frame: 5, name: "Marker 1", color: "Lavender" }, { frame: 10, name: "Hook", color: "Red" }]);
+    expect(removeMarker(t, 5).markers).toEqual([{ frame: 10, name: "Hook", color: "Red" }]);
+    expect(removeMarker(t, 7)).toBe(t);
+  });
+
+  it("exports a CSV: timecode, name, colour, note, duration, quoted where a cell needs it", () => {
+    const t = setMarker(addMarker(addMarker(tl(), 3700 * 25 + 3, { name: "End" }), 30, { name: 'Hook, "big"' }), 30, { note: "two\nlines", dur: 50 });
+    expect(markersCsv(t)).toBe('Timecode,Name,Colour,Note,Duration\n00:00:01:05,"Hook, ""big""",Blue,"two\nlines",00:00:02:00\n01:01:40:03,End,Blue,,00:00:00:01\n');
   });
 });

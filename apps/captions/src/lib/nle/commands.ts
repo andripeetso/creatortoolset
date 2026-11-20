@@ -1,9 +1,11 @@
+import { MARKER_COLORS, type EdjMarker, type MarkerColor, type TransType } from "@contracts/editor";
 import {
-  blade, clipAt, clipsFrom, closeGap, copyOf, duplicate, endOf, find, lengthOf, lengthTo, move, paste, remove, rippleToPlayhead, setItems,
-  setMark, setTrack, type Gap, type Marks, type NleItem, type NleTimeline, type PlaceMode,
+  addMarker, blade, setMarker, clipAt, clipsFrom, closeGap, copyOf, duplicate, endOf, extract, find, isVideo, lengthOf, lengthTo, lift, markerAt, markersOf, move,
+  paste, remove, removeMarker, rippleToPlayhead, setItems, setMark, setTrack, type Gap, type Marks, type NleItem, type NleTimeline, type PlaceMode,
 } from "./model";
 import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans } from "./loudness";
 import { INSPECTOR_COMMANDS } from "./inspector-commands";
+import { addTransition, handlesAt, removeTransition } from "./trans";
 
 // Every edit that can be made to an open timeline, by id: the keys (keys.ts), the menus and the chat's nle_run all run
 // these (keys.ts commandOfKey), so a key and the chat do the same thing. A command is pure: the editor's state in, the state after it out.
@@ -58,8 +60,48 @@ const pageOnly = (id: string, title: string): NleCommand => ({ id, title, params
 const cmd = (id: string, title: string, enabled: NleCommand["enabled"], run: NleCommand["run"], params: NleCommand["params"] = {}): NleCommand =>
   ({ id, title, params, chat: true, enabled, run });
 
-const remove_ = (ripple: boolean) => (s: NleState): NleState =>
-  s.gap ? { ...s, tl: closeGap(s.tl, s.gap), gap: null } : { ...s, tl: remove(s.tl, s.sel, ripple) };
+/** In and Out both marked: the frames from In up to the one after Out */
+const range = (s: NleState): [number, number] | null =>
+  s.marks[0] !== null && s.marks[1] !== null && s.marks[1] >= s.marks[0] ? [s.marks[0], s.marks[1] + 1] : null;
+const transPicked = (s: NleState) => !!s.trans && !!find(s.tl, s.trans)?.item.trans;
+// a picked transition, a picked gap, the picked clips, or (nothing picked, In and Out marked) the range: lift, or extract with ripple
+const remove_ = (ripple: boolean) => (s: NleState): NleState => {
+  if (transPicked(s)) return { ...s, tl: removeTransition(s.tl, s.trans!), trans: null };
+  if (s.gap) return { ...s, tl: closeGap(s.tl, s.gap), gap: null };
+  const r = range(s);
+  if (!picked(s) && r) return { ...s, tl: (ripple ? extract : lift)(s.tl, r[0], r[1]) };
+  return { ...s, tl: remove(s.tl, s.sel, ripple) };
+};
+const removable = (s: NleState) => picked(s) || !!s.gap || transPicked(s) || !!range(s);
+/** A 1 s transition at the cut nearest the playhead on the picked clips' tracks (their picture tracks when any; none
+ *  picked: V1); the linked sound at that cut gets a crossfade. */
+const transAt = (type: TransType) => (s: NleState): NleState => {
+  const on = [...new Set(s.sel.map((k) => find(s.tl, k)?.track).filter((t): t is string => !!t))];
+  const tracks = on.some(isVideo) ? on.filter(isVideo) : on.length ? on : ["V1"];
+  let tl = s.tl;
+  for (const id of tracks) {
+    const t = s.tl.tracks[id];
+    const cut = t && !t.locked ? t.items.filter((i) => handlesAt(s.tl, i._k!)).sort((a, b) => Math.abs(a.rec - s.playhead) - Math.abs(b.rec - s.playhead))[0] : undefined;
+    if (cut) tl = addTransition(tl, cut._k!, { ...(isVideo(id) ? { type } : {}), len: fpsOf(s) });
+  }
+  return { ...s, tl };
+};
+/** a marker's name, colour and note, as the chat gives them */
+const markerText = {
+  name: { type: "text", about: "its name", optional: true },
+  color: { type: "text", about: "its colour", optional: true, oneOf: Object.keys(MARKER_COLORS) },
+  note: { type: "text", about: "a note", optional: true },
+} as const satisfies NleCommand["params"];
+const markerPatch = (p: Record<string, number>, t: Record<string, string> = {}): Partial<EdjMarker> => ({
+  ...(t.name !== undefined ? { name: t.name } : {}),
+  ...(t.color !== undefined ? { color: t.color as MarkerColor } : {}),
+  ...(t.note !== undefined ? { note: t.note } : {}),
+  ...(p.frames !== undefined ? { dur: p.frames } : {}),
+});
+const markerTo = (dir: 1 | -1) => (s: NleState) => {
+  const f = markersOf(s.tl).map((m) => m.frame).filter((x) => (dir > 0 ? x > s.playhead : x < s.playhead));
+  return f.length ? at(s, dir > 0 ? f[0] : f.at(-1)!) : s;
+};
 const nudge = (d: number) => (s: NleState) => ({ ...s, tl: move(s.tl, s.sel, d) });
 const mark = (what: Parameters<typeof setMark>[1]) => (s: NleState) => ({ ...s, marks: setMark(s.marks, what, s.playhead) });
 /** A frame count from `frames`, or from `seconds` at the timeline's rate. */
@@ -103,8 +145,9 @@ const LIST: NleCommand[] = [
     return { ...s, tl, playhead: h && tl !== s.tl ? h.item.rec : s.playhead };
   }),
   cmd("rippleEnd", "Ripple trim end to playhead", any, (s) => ({ ...s, tl: rippleToPlayhead(s.tl, s.playhead, "tail", s.sel) })),
-  cmd("delete", "Delete (leaves a gap)", (s) => picked(s) || !!s.gap, remove_(false)),
-  cmd("rippleDelete", "Ripple delete", (s) => picked(s) || !!s.gap, remove_(true)),
+  cmd("delete", "Delete (leaves a gap); nothing picked and In and Out marked: lift that range", removable, remove_(false)),
+  cmd("rippleDelete", "Ripple delete; nothing picked and In and Out marked: extract that range", removable, remove_(true)),
+  cmd("closeGap", "Close Gap", (s) => !!s.gap, (s) => ({ ...s, tl: closeGap(s.tl, s.gap!), gap: null })),
   cmd("enable", "Clip on / off", picked, (s) => ({ ...s, tl: setItems(s.tl, s.sel, { enabled: find(s.tl, s.sel[0])!.item.enabled === false ? undefined : false }) })),
   cmd("markIn", "Mark In at playhead", any, mark("in")),
   cmd("markOut", "Mark Out at playhead", any, mark("out")),
@@ -114,6 +157,8 @@ const LIST: NleCommand[] = [
   pageOnly("toolSelect", "Selection mode"),
   pageOnly("toolTrim", "Trim edit mode"),
   pageOnly("toolBlade", "Blade edit mode"),
+  pageOnly("toolSlide", "Slide edit mode"),
+  pageOnly("toolStretch", "Rate stretch edit mode"),
   pageOnly("snap", "Snapping"),
   pageOnly("linkedSelection", "Linked selection"),
   cmd("nudgeBack", "Nudge one frame earlier", picked, nudge(-1)),
@@ -141,6 +186,18 @@ const LIST: NleCommand[] = [
   pageOnly("insertEdit", "Insert from the source viewer"),
   pageOnly("overwriteEdit", "Overwrite from the source viewer"),
   pageOnly("loop", "Loop"),
+  // M on a marker opens it (the page's own dialog): addMarker is off there
+  cmd("addMarker", "Add a marker at the playhead", (s) => !markerAt(s.tl, s.playhead), (s, p, t) => ({ ...s, tl: addMarker(s.tl, s.playhead, markerPatch(p, t)) }), markerText),
+  cmd("editMarker", "Change the marker at the playhead", (s) => !!markerAt(s.tl, s.playhead), (s, p, t) => ({ ...s, tl: setMarker(s.tl, markerAt(s.tl, s.playhead)!.frame, markerPatch(p, t)) }), {
+    ...markerText, frames: { type: "number", about: "its duration in frames", optional: true },
+  }),
+  cmd("deleteMarker", "Delete the marker at the playhead", (s) => !!markerAt(s.tl, s.playhead), (s) => ({ ...s, tl: removeMarker(s.tl, markerAt(s.tl, s.playhead)!.frame) })),
+  cmd("prevMarker", "Playhead to the previous marker", any, markerTo(-1)),
+  cmd("nextMarker", "Playhead to the next marker", any, markerTo(1)),
+  pageOnly("exportMarkers", "Export Markers"),
+  cmd("addDissolve", "Add a 1 s cross dissolve at the cut nearest the playhead on the picked clips' tracks (none picked: V1)", any, transAt("dissolve")),
+  cmd("addDipToBlack", "Add a 1 s dip to black at the cut nearest the playhead (as addDissolve)", any, transAt("dip_black")),
+  cmd("addDipToWhite", "Add a 1 s dip to white at the cut nearest the playhead (as addDissolve)", any, transAt("dip_white")),
   // the chat's own: what a key does by pointing and dragging
   cmd("select", "Pick the clips given in ref", any, (s) => s),
   cmd("seek", "Playhead to a time", any, (s, p) => at(s, p.seconds * fpsOf(s)), { seconds: seconds("seconds from the start") }),
