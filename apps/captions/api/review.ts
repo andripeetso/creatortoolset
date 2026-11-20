@@ -1360,7 +1360,7 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
       owner: v.meta.owner,
       libraryId: ownLibrary(v.meta.id, v.meta.owner),
       label: project?.name || v.meta.name,
-      item: ver.name ? finalsItemName(ver.name) : null,
+      item: ver.name ? (ver.edit || ver.draft ? finalsItemName(ver.name) : ver.name) : null, // only AI Editor cuts carry a draft mark
       kind: "review",
       width: ver.width,
       height: ver.height,
