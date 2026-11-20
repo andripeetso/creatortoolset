@@ -151,20 +151,32 @@ function textStyle(v: Record<string, unknown>, fonts: readonly string[], run: bo
  */
 function textRuns(v: unknown, text: string, fonts: readonly string[]): { runs?: TextRun[] } {
   const out: TextRun[] = [];
-  const lower = text.toLowerCase();
+  const lower = fold(text);
+  // runs are worked out a letter each after this (normalRuns): letters past twice the text's are overlaps of overlaps, left out so one text cannot cost millions of copies
+  let room = 2 * text.length;
+  const keep = (start: number, end: number, style: TextStyle): boolean => {
+    room -= end - start;
+    if (room < 0) return false;
+    out.push({ start, end, ...style });
+    return true;
+  };
   for (const r of (Array.isArray(v) ? v : []).filter(obj).slice(0, RUNS_MAX)) {
     const style = textStyle(r, fonts, true);
     if (!Object.keys(style).length) continue;
-    const words = typeof r.words === "string" ? r.words.toLowerCase() : "";
-    if (words) for (let at = lower.indexOf(words); at >= 0; at = lower.indexOf(words, at + words.length)) out.push({ start: at, end: at + words.length, ...style });
+    const words = typeof r.words === "string" ? fold(r.words) : "";
+    if (words) for (let at = lower.indexOf(words); at >= 0 && keep(at, at + words.length, style); at = lower.indexOf(words, at + words.length));
     else if (typeof r.start === "number" && typeof r.end === "number") {
       const start = Math.round(num(r.start, 0, text.length, 0));
       const end = Math.round(num(r.end, 0, text.length, 0));
-      if (end > start) out.push({ start, end, ...style });
+      if (end > start) keep(start, end, style);
     }
+    if (room < 0) break;
   }
   return out.length ? { runs: out } : {};
 }
+
+/** Lower case letter by letter, a letter whose lower case is longer ("İ") kept as it is: every place in it is the same place in the text. */
+const fold = (s: string): string => Array.from(s, (ch) => (ch.toLowerCase().length === ch.length ? ch.toLowerCase() : ch)).join("");
 
 /** A text's highlighter strokes as they may be saved: a few, each a colour and (or not) the words it goes behind. */
 function marks(v: unknown): { marks?: { color: string; words?: string; low?: true }[] } {
@@ -238,6 +250,8 @@ const inside = (at: number, size: number, page: number): [number, number] => (si
 
 /** Letters and digits only, lower case, one space between words: what "the same words" is compared on. */
 export const plainWords = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+/** Whether a text's words are a run of a page's own words, whole words: not a part of one, not letters out of two. */
+export const inWords = (own: string, text: string): boolean => ` ${plainWords(own)} `.includes(` ${plainWords(text)} `);
 /** A slide's text as words alone: its picture tokens taken out. */
 export const slideWords = (text: string): string => text.replace(PICTURE_TOKEN, " ").replace(/[ \t]+\n/g, "\n").trim();
 
@@ -380,7 +394,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       return null;
     }
     // its words are a run of the page's own words, whole words: not a part of one, not letters out of two
-    if (own !== undefined && !` ${plainWords(own)} `.includes(` ${plainWords(text)} `)) {
+    if (own !== undefined && !inWords(own, text)) {
       say(`“${text.replace(/\s+/g, " ").slice(0, 60)}” is not in its own words: left out`);
       return null;
     }
@@ -516,6 +530,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     }
     const ids = new Set<string>();
     const layers: Layer[] = [];
+    const sayPage = (why: string) => (r.say ? r.say(k, why) : notes.push(`Page ${k + 1}: ${why}`));
     // a frame's own size, when it has one (a width and a height): its layers are held to it
     const sized = typeof p.w === "number" && typeof p.h === "number";
     const size = sized ? { w: Math.round(num(p.w, DESIGN_LIMITS.frameMin, DESIGN_LIMITS.frameMax, r.w)), h: Math.round(num(p.h, DESIGN_LIMITS.frameMin, DESIGN_LIMITS.frameMax, r.h)) } : { w: r.w, h: r.h };
@@ -542,11 +557,11 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         if (at >= 0) left.splice(at, 1);
       }
       const why = `these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`;
-      if (left.length) (r.say ? r.say(k, why) : notes.push(`Page ${k + 1}: ${why}`));
+      if (left.length) sayPage(why);
     }
     // a loose piece with nothing left on it is gone
     if (loose && !layers.length) continue;
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, (why) => notes.push(`Page ${k + 1}: ${why}`)), ...strokeList(p.strokes, 200), ...finish(p), ...cleanAids(p), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, sayPage), ...strokeList(p.strokes, 200), ...finish(p), ...cleanAids(p), layers });
   }
   // loose layers after the frames: a frame's place in the list is its number
   return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };
