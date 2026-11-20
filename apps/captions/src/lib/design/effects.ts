@@ -1,5 +1,5 @@
 import type { Effect, Layer } from "@contracts/design";
-import { blurPixels, blurredRows, mixed } from "./retouch";
+import { blurPixels, blurredRows, mixed, smallerFor } from "./retouch";
 
 /**
  * A layer's effects (contracts/design.ts Effect), worked pixel by pixel: the Mac app's browser has no blur of a
@@ -116,13 +116,15 @@ export function addNoise(data: Uint8ClampedArray, w: number, h: number, amount: 
  * bw, bh in these pixels) along `angle` (0 left to right, 90 top to bottom). Worked as the layer blurred a quarter, a
  * half and fully, each pixel taken between the two nearest, so the blur grows and no picture shows through another.
  * The layer's edges stay where they are (its alpha is kept). The blurred levels are read a row at a time (retouch.ts
- * blurredRows) and the sharp one is the layer itself, so a wide blur keeps no full-size copy (a saved file may be
- * worked at tens of millions of pixels).
+ * blurredRows) and the sharp one is the layer itself, so a wide blur keeps no full-size copy and a narrow one one copy
+ * (a saved file may be worked at tens of millions of pixels).
  */
 export function progressiveBlur(data: Uint8ClampedArray, w: number, h: number, e: { blur: number; from: number; to: number; angle: number }, box: { x: number; y: number; w: number; h: number }): void {
   if (e.blur <= 0) return;
-  // every level made from the layer before any pixel of it changes
-  const levels = [0.25, 0.5, 1].map((f) => blurredRows(data, w, h, e.blur * f));
+  // every level made from the layer as it was before any pixel of it changes: a narrow level reads it as it goes, so
+  // from one copy that all of them share
+  const src = smallerFor(e.blur * 0.25) < 2 ? data.slice() : data;
+  const levels = [0.25, 0.5, 1].map((f) => blurredRows(src, w, h, e.blur * f));
   const rows = levels.map(() => new Uint8ClampedArray(w * 4));
   const ts = new Float32Array(w);
   const a = (e.angle * Math.PI) / 180;

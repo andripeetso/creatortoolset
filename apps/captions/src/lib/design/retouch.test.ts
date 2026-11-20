@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blurPixels, channelTables, retouch, retouches } from "./retouch";
+import { blurPixels, blurredRows, channelTables, retouch, retouches } from "./retouch";
 
 /** `w` × `h` pixels of one colour. */
 const flat = (w: number, h: number, rgba: [number, number, number, number]) => {
@@ -144,6 +144,20 @@ describe("a picture layer's colour changes", () => {
     blurPixels(d, 5, 5, 0);
     expect(at(d, 5, 2, 2)).toEqual([255, 255, 255, 255]);
     expect(at(d, 5, 1, 2)).toEqual([0, 0, 0, 255]);
+  });
+
+  it("a narrow blur handed out a row at a time, a band at a time, is the whole picture blurred at once, in any order the rows are asked for", () => {
+    const w = 23;
+    const h = 170;
+    const d = new Uint8ClampedArray(w * h * 4).map((_, i) => (i % 4 === 3 ? (i % 7 ? 255 : 40) : (i * 2654435761) >>> 24));
+    for (const radius of [1.5, 5, 7.9]) {
+      const whole = d.slice();
+      blurPixels(whole, w, h, radius);
+      const row = blurredRows(d, w, h, radius);
+      const got = new Uint8ClampedArray(w * h * 4);
+      for (const y of [...Array.from({ length: h }, (_, y) => y), 3, 150, 64, 63]) row(y, got, y * w * 4);
+      expect(Array.from(got)).toEqual(Array.from(whole));
+    }
   });
 
   it("a wide blur, worked on a smaller copy: a flat picture stays flat, an edge becomes an even slope, about as wide as the same blur worked whole", () => {
