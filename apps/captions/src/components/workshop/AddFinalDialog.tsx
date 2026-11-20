@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { uploadFinal } from "@/lib/library";
 import { addFromMac, deviceHere } from "@/lib/onMac";
-import { importCancel, importCopy, importPrint, importProgress, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { importCancel, IN_A_MEDIA_FOLDER, importCopy, importPrint, importProgress, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { getSessionFinals, putFinal, type SessionFinals, type SessionStatus } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 
@@ -91,9 +91,10 @@ export function AddFinalButton({ id, title, status }: { id: string; title: strin
 
 /**
  * The dropped file copied into the project's folder on this Mac (never over another file); its path there. Null when
- * the Mac can't (the file's place unknown, a folder the Mac app may not write to): the file is uploaded instead.
+ * the Mac can't (the file's place unknown, a folder the Mac app may not write to): the file is uploaded instead. A file
+ * in a Media folder already (another workspace's or server's footage) throws: it is never uploaded instead.
  */
-async function copyIn(file: File, folder: string, signal: AbortSignal, onBytes: (n: number) => void): Promise<string | null> {
+export async function copyIn(file: File, folder: string, signal: AbortSignal, onBytes: (n: number) => void): Promise<string | null> {
   const from = await pathOnMac(file);
   if (!from) return null;
   const id = `final-${Date.now()}`;
@@ -103,9 +104,11 @@ async function copyIn(file: File, folder: string, signal: AbortSignal, onBytes: 
   try {
     const r = await importCopy(id, [{ from, to: `${folder}/${file.name}` }]);
     signal.throwIfAborted();
+    const refused = r.failed[0]?.error;
+    if (refused && IN_A_MEDIA_FOLDER.test(refused)) throw new Error(refused);
     return r.copied[0]?.to ?? null;
   } catch (e) {
-    if (signal.aborted) throw e;
+    if (signal.aborted || (e instanceof Error && IN_A_MEDIA_FOLDER.test(e.message))) throw e;
     return null;
   } finally {
     clearInterval(tick);

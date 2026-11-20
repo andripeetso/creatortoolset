@@ -139,7 +139,8 @@ enum MediaFiles {
     /// one server's footage never lands in another's. A server with no sign-in left never blocks a drop.
     static func signedInMediaFolders(signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil }) -> [String] {
         (decoded(serversKey) as [String: [ServerFolder]])
-            .filter { key, _ in signedIn(String(key.split(separator: ":").first ?? Substring(key))) }
+            // the key is host or host:port; an IPv6 host has colons of its own, so both readings are asked (never fails open)
+            .filter { key, _ in signedIn(key) || key.lastIndex(of: ":").map { signedIn(String(key[..<$0])) } == true }
             .values.flatMap { $0.filter { $0.use == "media" }.map(\.path) }
     }
 
