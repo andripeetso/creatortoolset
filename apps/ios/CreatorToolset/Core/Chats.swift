@@ -27,9 +27,13 @@ struct ChatRow: Identifiable, Hashable {
     var picture: String?
     /// The workspace it was read in: its picture and its screen ask there, whatever is picked since.
     var workspace: String?
+    /// An assistant's chat put away on any device (`GET /api/assistant/chats`): it folds away in Chats, as on the desktop.
+    var fold: Fold?
 
     /// Where a row sits: with the ones in play, under "Working" while a job runs, under "Done" when it is over.
     enum Shelf: String { case active, working, done }
+    /// Snoozed (out of the list until a time) or settled (done with it, kept).
+    enum Fold: String { case snoozed, settled }
 }
 
 /// A video in Review as the list sends it (`GET /api/review`): only what its row needs.
@@ -138,7 +142,7 @@ enum ChatList {
 
     /// A tab's badge: its rows that wait on the person.
     static func waiting(_ rows: [ChatRow], chats: Bool) -> Int {
-        rows.filter { onChats($0) == chats && $0.status.waitsOnYou }.count
+        rows.filter { onChats($0) == chats && $0.fold == nil && $0.status.waitsOnYou }.count
     }
 
     /// The page of the website a route stands for, and so its row's id.
@@ -300,6 +304,8 @@ final class ChatsModel: ObservableObject {
     private var others: [ChatRow] = []
     /// Each chat's workspace (`GET /api/assistant/chats`), by chat id: each chat's row says its own.
     private var chatSpaces: [String: String] = [:]
+    /// The chats put away on any device, by chat id (same list).
+    private var chatFolds: [String: ChatRow.Fold] = [:]
     /// The workspace the edits and Review videos are of (the phone's pick when they were read).
     private var workspace: String?
     private var opened: [String: Double]
@@ -452,7 +458,10 @@ final class ChatsModel: ObservableObject {
                 let seen = read.items
                 let spaces = await chats
                 guard api.cacheKey == key else { return }
-                if let spaces { chatSpaces = ChatList.spaces(spaces) }
+                if let spaces {
+                    chatSpaces = ChatList.spaces(spaces)
+                    chatFolds = ChatList.folds(spaces)
+                }
                 couldNotRead = unreadable + read.skipped
                 videos = seen
                 others = fresh
@@ -514,7 +523,7 @@ final class ChatsModel: ObservableObject {
         }
         // every workspace's chats, each in its own
         let fresh: [ChatRow] = link == .none ? [] : ChatList.arrange(
-            rows: edits + ChatList.placed(ChatList.chats(assistant), spaces: chatSpaces, open: assistant),
+            rows: edits + ChatList.placed(ChatList.chats(assistant), spaces: chatSpaces, folds: chatFolds, open: assistant),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
         if fresh != rows { rows = fresh }
     }
@@ -631,6 +640,8 @@ struct ChatsView: View {
     @ObservedObject private var model = ChatsModel.shared
     @ObservedObject private var workspaces = Workspaces.shared
     @State private var query = ""
+    @AppStorage("chats.snoozed.open") private var snoozedOpen = false
+    @AppStorage("chats.settled.open") private var settledOpen = false
     @State private var signingIn = false
 
     var body: some View {
@@ -668,14 +679,29 @@ struct ChatsView: View {
         let many = (workspaces.lists[servers.currentId ?? ""]?.count ?? 0) > 1
         return List {
             if model.link == .expired || model.offline { header }
-            // one kind of thing, one flat list: a chat that asks on top, then the newest
-            ForEach(shown) { row in
+            // one kind of thing, one flat list: a chat that asks on top, then the newest; a search finds every chat
+            let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
+            let row = { (row: ChatRow) in
                 Button { AppNavigator.shared.open(row.route) } label: {
                     ChatListRow(title: row.title, detail: row.detail, status: row.status,
                                 workspace: many ? workspaces.entry(row.workspace) : nil)
                 }
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            }
+            ForEach(searching ? shown : shown.filter { $0.fold == nil }, content: row)
+            // put away on any device: folded under Snoozed and Settled, as on the desktop
+            if !searching {
+                let snoozed = shown.filter { $0.fold == .snoozed }
+                let settled = shown.filter { $0.fold == .settled }
+                if !snoozed.isEmpty {
+                    ShelfHeader(title: "Snoozed", count: snoozed.count, open: $snoozedOpen)
+                    if snoozedOpen { ForEach(snoozed, content: row) }
+                }
+                if !settled.isEmpty {
+                    ShelfHeader(title: "Settled", count: settled.count, open: $settledOpen)
+                    if settledOpen { ForEach(settled, content: row) }
+                }
             }
         }
         .listStyle(.plain)
