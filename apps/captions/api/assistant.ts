@@ -8,9 +8,10 @@ import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { aiFor, completeWithFallback } from "./ai-complete";
 import { cleanTitle, TITLE_SYSTEM, titlePrompt, type TitleSource } from "./lib/chat-title";
+import { findUser } from "./users";
 import { jobTurn, mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
-import { env } from "./lib/env";
+import { env, hostedMode } from "./lib/env";
 import { MODEL_RE, routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
 import { EFFORTS, type Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
@@ -623,14 +624,13 @@ onActionDone((username, done, goOn) => {
       if (!m.action || !done(m.action)) return;
       delete m.action;
       changed = true;
-      const ask = list[i - 1]?.role === "user" ? list[i - 1]!.text : "";
+      // the person's last own ask, however far back (an AI Editor's wait card sits on the line its work posted, after the
+      // reply); never one the app sent (wake): the woken reply has had its one turn
+      const asked = list.slice(0, i).reverse().find((x) => x.role === "user");
+      const ask = asked && !asked.woke ? asked.text : "";
       // shortcut: a card whose reply is still being written is only cleared, its ask is not carried on; carry it from `later` if that bites
       if (!goOn || !ask || i !== list.length - 1 || m.status === "thinking") return;
-      const t = Date.now();
-      const asked: AssistantMessage = { id: randomUUID(), role: "user", text: goOn.say(ask), at: t };
-      const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: t + 1, status: "thinking" };
-      list.push(asked, reply);
-      (conv.held ??= {})[reply.id] = { ask: asked.id, files: [], pasted: [], url: goOn.url, admin: goOn.admin, at: t, ...(chat.ai ? { ai: chat.ai } : {}) };
+      carryOn(conv, list, { text: goOn.say(ask) }, { url: goOn.url, admin: goOn.admin, ...(chat.ai ? { ai: chat.ai } : {}) });
     });
   }
   if (!changed) return;
@@ -638,6 +638,15 @@ onActionDone((username, done, goOn) => {
   tell(username);
   if (goOn) void pump(username);
 });
+
+/** The chat goes on by itself: `ask` as the user's next message, its reply started by pump like any turn sent. Call pump after saving. */
+function carryOn(conv: Conv, list: AssistantMessage[], ask: Pick<AssistantMessage, "text" | "woke">, go: Resume): void {
+  const t = Date.now();
+  const asked: AssistantMessage = { id: randomUUID(), role: "user", at: t, ...ask };
+  const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: t + 1, status: "thinking" };
+  list.push(asked, reply);
+  (conv.held ??= {})[reply.id] = { ask: asked.id, files: [], pasted: [], ...go, at: t };
+}
 
 /** Answers the reply offers as buttons (offer_choices, mcp.ts): the newest offer replaces an earlier one. */
 export function noteChoices(username: string, turn: string, choices: string[]): void {
@@ -718,12 +727,14 @@ const cardOf = (id: string, idStart: string) => id === idStart || id.startsWith(
  * answer buttons under it (`choices`: a press sends that answer). Nothing is said when no card was running: work
  * started on its own page tells nobody in the chat. While a reply is being written in that chat the line waits for
  * it to end, and is dropped if that reply reads the ended work with a tool meanwhile (noteWork): it then says so in
- * its own words, once. Returns whether a card was running.
+ * its own words, once. With `wake` (work that failed), the chat then answers that line by itself (wake). Returns
+ * whether a card was running.
  */
-export function workEnded(username: string, idStart: string, end: WorkEnd & { say?: string; choices?: string[]; href?: string; action?: ActionNeeded }): boolean {
+export function workEnded(username: string, idStart: string, end: WorkEnd & { say?: string; choices?: string[]; href?: string; action?: ActionNeeded; wake?: boolean }): boolean {
   const conv = load(username);
   let hit = false;
   let said = false;
+  let woke = false;
   for (const list of everyChat(conv)) {
     const mine = (w: NonNullable<AssistantMessage["work"]>[number]) => w.status === "running" && cardOf(w.id, idStart);
     const holders = list.filter((m) => m.work?.some(mine));
@@ -740,13 +751,44 @@ export function workEnded(username: string, idStart: string, end: WorkEnd & { sa
     const last = list.at(-1);
     // a reply being written there keeps the last word until it ends
     if (last?.status === "thinking") later.set(last.id, [...(later.get(last.id) ?? []), { line, idStart }]);
-    else list.push(line);
+    else {
+      list.push(line);
+      woke = !!end.wake && wake(username, conv, list);
+    }
   }
   if (hit) {
     save(username);
     tell(username);
   }
+  if (woke) void pump(username);
   return hit;
+}
+
+/** True for an admin, and for every account on an install of one's own (no team to be a member of). */
+export const isAdminHere = (username: string) => !hostedMode() || findUser(username)?.role === "admin";
+
+/** The tools' address: PUBLIC_ORIGIN, else the Mac app's own server on this Mac (CT_LOCAL), where the Mac's AI runs too. */
+export const toolsUrl = () => {
+  const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || (process.env.CT_LOCAL === "1" && process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : "");
+  return origin ? `${origin}/api/mcp` : null;
+};
+
+/** What the chat says by itself when work it started failed (workEnded `wake`): its reply acts on the error. */
+export const WAKE = "That stopped on an error. Fix it with your tools if you can; if it needs me, tell me what to do.";
+
+/**
+ * Work a chat started failed: the chat answers its line by itself, with one reply, so it can act on the error. Never
+ * twice before the person writes: work that a woken reply started and that fails again gets its line only, so a failure
+ * can't wake the chat in a loop. False when it didn't (no AI or no address for the tools: the line stays as it is).
+ */
+function wake(username: string, conv: Conv, list: AssistantMessage[]): boolean {
+  if ([...list].reverse().find((m) => m.role === "user")?.woke) return false;
+  const admin = isAdminHere(username);
+  const ai = list === conv.messages ? conv.ai : conv.past?.find((c) => c.messages === list)?.ai;
+  const url = toolsUrl();
+  if (!url || !routeOf(username, admin, ai)) return false;
+  carryOn(conv, list, { text: WAKE, woke: true }, { url, admin, ...(ai ? { ai } : {}) });
+  return true;
 }
 
 /**

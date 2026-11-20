@@ -33,11 +33,13 @@ const wiped: string[] = [];
 const { createUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { handle, pluginToolsOf } = await import("./mcp");
-const { checkWork, routeOf, runInChat, sweepWork, workEnded } = await import("./assistant");
+const { checkWork, routeOf, runInChat, sweepWork, WAKE, workEnded } = await import("./assistant");
 const { pairDevice } = await import("./lib/devices");
 const { saveSettings } = await import("./lib/providers");
 const { DEFAULT_SETTINGS } = await import("../contracts/providers");
 import type { AssistantMessage, AssistantView } from "../contracts/assistant";
+import type { ActionNeeded } from "../contracts/library";
+const { actionDone } = await import("./lib/action-done");
 
 /** A loaded plug-in whose source is the install's Media Library (LibrarySource.main): a drop "for the library" is refused there. */
 const pluggedLibrary = !!(await import("./library/sources")).mainSource();
@@ -240,6 +242,83 @@ describe("work the assistant started ends", () => {
     expect(workEnded("ana", "edit:e9", { status: "done", say: "Again" })).toBe(false);
     expect(workEnded("ana", "edit:e", { status: "done", say: "Not this one" })).toBe(false);
     expect((await viewOf(cookie)).messages.at(-1)!.text).toBe("The third is ready.");
+  });
+
+  it("work that failed wakes its chat with one reply; work that reply starts and that fails again, or the reply failing, wakes nothing more", async () => {
+    process.env.PUBLIC_ORIGIN = "https://tiny.example";
+    try {
+      const cookie = await cookieOf("ana");
+      const said = async () => (await viewOf(cookie)).messages.slice(-3).map((m: AssistantMessage) => [m.role, m.text, m.status ?? null]);
+      const fail = (id: string) => workEnded("ana", `edit:${id}`, { status: "failed", detail: "Not in a footage folder", say: `Cut failed on ${id}.`, choices: ["Retry"], wake: true });
+      const t = await turn(cookie, "Edit the tiny video");
+      await tool(t.token, "tiny_card", { id: "e30" });
+      await t.end();
+      expect(fail("e30")).toBe(true);
+      // the line, then the chat's own ask, answered on the Mac like any turn
+      const woken = await claim();
+      expect(await said()).toEqual([["assistant", "Cut failed on e30.", "done"], ["user", WAKE, null], ["assistant", "", "thinking"]]);
+      expect((await viewOf(cookie)).messages.at(-2)!.woke).toBe(true);
+      // the woken reply runs the work again and it fails again: the line only
+      await tool(`Bearer ${woken.mcp.token}`, "tiny_card", { id: "e31" });
+      await finish(woken.id, "Added the folder and ran it again.");
+      expect(fail("e31")).toBe(true);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(await said()).toEqual([["user", WAKE, null], ["assistant", "Added the folder and ran it again.", "done"], ["assistant", "Cut failed on e31.", "done"]]);
+
+      // once the person writes, a failure wakes the chat again; that woken reply failing starts nothing
+      const again = await turn(cookie, "Try the other folder");
+      await tool(again.token, "tiny_card", { id: "e32" });
+      await again.end();
+      expect(fail("e32")).toBe(true);
+      const second = await claim();
+      await app.request(`/api/devices/relay/${second.id}/fail`, { method: "POST", ...json({ error: "The Mac lost the job" }, { authorization: `Bearer ${mac.token}` }) });
+      await new Promise((r) => setTimeout(r, 50));
+      const end = (await viewOf(cookie)).messages;
+      expect(end.at(-1)).toMatchObject({ role: "assistant", status: "error" });
+      expect(end.at(-2)).toMatchObject({ role: "user", text: WAKE });
+      expect(end.filter((m: AssistantMessage) => m.status === "thinking")).toEqual([]);
+    } finally {
+      delete process.env.PUBLIC_ORIGIN;
+    }
+  });
+
+  it("a card on the line work posted carries the person's last ask on once it is done, and once only; never an ask the app sent", async () => {
+    const cookie = await cookieOf("ana");
+    const tail = async (n: number) => (await viewOf(cookie)).messages.slice(-n).map((m: AssistantMessage) => [m.role, m.text, m.status ?? null, !!m.action]);
+    const go = { say: (ask: string) => ask, url: "https://tiny.example/api/mcp", admin: true };
+    const card = (workspace: string) => ({ kind: "setup", workspace, title: "Set up the Media Library", line: "Set it up", actions: [] }) as unknown as ActionNeeded;
+    const setUp = (workspace: string) => actionDone("ana", (a) => a.kind === "setup" && a.workspace === workspace, go);
+    // user ask → reply → the work's line with its wait card
+    const t = await turn(cookie, "Edit the tiny video");
+    await tool(t.token, "tiny_card", { id: "e40" });
+    await t.end();
+    expect(workEnded("ana", "edit:e40", { status: "done", detail: "Waits for setup", say: "e40 waits for the Media Library setup.", action: card("tiny-ws") })).toBe(true);
+    expect(await tail(3)).toEqual([["user", "Edit the tiny video", null, false], ["assistant", "Done.", "done", false], ["assistant", "e40 waits for the Media Library setup.", "done", true]]);
+    setUp("tiny-ws");
+    const job = await claim();
+    expect(await tail(3)).toEqual([["assistant", "e40 waits for the Media Library setup.", "done", false], ["user", "Edit the tiny video", null, false], ["assistant", "", "thinking", false]]);
+    await finish(job.id, "Carried on.");
+    const n = (await viewOf(cookie)).messages.length;
+    setUp("tiny-ws");   // the card is gone: nothing more
+    expect((await viewOf(cookie)).messages.length).toBe(n);
+
+    // the last ask is the app's own (a woken reply that failed): the card goes, and the chat waits for the person
+    process.env.PUBLIC_ORIGIN = "https://tiny.example";
+    try {
+      const u = await turn(cookie, "Edit the other one");
+      await tool(u.token, "tiny_card", { id: "e41" });
+      await u.end();
+      workEnded("ana", "edit:e41", { status: "failed", say: "Cut failed on e41.", wake: true });
+      const woken = await claim();
+      await tool(`Bearer ${woken.mcp.token}`, "tiny_card", { id: "e42" });
+      await app.request(`/api/devices/relay/${woken.id}/fail`, { method: "POST", ...json({ error: "The Mac lost the job" }, { authorization: `Bearer ${mac.token}` }) });
+      expect(workEnded("ana", "edit:e42", { status: "done", say: "e42 waits for the Media Library setup.", action: card("tiny-ws-2") })).toBe(true);
+      setUp("tiny-ws-2");
+      await new Promise((r) => setTimeout(r, 50));
+      expect(await tail(3)).toEqual([["user", WAKE, null, false], ["assistant", "Claude on the Mac: The Mac lost the job", "error", false], ["assistant", "e42 waits for the Media Library setup.", "done", false]]);
+    } finally {
+      delete process.env.PUBLIC_ORIGIN;
+    }
   });
 });
 

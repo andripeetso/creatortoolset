@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { jobTurn, type AuthVars } from "./auth";
-import { chatBusy, chatOfTurn, routeOf, runInChat, setRunEnded } from "./assistant";
+import { chatBusy, chatOfTurn, isAdminHere, routeOf, runInChat, setRunEnded, toolsUrl } from "./assistant";
 import { announceSoon } from "./lib/announce-soon";
 import { deviceName, isOnline } from "./lib/devices";
-import { env, hostedMode } from "./lib/env";
+import { env } from "./lib/env";
 import type { Route } from "./lib/providers";
 import { notifyWorkshopOwner } from "./review";
-import { findUser, listUsers, USERNAME_RE } from "./users";
+import { listUsers, USERNAME_RE } from "./users";
 import {
   AUTOMATION_NAME_MAX,
   AUTOMATION_PROMPT_MAX,
@@ -115,17 +115,9 @@ const NO_AI = "Needs an AI provider";
 const NO_AI_MEMBER = "Needs Claude Code on a computer";
 const NOT_CLAUDE = "Needs Claude Code";
 const AI_GONE = "AI provider not found or turned off";
-/** True for an admin, and for every account on an install of one's own (no team to be a member of). */
-const isAdminHere = (username: string) => !hostedMode() || findUser(username)?.role === "admin";
 /** Why no task can run for this account, in plain words, or null. The page shows it before a task is built. */
 export const blockOf = (route: Route | null, admin = true): string | null =>
   !route ? (admin ? NO_AI : NO_AI_MEMBER) : route.instance.driver !== "claude" ? NOT_CLAUDE : null;
-
-/** The tools' address: PUBLIC_ORIGIN, else the Mac app's own server on this Mac (CT_LOCAL), where the Mac's AI runs too. */
-const toolsUrl = () => {
-  const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || (process.env.CT_LOCAL === "1" && process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : "");
-  return origin ? `${origin}/api/mcp` : null;
-};
 
 /**
  * Whether a task can run now: its route; `wait` when it can run later by itself (its computer is offline, its chat is
