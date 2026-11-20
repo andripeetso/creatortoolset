@@ -3,6 +3,7 @@ import { libraryDb } from "../library/db";
 import { wordsOf } from "../library/transcribe";
 import { dropTask, startTask, TASK_EXPIRED, taskFor, taskWaitLine } from "../work/tasks";
 import { LOUD_WAIT_MS, type LoudnessInput } from "../work/tasks/loudness";
+export { LOUD_WAIT_MS };
 import { LOUDNESS_TASK, readLoud } from "./analyze";
 import { fileFor, foldersOf, type FileRow } from "./reach";
 import { editSources } from "./store";
