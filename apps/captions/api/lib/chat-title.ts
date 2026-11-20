@@ -2,6 +2,7 @@
  * A chat's name, written by the person's own AI from its first message and what came with it (the open project, the
  * page, the files), so the list says what the chat is about rather than repeating its first words.
  */
+import type { AssistantMessage } from "../../contracts/assistant";
 
 /** What the first message of a chat said and showed. */
 export interface TitleSource {
@@ -15,6 +16,17 @@ export interface TitleSource {
   quote?: string;
   /** Names of the files, folders and pictures sent with it. */
   attachments?: string[];
+  /** The chat's first answer, once there is one: it says which video or piece a vague message meant. */
+  reply?: string;
+}
+
+/** A saved chat's first message and first answer as a name's source (the page it was sent from isn't kept). */
+export function sourceOf(messages: AssistantMessage[]): TitleSource | null {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return null;
+  const reply = messages.find((m) => m.role === "assistant" && m.status === "done" && m.text.trim());
+  const attachments = [...(first.files ?? []).map((f) => f.name), ...(first.images ?? []).map((i) => i.name), ...(first.folders ?? []), ...(first.localFiles ?? []), ...(first.pasted ?? []), ...(first.clips ?? []).map((c) => c.title)];
+  return { text: first.text, ...(first.quote ? { quote: first.quote } : {}), ...(attachments.length ? { attachments } : {}), ...(reply ? { reply: reply.text } : {}) };
 }
 
 export const TITLE_SYSTEM = `Write a title that will help the user recognize this chat weeks later, in a list of their chats in a creator's video and content app.
@@ -30,7 +42,7 @@ Title the subject and outcome. Discard incidental instructions.
 Editorial rules:
 - 3-8 words, fewer than 40 characters.
 - Use a compact noun phrase or clear action phrase.
-- When the message is vague ("edit the video", "fix this", "make it better"), take the subject from the open project, the page, the quoted text, or the attachments: "Edit the apology video", not "Edit the video".
+- When the message is vague ("edit the video", "fix this", "make it better"), take the subject from the open project, the page, the quoted text, the attachments, or the assistant's first answer: "Edit the apology video", not "Edit the video".
 - Capture the umbrella goal when the request lists several steps.
 - Models, tools, output formats, and monitoring instructions do not belong in the title unless they are themselves the topic.
 - For research, name the question domain rather than the research process.
@@ -53,6 +65,7 @@ export function titlePrompt(s: TitleSource): string {
   if (s.visible) parts.push(`On screen:\n${cap(s.visible, 1000)}`);
   if (s.quote) parts.push(`Quoted from the page:\n${cap(s.quote, 1000)}`);
   if (s.attachments?.length) parts.push(`Attachments: ${cap(s.attachments.join(", "), 1000)}`);
+  if (s.reply) parts.push(`The assistant's first answer:\n${cap(s.reply, 1500)}`);
   return parts.join("\n\n");
 }
 

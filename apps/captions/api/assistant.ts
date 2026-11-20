@@ -7,7 +7,7 @@ import path from "node:path";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { aiFor, completeWithFallback } from "./ai-complete";
-import { cleanTitle, TITLE_SYSTEM, titlePrompt, type TitleSource } from "./lib/chat-title";
+import { cleanTitle, sourceOf, TITLE_SYSTEM, titlePrompt, type TitleSource } from "./lib/chat-title";
 import { findUser } from "./users";
 import { jobTurn, mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
@@ -1472,6 +1472,7 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     pendingSave.delete(username);
     save(username);
     tell(username, replyId);
+    nameIfUnnamed(username, chatWith(load(username), replyId));
     // the person hears it ended (a Stop is their own doing), and the next message's turn starts
     if (m && !stop.signal.aborted) attend(username, replyId, m.status === "error" ? "failed" : "done", m.text);
     void pump(username);
@@ -2126,10 +2127,9 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   chat.messages.push(asked, reply);
-  // tests take the Mac's requests in order: a name's request is only made in one that asks for it
-  if (chat.messages.length === 2 && chat.title === undefined && chat.id && (process.env.NODE_ENV !== "test" || process.env.CHAT_NAMES)) {
+  if (chat.messages.length === 2 && chat.title === undefined && chat.id && namesOn()) {
     const attachments = [...files.map((f) => f.name), ...input.paths, ...input.local, ...input.images.map((im) => im.name)];
-    void nameChat(u, chat.id, { text: input.text, project: project?.name, page: input.context?.title, visible: input.context?.visible, quote: input.context?.selection, attachments }, chat.ai);
+    void nameChat(u.username, chat.id, { text: input.text, project: project?.name, page: input.context?.title, visible: input.context?.visible, quote: input.context?.selection, attachments }, chat.ai);
   }
   // every turn goes through the queue: one with nothing ahead and its videos in starts in this call (Stop counts on that)
   (conv.held ??= {})[reply.id] = {
@@ -2154,18 +2154,44 @@ assistantApp.post("/turn", (c) => sendTurn(c));
 /** What the usage tally counts a chat's name as. */
 const TITLE_LABEL = "Chat names";
 
-/** A new chat's name, written by its AI from its first message (lib/chat-title.ts). A name given by hand meanwhile wins; a failure keeps its first words. */
-async function nameChat(u: Pick<SessionUser, "username" | "role">, id: string, source: TitleSource, ai?: Selection): Promise<void> {
-  const route = aiFor(u, JOB, TITLE_LABEL, ai);
+// tests take the Mac's requests in order: a name's request is only made in one that asks for it
+const namesOn = () => process.env.NODE_ENV !== "test" || !!process.env.CHAT_NAMES;
+/** Names asked for per chat since the server started: the first message's, then again after an answer or on opening. */
+const nameAsks = new Map<string, number>();
+const MAX_NAME_ASKS = 3;
+const naming = new Set<string>();
+
+/** A chat still under its first words is asked a name again (its first ask failed: the Mac was busy; or it's from before names). */
+function nameIfUnnamed(username: string, chat: Chat | null | undefined): void {
+  if (!chat?.id || chat.title !== undefined || !namesOn()) return;
+  const source = sourceOf(chat.messages);
+  if (source) void nameChat(username, chat.id, source, chat.ai);
+}
+
+/** A chat's name, written by its AI (lib/chat-title.ts). A name given by hand meanwhile wins; a failure keeps its first words and is logged. */
+async function nameChat(username: string, id: string, source: TitleSource, ai?: Selection): Promise<void> {
+  const asks = nameAsks.get(id) ?? 0;
+  if (naming.has(id) || asks >= MAX_NAME_ASKS) return;
+  const route = aiFor(username, JOB, TITLE_LABEL, ai);
   if (route.off) return;
-  // a name needs no long thinking, whatever effort the chat itself runs at
-  if (route.mac?.provider) route.mac.provider.effort = "low";
-  const title = await completeWithFallback(TITLE_SYSTEM, titlePrompt(source), undefined, cleanTitle, route).catch(() => "");
-  const chat = chatOf(load(u.username), id);
-  if (!title || !chat || chat.title !== undefined) return;
-  chat.title = title;
-  save(u.username);
-  tell(u.username);
+  nameAsks.set(id, asks + 1);
+  naming.add(id);
+  try {
+    // a name needs no long thinking, whatever effort the chat itself runs at, and waits behind the person's own turns
+    if (route.mac?.provider) route.mac.provider.effort = "low";
+    if (route.mac) route.mac.background = true;
+    const title = await completeWithFallback(TITLE_SYSTEM, titlePrompt(source), undefined, cleanTitle, route).catch((e) => {
+      console.warn(`[assistant] chat name failed (${id}): ${e instanceof Error ? e.message : String(e)}`);
+      return "";
+    });
+    const chat = chatOf(load(username), id);
+    if (!title || !chat || chat.title !== undefined) return;
+    chat.title = title;
+    save(username);
+    tell(username);
+  } finally {
+    naming.delete(id);
+  }
 }
 
 // GET /action/:id → { action }: a card's Retry (D14). The server asks again (the computer it could not find, the setup,
@@ -2343,6 +2369,8 @@ assistantApp.post("/chats/:id/seen", (c) => {
   if (woke) chat.snooze = undefined;
   save(u.username);
   if (woke) tell(u.username);
+  // on screen on the desktop or the phone: one still under its first words (an older one too) is asked a name
+  nameIfUnnamed(u.username, chat);
   return c.json({ ok: true });
 });
 
@@ -2374,7 +2402,7 @@ assistantApp.post("/chats/:id/branch", async (c) => {
     if (m.images) m.images = m.images.map((im) => copyImage(u.username, im));
     return m;
   });
-  keepPast(u.username, conv, [{ id, messages, title: chat.title ?? titleOf(chat.messages), seen: Date.now(), workspace: chat.workspace, ai: chat.ai }, ...(conv.past ?? [])]);
+  keepPast(u.username, conv, [{ id, messages, title: chat.title, seen: Date.now(), workspace: chat.workspace, ai: chat.ai }, ...(conv.past ?? [])]);
   save(u.username);
   tell(u.username);
   return c.json({ id, chats: await chatsOf(u) });
