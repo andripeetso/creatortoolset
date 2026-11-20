@@ -35,6 +35,15 @@ beforeEach(() => {
 // a transcript whose speech model is not downloaded yet: the stand-in for transcribeVersion says so (lib/device-transcribe.ts)
 import { vi } from "vitest";
 const stuck = vi.hoisted(() => ({ model: false }));
+// a strip's JPEG, set by a test (the files here are not media): null = the real makeSprite
+const madeSprite = vi.hoisted(() => ({ jpeg: null as Buffer | null }));
+vi.mock("./media/sprite", async (real) => {
+  const m = await real<typeof import("./media/sprite")>();
+  return { ...m, makeSprite: (src: string, out: string, duration: number, turn?: number) => (madeSprite.jpeg ? import("node:fs/promises").then((f) => f.writeFile(out, madeSprite.jpeg!)) : m.makeSprite(src, out, duration, turn)) };
+});
+/** The smallest JPEG header with a size (pictures.ts jpegSize reads its frame marker). */
+const jpegOf = (w: number, h: number) => Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9]);
+
 // a probe's answer, set by a test (the files here are not media): null = the real ffprobe
 const probed = vi.hoisted(() => ({ value: null as import("./media/probe").ProbeSummary | null }));
 vi.mock("./media/probe", async (real) => {
@@ -334,5 +343,43 @@ describe("strips of frames", () => {
     expect(sprite().map((j) => j.version_id)).toEqual(["new", "old"]);
     expect(sprite()[0]!.error).toBeTruthy();
     expect(d.prepare("SELECT state FROM asset_versions WHERE id = 'old'").get()).toEqual({ state: "ready" }); // an extra: the clip stays ready
+  });
+
+  it("an old 16:9 strip on an upright clip is made again once from this server's copy; one of the clip's shape, or a computer's clip, is never touched", async () => {
+    const { backfillSprite } = await import("./worker");
+    const shaped = (id: string, w: number, h: number, source = `k/${id}`) => {
+      add(id, "video", { created: 10 });
+      d.prepare("UPDATE asset_versions SET probe = ?, source_key = ? WHERE id = ?").run(JSON.stringify({ duration: 5, width: w, height: h, rotation: 0, vcodec: "h264", acodec: "aac" }), source, id);
+      d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'sprite', ?, 7)").run(id, `old/${id}.jpg`); // an old strip: no size noted
+    };
+    const strip = (id: string) => d.prepare("SELECT storage_key, bytes, cell_w, cell_h FROM derivatives WHERE version_id = ? AND kind = 'sprite'").get(id);
+    shaped("tall", 1080, 1920);
+    shaped("wide", 1920, 1080);
+    shaped("onmac", 1080, 1920, "mac:onmac"); // its only copy is on a computer: that computer's to make (stray-strips.test.ts)
+    const f = path.join(dir, "tall.bin");
+    writeFileSync(f, "tall");
+    await blobs.put("k/tall", f);
+    madeSprite.jpeg = jpegOf(144 * 20, 256);
+    try {
+      // one a turn, newest first; the old strip stays the served one until the new one is kept
+      expect(await backfillSprite()).toBe(true);
+      expect(await backfillSprite()).toBe(true);
+      expect(await backfillSprite()).toBe(false);
+    } finally {
+      madeSprite.jpeg = null;
+    }
+    expect(strip("tall")).toEqual({ storage_key: "libraries/lib_a/v/tall/sprite.jpg", bytes: jpegOf(1, 1).length, cell_w: 144, cell_h: 256 });
+    expect(strip("wide")).toEqual({ storage_key: "old/wide.jpg", bytes: 7, cell_w: 160, cell_h: 90 }); // its shape: noted, not made again
+    expect(strip("onmac")).toEqual({ storage_key: "old/onmac.jpg", bytes: 7, cell_w: null, cell_h: null });
+  });
+
+  it("an old strip that can't be made again keeps the old one and is not tried again", async () => {
+    const { backfillSprite } = await import("./worker");
+    add("tall2", "video", { created: 11 });
+    d.prepare("UPDATE asset_versions SET probe = ? WHERE id = 'tall2'").run(JSON.stringify({ duration: 5, width: 720, height: 1280, rotation: 0, vcodec: "h264" }));
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('tall2', 'sprite', 'old/tall2.jpg', 7)").run();
+    expect(await backfillSprite()).toBe(true); // its source is not here: the remake fails
+    expect(d.prepare("SELECT storage_key, cell_w, cell_h FROM derivatives WHERE version_id = 'tall2' AND kind = 'sprite'").get()).toEqual({ storage_key: "old/tall2.jpg", cell_w: 160, cell_h: 90 });
+    expect(await backfillSprite()).toBe(false);
   });
 });

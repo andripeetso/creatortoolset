@@ -1,13 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { AssetCard } from "@contracts/library";
 import { cn } from "@/lib/utils";
 import { cardColumns } from "./views";
-import { across, clock, frameAt, frameStyle, KIND_ICON, NoPictureChip, noPictureYet, PhotoMasonry, type Drag } from "./ClipCards";
+import { across, clock, frameAt, frameStyle, KIND_ICON, NoPictureChip, noPictureYet, PhotoMasonry, useStrip, type Drag } from "./ClipCards";
 
 /**
  * The Gallery view (LibraryPage.tsx): only clips, big and edge to edge across the open tab. Tall clips stand in one
- * column, wide ones take two at the same height; the length and the tags sit on the picture, the name shows under the
- * pointer, and a mouse across a video scrubs it. Only photos: in their own proportions, in columns.
+ * column, wide ones take two at the same height; the length and the tags sit on the picture, the name shows on it under
+ * the pointer (no hover text of its own: it would cover the frames), and a mouse across a video scrubs it. Only photos: in their own proportions, in columns.
  */
 
 /** Wider than tall (a little square-ish stays tall): two columns at the same height. */
@@ -41,6 +41,8 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
   const Icon = KIND_ICON[a.kind];
   const [at, setAt] = useState<number | null>(null);
   const strip = a.kind === "video" ? a.spriteUrl : undefined;
+  const self = useRef<HTMLButtonElement>(null);
+  const cell = useStrip(strip, self);
   const scrub = strip
     ? {
         onPointerMove: (e: React.PointerEvent<HTMLElement>) => e.pointerType === "mouse" && setAt(across(e)),
@@ -52,8 +54,8 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
     <button
       type="button"
       onClick={onOpen}
+      ref={self}
       data-state={a.state}
-      title={a.title}
       {...drag}
       {...scrub}
       style={ownShape ? { aspectRatio: `${a.width || 4} / ${a.height || 3}` } : undefined}
@@ -71,9 +73,10 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
           {noPictureYet(a) && <NoPictureChip />}
         </div>
       )}
-      {strip && at !== null && (
+      {/* the picture stays until the strip is here */}
+      {strip && cell && at !== null && (
         <>
-          <div aria-hidden data-scrub className="absolute inset-0 bg-zinc-950" style={frameStyle(strip, frameAt(at))} />
+          <div aria-hidden data-scrub className="absolute inset-0 bg-zinc-950" style={frameStyle(strip, frameAt(at), cell, ownShape ? (a.width || 4) / (a.height || 3) : wide(a) ? 3 / 2 : 3 / 4)} />
           <div aria-hidden className="absolute bottom-0 left-0 h-0.5 bg-white/90" style={{ width: `${at * 100}%` }} />
         </>
       )}

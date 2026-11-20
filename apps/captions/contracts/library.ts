@@ -61,6 +61,9 @@ export interface AssetCard {
 
 /** Frames in a clip's strip (`spriteUrl`), side by side; frame i shows the middle of the clip's i-th share (api/library/media/sprite.ts). */
 export const SPRITE_FRAMES = 20;
+/** A strip frame's longer side in pixels: each frame keeps the clip's own shape (an upright clip's frames stand upright). Strips made
+ *  before 2026-11-19 are 160 × 90 cuts; a card reads the frame shape from the picture itself (ClipCards.tsx useStrip). */
+export const SPRITE_SIDE = 256;
 
 export interface AssetDetail extends AssetCard {
   versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState }[];

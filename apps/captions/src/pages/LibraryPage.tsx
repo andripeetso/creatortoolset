@@ -63,7 +63,7 @@ import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { EmptyDrop } from "./library/EmptyDrop";
 import { FoldersToAllow, lookForNew, lookedLine, useImportQuestion } from "./library/Import";
-import { repairPictures } from "@/lib/onMac";
+import { repairPictures, repairStrips } from "@/lib/onMac";
 import { SourceMediaItems } from "./library/SourceMediaItems";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, savable, withSaved } from "./library/Filters";
@@ -101,7 +101,7 @@ const SORT_KEY = "library:sort";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The libraries whose photos with no picture this window has asked this Mac for, once a session (repairPictures). */
+/** The libraries whose photos with no picture and stray strips this window has asked this Mac for, once a session (repairPictures, repairStrips). */
 const picturesRepaired = new Set<string>();
 
 export default function LibraryPage() {
@@ -851,11 +851,16 @@ export default function LibraryPage() {
     lookDone.current = window.setTimeout(() => setLookLine(null), 8000);
   };
 
-  // once per library a session, in the Mac app with the server elsewhere: photos with no picture get theirs from this Mac
+  // once per library a session, in the Mac app with the server elsewhere: photos with no picture get theirs from this Mac,
+  // then videos whose old strip isn't their shape get a new one (repairStrips), one after the other, never in the view's way
   useEffect(() => {
     if (!library || !watch || !macRemote || picturesRepaired.has(library.id)) return;
     picturesRepaired.add(library.id);
-    void repairPictures(library.id).then((n) => n && reload(), () => {});
+    const id = library.id;
+    void repairPictures(id)
+      .catch(() => 0)
+      .then(async (pictures) => pictures + (await repairStrips(id).catch(() => 0)))
+      .then((n) => n && reload(), () => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once a library, when the owner's view and the Mac are known
   }, [library?.id, !!watch, macRemote]);
 

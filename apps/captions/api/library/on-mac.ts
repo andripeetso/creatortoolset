@@ -15,6 +15,7 @@ import { kindOf, mimeOf, recordVersion } from "./routes";
 import { deviceOf } from "../lib/devices";
 import { rootAt } from "../lib/storage";
 import { confirmPlaces, OWN } from "./places";
+import { noteStrip, strayStrip, watchedAspect, OLD_CELL } from "./media/sprite";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
 import { hostsNone } from "../../contracts/library";
@@ -199,6 +200,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     await writeFile(file, Buffer.from(b64, "base64"));
     const { bytes } = await blobs.put(`${base}/${k}.jpg`, file);
     d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, k, `${base}/${k}.jpg`, bytes);
+    if (k === "sprite") noteStrip(d, versionId, Buffer.from(b64, "base64"));
   }
   d.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(versionId);
   // a sound's kind from its name, folders and length (sound-kind.ts: no listen, the file is not here); a library the AI
@@ -254,12 +256,53 @@ export async function putThumb(libraryId: string, versionId: string, b64: unknow
   const named = own.mac_path ?? own.source_path;
   const mime = named ? mimeOf(path.basename(named)) : null;
   if (mime && mime !== "application/octet-stream" && mime !== own.mime) d.prepare("UPDATE asset_versions SET mime = ? WHERE id = ?").run(mime, versionId);
+  await keepJpeg(libraryId, versionId, "thumb", b64 as string);
+  return true;
+}
+
+/** A JPEG made on a computer kept as a version's `kind` derivative (a replace: the one before is served until this lands). */
+async function keepJpeg(libraryId: string, versionId: string, kind: "thumb" | "sprite", b64: string): Promise<void> {
   const base = `libraries/${libraryId}/v/${versionId}`;
   const scratch = path.join(env.dataDir, "library", "staging");
   await mkdir(scratch, { recursive: true });
-  const file = path.join(scratch, `${versionId}-thumb.jpg`);
-  await writeFile(file, Buffer.from(b64 as string, "base64"));
-  const { bytes } = await blobs.put(`${base}/thumb.jpg`, file);
-  d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, "thumb", `${base}/thumb.jpg`, bytes);
+  const file = path.join(scratch, `${versionId}-${kind}.jpg`);
+  await writeFile(file, Buffer.from(b64, "base64"));
+  const { bytes } = await blobs.put(`${base}/${kind}.jpg`, file);
+  const d = libraryDb();
+  d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, kind, `${base}/${kind}.jpg`, bytes);
+  if (kind === "sprite") noteStrip(d, versionId, Buffer.from(b64, "base64"));
+}
+
+/**
+ * This library's videos with an old strip (16:9 cuts, no frame size noted) that isn't their shape, whose file `device`
+ * has: the computer makes each strip again from the file (repairStrips) and PUTs it. An old strip that is the clip's
+ * shape is noted as it is, so it is never looked at again.
+ * shortcut: looks at the newest 500 old strips a pass; a library with more settles them over later passes
+ */
+export function strayStrips(libraryId: string, device: string, limit = 50): { versionId: string; path: string }[] {
+  const d = libraryDb();
+  const rows = d
+    .prepare(
+      `SELECT v.id AS versionId, v.probe, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
+         FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+         JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
+        WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL
+        ORDER BY a.created_at DESC LIMIT 500`,
+    )
+    .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null }[];
+  const out: { versionId: string; path: string }[] = [];
+  for (const r of rows) {
+    if (!strayStrip(watchedAspect(r.probe))) d.prepare("UPDATE derivatives SET cell_w = ?, cell_h = ? WHERE version_id = ? AND kind = 'sprite'").run(OLD_CELL.w, OLD_CELL.h, r.versionId);
+    else if (r.path && out.length < limit) out.push({ versionId: r.versionId, path: r.path });
+  }
+  return out;
+}
+
+/** A video's strip made on the computer that has it (a JPEG under 2 MB), for a version of `libraryId`: false when it isn't one. */
+export async function putSprite(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
+  if (!jpeg(b64, 2 * MB)) return false;
+  const own = libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.kind = 'video'").get(versionId, libraryId);
+  if (!own) return false;
+  await keepJpeg(libraryId, versionId, "sprite", b64 as string);
   return true;
 }

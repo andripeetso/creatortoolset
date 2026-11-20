@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
@@ -17,7 +17,7 @@ import { limitLine } from "../../contracts/plans";
 import { hostsOriginals, hostsProxies, SOUNDS } from "../../contracts/library";
 import { tagSoundType } from "./sfx-type";
 import { makeProxy, needsProxy, wantsProxy } from "./media/proxy";
-import { makeSprite } from "./media/sprite";
+import { makeSprite, noteStrip, OLD_CELL, strayStrip, watchedAspect } from "./media/sprite";
 import { looksLikeSong, probe, type ProbeSummary } from "./media/probe";
 import { placeUnplaced } from "./media/probe";
 import { makeThumb } from "./media/thumb";
@@ -425,7 +425,7 @@ export async function backfillSprite(): Promise<boolean> {
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
     .get() as { id: string; library_id: string } | undefined;
-  if (!v) return false;
+  if (!v) return backfillStrayStrip();
   const job: JobRow = { id: 0, library_id: v.library_id, version_id: v.id, kind: "sprite", state: "running", attempts: 1, run_after: 0, lease_until: null, actor: null, error: null };
   try {
     await run(job);
@@ -436,6 +436,38 @@ export async function backfillSprite(): Promise<boolean> {
       e instanceof Error ? e.message : String(e),
     );
   }
+  return true;
+}
+
+/**
+ * Then an old strip (16:9 cuts, no frame size noted) on a clip of another shape, made again once from the copy this
+ * server has (its original on this disk, else its proxy), the old one served until the new one lands. An old strip that
+ * is the clip's shape, or one that fails to be made again, is noted 160 × 90 and never looked at again. A clip whose
+ * only copy is on a computer is that computer's to make (on-mac.ts strayStrips).
+ */
+async function backfillStrayStrip(): Promise<boolean> {
+  const db = libraryDb();
+  const v = db
+    .prepare(
+      `SELECT v.id, v.probe, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
+         JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
+       WHERE a.kind = 'video' AND a.trashed_at IS NULL AND v.state = 'ready'
+         AND ((l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%') OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
+       ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
+    )
+    .get() as { id: string; probe: string | null; library_id: string } | undefined;
+  if (!v) return false;
+  const settle = () => db.prepare("UPDATE derivatives SET cell_w = ?, cell_h = ? WHERE version_id = ? AND kind = 'sprite' AND cell_w IS NULL").run(OLD_CELL.w, OLD_CELL.h, v.id);
+  if (!strayStrip(watchedAspect(v.probe))) {
+    settle();
+    return true;
+  }
+  try {
+    await run({ id: 0, library_id: v.library_id, version_id: v.id, kind: "sprite", state: "running", attempts: 1, run_after: 0, lease_until: null, actor: null, error: null });
+  } catch {
+    /* kept as it was, below */
+  }
+  settle(); // a strip made again has its size noted already; one that failed keeps the old one, once
   return true;
 }
 
@@ -595,8 +627,10 @@ async function run(job: JobRow): Promise<void> {
   await mkdir(dir, { recursive: true });
   const out = (ext: string) => path.join(dir, `${job.kind}-${randomUUID()}.${ext}`);
   const keep = async (kind: "thumb" | "wave" | "proxy" | "sprite", file: string, key: string) => {
+    const strip = kind === "sprite" ? await readFile(file) : null; // read before the put, which may move the file
     const { bytes } = await blobs.put(key, file);
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, kind, key, bytes);
+    if (strip) noteStrip(db, v.id, strip);
   };
   const base = `libraries/${v.library_id}/v/${v.id}`;
   // the version's lighter copy when it has one (a 4K original's 720p proxy), else the original; a proxy in the cloud of
