@@ -18,6 +18,7 @@ import { jobFiles } from "./reach";
 import { fitsWork, gates, serverMayTake } from "../work/place";
 import type { Device } from "../../contracts/providers";
 import { passesDone } from "./passes";
+import { editLeaves, markStart } from "./preview";
 import { draining } from "../server-update";
 import { editRole, ownerOf, purgeEdits, queueVersion, readDraft, readEdit, saveStep, sourcesWorkspace, unreadNote, type EditMeta, seesEdit } from "./store";
 
@@ -146,6 +147,9 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
   if (!(await stillReadable(job.actor, edit))) return fail(db, job, "Some footage was deleted or cannot be read by this account"), true;
   const step = STEPS[job.kind];
   if (!step) return fail(db, job, `No ${job.kind} step yet`), true;
+  // what this version's pictures are made of as the step starts (editor/preview.ts markStart: the cut's honest mark)
+  const left = editLeaves(edit.id, variant);
+  if (left.ok) markStart(edit.id, variant, left.mark);
 
   const ctl = new AbortController();
   running.set(job.id, { edit: edit.id, ctl });

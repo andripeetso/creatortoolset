@@ -699,4 +699,7 @@ export const MIGRATIONS: string[] = [
   // reads the library's Blur faces (db.ts BLUR_SQL). An upload carries the answer it was started with
   `ALTER TABLE assets ADD COLUMN blur TEXT;
   ALTER TABLE uploads ADD COLUMN blur TEXT;`,
+  // what an AI Editor version's pictures were made of when its steps started (editor/preview.ts markStart), the server's
+  // own record (a computer's result never writes it): a cut is filed blurred only when its start and its end say so
+  `CREATE TABLE render_marks (edit_id TEXT NOT NULL, variant TEXT NOT NULL, mark TEXT NOT NULL, PRIMARY KEY (edit_id, variant));`,
 ];

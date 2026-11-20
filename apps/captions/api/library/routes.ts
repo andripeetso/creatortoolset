@@ -510,7 +510,9 @@ const receives = (row: UploadRow, got?: string) => {
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
   // a blurred render is declared only by a computer of the uploader's own (startUpload checks it too)
   const blurredOf = sender?.owner === row.created_by && sender.owner === libraryAccount(row.library_id) ? row.blurred_of : null;
-  const into = { id: row.library_id, collectionId: row.collection_id, blurredOf, ...(row.blur ? { blur: row.blur } : {}) };
+  // a next version follows its clip's answer as it is now (it may have been marked Blur faces since the upload began)
+  const blur = row.replaces_asset_id ? (db().prepare(`SELECT ${BLUR_SQL} AS b FROM assets a WHERE a.id = ?`).get(row.replaces_asset_id) as { b: Blur } | undefined)?.b : row.blur;
+  const into = { id: row.library_id, collectionId: row.collection_id, blurredOf, ...(blur ? { blur } : {}) };
   const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
   // at the finish: bytes that are the original itself, or any clip of the library not blurred, are not its blurred render
   if (blurredOf && got && (got === blurredOf || unblurredBytes(row.library_id, got))) return refuse(REFUSED_NOT_BLURRED);

@@ -5,7 +5,7 @@ import type { Item, Renders, Timeline } from "../../contracts/editor";
 import { addVersion, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
-import { blobs, fileBlur, isBlurred, libraryDb, playOf } from "../library/db";
+import { blobs, fileBlur, isBlurred, libraryDb, playOf, SOUND_ONLY_SQL } from "../library/db";
 import { readable } from "./media";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
@@ -319,16 +319,17 @@ export function editLeaves(editId: string, variant: string): { ok: true; mark: C
   const tl = readDraft(editId, variant)?.timeline.sources;
   const e = readEdit(editId);
   const ids = tl ? Object.keys(tl) : [...(e?.sources ?? []), ...(typeof e?.song === "string" ? [e.song] : [])];
-  const kindOfVersion = db.prepare("SELECT a.kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?");
+  const soundOf = db.prepare(`SELECT ${SOUND_ONLY_SQL} AS sound FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`);
   let pictures = 0;
   let asFilmed = false;
   for (const id of ids) {
     const own = tl?.[id]?.file;
-    const kind = own ? kindOf(own) : (kindOfVersion.get(id) as { kind: string } | undefined)?.kind;
-    if (kind === "audio") continue;
+    // a sound has no picture: an own file by its name (a voice take the editor made), a Library one by what was read in it
+    const row = own ? null : (soundOf.get(id) as { sound: number } | undefined);
+    if (own ? kindOf(own) === "audio" : row?.sound) continue;
     pictures++;
     // the edit's own file, or one the Library no longer has: as filmed
-    if (own || !kind || !isBlurred(playOf(id))) asFilmed = true;
+    if (own || !row || !isBlurred(playOf(id))) asFilmed = true;
   }
   return { ok: true, mark: pictures > 0 && !asFilmed ? "blurred" : "asFilmed" };
 }
@@ -337,9 +338,27 @@ export function editLeaves(editId: string, variant: string): { ok: true; mark: C
  * The preview step (one version): render, then into Review as the next version of the draft's Review video. A planned
  * cut the AI made waits for its look (critique.ts), which files it.
  */
+/**
+ * A step of version `variant` starts (editor/worker.ts runStep on the server, work/package.ts for a computer): what its
+ * pictures are made of now. Once any step of it started with something as filmed it stays so: a copy made then (a post
+ * step's, a render's) may be in the cut, whatever its sources are switched to later.
+ */
+export function markStart(editId: string, variant: string, mark: CutMark): void {
+  if (!variant) return;
+  libraryDb()
+    .prepare(
+      `INSERT INTO render_marks (edit_id, variant, mark) VALUES (?, ?, ?)
+       ON CONFLICT (edit_id, variant) DO UPDATE SET mark = CASE WHEN render_marks.mark = 'asFilmed' THEN 'asFilmed' ELSE excluded.mark END`,
+    )
+    .run(editId, variant, mark);
+}
+
+/** The mark a cut is filed with: blurred only when its steps started blurred and it still is (no start known: as filmed). */
 const markOf = (editId: string, variant: string): { blurred?: true; asFilmed?: true } => {
   const left = editLeaves(editId, variant);
-  return !left.ok ? {} : left.mark === "blurred" ? { blurred: true } : { asFilmed: true };
+  if (!left.ok) return {};
+  const start = (libraryDb().prepare("SELECT mark FROM render_marks WHERE edit_id = ? AND variant = ?").get(editId, variant) as { mark: CutMark } | undefined)?.mark;
+  return left.mark === "blurred" && start === "blurred" ? { blurred: true } : { asFilmed: true };
 };
 
 export async function previewStep({ edit, job, variant, signal }: StepContext): Promise<void> {

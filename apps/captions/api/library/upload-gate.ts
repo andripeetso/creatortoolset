@@ -7,7 +7,7 @@
  * 720p copy, which every library takes; a computer's proxy must hash to the SHA-256 it declared, and from every sender a proxy
  * no smaller than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
  */
-import { blursFaces, fileBlur, finalsUpload, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
+import { blursFaces, fileBlur, finalsUpload, isBlurred, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
 import { hostsNone, hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
 import { accountOf, librariesHere, libraryRole } from "./access";
@@ -118,6 +118,16 @@ export function mayLeave(
   }
   if (file.asFilmed || (file.blur ?? (blursFaces(libraryId) ? "yes" : "no")) === "no") return { ok: true };
   return file.blurred || (!!file.blurredOf && HEX.test(file.blurredOf)) ? { ok: true } : refuse(REFUSED_BLUR);
+}
+
+/**
+ * A public path (a library share link, an AI card's bearer link): under Blur faces only a blurred render goes, never a
+ * file kept as filmed (ruling 5: faces may show to the team, never in public; SPEC "Honest marks"). Elsewhere mayLeave.
+ */
+export function mayGoPublic(versionId: string): Received {
+  const lib = (libraryDb().prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined)?.library_id;
+  if (lib && blursFaces(lib) && !isBlurred(versionId)) return refuse(REFUSED_BLUR);
+  return mayLeave(lib, { versionId });
 }
 
 /** Whether `username` may mark a file of `libraryId` no (kept as filmed): the library's owner or an admin, nobody else. */

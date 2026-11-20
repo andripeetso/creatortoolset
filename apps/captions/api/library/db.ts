@@ -224,11 +224,16 @@ const finalsUploadStored = (libraryId: string): LibraryUpload => {
 export const blursFaces = (libraryId: string): boolean =>
   (libraryDb().prepare("SELECT json_extract(settings, '$.blurFaces') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v === 1;
 /**
- * Asset `a`'s blur answer (assets.blur, contracts Blur): a file nobody answered for (null) reads its library's Blur faces;
- * a sound has no picture, so it is no (a song never gets a blurred render, and never waits for one).
+ * Asset `a` is a sound with no picture: filed as audio (by its name) and every version of it read with no video stream
+ * (a probe with no video codec and no width). A file named like a sound that holds a picture, or one not read yet, is not.
  */
-export const BLUR_SQL =
-  "CASE WHEN a.kind = 'audio' THEN 'no' ELSE COALESCE(a.blur, CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END) END";
+export const SOUND_ONLY_SQL = `(a.kind = 'audio' AND NOT EXISTS (SELECT 1 FROM asset_versions pv WHERE pv.asset_id = a.id
+  AND (pv.probe IS NULL OR COALESCE(json_extract(pv.probe, '$.vcodec'), '') <> '' OR COALESCE(json_extract(pv.probe, '$.width'), 0) <> 0)))`;
+/**
+ * Asset `a`'s blur answer (assets.blur, contracts Blur): a file nobody answered for (null) reads its library's Blur faces;
+ * a sound with no picture is no (a song never gets a blurred render, and never waits for one).
+ */
+export const BLUR_SQL = `CASE WHEN ${SOUND_ONLY_SQL} THEN 'no' ELSE COALESCE(a.blur, CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END) END`;
 /** mayLeave in SQL (upload-gate.ts): version `v` of asset `a` may have pictures cut of it, kept or handed out. */
 export const LEAVES_SQL = `(v.blurred_of IS NOT NULL OR ${BLUR_SQL} = 'no')`;
 /**

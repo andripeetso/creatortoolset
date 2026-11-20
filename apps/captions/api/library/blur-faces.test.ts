@@ -40,7 +40,7 @@ const { sessionCookieFor } = await import("../auth");
 const { fileBlur, libraryDb, playOf } = await import("./db");
 const { libraryApp, serveGate, mediaFile } = await import("./routes");
 const { shareApp, publicShareApp } = await import("./shares");
-const { blurAtIntake, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_NOT_BLURRED, BLUR_UPLOADS, workspaceLibrary } = await import("./upload-gate");
+const { blurAtIntake, mayGoPublic, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_NOT_BLURRED, BLUR_UPLOADS, workspaceLibrary } = await import("./upload-gate");
 const { macFrames, dropHeldCopy, dropMacFrames, noPicture, putSprite, putThumb, strayStrips, holdStills, HELD_STILLS_BYTES, HELD_STILLS_MS } = await import("./on-mac");
 const { versionSource } = await import("./access");
 const { lightKey } = await import("../editor/reach");
@@ -243,9 +243,22 @@ describe("a member, a share link and the phone get only blurred bytes", () => {
     const good = await link(orig.assetId);
     expect((await app.request(`/api/library/s/${good}/media/${b.versionId}/play`)).status).toBe(200);
     const bad = await link(plain.assetId);
-    const r = await app.request(`/api/library/s/${bad}/media/${plain.versionId}/thumb`);
-    expect(r.status).toBe(409);
-    expect((await body(r)).message).toBe(REFUSED_BLUR);
+    // not in the link at all, and none of its pictures or files
+    expect((await body(app.request(`/api/library/s/${bad}`))).items).toEqual([]);
+    for (const kind of ["thumb", "play", "source"]) expect((await app.request(`/api/library/s/${bad}/media/${plain.versionId}/${kind}`)).status).not.toBe(200);
+  });
+
+  it("a share link never holds a file kept as filmed: the team sees it, the public does not", async () => {
+    const kept = (await body(onMac("lib_kids", "Kept talk.mov", { blur: false }))) as { assetId: string; versionId: string };
+    d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'thumb', 'k-kept', 1)").run(kept.versionId);
+    expect(mayLeave("lib_kids", { versionId: kept.versionId }).ok).toBe(true); // the team's
+    expect(mayGoPublic(kept.versionId).ok).toBe(false);
+    const token = ((await body(app.request("/api/library/lib_kids/shares", json({ target: { kind: "asset", id: kept.assetId }, scope: "download" })))) as { token: string }).token;
+    expect((await body(app.request(`/api/library/s/${token}`))).items).toEqual([]);
+    for (const kind of ["thumb", "play", "proxy", "source"]) expect((await app.request(`/api/library/s/${token}/media/${kept.versionId}/${kind}`)).status, kind).not.toBe(200);
+    // where Blur faces is off it is a file like any other
+    const plainLib = (await body(onMac("lib_plain", "Plain talk.mov"))) as { versionId: string };
+    expect(mayGoPublic(plainLib.versionId).ok).toBe(true);
   });
 });
 
@@ -336,22 +349,44 @@ describe("the public AI Editor follows each source's blur answer", () => {
     // with the blurred render in, the cut reaches Review: nothing in it needs blurring, and it says honestly what it is
     const { readStep } = await import("../editor/store");
     const { readMeta } = await import("../review");
+    const { saveDraft } = await import("../editor/store");
+    const { markStart } = await import("../editor/preview");
+    /** A version's step starts (the server's runner, a computer's package): its mark then, as the engine records it. */
+    const started = async (edit: typeof e) => {
+      await saveDraft(edit.id, "v1", { timeline: { ...(TIMELINE as object), sources: Object.fromEntries(edit.sources.map((id) => [id, {}])) }, notes: [] } as never);
+      const left = editLeaves(edit.id, "v1");
+      if (left.ok) markStart(edit.id, "v1", left.mark);
+    };
     const filed = async (edit: typeof e) => {
-      mkdirSync(path.dirname(previewFile(edit.id, "")), { recursive: true });
-      writeFileSync(previewFile(edit.id, ""), "a-rendered-cut");
-      await fileInReview(edit, "", TIMELINE);
-      const m = await readMeta(readStep(edit.id, "review")![""]!.assetId);
+      mkdirSync(path.dirname(previewFile(edit.id, "v1")), { recursive: true });
+      writeFileSync(previewFile(edit.id, "v1"), "a-rendered-cut");
+      await fileInReview(edit, "v1", TIMELINE);
+      const m = await readMeta(readStep(edit.id, "review")!["v1"]!.assetId);
       const v = m!.versions.at(-1)!;
       return { blurred: !!v.blurred, asFilmed: !!v.asFilmed };
     };
+    const make = async (sources: string[]) => {
+      const one = (await createEdit("tinyacrobatics", { name: "Tiny Acrobatics one", sources }, false, "ws_kids"))!;
+      await started(one);
+      return one;
+    };
     // a blurred render with a file kept as filmed: as filmed, never "blurred"
-    expect(await filed(e)).toEqual({ blurred: false, asFilmed: true });
-    const only = async (sources: string[]) => filed((await createEdit("tinyacrobatics", { name: "Tiny Acrobatics one", sources }, false, "ws_kids"))!);
-    expect(await only([no.versionId])).toEqual({ blurred: false, asFilmed: true }); // only files kept as filmed
-    expect(await only([yes.versionId])).toEqual({ blurred: true, asFilmed: false }); // only blurred renders
+    expect(await filed(await make([yes.versionId, no.versionId]))).toEqual({ blurred: false, asFilmed: true });
+    expect(await filed(await make([no.versionId]))).toEqual({ blurred: false, asFilmed: true }); // only files kept as filmed
+    expect(await filed(await make([yes.versionId]))).toEqual({ blurred: true, asFilmed: false }); // only blurred renders
+    // a file kept as filmed when the cut's steps started, switched to Blur faces and covered before the cut is filed: the
+    // cut was made from its original, so it is filed as filmed, never "blurred"
+    const late = (await body(onMac("lib_kids", "Late switch.mov", { blur: false, sha256: sha("late-original") }))) as { assetId: string; versionId: string };
+    const switched = await make([late.versionId]);
+    expect(await body(app.request(`/api/library/lib_kids/assets/${late.assetId}/blur`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ blur: "yes" }) }))).toEqual({ blur: "yes" });
+    await sendBlurred("lib_kids", "Late switch blurred.mp4", "late-blurred-bytes", sha("late-original"));
+    expect(editLeaves(switched.id, "v1")).toEqual({ ok: true, mark: "blurred" }); // its end alone would say blurred
+    expect(await filed(switched)).toEqual({ blurred: false, asFilmed: true });
+    // a step run again now starts blurred, but what an earlier step made as filmed may still be in it: it stays as filmed
+    await started(switched);
+    expect(await filed(switched)).toEqual({ blurred: false, asFilmed: true });
     // the mark is read from the cut's own sources: a card (an edit's own file) is as filmed, and so is a clip no longer
     // in the Library (deleted while the cut rendered), never "blurred"
-    const { saveDraft } = await import("../editor/store");
     const cut = (await createEdit("tinyacrobatics", { name: "Tiny Acrobatics card", sources: [yes.versionId] }, false, "ws_kids"))!;
     const draft = async (sources: Record<string, unknown>) => {
       await saveDraft(cut.id, "v1", { timeline: { ...(TIMELINE as object), sources }, notes: [] } as never);
@@ -365,6 +400,11 @@ describe("the public AI Editor follows each source's blur answer", () => {
     expect(fileBlur(song.versionId)?.blur).toBe("no");
     expect(mayLeave("lib_kids", { versionId: song.versionId }).ok).toBe(true);
     expect(await draft({ [yes.versionId]: {}, [song.versionId]: {} })).toEqual({ ok: true, mark: "blurred" });
+    // a video saved under a sound's name holds a picture: it is no sound, and Blur faces holds it
+    const posing = (await body(onMac("lib_kids", "Not a song.m4a", { width: 1080, height: 1920 }))) as { versionId: string };
+    expect(fileBlur(posing.versionId)?.blur).toBe("yes");
+    expect(mayLeave("lib_kids", { versionId: posing.versionId }).ok).toBe(false);
+    expect(editLeaves((await createEdit("tinyacrobatics", { name: "Tiny Acrobatics posing", sources: [posing.versionId] }, false, "ws_kids"))!.id, "")).toMatchObject({ ok: false });
     // what the AI Editor's worker is told of each Library source (the SPEC's contract)
     expect(fileBlur(yes.versionId)).toEqual({ blur: "yes", blurredVersionId: b.versionId });
     expect(fileBlur(no.versionId)).toEqual({ blur: "no", blurredVersionId: null });
