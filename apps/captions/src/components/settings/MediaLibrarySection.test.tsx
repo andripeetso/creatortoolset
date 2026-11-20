@@ -85,9 +85,10 @@ afterEach(() => {
 });
 /** the requests made after a test ended (none: every page was unmounted) */
 const late: string[] = [];
+// the spy stays to the end of the file (each file runs on its own): a request later than this check still never reaches
+// the network, and throws with its URL
 afterAll(async () => {
   await new Promise((done) => setTimeout(done, 50));
-  vi.unstubAllGlobals();
   expect(late).toEqual([]);
 });
 
