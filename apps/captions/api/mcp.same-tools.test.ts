@@ -81,7 +81,7 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // list: 534; upload_file adds 345 (its 182-byte description, path and size); channel_posts 426 (the connected
     // social accounts' numbers and posts, read again first when over an hour old; its 279-byte description, platform and refresh)
     // design_get, design_make and design_update add 2084 (the Designer's three tools: find and read a design, start
-    // one, change its frames and single layers and copy a video's moment in; their 473-, 328- and 430-byte descriptions; design_update's name renames a design;
+    // one, change its frames and single layers and copy a video's moment in; their 473-, 355- and 511-byte descriptions as they are now; design_update's name renames a design;
     // design_get's outline reads a big design as ids, kinds, names and words; design_update's notes name the change each is about, and as names a new frame or layer for the changes after it). Reading is a tool of its
     // own so an AI app outside does not ask before every look. How a design is written and changed is not in them:
     // design_get hands it over when a design is read, so it costs nothing on a turn that designs nothing

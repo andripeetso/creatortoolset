@@ -231,7 +231,7 @@ describe("designs: an AI that designs", () => {
     // every frame in two sizes: a row a size under the frames, each copy under its frame, named for its size
     const sized = await write(d.id, { sizes: { to: ["cover", { name: "Wide", w: 1600, h: 900 }, "huge"] } });
     expect(sized.status).toBe(200);
-    expect(sized.body.notes[0]).toContain('A size that is neither a format');
+    expect(sized.body.notes[0]).toContain('sizes.to[2]: a size that is neither a format');
     const copies = sized.body.design.pages.filter((p) => sized.body.touched.includes(p.id));
     expect(copies.map((p) => [p.name, p.x, p.y, p.w, p.h])).toEqual([
       ["Frame 1 Vertical cover 9:16", 0, 1590, 1080, 1920],
@@ -249,7 +249,7 @@ describe("designs: an AI that designs", () => {
       ["02 Proof", 2920, 0, 1080, "Second", false],
       ["Frame 1 2", 4120, 0, 1080, "Third", true],
     ]);
-    expect(filled.body.notes).toEqual(['Frame 1 has no layer named "Price": give the layers to fill a "name"']);
+    expect(filled.body.notes).toEqual(['fill.rows: Frame 1 has no layer named "Price": give the layers to fill a "name"']);
     // the design is full: the copies that fit are made, the rest named
     const full = await write(d.id, { sizes: { frames: ["p1"], to: ["square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover"] } });
     expect(full.body.touched).toHaveLength(12);
@@ -344,6 +344,16 @@ describe("designs: an AI that designs", () => {
     // the second "badge" of p1 took another id, and the change that named it changed that one, not the first
     expect(one!.layers).toMatchObject([{ id: "badge", fill: "#ff0000" }, { id: "l2", fill: "#0000ff" }]);
     expect(out.notes).toEqual([`changes[3], frame ${two} (Frame 2): a layer of no type that can be drawn ("rect"): left out; the types are text, shape, path, image and drawing`]);
+    // the same in one call with a move onto the canvas and copies: a moved layer is found where it went by its name,
+    // and "fill" copies a frame the call made, by its "as"
+    const more = (await write(d.id, {
+      frames: [{ as: "card", w: 1080, h: 1080, name: "Card", layers: [{ ...rect, name: "Ground" }] }],
+      changes: [{ frame: "p1", layer: "badge", to: "canvas" }, { frame: "canvas", layer: "badge", set: { fill: "#123456" } }, { frame: "card", add: { type: "video" } }],
+      fill: { frame: "card", rows: [{ name: "Card copy" }] },
+    })).body as Wrote & { named: Record<string, string> };
+    expect(more.design.pages.filter((p) => !p.loose).map((p) => p.name)).toEqual([undefined, "Story", "Card", "Card copy"]);
+    expect((await read(d.id)).canvas).toEqual([expect.objectContaining({ id: "badge", fill: "#123456" })]);
+    expect(more.notes).toEqual([`changes[2], frame ${more.named.card} (Frame 3): a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image and drawing`]);
   });
 
   it("layers lying on the canvas outside every frame: seen, added, changed, moved into a frame and out, removed, each checked", async () => {
@@ -357,7 +367,7 @@ describe("designs: an AI that designs", () => {
     expect(seen.how).toContain('"frame":"canvas"');
     // added on the canvas, in its pixels; a value out of range is held like a frame's; a bad "to" and a missing layer are named
     const added = (await write(d.id, { changes: [{ frame: "canvas", add: { ...box, id: "note", x: 2000, y: -300, fill: "nope", opacity: 7 } }, { frame: "canvas", layer: "l1", to: "p9" }, { frame: "canvas", layer: "ghost", remove: true }] })).body;
-    expect(added.notes).toEqual(['"to" names no frame of this design (p9): give a frame\'s id or "canvas"', "The canvas has no layer ghost"]);
+    expect(added.notes).toEqual(['changes[1], the canvas: "to" names no frame of this design (p9): give a frame\'s id or "canvas"', "changes[2], the canvas: there is no layer ghost: its layers are l1, note"]);
     const note = added.design.pages.find((p) => p.loose && p.layers.some((l) => l.id === "note"))!;
     expect(note).toMatchObject({ loose: true, x: 2000, y: -300, w: 100, h: 50, layers: [{ id: "note", x: 0, y: 0, fill: "#dddddd" }] });
     expect(note.layers[0]).not.toHaveProperty("opacity");

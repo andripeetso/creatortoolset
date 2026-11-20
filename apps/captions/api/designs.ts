@@ -289,7 +289,7 @@ To change a design, give either or both of:
 - "fill": {"frame":"<frame id>","rows":[{"name":"02 Proof","Headline":"…","Badge":{"visible":false}},…],"sizes":[…as in "sizes"…]}: one copy of that frame a row, in a row to its right (with "sizes": one a size, under each other). Each key of a row names layers by their "name" and gives a text's words, or {"text":"…","visible":true|false,"color":"#rrggbb"}; "name" names the copy. Name the layers to fill first.
 - "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
-Changes are made in the order given. One that cannot be made is left out and the rest are made: "notes" names each by where it was given ("changes[3]", "frames[0].layers[2]"), its frame and layer, and why, so send that one again fixed, never the whole call.
+Changes are made in the order given: "frames", then "changes", then "sizes" and "fill" (which may name a frame made in the same call by its "as"). One that cannot be made is left out and the rest are made: "notes" names each by where it was given ("changes[3]", "frames[0].layers[2]", "sizes.to[1]", "fill.rows"), its frame and layer, and why, so send that one again fixed, never the whole call.
 
 After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box or are cut off at the frame's edge (nothing said: they fit), and the size a text that shrinks is drawn at ("as_drawn"): its own "size" stays the most it may be, so leave it.
 
