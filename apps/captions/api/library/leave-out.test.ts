@@ -324,6 +324,18 @@ describe("every way a left-out file could come in or stay", () => {
     expect(leftOutBy(listsHere(await mediaForLibrary("bo", lib!.id), "this-computer"), `${HERE}/Private/m.mov`, "this-computer")).toBe(true);
   });
 
+  it("an uploaded clip whose computer file is gone is no move into a left-out folder: a backup copy there leaves it", async () => {
+    await listOf("fold_f2", ["Private"]);
+    const [lib] = await librariesOf("tia", row("fold_f2", F2) as never);
+    const d = libraryDb();
+    recordVersion(d, { libraryId: lib!.id, versionId: "v_desk", sourceKey: `libraries/${lib!.id}/v/v_desk/source`, filename: "u.mov", size: 10, sha256: "e".repeat(64), by: "tia", fromPath: "/Users/tia/Desktop/u.mov", fromDevice: mac.id });
+    d.prepare("UPDATE asset_versions SET quick = ? WHERE id = 'v_desk'").run(quick(650));
+    d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, bytes, confirmed_at, checked_at, state, source) VALUES ('v_desk', ?, '', '/Users/tia/Desktop/u.mov', 10, 0, 0, 'gone', 'drop')").run(mac.id);
+    await scan("fold_f2", F2, ["Private/u.mov"], 650);
+    await scan("fold_f2", F2, ["Private/u.mov"], 650);
+    expect(asset(650).trashed_at).toBeNull();
+  });
+
   it("a renamed folder's new path in the same listing keeps the clip a Finder copy in a left-out folder matches", async () => {
     await listOf("fold_f2", []);
     await indexForDevice(mac, "fold_f2", onMac(F2, "Day 3/r.mov", 640));

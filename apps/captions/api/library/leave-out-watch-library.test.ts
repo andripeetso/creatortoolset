@@ -140,11 +140,35 @@ describe("Folders left out over every watched folder of a library", () => {
     }
   });
 
+  it("a file moved into a left-out folder takes its clip out even when its version already reads as missing", async () => {
+    const z = path.join(footage, "z.mp4");
+    put(z, "zed");
+    await scan();
+    const id = clip(z)!.id;
+    renameSync(z, path.join(footage, "Private", "z.mp4"));
+    d.prepare("UPDATE asset_versions SET state = 'missing' WHERE source_path = ?").run(z);
+    await scan();
+    expect((d.prepare("SELECT trashed_at FROM assets WHERE id = ?").get(id) as { trashed_at: number | null }).trashed_at).not.toBeNull();
+  });
+
   it("another computer's path to a folder never leaves out a file here", async () => {
     // on pc_2 Archive is found a level up, where "Archive" is a folder inside it: only this computer's path weighs here
     storage(["Private", "Archive"], ["Private"], { pc_2: { path: dir, at: 0 } });
     put(path.join(archive, "w.mp4"), "w");
     await scan();
     expect(clip(path.join(archive, "w.mp4"))?.trashed_at).toBeNull();
+  });
+
+  it("a final under a listed name stays: a Finals folder is read with no lists", async () => {
+    const finals = path.join(footage, "Exports");
+    const final = path.join(finals, "Rehearsals", "final.mp4");
+    put(final, "final rehearsal");
+    d.prepare("UPDATE libraries SET settings = json_set(COALESCE(settings, '{}'), '$.watch', json(?)) WHERE id = 'lib_l'").run(
+      JSON.stringify([{ path: finals, mode: "reference", addedBy: USER, projects: { Rehearsals: "proj_rehearsals" } }]),
+    );
+    storage(["Private"], ["Private", "Rehearsals"]);
+    await scan();
+    await scan();
+    expect(d.prepare("SELECT a.trashed_at FROM watch_seen w JOIN asset_versions v ON v.id = w.version_id JOIN assets a ON a.id = v.asset_id WHERE w.path = ?").get(final)).toEqual({ trashed_at: null });
   });
 });

@@ -752,11 +752,11 @@ async function leaveWatched(
   libraryId: string,
   media: StorageFolder[],
   host: string,
-  seen: { live: Set<string>; dropped: string[]; read: string[]; unread: string[]; unseen: Set<string> },
+  seen: { live: Set<string>; dropped: string[]; read: string[]; unread: string[]; unseen: Set<string>; finals: string[] },
   copies: Set<string>,
   now: number,
 ): Promise<boolean> {
-  const { live, dropped, read, unread, unseen } = seen;
+  const { live, dropped, read, unread, unseen, finals } = seen;
   if (!media.some((m) => m.leaveOut?.length)) return false;
   const rows = db()
     .prepare(
@@ -765,13 +765,16 @@ async function leaveWatched(
        WHERE w.library_id = ? AND a.trashed_at IS NULL`,
     )
     .all(libraryId) as { path: string; size: number; mtime: number; version_id: string; asset_id: string; source_key: string; source_path: string | null; state: string }[];
-  const out = new Set(rows.filter((r) => leftOutBy(media, r.path, host) && !copies.has(r.path)).map((r) => r.path));
-  // moved in: only while a version's own file just went from where it read it (never a copy that went, never one long gone)
-  const inRead = (p: string) => read.some((root) => p.startsWith(root + path.sep));
+  // a Finals folder is read with no lists (scanFolders): a final is never left out, whatever its project folder is named
+  const under = (roots: string[]) => (p: string) => roots.some((root) => p.startsWith(root + path.sep));
+  const inFinals = under(finals);
+  const out = new Set(rows.filter((r) => !inFinals(r.path) && leftOutBy(media, r.path, host) && !copies.has(r.path)).map((r) => r.path));
+  // moved in: only while a version's own file just went from where it read it (never a copy that went), in a folder read now
+  const inRead = under(read);
   // a file gone from a folder read now whose size and time a file new to the watch has (`unseen`): renamed or moved
   // there, so the watch takes it in at its new path (ingest points the version there); never moved into a left-out folder
   const renamed = (r: { path: string; size: number; mtime: number }) => !live.has(r.path) && inRead(r.path) && unseen.has(`${r.size}:${r.mtime}`);
-  const vanished = rows.filter((r) => r.source_path === r.path && !out.has(r.path) && !live.has(r.path) && r.state !== "missing" && inRead(r.path) && !renamed(r));
+  const vanished = rows.filter((r) => r.source_path === r.path && !out.has(r.path) && !live.has(r.path) && inRead(r.path) && !renamed(r));
   for (const p of vanished.length ? dropped : []) {
     const st = await stat(p).catch(() => null);
     for (const r of vanished) if (st && r.size === st.size && r.mtime === Math.floor(st.mtimeMs)) out.add(r.path);
@@ -812,7 +815,7 @@ async function scanLibrary(libraryId: string, now: number, folders: WatchFolder[
 async function scanFolders(libraryId: string, now: number, folders: WatchFolder[]): Promise<number> {
   let took = 0;
   // the Folders left out, over every folder of the library at once (leaveWatched)
-  const pass = { live: new Set<string>(), dropped: [] as string[], read: [] as string[], unread: [] as string[], unseen: new Set<string>() };
+  const pass = { live: new Set<string>(), dropped: [] as string[], read: [] as string[], unread: [] as string[], unseen: new Set<string>(), finals: [] as string[] };
   let media: StorageFolder[] = [];
   let host: string = THIS_COMPUTER;
   // the copies' files, read once a folder of the library has a list (nothing to tell apart before that)
@@ -830,6 +833,7 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
       files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), lists, { dropped: pass.dropped, copies, host: here });
       for (const p of files) pass.live.add(p);
       pass.read.push(f.path);
+      if (f.projects) pass.finals.push(f.path);
       if (!media.length && lists.length) [media, host] = [lists, here];
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
