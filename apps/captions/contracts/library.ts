@@ -896,6 +896,8 @@ export const LIBRARY_WORDS = {
   downloading: "Downloading",
   downloadsTitle: "Downloads",
   setupCard: (workspace: string) => `Set up the Media Library for ${workspace} first`,
+  /** a workspace whose name is known nowhere, in a card's sentence */
+  thisWorkspace: "this workspace",
   setupCardMember: "This Media Library isn't set up yet: the workspace's owner sets it up.",
   setupButton: "Set up",
   downloadsCard: "This edit needs the files on your computer, and Automatic downloads is off. Turn it on?",
