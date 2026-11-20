@@ -2,7 +2,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LIBRARY_WORDS, type LibrarySettings, type LibrarySummary } from "@contracts/library";
 import { LibrarySettingsBody } from "@/pages/library/LibrarySettings";
 import { useAuth } from "@/lib/auth";
@@ -77,9 +77,25 @@ afterEach(() => {
   useAuth.setState({ me: null });
   useWorkspace.setState({ loaded: false, currentProjectId: null, projects: [] });
   vi.unstubAllGlobals();
+  // between tests and after the last, no request may reach the network: one would be a page still mounted
+  vi.stubGlobal("fetch", (url: string) => {
+    late.push(String(url));
+    throw new Error(`a request after its test ended: ${url}`);
+  });
+});
+/** the requests made after a test ended (none: every page was unmounted) */
+const late: string[] = [];
+// the spy stays to the end of the file (each file runs on its own): a request later than this check still never reaches
+// the network, and throws with its URL
+afterAll(async () => {
+  await new Promise((done) => setTimeout(done, 50));
+  expect(late).toEqual([]);
 });
 
 async function render(el: ReactNode) {
+  // a second render in one test unmounts the first: a page left mounted fetches for real once the test ends
+  if (root) act(() => root!.unmount());
+  host?.remove();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
