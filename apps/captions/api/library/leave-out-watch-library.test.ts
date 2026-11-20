@@ -172,3 +172,4 @@ describe("Folders left out over every watched folder of a library", () => {
     expect(d.prepare("SELECT a.trashed_at FROM watch_seen w JOIN asset_versions v ON v.id = w.version_id JOIN assets a ON a.id = v.asset_id WHERE w.path = ?").get(final)).toEqual({ trashed_at: null });
   });
 });
+

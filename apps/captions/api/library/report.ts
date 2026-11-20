@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { FILMED_MAX, FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
 import { EVERY_WORKSPACE, editorDirsOf, leftOutBy, notFootage, okFolderPath, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 import os from "node:os";
@@ -137,13 +138,17 @@ export function parseReportFolders(v: unknown): ReportFolder[] {
 
 /** When each running listing started on this server, by computer, folder and scan id (listing_starts, schema.ts: kept
  *  through a restart): its last page marks the rows it did not name gone only when its first page was seen here. */
+/** This server process: a listing of a computer that numbers no pages, begun before a restart, marks nothing gone. */
+let bootId = randomUUID();
 const scanStart = {
   /** a page came: the listing's start (its first page here) and, when numbered, which pages came */
   begin: (key: string, now: number, page?: number) => {
-    db().prepare("INSERT OR IGNORE INTO listing_starts (key, at) VALUES (?, ?)").run(key, now);
+    db().prepare("INSERT OR IGNORE INTO listing_starts (key, at, boot) VALUES (?, ?, ?)").run(key, now, bootId);
     if (page !== undefined) db().prepare("UPDATE listing_starts SET pages = json_insert(pages, '$[#]', ?) WHERE key = ?").run(page, key);
   },
   of: (key: string) => (db().prepare("SELECT at FROM listing_starts WHERE key = ?").get(key) as { at: number } | undefined)?.at,
+  /** the listing began in this server process (a restart in between lost what came, for a computer that numbers no pages) */
+  thisBoot: (key: string) => (db().prepare("SELECT boot FROM listing_starts WHERE key = ?").get(key) as { boot: string | null } | undefined)?.boot === bootId,
   /** every page from 0 to `last` came */
   whole: (key: string, last: number) => {
     const got = new Set(JSON.parse((db().prepare("SELECT pages FROM listing_starts WHERE key = ?").get(key) as { pages: string } | undefined)?.pages ?? "[]") as number[]);
@@ -221,6 +226,9 @@ const placesThatCount = (states: string[]) => {
   return (id: string, media: StorageFolder[]) => (q.all(id, want) as { path: string; device: string }[]).some((p) => !out(media, p));
 };
 
+/** Whether a clip has a known copy (placesThatCount: verified or found, `media` the lists): this server's watch asks. */
+export const knownCopy = () => placesThatCount(["verified", "found"]);
+
 /**
  * Moves each clip of `assets` into the trash unless it is held (trash.ts trashHeld) or another copy of it is still found
  * somewhere (a verified or found place of any of its versions, on any computer, that counts: placesThatCount), or may be:
@@ -232,7 +240,7 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string, 
   const moved: string[] = [];
   for (const id of assets) {
     if (live(id, media)) {
-      showLeft(id);
+      showHidden(id);
       continue;
     }
     const held = trashHeld(id, now);
@@ -240,7 +248,7 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string, 
       // said once per clip: the watch asks again every pass
       if (!heldSaid.has(id)) console.log(`[library] ${what}: ${id} stays in the library (${held}), not moved to the trash`);
       heldSaid.add(id);
-      showLeft(id);
+      showHidden(id);
       continue;
     }
     setTrashedAt(id, now);
@@ -252,7 +260,6 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string, 
 const heldSaid = new Set<string>();
 
 /** A clip kept: shown again where it was hidden while it waited (left_hidden_at, schema.ts). */
-export const showLeft = showHidden;
 
 /**
  * The clips waiting on computer `device` (leftWaiting) after a report. Computers no longer paired drop theirs. A clip
@@ -312,7 +319,7 @@ export async function settleSilent(now: number): Promise<string[]> {
     if (now - since < SILENT_MS) continue;
     for (const w of leftWaiting.values()) w.delete(h.id);
     // a copy known elsewhere (another computer, an upload found again): shown, never trashed
-    if (known(h.id, await listsOf(h.library_id)) || trashHeld(h.id, now)) showLeft(h.id);
+    if (known(h.id, await listsOf(h.library_id)) || trashHeld(h.id, now)) showHidden(h.id);
     // still hidden after the lists were read: one shown or restored meanwhile is never trashed by this pass
     else if (d.prepare("SELECT 1 FROM assets WHERE id = ? AND left_hidden_at IS NOT NULL AND trashed_at IS NULL").get(h.id)) {
       setTrashedAt(h.id, now);
@@ -359,9 +366,16 @@ function hideLeft(device: string, owner: string, now: number, media: StorageFold
  * restart forgets them; the next listing of the left-out file finds them again.
  */
 const leftWaiting = new Map<string, Map<string, number>>();
+/** Clips `ids` wait on computer `device` from `now`; one already waiting keeps when it was first found. */
+function waitOn(device: string, ids: Iterable<string>, now: number): void {
+  const waiting = leftWaiting.get(device) ?? new Map<string, number>();
+  for (const id of ids) if (!waiting.has(id)) waiting.set(id, now);
+  if (waiting.size) leftWaiting.set(device, waiting);
+}
 /** A server restart, for tests: every listing in progress and every clip waiting is forgotten. */
 export function forgetOnRestart(): void {
   for (const m of [leftWaiting, listed, leftSeen, editorSeen]) m.clear();
+  bootId = randomUUID();
 }
 /** When the last finished listing of each folder started, by `${device}|${folder id}`. */
 const listed = new Map<string, number>();
@@ -441,19 +455,20 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         // indexed here before this rule: the clip leaves the library through the trash once the listing is read whole, unless
         // a copy of it is found elsewhere (never while in Review or shared); the file on the computer stays
         // a locate-only library is never trashed into
-        leaveLibrary(dev, folder.id, inLibs, own, now, "p.path = ?", [f.path], left, out);
-        // moved into a left-out folder: the clip at this file's size and fingerprint with a place elsewhere on this computer
-        // (in any of its Media folders). Where its file went may be a folder read later or one whose drive is away, so it
-        // waits for every Media folder of the computer (leftWaiting), from when it was first found. An uploaded clip's file
-        // gone from where it was is no move: the server keeps its bytes, wherever its computer copy went
-        if (out && f.quick) {
-          const moved = d.prepare(MOVED_IN).all(f.quick, f.bytes, device, f.path, inOwn) as { id: string }[];
-          if (moved.length) {
-            const waiting = leftWaiting.get(device) ?? new Map<string, number>();
-            for (const m of moved) if (!waiting.has(m.id)) waiting.set(m.id, now);
-            leftWaiting.set(device, waiting);
-          }
+        // a file a list leaves out: its clip waits for every Media folder of the computer (leftWaiting), hidden meanwhile,
+        // since a copy may be in a folder read later (one report a folder); any other file that is not footage settles
+        // when this listing ends, as before
+        if (!out) {
+          leaveLibrary(dev, folder.id, inLibs, own, now, "p.path = ?", [f.path], left);
+          continue;
         }
+        const direct = new Set<string>();
+        leaveLibrary(dev, folder.id, inLibs, own, now, "p.path = ?", [f.path], direct, true);
+        waitOn(device, direct, now);
+        // moved into a left-out folder: the clip at this file's size and fingerprint with a place elsewhere on this computer
+        // (in any of its Media folders), where its file may have gone. An uploaded clip's file gone from where it was is no
+        // move: the server keeps its bytes, wherever its computer copy went
+        if (f.quick) waitOn(device, (d.prepare(MOVED_IN).all(f.quick, f.bytes, device, f.path, inOwn) as { id: string }[]).map((m) => m.id), now);
         continue;
       }
       const hits = d
@@ -508,7 +523,8 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
     // nothing gone (what was on that page was not looked at); one from a computer that numbers no pages marks as before
     const whole = !r.scan || (r.complete === true && start !== undefined && r.page !== undefined && scanStart.whole(key, r.page));
     if (r.complete) editorSeen.delete(key);
-    if (r.complete && start !== undefined && (r.page === undefined || whole)) {
+    // a computer that numbers no pages: as before, a listing it began in this server process marks what it did not name gone
+    if (r.complete && start !== undefined && (r.page === undefined ? scanStart.thisBoot(key) : whole)) {
       const gone = d
         // only in the libraries the folder fills now: a row of a library it no longer fills was not looked for, not gone
         .prepare(
@@ -574,7 +590,9 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     const lib = db().prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;
     if (lib) touched.add(lib.library_id);
   }
-  for (const l of hideLeft(dev.id, dev.owner, now, media)) touched.add(l);
+  // only a report that can change what is known: a last page, a page of no listing, a folder not read, or a clip settled
+  const changes = settle.size > 0 || folders.some((r) => !r.scan || r.complete || r.state !== "ok");
+  if (changes) for (const l of hideLeft(dev.id, dev.owner, now, media)) touched.add(l);
   for (const l of await settleSilent(now)) touched.add(l);
   for (const l of touched) libraryChanged(l);
   return { ok: true, index, ...(filmed?.length ? { filmed } : {}) };
@@ -615,10 +633,6 @@ export const mediaOf = (st: { folders: StorageFolder[] }): StorageFolder[] =>
 
 export const mediaFoldersOf = async (user: string): Promise<StorageFolder[]> => mediaOf(await storageOf(user));
 
-/**
- * The Media folders whose lists a file `user` brings into `libraryId` is checked against: the person's own and, for a
- * member adding to the owner's library, the owner's too. Either list leaves a file out: they are privacy lists.
- */
 /** The lists a clip of `libraryId` is judged by: its owner's Media folders (settleSilent). */
 async function libraryLists(libraryId: string): Promise<StorageFolder[]> {
   const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
@@ -626,6 +640,10 @@ async function libraryLists(libraryId: string): Promise<StorageFolder[]> {
   return owner ? mediaFoldersOf(owner) : [];
 }
 
+/**
+ * The Media folders whose lists a file `user` brings into `libraryId` is checked against: the person's own and, for a
+ * member adding to the owner's library, the owner's too. Either list leaves a file out: they are privacy lists.
+ */
 export async function mediaForLibrary(user: string, libraryId: string): Promise<StorageFolder[]> {
   const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
   const owner = row ? accountOf(row.workspace_id) : null;

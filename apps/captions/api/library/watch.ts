@@ -12,7 +12,7 @@ import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
-import { copyFilesOn, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, settleSilent, showLeft } from "./report";
+import { copyFilesOn, knownCopy, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, settleSilent } from "./report";
 import { pointSource } from "./locate";
 import { showHidden } from "./trash";
 import { findUser } from "../users";
@@ -805,7 +805,7 @@ async function leaveWatched(
   }
   // a clip hidden while it waited (report.ts hideLeft) with a copy read here now: shown again
   const hidden = new Set((db().prepare("SELECT id FROM assets WHERE library_id = ? AND left_hidden_at IS NOT NULL").all(libraryId) as { id: string }[]).map((x) => x.id));
-  if (hidden.size) for (const r of rows) if (hidden.has(r.asset_id) && live.has(r.path) && !out.has(r.path) && !copies.has(r.path)) showLeft(r.asset_id);
+  if (hidden.size) for (const r of rows) if (hidden.has(r.asset_id) && live.has(r.path) && !out.has(r.path) && !copies.has(r.path)) showHidden(r.asset_id);
   if (!out.size) return false;
   const assets = new Set(rows.filter((r) => out.has(r.path)).map((r) => r.asset_id));
   // a clip with a copy read here stays, and so does one with a file in a folder not read this pass (its drive away: unknown,
@@ -824,8 +824,10 @@ async function leaveWatched(
     if (!copyOf.has(r.version_id)) copyOf.set(r.version_id, r.path);
   }
   const hide = db().prepare("UPDATE assets SET left_hidden_at = ? WHERE id = ? AND left_hidden_at IS NULL");
+  const copyKnown = knownCopy();
   for (const a of kept) {
-    if (sure.has(a)) showLeft(a);
+    // a copy known elsewhere (a verified place on a computer) shows it: never hidden and shown again every pass
+    if (sure.has(a) || copyKnown(a, media)) showHidden(a);
     else hide.run(now, a);
   }
   // the place this computer had at that file (serverPlace): by its version, so the key finds it; one gone already stays
@@ -865,11 +867,12 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
       const here = hostHere(f.addedBy);
       const lists = f.projects ? [] : listsHere(await mediaFoldersOf(f.addedBy), here);
       if (!copies && lists.some((m) => m.leaveOut?.length)) copies = copyFilesOn([THIS_COMPUTER, ...listDevices((d) => isThisMachine(d.id)).map((d) => d.id)]);
+      // the lists are known whether or not the folder can be read: one away still has its clips judged (kept, hidden)
+      if (!media.length && lists.length) [media, host] = [lists, here];
       files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), lists, { dropped: pass.dropped, copies, host: here });
       for (const p of files) pass.live.add(p);
       pass.read.push(f.path);
       if (f.projects) pass.finals.push(f.path);
-      if (!media.length && lists.length) [media, host] = [lists, here];
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {
@@ -924,7 +927,9 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
       tell(libraryId);
     }
   }
-  if ((copies && (await leaveWatched(libraryId, media, host, pass, copies, now))) || took) libraryChanged(libraryId);
+  // no list left in the library: what the watch hid while a folder was unread is shown again (nothing would show it else)
+  const unhid = copies ? 0 : Number(db().prepare("UPDATE assets SET left_hidden_at = NULL WHERE library_id = ? AND left_hidden_at IS NOT NULL AND left_hidden_on IS NULL").run(libraryId).changes);
+  if ((copies && (await leaveWatched(libraryId, media, host, pass, copies, now))) || took || unhid) libraryChanged(libraryId);
   return took;
 }
 

@@ -692,4 +692,7 @@ export const MIGRATIONS: string[] = [
   // clips hidden while they wait, found fast (few)
   `ALTER TABLE listing_starts ADD COLUMN pages TEXT NOT NULL DEFAULT '[]';
   CREATE INDEX IF NOT EXISTS assets_left_hidden ON assets(left_hidden_at) WHERE left_hidden_at IS NOT NULL;`,
+  // the server process a listing began in (report.ts): one of a computer that numbers no pages, begun before a restart,
+  // marks nothing gone
+  `ALTER TABLE listing_starts ADD COLUMN boot TEXT;`,
 ];

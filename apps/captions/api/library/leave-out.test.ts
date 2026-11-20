@@ -125,6 +125,9 @@ describe("a clip indexed before its folder was left out", () => {
     expect(trashed(500)).toBe(false);
     await listOf("fold_arch", ["- ORIGINAL ARCHIVE"]);
     await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/x.mov", 500);
+    // its own file is left out: hidden while every Media folder of the Mac is read, then trashed
+    expect((libraryDb().prepare("SELECT a.left_hidden_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(500)) as { left_hidden_at: number | null }).left_hidden_at).not.toBeNull();
+    await listRest(Date.now());
     expect(trashed(500)).toBe(true);
     await listOf("fold_arch", []);
     expect((await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/x.mov", 500)).index).toEqual([]);
@@ -178,6 +181,9 @@ describe("every way a left-out file could come in or stay", () => {
     await indexOnMac(lib!.id, "tia", { ...onMac(F1, "- NO SHARE/w.mov", 600), device: mac.id });
     await listOf("fold_f1", ["- NO SHARE"]);
     await scan("fold_f1", F1, ["- NO SHARE/w.mov"], 600);
+    // its own file is left out: hidden while every Media folder of the Mac is read, then trashed
+    expect((libraryDb().prepare("SELECT a.left_hidden_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(600)) as { left_hidden_at: number | null }).left_hidden_at).not.toBeNull();
+    await listRest(Date.now());
     expect(asset(600).trashed_at).not.toBeNull();
     expect(libraryDb().prepare("SELECT folder_id, state FROM version_places WHERE path = ?").all(`${F1}/- NO SHARE/w.mov`)).toEqual([{ folder_id: "", state: "gone" }]);
   });
@@ -192,6 +198,9 @@ describe("every way a left-out file could come in or stay", () => {
     expect(d.prepare("SELECT state FROM version_places WHERE version_id = 'v_up'").get()).toEqual({ state: "verified" });
     await listOf("fold_f1", ["- NO SHARE"]);
     await scan("fold_f1", F1, ["- NO SHARE/u.mov"], 601);
+    // its own file is left out: hidden while every Media folder of the Mac is read, then trashed
+    expect((libraryDb().prepare("SELECT a.left_hidden_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(601)) as { left_hidden_at: number | null }).left_hidden_at).not.toBeNull();
+    await listRest(Date.now());
     expect(asset(601).trashed_at).not.toBeNull();
   });
 
@@ -253,6 +262,9 @@ describe("every way a left-out file could come in or stay", () => {
     d.prepare("INSERT INTO version_places (version_id, device, path, bytes, confirmed_at, checked_at, state, source) VALUES (?, ?, '/Volumes/Tiny Copies/Tiny/k.mov', 10, 0, 0, 'verified', 'copy')").run(v, MB.id);
     await listOf("fold_f2", ["Keep2"]);
     await scan("fold_f2", F2, ["Keep2/k.mov"], 610);
+    // its own file is left out: hidden while every Media folder of the Mac is read, then trashed
+    expect((libraryDb().prepare("SELECT a.left_hidden_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(610)) as { left_hidden_at: number | null }).left_hidden_at).not.toBeNull();
+    await listRest(Date.now());
     expect(asset(610).trashed_at).not.toBeNull();
     // a copy written into a Media folder, under a collection named like a left-out folder: read as the clip's place
     const kept = (await indexForDevice(mac, "fold_f2", onMac(F2, "Day/kc.mov", 611))) as { versions: { versionId: string }[] };

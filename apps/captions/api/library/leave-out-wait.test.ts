@@ -56,12 +56,16 @@ function computer(name: string) {
     );
   const index = async (at: keyof typeof ids, rel: string, q: number) =>
     ((await indexForDevice(mac, ids[at], onMac(roots[at], rel, q))) as { versions: { library: string; versionId: string }[] }).versions[0]!;
-  const setUp = () =>
+  const setUp = (aList: string[] = ["Private"]) =>
     changeStorage("tia", (st) => {
       for (const k of ["A", "B", "C"] as const)
-        st.folders.push({ id: ids[k], role: "footage", name: k, origin: { host: mac.id, path: roots[k] }, make: false, createdAt: 0, reach: {}, ...(k === "A" ? { leaveOut: ["Private"] } : {}) });
+        st.folders.push({ id: ids[k], role: "footage", name: k, origin: { host: mac.id, path: roots[k] }, make: false, createdAt: 0, reach: {}, ...(k === "A" && aList.length ? { leaveOut: aList } : {}) });
     });
-  return { mac, ids, roots, list, page, away, index, setUp };
+  const listOfA = (names: string[]) =>
+    changeStorage("tia", (st) => {
+      st.folders.find((f) => f.id === ids.A)!.leaveOut = names;
+    });
+  return { mac, ids, roots, list, page, away, index, setUp, listOfA };
 }
 const clip = (q: number) =>
   d.prepare("SELECT a.id, a.library_id, a.trashed_at, a.left_hidden_at, v.id AS version FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(q)) as {
@@ -486,5 +490,52 @@ describe("a Mac-app add sent later of a hidden clip's file", () => {
     const r = sendLater(at.library, "tia", { filename: "send.mov", size: 10, fromPath: "/Users/tia/Desktop/send.mov", device: m.mac.id, quick: quick(850) });
     expect("duplicateOf" in r).toBe(false);
     expect((r as { assetId: string }).assetId).not.toBe(clip(850).id);
+  });
+});
+
+describe("a clip whose own file is in a left-out folder", () => {
+  it("waits, hidden, for every folder of the computer: a copy in a folder read later keeps it, never trashed", async () => {
+    const m = computer("Tiny Mac DA");
+    await m.setUp([]);
+    await m.index("A", "Private/x.mov", 860);
+    await m.list("A", [{ rel: "Private/x.mov", q: 860 }]);
+    await m.listOfA(["Private"]);
+    await m.list("A", [{ rel: "Private/x.mov", q: 860 }]);
+    expect([trashed(860), hidden(860)]).toEqual([false, true]);
+    await m.list("B", [{ rel: "x.mov", q: 860 }]);
+    expect([trashed(860), hidden(860)]).toEqual([false, false]);
+    await m.list("C", []);
+    expect(trashed(860)).toBe(false);
+    expect(d.prepare("SELECT folder_id FROM version_places WHERE version_id = ? AND state = 'verified'").all(clip(860).version)).toEqual([{ folder_id: m.ids.B }]);
+  });
+
+  it("a lost page of its own folder settles nothing: it leaves only once every folder is read whole", async () => {
+    const m = computer("Tiny Mac DB");
+    await m.setUp([]);
+    await m.index("A", "Private/y.mov", 861);
+    await m.list("A", [{ rel: "Private/y.mov", q: 861 }]);
+    await m.listOfA(["Private"]);
+    await m.page("A", "lost-own", false, [{ rel: "Private/y.mov", q: 861 }], 0);
+    await m.page("A", "lost-own", true, [{ rel: "Zed/z.mov", q: 862 }], 2);
+    await m.list("B", []);
+    await m.list("C", []);
+    expect([trashed(861), hidden(861)]).toEqual([false, true]);
+    await m.list("A", [{ rel: "Private/y.mov", q: 861 }]);
+    await m.list("B", []);
+    await m.list("C", []);
+    expect(trashed(861)).toBe(true);
+  });
+});
+
+describe("a computer that numbers no pages", () => {
+  it("a listing it began before a restart marks nothing gone", async () => {
+    const m = computer("Tiny Mac OR");
+    await m.setUp();
+    const at = await m.index("B", "keep.mov", 870);
+    await m.page("B", "old-r", false, [{ rel: "other.mov", q: 871 }]);
+    forgetOnRestart();
+    // the page holding keep.mov was lost in the restart
+    await m.page("B", "old-r", true, [{ rel: "other2.mov", q: 872 }]);
+    expect(d.prepare("SELECT state FROM version_places WHERE version_id = ? AND folder_id = ?").get(at.versionId, m.ids.B)).toEqual({ state: "verified" });
   });
 });

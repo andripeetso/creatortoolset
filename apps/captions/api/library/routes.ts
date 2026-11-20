@@ -448,14 +448,13 @@ const madeOf = (row: UploadRow): Made | null => (row.made ? (JSON.parse(row.made
 function duplicateOf(row: UploadRow, sha256: string): { id: string; current: string | null } | undefined {
   if (row.replaces_asset_id) return undefined;
   const made = madeOf(row);
-  const dup = db()
+  // one hidden while it waits on Folders left out is no copy to keep instead: the upload is kept, the file really added
+  return db()
     .prepare(
       `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
     )
-    // one hidden while it waits on Folders left out is no copy to keep instead: the upload is kept, the file really added
     .get(row.library_id, sha256, made?.quick ?? null, made?.proxy?.size ?? row.size) as { id: string; current: string | null } | undefined;
-  return dup;
 }
 
 /**
