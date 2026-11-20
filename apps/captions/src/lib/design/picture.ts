@@ -50,7 +50,10 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
     const lines = set.widths.length;
     const said = `layer ${l.id} “${l.text.replace(/\s+/g, " ").slice(0, 40)}”`;
     if ((l.fit === "shrink" || l.lines) && set.size < l.size) worked.push(`${said} is drawn at size ${set.size} (its size ${l.size} is the most) in ${lines} ${lines === 1 ? "line" : "lines"}`);
-    if (wide > l.w + 1 || tall > l.h + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" || l.lines ? " (it cannot shrink further)" : ""}`);
+    // a text that shrinks is set by widths measured at one size and scaled, so at the size it lands on it can be drawn up to
+    // about 1 % wider than measured: that is no spill (a 2-line headline set at 125.5 drew 907 wide in a 900 box)
+    const slack = l.fit === "shrink" || l.lines ? 1.01 : 1;
+    if (wide > l.w * slack + 1 || tall > l.h * slack + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" || l.lines ? " (it cannot shrink further)" : ""}`);
     // words that fit their box and are still cut: the box itself reaches over the frame's edge (a turned box is left to the eye)
     else if (!l.rotate) {
       const left = l.x + (l.align === "center" ? (l.w - wide) / 2 : l.align === "right" ? l.w - wide : 0);

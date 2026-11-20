@@ -939,7 +939,7 @@ export function Inspector({
               <Choice
                 label="Text fit"
                 value={same((l) => (l.type === "text" ? (l.lines ? "lines" : (l.fit ?? "fixed")) : undefined))}
-                options={[["fixed", "Fixed size"], ["shrink", "Shrink to fit"], ["lines", "Shrink to lines"]] as const}
+                options={[["fixed", "Fixed size"], ["shrink", "Shrink to fit"], ["lines", "Lines"]] as const}
                 onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, fit: v === "shrink" ? "shrink" : undefined, lines: v === "lines" ? (l.lines ?? 2) : undefined } : l))}
               />
               {same((l) => (l.type === "text" ? !!l.lines : undefined)) === true && num("≡", "At most this many lines, with no word alone on the last one", same((l) => (l.type === "text" ? (l.lines ?? 2) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lines: n } : l), { min: 1, max: 12 })}
