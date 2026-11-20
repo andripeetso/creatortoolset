@@ -46,6 +46,8 @@ export async function makeProxy(src: string, out: string, soundOnly = false, qua
       // short side to the quality's cap at most, never upscaled, both sides kept even for libx264
       "-vf", `scale=w='trunc(min(iw,${q.short}*iw/min(iw,ih))/2)*2':h='trunc(min(ih,${q.short}*ih/min(iw,ih))/2)*2'`,
       "-c:v", "libx264", "-preset", "veryfast", "-crf", String(q.crf), "-pix_fmt", "yuv420p",
+      // a keyframe every second: the editor's cuts and scrubbing seek to one at most a second away
+      "-force_key_frames", "expr:gte(t,n_forced*1)",
       "-maxrate", `${kbps}k`, "-bufsize", `${kbps * 2}k`,
       "-c:a", "aac", "-b:a", "128k",
       "-movflags", "+faststart", "-f", "mp4",

@@ -3,6 +3,7 @@
 // (`data-mac-places`) asks nothing and plays the server's proxy, as before.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AssetCard } from "@contracts/library";
 import { PLACES_MAX, type PlaceCheck, type RootLabel } from "@contracts/places";
 import { macPlaces, placesCheck } from "@/lib/thisMac";
 
@@ -24,6 +25,18 @@ export function pickSource(check: PlaceCheck | undefined, versionId: string, ser
 export function proxySource(check: PlaceCheck | undefined, versionId: string, serverPlays = true): Source {
   const cached = check?.state === "cached" ? check.url : check?.cached;
   return { src: cached ?? (serverPlays ? `/api/library/media/${versionId}/play` : ""), badge: "Proxy" };
+}
+
+/**
+ * What the editor plays in place of a clip's original (AssetCard.proxy, api/library/query.ts markHere): this computer's
+ * cached proxy (ctlocal, from the Mac's answer), else the server's when the server plays (`serverPlays`, as pickSource).
+ * null: no proxy plays here, and the original does. Export always cuts the original.
+ */
+export function editorProxy(card: Pick<AssetCard, "versionId" | "proxy">, check: PlaceCheck | undefined, serverPlays = true): { url: string; w: number; h: number } | null {
+  const p = card.proxy;
+  if (!p) return null;
+  const url = (check?.state === "cached" ? check.url : check?.cached) ?? (p.server && serverPlays ? `/api/library/media/${card.versionId}/play` : null);
+  return url ? { url, w: p.w, h: p.h } : null;
 }
 
 /** "footage (office-nas)": a root as the lines under a player name it. */

@@ -18,7 +18,7 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { hostsNone, hostsOriginals, hostsProxies, SOUNDS } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, SOUNDS, type LibraryUpload } from "../../contracts/library";
 import { isWindowsPath } from "../../contracts/places";
 import type { Balance, Device } from "../../contracts/providers";
 import { sourcesOf } from "../../contracts/storage";
@@ -376,6 +376,9 @@ function waitsForWords(job: JobRow): boolean {
   return job.kind === "describe" && !!libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'transcribe' AND state IN ('queued', 'running')").get(job.version_id);
 }
 
+/** A proxy a computer makes stays in its cache, never sent, where the server hosts no proxies (Upload off, Originals only). */
+export const keepsProxy = (upload: LibraryUpload | null | undefined): boolean => !hostsProxies(upload);
+
 function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof foldersOf>): LibraryPackage {
   const at = fileFor(where(r), d.id, folders, isThisMachine);
   const file: WorkFile = {
@@ -413,8 +416,9 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
       : {}),
     // a proxy job encodes at the library's Proxy quality (media/proxy.ts makeProxy)
     ...(job.kind === "proxy" ? { proxy: { cloud: false, on: false, quality: libraryProxyQuality(r.library_id) } } : {}),
-    // Upload off: a proxy is made here and kept in this computer's cache, never sent (cache.ts keepProxy)
-    ...(job.kind === "proxy" && hostsNone(upload) ? { keepProxy: true } : {}),
+    // the server hosts no proxies (Upload off, or Originals only): a proxy is made here and kept in this computer's
+    // cache, never sent (cache.ts keepProxy); the editor plays it from there
+    ...(job.kind === "proxy" && keepsProxy(upload) ? { keepProxy: true } : {}),
   };
 }
 
