@@ -98,9 +98,14 @@ async function keepFonts(owner: string, list: KeptFont[]): Promise<void> {
 const fontTurn = new Map<string, Promise<unknown>>();
 function inTurn<T>(owner: string, run: () => Promise<T>): Promise<T> {
   const mine = (fontTurn.get(owner) ?? Promise.resolve()).then(run, run);
-  fontTurn.set(owner, mine.catch(() => {}));
+  const tail = mine.catch(() => {});
+  fontTurn.set(owner, tail);
+  // nothing waiting after it: its key goes (one a design id, made up or not, never stays)
+  void tail.then(() => fontTurn.get(owner) === tail && fontTurn.delete(owner));
   return mine;
 }
+/** How many keys have something running or waiting (none once all is done). */
+export const designTurnsWaiting = () => fontTurn.size;
 
 /**
  * The fonts a design's words may be set in beside the app's own: the person's own, and the ones its words are set in
@@ -1159,37 +1164,40 @@ designsApp.get("/:id", (c) => answer(c, () => mine(c)));
 const designTurn = (c: Context) => <T>(run: () => Promise<T>) => inTurn(`design:${c.req.param("id")}`, run);
 
 designsApp.put("/:id", (c) =>
-  answer(c, () => designTurn(c)(async () => {
-    const d = await mine(c);
+  answer(c, async () => {
+    // the body first: a slow sender never holds the other writes to the design
     const b = await body(c);
-    const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, DESIGN_LIMITS.name) : d.name;
-    if (!Array.isArray(b.pages)) return save({ ...d, name, updatedAt: stamp(d) });
-    // `since`: the design's last change this window knows of. One made after it (an AI's frames, written while this
-    // save was on its way) would be written over by frames that never saw it: the window puts its own changes onto
-    // the design as it is now, and saves again
-    // (but not by this window's own saves alone: one sent as the window closed, after one still on its way)
-    const by = typeof b.by === "string" && /^[\w-]{8,64}$/.test(b.by) ? b.by : undefined;
-    const n = typeof b.n === "number" && Number.isInteger(b.n) && b.n > 0 ? b.n : undefined;
-    // (a later one of its own: an earlier save arriving after a later one, a page brought back, is written over nothing)
-    const own = by && n !== undefined && d.writer === by && n > (d.writerN ?? 0) && (d.writerFrom ?? Infinity) <= (b.since as number);
-    if (typeof b.since === "number" && d.updatedAt > b.since && !own) throw new Changed(d);
-    // the person's own changes: checked for what a frame can hold, never for whose words they are. A frame sent
-    // without its place (a window opened before frames had one) keeps the place and the slide it has
-    const piece = pieceOf(d);
-    // a design made before frames knew their slides: each frame is its slide's by the order the design was in
-    const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
-    // laid out by the browser with the real widths of its words: a text keeps the size it was saved at
-    const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), measure: null, before: beforeIn(d.pages), own: true });
-    const pages = withFrames(checked.pages, d.width, d.height, was);
-    // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
-    // could be kept is not, and nothing is saved over what is there
-    if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
-    const changed: string[] = [];
-    const saved = await save(await settle({ ...d, name, pages, updatedAt: stamp(d), writerFrom: by && d.writer === by ? d.writerFrom : d.updatedAt }, d.pages, checked.notes, false, changed), by ? { by, n } : undefined);
-    // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
-    // `changes`: what the save changed of what was sent that loses nothing (a second main given a key of its own)
-    return { ...saved, ...(checked.notes.length ? { notes: checked.notes } : {}), ...(changed.length ? { changes: changed } : {}) };
-  })),
+    return designTurn(c)(async () => {
+      const d = await mine(c);
+      const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, DESIGN_LIMITS.name) : d.name;
+      if (!Array.isArray(b.pages)) return save({ ...d, name, updatedAt: stamp(d) });
+      // `since`: the design's last change this window knows of. One made after it (an AI's frames, written while this
+      // save was on its way) would be written over by frames that never saw it: the window puts its own changes onto
+      // the design as it is now, and saves again
+      // (but not by this window's own saves alone: one sent as the window closed, after one still on its way)
+      const by = typeof b.by === "string" && /^[\w-]{8,64}$/.test(b.by) ? b.by : undefined;
+      const n = typeof b.n === "number" && Number.isInteger(b.n) && b.n > 0 ? b.n : undefined;
+      // (a later one of its own: an earlier save arriving after a later one, a page brought back, is written over nothing)
+      const own = by && n !== undefined && d.writer === by && n > (d.writerN ?? 0) && (d.writerFrom ?? Infinity) <= (b.since as number);
+      if (typeof b.since === "number" && d.updatedAt > b.since && !own) throw new Changed(d);
+      // the person's own changes: checked for what a frame can hold, never for whose words they are. A frame sent
+      // without its place (a window opened before frames had one) keeps the place and the slide it has
+      const piece = pieceOf(d);
+      // a design made before frames knew their slides: each frame is its slide's by the order the design was in
+      const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
+      // laid out by the browser with the real widths of its words: a text keeps the size it was saved at
+      const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), measure: null, before: beforeIn(d.pages), own: true });
+      const pages = withFrames(checked.pages, d.width, d.height, was);
+      // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
+      // could be kept is not, and nothing is saved over what is there
+      if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
+      const changed: string[] = [];
+      const saved = await save(await settle({ ...d, name, pages, updatedAt: stamp(d), writerFrom: by && d.writer === by ? d.writerFrom : d.updatedAt }, d.pages, checked.notes, false, changed), by ? { by, n } : undefined);
+      // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
+      // `changes`: what the save changed of what was sent that loses nothing (a second main given a key of its own)
+      return { ...saved, ...(checked.notes.length ? { notes: checked.notes } : {}), ...(changed.length ? { changes: changed } : {}) };
+    });
+  }),
 );
 
 designsApp.delete("/:id", (c) =>
@@ -1231,13 +1239,14 @@ designsApp.get("/:id/look", (c) =>
 
 designsApp.post("/:id/pictures", (c) =>
   answer(c, async () => {
-    const d = await mine(c);
-    if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
+    const first = await mine(c);
+    if (first.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
     const b = await body(c);
-    let id: string;
+    // the picture first (a video's moment is cut, an upload read): then, in the design's turn, onto it as it is now
+    let picture: { bytes: Buffer; ext: string; asked?: unknown };
     if (typeof b.version === "string" && typeof b.t === "number" && Number.isFinite(b.t) && b.t >= 0) {
       // a moment of a library video (an AI that designs has no file to send): copied in like any other picture
-      id = await addPicture(d, (await videoFrame(d.owner, b.version, b.t)).frame, "jpg");
+      picture = { bytes: (await videoFrame(first.owner, b.version, b.t)).frame, ext: "jpg" };
     } else {
       let sent: ReturnType<typeof parsePictureUpload>;
       try {
@@ -1245,13 +1254,18 @@ designsApp.post("/:id/pictures", (c) =>
       } catch (e) {
         throw new DesignError(e instanceof Error ? e.message : String(e));
       }
-      id = await addPicture(d, sent.bytes, PICTURE_EXT[sent.type], b.id);
+      picture = { bytes: sent.bytes, ext: PICTURE_EXT[sent.type], asked: b.id };
     }
-    // `was`: the window that sent it knows the design is newer only by this picture when it knew `was`
-    const was = d.updatedAt;
-    const updatedAt = stamp(d);
-    await save({ ...d, updatedAt });
-    return { id, updatedAt, was };
+    return designTurn(c)(async () => {
+      const d = await mine(c);
+      if (d.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
+      const id = await addPicture(d, picture.bytes, picture.ext, picture.asked);
+      // `was`: the window that sent it knows the design is newer only by this picture when it knew `was`
+      const was = d.updatedAt;
+      const updatedAt = stamp(d);
+      await save({ ...d, updatedAt });
+      return { id, updatedAt, was };
+    });
   }),
 );
 
@@ -1299,11 +1313,13 @@ designsApp.post("/:id/pictures/:pid/cutout", (c) =>
     const tmp = path.join(picturesOf(d.owner, d.id), `.cut-${randomBytes(6).toString("hex")}.png`);
     try {
       const cut = await keepable(await fromMac(cutOut(d.owner, await forMac(d, c.req.param("pid"), tmp))), tmp, "The cut-out");
-      // onto the design as it is now: the cutting took a while, and a hand or an AI may have changed it meanwhile
-      const now = (await read(d.owner, d.id)) ?? d;
-      const id = await addPicture(now, cut, "png");
-      await save({ ...now, updatedAt: stamp(now) });
-      return { id };
+      // onto the design as it is now, in its turn: the cutting took a while (outside it), and a hand or an AI may have changed it meanwhile
+      return await designTurn(c)(async () => {
+        const now = (await read(d.owner, d.id)) ?? d;
+        const id = await addPicture(now, cut, "png");
+        await save({ ...now, updatedAt: stamp(now) });
+        return { id };
+      });
     } finally {
       await rm(tmp, { force: true });
     }
@@ -1323,15 +1339,18 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
     const tmp = path.join(picturesOf(d.owner, d.id), `.split-${randomBytes(6).toString("hex")}.png`);
     try {
       const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
-      const now = (await read(d.owner, d.id)) ?? d;
-      if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
-      const background = await addPicture(now, await keepable(made.background, tmp, "The picture behind"), "png");
-      const room = DESIGN_LIMITS.pictures - now.pictures.length;
-      const biggest = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, room).sort((a, b) => a.n - b.n);
-      const pieces: SplitAnswer["pieces"] = [];
-      for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, await keepable(made.pieces[n]!, tmp, "A piece"), "png") });
-      await save({ ...now, updatedAt: stamp(now) });
-      return { background, pieces, lines: made.layout.lines };
+      // onto the design as it is now, in its turn (the Mac's work stays outside it)
+      return await designTurn(c)(async (): Promise<SplitAnswer> => {
+        const now = (await read(d.owner, d.id)) ?? d;
+        if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
+        const background = await addPicture(now, await keepable(made.background, tmp, "The picture behind"), "png");
+        const room = DESIGN_LIMITS.pictures - now.pictures.length;
+        const biggest = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, room).sort((a, b) => a.n - b.n);
+        const pieces: SplitAnswer["pieces"] = [];
+        for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, await keepable(made.pieces[n]!, tmp, "A piece"), "png") });
+        await save({ ...now, updatedAt: stamp(now) });
+        return { background, pieces, lines: made.layout.lines };
+      });
     } finally {
       await rm(tmp, { force: true });
     }

@@ -2,7 +2,7 @@ import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer, type PathLayer 
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
-import { boundsOf, everyLayer, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, nextOf, outOf, parentOf, same, seenBox } from "./tree";
+import { boundsOf, everyLayer, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, nextOf, outOf, parentOf, same, seenBox, stable } from "./tree";
 import { pathBounds } from "./path";
 
 /**
@@ -391,6 +391,19 @@ export interface SentSave {
   pages: readonly DesignPage[];
   base: readonly DesignPage[];
 }
+/**
+ * The saves on their way with one more, oldest first. shortcut: the newest SENT_MAX (a long time with replies lost);
+ * an older one's layers may not be in the newer (an undo, a later move), so the cap is far past what a session sends.
+ */
+export const SENT_MAX = 50;
+export const withSent = (list: readonly SentSave[], save: SentSave): SentSave[] => [...list, save].slice(-SENT_MAX);
+/**
+ * Whether an answer settles a save (it is no longer on its way): refused (nothing written), an answer the server itself
+ * gave (below 500: a gateway's may come after the server wrote it), or none while the browser was offline as it was
+ * sent (it never left). No answer otherwise (a reply lost): it may be there.
+ */
+export const settles = (a: { refused?: boolean; status?: number; offline: boolean }): boolean => !!a.refused || (a.status !== undefined ? a.status < 500 : a.offline);
+
 /** What a save says of one thing (a frame of its, a layer of a frame of its): as it was sent, taken out (its base had it), or nothing. */
 type Says<T> = { has: T } | { gone: true } | null;
 const says = <T>(sent: T | undefined, before: boolean): Says<T> => (sent !== undefined ? { has: sent } : before ? { gone: true } : null);
@@ -481,6 +494,11 @@ function indexed(layers: readonly Layer[]): Map<string, At> {
   walk(layers, ROOT, false);
   return out;
 }
+/** What a layer is, beside how it looks: told apart from another layer whatever the server cleaned of it. */
+const whatItIs = (l: Layer): string => {
+  const r = l as unknown as Rec;
+  return stable([l.type, r.text, r.picture, r.shape, r.svg, l.name, r.component, (r.instance as { of?: string } | undefined)?.of]);
+};
 /** The containers a layer lies in on one side, innermost first. */
 function* ancestors(side: ReadonlyMap<string, At>, id: string): Generator<string> {
   const seen = new Set<string>();
@@ -510,7 +528,10 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
   if (sent.length) {
     const saves = sent.map((s) => ({ sent: indexed(s.layers ?? []), was: indexed(s.base ?? []) }));
     for (const id of new Set([...T.keys(), ...saves.flatMap((s) => [...s.sent.keys(), ...s.was.keys()])])) {
-      const a = agreed(saves.map((s) => says(s.sent.get(id), s.was.has(id))), T.get(id), (x, y) => rounded(ownOf(x, false)) === rounded(ownOf(y, false)) && x.parent === y.parent);
+      // (a layer new to the base is the one sent by what it is — its kind, words, picture, shape, drawing, name, main — not
+      // by values the server may have cleaned, a weight snapped or a size held in; another's new layer under that id differs)
+      const fresh = !B.has(id);
+      const a = agreed(saves.map((s) => says(s.sent.get(id), s.was.has(id))), T.get(id), (x, y) => x.parent === y.parent && (fresh ? whatItIs(x.l) === whatItIs(y.l) : rounded(ownOf(x, false)) === rounded(ownOf(y, false))));
       if (a) "gone" in a ? B.delete(id) : B.set(id, a.has);
     }
   }

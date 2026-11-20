@@ -11,7 +11,7 @@ process.env.DATA_DIR = dataDir;
 process.env.APP_SECRET = "designs-test-secret";
 
 const { Hono } = await import("hono");
-const { designsApp } = await import("./designs");
+const { designsApp, designTurnsWaiting } = await import("./designs");
 await import("./work/task-kinds");
 // a video's frame is cut here: the server's video work is on
 (await import("./work/server-work")).writeServerWork({ on: true });
@@ -442,6 +442,30 @@ describe("designs: an AI that designs", () => {
     await write(d.id, { changes: [{ frame: page0.id, layer: "l1", set: { color: "#ff0000" } }] });
     const after = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: back.pages, since: late.body.updatedAt, by: "window-one", n: 5 });
     expect(after.status).toBe(409);
+  });
+
+  it("keeps an AI's write made while a picture was being added, and never holds every write for a slow save's body", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const p1 = d.pages[0]!.id;
+    const png = execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "color=c=red:s=1200x1200", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"]);
+    const upload = call("POST", `/api/designs/${d.id}/pictures`, { name: "red.png", type: "image/png", data: png.toString("base64") });
+    const ai = write(d.id, { frames: [{ id: p1, layers: [{ type: "text", id: "t", text: "Written meanwhile", font: "Inter", size: 40, color: "#000000", align: "left", x: 0, y: 0, w: 400, h: 60 }] }] });
+    await Promise.all([upload, ai]);
+    const now = (await call<Design>("GET", `/api/designs/${d.id}`)).body;
+    expect(now.pages[0]!.layers.map((l) => (l as { text?: string }).text)).toEqual(["Written meanwhile"]);
+    expect(now.pictures).toHaveLength(1);
+    // a save whose body is still coming holds no other write to the design
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const stream = new ReadableStream({ async start(ctl) { ctl.enqueue(new TextEncoder().encode('{"pages":')); await held; ctl.enqueue(new TextEncoder().encode(`${JSON.stringify(now.pages)},"since":${now.updatedAt}}`)); ctl.close(); } });
+    as = "jordan";
+    const slow = app.request(`/api/designs/${d.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: stream, duplex: "half" } as RequestInit);
+    const quick = await Promise.race([write(d.id, { changes: [{ frame: p1, layer: "t", set: { color: "#ff0000" } }] }).then(() => "written"), new Promise((r) => setTimeout(() => r("held"), 3000))]);
+    release();
+    await slow;
+    expect(quick).toBe("written");
+    // and the turns kept for a design go once nothing waits on them
+    expect(designTurnsWaiting()).toBe(0);
   });
 
   it("an AI fills a slide whose number chip is a main: each copy gets an instance with its own number, the main stays one", async () => {

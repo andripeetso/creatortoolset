@@ -28,7 +28,7 @@ import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
-import type { SentSave } from "@/lib/design/hands";
+import { settles, withSent, type SentSave } from "@/lib/design/hands";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture, type SendError } from "@/lib/designs";
 import { splitLayers } from "@/lib/design/split";
 import { onThisMac } from "@/lib/thisMac";
@@ -316,17 +316,16 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   /** A save of these pages: on its way (sent) until its answer, which takes it off. */
   const putSave = useCallback((pages: Page[], since: number, keepalive = false, base: Page[] = server.current.pages) => {
     const save: SentSave = { pages, base };
-    // shortcut: the newest five only (a long time offline), so a merge never weighs dozens; the older ones' layers are in the newer
-    sent.current = [...sent.current, save].slice(-5);
+    sent.current = withSent(sent.current, save);
     const done = () => void (sent.current = sent.current.filter((s) => s !== save));
+    // offline as it goes: no answer then means it never left
+    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     return saveDesign(id, { pages, since, by: by.current, n: ++sends.current }, keepalive).then(
       // taken: it and every save sent before it are settled
       (d) => ((sent.current = sent.current.slice(sent.current.lastIndexOf(save) + 1)), d),
       (e) => {
-        // refused (nothing written), or an answer the server itself gave (not a gateway's after it may have written): no
-        // longer on its way. Unanswered (the reply lost): it may be there
         const status = (e as { status?: number }).status;
-        if (e instanceof DesignChanged || (typeof status === "number" && status < 500)) done();
+        if (settles({ refused: e instanceof DesignChanged, status: typeof status === "number" ? status : undefined, offline })) done();
         throw e;
       },
     );

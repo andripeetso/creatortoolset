@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DesignPage, GroupLayer, Layer, TextLayer } from "@contracts/design";
 import { detached, isInstance, syncInstances } from "./components";
 import { hits } from "./draw";
-import { mergeFrames } from "./hands";
+import { mergeFrames, settles, withSent, type SentSave } from "./hands";
 import { everyLayer, findLayer, takeId } from "./tree";
 
 /** Second review of components: merges, nested overrides, keys, ids. */
@@ -393,5 +393,30 @@ describe("saves on their way: what each one left (review)", () => {
 describe("the person's window's ids", () => {
   it("keeps a copied frame's l45 (its own), however far past a new frame's next", () => {
     expect(takeId("l45", new Set(), () => true, undefined, 1, false, true)).toBe("l45");
+  });
+});
+
+describe("saves on their way, kept and settled (last gate)", () => {
+  const f = (layers: Layer[]) => page("p1", layers);
+  const xs = (pages: readonly DesignPage[]) => everyLayer(pages[0]!.layers).map((l) => `${l.id}@${l.x}`);
+
+  it("keeps the save that matters however many failed after it offline, and settles one that never left the browser", () => {
+    const base = [f([shape("l1")])];
+    const save1 = { pages: [f([shape("l1"), shape("l2", "#ff0000", { x: 10 })])], base };
+    let list: SentSave[] = [save1];
+    for (let n = 0; n < 5; n++) list = withSent(list, { pages: [f([shape("l1"), shape("l2", "#ff0000", { x: 60 })])], base: save1.pages });
+    expect(list[0]).toBe(save1);
+    // offline: the saves after it never left, and are settled
+    expect([settles({ offline: true }), settles({ offline: false }), settles({ status: 502, offline: false }), settles({ status: 404, offline: false }), settles({ refused: true, offline: false })]).toEqual([true, false, false, true, true]);
+    const mine = [f([shape("l1"), shape("l2", "#ff0000", { x: 60 })])];
+    const theirs = [f([shape("l1"), shape("l2", "#ff0000", { x: 10 }), shape("l9", "#00ff00")])];
+    expect(xs(mergeFrames(mine, base, theirs, [save1]))).toEqual(["l1@0", "l2@60", "l9@0"]);
+  });
+
+  it("takes a new layer the server cleaned (a weight snapped, a value held in) as the one sent, never a second", () => {
+    const base = [f([shape("l1")])];
+    const sent = [f([shape("l1"), text("l3", "Hi", { weight: 450, size: 5000 })])];
+    const theirs = [f([shape("l1"), text("l3", "Hi", { weight: 400, size: 1000 }), shape("l9")])];
+    expect(xs(mergeFrames(sent, base, theirs, [{ pages: sent, base }]))).toEqual(["l1@0", "l3@10", "l9@0"]);
   });
 });
