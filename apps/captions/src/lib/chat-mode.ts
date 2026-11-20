@@ -149,6 +149,14 @@ export function chatLayout(s: Pick<Stored, "w" | "page"> & { bare?: boolean; lw?
 export const bareNow = (was: boolean, s: { chatMode: boolean; another: boolean; unsent: boolean }): boolean =>
   !s.chatMode || s.another || s.unsent ? s.unsent : was;
 
+/**
+ * Chat mode has just come on while the open chat, one something was said in, is another workspace's than the window's:
+ * the window keeps its workspace and a new chat is started in it, instead of following that chat (owner, 11-19: "threw
+ * me into a different workspace completely"). Not before the window knows its workspace (`ws` null): it waits for it.
+ */
+export const leavesChat = (s: { was: boolean; on: boolean; started: boolean; chatWs?: string | null; ws: string | null }): boolean =>
+  s.on && !s.was && s.started && !!s.chatWs && !!s.ws && s.chatWs !== s.ws;
+
 /** The breakpoints a page `pane` wide is narrower than, as <html data-pane> carries them: "lt-lg lt-xl lt-2xl". */
 export const paneBelow = (pane: number): string => BREAKPOINTS.filter(([, px]) => pane < px).map(([name]) => `lt-${name}`).join(" ");
 

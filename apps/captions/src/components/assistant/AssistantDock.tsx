@@ -25,7 +25,7 @@ import {
   sendAnswer,
   useAssistant,
 } from "@/lib/assistant";
-import { bareNow, useChatMode, useChatModeKey, useChatModeLayout, washTo } from "@/lib/chat-mode";
+import { bareNow, leavesChat, useChatMode, useChatModeKey, useChatModeLayout, washTo } from "@/lib/chat-mode";
 import { historyDepth } from "@/lib/history-depth";
 import { cornerOf, storePlace, storedPlace, type Corner, type Place } from "@/lib/dock-place";
 import { pageContext } from "@/lib/page-context";
@@ -288,13 +288,25 @@ export function AssistantDock() {
     .filter((w) => w.href?.startsWith("/"))
     .at(-1);
   const pageWanted = useChatMode((s) => s.page);
-  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, view?.id, view?.workspace, newest && { id: newest.id, href: newest.href }, () => {
+  // chat mode turned on while the open chat is another workspace's (the newest one, maybe started on another device):
+  // the window stays in its workspace and a new chat is started in it (leavesChat). Until that one is on screen, that
+  // chat is shown as a new chat already (so the wave's picture is the right screen) and the page does not take it
+  const onWas = useRef(chatMode);
+  const elsewhere = useRef<string | null>(null);
+  const wsLoaded = useWorkspace((s) => s.loaded);
+  const wsNow = useWorkspace((s) => (s.loaded ? s.currentProjectId : null));
+  if (view && leavesChat({ was: onWas.current, on: chatMode, started: !!view.messages.length, chatWs: view.workspace, ws: wsNow })) elsewhere.current = view.id;
+  else if (elsewhere.current && view?.id !== elsewhere.current) elsewhere.current = null;
+  // chat mode turned on before the workspaces are known counts as coming on once they are
+  if (wsLoaded) onWas.current = chatMode;
+  const leaving = !!view && view.id === elsewhere.current;
+  useChatPage(showChatMode && !layout.forced && pageWanted, !layout.full, leaving ? undefined : view?.id, view?.workspace, newest && { id: newest.id, href: newest.href }, () => {
     if (useChatMode.getState().bare) washTo({ bare: false });
   });
   // a new chat has no page (lib/chat-mode.ts `bare`): chat mode shows it as only chats, the question and the message
   // box in the middle, until it makes something, a link is followed or the page is asked for. Sending does not end
   // that. Outside chat mode a chat is about the page on screen, so only a chat nothing was said in has none
-  const unsent = !!view && !view.messages.length && !view.pending;
+  const unsent = !!view && (leaving || (!view.messages.length && !view.pending));
   const chatWas = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!view) return;
@@ -346,9 +358,18 @@ export function AssistantDock() {
   // in chat mode the page shows the open chat's workspace: on opening a chat, on a reload, on turning chat mode on (only
   // that: what a page does when its own picker changes is not done)
   const openWs = view?.workspace;
-  const wsLoaded = useWorkspace((s) => s.loaded);
   useEffect(() => {
-    if (chatMode && wsLoaded) followWorkspace(openWs);
+    if (!chatMode || !wsLoaded) return;
+    if (!leaving) return followWorkspace(openWs);
+    landing.current.on = true;
+    void startOver().then((r) => {
+      if (r.ok) return land(r.data, null, null);
+      // no new chat: the open one shows as itself again, so nothing is written into it thinking it is new
+      landing.current.on = false;
+      elsewhere.current = null;
+      void load();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatMode, view?.id, openWs, wsLoaded]);
   // a reply that starts, ends or asks changes the list's groups
   useEffect(() => {
@@ -763,8 +784,8 @@ export function AssistantDock() {
   /** The queued messages written in the chat on screen (one from before chats were told apart shows everywhere). */
   const shownQueue = queue.filter((q) => !q.chat || q.chat === view?.id);
   const chatting = connected;
-  const empty = chatting && !view.messages.length;
-  const pending = view?.pending;
+  const empty = chatting && (leaving || !view.messages.length);
+  const pending = !leaving && view?.pending;
   const headBtn = "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40";
   // a new chat in chat mode: the question and the message box in the middle of the column, the suggestions under the box
   const centred = chatMode && empty && !pending;
@@ -860,8 +881,8 @@ export function AssistantDock() {
       {chatMode ? (
         <ChatHeader
           layout={layout}
-          title={!view ? "" : view.messages.length ? (chats?.find((c) => c.open)?.title ?? "Assistant") : chatTitle({ title: "", count: 0 })}
-          dot={!!view?.messages.length && (
+          title={!view ? "" : view.messages.length && !leaving ? (chats?.find((c) => c.open)?.title ?? "Assistant") : chatTitle({ title: "", count: 0 })}
+          dot={!!view?.messages.length && !leaving && (
             <span className="relative flex size-2.5 shrink-0" aria-hidden>
               {thinking && <span className="absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--tint)_70%,transparent)] motion-safe:animate-ping" />}
               <span className={cn("relative size-2.5 rounded-full", thinking ? "bg-[var(--tint)]" : connected ? "bg-emerald-500" : "bg-muted-foreground/50")} />

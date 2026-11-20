@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bareNow, chatLayout, dragChatEdge, frontAt, frontReaches, LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow, useChatMode } from "./chat-mode";
+import { bareNow, chatLayout, leavesChat, dragChatEdge, frontAt, frontReaches, LIST_MAX, LIST_MIN, LIST_W, MIN_CHAT, MIN_PAGE, paneBelow, useChatMode } from "./chat-mode";
 
 const fresh = { w: 0, page: true };
 
@@ -121,5 +121,19 @@ describe("dragging the chats' edge", () => {
     run();
     expect(useChatMode.getState().drag).toBe(0);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("leavesChat", () => {
+  const at = { was: false, on: true, started: true, chatWs: "other", ws: "here" };
+  it("leaves a started chat of another workspace when chat mode has just come on", () => {
+    expect(leavesChat(at)).toBe(true);
+  });
+  it("follows the chat otherwise: chat mode already on, the same workspace, a chat nothing was said in, workspaces not known yet", () => {
+    expect(leavesChat({ ...at, was: true })).toBe(false);
+    expect(leavesChat({ ...at, on: false })).toBe(false);
+    expect(leavesChat({ ...at, chatWs: "here" })).toBe(false);
+    expect(leavesChat({ ...at, started: false, chatWs: undefined })).toBe(false);
+    expect(leavesChat({ ...at, ws: null })).toBe(false);
   });
 });
