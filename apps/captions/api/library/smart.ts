@@ -369,7 +369,7 @@ export async function suggestWays(libraryId: string, who: Who, workspace: string
     `The library has ${clips.length} clips. Its folders now: ${folders.length ? JSON.stringify(folders) : "none"}.`,
     tags.length ? `Its tags (tag: clips): ${tags.map((t) => `${t.tag}: ${t.n}`).join(", ")}` : "",
     `Some of its clips:\n\n${clips.slice(0, 60).map((c) => clipText(c).slice(0, 400)).join("\n\n")}`,
-    `Propose two or three different ways to sort this library into folders, each by one thing that tells its clips apart and that matters for making videos from them (where it was filmed or which part of the game, what device, what happens, who or what it shows…). Each way has two to eight folders that between them hold most clips. A folder's rule says, in the creator's plain words, what goes in it and how to tell (what is seen, said, the picture's shape), so a clip can be judged by it alone. Never "Misc" or "Other", never "Finals".`,
+    `Propose two or three different ways to sort this library into folders, each by one thing that tells its clips apart and that matters for making videos from them (where it was filmed or which part of the game, what device, what happens, who or what it shows…). Each way has two to eight folders that between them hold most clips. A folder's rule says, in the creator's plain words, what goes in it and how to tell (what is seen, said, the picture's shape), so a clip can be judged by it alone. Never "Misc" or "Other", never "Finals", and never a folder only for photos: the library already has a Photos tab.`,
     `Answer as {"ways": [{"name": "By …", "folders": [{"name": "one to three words", "rule": "one or two sentences"}]}]}`,
   ]
     .filter(Boolean)

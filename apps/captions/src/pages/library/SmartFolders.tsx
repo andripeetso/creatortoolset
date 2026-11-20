@@ -16,8 +16,11 @@ import { setFolderRule, suggestWays } from "./api";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The last ways the AI proposed for each library, kept while the app runs: the dialog closing never loses a paid read */
-const readWays = new Map<string, { ways: ReorganizeWay[]; about: boolean }>();
+type Read = { ways: ReorganizeWay[]; about: boolean; at: number };
+/** Each library's last Reorganize read, or the one still running, kept while the app runs: closing the dialog or leaving
+ * the page never loses a paid read (owner, 2026-11-19: a stray click made him read the library three times) */
+const reads = new Map<string, Promise<Read>>();
+const STRIP = ["bg-lime-500", "bg-sky-500", "bg-amber-500", "bg-violet-500", "bg-rose-500", "bg-teal-500", "bg-orange-500", "bg-fuchsia-500"];
 
 /** What goes in one folder, in the person's own words. Saving sorts the library into it again. */
 export function SmartFolderDialog({
@@ -86,8 +89,9 @@ export function SmartFolderDialog({
 
 /**
  * Reorganize: the dialog first says what it does and that it costs tokens; Read the library has the AI read it and
- * propose two or three ways to sort it, each folder with what goes in it and how many clips would. Use this makes them smart folders (a plain top-level folder of the same name gets the rule);
- * Undo takes them back.
+ * propose two or three ways to sort it. The ways stand side by side, each folder one line with how many clips would go
+ * in it; a tap on a folder shows its rule. Use this makes them smart folders (a plain top-level folder of the same name
+ * gets the rule, marked "exists"); Undo takes them back. Only Other ideas reads the library again.
  */
 export function ReorganizeDialog({
   libraryId,
@@ -102,46 +106,52 @@ export function ReorganizeDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [ways, setWays] = useState<ReorganizeWay[] | null>(() => readWays.get(libraryId)?.ways ?? null);
-  const [about, setAbout] = useState(() => readWays.get(libraryId)?.about ?? false);
+  const [read, setRead] = useState<Read | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [using, setUsing] = useState<number | null>(null);
+  const [ruleOf, setRuleOf] = useState<string | null>(null); // the folder ("way.folder") whose rule is open
   // The AI only runs on a second, deliberate press inside the dialog: the page's button just explains it
-  const [asked, setAsked] = useState(() => readWays.has(libraryId));
-  // Closing keeps what the AI read (owner, 2026-11-19: a stray click made him read the library three times); only
-  // Other ideas reads it again
+  const [asked, setAsked] = useState(false);
   const shown = useRef(libraryId);
-  const ask = () => {
+  /** Shows a read once it lands, unless another library is open or Other ideas started a newer one by then */
+  const follow = (lib: string, p: Promise<Read>) => {
     setAsked(true);
-    setWays(null);
+    setRead(null);
     setError(null);
-    const lib = libraryId;
-    suggestWays(lib).then(
-      (r) => {
-        readWays.set(lib, r);
-        if (lib !== shown.current) return; // another library is open now: its own read is kept for it
-        setWays(r.ways);
-        setAbout(r.about);
+    setRuleOf(null);
+    const current = () => shown.current === lib && reads.get(lib) === p;
+    p.then(
+      (r) => current() && setRead(r),
+      (e) => {
+        const showing = current();
+        if (reads.get(lib) === p) reads.delete(lib); // a failed read is not kept
+        if (showing) setError(message(e));
       },
-      (e) => lib === shown.current && setError(message(e)),
     );
   };
+  const ask = () => {
+    const p = suggestWays(libraryId).then((r) => ({ ...r, at: Date.now() }));
+    reads.set(libraryId, p);
+    follow(libraryId, p);
+  };
   useEffect(() => {
-    shown.current = libraryId; // a library switch shows that library's own read, if it has one
-    const kept = readWays.get(libraryId);
-    setAsked(!!kept);
-    setWays(kept?.ways ?? null);
-    setAbout(kept?.about ?? false);
+    shown.current = libraryId;
+    const p = reads.get(libraryId);
+    if (p) return follow(libraryId, p);
+    setAsked(false);
+    setRead(null);
     setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
 
+  const sameFolder = (name: string) => folders.find((c) => c.parentId === null && c.kind === "manual" && c.name.toLowerCase() === name.toLowerCase());
   const use = async (way: ReorganizeWay, i: number) => {
     setUsing(i);
     const made: string[] = [];
     const ruled: { id: string; rule: string | null }[] = [];
     try {
       for (const f of way.folders) {
-        const same = folders.find((c) => c.parentId === null && c.kind === "manual" && c.name.toLowerCase() === f.name.toLowerCase());
+        const same = sameFolder(f.name);
         if (same) {
           await setFolderRule(libraryId, same.id, f.rule);
           ruled.push({ id: same.id, rule: same.rule ?? null });
@@ -162,15 +172,24 @@ export function ReorganizeDialog({
     }
   };
 
+  const ways = read?.ways;
+  const about = read?.about;
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent
         aria-describedby={undefined}
         // a click or a screenshot outside never closes it: only Close, the X or Escape do
         onInteractOutside={(e) => e.preventDefault()}
-        className="flex max-h-[90dvh] flex-col gap-4 overflow-y-auto sm:max-w-lg"
+        className={`flex max-h-[90dvh] flex-col gap-4 overflow-y-auto ${ways ? "sm:max-w-4xl" : "sm:max-w-lg"}`}
       >
-        <DialogTitle className="text-base">Reorganize</DialogTitle>
+        <div className="flex items-baseline gap-2 pr-6">
+          <DialogTitle className="text-base">Reorganize</DialogTitle>
+          {read && (
+            <span className="text-xs text-zinc-500">
+              {read.ways.length} ways · read at {new Date(read.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
         {!asked && (
           <div className="flex flex-col gap-2 text-sm text-zinc-500">
             <p>
@@ -180,32 +199,63 @@ export function ReorganizeDialog({
             <p>It runs on the AI provider set in Settings, so it uses tokens each time. Nothing moves until you press Use this on one of the ways.</p>
           </div>
         )}
-        {asked && !ways && !error && (
+        {asked && !read && !error && (
           <p className="flex items-center gap-2 text-sm text-zinc-500">
             <Spinner /> Reading the library
           </p>
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}
-        {ways?.map((w, i) => (
-          <section key={w.name} className="flex flex-col gap-2 rounded-lg border border-zinc-500/20 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-medium">{w.name}</h3>
-              <Button size="sm" disabled={using !== null} onClick={() => void use(w, i)}>
-                {using === i && <Spinner />}
-                Use this
-              </Button>
-            </div>
-            <ul className="flex flex-col gap-1.5">
-              {w.folders.map((f) => (
-                <li key={f.name} className="text-sm" title={f.rule}>
-                  <span className="font-medium">{f.name}</span>
-                  {f.count !== undefined && <span className="ml-1.5 text-zinc-500 tabular-nums">{about ? `about ${f.count}` : f.count}</span>}
-                  <span className="block text-xs text-zinc-500">{f.rule}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+        {ways && (
+          <div className={`grid gap-3 ${ways.length > 2 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+            {ways.map((w, i) => {
+              const most = Math.max(1, ...w.folders.map((f) => f.count ?? 0));
+              const counted = w.folders.some((f) => f.count);
+              return (
+                <section key={w.name} className="flex flex-col gap-2 rounded-lg border border-zinc-500/20 p-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h3 className="text-sm font-medium">{w.name}</h3>
+                    <span className="shrink-0 text-xs text-zinc-500">{w.folders.length} folders</span>
+                  </div>
+                  {/* how the clips split between its folders: one folder taking everything shows at a glance */}
+                  {counted && (
+                    <div aria-hidden className="flex h-1.5 gap-px overflow-hidden rounded-full">
+                      {w.folders.map((f, k) => (
+                        <span key={f.name} className={STRIP[k % STRIP.length]} style={{ flex: f.count ?? 0 }} />
+                      ))}
+                    </div>
+                  )}
+                  <ul className="flex flex-col gap-0.5">
+                    {w.folders.map((f, k) => {
+                      const id = `${i}.${k}`;
+                      return (
+                        <li key={f.name}>
+                          <button
+                            type="button"
+                            aria-expanded={ruleOf === id}
+                            onClick={() => setRuleOf(ruleOf === id ? null : id)}
+                            className="relative flex w-full items-center gap-1.5 overflow-hidden rounded px-1.5 py-1 text-left text-sm hover:bg-zinc-500/10"
+                          >
+                            {counted && <span aria-hidden className="absolute inset-y-0 left-0 bg-zinc-500/15" style={{ width: `${((f.count ?? 0) / most) * 100}%` }} />}
+                            <span className="relative truncate font-medium">{f.name}</span>
+                            {sameFolder(f.name) && <span className="relative shrink-0 rounded border border-zinc-500/30 px-1 text-[10px] text-zinc-500">exists</span>}
+                            {f.count !== undefined && (
+                              <span className="relative ml-auto shrink-0 text-xs text-zinc-500 tabular-nums">{about ? `about ${f.count}` : f.count}</span>
+                            )}
+                          </button>
+                          {ruleOf === id && <p className="px-1.5 pt-0.5 pb-1 text-xs text-zinc-500">{f.rule}</p>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <Button size="sm" className="mt-auto" disabled={using !== null} onClick={() => void use(w, i)}>
+                    {using === i && <Spinner />}
+                    Use this
+                  </Button>
+                </section>
+              );
+            })}
+          </div>
+        )}
         <div className="flex justify-end gap-2">
           {(ways || error) && (
             <Button variant="ghost" disabled={using !== null} onClick={ask} className="mr-auto">
