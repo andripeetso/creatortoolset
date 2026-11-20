@@ -179,11 +179,12 @@ final class Imports: @unchecked Sendable {
         var stopped = false
         for f in files {
             if with(id, { $0.cancelled }) == true { stopped = true; break }
-            guard Self.inside(f.from, sources) != nil, let bytes = size(f.from) else {
-                failed.append(["from": f.from, "error": "Not a file from a drop or a pick in this window."]); continue
-            }
+            // first, whatever else is wrong with it: the page never uploads a file refused this way instead
             if let inMedia = Self.inside(f.from, media) {
                 failed.append(["from": f.from, "error": "\(f.from) is in the Media folder \(inMedia): drop the folder with the footage itself"]); continue
+            }
+            guard Self.inside(f.from, sources) != nil, let bytes = size(f.from) else {
+                failed.append(["from": f.from, "error": "Not a file from a drop or a pick in this window."]); continue
             }
             guard let root = Self.destination(f.to, destinations) else {
                 let away = Self.inside(f.to, waiting).map { (($0 as NSString).deletingLastPathComponent as NSString).lastPathComponent }
