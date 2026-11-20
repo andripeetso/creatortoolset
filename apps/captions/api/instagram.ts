@@ -126,6 +126,9 @@ import type {
   Tag,
 } from "./lib/instagram/types";
 import { POST_STATUS_MOVES } from "./lib/instagram/types";
+// the stored accounts, readable without this module (lib/instagram/accounts.ts); re-exported for the Analyzer's callers
+import { accountActive, accountDir, accountMetaPath, allAccountIds, allAccounts, accountsRoot, mineAccountId, okId, ownerMine, readAccount } from "./lib/instagram/accounts";
+export { accountActive, allAccounts, mineAccountId, readAccount } from "./lib/instagram/accounts";
 import { canMove, move } from "./lib/transition";
 import {
   InstagramUrlError,
@@ -200,7 +203,6 @@ const THUMB_MAX_BYTES = 8 * 1024 * 1024;
 const RESTART_MSG = "Stopped by a server restart";
 const SKIP_TOP = new Set(["users", "accounts", "stacks"]);
 
-const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const okSlide = (s: string) => /^\d{1,2}$/.test(s);
 const postDir = (id: string) => path.join(IG_ROOT, id);
 const metaPath = (id: string) => path.join(postDir(id), "meta.json");
@@ -213,10 +215,7 @@ const transcriptsDir = (id: string) => path.join(postDir(id), "transcripts");
 const commentsPath = (id: string) => path.join(postDir(id), "comments.json");
 const searchPath = (id: string) => path.join(postDir(id), "search.txt");
 const embeddingPath = (id: string) => path.join(postDir(id), "embedding.json");
-const ACCOUNTS_ROOT = path.join(IG_ROOT, "accounts");
 const STACKS_ROOT = path.join(IG_ROOT, "stacks");
-const accountDir = (id: string) => path.join(ACCOUNTS_ROOT, id);
-const accountMetaPath = (id: string) => path.join(accountDir(id), "meta.json");
 const accountCatalogPath = (id: string) => path.join(accountDir(id), "catalog.json");
 const accountGraphCommentsPath = (id: string) => path.join(accountDir(id), "graph-comments.json");
 export const accountSnapshotsPath = (id: string) => path.join(accountDir(id), "snapshots.json");
@@ -305,7 +304,6 @@ interface TranscriptWord {
 }
 
 const active = new Map<string, PostMeta>();
-export const accountActive = new Map<string, AccountMeta>();
 const aborts = new Map<string, AbortController>();
 const jobUsers = new Map<string, SessionUser>();
 const jobKinds = new Map<string, JobType[]>();
@@ -367,7 +365,7 @@ export const analyzerWork = (username: string, here?: ((own?: string) => boolean
 ];
 
 void mkdir(IG_ROOT, { recursive: true }).catch(() => {});
-void mkdir(ACCOUNTS_ROOT, { recursive: true }).catch(() => {});
+void mkdir(accountsRoot(), { recursive: true }).catch(() => {});
 
 /* ---- persistence ---- */
 
@@ -409,32 +407,6 @@ export async function persistAccount(meta: AccountMeta): Promise<void> {
     }
   });
   if (accountActive.has(meta.id)) tellJob(`a:${meta.id}`, meta.owner, meta);
-}
-
-export async function readAccount(id: string): Promise<AccountMeta | null> {
-  const mem = accountActive.get(id);
-  if (mem) return mem;
-  try {
-    // A read never writes: a stale "processing" is reconciled once, at boot (resumeInterrupted).
-    return JSON.parse(await readFile(accountMetaPath(id), "utf-8")) as AccountMeta;
-  } catch {
-    return null;
-  }
-}
-
-async function allAccountIds(): Promise<string[]> {
-  try {
-    return (await readdir(ACCOUNTS_ROOT, { withFileTypes: true }))
-      .filter((d) => d.isDirectory() && okId(d.name))
-      .map((d) => d.name);
-  } catch {
-    return [];
-  }
-}
-
-export async function allAccounts(): Promise<AccountMeta[]> {
-  const metas = await Promise.all((await allAccountIds()).map(readAccount));
-  return metas.filter((m): m is AccountMeta => !!m);
 }
 
 export const listedAccount = (m: AccountMeta, user: SessionUser) =>
@@ -757,9 +729,6 @@ const queryProjectId = (c: { req: { query: (k: string) => string | undefined } }
   const id = c.req.query("projectId") || "";
   return okId(id) ? id : undefined;
 };
-
-// "Mine" is per owner: the demo's copy of an account is never the admin's own.
-const ownMine = (a: AccountMeta, user: SessionUser) => !!a.mine && a.owner === user.username;
 
 /** Has the account its own login (Settings → Connectors)? Then it is its owner's, whatever else says. */
 const hasLogin = (a: AccountMeta) => !!a.owner && instagramLogin(a.owner, a.username) !== null;
@@ -1138,11 +1107,6 @@ export async function ownPostComments(
     comments,
     replies: replies.sort((a, b) => b.at - a.at).slice(0, 40).map(({ comment, reply }) => ({ comment, reply })),
   };
-}
-
-/** The account marked "my account" (the one Instagram login), if any. */
-export async function mineAccountId(user: SessionUser): Promise<string | undefined> {
-  return (await ownerMine(user))?.id;
 }
 
 /**
@@ -1920,10 +1884,6 @@ async function enrichMineCatalog(
     /* catalog still useful without comment threads */
   }
   return classified;
-}
-
-async function ownerMine(user: SessionUser): Promise<AccountMeta | null> {
-  return (await allAccounts()).find((a) => ownMine(a, user)) ?? null;
 }
 
 type ProjectScope = Awaited<ReturnType<typeof projectScope>>;
