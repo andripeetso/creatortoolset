@@ -157,11 +157,14 @@ export function editorDirsSeen(key: string, scan: string | undefined, rels: stri
 const COPY_PLACE = `EXISTS (SELECT 1 FROM copy_files cf JOIN library_copies c ON c.id = cf.copy_id
   WHERE cf.version_id = p.version_id AND c.device = p.device AND p.path = rtrim(c.path, '/') || '/' || cf.rel_path)`;
 
-/** Whether `file` on computer `device` is a file one of the library's copies wrote there. */
-const copyAt = (device: string, file: string): boolean =>
-  !!db()
-    .prepare("SELECT 1 FROM copy_files cf JOIN library_copies c ON c.id = cf.copy_id WHERE c.device = ? AND rtrim(c.path, '/') || '/' || cf.rel_path = ? LIMIT 1")
-    .get(device, file);
+/** Every file the library's copies wrote on `devices` (copies.ts), by its full path: read once per report or watch pass. */
+export function copyFilesOn(devices: string[]): Set<string> {
+  if (!devices.length) return new Set();
+  const rows = db()
+    .prepare("SELECT rtrim(c.path, '/') || '/' || cf.rel_path AS at FROM copy_files cf JOIN library_copies c ON c.id = cf.copy_id WHERE c.device IN (SELECT value FROM json_each(?)) AND cf.rel_path IS NOT NULL")
+    .all(JSON.stringify(devices)) as { at: string }[];
+  return new Set(rows.map((r) => r.at));
+}
 
 /**
  * The files `where` (a condition on version_places p) matches are not footage: their place rows of this folder turn gone
@@ -240,7 +243,7 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
 }
 
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */
-async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[], filmed: ReportAnswer["filmed"], media: StorageFolder[], settle: Set<string>): Promise<void> {
+async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[], filmed: ReportAnswer["filmed"], media: StorageFolder[], settle: Set<string>, copies: Set<string>): Promise<void> {
   const d = db();
   const device = dev.id;
   const libs = libraries.map((l) => l.id);
@@ -274,22 +277,22 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
     for (const { f, rel } of placed) {
       // not footage: an AI Editor folder, a folder this one leaves out, a half-written file, or anything inside a Projects or Exports folder
       // a file one of the library's copies wrote is never left out, whatever folder it went into
-      const out = leftOutBy(media, f.path, device) && !copyAt(device, f.path);
+      const out = leftOutBy(media, f.path, device) && !copies.has(f.path);
       if (out || notFootage(rel, editorDirs) || keepOut.some((k) => inside(f.path, k) !== null)) {
         // indexed here before this rule: the clip leaves the library through the trash once the listing is read whole, unless
         // a copy of it is found elsewhere (never while in Review or shared); the file on the computer stays
         // a locate-only library is never trashed into
         leaveLibrary(dev, folder.id, inLibs, own, now, "p.path = ?", [f.path], left, out);
-        // moved into a left-out folder: the clip at this file's size and fingerprint with a place in this folder is a
-        // candidate too (its old place turns gone when the listing completes; a real second copy still keeps it)
+        // moved into a left-out folder: the clip at this file's size and fingerprint with a place on this computer (in any
+        // of its Media folders) is a candidate too (its old place turns gone when the listing completes; a real second copy still keeps it)
         if (out && f.quick) {
           const moved = d
             .prepare(
               `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-               WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND v.bytes = ? AND v.quick = ? AND a.trashed_at IS NULL
+               WHERE p.device = ? AND p.kind = 'original' AND v.bytes = ? AND v.quick = ? AND a.trashed_at IS NULL
                  AND a.library_id IN (SELECT value FROM json_each(?)) AND NOT ${COPY_PLACE}`,
             )
-            .all(device, folder.id, f.bytes, f.quick, inOwn) as { id: string }[];
+            .all(device, f.bytes, f.quick, inOwn) as { id: string }[];
           for (const m of moved) left.add(m.id);
         }
         continue;
@@ -377,11 +380,12 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   const touched = new Set<string>();
   const keepOut = keptOut(st, dev.id);
   const settle = new Set<string>();
+  const copies = copyFilesOn([dev.id]);
   for (const r of folders) {
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
-    await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, mediaOf(st), settle);
+    await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, mediaOf(st), settle, copies);
   }
   for (const id of settleLeft(settle, now, dev.name)) {
     const lib = db().prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;

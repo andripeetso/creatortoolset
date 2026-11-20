@@ -736,7 +736,8 @@ libraryApp.post("/:id/in-place", async (c) => {
   const real = await realpath(given).catch(() => null);
   const s = real ? await stat(real).catch(() => null) : null;
   if (!real || !s?.isFile()) return refuse(`File not found on this computer: ${given}`);
-  if ((await leftOut(user.username, libraryId, given)) || (await leftOut(user.username, libraryId, real))) return refuse(LIBRARY_WORDS.notFootage);
+  const out = await (await import("./report")).leftOutFor(user.username, libraryId);
+  if (out(given) || out(real)) return refuse(LIBRARY_WORDS.notFootage);
   if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
   if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
   if (RAW_FILE.test(real)) return refuse(RAW_FROM_COMPUTER);

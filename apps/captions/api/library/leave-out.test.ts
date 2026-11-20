@@ -23,7 +23,7 @@ const { filesIn } = await import("./watch");
 const { changeStorage, storageApp } = await import("../devices-storage");
 const { pairDevice } = await import("../lib/devices");
 const { inRequestWorkspace } = await import("../lib/workspace-scope");
-const { leftOutBy, notFootage } = await import("../../contracts/storage");
+const { inLeftOut, leftOutBy, notFootage } = await import("../../contracts/storage");
 const leftOutOn = async (user: string, file: string, host?: string) => leftOutBy(await mediaFoldersOf(user), file, host);
 const { libraryDb } = await import("./db");
 createUser("tia", "password1", { role: "admin" });
@@ -44,20 +44,21 @@ const report = (folder: string, root: string, rels: string[]) =>
 const onMac = (root: string, rel: string, q: number) => ({ name: path.basename(rel), path: `${root}/${rel}`, size: 10, quick: quick(q), frames: [] });
 
 describe("a Media folder's Folders left out", () => {
-  it("notFootage: a left-out name is matched as a whole folder name at any depth, never in the file name or a longer name", () => {
+  it("inLeftOut: a left-out name is matched as a whole folder name at any depth, never in the file name or a longer name", () => {
     const out = ["- NO SHARE"];
-    expect(notFootage("- NO SHARE/x/clip.mov", undefined, out)).toBe(true);
-    expect(notFootage("Day 1/deep/- NO SHARE/clip.mov", undefined, out)).toBe(true);
-    expect(notFootage("- NO SHARE.mov", undefined, out)).toBe(false);
-    expect(notFootage("- NO SHARE 2/clip.mov", undefined, out)).toBe(false);
+    expect(inLeftOut("- NO SHARE/x/clip.mov", out)).toBe(true);
+    expect(inLeftOut("Day 1/deep/- NO SHARE/clip.mov", out)).toBe(true);
+    expect(inLeftOut("- NO SHARE.mov", out)).toBe(false);
+    expect(inLeftOut("- NO SHARE 2/clip.mov", out)).toBe(false);
+    expect(inLeftOut("- NO SHARE/x/clip.mov", [])).toBe(false);
     expect(notFootage("- NO SHARE/x/clip.mov")).toBe(false);
   });
 
-  it("notFootage: a name matches in any case and in either Unicode form", () => {
-    expect(notFootage("- no share/clip.mov", undefined, ["- NO SHARE"])).toBe(true);
-    expect(notFootage("Day 1/- No Share/clip.mov", undefined, ["- no share"])).toBe(true);
-    expect(notFootage("Cafe\u0301 shoot/clip.mov", undefined, ["Caf\u00e9 shoot"])).toBe(true);
-    expect(notFootage("Caf\u00e9 shoot/clip.mov", undefined, ["Cafe\u0301 SHOOT"])).toBe(true);
+  it("inLeftOut: a name matches in any case and in either Unicode form", () => {
+    expect(inLeftOut("- no share/clip.mov", ["- NO SHARE"])).toBe(true);
+    expect(inLeftOut("Day 1/- No Share/clip.mov", ["- no share"])).toBe(true);
+    expect(inLeftOut("Cafe\u0301 shoot/clip.mov", ["Caf\u00e9 shoot"])).toBe(true);
+    expect(inLeftOut("Caf\u00e9 shoot/clip.mov", ["Cafe\u0301 SHOOT"])).toBe(true);
   });
 
   it("a scan answers only the files outside them for indexing, and an index call for one inside is refused", async () => {
@@ -279,6 +280,18 @@ describe("every way a left-out file could come in or stay", () => {
     await scan("fold_f2", F2, ["Held/h.mov"], 613);
     expect(asset(613).trashed_at).toBeNull();
     expect(libraryDb().prepare("SELECT state FROM version_places WHERE path = ?").get(`${F2}/Held/h.mov`)).toEqual({ state: "gone" });
+  });
+
+  it("a file moved from one Media folder into another's left-out folder takes its clip out once both are read", async () => {
+    await listOf("fold_f1", ["- NO SHARE"]);
+    await listOf("fold_f2", []);
+    const t0 = Date.now();
+    await indexForDevice(mac, "fold_f2", onMac(F2, "Day/mx.mov", 620));
+    const list = (id: string, root: string, rels: string[], scan: string, at: number) =>
+      applyReport(mac, [{ id, state: "ok", scan, complete: true, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1, quick: quick(620) })), unreadable: [] }], at);
+    await list("fold_f2", F2, [], "mx-a", t0 + 1000);
+    await list("fold_f1", F1, ["- NO SHARE/mx.mov"], "mx-b", t0 + 2000);
+    expect(asset(620).trashed_at).not.toBeNull();
   });
 
   it("a member adding to the owner's library is checked against the owner's list as well as their own", async () => {
