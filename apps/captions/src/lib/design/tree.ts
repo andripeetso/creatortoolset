@@ -202,15 +202,22 @@ export function wrap(inner: readonly Layer[], ids: readonly string[], id: string
   return [...rest.slice(0, under), g, ...rest.slice(under)];
 }
 
-/** Containers taken apart (siblings in the frame's pixels): each one's layers lie where it was, where they are, in its place in the order. A plain group's opacity is kept by its layers. */
+/**
+ * Containers taken apart (siblings in the frame's pixels): each one's layers lie where it was, where they are, in its
+ * place in the order. What the container was is kept by them: its fade (times their own), hidden, locked, and its blend
+ * on those that have none (each then blends alone, which is near what the whole did).
+ */
 export function unwrap(inner: readonly Layer[], ids: readonly string[]): Layer[] {
   return inner.flatMap((l) => {
     if (!isGroup(l) || !ids.includes(l.id)) return [l];
     const o = l.opacity ?? 1;
-    return l.layers.map((k) => {
-      const out = layerOut(l, k);
-      return o < 1 ? { ...out, opacity: round((k.opacity ?? 1) * o) } : out;
-    });
+    return l.layers.map((k): Layer => ({
+      ...layerOut(l, k),
+      ...(o < 1 ? { opacity: round((k.opacity ?? 1) * o) } : {}),
+      ...(l.hidden ? { hidden: true } : {}),
+      ...(l.locked ? { locked: true } : {}),
+      ...(l.blend && !k.blend ? { blend: l.blend } : {}),
+    }));
   });
 }
 

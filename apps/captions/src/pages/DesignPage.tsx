@@ -295,6 +295,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           (d) => {
             server.current = { pages, at: d.updatedAt };
             setSaved(unsaved.current ? "unsaved" : "saved");
+            // the server kept less than was sent: said, so nothing goes missing unseen
+            if (d.notes?.length) setError(`Not saved: ${d.notes.join("; ")}`);
           },
           (e) => {
             // changed somewhere else while this save was on its way (an AI's frames): nothing was written. This
@@ -485,6 +487,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // themselves (copies do not join the group they were copied from)
     const made = regroup(reid(make(ids), ids, real.layers), target.layers);
     if (everyLayer(real.layers).length + everyLayer(made).length > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers`), null;
+    // containers go so deep at most, counting the one they land in (the server would leave the deeper ones out)
+    const inside = target === real || !scope ? 0 : (pathTo(real.layers, scope)?.length ?? 0) + 1;
+    if (inside + depthOf(made) > DESIGN_LIMITS.depth) return setError(`Groups go at most ${DESIGN_LIMITS.depth} deep`), null;
     // just above the layer `above`, else in front of them all
     const n = above ? target.layers.findIndex((l) => l.id === above) + 1 : 0;
     setPage({ ...target, layers: n > 0 ? [...target.layers.slice(0, n), ...made, ...target.layers.slice(n)] : [...target.layers, ...made] });
@@ -693,7 +698,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const framesBoxes = () => framedAt.map((n) => ({ ...frames[n]!, id: pages[n]!.id }));
   const placeFrames = (boxes: readonly (Rect & { id: string })[]) => setPages(boxes.map((r) => ({ ...pages.find((p) => p.id === r.id)!, x: Math.round(r.x), y: Math.round(r.y) })));
   const manyFrames = !mine.length && framedIds.length > 1;
-  const align = (how: Align) => (manyFrames ? placeFrames(alignLayers(framesBoxes(), how, here ?? { w: 0, h: 0 })) : here && arrange(alignLayers(mine, how, here)));
+  // one layer lines up with what it lies in: the open container's box, else the frame
+  const holder = top && scope ? boundsOf([inFrame(top.layers, scope)!]) : here && { w: here.w, h: here.h };
+  const align = (how: Align) => (manyFrames ? placeFrames(alignLayers(framesBoxes(), how, here ?? { w: 0, h: 0 })) : holder && arrange(alignLayers(mine, how, holder)));
   const spread = (axis: "x" | "y") => (manyFrames ? placeFrames(distribute(framesBoxes(), axis)) : arrange(distribute(mine, axis)));
   /** Tidy up (feel.ts tidy): null when what is picked is not a row, a column or a grid. */
   const tidied = manyFrames ? tidy(framesBoxes()) : tidy(mine);

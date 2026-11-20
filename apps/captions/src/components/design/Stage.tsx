@@ -550,8 +550,11 @@ export function Stage({
    * The picked layers follow the pointer. Over another frame they are that frame's (shown there while still held, and
    * left there when let go): which frame is under the middle of what is moving decides.
    */
-  const move = (e: React.PointerEvent, k: number, ids: string[], hit: string) => {
-    const p = pages[k]!;
+  const move = (e: React.PointerEvent, k: number, ids: string[], hit: string, outside = false) => {
+    // `outside`: a layer outside the open container, pressed and dragged at once: the frame's own layers are moved
+    const all = outside ? real : pages;
+    const open = outside ? null : scope;
+    const p = all[k]!;
     const f = fr[k]!;
     const from = world(e);
     // a layer locked while it was picked stays where it is
@@ -563,7 +566,7 @@ export function Stage({
     const looseId = `p${Date.now().toString(36)}`;
     let last: { pages: DesignPage[]; to: number; ids: string[] } | null = null;
     // the canvas holds no more loose pieces: layers let go off their frame go back where they were, and it says why
-    const canvasFull = pages.filter((q) => q.loose).length >= DESIGN_LIMITS.loose;
+    const canvasFull = all.filter((q) => q.loose).length >= DESIGN_LIMITS.loose;
     let keptIn = false;
     drag(
       e,
@@ -572,19 +575,19 @@ export function Stage({
         // another frame takes them only when it has room for them; a copy stays in a frame that has room too
         const fits = (n: number) => everyLayer(real[n]!.layers).length + everyLayer(moving).length <= DESIGN_LIMITS.layers;
         // layers taken wholly off their frame onto empty canvas lie loose there, uncut (hands.ts dropTarget)
-        const lands = dropTarget(pages.map((q, n) => ({ rect: fr[n]!, loose: q.loose, full: !fits(n) })), k, { ...b0, x: f.x + b0.x + m.dx, y: f.y + b0.y + m.dy });
+        const lands = dropTarget(all.map((q, n) => ({ rect: fr[n]!, loose: q.loose, full: !fits(n) })), k, { ...b0, x: f.x + b0.x + m.dx, y: f.y + b0.y + m.dy });
         keptIn = lands < 0 && canvasFull;
         const out = lands < 0 && !canvasFull;
         const to = lands < 0 ? k : lands;
         if (!out && to === k && copy && !fits(k)) return;
-        const host = pages[to]!;
+        const host = all[to]!;
         const g = fr[to]!;
         // in the host frame's own pixels
         const ox = f.x - g.x;
         const oy = f.y - g.y;
         // a loose picture's own box is where it was: nothing to catch on
         // inside an open container its own box is caught on too
-        const shell = to === k && scope ? inFrame(real[k]!.layers, scope) : undefined;
+        const shell = to === k && open ? inFrame(real[k]!.layers, open) : undefined;
         const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l])), ...(shell ? [boundsOf([shell])] : [])];
         const near = SNAP / live.current.z;
         const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
@@ -609,7 +612,7 @@ export function Stage({
         const next = to !== k || copy ? regroup(placed, host.layers.filter((l) => to !== k || copy || !ids.includes(l.id))) : placed;
         const home = copy ? p : { ...p, layers: p.layers.filter((l) => !moving.includes(l)) };
         last = out
-          ? { pages: [home, { id: looseId, loose: true, x: f.x, y: f.y, w: f.w, h: f.h, background: "#ffffff", layers: next }], to: pages.length, ids: next.map((l) => l.id) }
+          ? { pages: [home, { id: looseId, loose: true, x: f.x, y: f.y, w: f.w, h: f.h, background: "#ffffff", layers: next }], to: all.length, ids: next.map((l) => l.id) }
           : to === k
             ? { pages: [copy ? { ...p, layers: [...p.layers, ...next] } : withLayers(p, next)], to, ids: next.map((l) => l.id) }
             : { pages: [home, { ...host, layers: [...host.layers, ...next] }], to, ids: next.map((l) => l.id) };
@@ -623,8 +626,8 @@ export function Stage({
         if (last) {
           // let go in the same frame: into the box under their middle, or out of the container they were in
           const mid = boundsOf(last.pages[0]!.layers.filter((l) => last!.ids.includes(l.id)));
-          const into_ = last.to === k && !copy && !p.loose ? dropInto(real[k]!.layers, last.ids, { x: mid.x + mid.w / 2, y: mid.y + mid.h / 2 }, scope, DESIGN_LIMITS.depth) : scope;
-          if (into_ !== scope) {
+          const into_ = last.to === k && !copy && !p.loose ? dropInto(real[k]!.layers, last.ids, { x: mid.x + mid.w / 2, y: mid.y + mid.h / 2 }, open, DESIGN_LIMITS.depth) : open;
+          if (into_ !== open) {
             const whole = unscopeOne(last.pages[0]!);
             onCommit([{ ...whole, layers: moveInto(whole.layers, last.ids, into_) }]);
             return onPick(k, last.ids);
@@ -955,14 +958,17 @@ export function Stage({
     if (k >= 0 && framedIds.includes(pages[k]!.id) && (!hit || (!deep && !e.shiftKey))) return moveFrame(e, k, hit ? groupOf(pages[k]!.layers, hit) : undefined);
     if (!hit && k >= 0 && !pages[k]!.layers.some((l) => !l.hidden && !l.locked)) return moveFrame(e, k);
     if (!hit) return marquee(e, k);
-    const mine = k === at ? selected : [];
+    // pressed outside the open container: one of the frame's own layers, picked and dragged in the same press; Shift
+    // never mixes it with layers inside a container (what is picked is always of one container)
+    const outside = k === at && pages[k] !== real[k] && !pages[k]!.layers.some((l) => l.id === hit.id);
+    const mine = k === at && !outside ? selected : [];
     // ⌘: the innermost layer under the press, however deep in containers
     if (deep && isGroup(hit)) return onPick(k, [innermost(hit, { x: p.x - fr[k]!.x, y: p.y - fr[k]!.y }).id]);
-    const whole = deep ? [hit.id] : groupOf(pages[k]!.layers, hit);
+    const whole = deep ? [hit.id] : groupOf((outside ? real : pages)[k]!.layers, hit);
     if (e.shiftKey) return onPick(k, mine.includes(hit.id) ? mine.filter((id) => !whole.includes(id)) : [...new Set([...mine, ...whole])]);
     const ids = mine.includes(hit.id) && !deep ? mine : whole;
     if (ids !== mine) onPick(k, ids);
-    move(e, k, ids, hit.id);
+    move(e, k, ids, hit.id, outside);
   };
 
   const over = (e: React.PointerEvent) => {

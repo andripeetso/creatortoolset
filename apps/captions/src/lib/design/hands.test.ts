@@ -320,3 +320,10 @@ describe("a group's own name", () => {
   });
 });
 
+describe("lining up inside a container", () => {
+  it("lines one layer up with the box it lies in when that box is given with its place", () => {
+    const l = { x: 0, y: 0, w: 20, h: 10 };
+    expect(alignLayers([l], "right", { x: 100, y: 50, w: 200, h: 100 })).toEqual([{ ...l, x: 280 }]);
+    expect(alignLayers([l], "middle", { x: 100, y: 50, w: 200, h: 100 })).toEqual([{ ...l, y: 95 }]);
+  });
+});

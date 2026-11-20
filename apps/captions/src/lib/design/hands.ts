@@ -160,9 +160,9 @@ export function snapSpacing(box: Rect, others: readonly Rect[], near: number, ax
   return best ? { d: best.to - box[axis], gaps: best.gaps } : null;
 }
 
-/** Layers lined up: one layer with its page, several with the box round them. */
-export function alignLayers<T extends Turned>(layers: readonly T[], how: Align, page: { w: number; h: number }): T[] {
-  const to = layers.length > 1 ? boundsOf(layers) : { x: 0, y: 0, w: page.w, h: page.h };
+/** Layers lined up: one layer with its page (or the box it lies in, `x`/`y` given), several with the box round them. */
+export function alignLayers<T extends Turned>(layers: readonly T[], how: Align, page: { x?: number; y?: number; w: number; h: number }): T[] {
+  const to = layers.length > 1 ? boundsOf(layers) : { x: page.x ?? 0, y: page.y ?? 0, w: page.w, h: page.h };
   return layers.map((l) => {
     const b = boundsOf([l]);
     const dx = how === "left" ? to.x - b.x : how === "center" ? to.x + to.w / 2 - b.x - b.w / 2 : how === "right" ? to.x + to.w - b.x - b.w : 0;

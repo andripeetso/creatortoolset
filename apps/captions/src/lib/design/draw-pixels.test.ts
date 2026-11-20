@@ -196,6 +196,35 @@ describe("a container drawn on a canvas", () => {
     expect(each.at(25, 15)[1]).toBeLessThan(g! - 20);
   });
 
+  it("throws one shadow from all its layers together: as strong where they overlap as where one lies alone", () => {
+    const shade = { type: "shadow", color: "#000000", opacity: 0.5, blur: 0, x: 0, y: 25 } as const;
+    // red at 10 to 30 on the page, blue at 20 to 40; their shadow 25 lower, read on a see-through page
+    const d = draw([holder([rect({ x: 0, y: 0, w: 20, h: 20 }), blue()], { effects: [shade] })], { fills: [] });
+    expect(d.at(25, 45)[3]).toBeGreaterThan(100);
+    expect(Math.abs(d.at(25, 45)[3]! - d.at(15, 45)[3]!)).toBeLessThanOrEqual(2);
+  });
+
+  it("works a faded container on the canvas at the canvas's own detail, never at a saved file's", () => {
+    const made: number[] = [];
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class extends Canvas {
+        constructor(w: number, h: number) {
+          super(w, h);
+          made.push(w * h);
+        }
+      },
+    );
+    const canvas = new Canvas(W, H);
+    const ctx = canvas.getContext("2d");
+    // zoomed in three times on a big faded card: its own picture would be 2400 pixels a side
+    ctx.scale(3, 3);
+    drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "z", background: "#ffffff", layers: [holder([rect({ x: 0, y: 0, w: 800, h: 800 })], { w: 800, h: 800, opacity: 0.5 })] } as DesignPage, W, H, new Map() as Loaded, false);
+    vi.stubGlobal("OffscreenCanvas", Canvas);
+    expect(made.length).toBeGreaterThan(0);
+    expect(Math.max(...made)).toBeLessThanOrEqual(3_000_000 * 1.01);
+  });
+
   it("turns and moves its layers with it, and leaves out a hidden or reference layer of its own where a frame does", () => {
     const turned = draw([holder([rect({ x: 0, y: 0, w: 10, h: 20 })], { rotate: 180 })]);
     // turned half round its middle (25, 20): the bar at its left is at its right now

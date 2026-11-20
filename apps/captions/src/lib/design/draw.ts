@@ -606,7 +606,8 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   // shadow together, and a spread grows or shrinks that shape; fills alone already cast one (castFills), and the box would
   // soften a hard shadow when zoomed in
   // a container that fades or blends does so as one: its layers are drawn together first, and laid down at once
-  const whole = isGroup(l) && ((l.opacity ?? 1) < 1 || !!l.blend);
+  // and throws its shadow once, from all its layers together (each layer's own would darken where they overlap)
+  const whole = isGroup(l) && ((l.opacity ?? 1) < 1 || !!l.blend || fx.some((e) => e.type === "shadow"));
   const own = whole || worksPixels(fx) || fx.some((e) => e.type === "shadow" && ((e.spread ?? 0) !== 0 || strokesOf(l).some((st) => !st.hidden))) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
   const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
   const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
@@ -720,8 +721,7 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
   const grow = Math.max(0, ...fx.map((e) => (e.type === "shadow" ? (e.spread ?? 0) : 0)));
   const bw = l.w + 2 * (reach + grow);
   const bh = l.h + 2 * (reach + grow);
-  // a container is all of its layers' detail: worked as finely as a saved file, so a faded card stays sharp
-  const room = exact || isGroup(l) ? EXACT_WORK_PIXELS : WORK_PIXELS;
+  const room = exact ? EXACT_WORK_PIXELS : WORK_PIXELS;
   let scale = Math.hypot(t.a, t.b);
   if (bw * bh * scale * scale > room) scale = Math.sqrt(room / (bw * bh));
   // a picture or a drawing that has not loaded yet is a grey box: it is worked again once it is there

@@ -1,5 +1,5 @@
 import type { DesignPage, Gradient, GradientStop, Layer, Paint, PaintLook, Stroke } from "../../../contracts/design";
-import { everyLayer } from "./tree";
+import { everyLayer, mapLayers } from "./tree";
 
 /**
  * A layer's or a frame's fills and lines as lists (contracts/design.ts `fills`, `strokes`, bottom first). A design
@@ -125,6 +125,14 @@ export function colourAt(stops: readonly GradientStop[], at: number): string {
 }
 
 /** The pictures a frame's fills and its layers' fills show (an image layer's own picture is its `picture`, not here). */
+/**
+ * Every picture a page draws: its picture layers' and the pictures that fill it and its layers, however deep in
+ * containers; never a hidden or reference layer's, nor anything inside one (what the server's drawing browser is given).
+ */
+export function drawnPictures(page: DesignPage): string[] {
+  const shown = mapLayers(page.layers, (l) => (l.hidden || l.reference ? null : l));
+  return [...new Set([...everyLayer(shown).flatMap((l) => (l.type === "image" ? [l.picture] : [])), ...paintPictures({ ...page, layers: shown })])];
+}
 export const paintPictures = (page: DesignPage): string[] => [
   ...new Set(
     [page, ...everyLayer(page.layers).filter((l) => !l.hidden)].flatMap((o) => (takesFills(o) ? fillsOf(o) : []).flatMap((p) => (p.type === "image" && !p.hidden ? [p.picture] : []))),

@@ -29,7 +29,8 @@ export const listDesigns = (piece?: { session: string; doc: string }) => send<De
 export const createDesign = (d: NewDesign) => send<Design>("/api/designs", "POST", d);
 export const getDesign = (id: string) => send<Design>(base(id));
 /** `since`: the design's last change this window knows of (its updatedAt). Changed after it: DesignChanged, and nothing was saved. */
-export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number }) => send<Design>(base(id), "PUT", body);
+/** `notes`: what the server's check left out of what was sent (past a limit), each said. */
+export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number }) => send<Design & { notes?: string[] }>(base(id), "PUT", body);
 export const deleteDesign = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures/${picture}`;
 

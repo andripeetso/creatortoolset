@@ -6,7 +6,7 @@ import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_HEADS, DESIGN_FORMATS, DESIGN_GAP,
 import { DESIGN_FONTS, weightsOf } from "../src/lib/design/fonts";
 import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
 import { retext } from "../src/lib/design/runs";
-import { everyLayer, layerIn, layerOut } from "../src/lib/design/tree";
+import { everyLayer, layerIn, layerOut, unwrap } from "../src/lib/design/tree";
 import type { AuthVars } from "./auth";
 import type { AnimationStyle } from "../contracts/editor-styles";
 import { animationStyles, carouselApp, carouselStyles } from "./editor/animation-styles";
@@ -512,11 +512,15 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     return changed;
   };
   /** Every layer of a list, however deep in its containers. */
-  const allRaw = (list: readonly unknown[]): Raw[] => list.flatMap((l) => (raw(l) ? [raw(l)!, ...(Array.isArray(raw(l)!.layers) ? allRaw(raw(l)!.layers as unknown[]) : [])] : []));
+  // what an AI sends may nest without end: these walks stop a level past the deepest a group may go (the check then
+  // leaves the deeper ones out with a note), so a deep answer is a note, never a crash
+  const DEEP = DESIGN_LIMITS.depth + 1;
+  const allRaw = (list: readonly unknown[], d = 0): Raw[] => (d > DEEP ? [] : list.flatMap((l) => (raw(l) ? [raw(l)!, ...(Array.isArray(raw(l)!.layers) ? allRaw(raw(l)!.layers as unknown[], d + 1) : [])] : [])));
   /** Where layer `id` lies in a frame's layers: the list holding it, its place there, and the containers round it, outermost first. */
   const findRaw = (list: unknown[], id: unknown, path: Raw[] = []): { list: unknown[]; k: number; path: Raw[] } | null => {
     const k = list.findIndex((l) => raw(l)?.id === id);
     if (k >= 0) return { list, k, path };
+    if (path.length > DEEP) return null;
     for (const l of list) {
       const g = raw(l);
       const hit = g?.type === "group" && Array.isArray(g.layers) ? findRaw(g.layers as unknown[], id, [...path, g]) : null;
@@ -537,23 +541,26 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     for (let n = all.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
     return id;
   };
+  /**
+   * Layers coming into a frame inside a group (added, or a group's layers given whole), each with an id of its own in
+   * the frame (the one asked for when `taken` does not have it): an id given out here never takes one a layer of the
+   * frame has, so the layers there keep theirs.
+   */
+  const ownIds = (list: unknown, taken: Set<string>, d = 0): unknown[] =>
+    (Array.isArray(list) ? list : []).map((x) => {
+      const r = raw(x);
+      if (!r || d > DEEP) return x;
+      let id = typeof r.id === "string" && LAYER_ID.test(r.id) && !taken.has(r.id) ? r.id : "";
+      for (let n = taken.size + 1; !id; n++) if (!taken.has(`l${n}`)) id = `l${n}`;
+      taken.add(id);
+      return { ...r, id, ...(Array.isArray(r.layers) ? { layers: ownIds(r.layers, taken, d + 1) } : {}) };
+    });
   /** A layer into a frame (or into its container `inside`), on top (or at the back), under an id of its own there: the layer as it is placed. */
   const into = (page: DesignPage, layer: Raw, back: boolean, inside?: Raw): Raw => {
     const t = open(page);
     const done: Raw & { id: string } = { ...layer, id: freeId(t.layers, layer.id) };
-    // every layer inside it an id of its own in the frame too (the one asked for when it is free): an id given out here
-    // never takes one a layer of the frame has, so the layers there keep theirs
-    const taken = new Set([...allRaw(t.layers).map((l) => String(l.id)), done.id]);
-    const own = (list: unknown): unknown[] =>
-      (Array.isArray(list) ? list : []).map((x) => {
-        const r = raw(x);
-        if (!r) return x;
-        let id = typeof r.id === "string" && LAYER_ID.test(r.id) && !taken.has(r.id) ? r.id : "";
-        for (let n = taken.size + 1; !id; n++) if (!taken.has(`l${n}`)) id = `l${n}`;
-        taken.add(id);
-        return { ...r, id, ...(Array.isArray(r.layers) ? { layers: own(r.layers) } : {}) };
-      });
-    if (Array.isArray(done.layers)) done.layers = own(done.layers);
+    // every layer inside it an id of its own in the frame too
+    if (Array.isArray(done.layers)) done.layers = ownIds(done.layers, new Set([...allRaw(t.layers).map((l) => String(l.id)), done.id]));
     const list = inside ? (inside.layers as unknown[]) : t.layers;
     if (back) list.unshift(done);
     else list.push(done);
@@ -602,7 +609,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       const name = typeof c.as === "string" && c.as ? c.as : typeof add.id === "string" ? add.id : "";
       const asked = { ...add, id: name || add.id };
       let placed: Raw | null = null;
-      if (!onCanvas && allRaw(open(page!).layers).length >= DESIGN_LIMITS.layers) notes.push(`${here}: a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: a layer was not added`);
+      // counting every layer it holds: a group added at the back must not push the frame's frontmost layers past the limit
+      if (!onCanvas && allRaw(open(page!).layers).length + allRaw([add]).length > DESIGN_LIMITS.layers) notes.push(`${here}: a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: a layer was not added`);
       else if (!onCanvas) placed = into(page!, asked, c.at === "back", box ?? undefined);
       else if (room()) placed = ontoCanvas(asked, c.at === "back");
       else notes.push(`${here}: ${full}: a layer was not added`);
@@ -631,8 +639,9 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         notes.push(`${here}, layer ${String(lid)}: "ungroup" takes apart a group, and this is no group`);
         continue;
       }
-      const o = typeof g.opacity === "number" ? g.opacity : 1;
-      const inner = (g.layers as unknown[]).flatMap((l): Raw[] => (raw(l) ? [{ ...layerOut(placed(g), placed(raw(l)!)), ...(o < 1 ? { opacity: (typeof raw(l)!.opacity === "number" ? (raw(l)!.opacity as number) : 1) * o } : {}) }] : []));
+      // taken apart as by hand (tree.ts unwrap): its layers where they are, its fade, hiding, lock and blend kept by them
+      const shell = { ...placed(g), layers: (g.layers as unknown[]).flatMap((l) => (raw(l) ? [placed(raw(l)!)] : [])) } as unknown as Layer;
+      const inner = unwrap([shell], [String(g.id)]) as unknown as Raw[];
       list.splice(k, 1, ...inner);
       open(page).set.push(...inner.map((l) => String(l.id)));
       continue;
@@ -646,7 +655,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         notes.push(`${here}, layer ${String(lid)}: a group cannot go into itself`);
         continue;
       }
-      const depthOf = (l: Raw): number => (Array.isArray(l.layers) ? 1 + Math.max(0, ...(l.layers as unknown[]).map((x) => (raw(x) ? depthOf(raw(x)!) : 0))) : 0);
+      const depthOf = (l: Raw, d = 0): number => (d > DEEP ? d : Array.isArray(l.layers) ? 1 + Math.max(0, ...(l.layers as unknown[]).map((x) => (raw(x) ? depthOf(raw(x)!, d + 1) : 0))) : 0);
       const into_ = target ? [...target.path, g!] : [];
       if (into_.length + depthOf(moving) > DESIGN_LIMITS.depth) {
         notes.push(`${here}, layer ${String(lid)}: groups go at most ${DESIGN_LIMITS.depth} deep: it stays where it is`);
@@ -696,6 +705,17 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       continue;
     }
     let changed = setOn(layer, c.set);
+    // a group's layers given whole: ids of their own in the frame (one it uses already would rename that layer), and
+    // no more of them than the frame has room for
+    const given = raw(c.set)?.layers;
+    if (page && changed.type === "group" && Array.isArray(given)) {
+      changed = { ...changed, layers: ownIds(given, new Set([...allRaw(top).map((l) => String(l.id)), String(layer.id)])) };
+      if (allRaw(top).length + allRaw([changed]).length > DESIGN_LIMITS.layers) {
+        notes.push(`${here}, layer ${String(lid)}: a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: its layers were not changed`);
+        list.splice(k, 0, layer);
+        continue;
+      }
+    }
     // a group given a new size (its layers not given whole): they follow it, as when it is resized by hand
     if (changed.type === "group" && Array.isArray(changed.layers) && !raw(c.set)?.layers) changed = fitContents(placed(layer), placed(changed)) as unknown as Raw;
     givenAt.set(changed, at);
@@ -1093,11 +1113,14 @@ designsApp.put("/:id", (c) =>
     const piece = pieceOf(d);
     // a design made before frames knew their slides: each frame is its slide's by the order the design was in
     const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
-    const pages = withFrames(cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d) }).pages, d.width, d.height, was);
+    const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d) });
+    const pages = withFrames(checked.pages, d.width, d.height, was);
     // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
     // could be kept is not, and nothing is saved over what is there
     if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
-    return save({ ...d, name, pages, updatedAt: stamp(d) });
+    const saved = await save({ ...d, name, pages, updatedAt: stamp(d) });
+    // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
+    return checked.notes.length ? { ...saved, notes: checked.notes } : saved;
   }),
 );
 

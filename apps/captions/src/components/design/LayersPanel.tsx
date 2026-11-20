@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { groupName, layerName, pageName } from "@/lib/design/hands";
-import { isGroup, mapLayers, moveRow, parentOf } from "@/lib/design/tree";
+import { isGroup, mapLayers, moveRow, parentOf, pathTo } from "@/lib/design/tree";
 import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
 
@@ -57,6 +57,13 @@ export function LayersPanel({
   onZoomTo: (at: number, id?: string) => void;
 }) {
   const [shut, setShut] = useState<string[]>([]);
+  // a layer picked on the canvas inside a closed container: its containers (and its frame) open, so its row shows
+  const pickedIn = pages[at] && selected[0] ? (pathTo(pages[at]!.layers, selected[0]) ?? []).map((g) => `${pages[at]!.id}/${g.id}`) : [];
+  const opening = [...pickedIn, ...(pickedIn.length || selected.length ? [pages[at]?.id ?? ""] : [])].join("|");
+  useEffect(() => {
+    const open = opening.split("|");
+    setShut((s) => (s.some((x) => open.includes(x)) ? s.filter((x) => !open.includes(x)) : s));
+  }, [opening]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
   const dropped = useRef(false);

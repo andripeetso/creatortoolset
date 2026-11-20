@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer, Paint, Stroke } from "@contracts/design";
-import { colourAt, fillsOf, hexOf, moved, paintPictures, rgba, solidGround, strokesOf, withFills, withStrokes } from "./paint";
+import { colourAt, drawnPictures, fillsOf, hexOf, moved, paintPictures, rgba, solidGround, strokesOf, withFills, withStrokes } from "./paint";
 import { pathEnds, picturePlace } from "./paint-draw";
 
 const shape = (more: Partial<Layer> = {}) => ({ id: "s", type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 50, ...more }) as Extract<Layer, { type: "shape" }>;
@@ -102,5 +102,14 @@ describe("a frame's ground", () => {
     expect(solidGround(page({ background: "#ffffff80" }))).toBe(false);
     expect(solidGround(page({ fills: [{ type: "solid", color: "#000000", hidden: true }] }))).toBe(false);
     expect(solidGround(page({ fills: [{ type: "solid", color: "#000000", opacity: 0.5 }] }))).toBe(false);
+  });
+});
+
+describe("the pictures a page draws", () => {
+  it("takes the pictures inside containers too, never a hidden or reference layer's nor anything inside one", () => {
+    const pic = (id: string, more: object = {}) => ({ id, type: "image", picture: `${id}.jpg`, fit: "cover", x: 0, y: 0, w: 10, h: 10, ...more }) as Layer;
+    const group = (id: string, layers: Layer[], more: object = {}) => ({ id, type: "group", x: 0, y: 0, w: 10, h: 10, layers, ...more }) as Layer;
+    const page = { id: "p", background: "#ffffff", layers: [pic("top"), group("card", [pic("photo"), group("inner", [pic("deep")]), pic("gone", { hidden: true })], { box: true, fills: [{ type: "image", picture: "fill.jpg", mode: "fill" }] }), group("ref", [pic("under")], { reference: true }), group("off", [pic("shut")], { hidden: true })] } as DesignPage;
+    expect(drawnPictures(page).sort()).toEqual(["deep.jpg", "fill.jpg", "photo.jpg", "top.jpg"]);
   });
 });

@@ -65,6 +65,9 @@ describe("containers: layers that hold layers", () => {
     // taken apart, in its place, each where it was; a faded group's fade kept by its layers
     const back = unwrap([{ ...g, opacity: 0.5 }, rect("y", 0, 0)], ["g"]);
     expect(back.map((l) => [l.id, l.x, l.y, l.opacity])).toEqual([["a", 10, 10, 0.5], ["b", 50, 40, 0.5], ["y", 0, 0, undefined]]);
+    // a hidden, locked or blending group taken apart: its layers stay hidden, locked and blending
+    const kept = unwrap([{ ...g, hidden: true, locked: true, blend: "multiply" }], ["g"]);
+    expect(kept.map((l) => [l.hidden, l.locked, l.blend])).toEqual([[true, true, "multiply"], [true, true, "multiply"]]);
     // a turned group taken apart: its layers keep their place on the screen, turned as it was
     const turned = { ...g, rotate: 30 };
     const freed = unwrap([turned], ["g"]);
