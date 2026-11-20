@@ -135,3 +135,25 @@ describe("nle commands", () => {
     expect(lines).not.toMatch(/^save\b|^play\b|^undo\b/m);
   });
 });
+
+describe("lowerUnderVoice from the chat", () => {
+  it("refuses with no speech known, on A1 and on an empty track; never touches the keys", async () => {
+    const { spoken, measured } = await import("./loudness");
+    const tl = reel();
+    const k = key(tl, "A2", 0);
+    tl.tracks.A2.items[0]!.keys = { gain_db: [[10, -3, "linear"]] };
+    expect(() => runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 2 } }])).toThrow("Command 1 (lowerUnderVoice): No speech on A1 is known yet");
+    expect(() => runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 1 } }])).toThrow("A1 is the voice");
+    expect(() => runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 3 } }])).toThrow("A3 has no clips");
+    expect(find(tl, k)!.item.keys!.gain_db).toEqual([[10, -3, "linear"]]);
+    // once the track menu has read the words: A2 comes down where A1 speaks (source seconds 4.2–5 = frames 5–25; 150 ms down, 400 ms up)
+    spoken.set("cam", [[4.2, 5]]);
+    try {
+      const out = runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 2 } }]).tl;
+      expect(find(out, k)!.item.keys!.gain_db!.map((x) => [x[0], x[1]])).toEqual([[1.25, 0], [5, -12], [25, -12], [35, 0]]);
+    } finally {
+      spoken.clear();
+      measured.clear();
+    }
+  });
+});

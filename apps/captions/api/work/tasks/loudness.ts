@@ -1,5 +1,6 @@
 import { keepLoud, LOUDNESS_TASK, measureLoud } from "../../editor/analyze";
 import { measurable } from "../../editor/media";
+import { LOUD_WAIT_MS } from "../../editor/sound";
 import { taskKind } from "../tasks";
 
 /**
@@ -18,6 +19,8 @@ export interface LoudnessInput {
 
 taskKind<LoudnessInput, { blocks: number[] }>(LOUDNESS_TASK, {
   can: (d, t) => d.id === t.input.device,
+  // nobody with the file came: fails as expired, which the editor says plainly (sound.ts NO_COMPUTER)
+  ttlMs: LOUD_WAIT_MS,
   async run(input, ctx) {
     const src = ctx.where === "server" ? await measurable(input.version, input.sourceKey) : await ctx.file("src");
     ctx.beat("Measuring the sound");

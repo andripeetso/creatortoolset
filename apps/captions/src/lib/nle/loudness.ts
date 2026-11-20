@@ -355,14 +355,17 @@ export const DUCK: Duck = { amount: -12, attackMs: 150, releaseMs: 400 };
 
 /**
  * Lower Under Voice: `gain_db` keys on each clip of `track` that come down by `amount` over `attackMs` before each
- * span of speech and go back up over `releaseMs` after it (a gap shorter than both stays down). The clip's earlier
- * volume keys are replaced; its own gain is the level it comes back to. Keys he can move after (keyframes.ts).
+ * span of speech and go back up over `releaseMs` after it (a gap shorter than both stays down; each at least a frame).
+ * The clip's earlier volume keys are replaced; its own gain is the level it comes back to. Keys he can move after
+ * (keyframes.ts). The timeline as it was with no speech, on A1 or on a locked track.
  */
 export function lowerUnderVoice(tl: NleTimeline, track: string, spans: [number, number][], d: Duck = DUCK): NleTimeline {
   const t = tl.tracks[track];
-  if (!t || t.locked || !track.startsWith("A")) return tl;
+  // no speech: nothing to lower under, and its keys stay; never A1, the voice itself
+  if (!t || t.locked || !track.startsWith("A") || track === "A1" || !spans.length) return tl;
   const fps = tl.timeline.fps;
-  const att = (d.attackMs / 1000) * fps, rel = (d.releaseMs / 1000) * fps;
+  // at least a frame each way, so a ramp never lands on the key it starts from (and replaces it)
+  const att = Math.max(1, (d.attackMs / 1000) * fps), rel = Math.max(1, (d.releaseMs / 1000) * fps);
   const ducks = merge(spans, att + rel);
   let out = tl;
   for (const it of t.items) {

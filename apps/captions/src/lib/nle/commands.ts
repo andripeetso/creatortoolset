@@ -148,10 +148,15 @@ const LIST: NleCommand[] = [
       target: { type: "number", about: "LUFS (A1 -15, A4 -30, else -14)", optional: true },
       relative: { type: "number", about: "1: one gain for all, kept level with each other", optional: true },
     }),
-  cmd("lowerUnderVoice", "Lower Under Voice: a sound track's clips come down where A1 speaks, as volume keys", any, (s, p) => ({
-    ...s,
-    tl: lowerUnderVoice(s.tl, `A${p.track}`, speechSpans(s.tl), { amount: -Math.abs(p.amount ?? DUCK.amount), attackMs: p.attack ?? DUCK.attackMs, releaseMs: p.release ?? DUCK.releaseMs }),
-  }), {
+  cmd("lowerUnderVoice", "Lower Under Voice: a sound track's clips come down where A1 speaks, as volume keys", any, (s, p) => {
+    const track = `A${p.track}`;
+    if (track === "A1") throw new Error("A1 is the voice: lower another sound track under it");
+    if (!s.tl.tracks[track]?.items.length) throw new Error(`${track} has no clips`);
+    const spans = speechSpans(s.tl);
+    // the speech is read by the track menu's Lower Under Voice…, which measures first; the chat never writes keys without it
+    if (!spans.length) throw new Error("No speech on A1 is known yet: use Lower Under Voice… on the track's menu, which reads it first");
+    return { ...s, tl: lowerUnderVoice(s.tl, track, spans, { amount: -Math.abs(p.amount ?? DUCK.amount), attackMs: p.attack ?? DUCK.attackMs, releaseMs: p.release ?? DUCK.releaseMs }) };
+  }, {
     track: { type: "number", about: "the sound track's number (4 = A4)" },
     amount: { type: "number", about: "dB down (12)", optional: true },
     attack: { type: "number", about: "ms to come down (150)", optional: true },

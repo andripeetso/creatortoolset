@@ -159,6 +159,18 @@ describe("Lower Under Voice", () => {
     expect(lowerUnderVoice(t, "A4", [[100, 120]])).toBe(t);
   });
 
+  it("no speech or A1 as the target: the timeline as it was, its keys kept", () => {
+    const t = tl();
+    t.tracks.A4!.items[0]!.keys = { gain_db: [[10, 0, "linear"]] };
+    expect(lowerUnderVoice(t, "A4", [])).toBe(t);
+    expect(lowerUnderVoice(t, "A1", [[100, 120]])).toBe(t);
+  });
+
+  it("attack and release of 0 still ramp over a frame, so the clip comes back up after the speech", () => {
+    const keys = lowerUnderVoice(tl(), "A4", [[100, 200], [300, 350]], { amount: -12, attackMs: 0, releaseMs: 0 }).tracks.A4!.items[0]!.keys!.gain_db!;
+    expect(keys.map((k) => [k[0], k[1]])).toEqual([[99, -2], [100, -14], [200, -14], [201, -2], [299, -2], [300, -14], [350, -14], [351, -2]]);
+  });
+
   it("merge joins spans closer than the gap", () => {
     expect(merge([[10, 20], [0, 5], [22, 30]], 2)).toEqual([[0, 5], [10, 30]]);
   });
