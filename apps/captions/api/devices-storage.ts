@@ -127,11 +127,12 @@ function folderMade(user: string, role: string, workspace: string | undefined, h
  * the one it has, also under another registration of the same machine. No record is ever made here: a folder row is made
  * only when the person picks or confirms one (setup, Settings → Folders, a card's tap; owner, 2026-11-19). Projects on a
  * computer that only helps (the workspace's Project files are on another one) is a folder of its own under its home,
- * with no card (owner, 2026-11-20); a workspace with no Project files anywhere goes to its Media Library setup.
+ * with no card (owner, 2026-11-20).
  * Otherwise a named workspace's job pauses (`wait`) on a card: the
  * setup card while its Media Library is not set up, else the folder card (the workspace's default
  * ~/Movies/Creator Toolset/<workspace>/Project files, or Choose…), and the job goes on once the row is there. A `device`
- * that is no known computer (a worker's host name nothing matched) is a card that says so (`missing: "computer"`).
+ * that is no known computer (a worker's host name nothing matched) is a card that says so (`missing: "computer"`), unless
+ * the workspace has Project files elsewhere (then it is a helper's own folder).
  */
 export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string } | { wait: FolderAsk }> {
   // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
@@ -156,9 +157,6 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
     // the workspace's Project files are on another computer: this one is helping (load balancing), so it keeps its
     // working files in a folder of its own, never asked for and never written as a record (owner, 2026-11-20)
     if (mine.length) return { id: `helper:${device}`, role, name: label, origin: { host: device, path: `${libraryBase(name)}/${label}` }, make: true, createdAt: Date.now(), reach: {}, workspace: ws };
-    // none anywhere: the Media Library was never set up through its setup, which is where Project files are chosen
-    const setup = await setupNeeded(user, ws, true);
-    if (setup) return { wait: setup as FolderAsk };
   }
   // a Media Library not set up goes to its setup first (a member's card says the owner sets it up)
   const setup = await setupNeeded(user, ws);

@@ -6,8 +6,7 @@ import { afterAll, expect, it } from "vitest";
 import type { AuthVars } from "./auth";
 
 // ensureUseFolder never makes a Projects or Exports row by itself (owner, 2026-11-19): a row is made only when the
-// person picks or confirms one. Not set up: the setup card. Set up with no Project files anywhere: its setup again.
-// No Exports: the folder card, whose tap makes the row. A computer only helping keeps its own working folder (2026-11-20).
+// person picks or confirms one. Not set up: the setup card. Set up: the folder card, whose tap makes the row. A computer only helping keeps its own working folder (2026-11-20).
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "use-folder-"));
 process.env.DATA_DIR = dir;
 delete process.env.CT_LOCAL;
@@ -56,21 +55,19 @@ it("a member's job in a workspace not set up: a card that says the owner sets it
   expect(LIBRARY_WORDS.setupCardMember).toMatch(/owner/);
 });
 
-it("set up with no Project files anywhere: its setup again (no Quick setup); no Exports row: the folder card; no row is added", async () => {
+it("set up with no Projects or Exports row: the folder card, and no row is added", async () => {
   setUp("ws-tiny");
   const before = await rows();
   expect(await ensureUseFolder("ana", "ws-tiny", "projects", mac)).toMatchObject({
-    wait: { kind: "setup", again: true, line: LIBRARY_WORDS.setupAgainLine, actions: [{ id: "customise", open: "/library?setup=1", primary: true }] },
+    wait: { kind: "projects", device: mac, path: "~/Movies/Creator Toolset/Tiny Acrobatics/Project files", actions: [{ id: "use_default" }, { id: "choose" }] },
   });
-  const card = await ensureUseFolder("ana", "ws-tiny", "projects", mac);
-  if ("wait" in card) expect(card.wait.actions).toHaveLength(1);
   expect(await ensureUseFolder("ana", "ws-tiny", "library", mac)).toMatchObject({
     wait: { kind: "exports", device: mac, path: "~/Movies/Creator Toolset/Tiny Acrobatics/Final exports", actions: [{ id: "use_default" }, { id: "choose" }] },
   });
   expect(await rows()).toBe(before);
 });
 
-it("the Exports card's tap and the setup's Project files pick make the rows, and the next claim gets them; another workspace still waits", async () => {
+it("the cards' taps make the rows, and the next claim gets them; another workspace still waits", async () => {
   const r = await ensureUseFolder("ana", "ws-tiny", "library", mac);
   if (!("wait" in r)) throw new Error("expected a card");
   const call = r.wait.actions[0]!.call!;
