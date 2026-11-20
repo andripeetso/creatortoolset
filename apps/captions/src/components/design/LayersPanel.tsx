@@ -14,8 +14,7 @@ import { Tip } from "./Tip";
  * a frame, never the layers a picked frame already holds), a double click on a name renames and one on its icon zooms
  * the canvas to it, the eye hides and the lock locks, and a row is dragged to a
  * new place: a layer among its frame's layers (in or out of a group or a frame-like container: let go on the middle of a
- * container's row, it goes into it), onto another frame's rows or row (it goes there, staying where it is on the
- * canvas), a frame among the frames. A right press opens the canvas's menu for its row; the right edge sets the width. A container's layers lie under its row, which opens and
+ * container's row, it goes into it), onto another frame's rows or row (it goes there, at the same place in it), a frame among the frames. A right press opens the canvas's menu for its row; the right edge sets the width. A container's layers lie under its row, which opens and
  * closes them. Layers of an older group (a shared name) lie under a Group row,
  * which picks them all; a layer's own row picks that layer alone (where two frames lie over each other, the
  * lower one in the list is drawn on top, and the list's order numbers the saved PNGs).

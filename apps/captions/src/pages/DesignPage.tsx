@@ -154,6 +154,14 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const [ratio, setRatio] = useState(true);
   /** Moves when the menu's Rename is chosen: the layers list types in the picked row's name. */
   const [renameAsk, setRenameAsk] = useState(0);
+  /** Rename was chosen: the name field opens once the menu has closed (an open menu keeps the focus to itself). */
+  const renaming = useRef(false);
+  const menuClosed = (e: Event) => {
+    // focus stays where it is: given back to the canvas it would close the name field
+    e.preventDefault();
+    if (renaming.current) setRenameAsk((n) => n + 1);
+    renaming.current = false;
+  };
   /** The path layer whose points are shown for moving, and the picked one of them. */
   const [shaping, setShaping] = useState<{ id: string; anchor: number | null } | null>(null);
   const [pickedTool, setTool] = useState<Tool>("move");
@@ -663,16 +671,18 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     const fit = (n: number) => Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.round(n)));
     addFrame(undefined, { x: Math.round(r.x), y: Math.round(r.y), w: dragged ? fit(r.w) : like.w, h: dragged ? fit(r.h) : like.h });
   };
-  /** Layer `id` of frame `from` taken to frame `to` (a drag in the layers list), staying where it is on the canvas: beside its layer `by`, or on top of its layers; picked there. */
+  /** Layer `id` of frame `from` taken to frame `to` (a drag in the layers list), at the same place in that frame (where it shows): beside its layer `by`, or on top of its layers; picked there. */
   const carry = (from: number, id: string, to: number, by: string | null, how: "front" | "behind" | "into") => {
     const src = pages[from];
     const dst = pages[to];
     const me = src && dst && frames[from] && frames[to] ? inFrame(src.layers, id) : undefined;
     if (!me || locked) return;
     if (everyLayer(dst!.layers).length + everyLayer([me]).length > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups`);
-    const moved = { ...me, x: me.x + frames[from]!.x - frames[to]!.x, y: me.y + frames[from]!.y - frames[to]!.y };
-    // an id of its own there, and in no group of that frame's (as a layer dragged there on the canvas)
-    const [placed] = regroup(reid([moved], [moved.id], dst!.layers), dst!.layers);
+    // from a loose piece (its box is on the canvas): where it lies on the canvas, in the frame's pixels
+    const moved = src!.loose || dst!.loose ? { ...me, x: me.x + frames[from]!.x - frames[to]!.x, y: me.y + frames[from]!.y - frames[to]!.y } : me;
+    // an id of its own there (every frame has its own l1), and in no group of that frame's (as a layer dragged there on the canvas)
+    const fresh = everyLayer(dst!.layers).some((x) => x.id === moved.id) ? freshIds(dst!, 1)[0]! : moved.id;
+    const [placed] = regroup(reid([moved], [fresh], dst!.layers), dst!.layers);
     const there = { ...dst!, layers: [...dst!.layers, placed!] };
     const rest = mapLayers(src!.layers, (l) => (l.id === id ? null : l));
     setPages([{ ...src!, layers: rest }, (by && moveRow(there, placed!.id, by, how)) || there]);
@@ -1358,11 +1368,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const none = !mine.length;
   /** What a right press on the canvas or on a row of the layers list offers, for what is picked. */
   const menu = locked ? (
-                <ContextMenuContent className="w-56">
+                <ContextMenuContent className="w-56" onCloseAutoFocus={menuClosed}>
                   {item("Copy", "⌘C", copy, none)}
                 </ContextMenuContent>
               ) : (
-                <ContextMenuContent className="w-56">
+                <ContextMenuContent className="w-56" onCloseAutoFocus={menuClosed}>
                   {item("Copy", "⌘C", copy, none)}
                   {item("Paste here", "⌘V", paste, !clip)}
                   {item("Copy style", "⌥⌘C", copyLook, mine.length !== 1)}
@@ -1381,7 +1391,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
                   {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => isGroup(l) || (l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1)))}
                   {mine.some(isGroup) && (mine.filter(isGroup).every((l) => l.box) ? item("Convert to group", "", () => convert(false), false) : item("Convert to frame", "", () => convert(true), false))}
                   <ContextMenuSeparator />
-                  {item("Rename", "", () => setRenameAsk((n) => n + 1), mine.length !== 1 && !(framed && framedIds.length < 2))}
+                  {item("Rename", "", () => (renaming.current = true), mine.length !== 1 && !(framed && framedIds.length < 2))}
                   {mine.length === 1 && mine[0]!.type === "image" && item("Crop", "", () => setCropping(mine[0]!.id), false)}
                   <ContextMenuSeparator />
                   {item("Bring to front", "]", () => order(true), none)}

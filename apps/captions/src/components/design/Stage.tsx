@@ -791,7 +791,7 @@ export function Stage({
     const b0 = boundsOf(picked);
     // a picture with ⌘ held, or one being moved in its box: cropped, the picture staying where it is
     const pic = one?.type === "image" ? loaded.get(one.picture) : undefined;
-    const cut = one?.type === "image" && pic?.width && (e.metaKey || e.ctrlKey || cropping === one.id) ? one : null;
+    const cut = one?.type === "image" && pic?.width && (e.metaKey || (e.ctrlKey && !ON_A_MAC) || cropping === one.id) ? one : null;
     let last: DesignPage | null = null;
     let notes: string[] = [];
     drag(
@@ -804,9 +804,9 @@ export function Stage({
         const cropped = cut && pic ? cropBox(cut, h, to.x - from.x, to.y - from.y, pic, o) : null;
         // a side that hugged or filled is fixed at the size it is pulled to (layout.ts fixedBy)
         notes = [];
-        // a picture made another shape is stretched, never cut again
+        // a picture made another shape is stretched, never cut again (its shape kept: as it was, whole pixels aside)
         // shortcut: pictures inside a resized group or several picked are still refitted; upgrade by passing `loaded` into fitContents
-        const sized = (cropped ? [cropped] : one ? [one.type === "image" ? stretched(one, resizeBox(one, h, to.x - from.x, to.y - from.y, o), pic) : resizeBox(one, h, to.x - from.x, to.y - from.y, o)] : resizeAll(picked, b0, resizeBox(b0, h, to.x - from.x, to.y - from.y, o))).map((l) => fixedBy(picked.find((p) => p.id === l.id)!, l, (n) => notes.push(n)));
+        const sized = (cropped ? [cropped] : one ? [one.type === "image" && !o.keep ? stretched(one, resizeBox(one, h, to.x - from.x, to.y - from.y, o), pic) : resizeBox(one, h, to.x - from.x, to.y - from.y, o)] : resizeAll(picked, b0, resizeBox(b0, h, to.x - from.x, to.y - from.y, o))).map((l) => fixedBy(picked.find((p) => p.id === l.id)!, l, (n) => notes.push(n)));
         last = withLayers(page, sized);
         onLive([last]);
       },

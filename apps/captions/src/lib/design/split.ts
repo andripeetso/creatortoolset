@@ -120,7 +120,7 @@ export function splitLayers(page: DesignPage, layerId: string, pic: { width: num
   const made: Layer[] = [
     ...(original ? [{ ...l, hidden: true, name: "Original" } as Layer] : []),
     { ...l, id: ids[0]!, picture: a.background, uncut: undefined, hidden: undefined, name: "Background" },
-    ...kept.map((p, n): Layer => ({ id: ids[1 + n]!, type: "image", picture: p.picture, fit: "contain", name: `Piece ${n + 1}`, ...rounded(turned(l, p.r)), ...(l.flipX ? { flipX: true } : {}), ...(l.flipY ? { flipY: true } : {}) })),
+    ...kept.map((p, n): Layer => ({ id: ids[1 + n]!, type: "image", picture: p.picture, fit: "contain", name: `Piece ${n + 1}`, ...rounded(turned(l, p.r)), ...(l.crop ? { crop: { x: 0, y: 0, w: 1, h: 1 } } : {}), ...(l.flipX ? { flipX: true } : {}), ...(l.flipY ? { flipY: true } : {}) })),
     ...paras.slice(0, words).map((p, n) => textLayer(ids[1 + kept.length + n]!, p, l)),
   ];
   return { ...page, layers: [...page.layers.slice(0, at), ...made, ...page.layers.slice(at + 1)] };
