@@ -164,7 +164,7 @@ export function LayersPanel({
   const line = (key: string) => drop?.key === key && (drop.into ? <span className="pointer-events-none absolute inset-0 rounded-sm border-2 border-[#0d99ff]" /> : <span className={cn("pointer-events-none absolute inset-x-2 h-0.5 bg-[#0d99ff]", drop.after ? "bottom-0" : "top-0")} />);
 
   /** The rows of `list` (layers of frame `k`, or of a container in it), front first, each container's own under it. */
-  /** `owner`: the instance these layers are of: they move with its main, only what it overrides is its own. */
+  /** `owner`: the outermost instance these layers are of (an instance in it too): they move with its main, only what it overrides is its own, kept by the id in the main. */
   const rows = (p: DesignPage, k: number, list: readonly Layer[], depth: number, combined = false, owner?: Instance) => {
     const layerKey = `l:${p.id}:`;
     const shown = [...list].reverse();
@@ -245,7 +245,7 @@ export function LayersPanel({
             </button>
             {line(key)}
           </div>
-          {inner && <div role="group">{rows(p, k, l.layers, depth + 1, !!l.boolean, isInstance(l) ? l : owner)}</div>}
+          {inner && <div role="group">{rows(p, k, l.layers, depth + 1, !!l.boolean, owner ?? (isInstance(l) ? l : undefined))}</div>}
         </div>
       );
     });
