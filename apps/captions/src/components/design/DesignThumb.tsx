@@ -3,6 +3,7 @@ import type { Design } from "@contracts/design";
 import { drawingUrl, drawPage, fontsOfText, sourceOf, type Loaded } from "@/lib/design/draw";
 import { frameOf } from "@/lib/design/hands";
 import { paintPictures } from "@/lib/design/paint";
+import { everyLayer } from "@/lib/design/tree";
 import { useOwnFonts } from "@/lib/design/own-fonts";
 import { getDesign, pictureUrl } from "@/lib/designs";
 
@@ -35,7 +36,7 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
     const page = coverOf(design);
     if (!design || !page) return;
     const again = () => setDrawn((n) => n + 1);
-    for (const l of page.layers) {
+    for (const l of everyLayer(page.layers)) {
       const src = sourceOf(l);
       if (src && !loaded.has(src)) {
         const img = new Image();

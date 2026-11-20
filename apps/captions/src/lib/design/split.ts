@@ -1,5 +1,5 @@
 import { DESIGN_LIMITS, type DesignPage, type ImageLayer, type Layer, type SplitAnswer, type SplitBox, type SplitLine, type TextLayer } from "@contracts/design";
-import { freshIds } from "./hands";
+import { freshLayerIds } from "./tree";
 
 /**
  * A picture layer split into layers (POST /api/designs/:id/pictures/:pid/split): in its place on the frame, the picture
@@ -99,7 +99,8 @@ function textLayer(id: string, p: Placed[], l: ImageLayer): TextLayer {
 const rounded = <T extends Rect & { rotate?: number }>(r: T) => ({ x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(r.w)), h: Math.max(1, Math.round(r.h)), ...(r.rotate ? { rotate: r.rotate } : {}) });
 
 /** The frame with picture layer `layerId` split as `a` says, `pic` being the picture's own size (any size of it: only its shape counts). */
-export function splitLayers(page: DesignPage, layerId: string, pic: { width: number; height: number }, a: SplitAnswer): DesignPage {
+/** `taken`: every layer of the frame however deep in its containers (the page may be a container's layers, tree.ts inScope), so the new ids are the frame's own. */
+export function splitLayers(page: DesignPage, layerId: string, pic: { width: number; height: number }, a: SplitAnswer, taken: readonly Layer[] = page.layers): DesignPage {
   const at = page.layers.findIndex((x) => x.id === layerId);
   const l = page.layers[at];
   if (!l || l.type !== "image") return page;
@@ -114,7 +115,7 @@ export function splitLayers(page: DesignPage, layerId: string, pic: { width: num
   const words = Math.max(0, Math.min(paras.length, room - 1));
   const kept = pieces.map((p, n) => ({ p, n })).sort((x, y) => y.p.w * y.p.h - x.p.w * x.p.h).slice(0, Math.max(0, room - 1 - words)).sort((x, y) => x.n - y.n).map((x) => x.p);
   const original = room - 1 - words - kept.length > 0;
-  const ids = freshIds(page, 1 + kept.length + words);
+  const ids = freshLayerIds(taken, 1 + kept.length + words);
   const made: Layer[] = [
     ...(original ? [{ ...l, hidden: true, name: "Original" } as Layer] : []),
     { ...l, id: ids[0]!, picture: a.background, uncut: undefined, hidden: undefined, name: "Background" },

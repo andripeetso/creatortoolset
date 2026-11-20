@@ -1,6 +1,7 @@
 import type { DesignPage, Layer, Pin } from "../../../contracts/design";
 import { withFills } from "./paint";
 import { retext } from "./runs";
+import { everyLayer, mapLayers } from "./tree";
 
 /**
  * A frame that changes size, and its layers with it: each follows the frame's edges as its pin says (contracts/design.ts
@@ -58,7 +59,7 @@ function scaled<L extends Layer>(l: L, k: number): L {
   }
   if ((out.type === "shape" || out.type === "path") && out.stroke) out.stroke = { ...out.stroke, width: round(out.stroke.width * k) };
   if (out.type !== "drawing" && out.strokes) out.strokes = out.strokes.map((s) => ({ ...s, width: round(s.width * k), ...(s.sides ? { sides: s.sides.map((n) => round(n * k)) as [number, number, number, number] } : {}) }));
-  if ((out.type === "shape" || out.type === "image") && out.radius !== undefined) out.radius = typeof out.radius === "number" ? round(out.radius * k) : (out.radius.map((r) => round(r * k)) as [number, number, number, number]);
+  if ((out.type === "shape" || out.type === "image" || out.type === "group") && out.radius !== undefined) out.radius = typeof out.radius === "number" ? round(out.radius * k) : (out.radius.map((r) => round(r * k)) as [number, number, number, number]);
   return out as L;
 }
 
@@ -80,12 +81,33 @@ export function placeLayers<L extends Placed>(layers: readonly L[], from: Rect, 
     const free = (at: number, size: number, a: number, b: number, shift: number): [number, number] => (unpinned === "stay" ? [at - shift, size] : shareAxis(at, size, a, b, k));
     const [x, w] = pin.x ? pinAxis(pin.x, l.x, l.w, from.w, to.w) : free(l.x, l.w, from.w, to.w, dx);
     const [y, h] = pin.y ? pinAxis(pin.y, l.y, l.h, from.h, to.h) : free(l.y, l.h, from.h, to.h, dy);
-    const moved = { ...l, x: round(x), y: round(y), w: round(w), h: round(h) };
+    const moved = fitContents(l, { ...l, x: round(x), y: round(y), w: round(w), h: round(h) }, unpinned);
     // a copy scales what a layer draws with it when the layer was scaled whole (no side pinned or stretched across)
     const across = (at: number, size: number, of: number) => at <= 0 && at + size >= of;
     const whole = unpinned === "share" && !pin.x && !pin.y && !across(l.x, l.w, from.w) && !across(l.y, l.h, from.h);
     return whole && "type" in l ? (scaled(moved as unknown as Layer, k) as unknown as L) : moved;
   });
+}
+
+/**
+ * A container (contracts/design.ts GroupLayer) given a new size: its layers follow it. A box's layers follow its edges
+ * by their pins (unpinned they stay where they are in it); a plain group's grow and shrink with it; in a copy of another
+ * size (`share`) both are placed as a frame's are. Anything else, and a container of the same size, as it is.
+ */
+export function fitContents<L extends Placed>(was: Placed, now: L, unpinned: "stay" | "share" = "stay"): L {
+  const g = now as unknown as Layer;
+  if (!("type" in now) || g.type !== "group" || (was.w === now.w && was.h === now.h)) return now;
+  const from = { w: was.w, h: was.h };
+  const to = { w: now.w, h: now.h };
+  const inner =
+    unpinned === "share" || g.box
+      ? placeLayers(g.layers, from, to, unpinned)
+      : g.layers.map((l) => {
+          const [x, w] = pinAxis("scale", l.x, l.w, from.w, to.w);
+          const [y, h] = pinAxis("scale", l.y, l.h, from.h, to.h);
+          return fitContents(l, { ...l, x: round(x), y: round(y), w: round(w), h: round(h) });
+        });
+  return { ...now, layers: inner };
 }
 
 /** A frame with a new size (and place), its layers following it as placeLayers says. */
@@ -112,12 +134,12 @@ export function fillRow(page: DesignPage, row: Record<string, unknown>): { page:
     if (key === "name") continue;
     const want = key.trim().toLowerCase();
     const hit = (l: Layer) => (l.name ?? "").trim().toLowerCase() === want;
-    if (!layers.some(hit)) {
+    if (!everyLayer(layers).some(hit)) {
       missing.push(key);
       continue;
     }
     const set: { text?: string; visible?: boolean; color?: string } = typeof v === "string" || typeof v === "number" ? { text: String(v) } : v && typeof v === "object" ? (v as typeof set) : {};
-    layers = layers.map((l): Layer => {
+    layers = mapLayers(layers, (l): Layer => {
       if (!hit(l)) return l;
       let out: Layer = { ...l };
       if (typeof set.visible === "boolean") out = { ...out, hidden: set.visible ? undefined : true };

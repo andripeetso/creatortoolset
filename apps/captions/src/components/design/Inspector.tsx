@@ -70,6 +70,9 @@ import { cn } from "@/lib/utils";
  * menu here gives the keys back to the canvas at once: ⌘Z right after picking a font undoes the font.
  */
 
+/** What has corners to round: a picture, a rectangle, a frame-like container. */
+const hasCorners = (l: Layer): l is Extract<Layer, { type: "image" | "shape" | "group" }> => l.type === "image" || l.type === "shape" || l.type === "group";
+const roundable = (l: Layer) => l.type === "image" || (l.type === "shape" && l.shape === "rect") || (l.type === "group" && !!l.box);
 const FIELD = "flex h-6 min-w-0 items-center gap-1.5 rounded-[5px] border border-transparent bg-[#f5f5f5] px-1.5 focus-within:border-[#0d99ff] hover:border-[#e6e6e6] focus-within:hover:border-[#0d99ff] dark:bg-[#383838] dark:hover:border-[#4d4d4d]";
 const DIM = "text-zinc-500 dark:text-[#b3b3b3]";
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -757,11 +760,13 @@ export function Inspector({
 
   const text = every((l) => l.type === "text");
   const shape = every((l) => l.type === "shape");
+  /** A frame-like container: a box of its own, with fills, lines, corners and Clip content. */
+  const boxes = every((l) => l.type === "group" && !!l.box);
   const image = every((l) => l.type === "image");
   /** A corner's radius of a picture or a rectangle (0: top left, then round the box), and that corner set. */
-  const cornerOf = (l: Layer, n: number): number | undefined => (l.type === "image" || l.type === "shape" ? (typeof l.radius === "object" ? l.radius[n]! : (l.radius ?? 0)) : undefined);
+  const cornerOf = (l: Layer, n: number): number | undefined => (hasCorners(l) ? (typeof l.radius === "object" ? l.radius[n]! : (l.radius ?? 0)) : undefined);
   const setCorner = (n: number, v: number) => (l: Layer): Layer => {
-    if (l.type !== "image" && l.type !== "shape") return l;
+    if (!hasCorners(l)) return l;
     const r = [0, 1, 2, 3].map((k) => (k === n ? v : (cornerOf(l, k) ?? 0))) as [number, number, number, number];
     return { ...l, radius: r.every((x) => x === r[0]) ? r[0] || undefined : r };
   };
@@ -797,9 +802,9 @@ export function Inspector({
   return (
     <aside aria-label="Design" className="flex w-60 shrink-0 flex-col overflow-y-scroll border-l pb-20 border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
-        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? (groupName(picked[0]!.group) ?? `Group of ${picked.length}`) : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : SHAPE_NAMES[one.shape]) : framesPicked.length > 1 ? `${framesPicked.length} frames` : "Frame"}</h2>
+        <h2 className="font-semibold">{picked.length > 1 ? (picked[0]!.group && picked.every((l) => l.group === picked[0]!.group) ? (groupName(picked[0]!.group) ?? `Group of ${picked.length}`) : `${picked.length} selected`) : one ? (one.type === "text" ? "Text" : one.type === "image" ? "Picture" : one.type === "drawing" ? "Drawing" : one.type === "path" ? "Path" : one.type === "group" ? (one.box ? "Frame" : "Group") : SHAPE_NAMES[one.shape]) : framesPicked.length > 1 ? `${framesPicked.length} frames` : "Frame"}</h2>
         <div className="flex items-center">
-          {picked.some((l) => l.group && page.layers.filter((x) => x.group === l.group).length > 1) && (
+          {picked.some((l) => l.type === "group" || (l.group && page.layers.filter((x) => x.group === l.group).length > 1)) && (
             <Tap label="Ungroup" onClick={onUngroup}>
               <Ungroup className="h-3.5 w-3.5" />
             </Tap>
@@ -934,20 +939,20 @@ export function Inspector({
                 (n) => (l) => ({ ...l, opacity: n >= 100 ? undefined : n / 100 }),
                 { min: 0, max: 100, rate: 0.4 },
               )}
-              {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
+              {every(roundable) &&
                 num(
                   "◜",
                   "Corner radius",
                   // corners that differ show as mixed; a number typed here is every corner's
                   (() => {
-                    const r = same((l) => (l.type === "image" || l.type === "shape" ? (typeof l.radius === "object" ? -1 : (l.radius ?? 0)) : undefined));
+                    const r = same((l) => (hasCorners(l) ? (typeof l.radius === "object" ? -1 : (l.radius ?? 0)) : undefined));
                     return r === -1 ? null : r;
                   })(),
-                  (n) => (l) => (l.type === "image" || l.type === "shape" ? { ...l, radius: n || undefined } : l),
+                  (n) => (l) => (hasCorners(l) ? { ...l, radius: n || undefined } : l),
                   { min: 0, max: 2000 },
                 )}
             </div>
-            {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) && (
+            {every(roundable) && (
               <div className="flex items-center gap-2">
                 <div className="grid min-w-0 flex-1 grid-cols-4 gap-1">{split && CORNERS.map(([sign, title], n) => <div key={title}>{num(sign, title, same((l) => cornerOf(l, n)), (v) => setCorner(n, v), { min: 0, max: 2000 })}</div>)}</div>
                 <Tap label="Each corner separately" on={split} onClick={() => setSplit(!split)}>
@@ -955,8 +960,8 @@ export function Inspector({
                 </Tap>
               </div>
             )}
-            {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
-              slide("Corner smoothing", same((l) => (l.type === "image" || l.type === "shape" ? Math.round((l.smooth ?? 0) * 100) : undefined)), (n) => (l) => (l.type === "image" || l.type === "shape" ? { ...l, smooth: n ? n / 100 : undefined } : l), 0, 100)}
+            {every(roundable) &&
+              slide("Corner smoothing", same((l) => (hasCorners(l) ? Math.round((l.smooth ?? 0) * 100) : undefined)), (n) => (l) => (hasCorners(l) ? { ...l, smooth: n ? n / 100 : undefined } : l), 0, 100)}
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <PickOne
@@ -976,6 +981,13 @@ export function Inspector({
                 <FlipVertical2 className="h-3.5 w-3.5" />
               </Tap>
             </div>
+            {/* a frame-like container cuts its layers at its edges and corners */}
+            {boxes && (
+              <label className="flex items-center gap-2 text-xs">
+                <Checkbox checked={every((l) => l.type === "group" && !!l.clip)} onCheckedChange={(on) => onPatch((l) => (l.type === "group" ? { ...l, clip: on === true ? true : undefined } : l))} />
+                Clip content
+              </label>
+            )}
             {shape && (
               <PickOne
                 label="Shape"
@@ -1002,7 +1014,7 @@ export function Inspector({
                 onDropper={onDropper}
                 max={text ? 60 : 200}
                 text={text}
-                box={every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect"))}
+                box={every(roundable)}
                 open={every((l) => l.type === "path" && !l.closed)}
                 onSet={(st, merge) => onPatch((l) => withStrokes(l, st), merge)}
                 onLive={(st) => onPreview(st ? (l) => withStrokes(l, st) : null)}

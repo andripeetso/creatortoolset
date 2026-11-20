@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
+import { dropInto, everyLayer, inFrame, inScope, into, isGroup, mapLayers, moveInto, reid, scopeOf, withScope } from "@/lib/design/tree";
 import { solidGround } from "@/lib/design/paint";
 import { boundsOf, boxPick, dropTarget, frameOf, hovers, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
@@ -73,7 +74,7 @@ const ON_A_MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.platfo
 type Guides = { x?: number; y?: number; span: Rect; gaps?: Gap[] };
 
 export function Stage({
-  pages,
+  pages: real,
   at,
   width,
   height,
@@ -155,6 +156,10 @@ export function Stage({
   /** the right-click menu's content */
   menu: ReactNode;
 }) {
+  // a container opened (its layers are picked): the hands work on its layers as they lie in the frame, and what they
+  // change goes back into it (tree.ts inScope, unscope in the page); every frame is still drawn whole
+  const scope = real[at] ? scopeOf(real[at]!.layers, selected) : null;
+  const pages = useMemo(() => (scope ? real.map((p, n) => (n === at ? inScope(p, scope) : p)) : real), [real, at, scope]);
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const typing = useRef<TypedHandle>(null);
@@ -277,7 +282,7 @@ export function Stage({
     was.view = view;
     const want = view.z * dpr;
     let rough = false;
-    pages.forEach((p, k) => {
+    real.forEach((p, k) => {
       const f = frameOf(p, k, width, height);
       const left = view.x + f.x * view.z;
       const top = view.y + f.y * view.z;
@@ -286,7 +291,7 @@ export function Stage({
       if (left + area.x * view.z > room.w || left + (area.x + area.w) * view.z < 0 || top + area.y * view.z > room.h || top + (area.y + area.h) * view.z < 0) return;
       // the words being typed are in the box over the frame: the layer itself is not drawn under them
       const inWords = editing && k === at ? editing : "";
-      const shown = inWords ? { ...p, layers: p.layers.filter((l) => l.id !== inWords) } : p;
+      const shown = inWords ? { ...p, layers: mapLayers(p.layers, (l) => (l.id === inWords ? null : l)) } : p;
       // on whole device pixels, so a kept picture copied there and the frame drawn there are the same picture
       const x = Math.round(left * dpr);
       const y = Math.round(top * dpr);
@@ -429,7 +434,15 @@ export function Stage({
     for (let k = fr.length - 1; k >= 0; k--) if (!pages[k]!.loose && p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
     return -1;
   };
-  const hitAt = (k: number, p: Point) => (k >= 0 ? layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null);
+  /** The innermost layer of `g` under a point of the pixels it lies in, however deep in containers (g itself when it holds none there). */
+  const innermost = (g: Layer, pt: Point): Layer => {
+    if (!isGroup(g)) return g;
+    const q = into(g, pt);
+    const inner = layerAt(g, q.x, q.y, 6 / live.current.z);
+    return inner ? innermost(inner, q) : g;
+  };
+  // inside an open container its layers are hit first, then what lies on the frame round it
+  const hitAt = (k: number, p: Point) => (k >= 0 ? (layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) ?? (pages[k] !== real[k] ? layerAt(real[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null)) : null);
   /**
    * What a press at a point is on: the topmost layer drawn there and its frame, else the frame under it (-1: empty
    * canvas). A frame that clips hides its layers past its edges, and its ground covers what lies under it.
@@ -505,6 +518,12 @@ export function Stage({
     dragging.current = onUp;
   };
   const withLayers = (p: DesignPage, next: readonly Layer[]): DesignPage => ({ ...p, layers: p.layers.map((l) => next.find((n) => n.id === l.id) ?? l) });
+  /** A frame the hands changed inside an open container, made whole (its layers back in the container). */
+  const unscopeOne = (p: DesignPage): DesignPage => {
+    const { scope: s, ...rest } = p as DesignPage & { scope?: string };
+    const was = real.find((r) => r.id === p.id);
+    return s && was ? { ...rest, layers: withScope(was.layers, s, p.layers) } : p;
+  };
   /** The pointer's move since `from`; Shift keeps the longer of its two directions. */
   const moveOf = (ev: PointerEvent, from: Point) => {
     const to = world(ev);
@@ -551,7 +570,7 @@ export function Stage({
       (ev) => {
         const m = moveOf(ev, from);
         // another frame takes them only when it has room for them; a copy stays in a frame that has room too
-        const fits = (n: number) => pages[n]!.layers.length + moving.length <= DESIGN_LIMITS.layers;
+        const fits = (n: number) => everyLayer(real[n]!.layers).length + everyLayer(moving).length <= DESIGN_LIMITS.layers;
         // layers taken wholly off their frame onto empty canvas lie loose there, uncut (hands.ts dropTarget)
         const lands = dropTarget(pages.map((q, n) => ({ rect: fr[n]!, loose: q.loose, full: !fits(n) })), k, { ...b0, x: f.x + b0.x + m.dx, y: f.y + b0.y + m.dy });
         keptIn = lands < 0 && canvasFull;
@@ -564,7 +583,9 @@ export function Stage({
         const ox = f.x - g.x;
         const oy = f.y - g.y;
         // a loose picture's own box is where it was: nothing to catch on
-        const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l]))];
+        // inside an open container its own box is caught on too
+        const shell = to === k && scope ? inFrame(real[k]!.layers, scope) : undefined;
+        const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l])), ...(shell ? [boundsOf([shell])] : [])];
         const near = SNAP / live.current.z;
         const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
         // and on the host frame's guides, grids and safe parts (lib/design/aids.ts)
@@ -580,8 +601,10 @@ export function Stage({
         setGuides({ ...(m.lockX || s.x === undefined ? {} : { x: g.x + s.x }), ...(m.lockY || s.y === undefined ? {} : { y: g.y + s.y }), span: g, gaps: [...(evenX?.gaps ?? []), ...(evenY?.gaps ?? [])].map(inCanvas) });
         // an id of its own in the frame it lands in
         const taken = new Set(host.layers.filter((l) => to !== k || copy || !ids.includes(l.id)).map((l) => l.id));
-        const fresh = freshIds(host, moving.length);
-        const placed = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id }));
+        const fresh = freshIds(real[to] ?? host, moving.length);
+        const moved = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id }));
+        // a copy, or a container landing in another frame: every layer inside it an id of its own there
+        const placed = copy || to !== k ? reid(moved, moved.map((l) => l.id), [...(real[to] ?? host).layers, ...(copy ? [] : moving)]) : moved;
         // copies, and layers landing in another frame, are a group among themselves, not part of one that is there
         const next = to !== k || copy ? regroup(placed, host.layers.filter((l) => to !== k || copy || !ids.includes(l.id))) : placed;
         const home = copy ? p : { ...p, layers: p.layers.filter((l) => !moving.includes(l)) };
@@ -598,6 +621,14 @@ export function Stage({
         // let go where they could not lie (past the frame's edge, its clip hiding them): as if the drag never happened
         if (keptIn) return void onError?.(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
         if (last) {
+          // let go in the same frame: into the box under their middle, or out of the container they were in
+          const mid = boundsOf(last.pages[0]!.layers.filter((l) => last!.ids.includes(l.id)));
+          const into_ = last.to === k && !copy && !p.loose ? dropInto(real[k]!.layers, last.ids, { x: mid.x + mid.w / 2, y: mid.y + mid.h / 2 }, scope, DESIGN_LIMITS.depth) : scope;
+          if (into_ !== scope) {
+            const whole = unscopeOne(last.pages[0]!);
+            onCommit([{ ...whole, layers: moveInto(whole.layers, last.ids, into_) }]);
+            return onPick(k, last.ids);
+          }
           onCommit(last.pages);
           // a loose picture whose last picture went into a frame is gone, and the frames after it move up one
           const gone = p.loose && !copy && last.to !== k && !last.pages[0]!.layers.length;
@@ -925,6 +956,8 @@ export function Stage({
     if (!hit && k >= 0 && !pages[k]!.layers.some((l) => !l.hidden && !l.locked)) return moveFrame(e, k);
     if (!hit) return marquee(e, k);
     const mine = k === at ? selected : [];
+    // ⌘: the innermost layer under the press, however deep in containers
+    if (deep && isGroup(hit)) return onPick(k, [innermost(hit, { x: p.x - fr[k]!.x, y: p.y - fr[k]!.y }).id]);
     const whole = deep ? [hit.id] : groupOf(pages[k]!.layers, hit);
     if (e.shiftKey) return onPick(k, mine.includes(hit.id) ? mine.filter((id) => !whole.includes(id)) : [...new Set([...mine, ...whole])]);
     const ids = mine.includes(hit.id) && !deep ? mine : whole;
@@ -945,7 +978,8 @@ export function Stage({
   const place = (k: number, r: Rect & { rotate?: number }): React.CSSProperties => ({ ...onScreen({ ...r, x: (fr[k]?.x ?? 0) + r.x, y: (fr[k]?.y ?? 0) + r.y }), transform: r.rotate ? `rotate(${r.rotate}deg)` : undefined });
   const one = picked.length === 1 ? picked[0]! : null;
   const around = picked.length ? boundsOf(picked) : null;
-  const outlined = [hover && !(hover.k === at && selected.includes(hover.id)) ? pages[hover.k]?.layers.find((l) => l.id === hover.id) : null, pointed && !selected.includes(pointed) ? page?.layers.find((l) => l.id === pointed) : null];
+  // what the pointer is on (here or in the layers list), wherever it lies in its frame, and the container open for its layers
+  const outlined = [hover && !(hover.k === at && selected.includes(hover.id)) && real[hover.k] ? inFrame(real[hover.k]!.layers, hover.id) : null, pointed && !selected.includes(pointed) && real[at] ? inFrame(real[at]!.layers, pointed) : null, scope && real[at] ? inFrame(real[at]!.layers, scope) : null];
   /** The eight handles of a box: four corner knobs, and its sides (a side has no knob: the whole side is the handle). */
   const handles = (ofFrame: boolean) => {
     const mark = ofFrame ? "data-frame-handle" : "data-handle";
@@ -1004,7 +1038,13 @@ export function Stage({
               onPick(k, [hit.id]);
               return onShape({ id: hit.id, anchor: null });
             }
-            // a double click goes into a group: the one layer under it
+            // a double click goes into a container: the layer of it under the press is picked
+            if (isGroup(hit)) {
+              const q = into(hit, { x: p.x - fr[k]!.x, y: p.y - fr[k]!.y });
+              const inner = layerAt(hit, q.x, q.y, 6 / live.current.z);
+              return void (inner && onPick(k, [inner.id]));
+            }
+            // and into an older group (a shared name): the one layer under it
             if (hit.type !== "text" && hit.type !== "image") return void (hit.group && onPick(k, [hit.id]));
             onPick(k, [hit.id]);
             if (hit.type === "text") onEdit(hit.id);
@@ -1032,7 +1072,7 @@ export function Stage({
           )}
           {/* several frames picked: each is outlined, none has handles (they move, they are not resized together) */}
           {framedIds.length > 1 && pages.map((p, n) => framedIds.includes(p.id) && <div key={p.id} data-frame-selection className="pointer-events-none absolute outline outline-2 outline-[#0d99ff]" style={onScreen(fr[n]!)} />)}
-          {outlined.map((l, n) => l && <div key={n} className="pointer-events-none absolute outline outline-2 outline-[#0d99ff]" style={place(n === 0 ? hover!.k : at, l)} />)}
+          {outlined.map((l, n) => l && <div key={n} className={cn("pointer-events-none absolute outline outline-[#0d99ff]", n === 2 ? "outline-1 outline-dashed" : "outline-2")} style={place(n === 0 ? hover!.k : at, l)} />)}
           {guides?.x !== undefined && <div className="pointer-events-none absolute w-px bg-[#ff3b30]" style={{ left: view.x + guides.x * view.z, top: view.y + guides.span.y * view.z, height: guides.span.h * view.z }} />}
           {guides?.y !== undefined && <div className="pointer-events-none absolute h-px bg-[#ff3b30]" style={{ left: view.x + guides.span.x * view.z, top: view.y + guides.y * view.z, width: guides.span.w * view.z }} />}
           {guides?.gaps?.map((gap, n) => {

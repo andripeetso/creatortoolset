@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronRight, Circle, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { groupName, layerName, pageName } from "@/lib/design/hands";
+import { isGroup, mapLayers, moveRow, parentOf } from "@/lib/design/tree";
 import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
 
@@ -10,17 +11,21 @@ import { Tip } from "./Tip";
  * takes one; Shift picks every row from the last one clicked: the layers between, or the frames when the run goes past
  * a frame, never the layers a picked frame already holds), a double click on a name renames and one on its icon zooms
  * the canvas to it, the eye hides and the lock locks, and a row is dragged to a
- * new place: a layer among its frame's layers, a frame among the frames. Layers of a group lie under a Group row,
+ * new place: a layer among its frame's layers (in or out of a group or a frame-like container: let go on the middle of a
+ * container's row, it goes into it), a frame among the frames. A container's layers lie under its row, which opens and
+ * closes them. Layers of an older group (a shared name) lie under a Group row,
  * which picks them all; a layer's own row picks that layer alone (where two frames lie over each other, the
  * lower one in the list is drawn on top, and the list's order numbers the saved PNGs).
  */
 
 const ROW = "group relative flex h-8 w-full cursor-default items-center gap-1.5 pr-2 text-left";
 const ON = "bg-[#0d99ff]/20";
-const KIND = { text: Type, image: Image, drawing: PenTool, path: Spline } as const;
+const KIND = { text: Type, image: Image, drawing: PenTool, path: Spline, group: Group } as const;
 const SHAPE = { rect: Square, ellipse: Circle, triangle: Triangle, star: Star, arrow: ArrowRight } as const;
 
-type Drop = { key: string; after: boolean };
+/** Where a dragged row goes: above or below row `key`, or (`into`) into the container it is the row of. */
+type Drop = { key: string; after: boolean; into?: boolean };
+
 
 export function LayersPanel({
   pages,
@@ -64,7 +69,8 @@ export function LayersPanel({
     const from = a ? pages.findIndex((p) => p.id === a.page) : -1;
     if (!a || from < 0) return false;
     if (from === k && a.layer && id) {
-      const list = [...pages[k]!.layers].reverse().map((l) => l.id);
+      // the layers beside it, in its container
+      const list = [...(parentOf(pages[k]!.layers, id)?.layers ?? pages[k]!.layers)].reverse().map((l) => l.id);
       const [lo, hi] = [list.indexOf(a.layer), list.indexOf(id)].sort((x, y) => x - y);
       if (lo! < 0) return false;
       onPick(k, list.slice(lo, hi! + 1));
@@ -126,7 +132,9 @@ export function LayersPanel({
       const row = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-row]");
       const key = row?.dataset.row;
       const r = row?.getBoundingClientRect();
-      to = key && r && fits(key) ? { key, after: ev.clientY > r.top + r.height / 2 } : null;
+      // the middle of a container's row: into it
+      const inside = row?.dataset.container !== undefined && r && Math.abs(ev.clientY - r.top - r.height / 2) < r.height / 4;
+      to = key && r && fits(key) ? { key, after: ev.clientY > r.top + r.height / 2, ...(inside ? { into: true } : {}) } : null;
       setDrop(to);
     };
     const up = () => {
@@ -140,7 +148,90 @@ export function LayersPanel({
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
-  const line = (key: string) => drop?.key === key && <span className={cn("pointer-events-none absolute inset-x-2 h-0.5 bg-[#0d99ff]", drop.after ? "bottom-0" : "top-0")} />;
+  const line = (key: string) => drop?.key === key && (drop.into ? <span className="pointer-events-none absolute inset-0 rounded-sm border-2 border-[#0d99ff]" /> : <span className={cn("pointer-events-none absolute inset-x-2 h-0.5 bg-[#0d99ff]", drop.after ? "bottom-0" : "top-0")} />);
+
+  /** The rows of `list` (layers of frame `k`, or of a container in it), front first, each container's own under it. */
+  const rows = (p: DesignPage, k: number, list: readonly Layer[], depth: number) => {
+    const layerKey = `l:${p.id}:`;
+    const shown = [...list].reverse();
+    return shown.map((l, n) => {
+      const key = layerKey + l.id;
+      // the first of a run of one older group's layers (a shared name) gets the group's own row above it
+      // (a group that is down to one layer is a single layer again)
+      const members = l.group ? list.filter((x) => x.group === l.group).map((x) => x.id) : [];
+      const grouped = members.length > 1;
+      const heads = grouped && shown[n - 1]?.group !== l.group;
+      const allOn = k === at && members.length > 0 && members.every((id) => selected.includes(id));
+      const on = k === at && selected.includes(l.id);
+      const Icon = l.type === "shape" ? SHAPE[l.shape] : l.type === "group" && l.box ? Frame : KIND[l.type];
+      const set = (patch: Partial<Layer>) => onPage({ ...p, layers: mapLayers(p.layers, (x) => (x.id === l.id ? ({ ...x, ...patch } as Layer) : x)) });
+      const shutKey = `${p.id}/${l.id}`;
+      const inner = isGroup(l) && !shut.includes(shutKey);
+      const indent = { paddingLeft: p.loose ? 16 + depth * 14 : 36 + depth * 14 + (grouped ? 20 : 0) };
+      return (
+        <div key={l.id}>
+          {heads && (
+            <div role="treeitem" data-group={l.group} aria-label={groupName(l.group) ?? "Group"} aria-selected={allOn} onClick={() => !dragging.current && onPick(k, members)} className={cn(ROW, allOn ? ON : "hover:bg-zinc-500/10")} style={{ paddingLeft: 36 + depth * 14 }}>
+              <Group className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+              {/* the name its maker gave the group (an AI names its groups: "Palm trees"); one made by hand is a Group */}
+              <span className="min-w-0 flex-1 truncate">{groupName(l.group) ?? "Group"}</span>
+            </div>
+          )}
+          <div
+            role="treeitem"
+            data-row={key}
+            {...(isGroup(l) ? { "data-container": "", "aria-expanded": inner } : {})}
+            aria-label={layerName(l)}
+            aria-selected={on}
+            onPointerDown={(e) =>
+              dragRow(
+                e,
+                (other) => other.startsWith(layerKey) && other !== key,
+                (to) => {
+                  // the list shows the front layer on top: above a row is in front of it
+                  const next = moveRow(p, l.id, to.key.slice(layerKey.length), to.into ? "into" : to.after ? "behind" : "front");
+                  if (next) onPage(next);
+                },
+              )
+            }
+            onPointerEnter={() => onPoint(l.id)}
+            onPointerLeave={() => onPoint(null)}
+            onClick={(e) => {
+              if (dragging.current) return;
+              if (e.shiftKey && run(k, l.id)) return;
+              anchor.current = { page: p.id, layer: l.id };
+              // picked layers are always of one container: one of another is picked alone
+              const mine = k === at && selected.length && parentOf(p.layers, selected[0]!)?.id === parentOf(p.layers, l.id)?.id ? selected : [];
+              onPick(k, e.shiftKey || e.metaKey || e.ctrlKey ? (mine.includes(l.id) ? mine.filter((id) => id !== l.id) : [...mine, l.id]) : [l.id]);
+            }}
+            onDoubleClick={() => setRenaming(key)}
+            className={cn(ROW, on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
+            style={indent}
+          >
+            {isGroup(l) && (
+              <button type="button" aria-label={inner ? "Close" : "Open"} onClick={(e) => (e.stopPropagation(), setShut((s) => (inner ? [...s, shutKey] : s.filter((x) => x !== shutKey))))} className="-ml-4 flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 dark:text-[#b3b3b3]">
+                {inner ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+            )}
+            <span data-icon onDoubleClick={zoomOn(k, l.id)} className="flex shrink-0">
+              <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+            </span>
+            {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}
+            {/* shown while designing only: never in a saved picture, a thumbnail or a video */}
+            {l.reference && <span title="Shown while designing only, never in an export" className="shrink-0 rounded-[3px] border border-zinc-500/40 px-1 text-[9px] leading-[14px] text-zinc-500 dark:text-[#b3b3b3]">Reference</span>}
+            <button type="button" aria-label={l.locked ? "Unlock" : "Lock"} aria-pressed={!!l.locked} onClick={(e) => (e.stopPropagation(), set({ locked: l.locked ? undefined : true }))} className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-zinc-500/20", !l.locked && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100")}>
+              {l.locked ? <Lock className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />}
+            </button>
+            <button type="button" aria-label={l.hidden ? "Show" : "Hide"} aria-pressed={!!l.hidden} onClick={(e) => (e.stopPropagation(), set({ hidden: l.hidden ? undefined : true }))} className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-zinc-500/20", !l.hidden && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100")}>
+              {l.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            </button>
+            {line(key)}
+          </div>
+          {inner && <div role="group">{rows(p, k, l.layers, depth + 1)}</div>}
+        </div>
+      );
+    });
+  };
 
   return (
     <nav aria-label="Layers" className="flex w-60 shrink-0 flex-col border-r border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
@@ -157,7 +248,6 @@ export function LayersPanel({
           // layers lying loose on the canvas have no frame row: they stand on their own
           const open = p.loose || !shut.includes(p.id);
           const pageKey = `p:${p.id}`;
-          const layerKey = `l:${p.id}:`;
           return (
             <div key={p.id}>
               {!p.loose && (
@@ -201,73 +291,7 @@ export function LayersPanel({
                 {line(pageKey)}
               </div>
               )}
-              {open &&
-                [...p.layers].reverse().map((l, n, shown) => {
-                  const key = layerKey + l.id;
-                  // the first of a run of one group's layers gets the group's own row above it
-                  // (a group that is down to one layer is a single layer again)
-                  const members = l.group ? p.layers.filter((x) => x.group === l.group).map((x) => x.id) : [];
-                  const grouped = members.length > 1;
-                  const heads = grouped && shown[n - 1]?.group !== l.group;
-                  const allOn = k === at && members.length > 0 && members.every((id) => selected.includes(id));
-                  const on = k === at && selected.includes(l.id);
-                  const Icon = l.type === "shape" ? SHAPE[l.shape] : KIND[l.type];
-                  const set = (patch: Partial<Layer>) => onPage({ ...p, layers: p.layers.map((x) => (x.id === l.id ? ({ ...x, ...patch } as Layer) : x)) });
-                  return (
-                    <div key={l.id}>
-                    {heads && (
-                      <div role="treeitem" data-group={l.group} aria-label={groupName(l.group) ?? "Group"} aria-selected={allOn} onClick={() => !dragging.current && onPick(k, members)} className={cn(ROW, "pl-9", allOn ? ON : "hover:bg-zinc-500/10")}>
-                        <Group className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
-                        {/* the name its maker gave the group (an AI names its groups: "Palm trees"); one made by hand is a Group */}
-                        <span className="min-w-0 flex-1 truncate">{groupName(l.group) ?? "Group"}</span>
-                      </div>
-                    )}
-                    <div
-                      role="treeitem"
-                      data-row={key}
-                      aria-label={layerName(l)}
-                      aria-selected={on}
-                      onPointerDown={(e) =>
-                        dragRow(
-                          e,
-                          (other) => other.startsWith(layerKey) && other !== key,
-                          (to) => {
-                            // the list shows the front layer on top: a place in the list is a place from the front
-                            const shown = [...p.layers].reverse().filter((x) => x.id !== l.id);
-                            shown.splice(shown.findIndex((x) => layerKey + x.id === to.key) + (to.after ? 1 : 0), 0, l);
-                            onPage({ ...p, layers: shown.reverse() });
-                          },
-                        )
-                      }
-                      onPointerEnter={() => onPoint(l.id)}
-                      onPointerLeave={() => onPoint(null)}
-                      onClick={(e) => {
-                        if (dragging.current) return;
-                        if (e.shiftKey && run(k, l.id)) return;
-                        anchor.current = { page: p.id, layer: l.id };
-                        const mine = k === at ? selected : [];
-                        onPick(k, e.shiftKey || e.metaKey || e.ctrlKey ? (mine.includes(l.id) ? mine.filter((id) => id !== l.id) : [...mine, l.id]) : [l.id]);
-                      }}
-                      onDoubleClick={() => setRenaming(key)}
-                      className={cn(ROW, p.loose ? "pl-4" : grouped ? "pl-14" : "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
-                    >
-                      <span data-icon onDoubleClick={zoomOn(k, l.id)} className="flex shrink-0">
-                        <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
-                      </span>
-                      {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}
-                      {/* shown while designing only: never in a saved picture, a thumbnail or a video */}
-                      {l.reference && <span title="Shown while designing only, never in an export" className="shrink-0 rounded-[3px] border border-zinc-500/40 px-1 text-[9px] leading-[14px] text-zinc-500 dark:text-[#b3b3b3]">Reference</span>}
-                      <button type="button" aria-label={l.locked ? "Unlock" : "Lock"} aria-pressed={!!l.locked} onClick={(e) => (e.stopPropagation(), set({ locked: l.locked ? undefined : true }))} className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-zinc-500/20", !l.locked && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100")}>
-                        {l.locked ? <Lock className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />}
-                      </button>
-                      <button type="button" aria-label={l.hidden ? "Show" : "Hide"} aria-pressed={!!l.hidden} onClick={(e) => (e.stopPropagation(), set({ hidden: l.hidden ? undefined : true }))} className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-zinc-500/20", !l.hidden && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100")}>
-                        {l.hidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                      </button>
-                      {line(key)}
-                    </div>
-                    </div>
-                  );
-                })}
+              {open && rows(p, k, p.layers, 0)}
             </div>
           );
         })}

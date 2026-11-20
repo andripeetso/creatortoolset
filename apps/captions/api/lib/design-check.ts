@@ -2,6 +2,7 @@ import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_GAP, DESIGN_GRADIE
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
+import { everyLayer, hug } from "../../src/lib/design/tree";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
 import { cleanAids } from "./design-aids";
 
@@ -356,7 +357,8 @@ export interface PageRules {
 /** A layer without its id, kind by kind (Omit over the whole union would keep only what every kind has). */
 type Unnamed = Layer extends infer L ? (L extends Layer ? Omit<L, "id"> : never) : never;
 
-function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own: string | undefined): Unnamed | null {
+/** `deep`: a layer inside a container, placed in the container's own pixels. A container comes back with no layers: cleanPages checks them. */
+function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own: string | undefined, deep = false): Unnamed | null {
   if (!obj(raw)) {
     say("a layer that is not an object: left out");
     return null;
@@ -405,7 +407,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     // words their middle as x), since a word cut off at the page's edge is a word dropped. A turned box is left alone,
     // and so is whatever the person places by hand.
     let place = box;
-    if (own !== undefined && !box.rotate) {
+    if (own !== undefined && !box.rotate && !deep) {
       const [x, w] = inside(box.x, box.w, r.w);
       const [y, h] = inside(box.y, box.h, r.h);
       if (x !== box.x || y !== box.y || w !== box.w || h !== box.h) say("words that stuck out of the page were moved onto it");
@@ -455,6 +457,16 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...corners(raw.radius),
       ...smoothed(raw.smooth),
       ...strokeList(raw.strokes, 200),
+    };
+  }
+  if (raw.type === "group") {
+    const own = raw.box === true;
+    // a plain group is only what holds its layers: no fill, no line, no corners, no clip of its own
+    return {
+      type: "group",
+      ...box,
+      layers: [],
+      ...(own ? { box: true as const, ...fillList(raw.fills, r, say), ...strokeList(raw.strokes, 200), ...corners(raw.radius), ...smoothed(raw.smooth), ...(raw.clip === true ? { clip: true as const } : {}) } : {}),
     };
   }
   if (raw.type === "shape") {
@@ -512,7 +524,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     }
     return { type: "drawing", ...box, svg };
   }
-  say(`a layer of no type that can be drawn (${JSON.stringify(raw.type ?? null).slice(0, 30)}): left out; the types are text, shape, path, image and drawing`);
+  say(`a layer of no type that can be drawn (${JSON.stringify(raw.type ?? null).slice(0, 30)}): left out; the types are text, shape, path, image, drawing and group`);
   return null;
 }
 
@@ -531,7 +543,6 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       continue;
     }
     const ids = new Set<string>();
-    const layers: Layer[] = [];
     const sayPage = (why: string) => (r.say ? r.say(k, why) : notes.push(`Page ${k + 1}: ${why}`));
     // a frame's own size, when it has one (a width and a height): its layers are held to it
     const sized = typeof p.w === "number" && typeof p.h === "number";
@@ -541,20 +552,50 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       ...(sized ? size : {}),
       ...(typeof p.block === "string" && ID.test(p.block) ? { block: p.block } : {}),
     };
-    for (const l of (Array.isArray(p.layers) ? p.layers : []).slice(0, DESIGN_LIMITS.layers)) {
-      const clean = cleanLayer(l, { ...r, ...size }, (why) => (r.say ? r.say(k, why, l) : notes.push(`Page ${k + 1}: ${why}`)), r.words ? r.words[k] : undefined);
-      if (!clean) continue;
-      const given = obj(l) && typeof l.id === "string" && ID.test(l.id) && !ids.has(l.id) ? l.id : "";
-      let id = given;
-      for (let n = layers.length + 1; !id || ids.has(id); n++) id = `l${n}`;
-      ids.add(id);
-      layers.push({ ...clean, id } as Layer);
-    }
+    // every layer of the frame, however deep in its containers, counts once against the limit and has an id of its own in it
+    let held = 0;
+    let full = false;
+    const take = (list: unknown, depth: number): Layer[] => {
+      const out: Layer[] = [];
+      for (const l of Array.isArray(list) ? list : []) {
+        const sayL = (why: string) => (r.say ? r.say(k, why, l) : notes.push(`Page ${k + 1}: ${why}`));
+        if (held >= DESIGN_LIMITS.layers) {
+          if (!full) sayL(`a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: the rest left out`);
+          full = true;
+          break;
+        }
+        if (obj(l) && l.type === "group" && depth >= DESIGN_LIMITS.depth) {
+          sayL(`groups go at most ${DESIGN_LIMITS.depth} deep: one deeper left out`);
+          continue;
+        }
+        const clean = cleanLayer(l, { ...r, ...size }, sayL, r.words ? r.words[k] : undefined, depth > 0);
+        if (!clean) continue;
+        held++;
+        const given = obj(l) && typeof l.id === "string" && ID.test(l.id) && !ids.has(l.id) ? l.id : "";
+        let id = given;
+        for (let n = held; !id || ids.has(id); n++) id = `l${n}`;
+        ids.add(id);
+        if (clean.type !== "group") {
+          out.push({ ...clean, id } as Layer);
+          continue;
+        }
+        const inner = take(obj(l) ? l.layers : [], depth + 1);
+        // a plain group with nothing in it is nothing (a box may be empty: a card waiting for its words)
+        if (!inner.length && !clean.box) {
+          sayL("a group with no layers in it: left out");
+          continue;
+        }
+        out.push({ ...clean, id, layers: inner });
+      }
+      return out;
+    };
+    // a plain group's box is the box round its layers, whatever it was given
+    const layers = hug(take(p.layers, 0));
     // an AI's page says all of its words: any it left off are named, so it can put them back (a page with nothing
     // on it is said so by whoever asked for it)
     if (r.words?.[k] !== undefined && layers.length) {
       const left = plainWords(r.words[k] ?? "").split(" ").filter(Boolean);
-      for (const word of plainWords(layers.flatMap((l) => (l.type === "text" ? [l.text] : [])).join(" ")).split(" ")) {
+      for (const word of plainWords(everyLayer(layers).flatMap((l) => (l.type === "text" ? [l.text] : [])).join(" ")).split(" ")) {
         const at = left.indexOf(word);
         if (at >= 0) left.splice(at, 1);
       }

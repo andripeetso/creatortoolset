@@ -1,4 +1,5 @@
 import { DESIGN_FORMATS, type Design, type DesignAnswer, type DesignListed } from "../../contracts/design";
+import { findLayer } from "../../src/lib/design/tree";
 import { saveStyle } from "./editor-styles";
 import { type Args, pick, str, ToolError, type ToolContext, type ToolModule, when } from "./types";
 
@@ -42,15 +43,15 @@ async function seen(ctx: ToolContext, at: string, frames: readonly Frame[], only
   };
 }
 
-/** A frame as an outline: its size and words, and each layer's id, kind, name, group and words (cut at 120 letters), without how anything looks. */
-const outlined = (f: Frame) => ({
-  ...pick(f, ["id", "n", "name", "w", "h", "words"]),
-  layers: ((f.layers ?? []) as Args[]).map((l) => ({
+/** A frame as an outline: its size and words, and each layer's id, kind, name, group and words (cut at 120 letters), a group's own layers inside it, without how anything looks. */
+const outlineLayers = (layers: unknown): Args[] =>
+  ((Array.isArray(layers) ? layers : []) as Args[]).map((l) => ({
     ...pick(l, ["id", "type", "name", "group"]),
     ...(typeof l.text === "string" ? { text: l.text.length > 120 ? `${l.text.slice(0, 120)}…` : l.text } : {}),
     ...(l.hidden ? { hidden: true } : {}),
-  })),
-});
+    ...(Array.isArray(l.layers) ? { layers: outlineLayers(l.layers) } : {}),
+  }));
+const outlined = (f: Frame) => ({ ...pick(f, ["id", "n", "name", "w", "h", "words"]), layers: outlineLayers(f.layers) });
 
 export const designTools: ToolModule = {
   defs: [
@@ -136,7 +137,7 @@ export const designTools: ToolModule = {
       if (cuts.length) {
         const now = await ctx.json<Design>(at);
         for (const c of cuts) {
-          const layer = now.pages.find((p) => p.id === c.frame)?.layers.find((l) => l.id === c.layer);
+          const layer = findLayer(now.pages.find((p) => p.id === c.frame)?.layers ?? [], String(c.layer));
           if (layer?.type !== "image") throw new ToolError(`A cut-out is of a picture layer: ${String(c.frame)} has no picture layer ${String(c.layer)}.`);
           // refused (no Mac of theirs on, a picture with no subject): its reason, and what that means for the person
           const cut = (

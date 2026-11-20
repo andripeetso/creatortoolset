@@ -6,6 +6,8 @@ import { onPath, tracePath } from "./path";
 import { addNoise, effectsOf, fullAlpha, innerShadow, progressiveBlur, reachOf, spreadAlpha, worksPixels } from "./effects";
 import { blurPixels, retouch, retouches } from "./retouch";
 import { balancedWidth, casedText, fitScale, pieceFont, setRuns, usesRuns, type RunLine } from "./runs";
+import { paintedBox } from "./hands";
+import { boundsOf, everyLayer, into, isGroup } from "./tree";
 
 /**
  * Draws a design's page (contracts/design.ts) on a 2D canvas, in the design's own pixels. The editor's stage and the
@@ -589,6 +591,9 @@ function areaOf(t: DOMMatrix, w: number, h: number): Area {
   return { x, y, w: Math.ceil(Math.max(...xs)) - x, h: Math.ceil(Math.max(...ys)) - y };
 }
 
+/** What the page being drawn shows of a container's layers: reference layers only on the designer's canvas, and where a background blur reads (drawPage sets them; drawing is never interrupted). */
+const drawing = { designing: false, area: { x: 0, y: 0, w: Infinity, h: Infinity } as Area };
+
 function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean, area: Area) {
   ctx.save();
   ctx.translate(l.x + l.w / 2, l.y + l.h / 2);
@@ -600,7 +605,9 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   // a shadow is thrown by the layer drawn whole in a box of its own only when it has lines too: its fills and lines cast one
   // shadow together, and a spread grows or shrinks that shape; fills alone already cast one (castFills), and the box would
   // soften a hard shadow when zoomed in
-  const own = worksPixels(fx) || fx.some((e) => e.type === "shadow" && ((e.spread ?? 0) !== 0 || strokesOf(l).some((st) => !st.hidden))) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
+  // a container that fades or blends does so as one: its layers are drawn together first, and laid down at once
+  const whole = isGroup(l) && ((l.opacity ?? 1) < 1 || !!l.blend);
+  const own = whole || worksPixels(fx) || fx.some((e) => e.type === "shadow" && ((e.spread ?? 0) !== 0 || strokesOf(l).some((st) => !st.hidden))) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
   const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
   const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
   for (const e of fx) {
@@ -671,6 +678,14 @@ function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) 
  * arrow's head) and, for a text, words that run over the box and letters that reach past their line.
  */
 function inkOf(ctx: Ctx, l: Layer): number {
+  if (isGroup(l)) {
+    // a container's layers, and its own lines, past its box (none past the edge that cuts them)
+    const own = Math.max(0, ...strokesOf(l).filter((s) => !s.hidden).map((s) => Math.max(s.width * 1.5, ...(s.sides ?? [0]))));
+    const inner = l.layers.filter((k) => !k.hidden);
+    if (l.clip || !inner.length) return own;
+    const b = boundsOf(inner.map(paintedBox));
+    return Math.max(own, -b.x, -b.y, b.x + b.w - l.w, b.y + b.h - l.h);
+  }
   // a line reaches its width past the edge at most (outside, or round letters), half again at a square corner; a
   // corner set to a point reaches up to the canvas's miter limit (10) times half its width
   const lines = Math.max(0, ...strokesOf(l).filter((s) => !s.hidden).map((s) => Math.max(s.width * (s.join === "miter" ? 10 : 1.5), ...(s.sides ?? [0])) + (s.start || s.end ? Math.max(s.width * 4, 8) + s.width : 0)));
@@ -711,14 +726,17 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
   // a picture or a drawing that has not loaded yet is a grey box: it is worked again once it is there
   const src = sourceOf(l);
   // words are drawn again once a font arrives (their width changes with it)
-  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : "", l.type === "text" ? fontsOfText(l).map((f) => measureOn(ctx)(f, "Hamburg 1")) : ""]);
+  // and a container once a picture or a font of a layer in it arrives
+  const inner = isGroup(l) ? everyLayer(l.layers) : [];
+  const ready = (k: Layer) => [sourceOf(k) ? !!loaded.get(sourceOf(k)!)?.width : "", k.type === "text" ? fontsOfText(k).map((f) => measureOn(ctx)(f, "Hamburg 1")) : ""];
+  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : "", l.type === "text" ? fontsOfText(l).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", inner.map(ready), drawing.designing]);
   let mine = workedKept.get(loaded);
   if (!mine) workedKept.set(loaded, (mine = new Map()));
   return keptOr(mine, `${frame}/${l.id}`, key, Math.ceil(bw * bh * scale * scale), KEPT_WORK, () => {
     // an inner shadow falls the way a shadow does on the page, however the layer is turned or mirrored
     const a = (-(l.rotate ?? 0) * Math.PI) / 180;
     const inLayer = (x: number, y: number) => [(x * Math.cos(a) - y * Math.sin(a)) * (l.flipX ? -1 : 1), (x * Math.sin(a) + y * Math.cos(a)) * (l.flipY ? -1 : 1)] as const;
-    const body = worksPixels(fx)
+    const body = worksPixels(fx) || isGroup(l)
       ? pieceOf(l.w, l.h, reach, scale, (g) => paintLayer(g, l, loaded, false, frame, exact), (px, w, h) => {
           // its pixels a design pixel
           const k = w / (l.w + 2 * reach);
@@ -841,7 +859,23 @@ function finishFrame(ctx: Ctx, page: Pick<DesignPage, "grain" | "vignette">, w: 
 /** A layer in its own box. `cast`: only what throws its shadow (a picture's whole box, not the picture cut to its corners). */
 function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
   if (l.type === "text") drawText(ctx, l, cast, loaded);
-  else if (l.type === "shape") {
+  else if (l.type === "group") {
+    const edge = () => roundedRect(ctx, 0, 0, l.w, l.h, l.radius, l.smooth);
+    if (l.box) {
+      ctx.beginPath();
+      edge();
+      fillWith(ctx, cast ? castFills(fillsOf(l)) : fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
+    }
+    ctx.save();
+    if (l.box && l.clip) {
+      ctx.beginPath();
+      edge();
+      ctx.clip();
+    }
+    for (const k of l.layers) if (!k.hidden && (drawing.designing || !k.reference)) drawLayer(ctx, k, loaded, frame, exact, drawing.area);
+    ctx.restore();
+    if (l.box) strokeWith(ctx, strokesOf(l), () => edge(), l.w, l.h, "miter", { box: true });
+  } else if (l.type === "shape") {
     ctx.beginPath();
     shapePath(ctx, l);
     fillWith(ctx, cast ? castFills(fillsOf(l)) : fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
@@ -888,7 +922,13 @@ export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loade
   // the frame's box on the canvas: a background blur reads only what is inside it (on the editor's canvas, what is
   // outside is other frames and the canvas itself)
   const area = page.loose ? { x: 0, y: 0, w: Infinity, h: Infinity } : areaOf(ctx.getTransform(), w, h);
-  for (const l of page.layers) if (!l.hidden && (designing || !l.reference)) drawLayer(ctx, l, loaded, page.id, exact, area);
+  const was = { ...drawing };
+  Object.assign(drawing, { designing, area });
+  try {
+    for (const l of page.layers) if (!l.hidden && (designing || !l.reference)) drawLayer(ctx, l, loaded, page.id, exact, area);
+  } finally {
+    Object.assign(drawing, was);
+  }
   if (!page.loose) {
     strokeWith(ctx, strokesOf(page), () => ctx.rect(0, 0, w, h), w, h, "miter", { box: true });
     finishFrame(ctx, page, w, h);
@@ -906,7 +946,18 @@ export function inLayer(l: Layer, px: number, py: number): { x: number; y: numbe
 }
 
 /** The topmost layer under a point of the page that a press can pick (a hidden or locked one lets it through), or null. */
-export const layerAt = (page: DesignPage, px: number, py: number, near = 8): Layer | null =>
-  // a path is under the pointer where its line or its fill is (or within `near` of its line: a few pixels of the
-  // screen, whatever the zoom), not anywhere in the box round it
-  [...page.layers].reverse().find((l) => !l.hidden && !l.locked && (l.type === "path" ? onPath(l, px, py, near) : inLayer(l, px, py).inside)) ?? null;
+export const layerAt = (page: Pick<DesignPage, "layers">, px: number, py: number, near = 8): Layer | null => [...page.layers].reverse().find((l) => !l.hidden && !l.locked && hits(l, px, py, near)) ?? null;
+
+/**
+ * Whether a point (in the pixels the layer lies in) is on it. A path is under the pointer where its line or its fill is
+ * (or within `near` of its line: a few pixels of the screen, whatever the zoom), not anywhere in the box round it. A
+ * container is where one of its layers is, and a box anywhere in its box too (nowhere past it when it cuts its layers).
+ */
+export function hits(l: Layer, px: number, py: number, near = 8): boolean {
+  if (l.type === "path") return onPath(l, px, py, near);
+  if (!isGroup(l)) return inLayer(l, px, py).inside;
+  const inBox = inLayer(l, px, py).inside;
+  if (l.clip && !inBox) return false;
+  const p = into(l, { x: px, y: py });
+  return (!!l.box && inBox) || l.layers.some((k) => !k.hidden && !k.locked && hits(k, p.x, p.y, near));
+}
