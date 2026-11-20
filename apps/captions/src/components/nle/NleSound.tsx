@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans, spoken, type Duck } from "@/lib/nle/loudness";
+import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans, spoken, tooShort, type Duck } from "@/lib/nle/loudness";
 import { find, type NleTimeline } from "@/lib/nle/model";
 
 // Normalize Audio Levels… (a clip's menu) and Lower Under Voice… (a sound track's menu): each asks for its sources'
@@ -52,8 +52,9 @@ export async function measure(tl: NleTimeline, srcs: string[], onLine: (l: strin
     for (const s of [...left]) {
       const g = got[s];
       if (g?.words) spoken.set(s, g.words);
-      if (g?.blocks) measured.set(s, { blocks: blocksOf(g.blocks) });
-      if (g?.blocks || g?.error || !g) left.delete(s);
+      // "" is a file shorter than one block: measured, with no loudness
+      if (g?.blocks !== undefined) measured.set(s, { blocks: blocksOf(g.blocks) });
+      if (g?.blocks !== undefined || g?.error || !g) left.delete(s);
       if (g?.error || !g) failed[s] = g?.error ?? "Not found";
       if (g?.line) lines.push(g.line);
     }
@@ -85,6 +86,16 @@ function useMeasure() {
   return { line, run, busy: line !== null };
 }
 
+/** What Normalize says about the clips it left as they were, or null when it levelled them all. */
+export function normalizeNote(failed: string[], short: number): string | null {
+  const s = (n: number) => (n === 1 ? "" : "s");
+  const lines = [
+    ...(failed.length ? [`${failed.length} clip${s(failed.length)} could not be measured: ${failed[0]}`] : []),
+    ...(short ? [`${short} clip${s(short)} too short to measure (under 0.4 s), left as ${short === 1 ? "it is" : "they are"}`] : []),
+  ];
+  return lines.length ? lines.join(". ") : null;
+}
+
 const num = (v: string, d: number) => (Number.isFinite(Number.parseFloat(v)) ? Number.parseFloat(v) : d);
 
 /** Normalize Audio Levels: a target by the first clip's track, Independent or Relative. */
@@ -100,9 +111,9 @@ export function NormalizeDialog({ tl, keys, onCommit, onClose }: { tl: NleTimeli
   const go = () =>
     m.run(tl, [...new Set(ks.map((k) => find(tl, k)!.item.src))], (failed) => {
       const next = normalize(now.current, ks, num(target, normTarget(first ?? "")), mode === "relative");
-      const n = Object.keys(failed).length;
       if (next !== now.current) onCommit(next);
-      if (n) setNote(`${n} clip${n === 1 ? "" : "s"} could not be measured: ${Object.values(failed)[0]}`);
+      const note = normalizeNote(Object.values(failed), tooShort(now.current, ks).length);
+      if (note) setNote(note);
       else onClose();
     });
   return (

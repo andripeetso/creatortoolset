@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blocksIn, gated, kPre, kRlb, LoudnessMeter, lowerUnderVoice, lufsToEnergy, merge, normalize, normTarget, speechSpans, type Measured } from "./loudness";
+import { blocksIn, gated, tooShort, kPre, kRlb, LoudnessMeter, lowerUnderVoice, lufsToEnergy, merge, normalize, normTarget, speechSpans, type Measured } from "./loudness";
 import type { NleTimeline } from "./model";
 
 /**
@@ -118,6 +118,17 @@ describe("Normalize Audio Levels", () => {
     const out = normalize(tl(), ["s1"], -30, false, m);
     expect(out.tracks.A4!.items[0]!.norm_db).toBeUndefined();
   });
+  it("a clip too short to measure is left as it is, and said so", () => {
+    const t = tl();
+    const short = new Map<string, Measured>([["voice", { blocks: new Float32Array(0) }], ["quiet", flat(20, -26)]]);
+    const out = normalize(t, ["v1", "v2"], -15, false, short);
+    expect(out.tracks.A1!.items.map((i) => i.norm_db)).toEqual([undefined, 11]);
+    expect(tooShort(t, ["v1", "v2"], short)).toEqual(["v1"]);
+    // a clip under 0.4 s of a long source has no whole block either
+    t.tracks.A1!.items[1]!.len = 8;
+    expect(tooShort(t, ["v1", "v2"], short)).toEqual(["v1", "v2"]);
+  });
+
   it("reads only the blocks the clip plays", () => {
     const two: Measured = { blocks: [...flat(10, -30).blocks, ...flat(10, -10).blocks] };
     const t = tl();

@@ -271,18 +271,24 @@ export const normTarget = (track: string) => (track === "A1" ? -15 : track === "
 /** The sound clips among `keys` (a picture clip's sound is its linked A clip, picked with it). */
 export const soundKeys = (tl: NleTimeline, keys: string[]) => keys.filter((k) => find(tl, k)?.track.startsWith("A"));
 
+/** The measured blocks a clip plays; null when its source is not measured, empty when it plays less than one block (0.4 s). */
+export function clipBlocks(tl: NleTimeline, key: string, m = measured): number[] | null {
+  const hit = find(tl, key);
+  const got = hit && m.get(hit.item.src);
+  return got ? blocksIn(got, ...playedOf(tl, hit.item)) : null;
+}
+
+/** The sound clips among `keys` that are measured but too short to have a loudness (Normalize leaves them as they are). */
+export const tooShort = (tl: NleTimeline, keys: string[], m = measured) => soundKeys(tl, keys).filter((k) => clipBlocks(tl, k, m)?.length === 0);
+
 /**
  * Normalize Audio Levels: `norm_db` on each sound clip in `keys` so it plays at `target` LUFS. Independent: each clip
  * on its own loudness. Relative: one gain for all, from their blocks gated together, so they keep their levels to each
  * other. A clip not measured, or silent, is left as it is. Rounded to 0.1 dB.
  */
 export function normalize(tl: NleTimeline, keys: string[], target: number, relative: boolean, m = measured): NleTimeline {
-  const blocksOf = (k: string): number[] | null => {
-    const hit = find(tl, k);
-    const got = hit && m.get(hit.item.src);
-    return got ? blocksIn(got, ...playedOf(tl, hit.item)) : null;
-  };
-  const ks = soundKeys(tl, keys).filter((k) => blocksOf(k));
+  const blocksOf = (k: string) => clipBlocks(tl, k, m);
+  const ks = soundKeys(tl, keys).filter((k) => blocksOf(k)?.length);
   const gainFor = (b: number[]) => {
     const l = gated(b);
     return Number.isFinite(l) ? Math.round((target - l) * 10) / 10 : null;

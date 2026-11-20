@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { measured, spoken } from "@/lib/nle/loudness";
 import type { NleTimeline } from "@/lib/nle/model";
-import { measure, nleSound, type SourceSound } from "./NleSound";
+import { measure, nleSound, normalizeNote, type SourceSound } from "./NleSound";
 
 const b64 = (xs: number[]) => Buffer.from(Float32Array.from(xs).buffer).toString("base64");
 const tl = { timeline: { fps: 25 }, sources: {}, tracks: {} } as NleTimeline;
@@ -31,6 +31,21 @@ describe("measure (Normalize and Lower Under Voice ask first)", () => {
     expect(asked).toEqual([["voice", "gone"], ["voice"]]);
     expect(Array.from(measured.get("voice")!.blocks)).toEqual([0.5, 0.25]);
     expect(spoken.get("voice")).toEqual([[1, 2]]);
+  });
+
+  it("a file shorter than one block (blocks \"\") is measured, with no loudness: asked once, never waited on", async () => {
+    vi.useFakeTimers();
+    const ask = vi.fn(async () => ({ tiny: { blocks: "" } }));
+    nleSound.ask = ask;
+    expect(await measure(tl, ["tiny"], () => {}, new AbortController().signal)).toEqual({});
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(measured.get("tiny")!.blocks.length).toBe(0);
+  });
+
+  it("says plainly what Normalize left as it was", () => {
+    expect(normalizeNote([], 0)).toBeNull();
+    expect(normalizeNote([], 1)).toBe("1 clip too short to measure (under 0.4 s), left as it is");
+    expect(normalizeNote(["Not found"], 2)).toBe("1 clip could not be measured: Not found. 2 clips too short to measure (under 0.4 s), left as they are");
   });
 
   it("asks nothing for what it already has", async () => {
