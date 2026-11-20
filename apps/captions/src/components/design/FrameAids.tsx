@@ -40,17 +40,21 @@ export function FrameAids({ page, onPage, colours, onDropper }: { page: DesignPa
               </Tap>
             </div>
             {g.kind === "grid" ? (
-              <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <Num label="Size" title="Cell size in pixels" value={g.size ?? 8} min={1} max={4096} onCommit={(size) => setGrid(n, { size })} />
                 <Colour title="Grid colour" value={g.color} colours={colours} onDropper={onDropper} onSet={(color, merge) => setGrid(n, { color }, merge)} />
               </div>
             ) : (
-              <div className="grid grid-cols-[1fr_1fr_1fr_auto] items-center gap-2">
-                <Num label="#" title={g.kind === "columns" ? "Columns" : "Rows"} value={g.count ?? 4} min={1} max={DESIGN_AIDS.count} onCommit={(count) => setGrid(n, { count })} />
-                <Num label="Gut" title="Gutter in pixels" value={g.gutter ?? 0} min={0} max={4096} onCommit={(gutter) => setGrid(n, { gutter })} />
-                <Num label="Mar" title="Margin in pixels" value={g.margin ?? 0} min={0} max={4096} onCommit={(margin) => setGrid(n, { margin })} />
-                <Colour title="Grid colour" value={g.color} colours={colours} onDropper={onDropper} onSet={(color, merge) => setGrid(n, { color }, merge)} />
-              </div>
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <Num label="#" title={g.kind === "columns" ? "Columns" : "Rows"} value={g.count ?? 4} min={1} max={DESIGN_AIDS.count} onCommit={(count) => setGrid(n, { count })} />
+                  <Num label="G" title="Gutter in pixels" value={g.gutter ?? 0} min={0} max={4096} onCommit={(gutter) => setGrid(n, { gutter })} />
+                  <Num label="M" title="Margin in pixels" value={g.margin ?? 0} min={0} max={4096} onCommit={(margin) => setGrid(n, { margin })} />
+                </div>
+                <div className="flex">
+                  <Colour title="Grid colour" value={g.color} colours={colours} onDropper={onDropper} onSet={(color, merge) => setGrid(n, { color }, merge)} />
+                </div>
+              </>
             )}
           </div>
         ))}
