@@ -17,7 +17,7 @@ final class RecordingPreviewTests: XCTestCase {
         let busy = RecordingPreviewBusy()
         busy.workspaces = [RecordWorkspace(id: "a", name: "Tiny Acrobatics"), RecordWorkspace(id: "b", name: "Client work")]
         busy.chosen = "a"
-        let actions = RecordingPreview.Actions(edit: {}, save: {}, copy: {}, share: { _, _ in }, reveal: {}, discard: {})
+        let actions = RecordingPreview.Actions(edit: { _ in }, save: {}, copy: {}, share: { _, _ in }, reveal: {}, discard: {})
         let view = NSHostingView(rootView: PreviewView(project: project, thumb: nil, busy: busy, actions: actions, close: {}).frame(width: 340, height: 210))
         view.frame = NSRect(x: 0, y: 0, width: 340, height: 210)
         view.layoutSubtreeIfNeeded()

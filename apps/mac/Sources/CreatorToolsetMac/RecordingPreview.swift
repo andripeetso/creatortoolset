@@ -17,7 +17,8 @@ final class RecordingPreviewBusy: ObservableObject {
 @MainActor enum RecordingPreview {
     /// What each button does. The caller decides; the panel only reports the click.
     struct Actions {
-        var edit: () -> Void
+        /// The workspace picked on the panel (nil: the window's).
+        var edit: (String?) -> Void
         var save: () -> Void
         var copy: () -> Void
         /// The workspace: the one picked on the panel (nil: the window's).
@@ -136,7 +137,7 @@ struct PreviewView: View {
                         }
                         .menuStyle(.borderlessButton)
                         .fixedSize()
-                        tile("Edit", "pencil", actions.edit)
+                        tile("Edit", "pencil") { actions.edit(busy.chosen) }
                     }
                 }
             }
