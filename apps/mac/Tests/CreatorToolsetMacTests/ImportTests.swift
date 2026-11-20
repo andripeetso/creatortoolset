@@ -179,7 +179,7 @@ final class ImportTests: XCTestCase {
         // a file in another library's Media folder that this window wasn't given: still the Media folder refusal, which the
         // page never works around by uploading
         let notDropped = Imports().copy(id: "g2", [ImportPair(from: studioClip, to: mine + "/Imports/x/s.mov")], sources: [], destinations: Imports.copyDestinations(server: "s"), media: media) { _ in }
-        XCTAssertEqual((notDropped["failed"] as? [[String: String]])?.first?["error"], "\(studioClip) is in the Media folder \(studio): drop the folder with the footage itself")
+        XCTAssertEqual((notDropped["failed"] as? [[String: String]])?.first?["error"], "\(studioClip) is in the Media folder of another library: drop the folder with the footage itself")
         // Downloads is a Media folder only of a server this Mac left: it blocks nothing
         XCTAssertEqual((reply["copied"] as? [[String: String]])?.map { $0["to"] }, [mine + "/Imports/x/B.mov"])
     }

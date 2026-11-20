@@ -173,7 +173,8 @@ final class Imports: @unchecked Sendable {
               grant: (String) -> Void = MediaFiles.add) -> [String: Any] {
         defer { lock.lock(); jobs[id] = nil; lock.unlock() }
         let size = { (p: String) in ((try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? NSNumber)?.int64Value }
-        _ = with(id) { $0.of = files.compactMap { size($0.from) }.reduce(0, +) }
+        // only what this window was given counts: a page learns nothing of other files from the total
+        _ = with(id) { $0.of = files.filter { Self.inside($0.from, sources) != nil }.compactMap { size($0.from) }.reduce(0, +) }
         var copied: [[String: String]] = []
         var failed: [[String: String]] = []
         var stopped = false
@@ -181,7 +182,9 @@ final class Imports: @unchecked Sendable {
             if with(id, { $0.cancelled }) == true { stopped = true; break }
             // first, whatever else is wrong with it: the page never uploads a file refused this way instead
             if let inMedia = Self.inside(f.from, media) {
-                failed.append(["from": f.from, "error": "\(f.from) is in the Media folder \(inMedia): drop the folder with the footage itself"]); continue
+                // the folder is named only for a file this window was given: a page never learns where other libraries live
+                let named = Self.inside(f.from, sources) != nil ? inMedia : "of another library"
+                failed.append(["from": f.from, "error": "\(f.from) is in the Media folder \(named): drop the folder with the footage itself"]); continue
             }
             guard Self.inside(f.from, sources) != nil, let bytes = size(f.from) else {
                 failed.append(["from": f.from, "error": "Not a file from a drop or a pick in this window."]); continue
