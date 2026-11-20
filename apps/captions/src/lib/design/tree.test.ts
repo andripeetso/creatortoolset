@@ -224,3 +224,10 @@ describe("ids a frame cannot count to", () => {
     expect(a).toBe("l1000000");
   });
 });
+
+describe("an asked id far past a frame's", () => {
+  it("is not taken, so the frame's ids are not used up", () => {
+    expect(takeId("l999999", new Set(["l1", "l2"]), () => true, { next: 3, ids: new Set(["l1", "l2"]) })).toBe("l3");
+    expect(takeId("l999999", new Set(["l1"]), () => true, { next: 2, ids: new Set(["l1", "l999999"]) })).toBe("l999999");
+  });
+});

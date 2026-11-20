@@ -384,21 +384,25 @@ export const hovers = (buttons: number, tool: string, space: boolean) => !button
 /**
  * A frame as the server has it now (`theirs`) and as this window changed it meanwhile (`mine`, from `base`): what was
  * changed here stays, everything else is the server's. Its fields one by one, and its layers as one tree (mergeTree).
- * `sent`: the frame as this window last sent it, when the server may have it without this window knowing (a reply that
+ * `sent`: the frame as each save of this window's still on its way sent it, when the server may have it without this window knowing (a reply that
  * never came): what it has of that is not a change of its own.
  */
-export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage, sent?: DesignPage): DesignPage {
-  const was = base ?? sent;
+export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage, sent: readonly DesignPage[] = []): DesignPage {
+  // the server has it as a save of this window's sent it: that is what this window last agreed with (an undo since is its own)
+  const was = sent.find((s) => rounded(s) === rounded(theirs)) ?? base ?? sent[0];
   if (!was) return mine;
   const out = fieldsMerged(mine, was, theirs);
   // ids go on from the higher of the two: none is given again (tree.ts nextOf)
   const next = Math.max(nextOf(mine), nextOf(theirs));
-  out.layers = same(theirs.layers, was.layers) ? mine.layers : same(mine.layers, was.layers) ? theirs.layers : mergeTree(mine.layers, was.layers, theirs.layers, base && sent ? sent.layers : [], next);
+  out.layers = same(theirs.layers, was.layers) ? mine.layers : same(mine.layers, was.layers) ? theirs.layers : mergeTree(mine.layers, was.layers, theirs.layers, sent.map((s) => s.layers), next);
   return next > (out.next ?? 0) && (mine.next !== undefined || theirs.next !== undefined) ? { ...out, next } : out;
 }
 
 
 type Rec = Record<string, unknown>;
+
+/** A value as the server keeps it (its rounding of numbers, its order of fields): how a save come back is told. */
+const rounded = (v: unknown): string => JSON.stringify(v, (_, x) => (typeof x === "number" ? Math.round(x * 10) / 10 : x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
 
 /** Objects changed on both sides, key by key (`depth` levels down): what this window changed is its own, the rest the server's. */
 function mergeKeys(m: unknown, b: unknown, t: unknown, depth: number): unknown {
@@ -473,13 +477,13 @@ const ownOf = (a: At, flowing: boolean): Rec => {
  * one both added under the same id but different is this window's under an id of its own. A layer inside an instance
  * goes with its instance (its layers are its main's: lib/design/components.ts).
  */
-function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[], sent: readonly Layer[], floor = 0): Layer[] {
+function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[], sent: readonly (readonly Layer[])[], floor = 0): Layer[] {
   const T = indexed(theirs);
   const B = indexed(base);
-  // what this window sent that the server has (a reply that never came): its base, not a new layer of its own
-  // (only when the server has it as it was sent, but for the server's rounding: a layer the server gave that id is another)
-  const rounded = (l: Layer) => JSON.stringify(ownOf({ l } as At, false), (_, x) => (typeof x === "number" ? Math.round(x * 10) / 10 : x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
-  for (const [id, a] of indexed(sent)) if (!B.has(id) && T.has(id) && rounded(a.l) === rounded(T.get(id)!.l)) B.set(id, a);
+  // what a save of this window's sent that the server has as it was sent (a reply that never came): its base, so what
+  // this window did since (an undo too) is its own, and a new layer it sent is not a second one (a layer the server
+  // gave that id, or changed since, is the server's)
+  for (const list of sent) for (const [id, a] of indexed(list)) if (T.has(id) && rounded(ownOf(a, false)) === rounded(ownOf(T.get(id)!, false))) B.set(id, a);
   const mine = apart(mine0, B, T, floor);
   const M = indexed(mine);
   const flows = (side: Map<string, At>, parent: string) => {
@@ -612,16 +616,17 @@ function apart(mine: readonly Layer[], B: ReadonlyMap<string, At>, T: ReadonlyMa
  * A design's frames as the server has them now (`theirs`), with what this window did since it last agreed with the
  * server (`base` → `mine`) done to them again: a frame changed here keeps that change (mergeFrame), one made here is
  * there, one deleted here stays deleted, one the server deleted that this window changed stays, and the order is this
- * window's when it reordered them. `sent`: the frames as this window last sent them (mergeFrame).
+ * window's when it reordered them. `sent`: the frames of each save of this window's still on its way (mergeFrame); a
+ * frame one of them had not, which the server has not either, is one this window took out then and has again (undone).
  */
-export function mergeFrames(mine: readonly DesignPage[], base: readonly DesignPage[], theirs: readonly DesignPage[], sent: readonly DesignPage[] = []): DesignPage[] {
+export function mergeFrames(mine: readonly DesignPage[], base: readonly DesignPage[], theirs: readonly DesignPage[], sent: readonly (readonly DesignPage[])[] = []): DesignPage[] {
   const baseOf = new Map(base.map((p) => [p.id, p]));
   const mineOf = new Map(mine.map((p) => [p.id, p]));
-  const sentOf = new Map(sent.map((p) => [p.id, p]));
+  const sentOf = (id: string) => sent.flatMap((s) => s.filter((p) => p.id === id));
   const theirsOf = new Set(theirs.map((p) => p.id));
-  const kept = theirs.filter((p) => mineOf.has(p.id) || !baseOf.has(p.id)).map((p) => (mineOf.has(p.id) ? mergeFrame(mineOf.get(p.id)!, baseOf.get(p.id), p, sentOf.get(p.id)) : p));
+  const kept = theirs.filter((p) => mineOf.has(p.id) || !baseOf.has(p.id)).map((p) => (mineOf.has(p.id) ? mergeFrame(mineOf.get(p.id)!, baseOf.get(p.id), p, sentOf(p.id)) : p));
   // made here, or changed here while the server deleted it: this window's work is never lost
-  const made = mine.filter((p) => !theirsOf.has(p.id) && (!baseOf.has(p.id) || !same(p, baseOf.get(p.id))));
+  const made = mine.filter((p) => !theirsOf.has(p.id) && (!baseOf.has(p.id) || !same(p, baseOf.get(p.id)) || sent.some((s) => !s.some((q) => q.id === p.id))));
   const all = [...kept, ...made];
   // reordered here: the frames both sides have go in this window's order, the others stay where they are
   const common = (list: readonly DesignPage[]) => list.filter((p) => baseOf.has(p.id) && mineOf.has(p.id) && theirsOf.has(p.id)).map((p) => p.id);

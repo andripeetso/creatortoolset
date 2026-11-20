@@ -123,9 +123,9 @@ async function read(owner: string, id: string): Promise<Design | null> {
 }
 
 /** A design kept. `by`: the window whose save this is (its PUT): kept as its writer; any other write has none. */
-async function save(given: Design, by?: string): Promise<Design> {
-  const { writer: _w, writerFrom, ...rest } = given;
-  const d: Design = by ? { ...rest, writer: by, ...(writerFrom !== undefined ? { writerFrom } : {}) } : rest;
+async function save(given: Design, by?: { by: string; n?: number }): Promise<Design> {
+  const { writer: _w, writerFrom, writerN: _n, ...rest } = given;
+  const d: Design = by ? { ...rest, writer: by.by, ...(writerFrom !== undefined ? { writerFrom } : {}), ...(by.n !== undefined ? { writerN: by.n } : {}) } : rest;
   await mkdir(dirOf(d.owner), { recursive: true });
   const file = fileOf(d.owner, d.id);
   // a file of its own for each save: two at once (a save by hand and an AI's) never write into each other
@@ -1165,7 +1165,9 @@ designsApp.put("/:id", (c) =>
     // the design as it is now, and saves again
     // (but not by this window's own saves alone: one sent as the window closed, after one still on its way)
     const by = typeof b.by === "string" && /^[\w-]{8,64}$/.test(b.by) ? b.by : undefined;
-    const own = by && d.writer === by && (d.writerFrom ?? Infinity) <= (b.since as number);
+    const n = typeof b.n === "number" && Number.isInteger(b.n) && b.n > 0 ? b.n : undefined;
+    // (a later one of its own: an earlier save arriving after a later one, a page brought back, is written over nothing)
+    const own = by && n !== undefined && d.writer === by && n > (d.writerN ?? 0) && (d.writerFrom ?? Infinity) <= (b.since as number);
     if (typeof b.since === "number" && d.updatedAt > b.since && !own) throw new Changed(d);
     // the person's own changes: checked for what a frame can hold, never for whose words they are. A frame sent
     // without its place (a window opened before frames had one) keeps the place and the slide it has
@@ -1179,7 +1181,7 @@ designsApp.put("/:id", (c) =>
     // could be kept is not, and nothing is saved over what is there
     if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
     const changed: string[] = [];
-    const saved = await save(await settle({ ...d, name, pages, updatedAt: stamp(d), writerFrom: by && d.writer === by ? d.writerFrom : d.updatedAt }, d.pages, checked.notes, false, changed), by);
+    const saved = await save(await settle({ ...d, name, pages, updatedAt: stamp(d), writerFrom: by && d.writer === by ? d.writerFrom : d.updatedAt }, d.pages, checked.notes, false, changed), by ? { by, n } : undefined);
     // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
     // `changes`: what the save changed of what was sent that loses nothing (a second main given a key of its own)
     return { ...saved, ...(checked.notes.length ? { notes: checked.notes } : {}), ...(changed.length ? { changes: changed } : {}) };

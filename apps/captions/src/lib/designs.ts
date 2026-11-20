@@ -14,8 +14,10 @@ export class DesignChanged extends Error {
 /** An answer that is not ok: its words, and its `code` and the `device` it names when it has them (a Mac that is not reachable). */
 export type SendError = Error & { code?: string; device?: { id: string; name: string } };
 
-async function send<T>(url: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(url, { method, signal, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+/** `keepalive`: carried on by the browser after the page is gone (the window closing), when it is small enough (64 KB). */
+async function send<T>(url: string, method = "GET", body?: unknown, signal?: AbortSignal, keepalive = false): Promise<T> {
+  const text = body === undefined ? undefined : JSON.stringify(body);
+  const r = await fetch(url, { method, signal, keepalive: keepalive && (text?.length ?? 0) < 60_000, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: text });
   const out = (await r.json().catch(() => ({}))) as T & { error?: string; design?: Design; code?: string; device?: { id: string; name: string } };
   if (r.status === 409 && out.design) throw new DesignChanged(out.design);
   if (!r.ok) throw Object.assign(new Error(out.error ?? `Request failed (${r.status})`), { code: out.code, device: out.device }) as SendError;
@@ -30,8 +32,9 @@ export const createDesign = (d: NewDesign) => send<Design>("/api/designs", "POST
 export const getDesign = (id: string) => send<Design>(base(id));
 /** `since`: the design's last change this window knows of (its updatedAt). Changed after it: DesignChanged, and nothing was saved. */
 /** `notes`: what the server's check left out of what was sent (past a limit), each said. */
-/** `by`: this window, so a save of its own on top of its own (one sent as it closed) is never refused (contracts Design `writer`). */
-export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number; by?: string }) => send<Design & { notes?: string[]; changes?: string[] }>(base(id), "PUT", body);
+/** `by` and `n`: this window and its count of saves, so a later save of its own on top of its own (one sent as it closed) is never refused, and an earlier one never written over a later (contracts Design `writer`). */
+export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number; by?: string; n?: number }, keepalive = false) =>
+  send<Design & { notes?: string[]; changes?: string[] }>(base(id), "PUT", body, undefined, keepalive);
 export const deleteDesign = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures/${picture}`;
 

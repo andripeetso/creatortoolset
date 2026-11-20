@@ -307,10 +307,25 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const server = useRef<{ pages: Page[]; at: number }>({ pages: [], at: 0 });
   /** The pages not sent yet. */
   const unsaved = useRef<Page[] | null>(null);
-  /** The pages of the save on its way: the server may have them before this window hears so (mergeFrames `sent`). */
-  const sent = useRef<Page[]>([]);
-  /** This window, as its saves name it (`by`). */
+  /** The pages of each save on its way: the server may have them before this window hears so (mergeFrames `sent`). Each goes when its own answer comes. */
+  const sent = useRef<Page[][]>([]);
+  /** This window, as its saves name it (`by`), and how many it has sent (`n`). */
   const by = useRef(`w${Math.random().toString(36).slice(2, 14)}`);
+  const sends = useRef(0);
+  /** A save of these pages: on its way (sent) until its answer, which takes it off. */
+  const putSave = useCallback((pages: Page[], since: number, keepalive = false) => {
+    sent.current = [...sent.current, pages];
+    const done = () => void (sent.current = sent.current.filter((s) => s !== pages));
+    return saveDesign(id, { pages, since, by: by.current, n: ++sends.current }, keepalive).then(
+      // taken: it and every save sent before it are settled
+      (d) => ((sent.current = sent.current.slice(Math.max(0, sent.current.indexOf(pages) + 1))), d),
+      (e) => {
+        // refused (nothing written) or answered with an error: no longer on its way. Unanswered (the reply lost): it may be there
+        if (e instanceof DesignChanged || (e instanceof Error && "code" in e)) done();
+        throw e;
+      },
+    );
+  }, [id]);
   /** What a save said: what the server left out, and what it changed that loses nothing. */
   const told = useCallback((d: Design & { notes?: string[]; changes?: string[] }, quiet = false) => {
     if (d.notes?.length) (quiet ? (n: string) => toast(n, { id: "design-not-saved" }) : setError)(`Not saved: ${d.notes.join("; ")}`);
@@ -327,11 +342,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       unsaved.current = null;
       setSaved("saving");
       saving.current = saving.current.then(() => {
-        sent.current = pages;
-        return saveDesign(id, { pages, since: server.current.at, by: by.current }).then(
+        return putSave(pages, server.current.at).then(
           (d) => {
             server.current = { pages, at: d.updatedAt };
-            sent.current = [];
             setSaved(unsaved.current ? "unsaved" : "saved");
             // the server kept less than was sent, or changed what loses nothing: said, so nothing goes missing unseen
             told(d);
@@ -340,8 +353,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
             // changed somewhere else while this save was on its way (an AI's frames): nothing was written. This
             // window's changes are done again on the design as it is now, and that is saved: a moment later when
             // the canvas changed with it (as any change is), at once when it did not
-            // (refused: the server has none of it, so nothing it has is this window's own save come back)
-            if (e instanceof DesignChanged) return void ((sent.current = []), remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
+            if (e instanceof DesignChanged) return void (remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
             failed.current = true;
             unsaved.current ??= pages;
             setSaved("unsaved");
@@ -350,7 +362,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         );
       });
     },
-    [id, told],
+    [putSave, told],
   );
   // saved a moment after the last change
   const first = useRef(true);
@@ -373,11 +385,12 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     const onto = (pages: Page[], base: Page[], theirs: Page[]) => syncInstances(mergeFrames(pages, base, layoutPages(theirs, measureWords), sent.current));
     // on the way out of the page: refused for a change made elsewhere, merged onto it and sent again (three times at
     // most); what the server kept less of, or never took, is said where it still shows, as a notice
-    const leave = (pages: Page[], base: Page[], since: number, tries = 0): Promise<void> =>
-      saveDesign(id, { pages, since, by: by.current }).then(
+    // `keepalive`: the window closing (the browser carries the save on after the page is gone)
+    const leave = (pages: Page[], base: Page[], since: number, tries = 0, keepalive = false): Promise<void> =>
+      putSave(pages, since, keepalive).then(
         (d) => told(d, true),
         (e) => {
-          if (e instanceof DesignChanged && tries < 3) return leave(onto(pages, base, e.design.pages), layoutPages(e.design.pages, measureWords), e.design.updatedAt, tries + 1);
+          if (e instanceof DesignChanged && tries < 3) return leave(onto(pages, base, e.design.pages), layoutPages(e.design.pages, measureWords), e.design.updatedAt, tries + 1, keepalive);
           toast(`Not saved: the last changes to this design (${message(e)})`, { id: "design-not-saved" });
         },
       );
@@ -385,21 +398,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       const pages = unsaved.current;
       unsaved.current = null;
       if (!pages) return;
-      if (closing) {
-        // the window closing: one the browser carries on with after the page is gone, with what this window knew of
-        // the design, so it never writes over a change made since; refused, merged onto that and sent once more
-        const put = (p: Page[], since: number) => {
-          const body = JSON.stringify({ pages: p, since, by: by.current });
-          return fetch(`/api/designs/${id}`, { method: "PUT", keepalive: body.length < 60_000, headers: { "content-type": "application/json" }, body });
-        };
-        return void put(pages, server.current.at)
-          .then(async (r) => {
-            if (r.status !== 409) return;
-            const d = ((await r.json()) as { design: Design }).design;
-            await put(onto(pages, server.current.pages, d.pages), d.updatedAt);
-          })
-          .catch(() => {});
-      }
+      // the window closing: at once, with what this window knew of the design, so it never writes over a change made
+      // since; refused, merged onto that and sent once more (the page may be gone before a second answer)
+      if (closing) return void leave(pages, server.current.pages, server.current.at, 2, true).catch(() => {});
       // what this window knew as it left: a change made since (after a save still on its way) is merged, never written over
       const was = server.current;
       saving.current = saving.current.then(() => leave(pages, was.pages, was.at));
@@ -410,7 +411,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       window.removeEventListener("pagehide", closing);
       flush(false);
     };
-  }, [id, told]);
+  }, [id, told, putSave]);
 
   // the pages as of the last drawing, for what finishes later (an upload)
   const latest = useRef(pages);

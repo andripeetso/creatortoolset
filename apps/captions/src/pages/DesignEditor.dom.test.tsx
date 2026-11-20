@@ -12,8 +12,8 @@ import { useAuth } from "@/lib/auth";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const design: Design = { id: "d1", owner: "owner", name: "Title", kind: "thumbnail", format: "thumbnail", width: 1920, height: 1080, pictures: [], createdAt: 1, updatedAt: 1, pages: [{ id: "p1", x: 0, y: 0, w: 1920, h: 1080, background: "#ffffff", layers: [] }] };
-const saveDesign = vi.fn(async (_id: string, body: { pages?: Design["pages"] }) => ({ ...design, pages: body.pages ?? design.pages, updatedAt: 2 }));
-vi.mock("@/lib/designs", async (real) => ({ ...(await real<typeof import("@/lib/designs")>()), getDesign: vi.fn(async () => design), saveDesign: (id: string, body: { pages?: Design["pages"] }) => saveDesign(id, body) }));
+const saveDesign = vi.fn(async (_id: string, body: { pages?: Design["pages"] }, _keepalive?: boolean) => ({ ...design, pages: body.pages ?? design.pages, updatedAt: 2 }));
+vi.mock("@/lib/designs", async (real) => ({ ...(await real<typeof import("@/lib/designs")>()), getDesign: vi.fn(async () => design), saveDesign: (id: string, body: { pages?: Design["pages"] }, keepalive?: boolean) => saveDesign(id, body, keepalive) }));
 vi.mock("@/components/design/Stage", () => ({ Stage: () => null }));
 vi.mock("@/components/AppBar", () => ({ AppBar: ({ children }: { children?: React.ReactNode }) => <header>{children}</header> }));
 // the same list each time: a new one is a change the page draws again for
@@ -124,6 +124,23 @@ it("leaving the page: a save refused twice for changes made elsewhere is merged 
   expect(saveDesign).toHaveBeenCalledTimes(3);
   const last = saveDesign.mock.calls[2]![1].pages![0]!;
   expect([last.name, last.background, last.fills]).toEqual(["One", "#ff0000", []]);
+});
+it("the window closing: a save the browser carries on with, merged once more when refused, never written over a change", async () => {
+  const { DesignChanged } = await import("@/lib/designs");
+  saveDesign.mockRejectedValueOnce(new DesignChanged({ ...design, updatedAt: 7, pages: [{ ...design.pages[0]!, name: "Theirs" }] }));
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  act(() => root!.render(<MemoryRouter><DesignEditor id="d1" onDone={vi.fn()} /></MemoryRouter>));
+  await settle();
+  const transparent = [...document.querySelectorAll("label")].find((l) => l.textContent?.includes("Transparent background"))!.querySelector<HTMLElement>("[role=checkbox]")!;
+  act(() => transparent.click());
+  await settle();
+  window.dispatchEvent(new Event("pagehide"));
+  for (let i = 0; i < 5; i++) await settle();
+  expect(saveDesign.mock.calls.map((c) => [c[2], (c[1] as { since?: number }).since])).toEqual([[true, 1], [true, 7]]);
+  const last = saveDesign.mock.calls[1]![1].pages![0]!;
+  expect([last.name, last.fills]).toEqual(["Theirs", []]);
 });
 it("combines and masks layers picked inside a group in a group, where they are", async () => {
   const sq = (id: string, x: number) => ({ id, type: "shape" as const, shape: "rect" as const, fill: "#ff0000", x, y: 0, w: 100, h: 100 });

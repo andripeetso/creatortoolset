@@ -563,6 +563,8 @@ export interface Design extends Omit<DesignSummary, "pages"> {
   /** the window that wrote its last changes (a save's `by`), and the version before its run of them began: a save of that window's on top of no one else's change is never refused (api/designs.ts PUT) */
   writer?: string;
   writerFrom?: number;
+  /** the count of that window's last save taken: an earlier one of its saves arriving later is not its latest (`n`) */
+  writerN?: number;
 }
 
 /**

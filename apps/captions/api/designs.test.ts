@@ -426,18 +426,21 @@ describe("designs: an AI that designs", () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
     const t = (id: string, text: string) => ({ type: "text", id, text, font: "Inter", size: 40, color: "#000000", align: "left", x: 0, y: 0, w: 400, h: 60 });
     const page0 = d.pages[0]!;
-    const one = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...page0, layers: [t("l1", "One"), t("l2", "Two")] }], since: d.updatedAt, by: "window-one" })).body;
-    const two = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...one.pages[0]!, layers: [t("l1", "One")] }], since: one.updatedAt, by: "window-one" })).body;
+    const one = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...page0, layers: [t("l1", "One"), t("l2", "Two")] }], since: d.updatedAt, by: "window-one", n: 1 })).body;
+    const two = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...one.pages[0]!, layers: [t("l1", "One")] }], since: one.updatedAt, by: "window-one", n: 2 })).body;
     expect(two.pages[0]!.next).toBe(3);
     // ⌘Z: l2 comes back under its own id
-    const back = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...two.pages[0]!, layers: [t("l1", "One"), t("l2", "Two")] }], since: two.updatedAt, by: "window-one" })).body;
+    const back = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...two.pages[0]!, layers: [t("l1", "One"), t("l2", "Two")] }], since: two.updatedAt, by: "window-one", n: 3 })).body;
     expect(back.pages[0]!.layers.map((l) => l.id)).toEqual(["l1", "l2"]);
     // sent as the window closed, after a save of its own it had not heard back from: taken, not refused
-    const late = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...back.pages[0]!, layers: [t("l1", "One, closing")] }], since: two.updatedAt, by: "window-one" });
+    const late = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [{ ...back.pages[0]!, layers: [t("l1", "One, closing")] }], since: two.updatedAt, by: "window-one", n: 4 });
     expect(late.status).toBe(200);
+    // an earlier save of its own arriving after a later one (a page brought back) is not taken over it
+    const older = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: two.pages, since: two.updatedAt, by: "window-one", n: 1 });
+    expect(older.status).toBe(409);
     // after another's write it is refused
     await write(d.id, { changes: [{ frame: page0.id, layer: "l1", set: { color: "#ff0000" } }] });
-    const after = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: back.pages, since: late.body.updatedAt, by: "window-one" });
+    const after = await call<Design>("PUT", `/api/designs/${d.id}`, { pages: back.pages, since: late.body.updatedAt, by: "window-one", n: 5 });
     expect(after.status).toBe(409);
   });
 
