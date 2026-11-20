@@ -33,7 +33,7 @@ import { getDesign } from "@/lib/designs";
 import { canGrab, designFile, isDesign, placeText, renderScale } from "@/lib/nle/text-clip";
 import { drawFrame, grabDesign, grabFrame, makeText } from "@/lib/nle/text-design";
 import { CaptionsBody, CaptionsHead, CaptionsOver, captionsHref, downloadSrt, useCaptionClip } from "./NleCaptions";
-import { captionsStale, fromOf } from "@/lib/nle/captions";
+import { captionCards, captionsStale, fromOf, withoutCards } from "@/lib/nle/captions";
 
 export type { NleFile };
 import { NleTracks as Timeline, useLinkedSelection, type MenuAt, type Tool } from "./NleTracks";
@@ -491,6 +491,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const cap = useCaptionClip(tl.captions);
   const [capBusy, setCapBusy] = useState(false);
   const [capMenu, setCapMenu] = useState<{ x: number; y: number } | null>(null);
+  // burned in, Caption Studio's captions replace the caption cards in renders, so the viewer leaves them out too
+  const burnt = !!tl.captions?.burn && !!cap?.clip && !captionsStale(shown);
+  const viewed = useMemo(() => (burnt ? withoutCards(shown) : shown), [burnt, shown]);
   const sendCaptions = () => {
     if (!captions || capBusy || readOnly) return;
     if (dirty) return void toast.error("Save this cut first: its captions are made from the saved cut's render");
@@ -736,7 +739,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 )}
               </div>
             }>
-            <NleViewer tl={inSource ? srcTl! : shown} playhead={T.clock} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
+            <NleViewer tl={inSource ? srcTl! : viewed} playhead={T.clock} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
               nameOf={inSource ? () => source!.name : nameOfSrc} onClick={() => T.play(!T.playing)}
               onMenu={(e) => { e.preventDefault(); viewerBox.current = e.currentTarget; setMenu({ x: e.clientX, y: e.clientY, on: "viewer" }); }}
               loop={loop ? (inSource ? loopPart(sm, srcFrames, sfps) : lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null) : null}
@@ -789,7 +792,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             onDrop={readOnly ? undefined : dropOn}
             lane={captions && {
               head: <CaptionsHead link={tl.captions} busy={capBusy} readOnly={readOnly} onMake={() => run("makeCaptions")} onBurn={() => run("burnCaptions")} onMenu={setCapMenu} />,
-              body: (pps) => <CaptionsBody pps={pps} link={tl.captions} clip={cap ? cap.clip : undefined} captioning={!!cap?.captioning} stale={captionsStale(shown)} busy={capBusy}
+              body: (pps) => <CaptionsBody pps={pps} link={tl.captions} clip={cap ? cap.clip : undefined} captioning={!!cap?.captioning} stale={captionsStale(shown)} busy={capBusy} cards={captionCards(tl)}
                 readOnly={readOnly} onUpdate={() => run("updateCaptions")} onOpen={() => tl.captions && captions.open(captionsHref(tl.captions))} />,
             }}
             tools={

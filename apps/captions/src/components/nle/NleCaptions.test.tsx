@@ -79,4 +79,18 @@ describe("the Captions lane", () => {
     expect(changes.at(-1)!.captions).toEqual({ ...LINK, clip: "c2" });
     expect(document.body.textContent).not.toContain("From an older cut");
   });
+
+  it("with the AI Editor's caption cards on the timeline, says that Burn In replaces them in renders", async () => {
+    const line = "Replaces the caption cards in renders";
+    await mount({ ...tl, captions: LINK }, { send: async () => ({ project: "p1", clip: "c1" }), open: () => {} });
+    expect(document.body.textContent).not.toContain(line);
+    document.body.innerHTML = "";
+    const cards = { ...tl, captions: LINK, tracks: { ...tl.tracks, V4: { name: "CAPTIONS", items: [{ src: "a", rec: 0, len: 25, in: 0, _k: "k4" }] } } } as NleTimeline;
+    const changes = await mount(cards, { send: async () => ({ project: "p1", clip: "c1" }), open: () => {} });
+    expect(document.body.textContent).toContain(line);
+    await act(async () => button("Burn In")!.click());
+    // the cards stay in the timeline
+    expect(changes.at(-1)!.tracks.V4).toEqual(cards.tracks.V4);
+    expect(changes.at(-1)!.captions!.burn).toBe(true);
+  });
 });

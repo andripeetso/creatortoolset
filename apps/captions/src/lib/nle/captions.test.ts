@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Cue, Word } from "../types";
-import { captionsStale, fromOf, remapCaptions, type From } from "./captions";
+import { captionCards, captionsStale, fromOf, remapCaptions, withoutCards, type From } from "./captions";
 import type { NleTimeline } from "./model";
 
 // 30 fps, one recording "s1": the old cut plays frames 0–89 of it, then frames 200–289
@@ -117,5 +117,23 @@ describe("the registry's caption commands", async () => {
     expect(COMMANDS.burnCaptions.run(state(link), {}).tl.captions!.burn).toBe(true);
     expect(COMMANDS.burnCaptions.run(state(link), { on: 0 }).tl.captions).toEqual(link);
     expect(COMMANDS.burnCaptions.run(state({ ...link, burn: true }), { on: 1 }).tl.captions!.burn).toBe(true);
+  });
+});
+
+describe("the AI Editor's caption cards", () => {
+  const tracks = (v4: object) => ({ tracks: { V1: { items: [] }, V4: { name: "CAPTIONS", items: [{ src: "c", rec: 0, len: 25, in: 0 }], ...v4 }, A1: { name: "CAPTIONS", items: [] } } }) as unknown as NleTimeline;
+  it("are clips on a picture track named CAPTIONS that would show", () => {
+    expect(captionCards(tracks({}))).toBe(true);
+    expect(captionCards(tracks({ name: "Captions (off)" }))).toBe(true);
+    expect(captionCards(tracks({ hidden: true }))).toBe(false);
+    expect(captionCards(tracks({ enabled: false }))).toBe(false);
+    expect(captionCards(tracks({ name: "B-ROLL" }))).toBe(false);
+  });
+  it("are hidden only in what a burned render shows, never in the timeline itself", () => {
+    const tl = tracks({});
+    const shown = withoutCards(tl);
+    expect(shown.tracks.V4!.hidden).toBe(true);
+    expect(shown.tracks.V4!.items).toEqual(tl.tracks.V4!.items);
+    expect(tl.tracks.V4!.hidden).toBeUndefined();
   });
 });

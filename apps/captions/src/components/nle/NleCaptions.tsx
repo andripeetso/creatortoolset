@@ -73,13 +73,15 @@ export function CaptionsHead({ link, busy, readOnly, onMake, onBurn, onMenu }: {
 }
 
 /** What is on the lane: the cues where they play, or why there are none yet; from an older cut, its badge and Update Captions. */
-export function CaptionsBody({ pps, link, clip, captioning, stale, busy, readOnly, onUpdate, onOpen }: {
+export function CaptionsBody({ pps, link, clip, captioning, stale, busy, cards, readOnly, onUpdate, onOpen }: {
   pps: number;
   link?: EdjCaptions;
   clip: CaptionClip | null | undefined;
   captioning: boolean;
   stale: boolean;
   busy: boolean;
+  /** the timeline has the AI Editor's caption cards (lib/nle/captions.ts captionCards) */
+  cards?: boolean;
   readOnly?: boolean;
   onUpdate: () => void;
   onOpen: () => void;
@@ -96,10 +98,11 @@ export function CaptionsBody({ pps, link, clip, captioning, stale, busy, readOnl
         </div>
       ))}
       {/* at the lane's visible start, over its cues */}
-      {(note || stale || busy) && (
+      {(note || stale || busy || (link && cards)) && (
         <div className="pointer-events-none sticky left-[152px] z-10 flex h-full w-max items-center gap-1 pl-1.5">
           {busy && <span className={cn(pill, "bg-zinc-800 text-zinc-300")}><Loader2 className="size-3 animate-spin" />Sending to Caption Studio</span>}
           {note && !busy && <span className={cn(pill, "bg-zinc-800 text-zinc-400")}>{captioning && <Loader2 className="size-3 animate-spin" />}{note}</span>}
+          {link && cards && !busy && <span className={cn(pill, "bg-zinc-800", link.burn ? "text-zinc-300" : "text-zinc-500")}>Replaces the caption cards in renders</span>}
           {stale && !busy && (
             <>
               <span className={cn(pill, "bg-[#3b3014] text-amber-200")}>From an older cut</span>

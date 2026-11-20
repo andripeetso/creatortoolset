@@ -61,6 +61,16 @@ export function moves(from: From[], to: From[], rate: (src: string) => number = 
   return { pieces: joined, fill: fill.reduce<Range[]>((all, r) => (all.length && Math.abs(all.at(-1)![1] - r[0]) < 1e-6 ? (all.at(-1)![1] = r[1], all) : [...all, r]), []) };
 }
 
+/** The AI Editor's own caption cards: a picture track named CAPTIONS (its caption pass), the same rule as the studio
+ *  engine's preview.caption_cards. Burned-in Caption Studio captions replace them in renders: one caption system on screen. */
+const cardTrack = (id: string, t: { name?: string }) => id[0] === "V" && /^captions/i.test(t.name ?? "");
+/** The timeline has caption cards that would show. */
+export const captionCards = (tl: Pick<NleTimeline, "tracks">): boolean =>
+  Object.entries(tl.tracks).some(([id, t]) => cardTrack(id, t) && !t.hidden && t.enabled !== false && t.items.some((i) => i.enabled !== false));
+/** The timeline as a burned-in render shows it: the caption cards' tracks hidden here only, never in what is saved. */
+export const withoutCards = <T extends Pick<NleTimeline, "tracks">>(tl: T): T =>
+  ({ ...tl, tracks: Object.fromEntries(Object.entries(tl.tracks).map(([id, t]) => [id, cardTrack(id, t) ? { ...t, hidden: true } : t])) });
+
 /** A Caption Studio clip's saved data (GET /api/projects/:id, one clip): the parts that are timed, and the rest. */
 export interface CaptionData {
   words?: Word[];
