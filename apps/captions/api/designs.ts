@@ -1212,8 +1212,10 @@ designsApp.delete("/:id", (c) =>
 // an AI that designs: what it reads (?look=<a look's name> adds that look's pictures), and what it writes
 designsApp.get("/:id/pages", (c) => answer(c, async () => forAi(c.get("user"), await mine(c), c.req.query("look")?.trim() || undefined)));
 designsApp.post("/:id/pages", (c) =>
-  answer(c, () => designTurn(c)(async () => {
+  answer(c, async () => {
+    // the body first: a slow sender never holds the other writes to the design
     const b = await body(c);
+    return designTurn(c)(async () => {
     if (b.sizes === undefined && b.fill === undefined) return writeForAi(c.get("user"), await mine(c), b);
     // copies: after the frames and changes of the same call, so a frame designed in it is copied as it now is
     const first = b.frames !== undefined || b.changes !== undefined ? await writeForAi(c.get("user"), await mine(c), b) : null;
@@ -1224,7 +1226,8 @@ designsApp.post("/:id/pages", (c) =>
       throw e;
     });
     return { ...more, notes: [...first.notes, ...more.notes], touched: [...first.touched, ...more.touched], wrote: [...first.wrote, ...more.wrote], named: first.named };
-  })),
+    });
+  }),
 );
 // what it made, to look at: the frames named in ?frames=<id>,<id> (else the first ones) as small pictures, with the words that do not fit
 designsApp.get("/:id/look", (c) =>

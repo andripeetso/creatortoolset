@@ -464,6 +464,17 @@ describe("designs: an AI that designs", () => {
     release();
     await slow;
     expect(quick).toBe("written");
+    // nor does an AI's write whose body is still coming
+    let release2!: () => void;
+    const held2 = new Promise<void>((r) => (release2 = r));
+    const stream2 = new ReadableStream({ async start(ctl) { ctl.enqueue(new TextEncoder().encode('{"changes":')); await held2; ctl.enqueue(new TextEncoder().encode(`[{"frame":"${p1}","layer":"t","set":{"color":"#00ff00"}}]}`)); ctl.close(); } });
+    as = "jordan";
+    const slowAi = app.request(`/api/designs/${d.id}/pages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: stream2, duplex: "half" } as RequestInit);
+    const latest = (await call<Design>("GET", `/api/designs/${d.id}`)).body;
+    const quick2 = await Promise.race([call("PUT", `/api/designs/${d.id}`, { pages: latest.pages, since: latest.updatedAt }).then(() => "written"), new Promise((r) => setTimeout(() => r("held"), 3000))]);
+    release2();
+    await slowAi;
+    expect(quick2).toBe("written");
     // and the turns kept for a design go once nothing waits on them
     expect(designTurnsWaiting()).toBe(0);
   });
