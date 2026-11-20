@@ -113,6 +113,9 @@ const runLooks = async () => {
 beforeEach(() => {
   vi.mocked(completeVisionWithFallback).mockReset();
 });
+// every look here is real work on real video (ffmpeg cuts the sheets, the picture hashes are read off them): ~1 s a look
+// alone, several under a loaded full run, and a test runs up to two. The default 5 s timed out on load alone
+vi.setConfig({ testTimeout: 20_000 });
 
 describe("the look job", () => {
   it("writes one row per stretch from the AI's answer, with the context stamp, and keeps the sheets", async () => {
@@ -282,8 +285,12 @@ describe("the background index", () => {
     expect(job(busy)).toBeUndefined(); // its description queues its look itself
     expect(job(mac)).toMatchObject({ state: "needs_key", error: MAC_WAITS });
     expect(await sweepLook(d)).toBe(false); // nothing left: the lane idles
-    // the earlier tests' clips the sweep queued too, and these: the next tests start from an empty queue
-    d.prepare("DELETE FROM jobs WHERE (kind = 'look' AND state = 'queued') OR version_id IN (?, ?)").run(busy, mac);
+    // the earlier tests' clips the sweep queued too, and these: the next tests start from an empty queue. Marked done, not
+    // deleted: a clip whose look is gone is the sweep's again, so every later sweep queued them all (12 real looks in the
+    // access test, past the 5 s limit). The busy clip leaves the library; the Mac's parked look stays (the sweep skips it)
+    d.prepare("UPDATE jobs SET state = 'done' WHERE kind = 'look' AND state = 'queued'").run();
+    d.prepare("DELETE FROM jobs WHERE version_id = ?").run(busy);
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE current_version_id = ?").run(busy);
   });
 
   it("an uploader who lost the clip between queue and run gets nothing read or asked; with access again, the sweep queues it and it runs", async () => {
@@ -414,6 +421,8 @@ describe("the background index", () => {
     expect(queueLook(d, v, "local", false, true)).toBe(true);
     // only the switch goes back: a '{}' here would bring back the default budget for the tests after this one
     d.prepare(`UPDATE libraries SET settings = json_remove(settings, '$.look') WHERE id = 'lib_s'`).run();
+    // its look is only asked, never run here: left queued, the next test's runLooks ran it as well (a real look, ~1 s)
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = 'look'").run(v);
   });
 
   it("a file's calls run side by side, two at once on an AI provider", async () => {
