@@ -24,10 +24,11 @@ type Rect = { x: number; y: number; w: number; h: number };
 /** Where a box of the picture (fractions of it) is drawn on the frame, the layer's turn left out: through its fit, zoom and focus as the canvas draws it, and its flips. */
 function placer(l: ImageLayer, pic: { width: number; height: number }) {
   const k = (l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height)) * (l.zoom ?? 1);
-  const dw = pic.width * k;
-  const dh = pic.height * k;
-  const ox = (l.w - dw) * (l.focus?.x ?? 0.5);
-  const oy = (l.h - dh) * (l.focus?.y ?? 0.5);
+  const c = l.crop;
+  const dw = c ? l.w / c.w : pic.width * k;
+  const dh = c ? l.h / c.h : pic.height * k;
+  const ox = c ? -c.x * dw : (l.w - dw) * (l.focus?.x ?? 0.5);
+  const oy = c ? -c.y * dh : (l.h - dh) * (l.focus?.y ?? 0.5);
   return (b: SplitBox): Rect => {
     const r = { x: l.x + ox + b.x * dw, y: l.y + oy + b.y * dh, w: b.w * dw, h: b.h * dh };
     if (l.flipX) r.x = 2 * l.x + l.w - r.x - r.w;

@@ -559,7 +559,7 @@ function retouchedPicture(l: ImageLayer, pic: CanvasImageSource & { width: numbe
   const w = Math.max(1, Math.round(l.w * scale));
   const h = Math.max(1, Math.round(l.h * scale));
   // the picture itself by its own number: another put under the same id at the same size is retouched again (readyOf)
-  const key = JSON.stringify([l.picture, pictureNumber(pic), pic.width, pic.height, w, h, l.fit, l.zoom, l.focus, l.adjust, l.duotone, l.vignette, l.grain, l.blur]);
+  const key = JSON.stringify([l.picture, pictureNumber(pic), pic.width, pic.height, w, h, l.fit, l.zoom, l.focus, l.crop, l.adjust, l.duotone, l.vignette, l.grain, l.blur]);
   let mine = retouched.get(loaded);
   if (!mine) retouched.set(loaded, (mine = new Map()));
   return keptOr(mine, place, key, w * h, KEPT_PIXELS, (old) => {
@@ -576,8 +576,10 @@ function retouchedPicture(l: ImageLayer, pic: CanvasImageSource & { width: numbe
   });
 }
 
-/** A picture in its layer's box: filling it or fitting in it, bigger by its zoom, with what the box cuts off taken from both sides by where the focus is (0 keeps the picture's left or top edge, 1 its right or bottom). */
-function placePicture(ctx: Ctx, l: Pick<ImageLayer, "w" | "h" | "fit" | "zoom" | "focus">, pic: { width: number; height: number } & CanvasImageSource) {
+/** A picture in its layer's box: its cropped part stretched to it, or filling it or fitting in it, bigger by its zoom, with what the box cuts off taken from both sides by where the focus is (0 keeps the picture's left or top edge, 1 its right or bottom). */
+function placePicture(ctx: Ctx, l: Pick<ImageLayer, "w" | "h" | "fit" | "zoom" | "focus" | "crop">, pic: { width: number; height: number } & CanvasImageSource) {
+  const c = l.crop;
+  if (c) return ctx.drawImage(pic, c.x * pic.width, c.y * pic.height, c.w * pic.width, c.h * pic.height, 0, 0, l.w, l.h);
   const k = (l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height)) * (l.zoom ?? 1);
   ctx.drawImage(pic, (l.w - pic.width * k) * (l.focus?.x ?? 0.5), (l.h - pic.height * k) * (l.focus?.y ?? 0.5), pic.width * k, pic.height * k);
 }

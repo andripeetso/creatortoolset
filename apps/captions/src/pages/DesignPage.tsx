@@ -22,7 +22,7 @@ import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
 import { detached, plainOf, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
 import { ComponentSection } from "@/components/design/ComponentSection";
-import { depthOf, everyLayer, keepNext, same, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
+import { depthOf, everyLayer, keepNext, same, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, moveRow, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
@@ -150,6 +150,10 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   /** The picture layer being moved inside its box, and whether a picture's background is being cut away. */
   const [cropping, setCropping] = useState<string | null>(null);
   const [cutting, setCutting] = useState(false);
+  /** A layer's handles and its width and height keep its shape, until unlocked. */
+  const [ratio, setRatio] = useState(true);
+  /** Moves when the menu's Rename is chosen: the layers list types in the picked row's name. */
+  const [renameAsk, setRenameAsk] = useState(0);
   /** The path layer whose points are shown for moving, and the picked one of them. */
   const [shaping, setShaping] = useState<{ id: string; anchor: number | null } | null>(null);
   const [pickedTool, setTool] = useState<Tool>("move");
@@ -658,6 +662,22 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     const like = here && !base?.loose ? here : { w: design.width, h: design.height };
     const fit = (n: number) => Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.round(n)));
     addFrame(undefined, { x: Math.round(r.x), y: Math.round(r.y), w: dragged ? fit(r.w) : like.w, h: dragged ? fit(r.h) : like.h });
+  };
+  /** Layer `id` of frame `from` taken to frame `to` (a drag in the layers list), staying where it is on the canvas: beside its layer `by`, or on top of its layers; picked there. */
+  const carry = (from: number, id: string, to: number, by: string | null, how: "front" | "behind" | "into") => {
+    const src = pages[from];
+    const dst = pages[to];
+    const me = src && dst && frames[from] && frames[to] ? inFrame(src.layers, id) : undefined;
+    if (!me || locked) return;
+    if (everyLayer(dst!.layers).length + everyLayer([me]).length > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups`);
+    const moved = { ...me, x: me.x + frames[from]!.x - frames[to]!.x, y: me.y + frames[from]!.y - frames[to]!.y };
+    // an id of its own there, and in no group of that frame's (as a layer dragged there on the canvas)
+    const [placed] = regroup(reid([moved], [moved.id], dst!.layers), dst!.layers);
+    const there = { ...dst!, layers: [...dst!.layers, placed!] };
+    const rest = mapLayers(src!.layers, (l) => (l.id === id ? null : l));
+    setPages([{ ...src!, layers: rest }, (by && moveRow(there, placed!.id, by, how)) || there]);
+    // a loose piece left empty is gone (hugLoose): the frames after it move up one
+    pick(src!.loose && !rest.length && from < to ? to - 1 : to, [placed!.id]);
   };
   const movePage = (from: number, to: number) => {
     if (from === to) return;
@@ -1336,6 +1356,73 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     </ContextMenuItem>
   );
   const none = !mine.length;
+  /** What a right press on the canvas or on a row of the layers list offers, for what is picked. */
+  const menu = locked ? (
+                <ContextMenuContent className="w-56">
+                  {item("Copy", "⌘C", copy, none)}
+                </ContextMenuContent>
+              ) : (
+                <ContextMenuContent className="w-56">
+                  {item("Copy", "⌘C", copy, none)}
+                  {item("Paste here", "⌘V", paste, !clip)}
+                  {item("Copy style", "⌥⌘C", copyLook, mine.length !== 1)}
+                  {item("Paste style", "⌥⌘V", pasteLook, none || !copiedLook)}
+                  {item("Duplicate", "⌘D", duplicate, none && !framed)}
+                  {item("Group selection", "⌘G", () => group(), none)}
+                  {item("Frame selection", "⌥⌘G", () => group(true), none)}
+                  {item("Add auto layout", "⇧A", autoLayout, none || (mine.length === 1 && flows(mine[0])))}
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={mine.length < 2 && !(isGroup(mine[0]) && mine[0].boolean)} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Combine shapes</ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-48">{DESIGN_BOOLEANS.map((op) => item(BOOLEAN_NAMES[op], BOOLEAN_KEY_NAMES[op], () => combineShapes(op), false))}</ContextMenuSubContent>
+                  </ContextMenuSub>
+                  {item(mine.length === 1 && mine[0]!.mask ? "Stop using as mask" : "Use as mask", ON_A_MAC ? "⌃⌘M" : "Ctrl+Alt+M", useAsMask, none)}
+                  {item(mine.length > 1 && mine.every(isMain) ? "Combine as variants" : "Create component", "⌥⌘K", makeComponent, none || (mine.length === 1 && (isMain(mine[0]) || isInstance(mine[0]))))}
+                  {mine.length === 1 && isInstance(mine[0]) && item("Detach instance", "⌥⌘B", () => patch((l) => (isInstance(l) ? detached(l) : l)), false)}
+                  {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => isGroup(l) || (l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1)))}
+                  {mine.some(isGroup) && (mine.filter(isGroup).every((l) => l.box) ? item("Convert to group", "", () => convert(false), false) : item("Convert to frame", "", () => convert(true), false))}
+                  <ContextMenuSeparator />
+                  {item("Rename", "", () => setRenameAsk((n) => n + 1), mine.length !== 1 && !(framed && framedIds.length < 2))}
+                  {mine.length === 1 && mine[0]!.type === "image" && item("Crop", "", () => setCropping(mine[0]!.id), false)}
+                  <ContextMenuSeparator />
+                  {item("Bring to front", "]", () => order(true), none)}
+                  {item("Send to back", "[", () => order(false), none)}
+                  <ContextMenuSeparator />
+                  {item(mine.length && mine.every((l) => l.hidden) ? "Show" : "Hide", "⇧⌘H", () => toggle("hidden"), none)}
+                  {item(mine.length && mine.every((l) => l.locked) ? "Unlock" : "Lock", "⇧⌘L", () => toggle("locked"), none)}
+                  <ContextMenuSeparator />
+                  {item("Flip horizontal", "", () => patch((l) => ({ ...l, flipX: l.flipX ? undefined : true })), none)}
+                  {item("Flip vertical", "", () => patch((l) => ({ ...l, flipY: l.flipY ? undefined : true })), none)}
+                  <ContextMenuSeparator />
+                  {item("Delete", "⌫", remove, none && !framed)}
+                  {mine.length === 1 && mine[0]!.type === "image" && (
+                    <>
+                      <ContextMenuSeparator />
+                      {/* the AI makes the layers: its mark where a shortcut would be */}
+                      <ContextMenuItem disabled={cutting} onSelect={() => void split()}>
+                        {cutting ? "Working…" : "Split into layers"}
+                        <CtMark className="ml-auto size-4 text-violet-500" />
+                      </ContextMenuItem>
+                    </>
+                  )}
+                  <ContextMenuSeparator />
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={!base || !!base.loose || !here} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Copy in another size</ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-60">{here && <CopySizes Item={ContextMenuItem} from={here} onCopy={copySize} />}</ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={!base} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Add to a carousel style</ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-56">
+                      {(carouselStyles.data?.styles ?? []).map((s) => (
+                        <ContextMenuItem key={s.id} onSelect={() => void likeFrame(k, s)}>
+                          {s.name}
+                        </ContextMenuItem>
+                      ))}
+                      {!!carouselStyles.data?.styles.length && <ContextMenuSeparator />}
+                      {item("New carousel style", "", () => void likeFrame(k, null))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                </ContextMenuContent>
+              );
   /** The typed name, saved (Enter or leaving the field). Empty or unchanged keeps the old one. */
   const rename = (typed: string) => {
     setNaming(null);
@@ -1420,7 +1507,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         )}
       </AppBar>
       <div className="flex min-h-0 flex-1">
-        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} onZoomTo={zoomTo} />
+        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} onZoomTo={zoomTo} onCarry={carry} menu={menu} renameAsk={renameAsk} />
 
         <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
           {/* messages lie over the canvas, never above it: the canvas never moves under the pointer when one comes or goes.
@@ -1492,68 +1579,10 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
               onShape={setShaping}
               cropping={cropping}
               onCrop={setCropping}
+              keepRatio={ratio}
               pointed={pointed}
               dropper={dropper ? (hex) => (dropper.take(hex), setDropper(null)) : null}
-              menu={locked ? (
-                <ContextMenuContent className="w-56">
-                  {item("Copy", "⌘C", copy, none)}
-                </ContextMenuContent>
-              ) : (
-                <ContextMenuContent className="w-56">
-                  {item("Copy", "⌘C", copy, none)}
-                  {item("Paste here", "⌘V", paste, !clip)}
-                  {item("Copy style", "⌥⌘C", copyLook, mine.length !== 1)}
-                  {item("Paste style", "⌥⌘V", pasteLook, none || !copiedLook)}
-                  {item("Duplicate", "⌘D", duplicate, none && !framed)}
-                  {item("Group selection", "⌘G", () => group(), none)}
-                  {item("Frame selection", "⌥⌘G", () => group(true), none)}
-                  {item("Add auto layout", "⇧A", autoLayout, none || (mine.length === 1 && flows(mine[0])))}
-                  <ContextMenuSub>
-                    <ContextMenuSubTrigger disabled={mine.length < 2 && !(isGroup(mine[0]) && mine[0].boolean)} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Combine shapes</ContextMenuSubTrigger>
-                    <ContextMenuSubContent className="w-48">{DESIGN_BOOLEANS.map((op) => item(BOOLEAN_NAMES[op], BOOLEAN_KEY_NAMES[op], () => combineShapes(op), false))}</ContextMenuSubContent>
-                  </ContextMenuSub>
-                  {item(mine.length === 1 && mine[0]!.mask ? "Stop using as mask" : "Use as mask", ON_A_MAC ? "⌃⌘M" : "Ctrl+Alt+M", useAsMask, none)}
-                  {item(mine.length > 1 && mine.every(isMain) ? "Combine as variants" : "Create component", "⌥⌘K", makeComponent, none || (mine.length === 1 && (isMain(mine[0]) || isInstance(mine[0]))))}
-                  {mine.length === 1 && isInstance(mine[0]) && item("Detach instance", "⌥⌘B", () => patch((l) => (isInstance(l) ? detached(l) : l)), false)}
-                  {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => isGroup(l) || (l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1)))}
-                  {mine.some(isGroup) && (mine.filter(isGroup).every((l) => l.box) ? item("Convert to group", "", () => convert(false), false) : item("Convert to frame", "", () => convert(true), false))}
-                  <ContextMenuSeparator />
-                  {item("Bring to front", "]", () => order(true), none)}
-                  {item("Send to back", "[", () => order(false), none)}
-                  <ContextMenuSeparator />
-                  {item(mine.length && mine.every((l) => l.hidden) ? "Show" : "Hide", "⇧⌘H", () => toggle("hidden"), none)}
-                  {item(mine.length && mine.every((l) => l.locked) ? "Unlock" : "Lock", "⇧⌘L", () => toggle("locked"), none)}
-                  <ContextMenuSeparator />
-                  {item("Delete", "⌫", remove, none && !framed)}
-                  {mine.length === 1 && mine[0]!.type === "image" && (
-                    <>
-                      <ContextMenuSeparator />
-                      {/* the AI makes the layers: its mark where a shortcut would be */}
-                      <ContextMenuItem disabled={cutting} onSelect={() => void split()}>
-                        {cutting ? "Working…" : "Split into layers"}
-                        <CtMark className="ml-auto size-4 text-violet-500" />
-                      </ContextMenuItem>
-                    </>
-                  )}
-                  <ContextMenuSeparator />
-                  <ContextMenuSub>
-                    <ContextMenuSubTrigger disabled={!base || !!base.loose || !here} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Copy in another size</ContextMenuSubTrigger>
-                    <ContextMenuSubContent className="w-60">{here && <CopySizes Item={ContextMenuItem} from={here} onCopy={copySize} />}</ContextMenuSubContent>
-                  </ContextMenuSub>
-                  <ContextMenuSub>
-                    <ContextMenuSubTrigger disabled={!base} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Add to a carousel style</ContextMenuSubTrigger>
-                    <ContextMenuSubContent className="w-56">
-                      {(carouselStyles.data?.styles ?? []).map((s) => (
-                        <ContextMenuItem key={s.id} onSelect={() => void likeFrame(k, s)}>
-                          {s.name}
-                        </ContextMenuItem>
-                      ))}
-                      {!!carouselStyles.data?.styles.length && <ContextMenuSeparator />}
-                      {item("New carousel style", "", () => void likeFrame(k, null))}
-                    </ContextMenuSubContent>
-                  </ContextMenuSub>
-                </ContextMenuContent>
-              )}
+              menu={menu}
             />
           )}
 
@@ -1609,6 +1638,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           framesPicked={framedAt}
           onExport={(only, as) => void exportPngs(only, as)}
           cropping={!!cropping}
+          ratio={ratio}
+          onRatio={setRatio}
           onCrop={(on) => setCropping(on && mine.length === 1 ? mine[0]!.id : null)}
           onCutOut={() => void cutOut()}
           onSplit={() => void split()}

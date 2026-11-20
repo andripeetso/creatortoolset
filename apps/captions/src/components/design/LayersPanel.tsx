@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowRight, Component, Diamond, ChevronDown, ChevronRight, Circle, Contrast, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { groupName, layerName, pageName } from "@/lib/design/hands";
 import { isInstance, isMain, type Instance } from "@/lib/design/components";
-import { isGroup, mapLayers, masksOf, moveRow, parentOf, pathTo } from "@/lib/design/tree";
+import { isGroup, mapLayers, masksOf, moveInto, moveRow, parentOf, pathTo } from "@/lib/design/tree";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
 
@@ -13,7 +14,8 @@ import { Tip } from "./Tip";
  * a frame, never the layers a picked frame already holds), a double click on a name renames and one on its icon zooms
  * the canvas to it, the eye hides and the lock locks, and a row is dragged to a
  * new place: a layer among its frame's layers (in or out of a group or a frame-like container: let go on the middle of a
- * container's row, it goes into it), a frame among the frames. A container's layers lie under its row, which opens and
+ * container's row, it goes into it), onto another frame's rows or row (it goes there, staying where it is on the
+ * canvas), a frame among the frames. A right press opens the canvas's menu for its row; the right edge sets the width. A container's layers lie under its row, which opens and
  * closes them. Layers of an older group (a shared name) lie under a Group row,
  * which picks them all; a layer's own row picks that layer alone (where two frames lie over each other, the
  * lower one in the list is drawn on top, and the list's order numbers the saved PNGs).
@@ -29,6 +31,17 @@ const BOOLEAN = { union: SquaresUnite, subtract: SquaresSubtract, intersect: Squ
 /** Where a dragged row goes: above or below row `key`, or (`into`) into the container it is the row of. */
 type Drop = { key: string; after: boolean; into?: boolean };
 
+const WIDTH_KEY = "ct-design-layers-width";
+const [MIN_W, MAX_W] = [180, 480];
+const savedWidth = () => {
+  try {
+    const n = Number(localStorage.getItem(WIDTH_KEY));
+    return n >= MIN_W && n <= MAX_W ? n : 240;
+  } catch {
+    return 240;
+  }
+};
+
 
 export function LayersPanel({
   pages,
@@ -42,6 +55,9 @@ export function LayersPanel({
   onMovePage,
   onAddPage,
   onZoomTo,
+  onCarry,
+  menu,
+  renameAsk = 0,
 }: {
   pages: DesignPage[];
   at: number;
@@ -58,7 +74,14 @@ export function LayersPanel({
   onAddPage: () => void;
   /** the canvas zoomed to frame `at`, or to its layer `id` */
   onZoomTo: (at: number, id?: string) => void;
+  /** layer `id` of frame `from` taken to frame `to`, beside its layer `by` (in front of it, behind it, or into it), or on top of its layers */
+  onCarry: (from: number, id: string, to: number, by: string | null, how: "front" | "behind" | "into") => void;
+  /** the menu a right press on a row opens (its row picked first) */
+  menu?: ReactNode;
+  /** moves when the menu's Rename was chosen: the picked row's name is typed in */
+  renameAsk?: number;
 }) {
+  const [width, setWidth] = useState(savedWidth);
   const [shut, setShut] = useState<string[]>([]);
   // an instance is one row until it is opened (its layers are its main's)
   const [openInst, setOpenInst] = useState<string[]>([]);
@@ -71,6 +94,12 @@ export function LayersPanel({
     setOpenInst((s) => (open.some((x) => !s.includes(x)) ? [...new Set([...s, ...open])] : s));
   }, [opening]);
   const [renaming, setRenaming] = useState<string | null>(null);
+  useEffect(() => {
+    const p = pages[at];
+    if (renameAsk && p) setRenaming(selected.length === 1 ? `l:${p.id}:${selected[0]}` : framed ? `p:${p.id}` : null);
+    // only a new ask renames
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renameAsk]);
   const [drop, setDrop] = useState<Drop | null>(null);
   const dropped = useRef(false);
   const dragging = useRef(false);
@@ -134,7 +163,7 @@ export function LayersPanel({
    * row goes there when the pointer lifts. By the pointer's own events, not the browser's drag and drop: after one of
    * those, WebKit gives the next press no pointerdown, and the canvas would miss a click (found in a real browser).
    */
-  const dragRow = (e: React.PointerEvent, fits: (key: string) => boolean, done: (to: Drop) => void) => {
+  const dragRow = (e: React.PointerEvent, fits: (key: string) => boolean | "into", done: (to: Drop) => void) => {
     if (e.button !== 0) return;
     const x0 = e.clientX;
     const y0 = e.clientY;
@@ -147,7 +176,8 @@ export function LayersPanel({
       const r = row?.getBoundingClientRect();
       // the middle of a container's row: into it
       const inside = row?.dataset.container !== undefined && r && Math.abs(ev.clientY - r.top - r.height / 2) < r.height / 4;
-      to = key && r && fits(key) ? { key, after: ev.clientY > r.top + r.height / 2, ...(inside ? { into: true } : {}) } : null;
+      const ok = key ? fits(key) : false;
+      to = key && r && ok ? { key, after: ev.clientY > r.top + r.height / 2, ...(inside || ok === "into" ? { into: true } : {}) } : null;
       setDrop(to);
     };
     const up = () => {
@@ -204,14 +234,22 @@ export function LayersPanel({
               !owner &&
               dragRow(
                 e,
-                (other) => other.startsWith(layerKey) && other !== key,
+                // a frame's own row: on top of its layers
+                (other) => (other.startsWith("p:") ? "into" : other.startsWith("l:") && other !== key),
                 (to) => {
                   // the list shows the front layer on top: above a row is in front of it
-                  const next = moveRow(p, l.id, to.key.slice(layerKey.length), to.into ? "into" : to.after ? "behind" : "front");
+                  const how = to.into ? "into" : to.after ? "behind" : "front";
+                  const [kind, pid, ...rest] = to.key.split(":");
+                  const by = kind === "l" ? rest.join(":") : null;
+                  const there = pages.findIndex((x) => x.id === pid);
+                  if (there < 0) return;
+                  if (there !== k) return onCarry(k, l.id, there, by, how);
+                  const next = by ? moveRow(p, l.id, by, how) : { ...p, layers: moveInto(p.layers, [l.id], null) };
                   if (next) onPage(next);
                 },
               )
             }
+            onContextMenu={() => !on && onPick(k, [l.id])}
             onPointerEnter={() => onPoint(l.id)}
             onPointerLeave={() => onPoint(null)}
             onClick={(e) => {
@@ -252,7 +290,7 @@ export function LayersPanel({
   };
 
   return (
-    <nav aria-label="Layers" className="flex w-60 shrink-0 flex-col border-r border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
+    <nav aria-label="Layers" style={{ width }} className="relative flex shrink-0 flex-col border-r border-[#e6e6e6] bg-white text-[11px] text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#e6e6e6] pl-4 pr-2 dark:border-[#444]">
         <h2 className="font-semibold">Layers</h2>
         <Tip label="Add a frame" side="right">
@@ -261,6 +299,8 @@ export function LayersPanel({
           </button>
         </Tip>
       </div>
+      <ContextMenu>
+      <ContextMenuTrigger asChild>
       <div role="tree" className="min-h-0 flex-1 select-none overflow-y-auto py-1">
         {pages.map((p, k) => {
           // layers lying loose on the canvas have no frame row: they stand on their own
@@ -297,6 +337,7 @@ export function LayersPanel({
                   else onPick(first, [], true, next);
                 }}
                 onDoubleClick={() => setRenaming(pageKey)}
+                onContextMenu={() => !((k === at && framed) || framedIds.includes(p.id)) && onPick(k, [], true)}
                 className={cn(ROW, "pl-1 font-semibold", (k === at && framed) || framedIds.includes(p.id) ? ON : "hover:bg-zinc-500/10")}
               >
                 <button type="button" aria-label={open ? "Close" : "Open"} onClick={(e) => (e.stopPropagation(), setShut((s) => (open ? [...s, p.id] : s.filter((id) => id !== p.id))))} className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 dark:text-[#b3b3b3]">
@@ -314,6 +355,35 @@ export function LayersPanel({
           );
         })}
       </div>
+      </ContextMenuTrigger>
+      {menu}
+      </ContextMenu>
+      {/* its right edge sets its width, kept for the next visit */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Layers width"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          const x0 = e.clientX;
+          const w0 = width;
+          let w = w0;
+          const move = (ev: PointerEvent) => setWidth((w = Math.min(MAX_W, Math.max(MIN_W, Math.round(w0 + ev.clientX - x0)))));
+          const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            try {
+              localStorage.setItem(WIDTH_KEY, String(w));
+            } catch {
+              // the width is only kept where the browser lets it
+            }
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
+        }}
+        className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-[#0d99ff]/40"
+      />
     </nav>
   );
 }

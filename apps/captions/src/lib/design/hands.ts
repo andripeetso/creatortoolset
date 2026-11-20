@@ -1,4 +1,4 @@
-import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type DesignStyles, type Layer, type PathLayer } from "@contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type DesignStyles, type ImageLayer, type Layer, type PathLayer } from "@contracts/design";
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
@@ -90,6 +90,63 @@ export function resizeBox<T extends Turned>(l: T, handle: Handle, dx: number, dy
   const now = at(w / 2, h / 2);
   return withContents(l, { ...l, x: whole(l.x + l.w / 2 + was.x - now.x - w / 2), y: whole(l.y + l.h / 2 + was.y - now.y - h / 2), w, h });
 }
+type Part = NonNullable<ImageLayer["crop"]>;
+type Pic = { width: number; height: number };
+const part4 = (n: number) => Math.round(n * 1e4) / 1e4;
+
+/** The part of its picture a picture layer shows, as fractions of it (its `crop`, or what its fit, zoom and focus show); null where the box shows more than the picture (a fitted one with room round it). */
+export function shownPart(l: ImageLayer, pic: Pic): Part | null {
+  if (l.crop) return l.crop;
+  const k = (l.fit === "cover" ? Math.max(l.w / pic.width, l.h / pic.height) : Math.min(l.w / pic.width, l.h / pic.height)) * (l.zoom ?? 1);
+  const dw = pic.width * k;
+  const dh = pic.height * k;
+  const c = { x: (-(l.w - dw) * (l.focus?.x ?? 0.5)) / dw, y: (-(l.h - dh) * (l.focus?.y ?? 0.5)) / dh, w: l.w / dw, h: l.h / dh };
+  const e = 1e-3;
+  return c.x < -e || c.y < -e || c.x + c.w > 1 + e || c.y + c.h > 1 + e ? null : { x: part4(Math.max(0, c.x)), y: part4(Math.max(0, c.y)), w: part4(Math.min(1, c.w)), h: part4(Math.min(1, c.h)) };
+}
+
+/** A picture layer resized from `was`: the part of the picture it showed is stretched to its new box, never cut again (a fitted one with room round it fits again). */
+export function stretched(was: ImageLayer, now: ImageLayer, pic: Pic | undefined): ImageLayer {
+  if (!pic?.width || !pic.height || now.crop || Math.abs(now.w / now.h - was.w / was.h) < 1e-3) return now;
+  const c = shownPart(was, pic);
+  return c ? { ...now, crop: c } : now;
+}
+
+/**
+ * A picture layer cropped by one of its handles: its box changes as resizeBox's would, while the picture stays where it
+ * is on the frame, never further out than the picture's own edges. Null where it shows more than its picture (shownPart).
+ */
+export function cropBox(l: ImageLayer, handle: Handle, dx: number, dy: number, pic: Pic, o: { center?: boolean; min?: number } = {}): ImageLayer | null {
+  const c = shownPart(l, pic);
+  if (!c) return null;
+  const a = ((l.rotate ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const sx = handle.includes("e") ? 1 : handle.includes("w") ? -1 : 0;
+  const sy = handle.includes("s") ? 1 : handle.includes("n") ? -1 : 0;
+  // box pixels for the whole picture, and the picture past each side of the box (a flip swaps the sides)
+  const px = l.w / c.w;
+  const py = l.h / c.h;
+  const [left, right] = l.flipX ? [(1 - c.x - c.w) * px, c.x * px] : [c.x * px, (1 - c.x - c.w) * px];
+  const [top, bottom] = l.flipY ? [(1 - c.y - c.h) * py, c.y * py] : [c.y * py, (1 - c.y - c.h) * py];
+  // the pull along the layer's own axes, grown no further than the picture reaches
+  const reach = (s: number, lo: number, hi: number) => (o.center ? Math.min(lo, hi) : s > 0 ? hi : lo);
+  const cap = (pull: number, s: number, lo: number, hi: number) => (s ? Math.min(s * pull, reach(s, lo, hi)) * s : pull);
+  const ux = cap(dx * cos + dy * sin, sx, left, right);
+  const uy = cap(dy * cos - dx * sin, sy, top, bottom);
+  const r = resizeBox(l, handle, ux * cos - uy * sin, ux * sin + uy * cos, { center: o.center, min: o.min });
+  // how far each side came in (below 0: went out), in box pixels
+  const inX = l.w - r.w;
+  const inY = l.h - r.h;
+  const leftIn = o.center ? inX / 2 : sx < 0 ? inX : 0;
+  const topIn = o.center ? inY / 2 : sy < 0 ? inY : 0;
+  const w = Math.min(1, r.w / px);
+  const h = Math.min(1, r.h / py);
+  const x = c.x + (l.flipX ? inX - leftIn : leftIn) / px;
+  const y = c.y + (l.flipY ? inY - topIn : topIn) / py;
+  return { ...r, crop: { x: part4(Math.min(1 - w, Math.max(0, x))), y: part4(Math.min(1 - h, Math.max(0, y))), w: part4(w), h: part4(h) } };
+}
+
 /** A container's layers following its new size (resize.ts fitContents); anything else as it is. */
 const withContents = <T extends Turned>(was: T, now: T): T => ("type" in now && now.type === "group" ? (fitContents(was as unknown as Layer, now as unknown as Layer) as unknown as T) : now);
 

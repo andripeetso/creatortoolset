@@ -826,6 +826,8 @@ export function Inspector({
   onExport,
   cropping,
   onCrop,
+  ratio,
+  onRatio,
   onCutOut,
   onSplit,
   cutting,
@@ -868,6 +870,9 @@ export function Inspector({
   /** the picked picture is being moved inside its box (the canvas's crop), and the switch for it */
   cropping: boolean;
   onCrop: (on: boolean) => void;
+  /** a layer's width and height keep its shape (the canvas's handles too), and the switch for it */
+  ratio: boolean;
+  onRatio: (on: boolean) => void;
   /** the picked picture's background taken away (a Mac of the person's own cuts it out); `cutting`: one is being cut */
   onCutOut: () => void;
   /** the picked picture split into its words, its pieces and what is behind them (a Mac of the person's own does it) */
@@ -891,12 +896,12 @@ export function Inspector({
   /** a copy of the frame in another size, its layers placed by their pins */
   onCopySize: (size: { w: number; h: number; name: string }) => void;
 }) {
-  const [ratio, setRatio] = useState(false);
   /** Each corner's radius shown by itself. */
   const [split, setSplit] = useState(false);
   const [as, setAs] = useState<ExportAs>({ jpeg: false, scale: 1 });
   const one = picked.length === 1 ? picked[0]! : null;
   const box = one ?? (picked.length ? boundsOf(picked) : null);
+  const texts = picked.some((l) => l.type === "text");
   const { same, every, sameList } = common(picked);
   const { num, slide, colour } = fieldsFor(onPreview, onPatch, colours, onDropper);
   /** The picked layers resized so the box round them is `w` × `h` (one layer: that layer; with the lock, in its shape). */
@@ -1054,9 +1059,10 @@ export function Inspector({
           </Section>
           <Section title="Layout">
             <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
-              {num("W", "Width", box.w, (n) => sized(n, ratio ? (box.h * n) / box.w : box.h), { min: 1 })}
-              {num("H", "Height", box.h, (n) => sized(ratio ? (box.w * n) / box.h : box.w, n), { min: 1 })}
-              <Tap label="Keep the shape" on={ratio} onClick={() => setRatio(!ratio)}>
+              {/* a text's box is for its words: the lock leaves it be, as on the canvas */}
+              {num("W", "Width", box.w, (n) => sized(n, ratio && !texts ? (box.h * n) / box.w : box.h), { min: 1 })}
+              {num("H", "Height", box.h, (n) => sized(ratio && !texts ? (box.w * n) / box.h : box.w, n), { min: 1 })}
+              <Tap label={ratio ? "Unlock the shape" : "Keep the shape"} on={ratio} onClick={() => onRatio(!ratio)}>
                 {ratio ? <Link2 className="h-3.5 w-3.5" /> : <Unlink2 className="h-3.5 w-3.5" />}
               </Tap>
             </div>
@@ -1207,18 +1213,18 @@ export function Inspector({
                 )
               }
             >
-              <Choice label="Picture fit" value={same((l) => (l.type === "image" ? l.fit : undefined))} options={[["cover", "Fill"], ["contain", "Fit"]] as const} onPick={(fit) => onPatch((l) => (l.type === "image" ? { ...l, fit } : l))} />
+              <Choice label="Picture fit" value={same((l) => (l.type === "image" ? l.fit : undefined))} options={[["cover", "Fill"], ["contain", "Fit"]] as const} onPick={(fit) => onPatch((l) => (l.type === "image" ? { ...l, fit, crop: undefined } : l))} />
               <div className="grid grid-cols-3 gap-2">
                 {num("⊕", "Zoom in percent", (() => {
                   const z = same((l) => (l.type === "image" ? (l.zoom ?? 1) : undefined));
                   return z === null ? null : Math.round(z * 100);
-                })(), (n) => (l) => (l.type === "image" ? { ...l, zoom: n > 100 ? n / 100 : undefined } : l), { min: 100, max: 800 })}
+                })(), (n) => (l) => (l.type === "image" ? { ...l, zoom: n > 100 ? n / 100 : undefined, crop: undefined } : l), { min: 100, max: 800 })}
                 {(["x", "y"] as const).map((axis) => (
                   <div key={axis}>
                     {num(axis === "x" ? "↔" : "↕", axis === "x" ? "Which part stays in view, left to right, in percent" : "Which part stays in view, top to bottom, in percent", (() => {
                       const f = same((l) => (l.type === "image" ? (l.focus?.[axis] ?? 0.5) : undefined));
                       return f === null ? null : Math.round(f * 100);
-                    })(), (n) => (l) => (l.type === "image" ? { ...l, focus: { x: 0.5, y: 0.5, ...l.focus, [axis]: n / 100 } } : l), { min: 0, max: 100 })}
+                    })(), (n) => (l) => (l.type === "image" ? { ...l, focus: { x: 0.5, y: 0.5, ...l.focus, [axis]: n / 100 }, crop: undefined } : l), { min: 0, max: 100 })}
                   </div>
                 ))}
               </div>

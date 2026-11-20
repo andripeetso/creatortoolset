@@ -5,7 +5,7 @@ import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib
 import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, moveInto, reid, scopeOf, seenBox, withScope } from "@/lib/design/tree";
 import { solidGround } from "@/lib/design/paint";
 import { isInstance, isMain } from "@/lib/design/components";
-import { boundsOf, boxPick, dropTarget, frameOf, hovers, withoutTyped, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { boundsOf, boxPick, cropBox, stretched, dropTarget, frameOf, hovers, withoutTyped, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
 import { dropSlot, fixedBy, flowInsert, flows } from "@/lib/design/layout";
 import { measureWords } from "@/lib/design/draw";
@@ -109,6 +109,7 @@ export function Stage({
   pointed,
   dropper,
   menu,
+  keepRatio,
 }: {
   /** the frames as shown: one being dragged is its live self */
   pages: DesignPage[];
@@ -157,6 +158,8 @@ export function Stage({
   onCrop: (id: string | null) => void;
   /** a layer pointed at in the layers list */
   pointed: string | null;
+  /** a layer's handles keep its shape (Shift lets go of it; a text's box never keeps it) */
+  keepRatio: boolean;
   /** the dropper is out: a press on the canvas gives it the colour under the pointer, and picks nothing */
   dropper: ((hex: string) => void) | null;
   /** the right-click menu's content */
@@ -251,7 +254,22 @@ export function Stage({
   useEffect(() => {
     pictureZoom.current =
       cropped && page
-        ? {
+        ? cropped.crop
+          ? {
+              // a cropped picture: its part grows or shrinks about its middle, inside the picture
+              now: 1 / cropped.crop.w,
+              set: (to) => {
+                const c = cropped.crop!;
+                // never more than the whole picture, never less than a hundredth of it
+                const k = Math.max(0.01 / Math.min(c.w, c.h), Math.min(1 / c.w, 1 / c.h, 1 / to / c.w));
+                const w = Math.round(c.w * k * 1e4) / 1e4;
+                const h = Math.round(c.h * k * 1e4) / 1e4;
+                const x = Math.round(Math.min(1 - w, Math.max(0, c.x + (c.w - w) / 2)) * 1e4) / 1e4;
+                const y = Math.round(Math.min(1 - h, Math.max(0, c.y + (c.h - h) / 2)) * 1e4) / 1e4;
+                if (w !== c.w || x !== c.x || y !== c.y) onCommit([{ ...page, layers: page.layers.map((l) => (l.id === cropped.id ? { ...cropped, crop: { x, y, w, h } } : l)) }], `zoom ${cropped.id}`);
+              },
+            }
+          : {
             now: cropped.zoom ?? 1,
             set: (to) => {
               const zoom = Math.round(Math.min(8, Math.max(1, to)) * 100) / 100;
@@ -771,16 +789,24 @@ export function Stage({
     const from = world(e);
     const one = picked.length === 1 ? picked[0]! : null;
     const b0 = boundsOf(picked);
+    // a picture with ⌘ held, or one being moved in its box: cropped, the picture staying where it is
+    const pic = one?.type === "image" ? loaded.get(one.picture) : undefined;
+    const cut = one?.type === "image" && pic?.width && (e.metaKey || e.ctrlKey || cropping === one.id) ? one : null;
     let last: DesignPage | null = null;
     let notes: string[] = [];
     drag(
       e,
       (ev) => {
         const to = world(ev);
-        const o = { keep: ev.shiftKey, center: ev.altKey, min: MIN };
+        // its shape kept by the lock (Shift lets go of it, or keeps it when unlocked); a text's box is for its words
+        const keep = picked.some((l) => l.type === "text") ? ev.shiftKey : keepRatio !== ev.shiftKey;
+        const o = { keep, center: ev.altKey, min: MIN };
+        const cropped = cut && pic ? cropBox(cut, h, to.x - from.x, to.y - from.y, pic, o) : null;
         // a side that hugged or filled is fixed at the size it is pulled to (layout.ts fixedBy)
         notes = [];
-        const sized = (one ? [resizeBox(one, h, to.x - from.x, to.y - from.y, o)] : resizeAll(picked, b0, resizeBox(b0, h, to.x - from.x, to.y - from.y, o))).map((l) => fixedBy(picked.find((p) => p.id === l.id)!, l, (n) => notes.push(n)));
+        // a picture made another shape is stretched, never cut again
+        // shortcut: pictures inside a resized group or several picked are still refitted; upgrade by passing `loaded` into fitContents
+        const sized = (cropped ? [cropped] : one ? [one.type === "image" ? stretched(one, resizeBox(one, h, to.x - from.x, to.y - from.y, o), pic) : resizeBox(one, h, to.x - from.x, to.y - from.y, o)] : resizeAll(picked, b0, resizeBox(b0, h, to.x - from.x, to.y - from.y, o))).map((l) => fixedBy(picked.find((p) => p.id === l.id)!, l, (n) => notes.push(n)));
         last = withLayers(page, sized);
         onLive([last]);
       },
@@ -825,6 +851,7 @@ export function Stage({
     // the room the picture has to move in: below 0 where it is bigger than the box
     const room = { x: l.w - pic.width * k, y: l.h - pic.height * k };
     const was = { x: l.focus?.x ?? 0.5, y: l.focus?.y ?? 0.5 };
+    const c = l.crop;
     const a = (-(l.rotate ?? 0) * Math.PI) / 180;
     const part = (n: number) => Math.round(Math.min(1, Math.max(0, n)) * 1000) / 1000;
     let last: DesignPage | null = null;
@@ -836,7 +863,9 @@ export function Stage({
         const dy = to.y - from.y;
         const along = (dx * Math.cos(a) - dy * Math.sin(a)) * (l.flipX ? -1 : 1);
         const down = (dx * Math.sin(a) + dy * Math.cos(a)) * (l.flipY ? -1 : 1);
-        last = withLayers(page, [{ ...l, focus: { x: Math.abs(room.x) > 0.5 ? part(was.x + along / room.x) : was.x, y: Math.abs(room.y) > 0.5 ? part(was.y + down / room.y) : was.y } }]);
+        // a cropped picture: its part moves the other way, inside the picture
+        const four = (n: number, hi: number) => Math.round(Math.min(hi, Math.max(0, n)) * 1e4) / 1e4;
+        last = withLayers(page, [c ? { ...l, crop: { ...c, x: four(c.x - (along * c.w) / l.w, 1 - c.w), y: four(c.y - (down * c.h) / l.h, 1 - c.h) } } : { ...l, focus: { x: Math.abs(room.x) > 0.5 ? part(was.x + along / room.x) : was.x, y: Math.abs(room.y) > 0.5 ? part(was.y + down / room.y) : was.y } }]);
         onLive([last]);
       },
       () => {
@@ -1205,9 +1234,12 @@ export function Stage({
           {!typed && picked.length > 1 && picked.map((l) => <div key={l.id} className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={place(at, l)} />)}
           {cropped && here && (
             <>
-              <div data-cropping className="pointer-events-none absolute cursor-move outline-dashed outline-2 outline-[#0d99ff]" style={place(at, cropped)} />
+              {/* its handles crop it */}
+              <div data-cropping className="pointer-events-none absolute cursor-move outline-dashed outline-2 outline-[#0d99ff]" style={place(at, cropped)}>
+                {handles(false)}
+              </div>
               <div className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap rounded-sm px-1 text-[11px] leading-4 text-white" style={{ background: BLUE, left: view.x + (here.x + cropped.x + cropped.w / 2) * view.z, top: view.y + (here.y + boundsOf([cropped]).y + boundsOf([cropped]).h) * view.z + 6 }}>
-                Drag to move the picture, scroll to zoom it
+                Drag to move the picture, its handles to crop it, scroll to zoom it
               </div>
             </>
           )}

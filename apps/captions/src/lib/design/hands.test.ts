@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { DesignPage, Layer } from "@contracts/design";
+import type { DesignPage, ImageLayer, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { dropTarget, paintedBox, withoutTyped, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hovers, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { cropBox, shownPart, stretched, dropTarget, paintedBox, withoutTyped, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hovers, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -362,4 +362,34 @@ it("a box drawn across picks a masked layer only where it is seen", () => {
   const frames = [{ rect: { x: 0, y: 0, w: 1000, h: 1000 }, layers: [mask, photo] }];
   expect(boxPick(frames, { x: 200, y: 200, w: 50, h: 50 }, { home: 0 })).toBeNull();
   expect(boxPick(frames, { x: 20, y: 20, w: 10, h: 10 }, { home: 0 })).toEqual({ at: 0, layers: ["m", "ph"] });
+});
+
+describe("cropping and stretching a picture", () => {
+  const pic = { width: 2000, height: 1000 };
+  // a 2:1 picture filling a 100 × 100 box: its middle half shows
+  const img = { id: "l1", type: "image", picture: "a.jpg", fit: "cover", x: 0, y: 0, w: 100, h: 100 } as const satisfies ImageLayer;
+
+  it("knows the part a filled picture shows, and none where a fitted one leaves room", () => {
+    expect(shownPart(img, pic)).toEqual({ x: 0.25, y: 0, w: 0.5, h: 1 });
+    expect(shownPart({ ...img, zoom: 2, focus: { x: 0, y: 1 } }, pic)).toEqual({ x: 0, y: 0.5, w: 0.25, h: 0.5 });
+    expect(shownPart({ ...img, fit: "contain" }, pic)).toBeNull();
+  });
+
+  it("crops from a side: the picture stays put, no further out than its own edges", () => {
+    // the right side 30 in: the part narrows from the right
+    expect(cropBox(img, "e", -30, 0, pic)).toMatchObject({ x: 0, w: 70, h: 100, crop: { x: 0.25, y: 0, w: 0.35, h: 1 } });
+    // the left side 20 in: the box moves with it, the part narrows from the left
+    expect(cropBox(img, "w", 20, 0, pic)).toMatchObject({ x: 20, w: 80, crop: { x: 0.35, w: 0.4 } });
+    // pulled 500 out to the left: only as far as the picture's edge (50 box pixels)
+    expect(cropBox(img, "w", -500, 0, pic)).toMatchObject({ x: -50, w: 150, crop: { x: 0, w: 0.75 } });
+    // mirrored, the left side of the box shows the picture's right
+    expect(cropBox({ ...img, flipX: true }, "w", 20, 0, pic)).toMatchObject({ x: 20, w: 80, crop: { x: 0.25, w: 0.4 } });
+    expect(cropBox({ ...img, fit: "contain" }, "e", -30, 0, pic)).toBeNull();
+  });
+
+  it("stretches the part it showed when it changes shape, and leaves a same-shape resize as it was", () => {
+    expect(stretched(img, { ...img, w: 50 }, pic).crop).toEqual({ x: 0.25, y: 0, w: 0.5, h: 1 });
+    expect(stretched(img, { ...img, w: 200, h: 200 }, pic).crop).toBeUndefined();
+    expect(stretched(img, { ...img, w: 50 }, undefined).crop).toBeUndefined();
+  });
 });

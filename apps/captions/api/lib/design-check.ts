@@ -35,6 +35,12 @@ const color = (v: unknown, or: string): string => (typeof v === "string" && COLO
 const sixDigits = (c: string): string => (c.length === 4 ? `#${c[1]}${c[1]}${c[2]}${c[2]}${c[3]}${c[3]}` : c.slice(0, 7));
 const oneOf = <T extends string>(v: unknown, all: readonly T[], or: T): T => (all.includes(v as T) ? (v as T) : or);
 const round = (n: number) => Math.round(n * 100) / 100;
+/** A part of a picture: at least a hundredth of it each way, and inside it. */
+const cropPart = (c: Record<string, unknown>, r: (n: number) => number) => {
+  const w = r(num(c.w, 0.01, 1, 1));
+  const h = r(num(c.h, 0.01, 1, 1));
+  return { x: r(num(c.x, 0, 1 - w, 0)), y: r(num(c.y, 0, 1 - h, 0)), w, h };
+};
 /** A name as one line of at most the limit's letters, or "" when there is none. */
 /** A style a colour, a text or a layer names, as it may be saved (whether the design has it is styled's to say). */
 const ref = (k: string, v: unknown): Record<string, string> => (typeof v === "string" && STYLE_ID.test(v) ? { [k]: v } : {});
@@ -127,11 +133,7 @@ function fillList(v: unknown, r: PageRules, say: (why: string) => void): { fills
           return [];
         }
         const mode = oneOf(p.mode, DESIGN_PICTURE_MODES, "fill");
-        const c = obj(p.crop) ? p.crop : null;
-        // a crop is a part of the picture: at least a hundredth of it each way, and inside it
-        const cw = c ? round(num(c.w, 0.01, 1, 1)) : 1;
-        const ch = c ? round(num(c.h, 0.01, 1, 1)) : 1;
-        const crop = c && mode === "crop" ? { crop: { x: round(num(c.x, 0, 1 - cw, 0)), y: round(num(c.y, 0, 1 - ch, 0)), w: cw, h: ch } } : {};
+        const crop = obj(p.crop) && mode === "crop" ? { crop: cropPart(p.crop, round) } : {};
         const scale = mode === "tile" && typeof p.scale === "number" ? { scale: round(num(p.scale, 0.02, 4, 0.25)) } : {};
         return [{ type: "image", picture: p.picture, mode, ...crop, ...scale, ...look }];
       }
@@ -583,6 +585,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       fit: oneOf(raw.fit, ["cover", "contain"] as const, "cover"),
       ...(num(raw.zoom, 1, 8, 1) > 1 ? { zoom: round(num(raw.zoom, 1, 8, 1)) } : {}),
       ...(obj(raw.focus) ? { focus: { x: round(num(raw.focus.x, 0, 1, 0.5)), y: round(num(raw.focus.y, 0, 1, 0.5)) } } : {}),
+      // finer than other parts: a crop's hundredth of a big picture is many pixels
+      ...(obj(raw.crop) ? { crop: cropPart(raw.crop, (n) => Math.round(n * 1e4) / 1e4) } : {}),
       ...retouched(raw),
       // the picture it was cut out of: one of this design's own, and not itself
       ...(typeof raw.uncut === "string" && raw.uncut !== raw.picture && r.pictures.includes(raw.uncut) ? { uncut: raw.uncut } : {}),
