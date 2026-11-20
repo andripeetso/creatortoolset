@@ -90,3 +90,31 @@ describe("old strips that aren't the clip's shape", () => {
     expect(stripOf(libraryDb(), tall)).toEqual({ w: 160, h: 90, frames: 20 });
   });
 });
+
+describe("the player's preview frames (thumbs.vtt)", () => {
+  const vtt = async (versionId: string, user = "owner-s") => {
+    const r = await Promise.resolve(app.request(`/api/library/media/${versionId}/thumbs.vtt`, { headers: as(user) }));
+    return { status: r.status, type: r.headers.get("content-type"), text: r.ok ? await r.text() : "" };
+  };
+  it("each of the strip's 20 frames covers its share of the clip, cut at the strip's own frame size", async () => {
+    const old = await index("Vault wide.mov", 1920, 1080); // an old 160 × 90 strip, 12 s
+    const r = await vtt(old);
+    expect(r.status).toBe(200);
+    expect(r.type).toContain("text/vtt");
+    const cues = r.text.split("\n\n").slice(1);
+    expect(r.text.startsWith("WEBVTT\n\n")).toBe(true);
+    expect(cues).toHaveLength(20);
+    expect(cues[0]).toBe(`00:00:00.000 --> 00:00:00.600\n/api/library/media/${old}/sprite?s=160x90#xywh=0,0,160,90`);
+    expect(cues[19]!.trim()).toBe(`00:00:11.400 --> 00:00:12.000\n/api/library/media/${old}/sprite?s=160x90#xywh=3040,0,160,90`);
+    const tall = await index("Vault tall.mov", 1080, 1920, false);
+    await put(tall, jpegOf(144 * 20, 256));
+    const t = (await vtt(tall)).text.split("\n\n").slice(1);
+    expect(t[1]).toBe(`00:00:00.600 --> 00:00:01.200\n/api/library/media/${tall}/sprite?s=144x256#xywh=144,0,144,256`);
+  });
+  it("is the strip's: none without one, and only for someone who may see the clip", async () => {
+    const v = await index("Vault none.mov", 1920, 1080);
+    expect((await vtt(v, "stranger")).status).toBe(404);
+    libraryDb().prepare("DELETE FROM derivatives WHERE version_id = ? AND kind = 'sprite'").run(v);
+    expect((await vtt(v)).status).toBe(404);
+  });
+});

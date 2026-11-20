@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-react";
-import { hostsOriginals, hostsProxies, SPRITE_FRAMES, type AssetCard, type AssetDetail, type LibraryUpload } from "@contracts/library";
+import { hostsOriginals, hostsProxies, type AssetCard, type AssetDetail, type LibraryUpload } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { awayLine, pickSource, proxySource, useHere, type Source } from "@/lib/here";
@@ -9,17 +9,19 @@ import { askMediaFolder } from "@/lib/local-files";
 import { macPlaces, placesConnect } from "@/lib/thisMac";
 import { placeLine } from "@/lib/wording";
 import { cn } from "@/lib/utils";
-import { across, clock, frameAt, frameStyle, useStrip } from "./ClipCards";
 import { copyReady, original, playerNote, type PlayerNote } from "./clip";
+
+// the player's skin is its own chunk, loaded when a clip opens (SkinPlayer.tsx)
+const SkinPlayer = lazy(() => import("./SkinPlayer"));
 
 /**
  * The clip's player, at the top of its panel. It starts playing as it opens: with sound where the window allows that,
  * else muted with a Sound on button. The clip's picture shows under it until the first frame is there. A file this
  * window cannot decode says so in the player's place; while its lighter copy is being made the panel's detail says so
  * (read again on each library change), and the player starts once the copy is there: the same play address then
- * serves the copy. Under a video, its strip of frames (Filmstrip).
- * A clip with its own turn (a screen recorded on its side) is turned here, the file never is. The window's own controls
- * would turn with it, so it has none: a click plays or pauses, and the strip under it goes to a moment.
+ * serves the copy. A video plays in Video.js's skin (SkinPlayer): its bar previews the clip's strip on hover.
+ * A clip with its own turn (a screen recorded on its side) is turned here, the file never is. A bar would turn with it,
+ * so it is a plain video with none: a click plays or pauses.
  * ponytail: no volume or full screen on a turned clip; its own controls if he asks for them
  * In a Mac app that checks where originals are (lib/here.ts), a clip whose original is on a computer plays it from this
  * one when it is here (badge Original), else a proxy (badge Proxy): this computer's cached one (Available offline) before
@@ -80,13 +82,12 @@ export function ClipPlayer({
   const [seen, setSeen] = useState<{ src: string; phase: Phase }>({ src: "", phase: "loading" });
   const phase = seen.src === src ? seen.phase : "loading";
   const to = (p: Phase) => setSeen({ src, phase: p });
-  const [now, setNow] = useState(startAt);
-  // a jump (the strip, the player's bar, a line in the transcript) is fetching its moment: the spinner shows and the
-  // strip's line pulses there. `waiting` alone misses it: a paused clip, and WebKit often, only say `seeking`
-  const [seekingAt, setSeekingAt] = useState("");
-  const seeking = seekingAt === src;
-  // what of the file the window has fetched, as parts of its length, drawn along the strip's foot
-  const [fetched, setFetched] = useState<[number, number][]>([]);
+  // the element playing now: the skin's arrives a moment later (its chunk), and it starts playing once it is there
+  const [el, setEl] = useState<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const bind = (v: HTMLVideoElement | HTMLAudioElement | null) => {
+    (media as { current: unknown }).current = v;
+    setEl(v);
+  };
 
   // another source takes over at the second playing now
   const take = (s: Source) => void (s.src !== pin?.src && setPin({ ...s, at: media.current?.currentTime }));
@@ -122,7 +123,7 @@ export function ClipPlayer({
   }, [check]);
 
   useEffect(() => {
-    const v = media.current;
+    const v = el;
     if (!v || !src) return;
     v.play().catch((e: unknown) => {
       // a file it cannot play says so through `error`; an abort is the panel moving on
@@ -131,7 +132,7 @@ export function ClipPlayer({
       setMuted(true);
       void v.play().catch(() => {});
     });
-  }, [src, media]);
+  }, [src, el]);
 
   // a missing original is explained under the title, once; the player keeps its picture
   const said = phase === "failed" ? playerNote(detail?.state ?? a.state, detail) : null;
@@ -237,31 +238,26 @@ export function ClipPlayer({
       if (pin && pin.src !== fallback.src && !nowhere) stall.current = window.setTimeout(leave, 3000);
     },
     onCanPlay: () => clearTimeout(stall.current),
-    onSeeking: () => setSeekingAt(src),
-    onSeeked: () => setSeekingAt(""),
-    onProgress: () => {
-      const v = media.current;
-      if (!v || !v.duration) return;
-      const b = v.buffered;
-      setFetched(Array.from({ length: b.length }, (_, i) => [b.start(i) / v.duration, b.end(i) / v.duration]));
-    },
     onError: () => {
       if (leave()) return;
       if (!retry) setPlainFailed(true);
       to("failed");
     },
     onVolumeChange: () => setMuted(!!media.current?.muted),
-    onTimeUpdate: () => {
-      const t = media.current?.currentTime ?? 0;
-      setNow(t);
-      onTime?.(t);
-    },
+    onTimeUpdate: () => onTime?.(media.current?.currentTime ?? 0),
   };
+
+  // an address that fails while the player is still going on the page (its chunk, its parts) errors before anyone
+  // listens: said once the element is there, so the proxy or the note follows as for any error
+  useEffect(() => {
+    if (el?.error) events.onError();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per element
+  }, [el]);
 
   if (a.kind === "audio" && !fill) {
     return (
       <>
-        <audio key={src} ref={media} src={src || undefined} controls preload="auto" className="w-full" {...events} />
+        <audio key={src} ref={bind} src={src || undefined} controls preload="auto" className="w-full" {...events} />
         {note && <Note note={note} file={original(a, detail)} />}
         {awayNote}
         {buttons}
@@ -271,11 +267,11 @@ export function ClipPlayer({
 
   // the box has the clip's own shape (an upright clip stands upright), at most so tall; in the window it fills its side
   const shape = { "--ar": a.width && a.height ? `${a.width} / ${a.height}` : "16 / 9" } as CSSProperties;
-  const strip = a.kind === "video" && a.spriteUrl && a.durationS ? { url: a.spriteUrl, duration: a.durationS } : null;
   return (
-    // the player, and under a video its strip; in the window the player takes what the strip leaves
     <div className={cn("flex w-full flex-col", fill ? "md:h-full" : "gap-1.5")}>
       <div
+        // the page's ← → and Space stay out of the player: there they are the player's own keys (ClipPanel)
+        data-player
         className={cn(
           "relative w-full overflow-hidden bg-black bg-contain bg-center bg-no-repeat",
           turn && "[container-type:size]",
@@ -286,25 +282,36 @@ export function ClipPlayer({
         style={{ ...shape, ...(picture ? { backgroundImage: `url("${picture}")` } : {}) }}
       >
         {a.kind === "audio" ? (
-          <audio key={src} ref={media} src={src || undefined} controls preload="auto" className="absolute inset-x-4 bottom-4 w-[calc(100%-2rem)]" {...events} />
-        ) : (
+          <audio key={src} ref={bind} src={src || undefined} controls preload="auto" className="absolute inset-x-4 bottom-4 w-[calc(100%-2rem)]" {...events} />
+        ) : turn ? (
           <video
             key={src}
-            ref={media}
+            ref={bind}
             src={src || undefined}
-            // the picture is upright already: on a turned video it would be turned twice
-            poster={turn ? undefined : picture}
-            controls={phase !== "failed" && !turn}
             playsInline
             preload="auto"
-            className={phase === "failed" ? "hidden" : turn ? "absolute left-1/2 top-1/2 cursor-pointer object-contain" : "absolute inset-0 h-full w-full object-contain"}
+            className={phase === "failed" ? "hidden" : "absolute left-1/2 top-1/2 cursor-pointer object-contain"}
             // turned about its middle; on its side it is laid out as tall as the box is wide, so it fills the box once turned
-            style={turn ? { width: side ? "100cqh" : "100%", height: side ? "100cqw" : "100%", transform: `translate(-50%, -50%) rotate(${turn}deg)` } : undefined}
-            onClick={turn ? (e) => void (e.currentTarget.paused ? e.currentTarget.play().catch(() => {}) : e.currentTarget.pause()) : undefined}
+            style={{ width: side ? "100cqh" : "100%", height: side ? "100cqw" : "100%", transform: `translate(-50%, -50%) rotate(${turn}deg)` }}
+            onClick={(e) => void (e.currentTarget.paused ? e.currentTarget.play().catch(() => {}) : e.currentTarget.pause())}
             {...events}
           />
+        ) : (
+          <Suspense fallback={null}>
+            <SkinPlayer
+              key={src}
+              media={bind}
+              src={src || undefined}
+              poster={picture}
+              // the clip's strip as preview frames over the bar (api/library thumbs.vtt)
+              thumbs={a.spriteUrl ? `/api/library/media/${a.versionId}/thumbs.vtt` : undefined}
+              className={phase === "failed" ? "hidden" : "absolute inset-0 h-full w-full"}
+              {...events}
+            />
+          </Suspense>
         )}
-        {(phase === "loading" || (seeking && phase !== "failed")) && !note && a.kind === "video" && (
+        {/* a turned clip has no bar, so no bar's spinner: its own while it loads */}
+        {phase === "loading" && turn && !note && (
           // centred by its box: animate-spin's rotate replaces a translate on the icon itself, which threw it off centre
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <Loader2 aria-label="Loading" className="h-6 w-6 animate-spin text-white/80 drop-shadow" />
@@ -336,99 +343,23 @@ export function ClipPlayer({
           )}
         </div>
         {onPrev && (
-          <button type="button" aria-label="Previous clip" onClick={onPrev} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
+          <button type="button" aria-label="Previous clip" onClick={(e) => (e.stopPropagation(), onPrev())} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
             <ChevronLeft className="h-5 w-5" />
           </button>
         )}
         {onNext && (
-          <button type="button" aria-label="Next clip" onClick={onNext} className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
+          <button type="button" aria-label="Next clip" onClick={(e) => (e.stopPropagation(), onNext())} className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
             <ChevronRight className="h-5 w-5" />
           </button>
         )}
       </div>
-      {strip && <Filmstrip {...strip} now={now} media={media} seeking={seeking} fetched={fetched} />}
       {buttons && <div className="shrink-0 px-2">{buttons}</div>}
     </div>
   );
 }
 
-/** Frames the filmstrip shows across: every other frame of the strip, so each is big enough to make out. */
-const CELLS = 10;
 /** How often an original on this computer is tried again before the player says it didn't open (with no proxy to play). */
 const ORIGINAL_TRIES = 3;
-
-/**
- * The clip's strip of frames under its player. A mouse over it shows the frame there and its time, a thin line marks
- * where the clip is playing, and a click or a drag goes there: the line moves at once and pulses until the moment is
- * fetched (the player's spinner shows meanwhile). A light bar along its foot shows what of the file is fetched. The player's own controls do the same from the keyboard.
- */
-function Filmstrip({
-  url,
-  duration,
-  now,
-  media,
-  seeking,
-  fetched,
-}: {
-  url: string;
-  duration: number;
-  now: number;
-  media: RefObject<HTMLVideoElement | null>;
-  seeking: boolean;
-  fetched: [number, number][];
-}) {
-  // the line goes where he clicked at once, not where the player still is
-  const [target, setTarget] = useState<number | null>(null);
-  useEffect(() => void (!seeking && setTarget(null)), [seeking]);
-  const [hover, setHover] = useState<number | null>(null);
-  const cell = useStrip(url) ?? 16 / 9; // nothing shows before the strip is here, so the guess never shows
-  const seek = (frac: number) => {
-    const v = media.current;
-    if (!v) return;
-    v.currentTime = frac * duration;
-    setTarget(frac);
-  };
-  const at = target ?? Math.min(1, now / duration);
-  return (
-    <div
-      aria-hidden
-      data-filmstrip
-      className="relative flex w-full shrink-0 cursor-pointer touch-none select-none bg-black"
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        seek(across(e));
-      }}
-      onPointerMove={(e) => {
-        const at = across(e);
-        if (e.pointerType === "mouse") setHover(at);
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) seek(at);
-      }}
-      onPointerLeave={() => setHover(null)}
-    >
-      {Array.from({ length: CELLS }, (_, i) => (
-        <div key={i} className="aspect-video min-w-0 flex-1" style={frameStyle(url, Math.floor(((i + 0.5) * SPRITE_FRAMES) / CELLS), cell, 16 / 9)} />
-      ))}
-      {fetched.map(([a, b]) => (
-        <div key={a} className="pointer-events-none absolute bottom-0 h-1 bg-white/60" style={{ left: `${a * 100}%`, width: `${(b - a) * 100}%` }} />
-      ))}
-      <div
-        className={cn("pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-white", seeking && "w-1 animate-pulse")}
-        style={{ left: `${at * 100}%` }}
-      />
-      {hover !== null && (
-        <div
-          data-frame
-          className="pointer-events-none absolute bottom-full mb-1.5 flex -translate-x-1/2 flex-col items-center gap-1"
-          // kept inside the strip's width, so it never hangs over the window's edge
-          style={{ left: `clamp(80px, ${hover * 100}%, calc(100% - 80px))` }}
-        >
-          <div className="h-[90px] w-[160px] rounded shadow-lg ring-1 ring-white/30" style={frameStyle(url, frameAt(hover), cell, 16 / 9)} />
-          <span className="rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-white">{clock(hover * duration)}</span>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * A photo in the clip window: its original at full quality (its small picture under it until that is there, and in its
