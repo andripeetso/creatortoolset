@@ -87,6 +87,7 @@ import {
   cutOf,
   versionLabel,
 } from "@/lib/review";
+import { toast } from "sonner";
 import { undoable } from "@/lib/undo";
 import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { cn } from "@/lib/utils";
@@ -680,10 +681,12 @@ function Review({
     const put = async (to: Approval) => {
       const a = await api.approve(to, guest ? name.trim() : undefined, asFilmed && to === "approved");
       setView((v) => (v ? { ...v, asset: { ...v.asset, approval: a.approval, versions: a.versions } } : v));
+      return a.finals;
     };
-    await put(status);
+    const finals = await put(status);
+    if (finals && "error" in finals) toast.error(`Approved, not in Finals: ${finals.error}`);
     // a reviewer on a share link may only approve or ask for changes, so there is no way back for them to take
-    if (manage && was !== status) undoable(`set to ${APPROVAL[status].label}`, () => put(was));
+    if (manage && was !== status) undoable(`set to ${APPROVAL[status].label}${finals && "pieceId" in finals ? " and sent to Finals" : ""}`, () => put(was));
   };
 
   // ---- fit the video box to the stage so drawings line up with the picture ----

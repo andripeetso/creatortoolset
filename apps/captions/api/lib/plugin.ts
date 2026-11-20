@@ -60,11 +60,11 @@ export interface ServerPlugin {
   menu?: MenuFn;
   // Per-edit flags: each shows as a chip on an AI Editor edit and is saved with that edit (api/editor/store.ts).
   editFlags?: EditFlag[];
-  // Send to Finals (api/library/finals.ts): a guard asked before each piece is made. A string refuses it, with the reason
-  // shown to the user; a guard that throws refuses too. Absent = allowed.
+  // Send to Finals (api/library/finals.ts): a guard asked before each piece is made, with where its version comes from.
+  // A string refuses it, with the reason shown to the user; a guard that throws refuses too. Absent = allowed.
   // onAdded runs after a piece is added (its outcome says what was linked or stored); a throw is logged and skipped.
   finals?: {
-    beforeAdd?: (input: FinalsAdd) => string | null | Promise<string | null>;
+    beforeAdd?: (input: FinalsAdd, source: FinalsSource) => string | null | Promise<string | null>;
     onAdded?: (input: FinalsAdd, source: FinalsSource, outcome: FinalsOutcome) => unknown;
   };
   // editor.ingest: where footage an account adds to an AI Editor edit from its computer is filed (api/editor/ingest.ts).
@@ -521,10 +521,10 @@ export function pluginInstallMetaLogin(): boolean {
 }
 
 /** The first loaded plug-in's reason to refuse a Finals piece, or null. A guard that throws refuses (fails closed). */
-export async function pluginFinalsRefusal(input: FinalsAdd): Promise<string | null> {
+export async function pluginFinalsRefusal(input: FinalsAdd, source: FinalsSource): Promise<string | null> {
   for (const p of loaded) {
     try {
-      const why = await p.finals?.beforeAdd?.(input);
+      const why = await p.finals?.beforeAdd?.(input, source);
       if (why) return why;
     } catch (e) {
       return `${p.id} refused: ${e instanceof Error ? e.message : String(e)}`;

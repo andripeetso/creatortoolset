@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useCachedLoad } from "@/lib/local-cache";
 import { undoable } from "@/lib/undo";
 import { useSteadyList } from "@/lib/steady-list";
@@ -827,7 +828,9 @@ function AssetCard({
   const setStatus = (s: Approval) => {
     const was = a.approval.status;
     const put = (to: Approval): [Promise<unknown>, Now] => [
-      reviewApi(`/api/review/assets/${a.id}`).approve(to),
+      reviewApi(`/api/review/assets/${a.id}`).approve(to).then((r) => {
+        if (r.finals && "error" in r.finals) toast.error(`Approved, not in Finals: ${r.finals.error}`);
+      }),
       (l) => l.map((x) => (x.id === a.id ? { ...x, approval: { status: to } } : x)),
     ];
     act(...put(s), s === was ? undefined : { what: `set to ${APPROVAL[s].label}`, back: () => put(was) });
