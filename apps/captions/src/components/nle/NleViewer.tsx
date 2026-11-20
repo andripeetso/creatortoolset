@@ -108,10 +108,11 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, onMenu, 
       </div>
       {prefs.scopes && scopes.strip}
       {below}
-      <div className="grid h-9 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-t border-black/60 bg-[#202024] px-2 text-[11px] text-zinc-400">
+      <div className="grid h-9 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 [[data-narrow]_&]:grid-cols-[minmax(0,1fr)_auto] border-t border-black/60 bg-[#202024] px-2 text-[11px] text-zinc-400">
         <div className="min-w-0 truncate">{clock}</div>
         <div className="flex items-center gap-0.5">{transport}</div>
-        <div className="flex min-w-0 items-center justify-end gap-1.5">
+        {/* a narrow viewer (a portrait cut beside a panel, NleLayout data-narrow): the clock and the play buttons only */}
+        <div className="flex min-w-0 items-center justify-end gap-1.5 [[data-narrow]_&]:hidden">
           <span className="truncate font-mono tabular-nums text-zinc-500" title="The size and frame rate">{W}×{H} · {fps} fps</span>
           <span className="inline-flex shrink-0 rounded border border-zinc-800 p-0.5" role="group" aria-label="Viewer zoom">
             {ZOOMS.map(([z, l]) => (

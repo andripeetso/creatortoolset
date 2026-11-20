@@ -62,7 +62,9 @@ const readOpen = (chat: boolean): Open => {
 // the frame, and the least each needs.
 const VIEWER_CHROME = 32 + 36 + 32 + 2;
 const VIEWER_PAD = 32 + 2 + 2;
-const VIEWER_MIN = 340;
+const VIEWER_MIN = 260;
+/** narrower than this the viewer's bar keeps only the clock and the play buttons */
+const VIEWER_NARROW = 420;
 const SIDE_MIN = 260;
 
 /** The viewer's width with the side panel beside it in a row of `room`, for a frame of `frame`; null: no room for the
@@ -223,7 +225,7 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
             </div>
           </>
         )}
-        <div className={cn("flex min-w-0", besideW === null ? "flex-1" : "shrink-0")} style={besideW === null ? undefined : { width: besideW }}>{viewer}</div>
+        <div data-narrow={besideW !== null && besideW < VIEWER_NARROW ? "" : undefined} className={cn("flex min-w-0", besideW === null ? "flex-1" : "shrink-0")} style={besideW === null ? undefined : { width: besideW }}>{viewer}</div>
         {besideW !== null && <div className="ml-1 flex min-w-0 flex-1">{side}</div>}
         <div className={cn("flex", !open.inspector && "hidden")} onPointerDownCapture={begin}>
           <Splitter dir="x" label="Inspector width" onDrag={(d) => set({ inspector: from.current.inspector - d })} onDone={done} />

@@ -200,8 +200,9 @@ describe("the side panel beside the viewer (chat mode)", () => {
   afterEach(() => useChatMode.setState({ on: false, shown: false }));
 
   it("a portrait cut's viewer is as wide as its frame drawn as tall as the row; a landscape one keeps the width unless there is room", () => {
-    // a 1000 px row 600 tall: the 9:16 frame is (600 - 102) * 9/16 = 280 wide, 316 with its padding, 340 at least
-    expect(viewerBeside({ w: 1000, h: 600 }, { w: 1080, h: 1920 })).toBe(340);
+    // a 1000 px row 600 tall: the 9:16 frame is (600 - 102) * 9/16 = 280 wide, 316 with its padding
+    expect(viewerBeside({ w: 1000, h: 600 }, { w: 1080, h: 1920 })).toBe(316);
+    expect(viewerBeside({ w: 1000, h: 300 }, { w: 1080, h: 1920 })).toBe(260);
     expect(viewerBeside({ w: 1000, h: 900 }, { w: 1080, h: 1920 })).toBe(485);
     // narrow: the portrait viewer gives way to the panel's least; too narrow for both: no panel
     expect(viewerBeside({ w: 600, h: 900 }, { w: 1080, h: 1920 })).toBe(340);
