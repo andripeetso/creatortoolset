@@ -255,6 +255,8 @@ export function LayersPanel({
                         <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
                       </span>
                       {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}
+                      {/* shown while designing only: never in a saved picture, a thumbnail or a video */}
+                      {l.reference && <span title="Shown while designing only, never in an export" className="shrink-0 rounded-[3px] border border-zinc-500/40 px-1 text-[9px] leading-[14px] text-zinc-500 dark:text-[#b3b3b3]">Reference</span>}
                       <button type="button" aria-label={l.locked ? "Unlock" : "Lock"} aria-pressed={!!l.locked} onClick={(e) => (e.stopPropagation(), set({ locked: l.locked ? undefined : true }))} className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-zinc-500/20", !l.locked && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100")}>
                         {l.locked ? <Lock className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />}
                       </button>

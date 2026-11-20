@@ -881,13 +881,14 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: st
 }
 
 /** `exact`: for a file that is saved (or a picture an AI is shown): a retouched picture is worked at every pixel it is drawn at, where the canvas works at fewer when the picture is big. */
-export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded, exact = false): void {
+/** `designing`: the designer's canvas, the only place a reference layer is drawn (every picture made of the page leaves it out). */
+export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded, exact = false, designing = false): void {
   // pictures lying loose on the canvas have no ground and no finish of a frame's
   if (!page.loose) fillWith(ctx, fillsOf(page), w, h, loaded, () => ctx.fillRect(0, 0, w, h));
   // the frame's box on the canvas: a background blur reads only what is inside it (on the editor's canvas, what is
   // outside is other frames and the canvas itself)
   const area = page.loose ? { x: 0, y: 0, w: Infinity, h: Infinity } : areaOf(ctx.getTransform(), w, h);
-  for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded, page.id, exact, area);
+  for (const l of page.layers) if (!l.hidden && (designing || !l.reference)) drawLayer(ctx, l, loaded, page.id, exact, area);
   if (!page.loose) {
     strokeWith(ctx, strokesOf(page), () => ctx.rect(0, 0, w, h), w, h, "miter", { box: true });
     finishFrame(ctx, page, w, h);

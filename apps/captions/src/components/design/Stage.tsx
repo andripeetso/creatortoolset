@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
+import { solidGround } from "@/lib/design/paint";
 import { boundsOf, boxPick, dropTarget, frameOf, hovers, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
@@ -297,7 +298,8 @@ export function Stage({
         ctx.beginPath();
         ctx.rect(area.x, area.y, area.w, area.h);
         ctx.clip();
-        drawPage(ctx, shown, f.w, f.h, loaded);
+        if (!p.loose && !solidGround(p)) checker(ctx, f.w, f.h);
+        drawPage(ctx, shown, f.w, f.h, loaded, false, true);
         ctx.restore();
         return;
       }
@@ -313,7 +315,8 @@ export function Stage({
         canvas.height = h;
         const g = canvas.getContext("2d")!;
         g.setTransform(plan.scale, 0, 0, plan.scale, -ax, -ay);
-        drawPage(g, shown, f.w, f.h, loaded);
+        if (!p.loose && !solidGround(p)) checker(g, f.w, f.h);
+        drawPage(g, shown, f.w, f.h, loaded, false, true);
         return { canvas, content, scale: plan.scale };
       });
       if (plan.scale === want) return void ctx.drawImage(picture.canvas, x + ax, y + ay);
@@ -1149,4 +1152,25 @@ export function Stage({
       {menu}
     </ContextMenu>
   );
+}
+
+/** Squares of 8 screen pixels, in the frame's own place: where a see-through frame shows through, while designing. */
+let tile: HTMLCanvasElement | null = null;
+function checker(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  if (!tile) {
+    tile = document.createElement("canvas");
+    tile.width = tile.height = 16;
+    const g = tile.getContext("2d")!;
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, 16, 16);
+    g.fillStyle = "#e5e5e5";
+    g.fillRect(0, 0, 8, 8);
+    g.fillRect(8, 8, 8, 8);
+  }
+  const k = ctx.getTransform().a || 1;
+  ctx.save();
+  ctx.scale(1 / k, 1 / k);
+  ctx.fillStyle = ctx.createPattern(tile, "repeat")!;
+  ctx.fillRect(0, 0, w * k, h * k);
+  ctx.restore();
 }

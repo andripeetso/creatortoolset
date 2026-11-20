@@ -16,11 +16,11 @@ afterAll(() => vi.unstubAllGlobals());
 const W = 80;
 const H = 60;
 /** The page drawn on a W × H canvas: its pixels, and one pixel's RGBA. */
-function draw(layers: Layer[], more: Partial<DesignPage> = {}) {
+function draw(layers: Layer[], more: Partial<DesignPage> = {}, designing = false) {
   const canvas = new Canvas(W, H);
   const ctx = canvas.getContext("2d");
   const page = { id: "p", background: "#ffffff", layers, ...more } as DesignPage;
-  drawPage(ctx as unknown as CanvasRenderingContext2D, page, W, H, new Map() as Loaded, true);
+  drawPage(ctx as unknown as CanvasRenderingContext2D, page, W, H, new Map() as Loaded, true, designing);
   const data = ctx.getImageData(0, 0, W, H).data;
   return { data, at: (x: number, y: number) => Array.from(data.slice((y * W + x) * 4, (y * W + x) * 4 + 4)) };
 }
@@ -147,5 +147,22 @@ describe("a layer drawn on a canvas", () => {
     expect(v(40, 1)).toBeLessThan(v(1, 1));
     expect(Math.abs(v(40, 1) - v(40, H - 2))).toBeLessThanOrEqual(3);
     expect(Math.abs(v(1, 30) - v(W - 2, 30))).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("what only the designer's canvas shows", () => {
+  it("a reference layer is drawn while designing and in no picture made of the page (an export, a thumbnail, the AI's look)", () => {
+    const ref = rect({ id: "ref", reference: true });
+    expect(draw([ref], {}, true).at(20, 20)).toEqual([255, 0, 0, 255]);
+    // every caller but the canvas draws with the default: an export, a thumbnail, pagePicture
+    expect(draw([ref]).at(20, 20)).toEqual([255, 255, 255, 255]);
+    // the layers over it are drawn as ever
+    expect(draw([ref, rect({ id: "b", fill: "#0000ff", x: 15, y: 15, w: 5, h: 5 })]).at(17, 17)).toEqual([0, 0, 255, 255]);
+  });
+
+  it("a frame with no fill is see-through: only its layers have colour", () => {
+    const { at } = draw([rect()], { fills: [] });
+    expect(at(2, 2)[3]).toBe(0);
+    expect(at(20, 20)).toEqual([255, 0, 0, 255]);
   });
 });

@@ -93,7 +93,21 @@ export default function DesignRoute() {
   return <DesignPage key={id} id={id} />;
 }
 
-function DesignPage({ id }: { id: string }) {
+/**
+ * The designer on one design, full screen over another page (the video editor's timeline): the same canvas, layers,
+ * properties, saving and assistant as /design/:id. Done saves what is not saved yet, then calls `onDone`; a save
+ * that fails keeps it open, with the reason in its error line. While it is open, the page under it should leave the
+ * keys alone: the designer's own (Delete, the arrows, ⌘Z) are read on the window.
+ */
+export function DesignEditor({ id, onDone }: { id: string; onDone: () => void }) {
+  return (
+    <div role="dialog" aria-label="Design" className="fixed inset-0 z-50 bg-background">
+      <DesignPage key={id} id={id} onDone={onDone} />
+    </div>
+  );
+}
+
+function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   // the layers, the canvas and what is picked side by side: beside the chats (chat mode) the page asks for that much
   usePageNeeds(920);
   // Read (Settings → Team → Access): the design opens to look at; nothing in it changes, saves or shows a control to change it
@@ -266,6 +280,8 @@ function DesignPage({ id }: { id: string }) {
   const remote = useRef<(d: Design) => boolean>(() => false);
   /** The saves, one after another: each says the design's last change this window knows of, which the one before it may have made. */
   const saving = useRef<Promise<void>>(Promise.resolve());
+  /** The last save failed (not refused for a change made elsewhere, which is merged and sent again): Done stops there. */
+  const failed = useRef(false);
   const send = useCallback(
     (pages: Page[]) => {
       unsaved.current = null;
@@ -281,6 +297,7 @@ function DesignPage({ id }: { id: string }) {
             // window's changes are done again on the design as it is now, and that is saved: a moment later when
             // the canvas changed with it (as any change is), at once when it did not
             if (e instanceof DesignChanged) return void (remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
+            failed.current = true;
             unsaved.current ??= pages;
             setSaved("unsaved");
             setError(message(e));
@@ -932,7 +949,8 @@ function DesignPage({ id }: { id: string }) {
     const p = pages[n]!;
     // every picture and drawing of the frame is there first: a frame is never saved with a grey box where one goes
     for (const l of p.layers) {
-      const img = l.hidden ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
+      // a hidden or reference layer is never drawn in it: its picture is not waited for
+      const img = l.hidden || l.reference ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
       if (!img || (img.complete && img.naturalWidth)) continue;
       const gone = new Error(`A picture on ${pageName(p, n)} could not be loaded: nothing was saved`);
       if (img.complete) throw gone;
@@ -946,6 +964,8 @@ function DesignPage({ id }: { id: string }) {
     c.width = f.w * scale;
     c.height = f.h * scale;
     const ctx = c.getContext("2d")!;
+    // a JPG has nothing see-through: a see-through frame is white there, never black
+    if (type === "image/jpeg") (ctx.fillStyle = "#ffffff"), ctx.fillRect(0, 0, c.width, c.height);
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     drawPage(ctx, p, f.w, f.h, loaded, true);
     const blob = await new Promise<Blob | null>((done) => c.toBlob(done, type, 0.92));
@@ -979,6 +999,36 @@ function DesignPage({ id }: { id: string }) {
     }
   };
 
+  /** Done (the designer opened over another page): every change saved first, then `onDone`. A save refused because the design changed elsewhere is merged and sent again (send), so this waits until no save is left. */
+  const [finishing, setFinishing] = useState(false);
+  const finish = async () => {
+    if (!onDone || finishing) return;
+    // Read: nothing here changes, so nothing is saved
+    if (locked) return onDone();
+    setFinishing(true);
+    // a field being typed in sets its value as it is left (a name, a hex code)
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    // the change the blur made, and one merged in from a refused save, reach `unsaved` once the page has drawn them
+    const drawn = () => new Promise((r) => setTimeout(r, 0));
+    /** The canvas is what the server has: a change merged in from a refused save reaches `unsaved` only when its timer's effect runs. */
+    const sent = () => JSON.stringify(latest.current) === JSON.stringify(server.current.pages);
+    failed.current = false;
+    try {
+      await drawn();
+      for (let n = 0; n < 5 && !failed.current; n++) {
+        if (unsaved.current || !sent()) send(unsaved.current ?? latest.current);
+        const now = saving.current;
+        await now;
+        await drawn();
+        if (now === saving.current && !unsaved.current && sent()) break;
+      }
+    } finally {
+      setFinishing(false);
+    }
+    // a save that failed says why in the error line, and the designer stays open; so does a merged change not sent yet
+    if (!unsaved.current && sent()) onDone();
+  };
+
   const exportPngs = async (only?: number | readonly number[], as: ExportAs = { jpeg: false, scale: 1 }) => {
     if (!design) return;
     setError(null);
@@ -1001,7 +1051,7 @@ function DesignPage({ id }: { id: string }) {
   if (!design || !hist) {
     return (
       <div className="flex min-h-screen flex-col">
-        <AppBar tool="Designer" />
+        <AppBar tool="Designer">{onDone && <Button size="sm" onClick={onDone}>Done</Button>}</AppBar>
         <p className="p-6 text-sm text-zinc-500">{error ?? "Opening the design…"}</p>
       </div>
     );
@@ -1091,6 +1141,11 @@ function DesignPage({ id }: { id: string }) {
           <Download className="h-4 w-4" />
           {frameCount === 1 ? "Export PNG" : `Export ${frameCount} PNGs`}
         </Button>
+        {onDone && (
+          <Button size="sm" variant="secondary" disabled={finishing} onClick={() => void finish()}>
+            Done
+          </Button>
+        )}
       </AppBar>
       {error && <p className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{error}</p>}
       {macNote && (
@@ -1117,6 +1172,7 @@ function DesignPage({ id }: { id: string }) {
 
         <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
+          {onDone && <h3 className="sr-only">Design open over the video editor: {design.name} (design id {design.id}, as in /design/{design.id})</h3>}
           <h3 data-picked className="sr-only">
             Picked: {page?.loose ? "layers lying loose on the canvas, outside every frame (design_get's canvas)" : framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
             {picked.length > 0 &&
