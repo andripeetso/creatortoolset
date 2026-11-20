@@ -6,12 +6,11 @@ import type { SessionUser } from "../users";
 import { storageOf, updateFolder } from "../devices-storage";
 import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
-import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
+import { ownedProjects, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
 import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { blursFaces, libraryDb } from "./db";
 import { pluginKeepsBlurred, pluginUploadsTo } from "../lib/plugin";
-import { workspaceScope } from "../lib/workshop/workspace";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
@@ -65,7 +64,8 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
     // without the helpers' own catches (workspaceLibrary, servedByPlugin answer no on a failure): a failure here is guarded
     const blurred = async () =>
       (await librariesHere(owner, ws)).some((l) => blursFaces(l.id)) ||
-      !!(await (ws ? workspaceScope.run({ id: ws }, () => pluginUploadsTo(owner)) : pluginUploadsTo(owner))) ||
+      // uploadsTo answers for a named workspace only (keepsBlurred covers an account with none)
+      !!(ws && (await workspaceScope.run({ id: ws }, () => pluginUploadsTo(owner)))) ||
       (await pluginKeepsBlurred(owner, id));
     if (!blurs.has(id)) blurs.set(id, blurred().catch(() => true));
     return blurs.get(id)!;

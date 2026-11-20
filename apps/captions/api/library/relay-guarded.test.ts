@@ -28,11 +28,18 @@ const { mountPlugins } = await import("../lib/plugin");
 const { Hono } = await import("hono");
 // a plug-in that keeps the "ws_catalog" workspace's footage (a footage catalog), whichever workspace is open
 // and for an account with no workspace at all ("": all of its media), as a footage catalog's plug-in answers
-// "ws_broken": the plug-in fails to answer, which counts as guarded
-mountPlugins(new Hono(), [{ id: "catalog", keepsBlurred: (u: string, ws: string) => {
-  if (ws === "ws_broken") throw new Error("catalog away");
-  return ws === "ws_catalog" || (u === "tinysolo" && ws === "");
-} } as never]);
+// "ws_broken": the plug-in fails to answer whether it serves that workspace, which counts as guarded
+const { workspaceScope } = await import("../lib/workshop/workspace");
+mountPlugins(new Hono(), [
+  {
+    id: "catalog",
+    keepsBlurred: (u: string, ws: string) => ws === "ws_catalog" || (u === "tinysolo" && ws === ""),
+    uploadsTo: () => {
+      if (workspaceScope.getStore()?.id === "ws_broken") throw new Error("catalog away");
+      return null;
+    },
+  } as never,
+]);
 
 const lib = (id: string, settings: Record<string, unknown>) =>
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'L', 'local', ?, 0)").run(id, OWNER, JSON.stringify(settings));
