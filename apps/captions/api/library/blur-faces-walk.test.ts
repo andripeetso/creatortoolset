@@ -29,11 +29,12 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// first: it sets library/worker.ts leaveToComputers as it loads, which an import cycle on main breaks the other way round
+const { acceptLibraryFile, applyLibraryResult } = await import("../work/library-package");
 const { blobs, libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
 const { tick } = await import("./worker");
 const { indexOnMac } = await import("./on-mac");
-const { acceptLibraryFile, applyLibraryResult } = await import("../work/library-package");
 const { pairDevice } = await import("../lib/devices");
 const { addVersion } = await import("../review");
 const { REFUSED_BLUR } = await import("./upload-gate");

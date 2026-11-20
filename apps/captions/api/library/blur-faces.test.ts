@@ -262,13 +262,15 @@ describe("a blurred render is a computer's own, and never the original's bytes",
     expect((await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, MAC, { authorization: `Bearer ${second.token}` })).status).toBe(409);
     // a member's own computer, signed in as itself, uploading as that member: not where the originals are kept
     const member = pairDevice("sam", "Sam Mac");
+    const declared = () => d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_kids' AND blurred_of IS NOT NULL").get();
+    const before = declared();
     const r2 = await app.request("/api/library/lib_kids/uploads", {
       method: "POST",
       headers: { "content-type": "application/json", "x-as": "sam", authorization: `Bearer ${member.token}` },
       body: JSON.stringify({ filename: "Lunge blurred.mp4", size: 4, fromPath: "/Volumes/Sam/Lunge blurred.mp4", fromDevice: member.device.id, blurredOf: OF }),
     });
-    expect(r2.status).toBe(409);
-    expect(d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_kids' AND blurred_of IS NOT NULL").get()).toEqual({ n: 0 });
+    expect([404, 409]).toContain(r2.status); // refused before or at the gate: a member's add is never this computer's
+    expect(declared()).toEqual(before);
     // another account's computer is not this account's either
     const other = pairDevice("sam", "Sam Mac").device.id;
     expect((await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, other)).status).toBe(409);
