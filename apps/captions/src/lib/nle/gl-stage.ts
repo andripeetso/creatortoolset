@@ -8,15 +8,15 @@
 // The frame is composed in the file's own code values, as the renderer composes it (so the LUT, the grade and the
 // scopes see what the engine sees), and taken to the screen in present(): there, in WebKit, BT.709 video goes through
 // the same display step the <video> element and a 2D canvas give it, so the plain <video>, a 2D canvas and this stage
-// look alike.
+// look alike. Stills, text and fills are sRGB as they are: they take the inverse step on the way in (toCodes), so they
+// come out of present() as a 2D canvas shows them.
 
 import type { GradeCdl, LutTable } from "./looks";
 
 /** A colour change on a picture: the camera conversion, then the grade (looks.ts). */
 export type Look = { lut?: LutTable | null; grade?: GradeCdl | null };
-export type ScopeMode = "wave" | "vector";
 type M = [number, number, number, number, number, number];
-type Target = { fb: WebGLFramebuffer | null; tex: WebGLTexture | null; w: number; h: number };
+type Target = { fb: WebGLFramebuffer | null; tex: WebGLTexture | null; w: number; h: number; used?: number };
 type Tex = { tex: WebGLTexture; w: number; h: number; gen: number; used: number; mips: boolean; still: boolean };
 type State = { m: M; alpha: number; fill: string; filter: string; look: Look | null };
 
@@ -66,6 +66,7 @@ uniform vec3 offs;
 uniform vec3 power;
 uniform float sat;
 uniform float shown;   // > 0: video codes to the screen, as WebKit shows BT.709 video (gamma 'shown', then sRGB)
+uniform float unshown; // > 0: an sRGB still or text into codes, the inverse of that step
 out vec4 color;
 vec3 at(ivec3 p) { return texelFetch(lut, p, 0).rgb; }
 // ffmpeg lut3d interp=tetrahedral, on the table's points themselves (texel centres)
@@ -103,9 +104,12 @@ void main() {
   }
   vec4 t = sum / (n.x * n.y);
   vec3 c = t.a > 0.0 ? t.rgb / t.a : vec3(0.0);
+  if (unshown > 0.0) c = pow(mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)), vec3(1.0 / unshown));
   if (invert == 1) c = 1.0 - c;
   if (lutN > 1.0) c = tetra(c);
   if (graded == 1) {
+    // the engine's grade reads its float RGB through a 1D LUT over 0-1.1; the browser's picture stops at 1, so the two
+    // differ only on superwhites
     c = pow(max(c * slope + offs, 0.0), power);
     float y = dot(c, vec3(0.2126, 0.7152, 0.0722));
     c = y + sat * (c - y);
@@ -205,6 +209,19 @@ export function rgba(css: string): [number, number, number, number] {
   return [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]];
 }
 
+/** An sRGB colour (premultiplied) as codes that come out of present()'s display step as that colour (gamma 0: as is). */
+export function toCodes([r, g, b, a]: [number, number, number, number], gamma: number): [number, number, number, number] {
+  if (!gamma || !a) return [r, g, b, a];
+  const lin = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  const [x, y, z] = [r, g, b].map((v) => lin(v / a) ** (1 / gamma) * a);
+  return [x, y, z, a];
+}
+
+/** WebKit's display step for BT.709 video on Apple's systems (gamma 1.961, then sRGB), as present() takes the frame;
+ *  0 elsewhere (the codes shown as they are). */
+export const SHOWN_GAMMA =
+  typeof navigator !== "undefined" && /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent) ? 1.961 : 0;
+
 /** What a 2D canvas filter string asks for that this stage draws: invert(1) and blur(Npx). */
 export function filterOf(f: string): { invert: boolean; blur: number } {
   return { invert: /invert\(\s*1/.test(f), blur: Number(/blur\(\s*([\d.]+)px/.exec(f)?.[1] ?? 0) };
@@ -216,14 +233,16 @@ export type GlStage = {
   screen: GlPainter;
   /** an offscreen frame (a shot is composed there, then its zoom drawn); drawn by passing `layer.token` as a source */
   layer: GlPainter & { token: HTMLCanvasElement };
-  /** true once the context is gone: draw the 2D way */
+  /** true once it can't draw: its context is gone (it may come back: the canvas gets webglcontextrestored) or `tainted` */
   readonly lost: boolean;
+  /** a picture the page may not read was drawn (another origin without CORS): for good, draw the 2D way */
+  readonly tainted: boolean;
   /** sizes the frame and the layer (device px), ready for a new frame */
   begin(w: number, h: number): void;
   /** the composed frame onto the screen */
   present(): void;
-  /** the scope of the frame composed last, `w`×`h` */
-  scope(mode: ScopeMode, w: number, h: number): ImageData | null;
+  /** the waveform and vectorscope of the frame composed last, `w`×`h` each, read back in one go */
+  scopes(w: number, h: number): [ImageData, ImageData] | null;
   /** lets go of a source's texture (its element is gone) */
   forget(src: CanvasImageSource): void;
   dispose(): void;
@@ -274,6 +293,7 @@ export function glStage(): GlStage | null {
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
   let lost = false;
+  let tainted = false;
   canvas.addEventListener("webglcontextlost", (e) => {
     e.preventDefault();
     lost = true;
@@ -289,7 +309,7 @@ export function glStage(): GlStage | null {
   const targets = new Map<string, Target>();
   const target = (name: string, w: number, h: number, float = false): Target => {
     let t = targets.get(name);
-    if (t && t.w === w && t.h === h) return t;
+    if (t && t.w === w && t.h === h) return Object.assign(t, { used: gen });
     if (t) {
       gl.deleteFramebuffer(t.fb);
       gl.deleteTexture(t.tex);
@@ -302,13 +322,13 @@ export function glStage(): GlStage | null {
     const fb = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    targets.set(name, (t = { fb, tex, w, h }));
+    targets.set(name, (t = { fb, tex, w, h, used: gen }));
     return t;
   };
   const onScreen: Target = { fb: null, tex: null, w: 1, h: 1 };
   // shortcut: WebKit on Apple's systems shows BT.709 video with gamma 1.961 into sRGB (measured: within 0.5/255 on
   // average of its 2D canvas); another browser is taken to show the codes as they are. Measure Chrome's if it matters.
-  const shownGamma = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent) ? 1.961 : 0;
+  const shownGamma = SHOWN_GAMMA;
   const use = (t: Target) => {
     gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
     gl.viewport(0, 0, t.w, t.h);
@@ -318,7 +338,8 @@ export function glStage(): GlStage | null {
   let gen = 0;
   const texs = new Map<CanvasImageSource, Tex>();
   const layerToken = document.createElement("canvas");
-  const sourceOf = (src: CanvasImageSource): { tex: WebGLTexture; w: number; h: number; t?: Tex } | null => {
+  type Src = { tex: WebGLTexture; w: number; h: number; t?: Tex; srgb?: boolean };
+  const sourceOf = (src: CanvasImageSource): Src | null => {
     if (src === layerToken) {
       const t = targets.get("layer");
       return t ? { tex: t.tex!, w: t.w, h: t.h } : null;
@@ -341,13 +362,14 @@ export function glStage(): GlStage | null {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src as TexImageSource);
       } catch {
         // a picture the page may not read (another origin without CORS): the player draws the 2D way from now on
-        lost = true;
+        tainted = true;
         return null;
       }
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       Object.assign(t, { gen, w, h, mips: false });
     }
-    return { tex: t.tex, w: t.w, h: t.h, t };
+    // a still or a 2D canvas is sRGB, a video is codes
+    return { tex: t.tex, w: t.w, h: t.h, t, srgb: !v };
   };
 
   const quad = (to: Target, m: M, x: number, y: number, w: number, h: number) => {
@@ -374,7 +396,7 @@ export function glStage(): GlStage | null {
   };
 
   // a picture from `src`'s part into `to`: its corner at (dx, dy), dw×dh, under `m`
-  const picture = (to: Target, s: { tex: WebGLTexture; w: number; h: number; t?: Tex }, m: M, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number, alpha: number, invert: boolean, look: Look | null, shown = 0) => {
+  const picture = (to: Target, s: Src, m: M, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number, alpha: number, invert: boolean, look: Look | null, shown = 0) => {
     const { p, u } = progs.pic;
     gl.useProgram(p);
     use(to);
@@ -395,6 +417,7 @@ export function glStage(): GlStage | null {
     gl.uniform4f(u.inside, (sx + 0.5) / s.w, (sy + 0.5) / s.h, (sx + sw - 0.5) / s.w, (sy + sh - 0.5) / s.h);
     gl.uniform1i(u.invert, invert ? 1 : 0);
     gl.uniform1f(u.shown, shown);
+    gl.uniform1f(u.unshown, s.srgb ? shownGamma : 0);
     const lut = look?.lut;
     gl.uniform1f(u.lutN, lut ? lut.size : 0);
     gl.activeTexture(gl.TEXTURE1);
@@ -464,14 +487,14 @@ export function glStage(): GlStage | null {
       transform: (a, b, c, d, e, f) => void (s.m = mul(s.m, [a, b, c, d, e, f])),
       save: () => void stack.push({ ...s }),
       restore: () => void (s = stack.pop() ?? s),
-      fillRect: (x, y, w, h) => solid(to(), s.m, x, y, w, h, rgba(s.fill), s.alpha),
+      fillRect: (x, y, w, h) => solid(to(), s.m, x, y, w, h, toCodes(rgba(s.fill), shownGamma), s.alpha),
       clearRect(x, y, w, h) {
         gl.disable(gl.BLEND);
         solid(to(), s.m, x, y, w, h, [0, 0, 0, 0], 1);
         gl.enable(gl.BLEND);
       },
       drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh) {
-        if (lost || sw <= 0 || sh <= 0) return;
+        if (lost || tainted || sw <= 0 || sh <= 0) return;
         const got = sourceOf(src);
         if (!got) return;
         const { invert, blur: sigma } = filterOf(s.filter);
@@ -488,10 +511,11 @@ export function glStage(): GlStage | null {
         picture(t, { tex: a.tex!, w: a.w, h: a.h }, ID, 0, 0, a.w, a.h, 0, 0, t.w, t.h, s.alpha, false, null);
       },
       blurFill(src, [sx, sy, sw, sh], w, h, sigma, dimBy, [dx, dy, dw, dh]) {
-        const got = lost ? null : sourceOf(src);
+        const got = lost || tainted ? null : sourceOf(src);
         if (!got || w < 1 || h < 1) return;
-        const a = target("smallA", w, h);
-        const b = target("smallB", w, h);
+        // by size: a transition's two shots each keep theirs
+        const a = target(`smallA${w}x${h}`, w, h);
+        const b = target(`smallB${w}x${h}`, w, h);
         gl.disable(gl.BLEND);
         picture(a, got, ID, sx, sy, sw, sh, 0, 0, w, h, 1, false, null);
         gl.enable(gl.BLEND);
@@ -507,7 +531,8 @@ export function glStage(): GlStage | null {
     canvas,
     screen,
     layer,
-    get lost() { return lost || gl.isContextLost(); },
+    get lost() { return lost || tainted || gl.isContextLost(); },
+    get tainted() { return tainted; },
     begin(w, h) {
       gen++;
       if (canvas.width !== w || canvas.height !== h) Object.assign(canvas, { width: w, height: h });
@@ -515,10 +540,15 @@ export function glStage(): GlStage | null {
       // half floats where they can be drawn into: no 8-bit steps before the display step
       target("main", w, h, floatSums);
       target("layer", w, h, floatSums);
-      // textures of pictures not drawn for a while let go (a numbered sequence makes one per picture)
+      // textures of pictures not drawn for a while let go (the player also lets each one go as it drops it)
       for (const [k, t] of texs) if (gen - t.used > 120) {
         gl.deleteTexture(t.tex);
         texs.delete(k);
+      }
+      for (const [k, t] of targets) if (k.startsWith("small") && gen - (t.used ?? 0) > 120) {
+        gl.deleteFramebuffer(t.fb);
+        gl.deleteTexture(t.tex);
+        targets.delete(k);
       }
     },
     present() {
@@ -528,11 +558,12 @@ export function glStage(): GlStage | null {
       picture(onScreen, { tex: main.tex!, w: main.w, h: main.h }, ID, 0, 0, main.w, main.h, 0, 0, main.w, main.h, 1, false, null, shownGamma);
       gl.enable(gl.BLEND);
     },
-    scope(mode, w, h) {
+    scopes(w, h) {
       const frame = targets.get("main");
-      if (lost || !frame) return null;
+      if (lost || tainted || !frame) return null;
       const [cw, ch] = [frame.w, frame.h];
-      const sums = target(`sums${floatSums ? "F" : ""}`, w, h, floatSums);
+      // the waveform on the left half, the vectorscope on the right, read back together (one wait for the card)
+      const sums = target(`sums${floatSums ? "F" : ""}`, 2 * w, h, floatSums);
       use(sums);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -545,15 +576,18 @@ export function glStage(): GlStage | null {
       gl.bindTexture(gl.TEXTURE_2D, frame.tex);
       gl.uniform1i(u.frame, 0);
       gl.uniform2i(u.grid, gw, gh);
-      gl.uniform1i(u.mode, mode === "wave" ? 0 : 1);
       gl.uniform2f(u.size, w, h);
-      // a flat colour lights its place right up, a spread one shows its shape (tuned by eye against GradePanel's)
-      const k = (w * h) / (mode === "wave" ? 2 : 8) / (gw * gh);
-      gl.uniform1f(u.weight, floatSums ? k : Math.max(1 / 255, k / 6));
       gl.blendFunc(gl.ONE, gl.ONE);
-      gl.drawArrays(gl.POINTS, 0, gw * gh);
+      for (const mode of [0, 1]) {
+        gl.viewport(mode * w, 0, w, h);
+        gl.uniform1i(u.mode, mode);
+        // a flat colour lights its place right up, a spread one shows its shape (tuned by eye against GradePanel's)
+        const k = (w * h) / (mode === 0 ? 2 : 8) / (gw * gh);
+        gl.uniform1f(u.weight, floatSums ? k : Math.max(1 / 255, k / 6));
+        gl.drawArrays(gl.POINTS, 0, gw * gh);
+      }
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      const out = target("scope", w, h);
+      const out = target("scope", 2 * w, h);
       use(out);
       gl.disable(gl.BLEND);
       const show = progs.show;
@@ -562,14 +596,19 @@ export function glStage(): GlStage | null {
       gl.uniform1i(show.u.pic, 0);
       gl.uniform1i(show.u.soft, floatSums ? 1 : 0);
       gl.uniform4f(show.u.src, 0, 0, 1, 1);
-      gl.uniformMatrix3fv(show.u.toPx, false, [w, 0, 0, 0, h, 0, 0, 0, 1]);
-      gl.uniform2f(show.u.size, w, h);
+      gl.uniformMatrix3fv(show.u.toPx, false, [2 * w, 0, 0, 0, h, 0, 0, 0, 1]);
+      gl.uniform2f(show.u.size, 2 * w, h);
       gl.uniform1f(show.u.flip, -1);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.enable(gl.BLEND);
-      const img = new ImageData(w, h);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(img.data.buffer));
-      return img;
+      const both = new Uint8Array(2 * w * h * 4);
+      gl.readPixels(0, 0, 2 * w, h, gl.RGBA, gl.UNSIGNED_BYTE, both);
+      const [wave, vector] = [new ImageData(w, h), new ImageData(w, h)];
+      for (let y = 0; y < h; y++) {
+        wave.data.set(both.subarray(y * 8 * w, y * 8 * w + 4 * w), y * 4 * w);
+        vector.data.set(both.subarray(y * 8 * w + 4 * w, (y + 1) * 8 * w), y * 4 * w);
+      }
+      return [wave, vector];
     },
     forget(src) {
       const t = texs.get(src);

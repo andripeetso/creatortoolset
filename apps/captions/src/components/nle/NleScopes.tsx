@@ -60,7 +60,7 @@ export function useNleScopes() {
     <div className="relative flex shrink-0 justify-center gap-2 border-t border-black/60 bg-[#1a1a1d] p-1.5">
       <canvas ref={wave} width={SCOPE_W} height={SCOPE_H} aria-label="Waveform" className="h-28 min-w-0 rounded bg-black" />
       <canvas ref={vector} width={SCOPE_W} height={SCOPE_H} aria-label="Vectorscope" className="h-28 min-w-0 rounded bg-black" />
-      <div ref={none} hidden className="absolute inset-0 flex items-center justify-center text-[11px] text-zinc-500">Scopes need WebGL 2, which this browser doesn't have</div>
+      <div ref={none} hidden className="absolute inset-0 flex items-center justify-center text-[11px] text-zinc-500">Scopes are not available here</div>
     </div>
   );
   return { onScopes, strip };

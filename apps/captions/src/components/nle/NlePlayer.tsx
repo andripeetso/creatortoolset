@@ -46,9 +46,10 @@ type Media = {
 
 /** A source's file as this browser plays it; `lead`: seconds into the file where the source's frame 0 is; `frame`: the
  *  file of picture n when the source is a numbered picture sequence (from 0). `why`, with no `url`: it doesn't play here,
-  *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). `log`: whether the file is in
- *  its camera's log (the Media Library says so for a proxy or master); not said = it is, as an original is, so the
- *  source's camera conversion applies. */
+ *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). `log`: whether the file is in
+ *  its camera's log. Not said = the file as filmed (an original, today's proxies and blurred masters, which keep the
+ *  log), so the source's camera conversion applies; a file already converted (a 709 proxy or render) must say false,
+ *  or it is converted twice. */
 export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string; log?: boolean;
   /** what it shows may be drawn into a design (Design on This Frame): a blurred copy, the person's own file, a design */
   grab?: true };
@@ -93,7 +94,8 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
   className?: string;
   /** looping playback's part, seconds: the pictures where it wraps to are opened ahead, so the jump back shows at once */
   loop?: [number, number] | null;
-  /** when set, the scopes of each new picture (SCOPE_W × SCOPE_H): its waveform and vectorscope; nulls without WebGL 2 */
+  /** when set, the scopes of new pictures (SCOPE_W × SCOPE_H, about 10 a second while playing): the waveform and the
+   *  vectorscope; nulls when the graphics card can't make them here (no WebGL 2, or a picture it may not read) */
   onScopes?: ((wave: ImageData | null, vector: ImageData | null) => void) | null;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -241,7 +243,10 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
           img.src = frame(i);
           got.set(i, img);
         }
-        for (const i of got.keys()) if (i < n - 2 || i > n + 4 * SEQ_AHEAD) got.delete(i);
+        for (const [i, img] of got) if (i < n - 2 || i > n + 4 * SEQ_AHEAD) {
+          stage?.forget(img);
+          got.delete(i);
+        }
         for (let i = n; i >= n - 2; i--) {
           const img = got.get(i);
           if (img?.complete && img.naturalWidth) return { el: img, w: img.naturalWidth, h: img.naturalHeight };
@@ -316,13 +321,28 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
       s.globalCompositeOperation = "source-over";
       lc.drawImage(small, 0, 0, w, h, ...op.dst);
     };
-    // the colour change on a source's picture (looks.ts); a LUT still loading draws again once it is here
-    const lookOf = (t: NleTimeline, src: string, grade: unknown): Look | null => {
+    // the colour change on a clip's picture (looks.ts), kept per timeline and files; a LUT still loading isn't kept, and
+    // draws again once it is here
+    let looks = new Map<string, Look | null>();
+    let looksOf: [NleTimeline, unknown] | null = null;
+    const lookOf = (t: NleTimeline, key: string, src: string, grade: unknown): Look | null => {
+      if (looksOf?.[0] !== t || looksOf[1] !== now.current.urlOf) [looks, looksOf] = [new Map(), [t, now.current.urlOf]];
+      if (looks.has(key)) return looks.get(key)!;
       const file = now.current.urlOf(src);
       const cam = t.sources[src]?.camera as EdjCamera | undefined;
-      if (!hasLook(cam, file?.log, grade)) return null;
-      return { lut: file?.log === false ? null : lutOf(cam, () => void (painted = false)), grade: gradeOf(grade) };
+      const want = hasLook(cam, file?.log, grade);
+      const lut = want && file?.log !== false ? lutOf(cam, () => void ((looks = new Map()), (painted = false))) : null;
+      const look = want ? { lut, grade: gradeOf(grade) } : null;
+      if (!(want && cam?.on && file?.log !== false && !lut)) looks.set(key, look);
+      return look;
     };
+    // a lost context (the card was reset): the 2D way meanwhile, the stage again when the canvas says it is back or
+    // after a wait that doubles up to 30 s
+    let retryAt = 0;
+    let backoff = 1000;
+    let old: GlStage | null = null;
+    const retrySoon = () => void (retryAt = 1);
+    let scopedAt = 0;
     let sized = "";
     const frame = () => {
       raf = requestAnimationFrame(frame);
@@ -330,8 +350,25 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
       claimed.clear();
       if (stage?.lost) {
         toStage(false);
+        if (stage.tainted) stage.dispose(); // for good: a picture the card may not read
+        else {
+          old = stage;
+          old.canvas.addEventListener("webglcontextrestored", retrySoon, { once: true });
+          retryAt = performance.now() + backoff;
+        }
         stage = null;
         painted = false;
+      }
+      if (!stage && retryAt && performance.now() >= retryAt) {
+        old?.dispose();
+        old = null;
+        stage = glStage();
+        backoff = Math.min(2 * backoff, 30_000);
+        retryAt = stage ? 0 : performance.now() + backoff;
+        if (stage) {
+          toStage(true);
+          painted = false;
+        }
       }
       const cv = canvas.current;
       const ctx: Painter | null = stage ? stage.screen : (cv?.getContext("2d") ?? null);
@@ -382,7 +419,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
             more += stamp(pm, pd);
           }
         }
-        return { item, track, key, k, seen, under, m, d, got, more, look: lookOf(t, item.src, item.grade) };
+        return { item, track, key, k, seen, under, m, d, got, more, look: lookOf(t, key, item.src, item.grade) };
       });
       // Play waits until the pictures at the playhead can play on (or the clock's half second is up)
       if (c.state === "waiting" && pics.every((p) => p.item.fx === "flash" || readyToPlay(p.m, p.d))) c.ready();
@@ -397,7 +434,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
       const fit = plainVideo(on);
       const one = pics[0];
       // a colour change or the scopes need the picture drawn
-      const direct = fit && !one?.look && !(stage && scope) && one?.d && one.m && !one.m.seq && one.m.el instanceof HTMLVideoElement && !one.m.el.seeking ? one.m.el : null;
+      const direct = fit && !(stage && (one?.look || scope)) && one?.d && one.m && !one.m.seq && one.m.el instanceof HTMLVideoElement && !one.m.el.seeking ? one.m.el : null;
       if (direct) {
         show(direct, fit!);
         painted = true;
@@ -478,7 +515,12 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
         }
         stage?.present();
         unshow();
-        if (onScopes) onScopes(stage?.scope("wave", SCOPE_W, SCOPE_H) ?? null, stage?.scope("vector", SCOPE_W, SCOPE_H) ?? null);
+        // the scopes wait for the card to finish the frame: about 10 a second while playing, every new picture else
+        if (onScopes && stage && (!run || performance.now() - scopedAt >= 100)) {
+          scopedAt = performance.now();
+          const both = stage.scopes(SCOPE_W, SCOPE_H);
+          if (both) onScopes(...both);
+        } else if (onScopes && !stage && !retryAt) onScopes(null, null);
       }
       // the next clip on each track: its file open in a free element of its file, waiting on its first frame (a clip
       // that plays on from this one needs none: its element plays across the cut)
@@ -523,6 +565,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
       for (const k of [...all.keys()]) drop(k);
       toStage(false);
       stage?.dispose();
+      old?.dispose();
     };
   }, [W, H]);
 

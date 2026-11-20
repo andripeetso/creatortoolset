@@ -1,12 +1,37 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { withKeys, type NleTimeline } from "@/lib/nle/model";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { NlePlayer, whyNot, type NleFile } from "./NlePlayer";
 
 afterEach(() => vi.unstubAllGlobals());
+
+// a stand-in for the graphics stage (no WebGL in this test page): it keeps a texture for each picture drawn until the
+// player lets it go; off, the player draws the 2D way as before
+const fake = vi.hoisted(() => {
+  const st = { on: false, live: new Set<unknown>(), drawn: [] as unknown[] };
+  const painter = () =>
+    new Proxy({} as Record<string | symbol, unknown>, {
+      get: (t, k) => (k === "drawImage" || k === "blurFill" ? (src: unknown) => void (st.drawn.push(src), st.live.add(src)) : k in t ? t[k] : () => {}),
+      set: (t, k, v) => ((t[k] = v), true),
+    });
+  const stage = () => ({
+    canvas: document.createElement("canvas"),
+    screen: painter(),
+    layer: Object.assign(painter(), { token: document.createElement("canvas") }),
+    lost: false,
+    tainted: false,
+    begin: () => {},
+    present: () => {},
+    scopes: () => null,
+    forget: (src: unknown) => void st.live.delete(src),
+    dispose: () => {},
+  });
+  return Object.assign(st, { stage });
+});
+vi.mock("@/lib/nle/gl-stage", async (real) => ({ ...(await real<object>()), glStage: () => (fake.on ? fake.stage() : null) }));
 
 // a Tiny Acrobatics cut of one shot whose file is on a drive that isn't connected
 const tl: NleTimeline = withKeys({
@@ -115,5 +140,73 @@ describe("the sound of a clip from a video file", () => {
     expect(sources).toContainEqual(["AUDIO", "/tiny/IMG_0001.MOV"]);
     expect(routed).toHaveLength(1);
     act(() => root.unmount());
+  });
+});
+
+describe("on the graphics stage", () => {
+  afterEach(() => {
+    fake.on = false;
+    fake.live.clear();
+    fake.drawn.length = 0;
+    vi.restoreAllMocks();
+  });
+  const byHand = () => {
+    let next = null as FrameRequestCallback | null;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => ((next = cb), 1));
+    vi.stubGlobal("cancelAnimationFrame", () => void (next = null));
+    return (n: number) => {
+      for (let i = 0; i < n; i++) next?.(i * 16);
+    };
+  };
+
+  it("a numbered picture sequence keeps a texture only for the pictures it still holds, however long it plays", async () => {
+    fake.on = true;
+    vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(1080);
+    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(1920);
+    const run = byHand();
+    const card = withKeys({ timeline: { fps: 25, width: 1080, height: 1920 }, sources: { c: { fps: 25 } }, tracks: { V1: { items: [{ src: "c", rec: 0, len: 400, in: 0 }] } } } as unknown as NleTimeline);
+    const urlOf = (): NleFile => ({ url: "/tiny/card/0.png", frame: (n) => `/tiny/card/${n}.png` });
+    const clock = new NleClock();
+    const root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => root.render(<NlePlayer tl={card} clock={clock} rate={1} urlOf={urlOf} nameOf={() => "card"} />));
+    let most = 0;
+    for (let f = 0; f < 300; f++) {
+      clock.seek(f / 25);
+      run(1);
+      most = Math.max(most, [...fake.live].filter((x) => x instanceof HTMLImageElement).length);
+    }
+    expect(fake.drawn.filter((x) => x instanceof HTMLImageElement).length).toBeGreaterThan(250);
+    expect(most).toBeLessThanOrEqual(4);
+    act(() => root.unmount());
+  });
+
+  it("a clip with a grade or a camera conversion is never shown as its plain <video>; a plain one is", async () => {
+    fake.on = true;
+    vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+    vi.spyOn(HTMLMediaElement.prototype, "seeking", "get").mockReturnValue(false);
+    // this test page's <video> has no size of its own
+    for (const [k, v] of [["videoWidth", 1080], ["videoHeight", 1920]] as const) Object.defineProperty(HTMLVideoElement.prototype, k, { get: () => v, configurable: true });
+    onTestFinished(() => {
+      for (const k of ["videoWidth", "videoHeight"]) Reflect.deleteProperty(HTMLVideoElement.prototype, k);
+    });
+    vi.spyOn(HTMLMediaElement.prototype, "src", "set").mockImplementation(() => {});
+    const shown = async (item: object, camera?: object, log?: boolean) => {
+      const run = byHand();
+      const one = withKeys({ timeline: { fps: 25, width: 1080, height: 1920 }, sources: { a: { fps: 25, ...(camera ? { camera } : {}) } }, tracks: { V1: { items: [{ src: "a", rec: 0, len: 50, in: 0, ...item }] } } } as unknown as NleTimeline);
+      const box = document.body.appendChild(document.createElement("div"));
+      const root = createRoot(box);
+      await act(async () => root.render(<NlePlayer tl={one} clock={new NleClock()} rate={1} urlOf={() => ({ url: "/tiny/talk.mp4", log })} nameOf={() => "talk"} />));
+      fake.drawn.length = 0;
+      run(10);
+      const out = { video: [...box.querySelectorAll("video")].some((v) => v.style.visibility === "visible"), drawn: fake.drawn.some((x) => x instanceof HTMLVideoElement) };
+      act(() => root.unmount());
+      return out;
+    };
+    expect(await shown({})).toEqual({ video: true, drawn: false });
+    expect(await shown({ grade: { sat: 1.3 } })).toEqual({ video: false, drawn: true });
+    expect(await shown({}, { curve: "slog3", on: true })).toEqual({ video: false, drawn: true });
+    // a file already converted (log: false) is never converted again: with no grade it plays as it is
+    expect(await shown({}, { curve: "slog3", on: true }, false)).toEqual({ video: true, drawn: false });
   });
 });
