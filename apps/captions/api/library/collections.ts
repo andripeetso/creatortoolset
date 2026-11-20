@@ -928,6 +928,9 @@ collectionApp.get("/:id/pieces/:pid/cover", async (c) => {
     .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
     .get(row.cover_version_id) as { asset_id: string } | undefined;
   if (!v || !(await canSee(viewer, assetRef(libraryId, v.asset_id, row.cover_version_id)))) return notFound(c);
+  // Blur faces: a cover cut from a clip not blurred (picked before it was on) stays stored and is not shown
+  const left = mayLeave(libraryId, { versionId: row.cover_version_id });
+  if (!left.ok) return c.json(left.body, left.status);
   try {
     const at = await blobs.locate(row.cover_key, 900, { contentType: "image/jpeg" });
     return at.kind === "url" ? c.redirect(at.url, 302) : await sendFile(c, at.path, "image/jpeg");

@@ -153,6 +153,8 @@ interface Version {
   /** Its cut plays footage nobody has blurred yet, faces as filmed (whoever files it sets it: an editor, a plug-in). Only its
    *  owner may approve it, as filmed; in a workspace a plug-in serves, no share link or download is turned on for it. */
   notBlurred?: boolean;
+  /** Its filer blurred every face in it (an editor that blurs): under Blur faces only such a version is shared or shown. */
+  blurred?: true;
   /** Its owner approved it with the faces as filmed. */
   approvedAsFilmed?: { by: string; at: number };
   /** When its video files were deleted to save space (a later version went on
@@ -169,7 +171,8 @@ const waitsOnBlur = (m: Meta) => {
   return !!top?.notBlurred && !top.approvedAsFilmed;
 };
 /** A version with its files plays faces nobody has blurred: a share link shows every version. */
-const showsUnblurred = (m: Meta) => m.versions.some((v) => v.notBlurred && !v.removed);
+/** Under Blur faces: a version with its files was not filed as blurred (one from before the switch, or not declared). */
+const showsUnblurred = (m: Meta) => m.versions.some((v) => !v.blurred && !v.removed);
 const NOT_BLURRED_SHARE = "Blur the faces first: this cut uses clips that aren't blurred yet";
 /** Blur faces is on for the workspace a cut is filed in (contracts LibrarySettings.blurFaces). */
 const blurFacesIn = async (owner: string, workspace?: string) => {
@@ -885,7 +888,16 @@ const realUser = (u: SessionUser | undefined) =>
   u && u.role !== "visitor" ? u.username : undefined;
 
 /** Who may see a Review version on an owner, share or public-page route (null = not theirs). For a plug-in's routes too. */
+/**
+ * Who may watch the video the request names, as viewerOf answers. Under Blur faces nobody but its owner (and the server's
+ * admin) watches a video with a version not filed as blurred: a link or a teammate gets nothing of it. Its files stay.
+ */
 export async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
+  const v = await viewerOf(c);
+  return v && !v.manage && showsUnblurred(v.meta) && (await blurFacesIn(v.meta.owner, v.meta.workspace)) ? null : v;
+}
+
+async function viewerOf(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
   const user = c.get("user");
   const token = c.req.param("token");
   const guestKey = c.req.header("x-review-key")?.slice(0, 80) || undefined;
@@ -969,6 +981,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(manage && v.local && !v.removed ? { local: v.local } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(v.notBlurred ? { notBlurred: true } : {}),
+      ...(v.blurred ? { blurred: true } : {}),
       ...(v.approvedAsFilmed ? { approvedAsFilmed: v.approvedAsFilmed } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
       bytes: v.bytes,
@@ -1148,6 +1161,7 @@ export async function addVersion(
       ...(v.source ? { source: v.source } : {}),
       ...(v.local && path.isAbsolute(v.local) ? { local: v.local } : {}),
       ...(v.notBlurred ? { notBlurred: true } : {}),
+      ...(v.blurred && !v.notBlurred ? { blurred: true as const } : {}),
       createdAt: now,
     });
   });

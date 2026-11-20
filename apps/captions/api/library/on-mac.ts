@@ -135,12 +135,29 @@ export const framesDir = (versionId: string) => path.join(env.dataDir, "library"
  * Blur faces: the stills of a clip not blurred yet, held in memory until its description and never kept here (P2.4). A
  * restart loses them; the clip is then described from its words. For the call they are written out (heldDir) and gone after.
  */
-const heldStills = new Map<string, Buffer[]>();
+const heldStills = new Map<string, { at: number; stills: Buffer[]; bytes: number }>();
 const heldDir = (versionId: string) => path.join(tmpdir(), "ct-held-stills", versionId);
+/** At most this much held, and for this long: past either the oldest go first (described from its words then). */
+export const HELD_STILLS_BYTES = 256 * MB;
+export const HELD_STILLS_MS = 6 * 3600_000;
+
+/** Holds `stills` for `versionId`, dropping the expired and then the oldest past HELD_STILLS_BYTES. */
+export function holdStills(versionId: string, stills: Buffer[], now = Date.now()): void {
+  heldStills.delete(versionId);
+  heldStills.set(versionId, { at: now, stills, bytes: stills.reduce((n, b) => n + b.length, 0) });
+  let total = [...heldStills.values()].reduce((n, h) => n + h.bytes, 0);
+  for (const [id, h] of heldStills) {
+    if (now - h.at <= HELD_STILLS_MS && total <= HELD_STILLS_BYTES) break; // the rest are newer (Map keeps the order they came in)
+    heldStills.delete(id);
+    total -= h.bytes;
+  }
+}
 
 /** The stills kept for `versionId`, in order; [] when there are none. */
 export async function macFrames(versionId: string): Promise<string[]> {
-  const held = heldStills.get(versionId);
+  const h = heldStills.get(versionId);
+  if (h && Date.now() - h.at > HELD_STILLS_MS) heldStills.delete(versionId);
+  const held = heldStills.get(versionId)?.stills;
   const dir = held ? heldDir(versionId) : framesDir(versionId);
   if (held) {
     await mkdir(dir, { recursive: true });
@@ -251,7 +268,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     if (!pictures) {
-      heldStills.set(versionId, x.frames.map((f) => Buffer.from(f, "base64")));
+      holdStills(versionId, x.frames.map((f) => Buffer.from(f, "base64")));
       enqueueJob(d, libraryId, versionId, "describe", by);
       return { assetId, versionId };
     }

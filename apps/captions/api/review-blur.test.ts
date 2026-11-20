@@ -98,14 +98,37 @@ it("turns no share link or download on for an unblurred cut once Blur faces is o
     expect(r.status).toBe(409);
     expect((await json(r)).error).toBe("Blur the faces first: this cut uses clips that aren't blurred yet");
   }
-  // the link that was on stays on (the page warns on it), and can still be turned off
-  expect((await asset(id)).share).toMatchObject({ enabled: true, download: false });
+  // the link that was on stays on (the page warns on it), and can still be turned off; under Blur faces it shows nothing
+  // of a video with a version not filed as blurred, while its owner still watches it
+  const on = (await asset(id)).share;
+  expect(on).toMatchObject({ enabled: true, download: false });
+  expect((await app.request(`/s/${on.token}`, { headers: { "x-as": "ben" } })).status).toBe(404);
+  expect((await app.request(`/assets/${id}`)).status).toBe(200);
   expect((await json(share({ enabled: false }))).share.enabled).toBe(false);
   // a project link with it in is refused too
   const project = await json(app.request("/projects", { ...send("POST", { name: "Shoot" }), headers: { "content-type": "application/json", "x-ct-workspace": STORE } }));
   await app.request(`/assets/${id}`, send("PATCH", { projectId: project.id }));
   expect((await app.request(`/projects/${project.id}`, send("PATCH", { share: { enabled: true } }))).status).toBe(409);
   blurFaces(false);
+});
+
+it("under Blur faces a video filed before it with no word on its faces is neither shared nor shown on its link", async () => {
+  const id = await cut(STORE, false, undefined, false);
+  const share = (s: Record<string, unknown>) => app.request(`/assets/${id}`, send("PATCH", { share: s }));
+  const token = (await json(share({ enabled: true }))).share.token;
+  expect((await app.request(`/s/${token}`, { headers: { "x-as": "ben" } })).status).toBe(200);
+  blurFaces(true);
+  try {
+    expect((await app.request(`/s/${token}`, { headers: { "x-as": "ben" } })).status).toBe(404);
+    expect((await share({ download: true })).status).toBe(409);
+    // a blurred cut's video is shared as before
+    const kept = await cut(STORE, false);
+    expect((await asset(kept)).versions[0].blurred).toBe(true);
+    const t2 = (await json(app.request(`/assets/${kept}`, send("PATCH", { share: { enabled: true, download: true } })))).share.token;
+    expect((await app.request(`/s/${t2}`, { headers: { "x-as": "ben" } })).status).toBe(200);
+  } finally {
+    blurFaces(false);
+  }
 });
 
 it("keeps only a cut its filer blurred under Blur faces: an unblurred one, one that says nothing and a browser's upload are refused", async () => {

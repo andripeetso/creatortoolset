@@ -36,6 +36,7 @@ export const REFUSED_NO_PROXY = "This library keeps no proxies on the server.";
 export const REFUSED_PROOF = "These bytes are not the proxy your computer declared. Nothing was kept.";
 export const REFUSED_BLUR = "Blur faces is on for this workspace: only blurred videos leave your computer.";
 export const BLUR_UPLOADS = "With Blur faces on, Upload is Off or Blurred.";
+export const REFUSED_NOT_BLURRED = "These bytes are the original, not its blurred video. Nothing was kept.";
 
 export type Received = { ok: true } | { ok: false; status: 409; body: { error: string; code: "upload_refused"; message: string } };
 
@@ -106,9 +107,13 @@ export function mayLeave(libraryId: string | null | undefined, file: { versionId
   return blurred ? { ok: true } : refuse(REFUSED_BLUR);
 }
 
-/** The library of `owner`'s workspace `workspace` (none made): what mayLeave asks for a file filed by workspace (Review, a plug-in's). */
+/**
+ * The library of `owner`'s workspace `workspace` (none made) that mayLeave asks for a file filed by workspace (Review, a
+ * plug-in's): one with Blur faces on when the workspace has any, so a second library never lets its files past the rule.
+ */
 export async function workspaceLibrary(owner: string, workspace?: string): Promise<string | null> {
-  return (await librariesHere(owner, workspace).catch(() => []))[0]?.id ?? null;
+  const libs = await librariesHere(owner, workspace).catch(() => []);
+  return (libs.find((l) => blursFaces(l.id)) ?? libs[0])?.id ?? null;
 }
 
 export function mayReceive(

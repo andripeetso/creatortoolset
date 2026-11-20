@@ -31,7 +31,7 @@ import { deviceForToken, deviceOf, isOnline, isThisMachine, listDevices, setDevi
 import { env } from "../lib/env";
 import { libraryChanged } from "../library/access";
 import { keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, versionUpload } from "../library/db";
-import { mayReceive, provesProxies, proxyTooBig, refuse, REFUSED_PROOF, type Received } from "../library/upload-gate";
+import { mayLeave, mayReceive, provesProxies, proxyTooBig, refuse, REFUSED_PROOF, type Received } from "../library/upload-gate";
 import { recordDerived, type DerivedFile } from "../library/derived";
 import { canEmbed } from "../library/embed";
 import { FRAMES } from "../library/describe";
@@ -273,6 +273,7 @@ export function decide(
 /** The library job computer `d` takes now, with its package, or null. The best-placed of its owner's computers, then load balancing, decide. */
 export async function claimLibraryForComputer(d: Device, now = Date.now()): Promise<LibraryPackage | null> {
   if (!takesLibrary(d) || offOf(d.owner).has(d.id)) return null;
+  await sweepIncoming();
   const balance = readBalanceSync(d.owner);
   const queued = queuedFor(d, now, balance);
   if (!queued.length) return null;
@@ -501,6 +502,13 @@ export async function libraryWaits(d: Device, now = Date.now()): Promise<boolean
 }
 
 const incoming = (jobId: number) => path.join(env.dataDir, "library", "incoming", String(jobId));
+/** What a computer sent for a job it no longer holds (it went away mid-job, its lease ran out): a description's stills
+ *  among them, which are kept only for that job's call. Gone before work is handed out again. */
+export async function sweepIncoming(): Promise<void> {
+  const dir = path.join(env.dataDir, "library", "incoming");
+  const running = libraryDb().prepare("SELECT 1 FROM jobs WHERE id = ? AND state = 'running'");
+  for (const n of await readdir(dir).catch(() => [] as string[])) if (!running.get(Number(n))) await rm(path.join(dir, n), { recursive: true, force: true });
+}
 const NAME = /^(original|proxy|thumb|wave|sprite|still\d)$/;
 
 /** Passes at most `cap` bytes, then fails the stream. */
@@ -636,6 +644,7 @@ function transcriptOf(x: unknown): LibraryTranscript | null {
 /** A failed try (retried after its backoff); the last one of a step the card is shown with fails the version, as on the server. */
 function failLibrary(job: JobRow, error: string): true {
   const db = libraryDb();
+  void rm(incoming(job.id), { recursive: true, force: true }); // what it sent (a description's stills): not kept past the try
   finishJob(db, job.id, false, error, Date.now());
   const after = db.prepare("SELECT state FROM jobs WHERE id = ?").get(job.id) as { state: string } | undefined; // gone when the clip was removed meanwhile
   if (after?.state === "failed" && (job.kind === "send" || job.kind === "proxy")) db.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(job.version_id);
@@ -694,7 +703,8 @@ libWorkApp.get("/:id/light", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = await heldSeen(idOf(c), d.id, claimOf(c));
   if (!job) return GONE(c);
-  const key = !["proxy", "probe", "send"].includes(job.kind) ? rowOf(job.version_id)?.proxy : null;
+  // Blur faces: a held copy of a clip not blurred (from before it was on) goes to no computer
+  const key = !["proxy", "probe", "send"].includes(job.kind) && mayLeave(job.library_id, { versionId: job.version_id! }).ok ? rowOf(job.version_id)?.proxy : null;
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 
@@ -704,7 +714,7 @@ libWorkApp.get("/:id/original", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = await heldSeen(idOf(c), d.id, claimOf(c));
   if (!job) return GONE(c);
-  const r = READS_ORIGINAL.includes(job.kind) ? rowOf(job.version_id) : undefined;
+  const r = READS_ORIGINAL.includes(job.kind) && mayLeave(job.library_id, { versionId: job.version_id! }).ok ? rowOf(job.version_id) : undefined;
   return r && !r.source_key.startsWith("mac:") ? serveBlob(c, r.source_key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 

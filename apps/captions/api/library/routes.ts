@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { isPhoneSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { BLUR_UPLOADS, hasMembers, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, uploadFor, type Received } from "./upload-gate";
+import { BLUR_UPLOADS, hasMembers, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
@@ -140,13 +140,14 @@ export function unproxied(libraryId: string, versionId?: string, hosted = false)
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
-      `SELECT v.id, v.created_by, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+      `SELECT v.id, v.created_by, v.probe, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        WHERE a.library_id = ? AND (? IS NULL OR v.id = ?) AND v.probe IS NOT NULL AND v.state != 'missing' AND a.kind != 'image'
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'proxy')
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed'))`,
     )
-    .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string }[];
-  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want));
+    .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string; source_key: string }[];
+  // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there
+  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
 }
 
 /** The name an original downloads as: the file's own name when it is read where it is, else its title with its type's extension. */
@@ -479,12 +480,22 @@ const IN_REVIEW = { error: "This video is in Review: change it there", code: "co
 const receives = (row: UploadRow, got?: string) => {
   const made = madeOf(row)?.proxy;
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
-  const into = { id: row.library_id, collectionId: row.collection_id, blurredOf: row.blurred_of };
+  // a blurred render is declared only by a computer of the uploader's own (startUpload checks it too)
+  const blurredOf = sender?.owner === row.created_by ? row.blurred_of : null;
+  const into = { id: row.library_id, collectionId: row.collection_id, blurredOf };
   const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
+  // at the finish: bytes that are the original itself, or any clip of the library not blurred, are not its blurred render
+  if (blurredOf && got && (got === blurredOf || unblurredBytes(row.library_id, got))) return refuse(REFUSED_NOT_BLURRED);
   if (!made) return mayReceive("original", into, origin, { sender });
   // the size check runs for every sender, a computer without the proof included (UNIFIED-PRD §4.1 rule 4)
   return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got } : {}), bytes: row.size, original: made.size } });
 };
+
+/** Whether `sha256` is the bytes of a clip of `libraryId` that is not a blurred render (its upload's or its full SHA-256). */
+const unblurredBytes = (libraryId: string, sha256: string): boolean =>
+  !!db()
+    .prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.blurred_of IS NULL AND (v.sha256 = ? OR v.full_sha256 = ?) LIMIT 1")
+    .get(libraryId, sha256, sha256);
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
 
@@ -687,7 +698,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const made = await parseMade(body);
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
   // a computer's blurred render of an original (its full SHA-256): under Blur faces the one file that may leave it
-  const blurredOf = from && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
+  // only from a computer of the caller's own: a made-up device or a browser's word is no blurred render
+  const blurredOf = from && sender?.owner === user.username && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
   const into = { id: libraryId, collectionId: collection, blurredOf };
   // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
   // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isPhoneSession), never a browser's or a Mac's

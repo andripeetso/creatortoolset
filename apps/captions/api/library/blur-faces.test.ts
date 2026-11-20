@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -31,12 +31,21 @@ writeFileSync(
   }),
 );
 
+// a workspace of the owner's with two libraries (the newer one has Blur faces), written before anything reads the list
+mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
+for (const [id, at] of [["ws_kids", 0], ["ws_two", 1]] as const)
+  writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "tinyacrobatics", name: id, createdAt: at, updatedAt: at }));
+
 const { sessionCookieFor } = await import("../auth");
 const { libraryDb } = await import("./db");
 const { libraryApp, serveGate, mediaFile } = await import("./routes");
 const { shareApp, publicShareApp } = await import("./shares");
-const { mayLeave, mayReceive, mayServe, REFUSED_BLUR, BLUR_UPLOADS } = await import("./upload-gate");
-const { macFrames, dropHeldCopy, dropMacFrames, noPicture, putThumb } = await import("./on-mac");
+const { mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_NOT_BLURRED, BLUR_UPLOADS, workspaceLibrary } = await import("./upload-gate");
+const { macFrames, dropHeldCopy, dropMacFrames, noPicture, putThumb, holdStills, HELD_STILLS_BYTES, HELD_STILLS_MS } = await import("./on-mac");
+const { versionSource } = await import("./access");
+const { lightKey } = await import("../editor/reach");
+const { useFile } = await import("../assistant-files");
+const { pairDevice } = await import("../lib/devices");
 const { toCard, CARD } = await import("./query");
 const { acceptLibraryFile } = await import("../work/library-package");
 const { createUser } = await import("../users");
@@ -44,6 +53,8 @@ const { Readable } = await import("node:stream");
 
 createUser("tinyacrobatics", "secret-tiny-acrobatics");
 createUser("sam", "secret-sam-acrobatics");
+// the owner's own Mac: the only sender whose blurred render counts
+const MAC = pairDevice("tinyacrobatics", "Tiny Mac").device.id;
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
   rmSync(dir, { recursive: true, force: true });
@@ -67,6 +78,8 @@ lib("lib_kids_off", { upload: "none", blurFaces: true });
 lib("lib_plain", { upload: "all" });
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+/** Bytes a route refused as not blurred: the disk walk finds none of them anywhere under the data folder. */
+const REFUSED_BYTES: string[] = [];
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 7)]).toString("base64");
 const json = (body: unknown, who?: string): RequestInit => ({ method: "POST", headers: { "content-type": "application/json", ...(who ? { "x-as": who } : {}) }, body: JSON.stringify(body) });
 const onMac = (library: string, name: string, extra: Record<string, unknown> = {}) =>
@@ -75,14 +88,14 @@ const onMac = (library: string, name: string, extra: Record<string, unknown> = {
 const body = async (r: Response | Promise<Response>): Promise<any> => (await r).json();
 const vOf = (assetId: string) => (d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ?").get(assetId) as { v: string }).v;
 const pictures = (versionId: string) => (d.prepare("SELECT kind FROM derivatives WHERE version_id = ? ORDER BY kind").all(versionId) as { kind: string }[]).map((r) => r.kind);
-/** A computer sends its blurred render of the original with full SHA-256 `of`: start, bytes, finish. The version's id. */
-async function sendBlurred(library: string, name: string, bytes: string, of: string): Promise<{ status: number; versionId?: string; assetId?: string }> {
-  const r = await app.request(`/api/library/${library}/uploads`, json({ filename: name, size: bytes.length, fromPath: `/Volumes/Tiny Footage/- BLURRED/${name}`, fromDevice: "mac-1", blurredOf: of }));
-  if (r.status !== 201) return { status: r.status };
+/** A computer (`device`, the owner's Mac by default) sends its blurred render of the original with full SHA-256 `of`: start, bytes, finish. */
+async function sendBlurred(library: string, name: string, bytes: string, of: string, device = MAC): Promise<{ status: number; versionId?: string; assetId?: string; message?: string }> {
+  const r = await app.request(`/api/library/${library}/uploads`, json({ filename: name, size: bytes.length, fromPath: `/Volumes/Tiny Footage/- BLURRED/${name}`, fromDevice: device, blurredOf: of }));
+  if (r.status !== 201) return { status: r.status, message: (await body(r)).message };
   const { id } = (await r.json()) as { id: string };
   expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(bytes.length) }, body: bytes })).status).toBe(204);
   const done = await app.request(`/api/library/uploads/${id}/finish`, { method: "POST" });
-  const got = (await done.json()) as { assetId?: string; versionId?: string };
+  const got = (await done.json()) as { assetId?: string; versionId?: string; message?: string };
   return { status: done.status, ...got, versionId: got.versionId ?? (got.assetId ? vOf(got.assetId) : undefined) };
 }
 
@@ -232,6 +245,83 @@ describe("a member, a share link and the phone get only blurred bytes", () => {
   });
 });
 
+describe("a blurred render is a computer's own, and never the original's bytes", () => {
+  it("refuses blurredOf from a browser or a made-up computer: the upload is an original then", async () => {
+    const OF = sha("Lunge original");
+    expect(await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, "mac-made-up")).toMatchObject({ status: 409, message: REFUSED_BLUR });
+    const r = await app.request("/api/library/lib_kids/uploads", json({ filename: "Lunge blurred.mp4", size: 4, blurredOf: OF }));
+    expect((await body(r)).message).toBe(REFUSED_BLUR);
+    // another account's computer is not this account's either
+    const other = pairDevice("sam", "Sam Mac").device.id;
+    expect((await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, other)).status).toBe(409);
+  });
+
+  it("refuses the original sent as its own blurred render, and the bytes of any clip not blurred; nothing of them is kept", async () => {
+    const original = "the-original-bytes-of-a-roll";
+    const r = await sendBlurred("lib_kids", "Roll blurred.mp4", original, sha(original));
+    expect(r).toMatchObject({ status: 409, message: REFUSED_NOT_BLURRED });
+    // a clip of the library not blurred (its whole file's SHA-256 known from the Mac), sent as another's blurred render
+    const other = "the-bytes-of-another-roll";
+    await onMac("lib_kids", "Other.mov", { sha256: sha(other) });
+    expect(await sendBlurred("lib_kids", "Other blurred.mp4", other, sha("something else"))).toMatchObject({ status: 409, message: REFUSED_NOT_BLURRED });
+    REFUSED_BYTES.push(original, other);
+  });
+});
+
+describe("the workspace's library is the one with Blur faces on", () => {
+  it("picks the newer library with Blur faces over the older one without", async () => {
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_two_old', 'tinyacrobatics', 'L', 'local', ?, 1)").run(JSON.stringify({ projectId: "ws_two", upload: "all" }));
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_two_new', 'tinyacrobatics', 'L', 'local', ?, 2)").run(JSON.stringify({ projectId: "ws_two", upload: "none", blurFaces: true }));
+    expect(await workspaceLibrary("tinyacrobatics", "ws_two")).toBe("lib_two_new");
+    expect(mayLeave(await workspaceLibrary("tinyacrobatics", "ws_two"), { blurred: false }).ok).toBe(false);
+  });
+});
+
+describe("files stored before Blur faces was turned on stay, and leave no more", () => {
+  it("a held copy and its proxy go to no computer and to Caption Studio; the server cuts no new proxy of it", async () => {
+    lib("lib_late", { upload: "all", proxy: true });
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_late', 'lib_late', 'video', 'Late', 'v_late', 'tinyacrobatics', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe) VALUES ('v_late', 'a_late', 1, 'k-late', 9, 'h', 'ready', 'tinyacrobatics', 0, ?)").run(JSON.stringify({ duration: 3, width: 3840, height: 2160, vcodec: "hevc", pixFmt: "yuv420p10le" }));
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('v_late', 'proxy', 'k-late-proxy', 1)").run();
+    const row = { id: "v_late", source_key: "k-late", source_path: null, mac_path: null, mac_device: null, proxy: "k-late-proxy", library_id: "lib_late" };
+    expect(lightKey(row)).toBe("k-late-proxy");
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.blurFaces', json('true'), '$.upload', 'proxies') WHERE id = 'lib_late'").run();
+    expect(lightKey(row)).toBeNull();
+    expect(await versionSource("tinyacrobatics", "v_late")).toBeNull();
+    expect((await serveGate("v_late", "proxy", { key: "k-late-proxy", what: "proxy" })).ok).toBe(false);
+    // still stored: deleting them is the owner's call
+    expect(d.prepare("SELECT storage_key FROM derivatives WHERE version_id = 'v_late'").get()).toEqual({ storage_key: "k-late-proxy" });
+  });
+});
+
+describe("the chat dock under Blur faces", () => {
+  it("makes no Caption Studio project or Video Note of a dropped file", async () => {
+    const id = "0b5e7f3e-1c2d-4e5f-8a9b-0c1d2e3f4a5b";
+    const at = path.join(dir, "assistant", "files", "tinyacrobatics", id);
+    mkdirSync(at, { recursive: true });
+    writeFileSync(path.join(at, "file"), "chat-drop-original");
+    writeFileSync(path.join(at, "meta.json"), JSON.stringify({ id, name: "Drop.mov", mime: "video/quicktime", size: 18, at: Date.now() }));
+    const user = { username: "tinyacrobatics", role: "user", cloud: false, off: [] } as never;
+    for (const to of ["captions", "notes"] as const) await expect(useFile(user, id, to)).rejects.toThrow(REFUSED_BLUR);
+  });
+});
+
+describe("held stills", () => {
+  it("are dropped oldest first past their size, and after their time", async () => {
+    const big = Buffer.alloc(HELD_STILLS_BYTES / 3);
+    holdStills("v_h1", [big], 0);
+    holdStills("v_h2", [big], 1);
+    holdStills("v_h3", [big], 2);
+    holdStills("v_h4", [big], 3); // past the size: v_h1 goes
+    expect(await macFrames("v_h1")).toEqual([]);
+    expect(await macFrames("v_h2")).toHaveLength(0); // expired by now (held at t=1)
+    holdStills("v_h5", [Buffer.from(JPEG, "base64")]);
+    expect(await macFrames("v_h5")).toHaveLength(1);
+    await dropMacFrames("v_h5");
+    expect(HELD_STILLS_MS).toBeGreaterThan(0);
+  });
+});
+
 describe("after a full ingest the server's disk holds no frame of an original", () => {
   it("walks the library folder: every file kept is a blurred render's, or no picture at all", async () => {
     lib("lib_walk", { upload: "proxies", blurFaces: true });
@@ -254,5 +344,22 @@ describe("after a full ingest the server's disk holds no frame of an original", 
     expect(ofWalk.length).toBeGreaterThan(0); // the blurred render itself
     for (const f of ofWalk) expect([...blurred].some((id) => f.includes(id)), f).toBe(true);
     for (const f of files) for (const id of ids) expect(f.includes(id), f).toBe(false);
+    // the whole data folder (the library, the chat's files, the AI Editor's, Review's): no refused original's bytes, and
+    // no file named for a clip not blurred
+    const all: string[] = [];
+    const walkAll = (p: string) => {
+      for (const n of readdirSync(p)) {
+        const f = path.join(p, n);
+        if (statSync(f).isDirectory()) walkAll(f);
+        else all.push(f);
+      }
+    };
+    walkAll(dir);
+    const refused = new Set(REFUSED_BYTES.map(sha));
+    for (const f of all) {
+      if (f.endsWith(".db") || f.endsWith(".db-wal") || f.endsWith(".db-shm")) continue;
+      expect(refused.has(createHash("sha256").update(readFileSync(f)).digest("hex")), f).toBe(false);
+      for (const id of ids) expect(f.includes(id), f).toBe(false);
+    }
   });
 });
