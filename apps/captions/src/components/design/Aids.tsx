@@ -112,7 +112,7 @@ export function Aids({ pages, frames, view, at, onCommit }: { pages: DesignPage[
       }
       if (onRuler) return;
       // the frame let go over (the top one where frames overlap); loose pictures hold no guides
-      const k = fs.map((f, n) => n).reverse().find((n) => !ps[n]!.loose && c.x >= fs[n]!.x && c.x <= fs[n]!.x + fs[n]!.w && c.y >= fs[n]!.y && c.y <= fs[n]!.y + fs[n]!.h);
+      const k = fs.map((_, n) => n).reverse().find((n) => !ps[n]!.loose && c.x >= fs[n]!.x && c.x <= fs[n]!.x + fs[n]!.w && c.y >= fs[n]!.y && c.y <= fs[n]!.y + fs[n]!.h);
       if (k === undefined) return;
       const p = ps[k]!;
       const f = fs[k]!;
