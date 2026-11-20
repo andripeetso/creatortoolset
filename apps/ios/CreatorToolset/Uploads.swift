@@ -103,6 +103,8 @@ struct UploadItem: Codable, Identifiable, Hashable {
     /// The workspace it was queued in (`X-CT-Workspace`), fixed when it is picked: every step of its upload names it,
     /// whatever is picked later. nil (queued by an older build): the pick at the time of each step.
     var workspace: String?
+    /// false: the person turned Blur faces off for it (sent as `blur: false`); nil: the server's default.
+    var blur: Bool?
 
     struct Direct: Codable, Hashable {
         let partSize: Int64

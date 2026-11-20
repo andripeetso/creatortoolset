@@ -51,9 +51,10 @@ final class UploadEngine: ObservableObject {
     // MARK: What the screens call
 
     /// A file picked on the phone, already moved to `AppFiles.upload(id)`. Nothing is sent until Upload.
-    func add(id: UUID, filename: String, size: Int64, server: Server, edit: UUID? = nil) {
+    func add(id: UUID, filename: String, size: Int64, server: Server, edit: UUID? = nil, blur: Bool? = nil) {
         var item = UploadItem(id: id, filename: filename, size: size, server: server.id)
         item.edit = edit
+        item.blur = blur
         item.workspace = workspace(on: server.id)
         store.add(item)
     }
@@ -75,9 +76,11 @@ final class UploadEngine: ObservableObject {
         Servers.shared.list.first { $0.id == server }.flatMap(API.connected)?.workspace
     }
 
-    /// Upload everything picked, and everything that failed before (a New edit's clips go with their edit).
-    func uploadAll() {
+    /// Upload everything picked, and everything that failed before (a New edit's clips go with their edit). `blur`
+    /// (false: Blur faces turned off) is stamped on the picked ones; one that failed keeps what it was sent with.
+    func uploadAll(blur: Bool? = nil) {
         for item in store.items where (item.state == .picked || item.state == .failed) && item.edit == nil {
+            if item.state == .picked { store.update(item.id) { $0.blur = blur } }
             retry(item.id)
         }
     }
@@ -267,9 +270,13 @@ final class UploadEngine: ObservableObject {
     /// refusal fails the clip with the server's line. Asked once per server and workspace in a run, not per clip.
     func route(for item: UploadItem, api: API) async throws -> UploadItem.Route {
         if item.edit != nil { return .library }
+        return try await route(server: item.server, api: api)
+    }
+
+    private func route(server: String, api: API) async throws -> UploadItem.Route {
         // a debug build can send there on a scratch server whose library lists no source: -UploadRoute catalog
         if debugArg("UploadRoute") == "catalog" { return .catalog }
-        let key = "\(item.server) \(api.workspace ?? "")"
+        let key = "\(server) \(api.workspace ?? "")"
         if let known = targets[key] { return known }
         let route: UploadItem.Route
         do {
@@ -286,6 +293,20 @@ final class UploadEngine: ObservableObject {
         }
         targets[key] = route
         return route
+    }
+
+    /// Whether uploads from the workspace picked on `server` now are blurred unless Blur faces is turned off: they go
+    /// to a plug-in's library (the studio's), or to a library with Blur faces on. A New edit's go to the own library.
+    /// false when the server can't say (nothing is offered; the server's default holds).
+    func blursByDefault(server: String, edit: Bool = false) async -> Bool {
+        guard let api = Servers.shared.list.first(where: { $0.id == server }).flatMap(API.connected) else { return false }
+        do {
+            if !edit, try await route(server: server, api: api) == .catalog { return true }
+            let libraries = try JSONDecoder().decode(Libraries.self, from: try await api.data(api.request("/api/library"), session: session))
+            return libraries.libraries.first?.settings?.blurFaces == true
+        } catch {
+            return false
+        }
     }
 
     func note(_ id: UUID, _ text: String?) {
@@ -341,12 +362,16 @@ final class UploadEngine: ObservableObject {
 
     struct Libraries: Decodable {
         struct Library: Decodable {
-            /// Only `upload` ("none", "proxies", "all"); a server from before it wrote true/false, read as nothing.
+            /// Only `upload` ("none", "proxies", "all"; a server from before it wrote true/false, read as nothing) and
+            /// `blurFaces` (absent: off).
             struct Settings: Decodable {
                 let upload: String?
-                private enum Key: CodingKey { case upload }
+                let blurFaces: Bool?
+                private enum Key: CodingKey { case upload, blurFaces }
                 init(from decoder: Decoder) throws {
-                    upload = try? decoder.container(keyedBy: Key.self).decode(String.self, forKey: .upload)
+                    let container = try? decoder.container(keyedBy: Key.self)
+                    upload = try? container?.decode(String.self, forKey: .upload)
+                    blurFaces = try? container?.decode(Bool.self, forKey: .blurFaces)
                 }
             }
             let id: String
@@ -371,8 +396,7 @@ final class UploadEngine: ObservableObject {
         let proxies = libraries.libraries.first?.settings?.upload == "proxies"
         let made = (libraries.uploadTakes ?? 0) >= 1 ? await made(id, proxies: proxies) : [:]
         guard let item = store.item(id) else { return }
-        var request = api.request("/api/library/here/uploads", method: "POST",
-                                  json: made.merging(["filename": item.filename, "size": item.size]) { $1 })
+        var request = api.request("/api/library/here/uploads", method: "POST", json: Self.startBody(item, made: made))
         // the person's own file, sent to their computers: the server takes it under Upload none too (routes.ts x-ct-origin)
         request.setValue("phone", forHTTPHeaderField: "x-ct-origin")
         let data = try await api.data(request, session: session)
@@ -383,6 +407,14 @@ final class UploadEngine: ObservableObject {
             $0.direct = created.direct.map { UploadItem.Direct(partSize: $0.partSize, urls: $0.urls) }
             $0.sent = created.offset
         }
+    }
+
+    /// The upload start's body: the name and size over what the phone made, and `blur: false` only when Blur faces was
+    /// turned off (omitted, the server's default for the phone holds; a non-owner's false is ignored there).
+    static func startBody(_ item: UploadItem, made: [String: Any]) -> [String: Any] {
+        var body = made.merging(["filename": item.filename, "size": item.size]) { $1 }
+        if item.blur == false { body["blur"] = false }
+        return body
     }
 
     /// What the phone makes of a video itself for the upload start (`PhoneMade`, the server's derived.ts `Made`): the

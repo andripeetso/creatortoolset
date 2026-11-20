@@ -134,9 +134,10 @@ struct CatalogAPI {
 
     // MARK: Starting an upload
 
-    private func createBody(_ item: UploadItem) -> [String: Any] {
+    static func createBody(_ item: UploadItem) -> [String: Any] {
         var body: [String: Any] = ["filename": item.filename, "size_bytes": item.size, "destination": "auto"]
         if let at = item.capturedAt { body["source_created_at"] = ISO8601DateFormatter().string(from: at) }
+        if item.blur == false { body["blur"] = false }   // kept as filmed; the library ignores it from anyone but its owner
         return body
     }
 
@@ -151,7 +152,7 @@ struct CatalogAPI {
 
     /// A fast-route upload for a video; nil when the server has none (501).
     func createRelay(_ item: UploadItem) async throws -> RelayMint? {
-        let (data, http) = try await send(request("api/uploads/relay", method: "POST", json: createBody(item)))
+        let (data, http) = try await send(request("api/uploads/relay", method: "POST", json: Self.createBody(item)))
         if http.statusCode == 501 { return nil }
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard http.statusCode == 201 else { throw await failure(http.statusCode, object) }
@@ -208,7 +209,7 @@ struct CatalogAPI {
 
     /// A resumable upload straight to the library: its id, piece size and where it stands.
     func createDirect(_ item: UploadItem) async throws -> (ingestId: String, chunkSize: Int64, offset: Int64) {
-        let object = try await json(request("api/uploads", method: "POST", json: createBody(item)))
+        let object = try await json(request("api/uploads", method: "POST", json: Self.createBody(item)))
         guard let ingest = object["ingest_id"] as? String else { throw APIError.server(502, "The server didn't start the upload") }
         return (ingest, (object["chunk_size"] as? NSNumber)?.int64Value ?? CatalogRules.maxPiece,
                 (object["offset"] as? NSNumber)?.int64Value ?? 0)
