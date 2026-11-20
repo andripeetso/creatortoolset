@@ -78,7 +78,7 @@ const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const root = () => path.join(env.dataDir, "editor");
 export const editDir = (id: string) => path.join(root(), id);
 const fileOf = (id: string) => path.join(editDir(id), "edit.json");
-const MAX_SOURCES = 50;
+export const MAX_SOURCES = 50;
 
 /** The edit, trashed or not; null for an id that is no edit. */
 /** The name of an edit nobody named: the script step gives it the video's first line (script.ts). */
@@ -590,7 +590,8 @@ export function uploadFinished(uploadId: string, versionId: string): Promise<voi
     const uploads = e.uploads!.map((u) => (u.id === uploadId ? { ...u, version: versionId } : u));
     if (uploads.some((u) => !u.version)) return void (await saveEdit({ ...e, uploads }));
     const { uploads: _, ...rest } = e;
-    await saveEdit({ ...rest, sources: [...new Set(uploads.map((u) => u.version!))] });
+    // footage added while it waited (PATCH addSources) stays with the uploads'
+    await saveEdit({ ...rest, sources: [...new Set([...uploads.map((u) => u.version!), ...e.sources])] });
     enqueueJob(libraryDb(), e.workspaceId, `${e.id}:`, "analyze", e.createdBy, true, "edit_jobs");
   }).catch((err) => console.error("editor: an edit waiting on uploads", err));
   return waiting;

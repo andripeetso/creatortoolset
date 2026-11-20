@@ -14,7 +14,7 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
-import { addFeedback, newestDraft, queueVersion, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editDir, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft, seesEdit } from "./store";
+import { addFeedback, MAX_SOURCES, newestDraft, queueVersion, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editDir, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft, seesEdit } from "./store";
 import { fileIntoProjects } from "./projects";
 import { emptyTracks, sourceOf } from "./timeline";
 import { wordsOf } from "../library/transcribe";
@@ -325,9 +325,13 @@ editorApp.patch("/:id", async (c) => {
     throw e;
   }
   if (patch.name !== undefined && !mayRename(r.user, r.e, r.role)) return c.json(NOT_YOURS, 403);
+  // addSources: more footage for this edit (version ids), checked as a new edit's sources are (createEdit)
+  const add = Array.isArray(b.addSources) ? [...new Set(b.addSources.filter((s): s is string => typeof s === "string"))].filter((s) => !r.e.sources.includes(s)) : [];
+  if (r.e.sources.length + (r.e.uploads?.length ?? 0) + add.length > MAX_SOURCES) return c.json({ error: `An edit takes up to ${MAX_SOURCES} clips`, code: "invalid" }, 400);
+  if (add.length && (await editSources(r.user, add)) !== r.e.workspaceId) return c.json({ error: "A clip isn't in this edit's workspace's Media Library", code: "invalid" }, 400);
   delete patch.framing; // set per source in a later step
   // a flag the patch leaves out keeps its state
-  const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags } };
+  const e = { ...r.e, ...styled, ...patch, flags: { ...r.e.flags, ...patch.flags }, sources: [...r.e.sources, ...add] };
   if (b.style === null) {
     delete e.style;
     delete e.size; // an edit with no style is cut at the footage's size, as before
