@@ -285,6 +285,10 @@ struct ChatSummary: Decodable, Equatable {
     var workspace: String?
     /// It asks the person something (an Allow, a Yes / No, a key).
     var asks: Bool?
+    /// Settled on some device, and nothing new in it since.
+    var settled: Bool?
+    /// Snoozed until this time (ms).
+    var snoozed: Double?
 
     struct List: Decodable { var chats: Tolerant<ChatSummary> }
 }

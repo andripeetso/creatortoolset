@@ -157,6 +157,21 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(placed.map(\.workspace), ["tiny", "gym", nil, "gym", "tiny"])
     }
 
+    func testChatsSettledOrSnoozedOnTheDesktopFoldAwayOnThePhone() throws {
+        let json = #"{"chats":[{"id":"c1","settled":true},{"id":"c2","snoozed":1900000000000},{"id":"c3"},{"id":"c4","asks":true}]}"#
+        let folds = ChatList.folds(try JSONDecoder().decode(ChatSummary.List.self, from: Data(json.utf8)).chats.items)
+        XCTAssertEqual(folds, ["c1": .settled, "c2": .snoozed])
+        let rows = ["c1", "c2", "c3", "c4"].map { id in
+            ChatRow(id: "/?chat=\(id)", route: .chat(id), title: id, detail: "", status: .done, at: .distantPast)
+        }
+        let placed = ChatList.placed(rows, spaces: [:], folds: folds, open: nil)
+        XCTAssertEqual(placed.map(\.fold), [.settled, .snoozed, nil, nil])
+        // one that asks since that list was read is in play again
+        var asks = rows[0]
+        asks.status = .approval
+        XCTAssertNil(ChatList.placed([asks], spaces: [:], folds: folds, open: nil)[0].fold)
+    }
+
     func testProjectsAreGroupedLikeTheWorkshop() {
         let groups = [WorkshopStatus.draft, .writing, .ready, .production, .editing, .toPost, .published, .shelved, .unknown].map(\.group)
         XCTAssertEqual(groups, [.ideas, .ideas, .making, .making, .making, .making, .published, .shelved, .ideas])
