@@ -508,7 +508,10 @@ editorApp.post("/:id/drafts/:name/cut", async (c) => {
     // what was changed, so a later chat turn knows (an AI key's cut, a chat's editor_cut, is not the person's own)
     const by = c.req.header("authorization") && !c.req.header("cookie") ? AI_NOTE : HAND_NOTE;
     const note = `${by} ${inReview ? "in Review" : "on the timeline"}: ${count}${on} (${describeEdits(edits, base.fps)})`;
-    await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !n.startsWith(HAND_NOTE) && !n.startsWith(AI_NOTE)), note] });
+    // the earlier cuts stay with it, the last five in all, so the chat knows every change, not only the newest
+    const isCut = (n: string) => n.startsWith(HAND_NOTE) || n.startsWith(AI_NOTE);
+    let older = d.notes.filter(isCut).length - 4;
+    await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !isCut(n) || --older < 0), note] });
   }
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
   return c.json(viewFor(r));

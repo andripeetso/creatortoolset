@@ -8,7 +8,7 @@ const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "edito
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-routes-test-secret";
 
-const { createUser, findUser, setOff } = await import("../users");
+const { createUser, findUser, newApiKey, setOff } = await import("../users");
 const app = (await import("../boot")).default;
 // A loaded plug-in that replaces /api/editor answers the root itself, so these tests (which drive the built-in root) run only without one.
 const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor");
@@ -378,13 +378,25 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     expect(queued(e)).toEqual([["post", "v1"]]);
     const after = readDraft(id, "v1")!;
     expect(after.timeline.tracks.V1.items.map((i) => i.rec)).toEqual([0]);
-    expect(after.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit (Second line on V1: taken out with its voice, what follows moves up)"]);
+    const handNotes = ["Cut by hand in Review: 1 timeline edit on version 1", "Cut by hand on the timeline: 1 timeline edit (Second line on V1: taken out with its voice, what follows moves up)"];
+    expect(after.notes).toEqual(handNotes);
     expect(await json(cut({ edits: [] }))).toMatchObject({ error: "This version is still being made" });
     await stopAll(id);
     // changed since Review: no edits renders it as it is, with no new revision
     expect((await draft()).filed).toBeNull();
     expect(queued(await json<Edit>(cut({ edits: [] })))).toEqual([["post", "v1"]]);
-    expect(readDraft(id, "v1")!.notes).toEqual(["Cut by hand on the timeline: 1 timeline edit (Second line on V1: taken out with its voice, what follows moves up)"]);
+    expect(readDraft(id, "v1")!.notes).toEqual(handNotes);
+    await stopAll(id);
+    // an AI key's cut (a chat's editor_cut) is noted as the AI's; the last five cut notes stay, other notes too
+    const cuts = [1, 2, 3, 4, 5].map((k) => `Cut by hand on the timeline: cut ${k}`);
+    await saveDraft(id, "v1", { ...readDraft(id, "v1")!, notes: ["a note", ...cuts] });
+    const byKey = await app.request(`/api/editor/${id}/drafts/v1/cut`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${newApiKey(findUser("maker")!, "full")}`, "content-type": "application/json" },
+      body: JSON.stringify({ edits: [{ key: "V1:0", label: "First line", head: -10 }] }),
+    });
+    expect(byKey.status).toBe(200);
+    expect(readDraft(id, "v1")!.notes).toEqual(["a note", ...cuts.slice(1), "Cut by the AI on the timeline: 1 timeline edit (First line on V1: 10 f off the start)"]);
     await stopAll(id);
   });
 
