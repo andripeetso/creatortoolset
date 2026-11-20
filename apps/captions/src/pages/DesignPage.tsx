@@ -15,12 +15,12 @@ import { Stage, type Tool } from "@/components/design/Stage";
 import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
-import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
+import { drawingUrl, drawPage, measureWords, sourceOf, type Loaded } from "@/lib/design/draw";
 import { paintPictures } from "@/lib/design/paint";
 import { alignLayers, besideFrames, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
-import { depthOf, everyLayer, findLayer, hugPages, inFrame, inScope, isGroup, mapLayers, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
+import { depthOf, everyLayer, findLayer, inFrame, inScope, isGroup, mapLayers, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
@@ -32,6 +32,7 @@ import { downloadBlob } from "@/lib/download";
 import { addStylePictures, createAnimationStyle, listAnimationStyles } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
+import { addAutoLayout, flows, layoutPages } from "@/lib/design/layout";
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
@@ -169,6 +170,16 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       (e) => setError(message(e)),
     );
   }, [id]);
+
+  // the words measured again once their fonts are here: every auto layout laid out with them, as it is (no step to undo)
+  const ready = hist !== null;
+  useEffect(() => {
+    if (!version || !ready) return;
+    setHist((h) => {
+      const now = h && layoutPages(h.now, measureWords);
+      return !h || now === h.now ? h : { ...h, now: now! };
+    });
+  }, [version, ready]);
 
   // the app's fonts, before the first page is drawn with them
   useEffect(() => {
@@ -357,7 +368,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const latest = useRef(pages);
   useEffect(() => void (latest.current = pages), [pages]);
   /** Frames while a drag or a preview is under way, put back whole (a container's layers back into it). */
-  const setLive = useCallback((next: Page[] | null) => setLiveRaw(next && hugPages(unscope(next, latest.current))), []);
+  const setLive = useCallback((next: Page[] | null) => setLiveRaw(next && layoutPages(unscope(next, latest.current), measureWords)), []);
   /**
    * One step to undo. With `merge`, a change that follows another of the same name joins it: a colour dragged about
    * in the picker is one step, not one for every shade it passed.
@@ -371,7 +382,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // a loose picture keeps to the box round it, whatever changed it
     // and a plain group to the box round its layers
     // a frame still showing an open container's layers (tree.ts inScope) is made whole before it is kept
-    const whole = (all: Page[]) => hugLoose(hugPages(unscope(fn(all), all)));
+    // and every auto layout laid out (lib/design/layout.ts), what it fixed said once the step is drawn
+    const whole = (all: Page[]) => hugLoose(layoutPages(unscope(fn(all), all), measureWords, (n) => queueMicrotask(() => toast(n, { id: n }))));
     setHist((h) => (!h ? h : join ? { ...h, now: whole(h.now) } : histChange(h, whole)));
   }, [locked]);
   /** Frames changed in one step: each takes the place of the one with its id, and one with a new id is added (a picture dragged out of its frame). */
@@ -607,6 +619,21 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     if (!next) return;
     setPage({ ...base, layers: next });
     pick(k, [id!]);
+  };
+  /**
+   * Auto layout added to the picked layers (⇧A, layout.ts addAutoLayout): one group or box is given it in place, else
+   * they are wrapped in a box that has it, hugging them, in the order they lie in. It is picked.
+   */
+  const autoLayout = () => {
+    if (!base || !top || !mine.length || (mine.length === 1 && flows(mine[0]))) return;
+    const inPlace = mine.length === 1 && isGroup(mine[0]);
+    if (!inPlace && (pathTo(top.layers, mine[0]!.id)?.length ?? 0) + 1 + depthOf(mine) > DESIGN_LIMITS.depth) return setError(`Groups go at most ${DESIGN_LIMITS.depth} deep`);
+    if (!inPlace && everyLayer(top.layers).length >= DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups`);
+    const [id] = freshIds(top, 1);
+    const made = addAutoLayout(base.layers, selected, id!, measureWords);
+    if (!made) return;
+    setPage({ ...base, layers: made.layers });
+    pick(k, [made.id]);
   };
   /** The picked containers taken apart, their layers where they are, picked; and the older groups a picked layer is in (a shared `group` name): its layers single layers again. */
   const ungroup = () => {
@@ -943,6 +970,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       }
       if (e.altKey) return void ((has || manyFrames) && ALIGN_KEYS[c] && run(() => align(ALIGN_KEYS[c]!)));
       if (e.shiftKey && c === "Digit1") return run(() => zoom("fit"));
+      if (e.shiftKey && c === "KeyA" && has) return run(autoLayout);
       if (e.shiftKey && c === "Digit2") return run(() => zoom("selection"));
       if (e.shiftKey && c === "Digit0") return run(() => zoom(1));
       if (e.key === "+" || e.key === "=") return run(() => zoom("in"));
@@ -1274,6 +1302,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
                   {item("Duplicate", "⌘D", duplicate, none && !framed)}
                   {item("Group selection", "⌘G", () => group(), none)}
                   {item("Frame selection", "⌥⌘G", () => group(true), none)}
+                  {item("Add auto layout", "⇧A", autoLayout, none || (mine.length === 1 && flows(mine[0])))}
                   {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => isGroup(l) || (l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1)))}
                   {mine.some(isGroup) && (mine.filter(isGroup).every((l) => l.box) ? item("Convert to group", "", () => convert(false), false) : item("Convert to frame", "", () => convert(true), false))}
                   <ContextMenuSeparator />
@@ -1373,6 +1402,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           onSplit={() => void split()}
           onGroup={() => group()}
           onUngroup={ungroup}
+          onAutoLayout={autoLayout}
+          flow={(() => {
+            const c = top && scope ? findLayer(top.layers, scope) : null;
+            return flows(c) ? c.layout : null;
+          })()}
           cutting={cutting}
           colours={colours}
           onDropper={(take) => setDropper({ take })}

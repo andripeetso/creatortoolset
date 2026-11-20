@@ -185,7 +185,40 @@ interface Box {
   reference?: true;
   /** how it follows the frame's edges when the frame changes size; absent = it stays where it is on the canvas (a copy in another size places it by its share of the frame) */
   pin?: Pin;
+  /**
+   * how big it is along each side (src/lib/design/layout.ts); absent = the size it is given (fixed). "hug": as big as
+   * what it holds (a text's words; an auto layout box's layers and padding). "fill": a layer of an auto layout box
+   * takes the room the box has left along its flow (shared with the others that fill), or the whole line across it
+   */
+  sizing?: { w?: Sizing; h?: Sizing };
+  /** the least and the most it may be, in pixels, however it is sized (a hugging text wider than its most wraps there) */
+  min?: { w?: number; h?: number };
+  max?: { w?: number; h?: number };
+  /** in an auto layout box: kept out of its flow, where it is (it follows the box's edges by its pin) */
+  absolute?: true;
 }
+
+export const DESIGN_SIZINGS = ["hug", "fill"] as const;
+export type Sizing = (typeof DESIGN_SIZINGS)[number];
+/**
+ * A box's auto layout (src/lib/design/layout.ts): its layers one after another, side by side ("row") or one under
+ * another ("column"), `gap` pixels apart (below 0 they overlap), inside `pad` (top, right, bottom, left, or one for all).
+ * `between`: the room left is spread evenly between them, none at the ends (a box that hugs that way uses `gap`).
+ * `align`: where they sit along the flow, `cross` across it. `wrap` (a row or column of a fixed size): a layer that
+ * does not fit starts a new line, the lines `lineGap` apart (absent = `gap`). A hidden layer and an absolute one are
+ * not in the flow.
+ */
+export interface AutoLayout {
+  dir: "row" | "column";
+  gap?: number;
+  between?: true;
+  pad?: number | [number, number, number, number];
+  align?: "start" | "center" | "end";
+  cross?: "start" | "center" | "end";
+  wrap?: true;
+  lineGap?: number;
+}
+export const DESIGN_FLOW_ALIGNS = ["start", "center", "end"] as const;
 
 /** How a part of a text is set, beside the layer's own: what a run leaves out is the layer's. */
 export interface TextStyle {
@@ -349,6 +382,8 @@ export interface GroupLayer extends Box {
   smooth?: number;
   /** a box: its layers are cut at its edges (and its corners) */
   clip?: true;
+  /** a box: its layers placed one after another by auto layout, not by their own x and y */
+  layout?: AutoLayout;
 }
 
 export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer | GroupLayer;

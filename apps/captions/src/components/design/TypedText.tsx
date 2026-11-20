@@ -284,6 +284,8 @@ export function TypedText({
         textTransform: how === "upper" ? "uppercase" : how === "lower" ? "lowercase" : how === "title" ? "capitalize" : undefined,
         fontVariantCaps: how === "small" ? "small-caps" : undefined,
         textDecorationLine: [layer.underline && "underline", layer.strike && "line-through"].filter(Boolean).join(" ") || undefined,
+        // words that hug their width never wrap: the box grows as they are typed (layout.ts)
+        ...(layer.sizing?.w === "hug" ? { whiteSpace: "pre", overflow: "visible", width: "max-content", minWidth: style?.width } : {}),
       }}
     />
   );

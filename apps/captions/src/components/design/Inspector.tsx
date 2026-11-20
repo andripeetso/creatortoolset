@@ -40,7 +40,9 @@ import {
   LayoutGrid,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import type { Design, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke, TextLayer } from "@contracts/design";
+import type { AutoLayout, Design, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke, TextLayer } from "@contracts/design";
+import { fixedBy, flows, padOf, withSizing, withoutLayout } from "@/lib/design/layout";
+import { toast } from "sonner";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES, EFFECT_PRESETS, EFFECTS_MAX } from "@contracts/design";
 import { effectsOf, withEffects } from "@/lib/design/effects";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -389,6 +391,121 @@ const ALIGNS: [Align, string, typeof AlignLeft][] = [
 ];
 
 
+/** A notice of what changed beside what was asked (a side set to Fixed), once however often it is said. */
+const say = (n: string) => toast(n, { id: n });
+type NumField = ReturnType<typeof fieldsFor>["num"];
+const PLACES = ["start", "center", "end"] as const;
+
+/**
+ * How big the picked layers are along each side (layout.ts): fixed, hugging what they hold (texts and auto layout
+ * boxes) or filling the auto layout box they lie in; their least and most; and kept out of that box's flow.
+ */
+function Sizing({ picked, flow, onPatch, num }: { picked: Layer[]; flow: AutoLayout | null; onPatch: (fn: (l: Layer) => Layer, merge?: string) => void; num: NumField }) {
+  const { same, every } = common(picked);
+  const hugs = every((l) => l.type === "text" || flows(l));
+  if (!hugs && !flow) return null;
+  const options = [["fixed", "Fixed"] as const, ...(hugs ? [["hug", "Hug"] as const] : []), ...(flow ? [["fill", "Fill"] as const] : [])];
+  const bound = (end: "min" | "max", ax: "w" | "h") => (n: number) => (l: Layer): Layer => {
+    const v: { w?: number; h?: number } = { ...l[end], [ax]: n > 0 ? n : undefined };
+    const { [end]: _old, ...rest } = l;
+    return (v.w !== undefined || v.h !== undefined ? { ...rest, [end]: v } : rest) as Layer;
+  };
+  return (
+    <>
+      {(["w", "h"] as const).map((ax) => (
+        <div key={ax} className="flex items-center gap-2">
+          <span className={cn("w-10 shrink-0", DIM)}>{ax === "w" ? "Width" : "Height"}</span>
+          <div className="min-w-0 flex-1">
+            <Choice label={`${ax === "w" ? "Width" : "Height"} sizing`} value={same((l) => l.sizing?.[ax] ?? "fixed")} options={options} onPick={(v) => onPatch((l) => withSizing(l, ax, v, !!flow, say))} />
+          </div>
+        </div>
+      ))}
+      <div className="grid grid-cols-2 gap-2">
+        {num("Min W", "Least width", same((l) => l.min?.w ?? 0), bound("min", "w"), { min: 0 })}
+        {num("Max W", "Most width (0: none)", same((l) => l.max?.w ?? 0), bound("max", "w"), { min: 0 })}
+        {num("Min H", "Least height", same((l) => l.min?.h ?? 0), bound("min", "h"), { min: 0 })}
+        {num("Max H", "Most height (0: none)", same((l) => l.max?.h ?? 0), bound("max", "h"), { min: 0 })}
+      </div>
+      {flow && (
+        <label className="flex items-center gap-2 text-xs">
+          <Checkbox checked={every((l) => !!l.absolute)} onCheckedChange={(on) => onPatch((l) => (on === true ? { ...l, absolute: true } : (({ absolute: _a, ...rest }) => rest as Layer)(l)))} />
+          Absolute position
+        </label>
+      )}
+    </>
+  );
+}
+
+/** The picked boxes' auto layout: its direction, spacing, padding, where its layers sit, wrapping; or a + that adds one. */
+function AutoLayoutSection({ picked, onPatch, onAdd, num }: { picked: Layer[]; onPatch: (fn: (l: Layer) => Layer, merge?: string) => void; onAdd: () => void; num: NumField }) {
+  const { same, every } = common(picked);
+  if (!every(flows))
+    return (
+      <Section
+        title="Auto layout"
+        action={
+          <Tap label="Add auto layout (⇧A)" onClick={onAdd}>
+            <Plus className="h-3.5 w-3.5" />
+          </Tap>
+        }
+      />
+    );
+  const get = <V,>(of: (a: AutoLayout) => V) => same((l) => (flows(l) ? of(l.layout) : undefined));
+  const set = (fn: (a: AutoLayout) => AutoLayout) => (l: Layer): Layer => (flows(l) ? { ...l, layout: fn(l.layout) } : l);
+  const setPad = (side: number) => (n: number) =>
+    set((a) => {
+      const p = padOf(a).map((v, i) => (i === side ? n : v)) as [number, number, number, number];
+      const { pad: _old, ...rest } = a;
+      return p.every((v) => v === p[0]) ? (p[0] ? { ...rest, pad: p[0] } : rest) : { ...rest, pad: p };
+    });
+  const row = get((a) => a.dir) === "row";
+  const between = get((a) => !!a.between);
+  const align = get((a) => a.align ?? "start");
+  const cross = get((a) => a.cross ?? "start");
+  return (
+    <Section
+      title="Auto layout"
+      action={
+        <Tap label="Remove auto layout" onClick={() => onPatch((l) => (flows(l) ? withoutLayout(l) : l))}>
+          <Minus className="h-3.5 w-3.5" />
+        </Tap>
+      }
+    >
+      <Choice label="Direction" value={get((a) => a.dir)} options={[["row", "Row"], ["column", "Column"]]} onPick={(v) => onPatch(set((a) => ({ ...a, dir: v })))} />
+      <Choice label="Spacing" value={between === null ? null : between ? "between" : "packed"} options={[["packed", "Packed"], ["between", "Space between"]]} onPick={(v) => onPatch(set(({ between: _b, ...a }) => (v === "between" ? { ...a, between: true } : a)))} />
+      <div className="grid grid-cols-[auto_1fr] items-start gap-2">
+        {/* where the layers sit: along the flow side to side in a row, up and down in a column; across it the other way */}
+        <div role="group" aria-label="Alignment" className="grid grid-cols-3 gap-0.5 rounded-[5px] bg-[#f5f5f5] p-1 dark:bg-[#383838]">
+          {PLACES.map((y) =>
+            PLACES.map((x) => {
+              const [a, c] = row ? [x, y] : [y, x];
+              const on = cross === c && (between || align === a);
+              return (
+                <button key={`${y}${x}`} type="button" aria-label={`Align ${y === "start" ? "top" : y === "end" ? "bottom" : "middle"} ${x === "start" ? "left" : x === "end" ? "right" : "centre"}`} aria-pressed={on} onClick={() => onPatch(set((l) => ({ ...l, align: a === "start" ? undefined : a, cross: c === "start" ? undefined : c })))} className="flex h-4 w-4 items-center justify-center rounded-[3px] hover:bg-zinc-500/15">
+                  <span className={cn("rounded-full", on ? "h-2 w-2 bg-[#0d99ff]" : "h-1 w-1 bg-zinc-400")} />
+                </button>
+              );
+            }),
+          )}
+        </div>
+        <div className="grid gap-2">
+          {num("Gap", between ? "Gap when it hugs (the room left is spread between its layers)" : "Gap between its layers", get((a) => a.gap ?? 0), (n) => set((a) => ({ ...a, gap: n || undefined })), { min: -2000, max: 2000 })}
+          <label className="flex items-center gap-2 text-xs">
+            <Checkbox checked={!!get((a) => !!a.wrap)} onCheckedChange={(on) => onPatch(set(({ wrap: _w, lineGap: _g, ...a }) => (on === true ? { ...a, wrap: true } : a)))} />
+            Wrap
+          </label>
+          {get((a) => !!a.wrap) && num("Lines", "Gap between lines", get((a) => a.lineGap ?? a.gap ?? 0), (n) => set((a) => ({ ...a, lineGap: n })), { min: -2000, max: 2000 })}
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-1">
+        {(["Top", "Right", "Bottom", "Left"] as const).map((side, i) => (
+          <div key={side}>{num(side[0], `${side} padding`, get((a) => padOf(a)[i]!), setPad(i), { min: 0, max: 2000 })}</div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 /** What every picked layer has in common: one value (null when they differ, or one has none), every one passing a test, one list of fills or lines (null: they differ). */
 function common(picked: readonly Layer[]) {
   const same = <V,>(of: (l: Layer) => V | undefined): V | null => {
@@ -699,6 +816,8 @@ export function Inspector({
   cutting,
   onGroup,
   onUngroup,
+  onAutoLayout,
+  flow,
   colours,
   onDropper,
   onCopySize,
@@ -740,6 +859,10 @@ export function Inspector({
   /** the picked layers made one group, and the groups they are in taken apart */
   onGroup: () => void;
   onUngroup: () => void;
+  /** auto layout added to the picked layers (layout.ts addAutoLayout) */
+  onAutoLayout: () => void;
+  /** the auto layout of the box the picked layers lie in; null: they lie in none */
+  flow: AutoLayout | null;
   /** the colours the design already uses, for the picker */
   colours: readonly string[];
   /** the next press on the canvas gives its colour to `take` */
@@ -756,7 +879,8 @@ export function Inspector({
   const { same, every, sameList } = common(picked);
   const { num, slide, colour } = fieldsFor(onPreview, onPatch, colours, onDropper);
   /** The picked layers resized so the box round them is `w` × `h` (one layer: that layer; with the lock, in its shape). */
-  const sized = (w: number, h: number) => (l: Layer) => (box ? resizeAll([l], box, { x: box.x, y: box.y, w, h })[0]! : l);
+  // a side that hugged or filled is fixed at the size typed (layout.ts fixedBy)
+  const sized = (w: number, h: number) => (l: Layer) => (box ? fixedBy(l, resizeAll([l], box, { x: box.x, y: box.y, w, h })[0]!, say) : l);
 
   const text = every((l) => l.type === "text");
   const shape = every((l) => l.type === "shape");
@@ -913,7 +1037,9 @@ export function Inspector({
                 {ratio ? <Link2 className="h-3.5 w-3.5" /> : <Unlink2 className="h-3.5 w-3.5" />}
               </Tap>
             </div>
+            <Sizing picked={picked} flow={flow} onPatch={onPatch} num={num} />
           </Section>
+          <AutoLayoutSection picked={picked} onPatch={onPatch} onAdd={onAutoLayout} num={num} />
           {/* how the picked layers follow the frame's edges when it changes size; the pressed one again takes the pin off */}
           {!page.loose && (
             <Section title="Pin to the frame">

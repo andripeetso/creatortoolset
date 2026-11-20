@@ -1,8 +1,10 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, type DesignPage, type Effect, type Pin, type Gradient, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, DESIGN_FLOW_ALIGNS, DESIGN_SIZINGS, type AutoLayout, type DesignPage, type Sizing, type Effect, type Pin, type Gradient, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
-import { everyLayer, hug } from "../../src/lib/design/tree";
+import { guessWidth, layoutLayers } from "../../src/lib/design/layout";
+import type { Measure } from "../../src/lib/design/runs";
+import { everyLayer } from "../../src/lib/design/tree";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
 import { cleanAids } from "./design-aids";
 
@@ -193,6 +195,46 @@ function marks(v: unknown): { marks?: { color: string; words?: string; low?: tru
 }
 
 /** A layer's pin as it may be saved: each side one of its own words, and none when neither is. */
+/** A layer's sizing, least and most size and place out of an auto layout's flow, as given (cleanPages keeps each only where it applies). */
+function sizes(raw: Record<string, unknown>, r: { w: number; h: number }) {
+  const side = (v: unknown, ax: "w" | "h") => (typeof v === "number" && Number.isFinite(v) ? round(num(v, 0, 2 * r[ax], 0)) : undefined);
+  const pair = (v: unknown) => {
+    const w = obj(v) ? side(v.w, "w") : undefined;
+    const h = obj(v) ? side(v.h, "h") : undefined;
+    return w === undefined && h === undefined ? undefined : { ...(w !== undefined ? { w } : {}), ...(h !== undefined ? { h } : {}) };
+  };
+  const min = pair(raw.min);
+  // a most below the least is the least
+  const most = pair(raw.max);
+  const max = most && { ...(most.w !== undefined ? { w: Math.max(most.w, min?.w ?? 0) } : {}), ...(most.h !== undefined ? { h: Math.max(most.h, min?.h ?? 0) } : {}) };
+  const sw = obj(raw.sizing) && DESIGN_SIZINGS.includes(raw.sizing.w as Sizing) ? (raw.sizing.w as Sizing) : undefined;
+  const sh = obj(raw.sizing) && DESIGN_SIZINGS.includes(raw.sizing.h as Sizing) ? (raw.sizing.h as Sizing) : undefined;
+  return {
+    ...(sw || sh ? { sizing: { ...(sw ? { w: sw } : {}), ...(sh ? { h: sh } : {}) } } : {}),
+    ...(min ? { min } : {}),
+    ...(max ? { max } : {}),
+    ...(raw.absolute === true ? { absolute: true as const } : {}),
+  };
+}
+
+/** A box's auto layout as given, every number held to what can be drawn; null when it names no direction. */
+function autoLayout(v: unknown): AutoLayout | null {
+  if (!obj(v) || (v.dir !== "row" && v.dir !== "column")) return null;
+  const pad = Array.isArray(v.pad) && v.pad.length === 4 ? (v.pad.map((n) => round(num(n, 0, 2000, 0))) as [number, number, number, number]) : typeof v.pad === "number" ? round(num(v.pad, 0, 2000, 0)) : 0;
+  const gap = round(num(v.gap, -2000, 2000, 0));
+  const lineGap = typeof v.lineGap === "number" ? round(num(v.lineGap, -2000, 2000, 0)) : undefined;
+  return {
+    dir: v.dir,
+    ...(gap ? { gap } : {}),
+    ...(v.between === true ? { between: true as const } : {}),
+    ...(pad ? { pad } : {}),
+    ...(DESIGN_FLOW_ALIGNS.includes(v.align as never) && v.align !== "start" ? { align: v.align as AutoLayout["align"] } : {}),
+    ...(DESIGN_FLOW_ALIGNS.includes(v.cross as never) && v.cross !== "start" ? { cross: v.cross as AutoLayout["cross"] } : {}),
+    ...(v.wrap === true ? { wrap: true as const } : {}),
+    ...(lineGap !== undefined ? { lineGap } : {}),
+  };
+}
+
 function pin(v: unknown): { pin?: Pin } {
   if (!obj(v)) return {};
   const x = DESIGN_PINS_X.find((p) => p === v.x);
@@ -348,6 +390,11 @@ export interface PageRules {
    */
   words?: readonly (string | undefined)[];
   /**
+   * What a text's words are measured with to lay out its auto layout boxes and hugging texts (src/lib/design/layout.ts):
+   * absent, a guess (an AI's work); null, every text keeps the size it has (a save by hand, laid out by the browser).
+   */
+  measure?: Measure | null;
+  /**
    * Where a note goes instead of the notes list: the page's place in the list, the note, and the layer as it was given
    * (for a note about one layer), so a caller can say which of the things it sent the note is about.
    */
@@ -389,6 +436,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...(raw.locked === true ? { locked: true } : {}),
     ...(raw.reference === true ? { reference: true as const } : {}),
     ...pin(raw.pin),
+    ...sizes(raw, r),
   };
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
   if (raw.type === "text") {
@@ -460,13 +508,16 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     };
   }
   if (raw.type === "group") {
-    const own = raw.box === true;
+    // an auto layout makes it a box of its own
+    const layout = autoLayout(raw.layout);
+    if (raw.layout !== undefined && raw.layout !== null && !layout) say('an auto layout needs "dir": "row" or "column": left out');
+    const own = raw.box === true || !!layout;
     // a plain group is only what holds its layers: no fill, no line, no corners, no clip of its own
     return {
       type: "group",
       ...box,
       layers: [],
-      ...(own ? { box: true as const, ...fillList(raw.fills, r, say), ...strokeList(raw.strokes, 200), ...corners(raw.radius), ...smoothed(raw.smooth), ...(raw.clip === true ? { clip: true as const } : {}) } : {}),
+      ...(own ? { box: true as const, ...fillList(raw.fills, r, say), ...strokeList(raw.strokes, 200), ...corners(raw.radius), ...smoothed(raw.smooth), ...(raw.clip === true ? { clip: true as const } : {}), ...(layout ? { layout } : {}) } : {}),
     };
   }
   if (raw.type === "shape") {
@@ -529,6 +580,20 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
 }
 
 /** Pages as they may be saved: at most the limits' count of pages and layers, every id its page's own. */
+/** Hug kept to texts and auto layout boxes, fill and a place out of the flow to an auto layout box's layers (each said when given elsewhere). */
+function fitSizing(l: { type: string; sizing?: Layer["sizing"]; absolute?: true; box?: true; layout?: AutoLayout }, flowing: boolean, say: (why: string) => void): void {
+  const hugs = l.type === "text" || !!l.layout;
+  for (const ax of ["w", "h"] as const) {
+    const s = l.sizing?.[ax];
+    if ((s === "hug" && !hugs) || (s === "fill" && !flowing)) {
+      say(s === "hug" ? `"hug" is for a text or a box with an auto layout: ${ax === "w" ? "width" : "height"} kept fixed` : `"fill" is for a layer of a box with an auto layout: ${ax === "w" ? "width" : "height"} kept fixed`);
+      delete l.sizing![ax];
+    }
+  }
+  if (l.sizing && !l.sizing.w && !l.sizing.h) delete l.sizing;
+  if (l.absolute && !flowing) delete l.absolute;
+}
+
 export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; notes: string[] } {
   const notes: string[] = [];
   const pages: DesignPage[] = [];
@@ -555,7 +620,8 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     // every layer of the frame, however deep in its containers, counts once against the limit and has an id of its own in it
     let held = 0;
     let full = false;
-    const take = (list: unknown, depth: number): Layer[] => {
+    /** `flowing`: the layers are an auto layout box's: they may fill and lie out of its flow. */
+    const take = (list: unknown, depth: number, flowing = false): Layer[] => {
       const out: Layer[] = [];
       for (const l of Array.isArray(list) ? list : []) {
         const sayL = (why: string) => (r.say ? r.say(k, why, l) : notes.push(`Page ${k + 1}: ${why}`));
@@ -575,11 +641,12 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         let id = given;
         for (let n = held; !id || ids.has(id); n++) id = `l${n}`;
         ids.add(id);
+        fitSizing(clean, flowing, sayL);
         if (clean.type !== "group") {
           out.push({ ...clean, id } as Layer);
           continue;
         }
-        const inner = take(obj(l) ? l.layers : [], depth + 1);
+        const inner = take(obj(l) ? l.layers : [], depth + 1, !!clean.layout);
         // a plain group with nothing in it is nothing (a box may be empty: a card waiting for its words)
         if (!inner.length && !clean.box) {
           sayL("a group with no layers in it: left out");
@@ -589,8 +656,8 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       }
       return out;
     };
-    // a plain group's box is the box round its layers, whatever it was given
-    const layers = hug(take(p.layers, 0));
+    // a plain group's box is the box round its layers, whatever it was given, and every auto layout laid out
+    const layers = layoutLayers(take(p.layers, 0), r.measure === undefined ? guessWidth : r.measure, sayPage);
     // an AI's page says all of its words: any it left off are named, so it can put them back (a page with nothing
     // on it is said so by whoever asked for it)
     if (r.words?.[k] !== undefined && layers.length) {

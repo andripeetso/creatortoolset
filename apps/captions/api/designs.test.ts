@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Design, DesignAnswer, DesignListed, DesignSummary, SplitAnswer } from "../contracts/design";
+import type { Design, DesignAnswer, DesignListed, DesignSummary, GroupLayer, SplitAnswer } from "../contracts/design";
+import { everyLayer } from "../src/lib/design/tree";
 
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "designs-"));
 process.env.DATA_DIR = dataDir;
@@ -199,6 +200,39 @@ describe("designs: an AI that designs", () => {
   const text = { type: "text", font: "Anton", size: 90, color: "#ffffff", align: "center", x: 90, y: 400, w: 900, h: 300 };
   const read = async (id: string, more = "") => (await call<Read>("GET", `/api/designs/${id}/pages${more}`)).body;
   const write = (id: string, body: unknown) => call<Wrote>("POST", `/api/designs/${id}/pages`, body);
+
+  it("lays out an AI's auto layout: a badge's longer word grows its pill, a list keeps even gaps, what cannot apply is said", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const word = { type: "text", font: "Inter", size: 40, color: "#ffffff", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" } };
+    const badge = { type: "group", box: true, id: "badge", x: 80, y: 80, w: 10, h: 10, radius: 999, layout: { dir: "row", pad: [14, 32, 14, 32] }, sizing: { w: "hug", h: "hug" }, layers: [{ ...word, id: "word", text: "NEW" }] };
+    const point = (id: string, t: string) => ({ ...word, id, text: t, sizing: { w: "fill", h: "hug" } });
+    const list = { type: "group", box: true, id: "list", x: 80, y: 300, w: 900, h: 10, layout: { dir: "column", gap: 32 }, sizing: { h: "hug" }, layers: [point("a", "One"), point("b", "Two"), point("c", "Three")] };
+    const odd = [{ type: "shape", shape: "rect", id: "bar", x: 0, y: 0, w: 50, h: 50, fill: "#000000", sizing: { w: "fill", h: "hug" } }, { type: "group", box: true, id: "bad", x: 0, y: 900, w: 50, h: 50, layout: { dir: "diagonal" }, layers: [] }];
+    const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [badge, list, ...odd] }] })).body;
+    const at = (b: typeof first, id: string) => everyLayer(b.design.pages[0]!.layers).find((l) => l.id === id)! as GroupLayer;
+    const pill = at(first, "badge");
+    expect(pill.layout).toEqual({ dir: "row", pad: [14, 32, 14, 32] });
+    expect(pill.w).toBe(at(first, "word").w + 64);
+    expect(pill.h).toBe(at(first, "word").h + 28);
+    const ys = at(first, "list").layers.map((l) => l.y);
+    expect(ys[1]! - ys[0]!).toBe(ys[2]! - ys[1]!);
+    expect(at(first, "list").layers.every((l) => l.w === 900)).toBe(true);
+    expect(at(first, "bar").sizing).toBeUndefined();
+    expect(at(first, "bad").layout).toBeUndefined();
+    expect(first.notes.join(" ")).toMatch(/"fill" is for a layer of a box with an auto layout/);
+    expect(first.notes.join(" ")).toMatch(/"hug" is for a text or a box with an auto layout/);
+    expect(first.notes.join(" ")).toMatch(/an auto layout needs "dir"/);
+    // only the word changes: the pill grows round it, where it was
+    const second = (await write(d.id, { changes: [{ frame: d.pages[0]!.id, layer: "word", set: { text: "LIMITED OFFER" } }] })).body;
+    expect(at(second, "badge").w).toBeGreaterThan(pill.w + 100);
+    expect([at(second, "badge").x, at(second, "badge").y]).toEqual([80, 80]);
+    expect(at(second, "badge").w).toBe(at(second, "word").w + 64);
+    // a save by hand keeps the sizes the browser measured its words at, and lays out its boxes round them
+    const saved = second.design.pages[0]!;
+    const mine = { ...saved, layers: saved.layers.map((l) => (l.id === "badge" ? { ...l, layers: (l as GroupLayer).layers.map((k) => ({ ...k, w: 500 })) } : l)) };
+    const put = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: [mine] })).body;
+    expect([everyLayer(put.pages[0]!.layers).find((l) => l.id === "word")!.w, put.pages[0]!.layers.find((l) => l.id === "badge")!.w]).toEqual([500, 564]);
+  });
 
   it("reads every frame with its id, size, words and layers, and how a design is changed", async () => {
     const d = await fromPiece();

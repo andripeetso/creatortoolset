@@ -225,6 +225,9 @@ export function measurer(font: string): (s: string) => number {
   };
 }
 
+/** A string's width in a CSS font, measured on the browser's kept canvas (measurer): what auto layout sizes words with (layout.ts). */
+export const measureWords = (font: string, s: string): number => measurer(font)(s);
+
 /**
  * Where a text's highlighter strokes go, in its box: for each mark, a box on every line its words are on (a phrase
  * that wraps gets one a line, and every place the phrase is in the text gets its own); a mark without words, a box

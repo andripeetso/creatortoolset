@@ -43,10 +43,10 @@ async function seen(ctx: ToolContext, at: string, frames: readonly Frame[], only
   };
 }
 
-/** A frame as an outline: its size and words, and each layer's id, kind, name, group and words (cut at 120 letters), a group's own layers inside it, without how anything looks. */
+/** A frame as an outline: its size and words, and each layer's id, kind, name, group, auto layout and sizing and words (cut at 120 letters), a group's own layers inside it, without how anything looks. */
 const outlineLayers = (layers: unknown): Args[] =>
   ((Array.isArray(layers) ? layers : []) as Args[]).map((l) => ({
-    ...pick(l, ["id", "type", "name", "group", "box"]),
+    ...pick(l, ["id", "type", "name", "group", "box", "layout", "sizing", "absolute"]),
     ...(typeof l.text === "string" ? { text: l.text.length > 120 ? `${l.text.slice(0, 120)}…` : l.text } : {}),
     ...(l.hidden ? { hidden: true } : {}),
     ...(Array.isArray(l.layers) ? { layers: outlineLayers(l.layers) } : {}),

@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
-import { dropInto, everyLayer, inFrame, inScope, into, isGroup, mapLayers, moveInto, reid, scopeOf, withScope } from "@/lib/design/tree";
+import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, mapLayers, moveInto, reid, scopeOf, withScope } from "@/lib/design/tree";
 import { solidGround } from "@/lib/design/paint";
 import { boundsOf, boxPick, dropTarget, frameOf, hovers, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
+import { fixedBy, flowInsert, flowSlot, flows } from "@/lib/design/layout";
+import { toast } from "sonner";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, zoomStop, type KeptFrame, type ViewStore } from "@/lib/design/view";
 import { aidTargets } from "@/lib/design/aids";
@@ -164,6 +166,8 @@ export function Stage({
   const canvas = useRef<HTMLCanvasElement>(null);
   const typing = useRef<TypedHandle>(null);
   const [guides, setGuides] = useState<Guides | null>(null);
+  /** where layers dragged in an auto layout box go in its flow, in the canvas's pixels */
+  const [slot, setSlot] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [band, setBand] = useState<Rect | null>(null);
   /** the box a making tool is drawing, in the canvas's pixels */
   const [drawn, setDrawn] = useState<Rect | null>(null);
@@ -568,6 +572,10 @@ export function Stage({
     // the canvas holds no more loose pieces: layers let go off their frame go back where they were, and it says why
     const canvasFull = all.filter((q) => q.loose).length >= DESIGN_LIMITS.loose;
     let keptIn = false;
+    // in an open auto layout box they leave its flow while they move (the others close up) and go back in where let go
+    const flowing = open && !copy ? findLayer(real[k]!.layers, open) : null;
+    const free = new Set(moving.filter((l) => !l.absolute).map((l) => l.id));
+    let inFlow = false;
     drag(
       e,
       (ev) => {
@@ -605,7 +613,18 @@ export function Stage({
         // an id of its own in the frame it lands in
         const taken = new Set(everyLayer((real[to] ?? host).layers).filter((l) => to !== k || copy || !ids.includes(l.id)).map((l) => l.id));
         const fresh = freshIds(real[to] ?? host, moving.length);
-        const moved = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id }));
+        inFlow = flows(flowing) && to === k && !out;
+        const moved = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id, ...(inFlow ? { absolute: true as const } : {}) }));
+        // the line shows while their middle is over the box (let go outside it, they leave it: dropInto)
+        const flowRect = flows(flowing) ? inFrame(real[k]!.layers, flowing.id)! : null;
+        const held = boundsOf(moved);
+        const cx = held.x + held.w / 2;
+        const cy = held.y + held.h / 2;
+        const over = !!flowRect && cx >= flowRect.x && cx <= flowRect.x + flowRect.w && cy >= flowRect.y && cy <= flowRect.y + flowRect.h;
+        if (flows(flowing) && inFlow && over) {
+          const at = flowSlot(flowing.layout, p.layers.filter((l) => !ids.includes(l.id)), held).line;
+          setSlot({ x1: at.x1 + g.x, y1: at.y1 + g.y, x2: at.x2 + g.x, y2: at.y2 + g.y });
+        } else setSlot(null);
         // a copy, or a container landing in another frame: every layer inside it an id of its own there
         const placed = copy || to !== k ? reid(moved, moved.map((l) => l.id), [...(real[to] ?? host).layers, ...(copy ? [] : moving)]) : moved;
         // copies, and layers landing in another frame, are a group among themselves, not part of one that is there
@@ -620,17 +639,32 @@ export function Stage({
       },
       (moved) => {
         setGuides(null);
+        setSlot(null);
         onLive(null);
+        // back in the flow they were in: the place they were let go at says where (layout.ts flowInsert)
+        if (last && inFlow) {
+          const back = (l: Layer): Layer => {
+            if (!free.has(l.id)) return l;
+            const { absolute: _out, ...rest } = l;
+            return rest as Layer;
+          };
+          last = { ...last, pages: last.pages.map((q, n) => (n ? q : { ...q, layers: q.layers.map(back) })) };
+        }
         // let go where they could not lie (past the frame's edge, its clip hiding them): as if the drag never happened
         if (keptIn) return void onError?.(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
         if (last) {
           // let go in the same frame: into the box under their middle, or out of the container they were in
           const mid = boundsOf(last.pages[0]!.layers.filter((l) => last!.ids.includes(l.id)));
           const into_ = last.to === k && !copy && !p.loose ? dropInto(real[k]!.layers, last.ids, { x: mid.x + mid.w / 2, y: mid.y + mid.h / 2 }, open, DESIGN_LIMITS.depth) : open;
+          const inFlowOf = (layers: Layer[], box: string | null) => (box && flows(findLayer(layers, box)) ? flowInsert(layers, box, last!.ids) : layers);
           if (into_ !== open) {
             const whole = unscopeOne(last.pages[0]!);
-            onCommit([{ ...whole, layers: moveInto(whole.layers, last.ids, into_) }]);
+            onCommit([{ ...whole, layers: inFlowOf(moveInto(whole.layers, last.ids, into_), into_) }]);
             return onPick(k, last.ids);
+          }
+          if (inFlow) {
+            const whole = unscopeOne(last.pages[0]!);
+            return onCommit([{ ...whole, layers: inFlowOf(whole.layers, open) }]);
           }
           onCommit(last.pages);
           // a loose picture whose last picture went into a frame is gone, and the frames after it move up one
@@ -724,17 +758,22 @@ export function Stage({
     const one = picked.length === 1 ? picked[0]! : null;
     const b0 = boundsOf(picked);
     let last: DesignPage | null = null;
+    let notes: string[] = [];
     drag(
       e,
       (ev) => {
         const to = world(ev);
         const o = { keep: ev.shiftKey, center: ev.altKey, min: MIN };
-        last = withLayers(page, one ? [resizeBox(one, h, to.x - from.x, to.y - from.y, o)] : resizeAll(picked, b0, resizeBox(b0, h, to.x - from.x, to.y - from.y, o)));
+        // a side that hugged or filled is fixed at the size it is pulled to (layout.ts fixedBy)
+        notes = [];
+        const sized = (one ? [resizeBox(one, h, to.x - from.x, to.y - from.y, o)] : resizeAll(picked, b0, resizeBox(b0, h, to.x - from.x, to.y - from.y, o))).map((l) => fixedBy(picked.find((p) => p.id === l.id)!, l, (n) => notes.push(n)));
+        last = withLayers(page, sized);
         onLive([last]);
       },
       () => {
         onLive(null);
         if (last) onCommit([last]);
+        if (last) notes.forEach((n) => toast(n, { id: n }));
       },
     );
   };
@@ -1081,6 +1120,8 @@ export function Stage({
           {outlined.map((l, n) => l && <div key={n} className={cn("pointer-events-none absolute outline outline-[#0d99ff]", n === 2 ? "outline-1 outline-dashed" : "outline-2")} style={place(n === 0 ? hover!.k : at, l)} />)}
           {guides?.x !== undefined && <div className="pointer-events-none absolute w-px bg-[#ff3b30]" style={{ left: view.x + guides.x * view.z, top: view.y + guides.span.y * view.z, height: guides.span.h * view.z }} />}
           {guides?.y !== undefined && <div className="pointer-events-none absolute h-px bg-[#ff3b30]" style={{ left: view.x + guides.span.x * view.z, top: view.y + guides.y * view.z, width: guides.span.w * view.z }} />}
+          {/* where the dragged layers go in the auto layout's flow */}
+          {slot && <div data-flow-slot className="pointer-events-none absolute bg-[#0d99ff]" style={{ left: view.x + Math.min(slot.x1, slot.x2) * view.z - 1, top: view.y + Math.min(slot.y1, slot.y2) * view.z - 1, width: Math.max(2, Math.abs(slot.x2 - slot.x1) * view.z), height: Math.max(2, Math.abs(slot.y2 - slot.y1) * view.z) }} />}
           {guides?.gaps?.map((gap, n) => {
             // each even gap: a line across it, and how wide it is
             const a = gap.axis === "x" ? { left: view.x + gap.from * view.z, top: view.y + gap.at * view.z } : { left: view.x + gap.at * view.z, top: view.y + gap.from * view.z };
