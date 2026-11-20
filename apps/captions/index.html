@@ -43,6 +43,29 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- the CT mark draws itself until the app first draws into #root (it lives outside #root, so the Mac app's
+         10 s "still blank" check keeps seeing an empty #root); the same mark as the Mac app's splashPage -->
+    <div id="ct-boot" role="status" aria-label="Opening Creator Toolset">
+      <svg viewBox="111 120 800 800" aria-hidden="true">
+        <linearGradient id="ct-boot-g" gradientUnits="userSpaceOnUse" x1="0" y1="200" x2="0" y2="840"><stop offset="0" /><stop offset="1" /></linearGradient>
+        <g stroke="url(#ct-boot-g)">
+          <path class="s c" pathLength="1" d="M412 285A235 235 0 1 0 582 682" stroke-width="130" />
+          <path class="s b" pathLength="1" d="M410 285H910" stroke-width="130" />
+          <path class="s t" pathLength="1" d="M726 350V820" stroke-width="128" />
+        </g>
+      </svg>
+    </div>
+    <style>
+      #ct-boot{position:fixed;inset:0;display:grid;place-items:center;pointer-events:none;opacity:0;animation:ct-boot-show .3s ease .25s forwards}
+      #root:not(:empty)~#ct-boot{display:none}
+      #ct-boot svg{width:120px;height:120px;overflow:visible}
+      #ct-boot stop:first-child{stop-color:#4a28d0} #ct-boot stop:last-child{stop-color:#8b6cff}
+      .dark #ct-boot stop:first-child{stop-color:#ece7ff} .dark #ct-boot stop:last-child{stop-color:#b3a1ff}
+      #ct-boot .s{fill:none;stroke-dasharray:1 1;stroke-dashoffset:1;animation:ct-boot-draw .5s cubic-bezier(.3,0,.2,1) .25s forwards}
+      #ct-boot .c{animation-duration:.65s} #ct-boot .b{animation-delay:.75s} #ct-boot .t{animation-delay:1s}
+      @keyframes ct-boot-draw{to{stroke-dashoffset:0}} @keyframes ct-boot-show{to{opacity:1}}
+      @media (prefers-reduced-motion:reduce){#ct-boot .s{animation:none;stroke-dashoffset:0}}
+    </style>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
