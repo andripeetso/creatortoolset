@@ -61,7 +61,7 @@ function golden() {
       "Made by src/lib/nle/edj.test.ts from the formulas below; compare values within 1e-6.",
       "Keys: source frame s = in + (f - rec) * speed * sfps / fps for timeline frame f = floor(t * fps). No keys: the item's own value, else zoom 1, pan 0, tilt 0, rot 0, opacity 1, gain_db 0. s at or before the first key: its value; at or after the last: its value. Between keys k and k+1: u = (s - s_k) / (s_k+1 - s_k); key k's ease decides: hold = v_k, linear = lerp(u), ease = lerp(E(u)), E(u) = 16u^5 below 0.5, else 1 - (2 - 2u)^5 / 2.",
       "Transitions sit on the later clip at cut = its rec. Frames before the cut: start 0, end len, center floor(len / 2). start = cut - that; u = (f - start) / len for f in [start, start + len).",
-      "dissolve: the later clip at alpha u over the earlier one at full opacity. dip: weights of earlier clip a, colour, later clip b: u < 0.5: a = 1 - 2u, color = 2u, b = 0; else a = 0, color = 2 - 2u, b = 2u - 1. crossfade: gains a = cos(u * pi / 2), b = sin(u * pi / 2).",
+      "dissolve: the later clip at alpha u over the earlier one at full opacity. dip: weights of earlier clip a, colour, later clip b, read at the frame's middle w = u + 0.5 / len: color = 0.82 * (1 - |2w - 1|); w < 0.5: a = 1 - color, b = 0; else a = 0, b = 1 - color (Resolve 21.2's Dip To Color Dissolve, measured). crossfade: gains a = cos(u * pi / 2), b = sin(u * pi / 2).",
       "Handles in source frames: tail of the earlier clip past its last frame = post * speed * sfps / fps; head of the later clip before its in = pre * speed * sfps / fps (pre / post = timeline frames before / after the cut).",
     ],
     keys: KEY_CASES.map((c) => ({ ...c, values: c.frames.map((f) => r6(valueAt(c.item, c.prop, f, c.fps, c.sfps))) })),
