@@ -2,7 +2,7 @@ import { FILMED_MAX, FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type Rel
 import { EVERY_WORKSPACE, editorDirsOf, leftOutBy, notFootage, okFolderPath, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 import os from "node:os";
 import path from "node:path";
-import { isThisMachine } from "../lib/devices";
+import { deviceOf, isThisMachine } from "../lib/devices";
 import type { Device } from "../../contracts/providers";
 import { LIBRARY_WORDS } from "../../contracts/library";
 import type { SessionUser } from "../users";
@@ -151,34 +151,50 @@ export function editorDirsSeen(key: string, scan: string | undefined, rels: stri
 }
 
 /**
- * The files `where` (a condition on version_places p) matches are not footage: their place rows of this folder turn gone, and
- * each clip made from one is a candidate to leave the library. `pending` collects them until the listing is read whole
- * (settleLeft): a copy of the same file elsewhere in it, on a later page, keeps the clip.
+ * A place (version_places p) that is one of the library's own copies (copies.ts, Media Library Copies), at the path its
+ * copy was written to: never a copy of a clip's own that keeps it in the library, and never a left-out file.
  */
-function leaveLibrary(dev: Device, folderId: string, inLibs: string, now: number, where: string, args: string[], pending: Set<string>, uploaded = false): void {
+const COPY_PLACE = `EXISTS (SELECT 1 FROM copy_files cf JOIN library_copies c ON c.id = cf.copy_id
+  WHERE cf.version_id = p.version_id AND c.device = p.device AND p.path = rtrim(c.path, '/') || '/' || cf.rel_path)`;
+
+/** Whether `file` on computer `device` is a file one of the library's copies wrote there. */
+const copyAt = (device: string, file: string): boolean =>
+  !!db()
+    .prepare("SELECT 1 FROM copy_files cf JOIN library_copies c ON c.id = cf.copy_id WHERE c.device = ? AND rtrim(c.path, '/') || '/' || cf.rel_path = ? LIMIT 1")
+    .get(device, file);
+
+/**
+ * The files `where` (a condition on version_places p) matches are not footage: their place rows of this folder turn gone
+ * (a member's locate-only one too), and each clip of the libraries in `own` made from one is a candidate to leave the
+ * library. `pending` collects them until the listing is read whole (settleLeft): a copy of the same file elsewhere in it,
+ * on a later page, keeps the clip.
+ */
+function leaveLibrary(dev: Device, folderId: string, inLibs: string, own: ReadonlySet<string>, now: number, where: string, args: string[], pending: Set<string>, uploaded = false): void {
   const rows = db()
     .prepare(
       // a place with no folder (the Mac window's index, a Locate) is this folder's file too
       // `uploaded`: a left-out file's clip leaves even when the server keeps its bytes; otherwise only one read where it is
-      `SELECT p.rowid AS place, a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+      `SELECT p.rowid AS place, a.id, a.library_id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
        WHERE p.device = ? AND p.folder_id IN (?, '') AND p.kind = 'original' AND ${where} ${uploaded ? "" : "AND v.source_key LIKE 'mac:%'"} AND a.trashed_at IS NULL
-         AND a.library_id IN (SELECT value FROM json_each(?))`,
+         AND a.library_id IN (SELECT value FROM json_each(?)) AND NOT ${COPY_PLACE}`,
     )
-    .all(dev.id, folderId, ...args, inLibs) as { place: number; id: string }[];
+    .all(dev.id, folderId, ...args, inLibs) as { place: number; id: string; library_id: string }[];
   const gone = db().prepare("UPDATE version_places SET state = 'gone', gone_at = ? WHERE rowid = ?");
   for (const r of rows) {
     gone.run(now, r.place);
-    pending.add(r.id);
+    if (own.has(r.library_id)) pending.add(r.id);
   }
 }
 
 /**
  * Moves each clip of `assets` into the trash unless it is held (trash.ts trashHeld) or another copy of it is still found
- * somewhere (a verified or found place of any of its versions, on any computer). Returns the ones it moved.
+ * somewhere (a verified or found place of any of its versions, on any computer, that is not one of the library's own
+ * copies, COPY_PLACE). Returns the ones it moved.
  */
 export function settleLeft(assets: Iterable<string>, now: number, what: string): string[] {
   const live = db().prepare(
-    `SELECT 1 FROM version_places p JOIN asset_versions v ON v.id = p.version_id WHERE v.asset_id = ? AND p.kind = 'original' AND p.state IN ('verified','found') LIMIT 1`,
+    `SELECT 1 FROM version_places p JOIN asset_versions v ON v.id = p.version_id
+      WHERE v.asset_id = ? AND p.kind = 'original' AND p.state IN ('verified','found') AND NOT ${COPY_PLACE} LIMIT 1`,
   );
   const moved: string[] = [];
   for (const id of assets) {
@@ -232,6 +248,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
   const inLibs = JSON.stringify(libs);
   // a locate-only library is matched, never trashed into
   const inOwn = JSON.stringify(libs.filter((l) => !locate.has(l)));
+  const own = new Set(libs.filter((l) => !locate.has(l)));
   const state: FolderState = r.state;
   if (state !== "ok") {
     // not readable now: what was here is not checked, never gone
@@ -252,16 +269,29 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
     for (const dir of fresh) {
       const hit = placed.find((x) => x.rel.startsWith(`${dir}/`))!;
       const full = hit.f.path.slice(0, hit.f.path.length - hit.rel.length) + dir;
-      leaveLibrary(dev, folder.id, inOwn, now, "(p.path = ? OR substr(p.path, 1, length(?) + 1) = ? || '/')", [full, full, full], left);
+      leaveLibrary(dev, folder.id, inLibs, own, now, "(p.path = ? OR substr(p.path, 1, length(?) + 1) = ? || '/')", [full, full, full], left);
     }
     for (const { f, rel } of placed) {
       // not footage: an AI Editor folder, a folder this one leaves out, a half-written file, or anything inside a Projects or Exports folder
-      const out = leftOutBy(media, f.path, device);
+      // a file one of the library's copies wrote is never left out, whatever folder it went into
+      const out = leftOutBy(media, f.path, device) && !copyAt(device, f.path);
       if (out || notFootage(rel, editorDirs) || keepOut.some((k) => inside(f.path, k) !== null)) {
         // indexed here before this rule: the clip leaves the library through the trash once the listing is read whole, unless
         // a copy of it is found elsewhere (never while in Review or shared); the file on the computer stays
         // a locate-only library is never trashed into
-        leaveLibrary(dev, folder.id, inOwn, now, "p.path = ?", [f.path], left, out);
+        leaveLibrary(dev, folder.id, inLibs, own, now, "p.path = ?", [f.path], left, out);
+        // moved into a left-out folder: the clip at this file's size and fingerprint with a place in this folder is a
+        // candidate too (its old place turns gone when the listing completes; a real second copy still keeps it)
+        if (out && f.quick) {
+          const moved = d
+            .prepare(
+              `SELECT DISTINCT a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
+               WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND v.bytes = ? AND v.quick = ? AND a.trashed_at IS NULL
+                 AND a.library_id IN (SELECT value FROM json_each(?)) AND NOT ${COPY_PLACE}`,
+            )
+            .all(device, folder.id, f.bytes, f.quick, inOwn) as { id: string }[];
+          for (const m of moved) left.add(m.id);
+        }
         continue;
       }
       const hits = d
@@ -404,6 +434,17 @@ export async function mediaForLibrary(user: string, libraryId: string): Promise<
   const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
   const owner = row ? accountOf(row.workspace_id) : null;
   return [...(await mediaFoldersOf(user)), ...(owner && owner !== user ? await mediaFoldersOf(owner) : [])];
+}
+
+/**
+ * The check every file `user` brings into `libraryId` gets (contracts/storage.ts leftOutBy over mediaForLibrary): true
+ * when a list leaves it out. `device`: the computer the file is on; it counts only when it is one of `user`'s, otherwise
+ * every computer's path counts. Read once, for a whole batch.
+ */
+export async function leftOutFor(user: string, libraryId: string, device?: string | null): Promise<(file: string) => boolean> {
+  const media = await mediaForLibrary(user, libraryId);
+  const host = device && deviceOf(device)?.owner === user ? device : undefined;
+  return (file) => leftOutBy(media, file, host);
 }
 
 /**

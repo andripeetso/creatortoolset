@@ -601,14 +601,20 @@ export async function keepOutOf(user: string): Promise<string[]> {
   return st.folders.filter((f) => f.role !== "footage" && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))).map((f) => f.origin.path);
 }
 
-export async function filesIn(root: string, keepOut: string[] = [], media: StorageFolder[] = []): Promise<string[]> {
+/** `dropped`, when given, gets the files a Media folder's Folders left out kept out (leaveWatched's moved-in check). */
+export async function filesIn(root: string, keepOut: string[] = [], media: StorageFolder[] = [], dropped?: string[]): Promise<string[]> {
   const all = await readdir(root, { recursive: true, withFileTypes: true });
   const seen = all
     .filter((e) => e.isFile() && kindOf(e.name) !== "doc" && !RAW_FILE.test(e.name))
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
-  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !leftOutBy(media, p) && !keepOut.some((k) => inside(p, k)));
+  return seen.filter((p) => {
+    if (notFootage(path.relative(root, p), editorDirs) || keepOut.some((k) => inside(p, k))) return false;
+    if (!leftOutBy(media, p)) return true;
+    dropped?.push(p);
+    return false;
+  });
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
@@ -722,28 +728,42 @@ export async function copyInto(root: string, copyTo: string, file: string, size:
 
 /**
  * Clips this watch took in from files under `root` that a Media folder now leaves out (`media`, leftOutBy): into the trash
- * as a computer's scan does (report.ts settleLeft), unless a copy of the clip is still read here (`live`: this pass's files)
- * or found elsewhere. Their files are no copy any more. True when one moved.
+ * as a computer's scan does (report.ts settleLeft), unless a copy of the clip is still read here (`live`: this pass's
+ * files) or found elsewhere. A clip whose file this folder no longer has where it was, with the size and time of a file
+ * now in a left-out folder (`dropped`), was moved in there: it counts as left out too. The left-out files are no copy
+ * any more, and a version that read one reads the copy that keeps it from now on. True when one moved to the trash.
  */
-function leaveWatched(libraryId: string, root: string, media: StorageFolder[], live: Set<string>, now: number): boolean {
+async function leaveWatched(libraryId: string, root: string, media: StorageFolder[], live: Set<string>, dropped: string[], now: number): Promise<boolean> {
   if (!media.some((m) => m.leaveOut?.length)) return false;
   const under = root + path.sep;
   const rows = db()
     .prepare(
       // length() in SQL: a root with an emoji is one character there and two in JavaScript
-      `SELECT w.path, w.version_id, v.asset_id FROM watch_seen w JOIN asset_versions v ON v.id = w.version_id JOIN assets a ON a.id = v.asset_id
+      `SELECT w.path, w.size, w.mtime, w.version_id, v.asset_id, v.source_key, v.source_path, v.state FROM watch_seen w
+         JOIN asset_versions v ON v.id = w.version_id JOIN assets a ON a.id = v.asset_id
        WHERE w.library_id = ? AND substr(w.path, 1, length(?)) = ? AND a.trashed_at IS NULL`,
     )
-    .all(libraryId, under, under) as { path: string; version_id: string; asset_id: string }[];
-  const left = rows.filter((r) => leftOutBy(media, r.path));
-  if (!left.length) return false;
-  const out = new Set(left.map((r) => r.path));
-  const assets = new Set(left.map((r) => r.asset_id));
-  for (const r of rows) if (!out.has(r.path) && live.has(r.path)) assets.delete(r.asset_id);
+    .all(libraryId, under, under) as { path: string; size: number; mtime: number; version_id: string; asset_id: string; source_key: string; source_path: string | null; state: string }[];
+  const out = new Set(rows.filter((r) => leftOutBy(media, r.path)).map((r) => r.path));
+  // moved in: only looked for while a clip's file is missing from where it was (never for one long gone: missing)
+  const vanished = rows.filter((r) => !out.has(r.path) && !live.has(r.path) && r.state !== "missing");
+  for (const p of vanished.length ? dropped : []) {
+    const st = await stat(p).catch(() => null);
+    for (const r of vanished) if (st && r.size === st.size && r.mtime === Math.floor(st.mtimeMs)) out.add(r.path);
+  }
+  if (!out.size) return false;
+  const assets = new Set(rows.filter((r) => out.has(r.path)).map((r) => r.asset_id));
+  const keep = new Map<string, string>();
+  for (const r of rows) if (!out.has(r.path) && live.has(r.path) && assets.has(r.asset_id)) keep.set(r.asset_id, r.path);
   // the place this computer had at that file (serverPlace): by its version, so the key finds it; one gone already stays
   const gone = db().prepare("UPDATE version_places SET state = 'gone', gone_at = ? WHERE version_id = ? AND kind = 'original' AND source = 'server-disk' AND path = ? AND state <> 'gone'");
-  for (const r of left) gone.run(now, r.version_id, r.path);
-  return settleLeft(assets, now, "watch").length > 0;
+  for (const r of rows.filter((x) => out.has(x.path))) {
+    gone.run(now, r.version_id, r.path);
+    const copy = keep.get(r.asset_id);
+    // kept by a copy read here: the version reads that copy, so its place is never put back on the left-out file
+    if (copy && r.source_path === r.path) await pointSource(r.version_id, r.source_key, copy);
+  }
+  return settleLeft([...assets].filter((a) => !keep.has(a)), now, "watch").length > 0;
 }
 
 /** One pass over a library's watch folders. Returns how many files it took in (new versions or known duplicates). */
@@ -765,8 +785,9 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
     try {
       // a Finals folder (f.projects) is read in its projects' subfolders, which may sit in an Exports folder: nothing is kept out there
       const media = f.projects ? [] : await mediaFoldersOf(f.addedBy);
-      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), media);
-      if (leaveWatched(libraryId, f.path, media, new Set(files), now)) libraryChanged(libraryId);
+      const dropped: string[] = [];
+      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), media, dropped);
+      if (await leaveWatched(libraryId, f.path, media, new Set(files), dropped, now)) libraryChanged(libraryId);
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {

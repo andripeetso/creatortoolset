@@ -6,7 +6,6 @@ import { Hono } from "hono";
 import type { AuthVars } from "../auth";
 import { quickPrint } from "../work/files";
 import { deviceOf } from "../lib/devices";
-import { leftOutBy } from "../../contracts/storage";
 import { libraryChanged, mayAdd } from "./access";
 import { blobs, libraryDb } from "./db";
 import { confirmPlaces } from "./places";
@@ -219,7 +218,6 @@ locateApp.post("/:id/locate", async (c) => {
   const x = parseLocate(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
   // a file in a folder a Media folder leaves out is never located (report.ts mediaForLibrary; loaded late: it loads this file)
-  const media = await (await import("./report")).mediaForLibrary(user.username, libraryId);
-  const host = x.device && deviceOf(x.device)?.owner === user.username ? x.device : undefined;
-  return c.json({ reconnected: await reconnect(libraryId, user.username, { ...x, files: x.files.filter((f) => !leftOutBy(media, f.path, host)) }) });
+  const out = await (await import("./report")).leftOutFor(user.username, libraryId, x.device);
+  return c.json({ reconnected: await reconnect(libraryId, user.username, { ...x, files: x.files.filter((f) => !out(f.path)) }) });
 });

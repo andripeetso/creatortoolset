@@ -28,10 +28,10 @@ afterEach(() => {
 });
 
 /** This computer's Source media rows, as the storage list has them (another computer's row is left out). */
-function storage(rows: { path: string; host?: string; role?: string; leaveOut?: string[] }[]) {
+function storage(rows: { path: string; host?: string; role?: string; leaveOut?: string[]; reach?: Record<string, { path: string; at: number }> }[]) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ folders: rows.map((r) => ({ id: r.path, role: r.role ?? "footage", origin: { host: r.host ?? "mac_1", path: r.path }, reach: {}, ...(r.leaveOut ? { leaveOut: r.leaveOut } : {}) })) }))),
+    vi.fn(async () => new Response(JSON.stringify({ folders: rows.map((r) => ({ id: r.path, role: r.role ?? "footage", origin: { host: r.host ?? "mac_1", path: r.path }, reach: r.reach ?? {}, ...(r.leaveOut ? { leaveOut: r.leaveOut } : {}) })) }))),
   );
 }
 
@@ -135,6 +135,19 @@ describe("Look for new files", () => {
     expect(m.checkUpload).toHaveBeenCalledTimes(1);
     expect(m.indexOnMac).toHaveBeenCalledTimes(1);
     expect(steps).toContain("Adding 1 of 1 from Footage");
+  });
+
+  it("only this Mac's path of a row counts: another computer's path to it never leaves a file out here", async () => {
+    document.documentElement.dataset.macDevice = "mac_1";
+    // on pc_2 the row is found a level up, so there "Footage" is a folder inside it
+    storage([{ path: "/Volumes/Tiny/Footage", leaveOut: ["Footage"], reach: { pc_2: { path: "/Volumes/Tiny", at: 0 } } }]);
+    vi.clearAllMocks();
+    m.importScan.mockResolvedValue([{ path: "/Volumes/Tiny/Footage/a.mov", size: 1, mtime: 0 }]);
+    m.importPrint.mockImplementation(async (paths: string[]) => Object.fromEntries(paths.map((p) => [p, "q-a"])));
+    m.checkUpload.mockResolvedValue({});
+    m.indexOnMac.mockResolvedValue({ assetId: "a_new" });
+    const library = { id: "lib", name: "Tiny Acrobatics", settings: {} } as unknown as LibrarySummary;
+    expect(await lookForNew(library, () => undefined)).toEqual({ added: 1, reconnected: 0, refused: [] });
   });
 
   it("a granted folder that can't be read says why, as before", async () => {

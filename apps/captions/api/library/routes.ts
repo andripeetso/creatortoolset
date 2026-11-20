@@ -47,7 +47,7 @@ import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
 import { addFolder } from "../devices-storage";
 import { workspaceById } from "../lib/workspaces";
-import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName, leftOutBy, libraryBase, THIS_COMPUTER } from "../../contracts/storage";
+import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName, libraryBase, THIS_COMPUTER } from "../../contracts/storage";
 import { quickPrint } from "../work/files";
 import { libraryWorkspace, serverKind } from "../work/server-work";
 import { WORK_MIN } from "../../contracts/work";
@@ -712,15 +712,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
 }
 
-/**
- * Whether a Media folder of `user`'s, or of the owner of `libraryId` they add to, leaves out the file at `file`
- * (report.ts mediaForLibrary, contracts/storage.ts leftOutBy). `device`: the computer it is on, when it is one of `user`'s;
- * otherwise every computer's path counts. report.ts is loaded late: it loads this file.
- */
-async function leftOut(user: string, libraryId: string, file: string, device?: string | null): Promise<boolean> {
-  const host = device && deviceOf(device)?.owner === user ? device : undefined;
-  return leftOutBy(await (await import("./report")).mediaForLibrary(user, libraryId), file, host);
-}
+/** Whether a list leaves out the file `user` brings into `libraryId` (report.ts leftOutFor; loaded late: it loads this file). */
+const leftOut = async (user: string, libraryId: string, file: string, device?: string | null) => (await (await import("./report")).leftOutFor(user, libraryId, device))(file);
 
 /**
  * POST /api/library/:id/in-place { path, size, collectionId?, again? } → { assetId, versionId } | { duplicateOf } |

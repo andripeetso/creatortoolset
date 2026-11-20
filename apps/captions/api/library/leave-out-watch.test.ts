@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -63,11 +63,15 @@ describe("this server's watch and a Media folder's Folders left out", () => {
     storage(["- no share"]);
     put("Day 2/- NO SHARE/d.mp4", "d");
     await scan();
-    expect(clips()).toEqual([
-      ["- NO SHARE/c.mp4", false],
+    const after = [
       ["Day 1/- NO SHARE/b.mp4", true],
       ["Day 1/a.mp4", false],
-    ]);
+      // kept by its copy, which it reads from now on: never the left-out file again
+      ["Keep/c.mp4", false],
+    ];
+    expect(clips()).toEqual(after);
+    await scan();
+    expect(clips()).toEqual(after);
   });
 
   it("an import of a folder inside a left-out folder takes nothing", async () => {
@@ -86,5 +90,11 @@ describe("this server's watch and a Media folder's Folders left out", () => {
     expect(r.status).toBe(200);
     expect(((await r.json()) as { imported: unknown[] }).imported).toEqual([]);
     expect(clips().some(([p]) => p.includes("e.mp4"))).toBe(false);
+  });
+
+  it("a file moved into a left-out folder takes its clip out with it", async () => {
+    renameSync(path.join(media, "Day 1", "a.mp4"), path.join(media, "Day 1", "- NO SHARE", "a.mp4"));
+    await scan();
+    expect(clips().find(([p]) => p === "Day 1/a.mp4")).toEqual(["Day 1/a.mp4", true]);
   });
 });

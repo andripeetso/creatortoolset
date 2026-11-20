@@ -285,15 +285,21 @@ export const PHONE_UPLOADS_DIR = "Phone uploads";
 export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set(), leaveOut: readonly string[] = []): boolean {
   const parts = rel.split(/[\\/]/);
   const dirs = parts.slice(0, -1);
-  // a privacy list fails safe: any case, either Unicode form (a Mac disk ignores case and may hand back decomposed names)
-  const out = new Set(leaveOut.map(nameKey));
-  return dirs.some((d) => d === PHONE_UPLOADS_DIR || out.has(nameKey(d))) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+  return dirs.includes(PHONE_UPLOADS_DIR) || inLeftOut(rel, leaveOut) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
 }
 const nameKey = (n: string) => n.normalize("NFC").toLowerCase();
 
+/** Whether a file, by its path below a Media folder, is inside a folder named in `names` (StorageFolder.leaveOut), at any
+ *  depth. A privacy list fails safe: any case, either Unicode form (a Mac disk ignores case and may hand back decomposed names). */
+export function inLeftOut(rel: string, names: readonly string[]): boolean {
+  if (!names.length) return false;
+  const out = new Set(names.map(nameKey));
+  return rel.split(/[\\/]/).slice(0, -1).some((d) => out.has(nameKey(d)));
+}
+
 /**
- * Whether `file` (a full path) is inside a folder that one of `folders` (Media folders) leaves out (notFootage with its
- * leaveOut). `host`: the computer the path is on, when it is known; only each folder's path there counts (the path it was
+ * Whether `file` (a full path) is inside a folder that one of `folders` (Media folders) leaves out (inLeftOut with its
+ * leaveOut; the list only, never the other files notFootage leaves out). `host`: the computer the path is on, when it is known; only each folder's path there counts (the path it was
  * added at, inside its container, or where that computer found its marker), so a folder at the same path on another
  * computer never decides. No `host`: the path on any computer that found it counts. Every folder that holds the file
  * counts, so a Media folder inside another, kept apart for another workspace, leaves out what either list names: the
@@ -308,7 +314,7 @@ export function leftOutBy(folders: ReadonlyArray<Pick<StorageFolder, "origin" | 
     return [...new Set([...own, ...found])].some((root) => {
       if (!root) return false;
       const r = root.normalize("NFC").replace(/\/+$/, "");
-      return at.startsWith(`${r}/`) && notFootage(at.slice(r.length + 1), undefined, f.leaveOut);
+      return at.startsWith(`${r}/`) && inLeftOut(at.slice(r.length + 1), f.leaveOut!);
     });
   });
 }

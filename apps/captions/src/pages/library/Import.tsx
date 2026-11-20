@@ -108,7 +108,7 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
       files = (await Promise.all(inside.map((g) => importScan(g).catch(() => [])))).flat();
     }
     // a folder a row leaves out is never fingerprinted, checked or counted (the server refuses its files too)
-    files = files.filter((f) => !leftOutBy(rows, f.path));
+    files = files.filter((f) => !leftOutBy(rows, f.path, thisMacDevice() ?? undefined));
     for (const f of files) seen.add(f.path.normalize("NFC"));
     const prints: Record<string, string> = {};
     for (let i = 0; i < files.length; i += 500) Object.assign(prints, await importPrint(files.slice(i, i + 500).map((f) => f.path)));

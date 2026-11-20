@@ -231,6 +231,56 @@ describe("every way a left-out file could come in or stay", () => {
     expect(libraryDb().prepare("SELECT 1 FROM version_places WHERE path = ?").get(hidden)).toBeUndefined();
   });
 
+  it("only the list decides: a Phone uploads folder or a half-written file under a listed folder's root is not left out by it", () => {
+    const f = [{ origin: { host: mac.id, path: F1 }, reach: {}, leaveOut: ["Other"] }];
+    expect(leftOutBy(f, `${F1}/Phone uploads/x 1/a.mov`)).toBe(false);
+    expect(leftOutBy(f, `${F1}/Day/a.part.mov`)).toBe(false);
+    expect(leftOutBy(f, `${F1}/Other/a.mov`)).toBe(true);
+  });
+
+  it("a library copy of a clip is no copy that keeps it, and the copy's own file is never left out", async () => {
+    await listOf("fold_f2", []);
+    const made = (await indexForDevice(mac, "fold_f2", onMac(F2, "Keep2/k.mov", 610))) as { versions: { library: string; versionId: string }[] };
+    const { library: lib, versionId: v } = made.versions[0]!;
+    const d = libraryDb();
+    d.prepare("INSERT INTO library_copies (id, library_id, device, path, state, created_at) VALUES ('copy_k', ?, ?, '/Volumes/Tiny Copies', 'ok', 0)").run(lib, MB.id);
+    d.prepare("INSERT INTO copy_files (copy_id, version_id, rel_path, size, copied_at) VALUES ('copy_k', ?, 'Tiny/k.mov', 10, 0)").run(v);
+    d.prepare("INSERT INTO version_places (version_id, device, path, bytes, confirmed_at, checked_at, state, source) VALUES (?, ?, '/Volumes/Tiny Copies/Tiny/k.mov', 10, 0, 0, 'verified', 'copy')").run(v, MB.id);
+    await listOf("fold_f2", ["Keep2"]);
+    await scan("fold_f2", F2, ["Keep2/k.mov"], 610);
+    expect(asset(610).trashed_at).not.toBeNull();
+    // a copy written into a Media folder, under a collection named like a left-out folder: read as the clip's place
+    const kept = (await indexForDevice(mac, "fold_f2", onMac(F2, "Day/kc.mov", 611))) as { versions: { versionId: string }[] };
+    const kv = kept.versions[0]!.versionId;
+    d.prepare("INSERT INTO library_copies (id, library_id, device, path, state, created_at) VALUES ('copy_f2', ?, ?, ?, 'ok', 0)").run(lib, mac.id, F2);
+    d.prepare("INSERT INTO copy_files (copy_id, version_id, rel_path, size, copied_at) VALUES ('copy_f2', ?, 'Keep2/kc.mov', 10, 0)").run(kv);
+    d.prepare("INSERT INTO version_places (version_id, device, path, bytes, confirmed_at, checked_at, state, source) VALUES (?, ?, ?, 10, 0, 0, 'verified', 'copy')").run(kv, mac.id, `${F2}/Keep2/kc.mov`);
+    await scan("fold_f2", F2, ["Day/kc.mov", "Keep2/kc.mov"], 611);
+    expect(asset(611).trashed_at).toBeNull();
+    expect(d.prepare("SELECT folder_id, state FROM version_places WHERE version_id = ? AND path = ?").get(kv, `${F2}/Keep2/kc.mov`)).toEqual({ folder_id: "fold_f2", state: "verified" });
+  });
+
+  it("a file moved into a left-out folder takes its clip out with it", async () => {
+    await listOf("fold_f2", []);
+    const t0 = Date.now();
+    await indexForDevice(mac, "fold_f2", onMac(F2, "Day 1/a.mov", 612));
+    await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv1", complete: true, files: [{ path: `${F2}/Day 1/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 1000);
+    await listOf("fold_f2", ["Private"]);
+    await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv2", complete: true, files: [{ path: `${F2}/Day 1/Private/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 2000);
+    expect(asset(612).trashed_at).not.toBeNull();
+  });
+
+  it("a clip in Review or behind a share link stays in the library, though its place is gone", async () => {
+    await listOf("fold_f2", []);
+    await indexForDevice(mac, "fold_f2", onMac(F2, "Held/h.mov", 613));
+    const a = asset(613);
+    libraryDb().prepare("INSERT INTO shares (token_hash, library_id, target_kind, target_id, scope, created_by, expires_at) VALUES ('tok_h', ?, 'asset', ?, 'view', 'tia', ?)").run(a.library_id, a.id, Date.now() + 86_400_000);
+    await listOf("fold_f2", ["Held"]);
+    await scan("fold_f2", F2, ["Held/h.mov"], 613);
+    expect(asset(613).trashed_at).toBeNull();
+    expect(libraryDb().prepare("SELECT state FROM version_places WHERE path = ?").get(`${F2}/Held/h.mov`)).toEqual({ state: "gone" });
+  });
+
   it("a member adding to the owner's library is checked against the owner's list as well as their own", async () => {
     const [lib] = await librariesOf("tia", row("fold_f1", F1) as never);
     expect(leftOutBy(await mediaForLibrary("bo", lib!.id), `${F1}/- NO SHARE/m.mov`)).toBe(true);
