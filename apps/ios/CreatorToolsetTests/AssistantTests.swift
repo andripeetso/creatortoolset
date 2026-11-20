@@ -1141,8 +1141,9 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(setup.card?.page, "/library?setup=1")
 
         let member = try XCTUnwrap(action(#"{"kind":"setup","workspace":"ws_p","workspaceName":"Tiny Acrobatics","owner":false,"href":"/library?setup=1"}"#))
-        XCTAssertEqual(member.card?.title, "This Media Library isn't set up yet.")
-        XCTAssertNil(member.card?.page)
+        XCTAssertEqual(member.card?.title, "This Media Library isn't set up yet: the workspace's owner sets it up.")
+        XCTAssertNil(member.card?.line)
+        XCTAssertNil(member.card?.page)   // nothing to press
 
         let downloads = try XCTUnwrap(action(#"{"kind":"downloads","libraryId":"lib_1","workspace":"ws_p"}"#))
         XCTAssertEqual(downloads.card?.title, "Turn on Automatic downloads on your computer")

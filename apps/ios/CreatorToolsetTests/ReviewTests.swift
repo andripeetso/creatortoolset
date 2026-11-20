@@ -1,6 +1,45 @@
 import XCTest
 @testable import CreatorToolset
 
+/// Answers approvals as the server's Review does for a cut whose faces aren't blurred, and records each body.
+private final class ApprovalServer: URLProtocol {
+    nonisolated(unsafe) static var bodies: [[String: Any]] = []
+    nonisolated(unsafe) static var answer: ([String: Any]) -> (Int, String) = { _ in (404, "{}") }
+
+    static func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ApprovalServer.self]
+        return URLSession(configuration: config)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let n = stream.read(&buffer, maxLength: buffer.count)
+                if n <= 0 { break }
+                data.append(buffer, count: n)
+            }
+            stream.close()
+        }
+        let body = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        XCTAssertEqual(request.url?.path, "/api/review/assets/a1/approval")
+        XCTAssertEqual(request.httpMethod, "POST")
+        Self.bodies.append(body)
+        let (status, text) = Self.answer(body)
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
+                                                              headerFields: ["Content-Type": "application/json"])!,
+                            cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(text.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 /// Review on the phone: the server's own answers decode, comments come out as threads in the
 /// order they are shown, a new comment is posted in the right shape, and a link opens its version.
 final class ReviewTests: XCTestCase {
@@ -116,5 +155,57 @@ final class ReviewTests: XCTestCase {
         XCTAssertEqual(asset.opening(1), 1)
         XCTAssertEqual(asset.opening(nil), 2)   // no version named: the newest
         XCTAssertEqual(asset.opening(7), 2)     // a version the video hasn't got: the newest
+    }
+
+    // MARK: a cut whose faces aren't blurred
+
+    private let api = API(server: URL(string: "https://review-approve.example.test/")!, cookie: "c")
+
+    func testTheOwnerIsAskedAndApprovesAsFilmed() async throws {
+        ApprovalServer.bodies = []
+        ApprovalServer.answer = { body in
+            body["asFilmed"] as? Bool == true
+                ? (200, #"{"id":"a1","name":"Cut","approval":{"status":"approved","by":"sam"},"versions":[{"n":1,"name":"Cut.mp4","duration":8,"width":1080,"height":1920,"status":"ready","createdAt":1,"removed":false,"notBlurred":true,"approvedAsFilmed":{"by":"sam","at":2}}],"projectId":null,"createdAt":1}"#)
+                : (409, #"{"error":"The faces in this cut aren't blurred. Approve it as filmed?"}"#)
+        }
+        guard case .ask(let line) = try await ReviewApproval.send(api, asset: "a1", .approved, session: ApprovalServer.session()) else {
+            return XCTFail("expected the question")
+        }
+        XCTAssertEqual(line, "The faces in this cut aren't blurred. Approve it as filmed?")
+        // Approve as filmed: the same approve again, with asFilmed
+        guard case .done(let data) = try await ReviewApproval.send(api, asset: "a1", .approved, asFilmed: true, session: ApprovalServer.session()) else {
+            return XCTFail("expected the approval")
+        }
+        XCTAssertEqual(ApprovalServer.bodies.count, 2)
+        XCTAssertEqual(ApprovalServer.bodies[0]["status"] as? String, "approved")
+        XCTAssertNil(ApprovalServer.bodies[0]["asFilmed"])
+        XCTAssertEqual(ApprovalServer.bodies[1]["status"] as? String, "approved")
+        XCTAssertEqual(ApprovalServer.bodies[1]["asFilmed"] as? Bool, true)
+        let fresh = try JSONDecoder().decode(ReviewAsset.self, from: data)
+        XCTAssertEqual(fresh.approval.status, "approved")
+        XCTAssertEqual(fresh.latest?.approvedAsFilmed, .init(by: "sam", at: 2))
+    }
+
+    func testSomeoneElseGetsTheServersRefusal() async throws {
+        ApprovalServer.bodies = []
+        ApprovalServer.answer = { _ in (403, #"{"error":"Only the owner can approve a cut whose faces aren't blurred"}"#) }
+        do {
+            _ = try await ReviewApproval.send(api, asset: "a1", .approved, session: ApprovalServer.session())
+            XCTFail("expected the refusal")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Only the owner can approve a cut whose faces aren't blurred")
+        }
+        XCTAssertEqual(ApprovalServer.bodies.count, 1)
+    }
+
+    func testAVersionWithUnblurredFacesShowsTheTag() throws {
+        func version(_ extra: String) throws -> ReviewAsset.Version {
+            try JSONDecoder().decode(ReviewAsset.Version.self, from: Data(#"{"n":2,"name":"V2.mp4","duration":8,"width":1080,"height":1920,"status":"ready","createdAt":1,"removed":false\#(extra)}"#.utf8))
+        }
+        XCTAssertEqual(try version(#","notBlurred":true"#).blurTag, "Not blurred yet")
+        XCTAssertEqual(try version(#","notBlurred":true,"approvedAsFilmed":{"by":"sam","at":5}"#).blurTag, "Not blurred yet · approved as filmed")
+        XCTAssertNil(try version("").blurTag)
+        // the test server's own answer has no such field: no tag
+        XCTAssertNil(try detail().asset.versions.compactMap(\.blurTag).first)
     }
 }

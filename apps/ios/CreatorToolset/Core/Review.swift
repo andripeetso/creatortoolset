@@ -32,7 +32,21 @@ struct ReviewAsset: Codable, Hashable, Identifiable {
         /// Its video file was deleted; the comments stay.
         let removed: Bool?
         var error: String? = nil
+        /// Its cut plays footage nobody has blurred yet: only its owner approves it, as filmed.
+        var notBlurred: Bool? = nil
+        /// Its owner approved it with the faces as filmed.
+        var approvedAsFilmed: AsFilmed? = nil
         var id: Int { n }
+
+        struct AsFilmed: Codable, Hashable {
+            let by: String
+            let at: Double
+        }
+
+        /// The amber tag the website shows on it (ReviewAssetPage); nil when its faces are blurred.
+        var blurTag: String? {
+            notBlurred == true ? "Not blurred yet" + (approvedAsFilmed != nil ? " · approved as filmed" : "") : nil
+        }
     }
 
     var latest: Version? { versions.last }
@@ -138,6 +152,26 @@ enum ReviewStatus: String, CaseIterable, Identifiable {
         case .changes: .orange
         case .rejected: .red
         case .approved: .green
+        }
+    }
+}
+
+/// `POST /api/review/assets/:id/approval`. Approving a cut whose faces aren't blurred: the server refuses anyone but its
+/// owner (403, its line, thrown) and asks the owner first (409, its question: `.ask`); `asFilmed` is the owner's yes.
+enum ReviewApproval {
+    enum Answer {
+        case done(Data)
+        case ask(String)
+    }
+
+    static func send(_ api: API, asset id: String, _ status: ReviewStatus, asFilmed: Bool = false,
+                     session: URLSession = API.session) async throws -> Answer {
+        var body: [String: Any] = ["status": status.rawValue]
+        if asFilmed { body["asFilmed"] = true }
+        do {
+            return .done(try await api.data(api.request("/api/review/assets/\(id)/approval", method: "POST", json: body), session: session))
+        } catch APIError.server(409, let line) where status == .approved && !asFilmed {
+            return .ask(line)
         }
     }
 }
