@@ -10,8 +10,14 @@ import { cn } from "@/lib/utils";
  * The language spoken in a workspace's or an edit's videos: one code, or "" for the person's own languages (Settings →
  * Voice; none there = English, as api/transcribe.ts hears it), or for `fallback`. Saved as `languages: [code]` (none: []). A short
  * list you can type into, so 30 languages never fill the screen. With `values` it ticks several (a workspace whose videos
- * mix languages): each pick turns one on or off and the list stays open; the default row clears them.
+ * mix languages): every language is a row that turns on or off and the list stays open. Nothing picked shows the default
+ * ticked, and the first pick starts from it (English ticked + Estonian = both); unticking the last goes back to the default.
  */
+export function toggleLanguage(values: string[], defaults: string[], code: string): string[] {
+  const shown = values.length ? values : defaults;
+  return shown.includes(code) ? shown.filter((c) => c !== code) : [...shown, code].slice(0, 5);
+}
+
 export function LanguageSelect({ id, value, onChange, values, onValuesChange, disabled, className, placeholder, fallback }: {
   id?: string;
   /** The languages "" stands for when they are not the person's own: an edit's is its workspace's language, when that has one. */
@@ -30,19 +36,18 @@ export function LanguageSelect({ id, value, onChange, values, onValuesChange, di
   const own = useVoice().data?.languages ?? [];
   const mine = fallback?.length ? fallback : own;
   const usual = placeholder ?? (mine.length ? mine.map(languageName).join(", ") : "English");
-  // the default already names a single language: it is not listed twice
-  const one = !placeholder && mine.length <= 1 ? (mine[0] ?? "en") : null;
-  // several: a ticked language is listed even when it is the default's one
-  const rest = SPOKEN_LANGUAGES.filter((c) => c !== one || (values?.includes(c) ?? false));
   const many = values !== undefined;
+  const defaults = mine.length ? mine : ["en"];
+  // the default already names a single language: it is not listed twice (several: every language is its own row)
+  const one = !many && !placeholder && mine.length <= 1 ? (mine[0] ?? "en") : null;
+  const rest = SPOKEN_LANGUAGES.filter((c) => c !== one);
   const isDefault = many ? !values.length : !value || value === one;
-  const ticked = (c: string) => (many ? values.includes(c) : value === c);
+  const ticked = (c: string) => (many ? (values.length ? values : defaults).includes(c) : value === c);
   const pick = (code: string) => {
     if (!many) {
       onChange?.(code);
       setOpen(false);
-    } else if (!code) onValuesChange?.([]);
-    else onValuesChange?.(values.includes(code) ? values.filter((c) => c !== code) : [...values, code].slice(0, 5));
+    } else onValuesChange?.(toggleLanguage(values, defaults, code));
   };
   return (
     // modal: inside a window (the Projects one) the window's scroll lock would eat the list's wheel; the popover's own
@@ -59,15 +64,18 @@ export function LanguageSelect({ id, value, onChange, values, onValuesChange, di
           <CommandInput placeholder="Search languages" />
           <CommandList className="max-h-64">
             <CommandEmpty>No such language</CommandEmpty>
-            <CommandItem value={`${usual} default`} onSelect={() => pick("")}>
-              <Check className={cn("size-3.5", isDefault ? "" : "opacity-0")} />
-              {usual}
-              {!placeholder && <span className="ml-auto text-xs text-muted-foreground">default</span>}
-            </CommandItem>
+            {!many && (
+              <CommandItem value={`${usual} default`} onSelect={() => pick("")}>
+                <Check className={cn("size-3.5", isDefault ? "" : "opacity-0")} />
+                {usual}
+                {!placeholder && <span className="ml-auto text-xs text-muted-foreground">default</span>}
+              </CommandItem>
+            )}
             {rest.map((c) => (
               <CommandItem key={c} value={languageName(c)} onSelect={() => pick(c)}>
                 <Check className={cn("size-3.5", ticked(c) ? "" : "opacity-0")} />
                 {languageName(c)}
+                {many && defaults.includes(c) && <span className="ml-auto text-xs text-muted-foreground">default</span>}
               </CommandItem>
             ))}
           </CommandList>

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { LanguageSelect } from "./LanguageSelect";
+import { LanguageSelect, toggleLanguage } from "./LanguageSelect";
 
 describe("LanguageSelect", () => {
   it("names the default when nothing is picked", () => {
@@ -19,5 +19,13 @@ describe("LanguageSelect", () => {
 
   it("several picked languages are all named", () => {
     expect(renderToStaticMarkup(<LanguageSelect values={["et", "en"]} onValuesChange={() => {}} />)).toContain(">Estonian, English</span>");
+  });
+
+  it("several: the default language can be ticked alongside another, and unticking the last goes back to the default", () => {
+    expect(toggleLanguage([], ["en"], "et")).toEqual(["en", "et"]);
+    expect(toggleLanguage(["et"], ["en"], "en")).toEqual(["et", "en"]);
+    expect(toggleLanguage(["et", "en"], ["en"], "et")).toEqual(["en"]);
+    expect(toggleLanguage(["et"], ["en"], "et")).toEqual([]);
+    expect(toggleLanguage([], ["en"], "en")).toEqual([]);
   });
 });
