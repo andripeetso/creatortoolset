@@ -312,7 +312,7 @@ describe.skipIf(rootReplaced)("the AI Editor's page buttons as tools", () => {
     expect((await editOf(id)).brollCollectionId).toBeNull();
     // a folder that is someone else's, and a call that changes nothing
     expect(await tool(anaKey, "editor_update", { edit: id, broll_folder: "col_n" })).toMatchObject({ error: true, text: "Not found, or not this account's." });
-    expect(await tool(anaKey, "editor_update", { edit: id })).toMatchObject({ error: true, text: "Nothing to change: give name, brief, script, versions, target_s, broll_folder or flags." });
+    expect(await tool(anaKey, "editor_update", { edit: id })).toMatchObject({ error: true, text: "Nothing to change: give name, brief, script, versions, target_s, broll_folder, flags or add_sources." });
 
     // once drafts are cut, a new brief says how it gets used
     standIn();
@@ -321,6 +321,19 @@ describe.skipIf(rootReplaced)("the AI Editor's page buttons as tools", () => {
     expect((await tool(anaKey, "editor_update", { edit: id, brief: "Calm and slow" })).value.note).toBe("The drafts are as they were: editor_run from script cuts them again with this.");
     expect((await tool(anaKey, "editor_update", { edit: id, broll_folder: "col_a" })).value.note).toBe("The drafts are as they were: editor_run from draft cuts them again with this.");
     expect((await tool(anaKey, "editor_update", { edit: id, name: "Tiny tumbles" })).value.note).toBeUndefined();
+  });
+
+  it("editor_update adds footage sent later to the same edit, and refuses a clip it can't read", async () => {
+    libraryDb().exec(`
+      INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_b', 'lib_a', 'video', 'Tiny screen recording', 'ana', 0), ('ast_n', 'lib_n', 'video', 'Theirs', 'nico', 0);
+      INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_b', 'ast_b', 1, 'kb', 1, 'xb', 'ready', 'ana', 0), ('ver_n', 'ast_n', 1, 'kn', 1, 'xn', 'ready', 'nico', 0);
+    `);
+    const id = await edit("Tiny follow-up");
+    // not cut yet: it simply joins the edit's footage, with nothing to run again
+    expect((await tool(anaKey, "editor_update", { edit: id, add_sources: ["ver_b", "ver_a"] })).value).toEqual({ id, name: "Tiny follow-up", changed: ["add_sources"], link: `http://localhost/editor/${id}` });
+    expect((await editOf(id)).sources).toEqual(["ver_a", "ver_b"]);
+    expect(await tool(anaKey, "editor_update", { edit: id, add_sources: ["ver_n"] })).toMatchObject({ error: true, text: "A clip isn't in this edit's workspace's Media Library" });
+    expect((await editOf(id)).sources).toEqual(["ver_a", "ver_b"]);
   });
 
   it("editor_update sets the flags an install's plug-ins declare, and refuses one it does not have with the list", async () => {

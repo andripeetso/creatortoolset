@@ -75,6 +75,19 @@ describe.skipIf(rootReplaced)("AI Editor: an edit from clips still uploading", (
     expect(jobs(id)).toEqual([{ kind: "analyze", state: expect.any(String) }]);
   });
 
+  it("footage added while it waits stays after the upload's clip, and it starts once", async () => {
+    const broll = (await send("maker", await start("maker", 6))).versionId;
+    const a = await start("maker", 7);
+    const { id } = await json<{ id: string }>(call("maker", "POST", "/api/editor", { name: "Tiny talk", uploads: [a.id] }));
+    expect((await call("maker", "PATCH", `/api/editor/${id}`, { addSources: [broll] })).status).toBe(200);
+    const va = (await send("maker", a)).versionId;
+    await settle();
+    const e = await json<Edit>(call("maker", "GET", `/api/editor/${id}`));
+    expect(e.sources).toEqual([va, broll]);
+    expect(e.uploads).toBeUndefined();
+    expect(jobs(id)).toEqual([{ kind: "analyze", state: expect.any(String) }]);
+  });
+
   it("takes a clip already in the library as its version", async () => {
     const a = await start("maker", 3);
     const first = await send("maker", a);
