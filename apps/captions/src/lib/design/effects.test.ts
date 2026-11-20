@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Layer } from "@contracts/design";
+import { blurPixels } from "./retouch";
 import { addNoise, effectsOf, fullAlpha, innerShadow, progressiveBlur, reachOf, spreadAlpha, withEffects, worksPixels } from "./effects";
 
 const shape = (more: object = {}): Layer => ({ id: "a", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 10, h: 10, ...more }) as Layer;
@@ -100,6 +101,48 @@ describe("a layer's effects", () => {
     expect(range(46)).toBeLessThan(255);
     expect(range(70)).toBeLessThan(range(46) / 2);
     expect(alphas(d, 20).flat().every((a) => a === 255)).toBe(true);
+  });
+
+  it("a progressive blur keeps no full-size copy of a layer when it is wide, and comes out as each level blurred whole would", () => {
+    // a white disc on see-through, 120 × 90, blurred up to 40: every level is worked on a smaller copy
+    const at = (x: number, y: number): [number, number, number, number] => (Math.hypot(x - 60, y - 45) < 30 ? [250, 240, 10, 255] : [0, 0, 0, 0]);
+    const e = { blur: 40, from: 0.2, to: 0.9, angle: 30 };
+    const box = { x: 10, y: 5, w: 100, h: 80 };
+    const d = pixels(120, 90, at);
+    const copies = vi.spyOn(d, "slice");
+    progressiveBlur(d, 120, 90, e, box);
+    expect(copies).not.toHaveBeenCalled();
+    // the same as every level blurred whole and each pixel taken between the two nearest
+    const src = pixels(120, 90, at);
+    const levels = [src.slice(), ...[0.25, 0.5, 1].map((f) => {
+      const c = src.slice();
+      blurPixels(c, 120, 90, e.blur * f);
+      return c;
+    })];
+    const want = src.slice();
+    const a = (e.angle * Math.PI) / 180;
+    const half = (Math.abs(Math.cos(a)) * box.w + Math.abs(Math.sin(a)) * box.h) / 2;
+    for (let y = 0; y < 90; y++)
+      for (let x = 0; x < 120; x++) {
+        const along = ((x + 0.5 - 60) * Math.cos(a) + (y + 0.5 - 45) * Math.sin(a)) / (2 * half) + 0.5;
+        const t = Math.min(1, Math.max(0, (along - e.from) / (e.to - e.from)));
+        if (!t) continue;
+        const lo = Math.min(2, Math.floor(t * 3));
+        const f = t * 3 - lo;
+        const i = (y * 120 + x) * 4;
+        for (let c = 0; c < 3; c++) want[i + c] = levels[lo]![i + c]! + (levels[lo + 1]![i + c]! - levels[lo]![i + c]!) * f;
+      }
+    expect(Array.from(d)).toEqual(Array.from(want));
+  });
+
+  it("a blur of 0 is no blur: the layer is not worked for it, and a progressive blur of 0 leaves it as it was", () => {
+    expect(worksPixels([{ type: "blur", blur: 0 }])).toBe(false);
+    expect(worksPixels([{ type: "progressive-blur", blur: 0, from: 0, to: 1, angle: 90 }])).toBe(false);
+    expect(worksPixels([{ type: "blur", blur: 0 }, { type: "noise", amount: 4 }])).toBe(true);
+    const at = (x: number): [number, number, number, number] => [x % 2 ? 255 : 0, 0, 0, 255];
+    const d = pixels(6, 6, at);
+    progressiveBlur(d, 6, 6, { blur: 0, from: 0, to: 1, angle: 0 }, { x: 0, y: 0, w: 6, h: 6 });
+    expect(Array.from(d)).toEqual(Array.from(pixels(6, 6, at)));
   });
 
   it("makes a see-through mask whole, its soft edges in proportion", () => {

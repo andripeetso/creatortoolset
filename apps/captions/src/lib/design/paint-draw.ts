@@ -105,10 +105,20 @@ export function fillWith(ctx: Ctx, paints: readonly Paint[], w: number, h: numbe
   }
 }
 
-/** Each shown line of a list, bottom first, with its opacity and blend, while `draw` strokes it. */
-export function eachStroke(ctx: Ctx, strokes: readonly Stroke[], draw: (s: Stroke) => void): void {
+/**
+ * What throws a layer's shadow in place of its fills: one opaque fill at the strongest shown fill's opacity, so fills
+ * laid over each other cast one shadow, not one each that darken together.
+ */
+export const castFills = (paints: readonly Paint[]): Paint[] => {
+  const shown = paints.filter((p) => !p.hidden);
+  return shown.length ? [{ type: "solid", color: "#000000", opacity: Math.max(...shown.map((p) => p.opacity ?? 1)) }] : [];
+};
+
+/** Each shown line of a list, bottom first, with its opacity and blend, while `draw` strokes it. `sides`: the caller draws a width a side, so a line with only those counts. */
+export function eachStroke(ctx: Ctx, strokes: readonly Stroke[], draw: (s: Stroke) => void, sides = false): void {
   for (const s of strokes) {
-    if (s.hidden || !(s.width > 0 || s.sides?.some((n) => n > 0))) continue;
+    // a width of 0 is no line at all: a canvas told to stroke 0 wide keeps the width it had (1 at first)
+    if (s.hidden || !(s.width > 0 || (sides && s.sides?.some((n) => n > 0)))) continue;
     ctx.save();
     ctx.globalAlpha *= s.opacity ?? 1;
     if (s.blend) ctx.globalCompositeOperation = s.blend;
@@ -156,7 +166,7 @@ export function strokeWith(ctx: Ctx, strokes: readonly Stroke[], trace: () => vo
       ctx.setLineDash([]);
       heads(ctx, s, more.points, w, h);
     }
-  });
+  }, !!more.box);
 }
 
 /**

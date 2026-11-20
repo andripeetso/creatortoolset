@@ -68,10 +68,15 @@ export function mixed(x: number, y: number): number {
  * picture's own edge is carried on outwards, so the blur does not fade at the box's sides.
  */
 export function blurPixels(data: Uint8ClampedArray, w: number, h: number, radius: number): void {
+  // a blur of 0 leaves the picture as it is (the narrowest box below is a pixel each way)
+  if (!(radius > 0)) return;
   // a wide blur is worked on a smaller copy and brought back up: what a blur leaves has nothing finer than its own
   // width, so nothing seen is lost, and it costs a fraction (a slider dragged on a big picture stays quick)
-  const smaller = Math.min(8, Math.floor(radius / 4));
-  if (smaller >= 2) return blurSmaller(data, w, h, radius, smaller);
+  if (smallerFor(radius) >= 2) {
+    const row = blurredRows(data, w, h, radius);
+    for (let y = 0; y < h; y++) row(y, data, y * w * 4);
+    return;
+  }
   const r = Math.max(1, Math.round(radius / 2));
   const size = w * h;
   // a channel at a time, so the room it works in is two numbers a pixel, not eight
@@ -140,8 +145,23 @@ export function blurPixels(data: Uint8ClampedArray, w: number, h: number, radius
   }
 }
 
-/** `blurPixels` on a copy `k` times smaller each way. Colours are weighed by how see-through they are both ways, as in the blur itself. */
-function blurSmaller(data: Uint8ClampedArray, w: number, h: number, radius: number, k: number): void {
+/** How many times smaller each way a blur of `radius` is worked (below 2: at full size). */
+const smallerFor = (radius: number) => Math.min(8, Math.floor(radius / 4));
+
+/**
+ * `data` blurred by `radius` (as blurPixels), handed out a row at a time: `row(y, out, at)` writes row y's RGBA bytes
+ * into `out` from `at`. A wide blur is held on its copy `k` times smaller each way (colours weighed by how see-through
+ * they are both ways, as in the blur itself) and each row brought back up when asked for, so what it keeps is a
+ * fraction of the picture; a narrow one is a blurred copy. Made from `data` as it is now: writing to `data` after
+ * changes nothing here.
+ */
+export function blurredRows(data: Uint8ClampedArray, w: number, h: number, radius: number): (y: number, out: Uint8ClampedArray, at: number) => void {
+  const k = smallerFor(radius);
+  if (k < 2) {
+    const copy = data.slice();
+    blurPixels(copy, w, h, radius);
+    return (y, out, at) => out.set(copy.subarray(y * w * 4, (y + 1) * w * 4), at);
+  }
   const sw = Math.ceil(w / k);
   const sh = Math.ceil(h / k);
   const small = new Uint8ClampedArray(sw * sh * 4);
@@ -183,7 +203,7 @@ function blurSmaller(data: Uint8ClampedArray, w: number, h: number, radius: numb
     right[x] = Math.min(sw - 1, Math.floor(fx) + 1) * 4;
     across[x] = fx - Math.floor(fx);
   }
-  for (let y = 0; y < h; y++) {
+  return (y, out, at) => {
     const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) / k - 0.5));
     const top = Math.floor(fy) * sw * 4;
     const bottom = Math.min(sh - 1, Math.floor(fy) + 1) * sw * 4;
@@ -199,15 +219,15 @@ function blurSmaller(data: Uint8ClampedArray, w: number, h: number, radius: numb
       const w10 = (1 - tx) * down * small[p10 + 3]!;
       const w11 = tx * down * small[p11 + 3]!;
       const a = w00 + w01 + w10 + w11;
-      const i = (y * w + x) * 4;
+      const i = at + x * 4;
       if (a > 0) {
-        data[i] = (small[p00]! * w00 + small[p01]! * w01 + small[p10]! * w10 + small[p11]! * w11) / a;
-        data[i + 1] = (small[p00 + 1]! * w00 + small[p01 + 1]! * w01 + small[p10 + 1]! * w10 + small[p11 + 1]! * w11) / a;
-        data[i + 2] = (small[p00 + 2]! * w00 + small[p01 + 2]! * w01 + small[p10 + 2]! * w10 + small[p11 + 2]! * w11) / a;
+        out[i] = (small[p00]! * w00 + small[p01]! * w01 + small[p10]! * w10 + small[p11]! * w11) / a;
+        out[i + 1] = (small[p00 + 1]! * w00 + small[p01 + 1]! * w01 + small[p10 + 1]! * w10 + small[p11 + 1]! * w11) / a;
+        out[i + 2] = (small[p00 + 2]! * w00 + small[p01 + 2]! * w01 + small[p10 + 2]! * w10 + small[p11 + 2]! * w11) / a;
       }
-      data[i + 3] = a;
+      out[i + 3] = a;
     }
-  }
+  };
 }
 
 /** The picture's bytes (`w` × `h` pixels of its layer's box, `scale` of them a design pixel) with the layer's changes made, in place. */

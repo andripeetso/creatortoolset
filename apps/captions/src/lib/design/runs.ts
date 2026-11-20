@@ -216,8 +216,44 @@ export const pieceFont = (p: Pick<Piece, "css" | "family">, size: number): strin
 /** What a width is measured with: a string's width in a CSS font. */
 export type Measure = (font: string, s: string) => number;
 
-/** The smallest size words are shrunk to, in pixels (as draw.ts setText). */
+/** The smallest size words are shrunk to, in pixels. */
 const SMALLEST = 8;
+
+/**
+ * The scale a text is set at, for draw.ts setText and setRuns alike: 1, or (shrinking to fit, or held to a number of
+ * lines, and not fitting at its own size) the largest that `fits` between SMALLEST and its own size, to a
+ * four-thousandth. Held to a number of lines, a little smaller still (down to 0.92 of that) when that is enough for no
+ * paragraph to end on a word alone (`orphaned`).
+ */
+export function fitScale(l: Pick<TextLayer, "fit" | "lines" | "size">, fits: (k: number) => boolean, orphaned: (k: number) => boolean): number {
+  let k = 1;
+  if ((l.fit === "shrink" || l.lines) && !fits(1)) {
+    let lo = Math.min(1, SMALLEST / l.size);
+    let hi = 1;
+    for (let n = 0; n < 12; n++) {
+      const mid = (lo + hi) / 2;
+      if (fits(mid)) lo = mid;
+      else hi = mid;
+    }
+    k = lo;
+  }
+  if (l.lines && orphaned(k))
+    for (let s = k * 0.99; s >= k * 0.92; s -= k * 0.01)
+      if (fits(s) && !orphaned(s)) return s;
+  return k;
+}
+
+/** A balanced paragraph's width: the narrowest up to `width` at which it still takes no more than `lines` lines (`count` gives the lines at a width). */
+export function balancedWidth(width: number, lines: number, count: (width: number) => number): number {
+  let lo = 0;
+  let hi = width;
+  for (let n = 0; n < 10; n++) {
+    const mid = (lo + hi) / 2;
+    if (count(mid) <= lines) hi = mid;
+    else lo = mid;
+  }
+  return hi;
+}
 
 /**
  * How a text with runs is set in its box: the size of its own letters (its runs in proportion) and its lines, each
@@ -307,40 +343,15 @@ export function setRuns(l: TextLayer, measure: Measure): { size: number; scale: 
     const lines = linesAt(k);
     return lines.reduce((n, ws) => n + sizeOfLine(ws) * lh * k, 0) <= l.h + 0.5 && lines.every((ws) => lineWidth(ws, k) <= l.w + 0.5) && (!l.lines || lines.length <= l.lines);
   };
-  let k = 1;
-  if ((l.fit === "shrink" || l.lines) && !fits(1)) {
-    let lo = Math.min(1, SMALLEST / l.size);
-    let hi = 1;
-    for (let n = 0; n < 12; n++) {
-      const mid = (lo + hi) / 2;
-      if (fits(mid)) lo = mid;
-      else hi = mid;
-    }
-    k = lo;
-  }
-  // held to a number of lines: no word alone on a paragraph's last line (as draw.ts setText), by shrinking a little more when that is enough
+  // held to a number of lines: no word alone on a paragraph's last line
   const orphaned = (at: number) => paras.some((para) => {
     const ls = wrap(para, l.w, at);
     return ls.length > 1 && ls.at(-1)!.length === 1;
   });
-  if (l.lines && orphaned(k))
-    for (let s = k * 0.99; s >= k * 0.92; s -= k * 0.01)
-      if (fits(s) && !orphaned(s)) {
-        k = s;
-        break;
-      }
+  const k = fitScale(l, fits, orphaned);
   const words = paras.flatMap((para) => {
     let out = wrap(para, l.w, k);
-    if (l.balance && out.length > 1) {
-      let lo = 0;
-      let hi = l.w;
-      for (let n = 0; n < 10; n++) {
-        const mid = (lo + hi) / 2;
-        if (wrap(para, mid, k).length <= out.length) hi = mid;
-        else lo = mid;
-      }
-      out = wrap(para, hi, k);
-    }
+    if (l.balance && out.length > 1) out = wrap(para, balancedWidth(l.w, out.length, (width) => wrap(para, width, k).length), k);
     // still alone: the word before it comes down to keep it company, when the two fit the width together
     const last = out.at(-1)!;
     const before = out.at(-2);
