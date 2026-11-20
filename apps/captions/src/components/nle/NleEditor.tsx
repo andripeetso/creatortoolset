@@ -12,11 +12,12 @@ import { fingerprint, keepUnsaved, readUnsaved } from "@/lib/nle/unsaved";
 import { cn } from "@/lib/utils";
 import { keyAction } from "@/lib/nle/keys";
 import { NleInspector } from "./NleInspector";
-import { nleAudio } from "@/lib/nle/audio";
+import { NleClock, nleAudio } from "@/lib/nle/audio";
+import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
 import { NleLayout, Panel } from "./NleLayout";
 import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
-import { NleViewer, SoundCard, SourceStrip } from "./NleViewer";
+import { NleViewer, SoundCard, SourceStrip, Timecode } from "./NleViewer";
 
 export type { NleFile };
 import { NleTracks as Timeline, useLinkedSelection, type Tool } from "./NleTracks";
@@ -61,57 +62,61 @@ const openOf = (initial: NleTimeline, key: string) => {
   return { key, base, saved, now: readUnsaved(key, base) ?? saved };
 };
 
-/** A playhead and its clock: it runs on the page's frame clock while playing (backwards for J) and stops on the last
- *  frame, or with `loop` (seconds) goes round that part. */
+/** A playhead and its clock (lib/nle/audio.ts NleClock): played on the sound's time (backwards for J), it stops on the
+ *  last frame, or with `loop` (seconds) goes round that part. `time` is React's only at a pause, a seek or a stop; while
+ *  it plays, whatever moves with it reads `clock` (nothing else renders again 60 times a second). */
 function useTransport(last: number, fps: number, loop: [number, number] | null) {
+  const [clock] = useState(() => new NleClock());
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(1);
-  const timeRef = useRef(time);
-  timeRef.current = time;
   const loopRef = useRef(loop);
   loopRef.current = loop;
+  const lastRef = useRef(last);
+  lastRef.current = last;
   useEffect(() => {
     if (!playing) return;
+    const release = holdWaves();
+    clock.play(rate);
     let raf = 0;
-    let then = performance.now();
-    const step = (now: number) => {
-      const t = timeRef.current + ((now - then) / 1000) * rate;
-      then = now;
+    const step = () => {
+      const t = clock.tick();
       const lp = loopRef.current;
+      const end = lastRef.current;
       if (lp) {
         // straight back to the other end on this frame: the player has its pictures waiting there
-        timeRef.current = loopNext(t, rate, lp);
-        setTime(timeRef.current);
-        raf = requestAnimationFrame(step);
-        return;
-      }
-      if (t >= last && rate > 0) {
-        setTime(last);
+        const to = loopNext(t, rate, lp);
+        if (to !== t) clock.seek(to);
+      } else if ((t >= end && rate > 0) || (t <= 0 && rate < 0)) {
+        clock.stop();
+        clock.seek(rate > 0 ? end : 0);
         setPlaying(false);
         return;
       }
-      if (t <= 0 && rate < 0) {
-        setTime(0);
-        setPlaying(false);
-        return;
-      }
-      setTime(t);
       raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, rate, last]);
+    return () => {
+      cancelAnimationFrame(raf);
+      release();
+      setTime(clock.stop());
+    };
+  }, [playing, rate, clock]);
 
+  const seek = useCallback((t: number) => {
+    clock.seek(Math.max(0, t));
+    setTime(Math.max(0, t));
+  }, [clock]);
   const play = (on: boolean, r = 1) => {
     nleAudio();
-    if (on && r > 0 && !loopRef.current && timeRef.current >= last - 0.5 / fps) setTime(0);
+    if (on && r > 0 && !loopRef.current && clock.now() >= last - 0.5 / fps) seek(0);
     setRate(r);
     setPlaying(on);
   };
-  const seek = useCallback((t: number) => setTime(Math.max(0, t)), []);
   const shuttle = (dir: 1 | -1) => play(true, !playing || Math.sign(rate) !== dir ? dir : Math.max(-8, Math.min(8, rate * 2)));
-  return { time, setTime, playing, setPlaying, rate, play, seek, shuttle };
+  /** the playhead now (playing: where the clock is) */
+  const now = useCallback(() => clock.now(), [clock]);
+  return { time, clock, now, playing, setPlaying, rate, play, seek, shuttle };
 }
 
 
@@ -187,8 +192,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     setSaved(o.saved);
     setLive(null);
     setSelected([]);
-    tln.setTime(0);
     tln.setPlaying(false);
+    tln.seek(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a new version only
   }, [resetKey]);
 
@@ -201,7 +206,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const last = Math.max(0, lengthOf(shown) - 1) / fps;
   const dirty = tl !== saved;
   const tln = useTransport(last, fps, loop && lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null);
-  const { time, play, seek } = tln;
+  const { time, play, seek, now } = tln;
 
   // the source: one of the timeline's own when it plays the same file (so it plays from where that one is found here)
   const sfpsOf = (d: NleDrop) => d.fps || Number(Object.values(tl.sources).find((x) => x.path === d.path)?.fps) || fps;
@@ -293,9 +298,9 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     if (!source) return;
     const t = editTracks(tl, sel);
     const track = srcPicture ? t.picture : t.sound;
-    if (tl.tracks[track]) lay(marked(source), { track, frame: marks[0] ?? Math.round(time * fps), sound: t.sound }, how);
+    if (tl.tracks[track]) lay(marked(source), { track, frame: marks[0] ?? Math.round(now() * fps), sound: t.sound }, how);
   };
-  if (control) control.current = { put: (d) => lay(marked(d), { track: "V1", frame: marks[0] ?? Math.round(time * fps) }), source: openSource };
+  if (control) control.current = { put: (d) => lay(marked(d), { track: "V1", frame: marks[0] ?? Math.round(now() * fps) }), source: openSource };
 
   const act = {
     // a gap goes with either delete key, as in Resolve: what is after it moves back
@@ -308,7 +313,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     },
     paste: () => {
       if (!clipboard.length) return;
-      const made = paste(tl, clipboard, Math.round(time * fps), mode);
+      const made = paste(tl, clipboard, Math.round(now() * fps), mode);
       commit(made.tl);
       setSelected(made.keys);
     },
@@ -321,7 +326,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     link: () => sel.length > 1 && commit(linkTogether(tl, sel)),
     // the picked clips under the playhead, or (none there) every clip under it on the unlocked tracks
     blade: () => {
-      const f = Math.round(time * fps);
+      const f = Math.round(now() * fps);
       const under = sel.filter((k) => { const it = find(tl, k)!.item; return it.rec < f && f < endOf(it); });
       commit(blade(tl, f, under.length ? under : undefined));
     },
@@ -346,13 +351,13 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
       const a = keyAction(e);
       if (!a) return;
-      const f = Math.round(time * fps);
+      const f = Math.round(now() * fps);
       const zoom = (key: string) => zoomKeys.current?.(new KeyboardEvent("keydown", { key }));
       // playing, stepping and marks go to what the viewer shows (Source or Timeline)
-      const pf = Math.round(T.time * tfps);
+      const pf = Math.round(T.now() * tfps);
       const step = (d: number) => {
         T.play(false);
-        T.seek(T.time + d / tfps);
+        T.seek(T.now() + d / tfps);
       };
       const mark = (what: Parameters<typeof setMark>[1]) => inSource && source
         ? setSrcMarks((all) => ({ ...all, [source.path]: setMark(all[source.path] ?? NO_MARKS, what, pf) }))
@@ -495,19 +500,19 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                 )}
               </div>
             }>
-            <NleViewer tl={inSource ? srcTl! : shown} time={T.time} playing={T.playing} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
+            <NleViewer tl={inSource ? srcTl! : shown} playhead={T.clock} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
               nameOf={inSource ? () => source!.name : nameOfSrc} onClick={() => T.play(!T.playing)}
               loop={loop ? (inSource ? loopPart(sm, srcFrames, sfps) : lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null) : null}
               onDragStart={inSource ? (e) => { e.dataTransfer.setData(VIEWER_MIME, "1"); e.dataTransfer.effectAllowed = "copy"; note(source); } : undefined}
               onDragEnd={() => note(null)}
-              over={inSource && !srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} time={srcT.time} /> : null}
+              over={inSource && !srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} clock={srcT.clock} /> : null}
               below={inSource ? (
-                <SourceStrip time={srcT.time} seconds={srcSecs} from={sm[0] !== null ? sm[0] / sfps : null} to={sm[1] !== null ? (sm[1] + 1) / sfps : null}
+                <SourceStrip clock={srcT.clock} seconds={srcSecs} from={sm[0] !== null ? sm[0] / sfps : null} to={sm[1] !== null ? (sm[1] + 1) / sfps : null}
                   onSeek={(t) => { srcT.play(false); srcT.seek(t); }} />
               ) : null}
               clock={
                 <span className="font-mono tabular-nums">
-                  <span className="text-[13px] text-zinc-100">{timecode(Math.round(T.time * tfps), tfps)}</span>
+                  <span className="text-[13px] text-zinc-100"><Timecode clock={T.clock} fps={tfps} /></span>
                   <span className="text-zinc-500"> / {inSource ? timecode(srcFrames, sfps) : timecode(Math.round(end * fps), fps)}</span>
                   {T.playing && T.rate !== 1 && <span className="pl-1.5 text-violet-300">{T.rate}×</span>}
                 </span>
@@ -530,7 +535,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         timeline={
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>
-          <Timeline tl={shown} time={time} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
+          <Timeline tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}

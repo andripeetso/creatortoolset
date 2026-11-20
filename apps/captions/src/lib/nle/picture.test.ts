@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { withKeys, type NleItem, type NleTimeline } from "./model";
-import { drawScale, picturesAt, placement, soundPieces, sourceTime, steer } from "./picture";
+import { chains, continues, drawScale, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, steer } from "./picture";
 
 type Case = { name: string; timeline: [number, number]; track: string; source: [number, number]; item: object; place: { matrix: number[]; crop: number[]; opacity: number } };
 // the renderer's own answers for these clips (its geometry check writes them)
@@ -59,5 +59,71 @@ describe("a playing video kept to the clock", () => {
     expect(steer(0.1, 2, 25).rate).toBeCloseTo(1.8);
     expect(steer(0.4, 1, 25)).toEqual({ rate: 0.75, seek: false });
     expect(steer(-0.7, 1, 25).seek).toBe(true);
+  });
+});
+
+describe("a clip that plays on from the one before it in the same file", () => {
+  // a Tiny Acrobatics talk cut into short clips: 0–25 then 25–50 of one file (nothing left out), a jump to 80, another file
+  const tl = withKeys({
+    timeline: { fps: 25, width: 2160, height: 3840 },
+    sources: { a: { fps: 25 }, b: { fps: 50 } },
+    tracks: {
+      V1: { items: [
+        { src: "a", rec: 0, len: 25, in: 0 },
+        { src: "a", rec: 25, len: 25, in: 26 },
+        { src: "a", rec: 50, len: 25, in: 80 },
+        { src: "b", rec: 75, len: 25, in: 0 },
+        { src: "b", rec: 100, len: 25, in: 50 },
+        { src: "b", rec: 130, len: 25, in: 100 },
+      ] },
+    },
+  } as unknown as NleTimeline);
+  const it_ = tl.tracks.V1.items;
+
+  it("keeps one element across the cut only when it continues the file from where the clip ends, at its speed", () => {
+    // in 26 where the first ends at 25: within a frame
+    expect(continues(tl, it_[0], it_[1])).toBe(true);
+    // a jump cut leaves 30 frames out
+    expect(continues(tl, it_[1], it_[2])).toBe(false);
+    // another file
+    expect(continues(tl, it_[2], it_[3])).toBe(false);
+    // a 50 fps source: 25 timeline frames are 50 of its own
+    expect(continues(tl, it_[3], it_[4])).toBe(true);
+    // a gap on the timeline between them
+    expect(continues(tl, it_[4], it_[5])).toBe(false);
+    expect(continues(tl, it_[0], { ...it_[1], speed: 2 })).toBe(false);
+    expect(continues(tl, it_[0], { ...it_[1], freeze: 1 } as NleItem)).toBe(false);
+    const c = chains(tl);
+    expect(c.get(keyOf(it_[1]))).toBe(keyOf(it_[0]));
+    expect(c.get(keyOf(it_[2]))).toBe(keyOf(it_[2]));
+    expect(c.get(keyOf(it_[4]))).toBe(keyOf(it_[3]));
+  });
+
+  it("opens only the next clip on a track, and none for one that plays on in the same element", () => {
+    const c = chains(tl);
+    // at frame 10 the next clip continues this one: the one after it (the jump to 80) is opened
+    expect(picturesSoon(tl, 10, 50, c).map((p) => p.item.rec)).toEqual([50]);
+    expect(picturesSoon(tl, 10, 10, c)).toEqual([]);
+    expect(picturesSoon(tl, 60, 50, c).map((p) => p.item.rec)).toEqual([75]);
+  });
+
+  it("gives a run of clips the element it has, else a new one under two a file, else the one unused longest", () => {
+    expect(pickSlot([{ owner: "x", used: 5, busy: true }], "x")).toBe(0);
+    expect(pickSlot([{ owner: "x", used: 5, busy: true }], "y")).toBe(-1);
+    expect(pickSlot([{ owner: "x", used: 5, busy: true }, { owner: "z", used: 1, busy: false }], "y")).toBe(1);
+    expect(pickSlot([{ owner: "x", used: 5, busy: true }, { owner: "z", used: 1, busy: true }], "y")).toBeNull();
+  });
+});
+
+describe("one plain picture shows as its <video>", () => {
+  const on = (item: object, track = "V1") => [{ track, item: { src: "a", rec: 0, len: 25, in: 0, ...item } as NleItem }];
+  it("only when exactly one picture shows with nothing changing how it is drawn", () => {
+    expect(plainVideo(on({}))).toBe("cover");
+    expect(plainVideo(on({}, "V3"))).toBe("contain");
+    expect(plainVideo(on({ zoom: 1, crop: [0, 0, 0, 0], look: [] }))).toBe("cover");
+    for (const more of [{ zoom: 1.2 }, { pan: 10 }, { crop: [0.1, 0, 0, 0] }, { opacity: 0.5 }, { fade_in: 5 }, { frame: "blur" }, { split: [{ src: "b", in: 0 }] }, { look: [["blur", 0, 5, 1]] }, { fit_x: 0.2 }, { rev: true }])
+      expect(plainVideo(on(more))).toBeNull();
+    expect(plainVideo([...on({}), ...on({}, "V2")])).toBeNull();
+    expect(plainVideo([])).toBeNull();
   });
 });
