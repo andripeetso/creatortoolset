@@ -129,7 +129,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     /// Cmd-V of files copied in Finder: the same check as a drop (the window gets the key before the Edit menu does).
     /// shortcut: Edit → Paste chosen with the mouse isn't checked; a paste(_:) of our own once WebKit exposes it.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, event.charactersIgnoringModifiers == "v",
+        // Caps Lock and the like don't count: only ⌘ held, of the keys that change a shortcut
+        if event.type == .keyDown, event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command, event.charactersIgnoringModifiers?.lowercased() == "v",
            let refused = blurredElsewhere(NSPasteboard.general) {
             refuse(refused)
             return true

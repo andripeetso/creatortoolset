@@ -164,10 +164,11 @@ enum MediaFiles {
         for (key, folders) in signedInServers(signedIn) where key.lowercased() != page {
             for f in folders where f.use == "media" && f.guarded != [] {
                 // a folder whose disk answers by its real path, resolved once; one that doesn't by name, never waited on
-                let root = reachable(f.path) ? Imports.resolved(f.path) : f.path.precomposedStringWithCanonicalMapping
+                let live = reachable(f.path)
+                let root = live ? Imports.resolved(f.path) : f.path.precomposedStringWithCanonicalMapping
                 let workspace = f.guarded?.first
                 for (p, real) in mine {
-                    let at = reachable(f.path) ? real : p.precomposedStringWithCanonicalMapping
+                    let at = live ? real : p.precomposedStringWithCanonicalMapping
                     let into = under(at, root), holds = !into && under(root, at)
                     guard into || holds else { continue }
                     let what = holds ? "\(p) holds" : "\(p) is in"

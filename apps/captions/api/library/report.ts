@@ -53,12 +53,17 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
   const st = await storageOf(d.owner);
   const mine = st.folders.filter((f) => f.origin.host === d.id);
   const owned = await ownedProjects(d.owner);
-  const name = new Map([...owned, ...(await sharedProjects(d.owner))].map((p) => [p.id, p.name]));
+  const shared = await sharedProjects(d.owner);
+  const name = new Map([...owned, ...shared].map((p) => [p.id, p.name]));
+  // a workspace is judged as its owner's: a member's folder in the team owner's workspace by the owner's library and catalog
+  const ownerOf = new Map(shared.map((p) => [p.id, p.owner]));
   const blurs = new Map<string, Promise<boolean>>();
   const guarded = (id: string) => {
+    const owner = ownerOf.get(id) ?? d.owner;
+    const ws = id || undefined;   // "": an account with no workspace, all of its media in one
     // Blur faces on, a plug-in serving its media now, or one keeping it blurred whatever is open (its catalog); a failure: guarded
     if (!blurs.has(id))
-      blurs.set(id, workspaceLibrary(d.owner, id).then(async (lib) => (!!lib && blursFaces(lib)) || (await servedByPlugin(d.owner, id)) || pluginKeepsBlurred(d.owner, id)).catch(() => true));
+      blurs.set(id, workspaceLibrary(owner, ws).then(async (lib) => (!!lib && blursFaces(lib)) || (await servedByPlugin(owner, ws)) || pluginKeepsBlurred(owner, id)).catch(() => true));
     return blurs.get(id)!;
   };
   return Promise.all(
@@ -66,8 +71,10 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
       const workspaces = await workspacesOf(d.owner, f);
       const out: RelayFolder = { id: f.id, path: f.origin.path, hostPath: f.origin.path, mountPath: f.mountPath ?? f.origin.path, workspaces, use: useOf(f) };
       if (out.use !== "media") return out;
-      const ids = workspaces === "*" ? owned.map((p) => p.id) : workspaces;
-      const kept = await Promise.all(ids.map(async (id) => ((await guarded(id)) ? (name.get(id) ?? id) : null)));
+      // every workspace it reads into (devices-storage.ts readersOf): its own and those it was given; none at all: the one
+      const all = [...owned, ...shared].map((p) => p.id);
+      const ids = workspaces === "*" ? (all.length ? all : [""]) : workspaces;
+      const kept = await Promise.all(ids.map(async (id) => ((await guarded(id)) ? (name.get(id) ?? (id || d.owner)) : null)));
       return { ...out, guarded: kept.filter((n): n is string => !!n) };
     }),
   );

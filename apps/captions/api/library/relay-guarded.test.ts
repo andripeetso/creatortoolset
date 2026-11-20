@@ -9,6 +9,11 @@ import type { StorageFolder } from "../../contracts/storage";
 const dir = realpathSync(mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "relay-guarded-")));
 process.env.DATA_DIR = dir;
 vi.mock("../plugins.gen", () => ({ serverPlugins: [] }));
+// "tinymember" was given the owner's "ws_blur" workspace (Settings → Team): their own folder in it reads into it
+vi.mock("../lib/workshop/workspace", async (real) => {
+  const m = await real<typeof import("../lib/workshop/workspace")>();
+  return { ...m, sharedProjects: async (u: string) => (u === "tinymember" ? [{ id: "ws_blur", owner: "tinyacrobatics", name: "Tiny Classes" } as never] : m.sharedProjects(u)) };
+});
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const OWNER = "tinyacrobatics";
@@ -22,7 +27,8 @@ const { relayFolders } = await import("./report");
 const { mountPlugins } = await import("../lib/plugin");
 const { Hono } = await import("hono");
 // a plug-in that keeps the "ws_catalog" workspace's footage (a footage catalog), whichever workspace is open
-mountPlugins(new Hono(), [{ id: "catalog", keepsBlurred: (_: string, ws: string) => ws === "ws_catalog" } as never]);
+// and for an account with no workspace at all ("": all of its media), as a footage catalog's plug-in answers
+mountPlugins(new Hono(), [{ id: "catalog", keepsBlurred: (u: string, ws: string) => ws === "ws_catalog" || (u === "tinysolo" && ws === "") } as never]);
 
 const lib = (id: string, settings: Record<string, unknown>) =>
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'L', 'local', ?, 0)").run(id, OWNER, JSON.stringify(settings));
@@ -40,5 +46,15 @@ describe("the computer's folder list names the Blur faces workspaces of each Med
     });
     const got = Object.fromEntries((await relayFolders({ id: "mac_1", owner: OWNER } as never)).map((f) => [f.id, f.guarded]));
     expect(got).toEqual({ m_blur: ["Tiny Classes"], m_plain: [], m_all: ["Tiny Classes", "Tiny Catalog"], x_blur: undefined, m_catalog: ["Tiny Catalog"] });
+  });
+
+  it("a member's folder in the owner's Blur faces workspace is judged by the owner's library", async () => {
+    await changeStorage("tinymember", (st) => void st.folders.push({ ...row("mm", "/Volumes/Member/FOOTAGE", "ws_blur"), origin: { host: "mac_m", path: "/Volumes/Member/FOOTAGE" } }));
+    expect((await relayFolders({ id: "mac_m", owner: "tinymember" } as never)).map((f) => f.guarded)).toEqual([["Tiny Classes"]]);
+  });
+
+  it("an account with no workspace has its one asked about too", async () => {
+    await changeStorage("tinysolo", (st) => void st.folders.push({ ...row("ms", "/Volumes/Solo/FOOTAGE", "*"), origin: { host: "mac_s", path: "/Volumes/Solo/FOOTAGE" } }));
+    expect((await relayFolders({ id: "mac_s", owner: "tinysolo" } as never)).map((f) => f.guarded)).toEqual([["tinysolo"]]);
   });
 });
