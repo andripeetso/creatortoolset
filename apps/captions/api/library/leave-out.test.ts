@@ -20,7 +20,7 @@ const { recordVersion } = await import("./routes");
 const { locateApp } = await import("./locate");
 const { placesApp } = await import("./places");
 const { filesIn, listsHere } = await import("./watch");
-const { changeStorage, storageApp } = await import("../devices-storage");
+const { changeStorage, storageApp, storageOf } = await import("../devices-storage");
 const { noteMachine, pairDevice } = await import("../lib/devices");
 const { inRequestWorkspace } = await import("../lib/workspace-scope");
 const { inLeftOut, leftOutBy, notFootage } = await import("../../contracts/storage");
@@ -149,6 +149,10 @@ describe("a clip indexed before its folder was left out", () => {
   });
 });
 
+/** Every Media folder of the Mac read once more at `at` (a listing with nothing new): what waits on them is settled. */
+const listRest = async (at: number) =>
+  applyReport(mac, (await storageOf("tia")).folders.filter((f) => f.origin.host === mac.id && f.role === "footage").map((f) => ({ id: f.id, state: "ok" as const, files: [], unreadable: [] })), at);
+
 describe("every way a left-out file could come in or stay", () => {
   const listOf = (id: string, leaveOut: string[]) =>
     changeStorage("tia", (st) => {
@@ -268,6 +272,9 @@ describe("every way a left-out file could come in or stay", () => {
     await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv1", complete: true, files: [{ path: `${F2}/Day 1/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 1000);
     await listOf("fold_f2", ["Private"]);
     await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv2", complete: true, files: [{ path: `${F2}/Day 1/Private/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 2000);
+    // its old place went in that same listing: it waits for the computer's other Media folders to be read
+    expect(asset(612).trashed_at).toBeNull();
+    await listRest(t0 + 3000);
     expect(asset(612).trashed_at).not.toBeNull();
   });
 
@@ -344,6 +351,59 @@ describe("every way a left-out file could come in or stay", () => {
     expect(asset(640).trashed_at).toBeNull();
     const live = libraryDb().prepare("SELECT p.path FROM version_places p JOIN asset_versions v ON v.id = p.version_id WHERE v.quick = ? AND p.state IN ('verified','found')").all(quick(640));
     expect(live).toEqual([{ path: `${F2}/Day 3 final/r.mov` }]);
+  });
+});
+
+describe("a move between a computer's Media folders, read in separate reports", () => {
+  const MM = pairDevice("tia", "Tiny Mac M").device;
+  const FA = "/Volumes/Tiny M/A";
+  const FB = "/Volumes/Tiny M/B";
+  const at = (id: string, p: string, leaveOut?: string[]) => ({ ...row(id, p, leaveOut), origin: { host: MM.id, path: p } });
+  const rep = (id: string, root: string, rels: string[], q: number, when: number) =>
+    applyReport(MM, [{ id, state: "ok", scan: `m${++n}`, complete: true, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1, quick: quick(q) })), unreadable: [] }], when);
+  const trashed = (q: number) =>
+    (libraryDb().prepare("SELECT a.trashed_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(q)) as { trashed_at: number | null }).trashed_at !== null;
+
+  beforeAll(async () => {
+    await changeStorage("tia", (st) => {
+      st.folders.push(at("fold_ma", FA, ["Private"]), at("fold_mb", FB));
+    });
+  });
+
+  it("a file moved into another Media folder read in a later report keeps its clip, with a backup in a left-out folder", async () => {
+    const t0 = Date.now();
+    await indexForDevice(MM, "fold_ma", onMac(FA, "Day/c.mov", 660));
+    await rep("fold_ma", FA, ["Private/c.mov"], 660, t0 + 1000);
+    expect(trashed(660)).toBe(false);
+    await rep("fold_mb", FB, ["c.mov"], 660, t0 + 2000);
+    expect(trashed(660)).toBe(false);
+    await rep("fold_ma", FA, ["Private/c.mov"], 660, t0 + 3000);
+    expect(trashed(660)).toBe(false);
+  });
+
+  it("a file gone from every Media folder leaves once every folder of the computer has listed", async () => {
+    const t0 = Date.now() + 10_000;
+    await indexForDevice(MM, "fold_ma", onMac(FA, "Day/g.mov", 661));
+    await rep("fold_ma", FA, ["Private/g.mov"], 661, t0 + 1000);
+    expect(trashed(661)).toBe(false);
+    await applyReport(MM, [{ id: "fold_mb", state: "disk_away", files: [], unreadable: [] }], t0 + 1500);
+    expect(trashed(661)).toBe(false);
+    await rep("fold_mb", FB, ["c.mov"], 660, t0 + 2000);
+    expect(trashed(661)).toBe(true);
+  });
+
+  it("an outer Media folder added over one with a list takes its list", async () => {
+    const OUT = "/Volumes/Tiny Outer";
+    await changeStorage("tia", (st) => {
+      st.folders.push(row("fold_inner", `${OUT}/Shoots`, ["Private"]));
+    });
+    await changeStorage("tia", (st) => {
+      st.folders.push(row("fold_outer", OUT, ["Archive"]));
+    });
+    const media = await mediaFoldersOf("tia");
+    expect(media.some((f) => f.id === "fold_inner")).toBe(false);
+    expect(media.find((f) => f.id === "fold_outer")?.leaveOut).toEqual(["Archive", "Private"]);
+    expect(leftOutBy(media, `${OUT}/Shoots/Private/x.mov`, mac.id)).toBe(true);
   });
 });
 

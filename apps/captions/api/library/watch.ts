@@ -748,6 +748,9 @@ export async function copyInto(root: string, copyTo: string, file: string, size:
  * keeps the clip from now on. A file one of the library's copies wrote (`copies`) is never left out. True when one moved
  * to the trash.
  */
+/** Each library's left-out files as last read, `${size}:${mtime}` by path (leaveWatched's moved-in look). */
+const droppedSeen = new Map<string, Map<string, string>>();
+
 async function leaveWatched(
   libraryId: string,
   media: StorageFolder[],
@@ -775,9 +778,20 @@ async function leaveWatched(
   // there, so the watch takes it in at its new path (ingest points the version there); never moved into a left-out folder
   const renamed = (r: { path: string; size: number; mtime: number }) => !live.has(r.path) && inRead(r.path) && unseen.has(`${r.size}:${r.mtime}`);
   const vanished = rows.filter((r) => r.source_path === r.path && !out.has(r.path) && !live.has(r.path) && inRead(r.path) && !renamed(r));
+  // each left-out file's size and time, read once and kept while it stays left out (a file deleted long ago keeps
+  // `vanished` non-empty: no pass reads thousands of left-out files again)
+  const known = droppedSeen.get(libraryId) ?? new Map<string, string>();
+  droppedSeen.set(libraryId, known);
+  const still = new Set(dropped);
+  for (const p of known.keys()) if (!still.has(p)) known.delete(p);
   for (const p of vanished.length ? dropped : []) {
-    const st = await stat(p).catch(() => null);
-    for (const r of vanished) if (st && r.size === st.size && r.mtime === Math.floor(st.mtimeMs)) out.add(r.path);
+    let at = known.get(p);
+    if (at === undefined) {
+      const st = await stat(p).catch(() => null);
+      if (!st) continue;
+      known.set(p, (at = `${st.size}:${Math.floor(st.mtimeMs)}`));
+    }
+    for (const r of vanished) if (`${r.size}:${r.mtime}` === at) out.add(r.path);
   }
   if (!out.size) return false;
   const assets = new Set(rows.filter((r) => out.has(r.path)).map((r) => r.asset_id));

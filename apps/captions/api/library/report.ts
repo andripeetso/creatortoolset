@@ -217,6 +217,16 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string):
 
 const heldSaid = new Set<string>();
 
+/**
+ * Clips a listing found only where they are not footage whose own place that same listing turned gone: their file may
+ * have moved into another Media folder of the computer, read in a later report. Each waits, by computer, with when it
+ * was found, until every Media folder of that computer has finished a listing that started then or later (`listed`);
+ * a folder not read (its drive away) never finishes, so nothing leaves on what is unknown.
+ */
+const leftWaiting = new Map<string, Map<string, number>>();
+/** When the last finished listing of each folder started, by `${device}|${folder id}`. */
+const listed = new Map<string, number>();
+
 /** The clips a listing (its key in `scans`) found only in files that are not footage so far: settled when it completes.
  *  Only a listing that found one has an entry, and a new listing of the same folder drops the older ones. */
 const leftSeen = new Map<string, Set<string>>();
@@ -346,13 +356,19 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       d.prepare("UPDATE version_places SET state = CASE WHEN state = 'gone' THEN 'gone' ELSE 'unchecked' END, checked_at = ? WHERE device = ? AND folder_id = ? AND (path = ? OR substr(path, 1, length(?) + 1) = ? || '/')")
         .run(now, device, folder.id, dir, dir, dir);
     }
-    // a page of no listing, or the last page of one: its clips found only where they are not footage leave once the whole
-    // report is read (applyReport), so a copy in a later folder of it keeps the clip
-    if (!r.scan || r.complete) {
-      left.forEach((a) => settle.add(a));
-      leftSeen.delete(key);
-    } else if (left.size) leftSeen.set(key, left);
     const start = scans.get(key);
+    // the candidates whose own place this listing's end is about to turn gone (moved, or gone for good: not known yet)
+    const moved = new Set<string>();
+    if (r.complete && start !== undefined && left.size) {
+      const rows = d
+        .prepare(
+          `SELECT DISTINCT v.asset_id FROM version_places p JOIN asset_versions v ON v.id = p.version_id
+            WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND p.state <> 'gone' AND (p.checked_at IS NULL OR p.checked_at < ?)
+              AND v.asset_id IN (SELECT value FROM json_each(?))`,
+        )
+        .all(device, folder.id, start, JSON.stringify([...left])) as { asset_id: string }[];
+      for (const x of rows) moved.add(x.asset_id);
+    }
     if (r.complete) editorSeen.delete(key);
     if (r.complete && start !== undefined) {
       const gone = d
@@ -366,6 +382,19 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       if (Number(gone.changes)) libs.forEach((l) => touched.add(l));
       scans.delete(key);
     }
+    // a page of no listing, or the last page of one: its clips found only where they are not footage leave once the whole
+    // report is read (applyReport), so a copy in a later folder of it keeps the clip; one whose own place this listing
+    // turned gone waits for every Media folder of the computer (leftWaiting)
+    if (!r.scan || r.complete) {
+      const waiting = leftWaiting.get(device) ?? new Map<string, number>();
+      for (const a of left) {
+        if (moved.has(a)) waiting.set(a, now);
+        else settle.add(a);
+      }
+      if (waiting.size) leftWaiting.set(device, waiting);
+      leftSeen.delete(key);
+      listed.set(`${device}|${folder.id}`, start ?? now);
+    } else if (left.size) leftSeen.set(key, left);
   }
   const was = folder.folderState;
   if (was !== state || !folder.checkedAt || now - folder.checkedAt > 5 * 60_000)
@@ -391,6 +420,17 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
     await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, media, settle, copies);
+  }
+  // the clips waiting on this computer's other folders: settled once every one of its Media folders has listed since
+  const waiting = leftWaiting.get(dev.id);
+  if (waiting) {
+    const here = st.folders.filter((f) => f.origin.host === dev.id && useOf(f) === "media");
+    for (const [a, at] of waiting) {
+      if (!here.every((f) => (listed.get(`${dev.id}|${f.id}`) ?? -1) >= at)) continue;
+      settle.add(a);
+      waiting.delete(a);
+    }
+    if (!waiting.size) leftWaiting.delete(dev.id);
   }
   for (const id of settleLeft(settle, now, dev.name)) {
     const lib = db().prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;

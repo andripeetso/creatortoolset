@@ -675,5 +675,5 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE asset_versions ADD COLUMN blurred_of TEXT;
   ALTER TABLE uploads ADD COLUMN blurred_of TEXT;`,
   // a file by its size and fingerprint (report.ts: a scan's match, a file moved into a left-out folder)
-  `CREATE INDEX versions_quick ON asset_versions(quick);`,
+  `CREATE INDEX IF NOT EXISTS versions_quick ON asset_versions(quick);`,
 ];

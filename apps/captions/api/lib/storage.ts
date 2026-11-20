@@ -53,7 +53,8 @@ const placesOf = (f: StorageFolder): string[] | null => (f.workspace === EVERY_W
 /**
  * The one Media list (owner, 2026-11-17: no Music folder in Settings → Folders): a "music" folder from before is a Media
  * folder, and a Media folder inside another one of the same computer that is in all of its workspaces is left out, the
- * outer one already brings its files into the Media Library. `places`: a folder's workspaces, null for every workspace.
+ * outer one already brings its files into the Media Library. A left-out inner folder's Folders left out go to the outer
+ * one: more is left out, never less (they are privacy lists). `places`: a folder's workspaces, null for every workspace.
  */
 export function mediaFolders(folders: StorageFolder[], places = placesOf): StorageFolder[] {
   const all = folders.map((f) => ((f?.role as string) === "music" ? { ...f, role: "footage" as const } : f));
@@ -62,7 +63,22 @@ export function mediaFolders(folders: StorageFolder[], places = placesOf): Stora
     const inner = places(f);
     return !outer || (!!inner && inner.every((w) => outer.includes(w)));
   };
-  return all.filter((f) => f?.role !== "footage" || !all.some((o) => o !== f && o.role === "footage" && o.origin?.host === f.origin?.host && !!inside(f.origin.path, o.origin.path) && covers(o, f)));
+  const outerOf = (f: StorageFolder) =>
+    f?.role === "footage" ? all.find((o) => o !== f && o.role === "footage" && o.origin?.host === f.origin?.host && !!inside(f.origin.path, o.origin.path) && covers(o, f)) : undefined;
+  const kept = all.filter((f) => !outerOf(f));
+  const names = new Map<StorageFolder, string[]>();
+  for (const f of all) {
+    if (!f?.leaveOut?.length) continue;
+    // the outermost folder that keeps it (one inside another inside a third)
+    let o = outerOf(f);
+    while (o && outerOf(o)) o = outerOf(o);
+    if (o) names.set(o, [...(names.get(o) ?? o.leaveOut ?? []), ...f.leaveOut]);
+  }
+  const key = (n: string) => n.normalize("NFC").toLowerCase();
+  return kept.map((f) => {
+    const list = names.get(f);
+    return list ? { ...f, leaveOut: list.filter((n, i) => list.findIndex((m) => key(m) === key(n)) === i) } : f;
+  });
 }
 
 /**
