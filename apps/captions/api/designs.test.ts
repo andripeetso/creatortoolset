@@ -1133,6 +1133,37 @@ describe("designs: a picture's background taken away", () => {
     expect([kept.readUInt32BE(16), kept.readUInt32BE(20)]).toEqual([2560, 1920]);
     expect(kept.length).toBeLessThan(heavy.length);
   }, 120_000);
+  it("leaves a design deleted while a picture of it was cut deleted, and gives one filled meanwhile no picture past its cap", async () => {
+    const mac = pairDevice("jordan", "Jordan's Mac").device;
+    setDeviceKinds(mac.id, [CUTOUT_KIND]);
+    touchDevice(mac.id);
+    const claim = async () => {
+      let job = null as ReturnType<typeof claimCutout>;
+      for (let n = 0; n < 200 && !(job = claimCutout(mac, [CUTOUT_KIND])); n++) await new Promise((r) => setTimeout(r, 10));
+      return job!;
+    };
+    const small = png(8, 8);
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const first = await upload(d.id, small);
+    const asked = call("POST", `/api/designs/${d.id}/pictures/${first}/cutout`, {});
+    const job = await claim();
+    expect((await call("DELETE", `/api/designs/${d.id}`)).status).toBe(200);
+    cutoutSent(mac.id, job.id, { cutout: small });
+    expect((await asked).status).toBe(404);
+    expect((await call("GET", `/api/designs/${d.id}`)).status).toBe(404);
+    expect(existsSync(path.join(dataDir, "designs", "jordan", d.id))).toBe(false);
+    // 59 pictures as it is asked, 60 by the time the Mac answers
+    const e = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const one = await upload(e.id, small);
+    for (let n = 1; n < 59; n++) await upload(e.id, small);
+    const asked2 = call<{ error: string }>("POST", `/api/designs/${e.id}/pictures/${one}/cutout`, {});
+    const job2 = await claim();
+    await upload(e.id, small);
+    cutoutSent(mac.id, job2.id, { cutout: small });
+    const full = await asked2;
+    expect([full.status, full.body.error]).toEqual([400, "A design holds up to 60 pictures: remove one first"]);
+    expect((await call<Design>("GET", `/api/designs/${e.id}`)).body.pictures).toHaveLength(60);
+  }, 120_000);
 });
 
 describe("designs: a picture split into layers", () => {

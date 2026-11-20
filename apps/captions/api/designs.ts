@@ -1200,11 +1200,17 @@ designsApp.put("/:id", (c) =>
   }),
 );
 
+/** A design and its pictures taken away, in its turn: a cut-out or a split finishing meanwhile never brings it back. */
+export const dropDesign = (owner: string, id: string): Promise<void> =>
+  inTurn(`design:${id}`, async () => {
+    await rm(fileOf(owner, id), { force: true });
+    await rm(picturesOf(owner, id), { recursive: true, force: true });
+  });
+
 designsApp.delete("/:id", (c) =>
   answer(c, async () => {
     const d = await mine(c);
-    await rm(fileOf(d.owner, d.id), { force: true });
-    await rm(picturesOf(d.owner, d.id), { recursive: true, force: true });
+    await dropDesign(d.owner, d.id);
     return { ok: true };
   }),
 );
@@ -1318,7 +1324,10 @@ designsApp.post("/:id/pictures/:pid/cutout", (c) =>
       const cut = await keepable(await fromMac(cutOut(d.owner, await forMac(d, c.req.param("pid"), tmp))), tmp, "The cut-out");
       // onto the design as it is now, in its turn: the cutting took a while (outside it), and a hand or an AI may have changed it meanwhile
       return await designTurn(c)(async () => {
-        const now = (await read(d.owner, d.id)) ?? d;
+        const now = await read(d.owner, d.id);
+        // deleted while it was being cut: it stays deleted
+        if (!now) throw new DesignError("Not found", 404);
+        if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
         const id = await addPicture(now, cut, "png");
         await save({ ...now, updatedAt: stamp(now) });
         return { id };
@@ -1344,7 +1353,9 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
       const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
       // onto the design as it is now, in its turn (the Mac's work stays outside it)
       return await designTurn(c)(async (): Promise<SplitAnswer> => {
-        const now = (await read(d.owner, d.id)) ?? d;
+        const now = await read(d.owner, d.id);
+        // deleted while it was being split: it stays deleted
+        if (!now) throw new DesignError("Not found", 404);
         if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
         const background = await addPicture(now, await keepable(made.background, tmp, "The picture behind"), "png");
         const room = DESIGN_LIMITS.pictures - now.pictures.length;

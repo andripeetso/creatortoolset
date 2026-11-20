@@ -173,7 +173,12 @@ export const STORES: WorkspaceStore[] = [
         const session = from && /^[\w-]{1,64}$/.test(from) ? await json(path.join(env.dataDir, "workshop", "sessions", from, "meta.json")) : null;
         if (d && ws.has(str(session?.projectId) ?? str(d.project))) hit.push(f.slice(0, -5));
       }
-      return { n: hit.length, drop: async () => void (await Promise.all(hit.flatMap((id) => [rm(path.join(root, `${id}.json`), { force: true }), rm(path.join(root, id), { recursive: true, force: true })]))) };
+      // each in its turn, as a design deleted by hand (a cut-out finishing meanwhile never brings it back)
+      return { n: hit.length, drop: async () => {
+        // (loaded when needed: the designs routes are a big module of their own)
+        const { dropDesign } = await import("../designs");
+        await Promise.all(hit.map((id) => dropDesign(a.username, id)));
+      } };
     },
   },
   {
