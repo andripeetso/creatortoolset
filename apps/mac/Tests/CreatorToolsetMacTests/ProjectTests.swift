@@ -116,7 +116,7 @@ final class ProjectTests: XCTestCase {
     @MainActor
     func testEveryAnswerIsMadeOnTheMainThreadAndRequestsOverlap() throws {
         let project = try LocalProject.create(in: root, at: Date())
-        try Data(count: 3 << 20).write(to: project.screenURL)
+        try Data(count: 9 << 20).write(to: project.screenURL)
         try project.writeEvents(Data(#"{"v":1,"width":2,"height":2,"moves":[],"clicks":[]}"#.utf8))
         let folder = root!
         let scheme = ProjectScheme(root: { folder })
@@ -127,8 +127,8 @@ final class ProjectTests: XCTestCase {
         scheme.webView(web, start: video)
         scheme.webView(web, start: log)
         wait(for: [video.done, log.done], timeout: 10)
-        XCTAssertEqual(video.calls, ["response", "data", "data", "data", "finish"])   // 3 MB in 1 MB pieces
-        XCTAssertEqual(video.bytes, 3 << 20)
+        XCTAssertEqual(video.calls, ["response", "data", "data", "data", "finish"])   // 9 MB in 4 MB pieces
+        XCTAssertEqual(video.bytes, 9 << 20)
         XCTAssertEqual(log.calls, ["response", "data", "finish"])
         XCTAssertEqual(video.offMain + log.offMain, 0, "an answer made off the main thread waits for it inside WebKit")
 
