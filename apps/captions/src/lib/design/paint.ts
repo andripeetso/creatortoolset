@@ -21,8 +21,8 @@ export const gradientPaint = (from: string, g: Gradient): Paint => ({
 });
 const oldFill = (color: string, g: Gradient | undefined): Paint => (g ? gradientPaint(color, g) : { type: "solid", color });
 
-/** What can have fills: a frame, a text, a shape, a path. */
-export const takesFills = (o: Painted): boolean => isPage(o) || o.type === "text" || o.type === "shape" || o.type === "path" || (o.type === "group" && !!o.box);
+/** What can have fills: a frame, a text, a shape, a path, a box and a boolean group. */
+export const takesFills = (o: Painted): boolean => isPage(o) || o.type === "text" || o.type === "shape" || o.type === "path" || (o.type === "group" && (!!o.box || !!o.boolean));
 /** What can have lines: those and a picture. */
 export const takesStrokes = (o: Painted): boolean => takesFills(o) || (!isPage(o) && o.type === "image");
 
@@ -31,7 +31,7 @@ export function fillsOf(o: Painted): Paint[] {
   if (o.type === "text") return o.fills ?? [oldFill(o.color, o.gradient)];
   if (o.type === "shape") return o.fills ?? [oldFill(o.fill, o.gradient)];
   if (o.type === "path") return o.fills ?? (o.fill ? [oldFill(o.fill, o.gradient)] : []);
-  if (o.type === "group" && o.box) return o.fills ?? [];
+  if (o.type === "group" && (o.box || o.boolean)) return o.fills ?? [];
   return [];
 }
 
@@ -42,7 +42,7 @@ export function strokesOf(o: Painted): Stroke[] {
   if (isPage(o)) return o.strokes ?? [];
   if (o.type === "text") return o.strokes ?? (o.outline ? [{ ...o.outline }] : []);
   if (o.type === "shape" || o.type === "path") return o.strokes ?? (o.stroke ? [o.stroke] : []);
-  if (o.type === "image" || (o.type === "group" && o.box)) return o.strokes ?? [];
+  if (o.type === "image" || (o.type === "group" && (o.box || o.boolean))) return o.strokes ?? [];
   return [];
 }
 

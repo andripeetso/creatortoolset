@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
-import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, mapLayers, moveInto, reid, scopeOf, withScope } from "@/lib/design/tree";
+import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, moveInto, reid, scopeOf, seenBox, withScope } from "@/lib/design/tree";
 import { solidGround } from "@/lib/design/paint";
-import { boundsOf, boxPick, dropTarget, frameOf, hovers, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { boundsOf, boxPick, dropTarget, frameOf, hovers, withoutTyped, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
 import { dropSlot, fixedBy, flowInsert, flows } from "@/lib/design/layout";
 import { measureWords } from "@/lib/design/draw";
@@ -296,7 +296,7 @@ export function Stage({
       if (left + area.x * view.z > room.w || left + (area.x + area.w) * view.z < 0 || top + area.y * view.z > room.h || top + (area.y + area.h) * view.z < 0) return;
       // the words being typed are in the box over the frame: the layer itself is not drawn under them
       const inWords = editing && k === at ? editing : "";
-      const shown = inWords ? { ...p, layers: mapLayers(p.layers, (l) => (l.id === inWords ? null : l)) } : p;
+      const shown = inWords ? { ...p, layers: withoutTyped(p.layers, inWords) } : p;
       // on whole device pixels, so a kept picture copied there and the frame drawn there are the same picture
       const x = Math.round(left * dpr);
       const y = Math.round(top * dpr);
@@ -447,7 +447,12 @@ export function Stage({
     return inner ? innermost(inner, q) : g;
   };
   // inside an open container its layers are hit first, then what lies on the frame round it
-  const hitAt = (k: number, p: Point) => (k >= 0 ? (layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) ?? (pages[k] !== real[k] ? layerAt(real[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null)) : null);
+  // the layers of an open combined shape are each their own shape: no mask among them cuts the others
+  const openShape = (k: number) => {
+    const c = pages[k] !== real[k] && scope ? findLayer(real[k]!.layers, scope) : undefined;
+    return isGroup(c) && c.boolean ? { layers: pages[k]!.layers, boolean: c.boolean } : pages[k]!;
+  };
+  const hitAt = (k: number, p: Point) => (k >= 0 ? (layerAt(openShape(k), p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) ?? (pages[k] !== real[k] ? layerAt(real[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null)) : null);
   /**
    * What a press at a point is on: the topmost layer drawn there and its frame, else the frame under it (-1: empty
    * canvas). A frame that clips hides its layers past its edges, and its ground covers what lies under it.
@@ -597,7 +602,7 @@ export function Stage({
         // a loose picture's own box is where it was: nothing to catch on
         // inside an open container its own box is caught on too
         const shell = to === k && open ? inFrame(real[k]!.layers, open) : undefined;
-        const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l])), ...(shell ? [boundsOf([shell])] : [])];
+        const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => seenBox(host.layers, l)), ...(shell ? [boundsOf([shell])] : [])];
         const near = SNAP / live.current.z;
         const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
         // and on the host frame's guides, grids and safe parts (lib/design/aids.ts)

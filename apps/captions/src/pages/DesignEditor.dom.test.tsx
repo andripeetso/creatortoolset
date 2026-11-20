@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Design } from "@contracts/design";
+import type { Design, GroupLayer } from "@contracts/design";
 import { useAuth } from "@/lib/auth";
 
 // The designer opened over another page (the video editor) on one design: Done saves the change not sent yet, then
@@ -103,4 +103,60 @@ it("a save refused because the design changed elsewhere is merged and sent again
   expect([last.name, last.fills]).toEqual(["Renamed elsewhere", []]);
   expect(onDone).toHaveBeenCalledTimes(1);
   expect(saveDesign.mock.invocationCallOrder[1]!).toBeLessThan(onDone.mock.invocationCallOrder[0]!);
+});
+it("combines and masks layers picked inside a group in a group, where they are", async () => {
+  const sq = (id: string, x: number) => ({ id, type: "shape" as const, shape: "rect" as const, fill: "#ff0000", x, y: 0, w: 100, h: 100 });
+  const was = design.pages;
+  design.pages = [{ ...was[0]!, layers: [{ id: "outer", type: "group", x: 100, y: 100, w: 450, h: 100, layers: [{ id: "inner", type: "group", x: 0, y: 0, w: 450, h: 100, layers: [sq("a", 0), sq("b", 50), sq("c", 300), sq("d", 350)] }] }] }];
+  try {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><DesignEditor id="d1" onDone={() => {}} /></MemoryRouter>));
+    await settle();
+    const row = (id: string) => document.querySelector<HTMLElement>(`[data-row="l:p1:${id}"]`)!;
+    const pickTwo = async (x: string, y: string) => {
+      act(() => row(x).click());
+      act(() => void row(y).dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true })));
+      await settle();
+    };
+    // a and b: ⌥⌘S (Ctrl+Alt+S off a Mac)
+    await pickTwo("a", "b");
+    act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyS", key: "s", ctrlKey: true, altKey: true, metaKey: true })));
+    await settle();
+    // c and d: Use as mask (⌃⌘M, Ctrl+Alt+M off a Mac)
+    await pickTwo("c", "d");
+    act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyM", key: "m", ctrlKey: true, altKey: true, metaKey: true })));
+    await settle();
+    await act(async () => button("Done")!.click());
+    await settle();
+    const inner = (saveDesign.mock.calls.at(-1)![1].pages![0]!.layers[0] as GroupLayer).layers[0] as GroupLayer;
+    const [ring, mask] = inner.layers as GroupLayer[];
+    expect([inner.id, inner.layers.length, ring!.boolean, ring!.layers.map((l) => l.id), mask!.boolean, mask!.layers.map((l) => [l.id, l.mask])]).toEqual(["inner", 2, "subtract", ["a", "b"], undefined, [["c", "alpha"], ["d", undefined]]]);
+  } finally {
+    design.pages = was;
+  }
+});
+
+it("Use as mask under a mask in an auto layout box makes the layer a mask in its place", async () => {
+  const sq = (id: string, more: object = {}) => ({ id, type: "shape" as const, shape: "rect" as const, fill: "#ff0000", x: 0, y: 0, w: 100, h: 100, ...more });
+  const was = design.pages;
+  design.pages = [{ ...was[0]!, layers: [{ id: "row", type: "group", box: true, layout: { dir: "row" }, x: 100, y: 100, w: 200, h: 100, layers: [sq("a"), sq("b", { x: 100, mask: "alpha" })] }] }];
+  try {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><DesignEditor id="d1" onDone={() => {}} /></MemoryRouter>));
+    await settle();
+    act(() => document.querySelector<HTMLElement>('[data-row="l:p1:a"]')!.click());
+    await settle();
+    act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyM", key: "m", ctrlKey: true, altKey: true, metaKey: true })));
+    await settle();
+    await act(async () => button("Done")!.click());
+    await settle();
+    const row = saveDesign.mock.calls.at(-1)?.[1].pages![0]!.layers[0] as GroupLayer | undefined;
+    expect(row?.layers.map((l) => [l.id, l.mask])).toEqual([["a", "alpha"], ["b", "alpha"]]);
+  } finally {
+    design.pages = was;
+  }
 });

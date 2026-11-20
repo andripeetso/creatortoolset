@@ -1,8 +1,9 @@
-import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer } from "@contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer, type PathLayer } from "@contracts/design";
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
-import { boundsOf, freshLayerIds, isGroup, layerOut } from "./tree";
+import { boundsOf, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, outOf, parentOf, seenBox } from "./tree";
+import { pathBounds } from "./path";
 
 /**
  * What the hands on the canvas work out, as plain functions: where the frames lie, the view (pan and zoom), a layer's
@@ -216,7 +217,8 @@ export function boxPick(frames: readonly { rect: Rect; layers: readonly Layer[];
     const f = frames[k];
     if (!f) continue;
     const inFrame = { ...box, x: box.x - f.rect.x, y: box.y - f.rect.y };
-    const layers = f.layers.filter((l) => pickable(l) && intersects(boundsOf([l]), inFrame)).map((l) => l.id);
+    // a layer a mask cuts is touched where it is seen
+    const layers = f.layers.filter((l) => pickable(l) && intersects(seenBox(f.layers, l), inFrame)).map((l) => l.id);
     if (layers.length) return { at: k, layers };
   }
   return null;
@@ -255,7 +257,9 @@ export function regroup<T extends Layer>(coming: readonly T[], there: readonly L
 
 export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle", star: "Star", arrow: "Arrow" } as const;
 /** What the layers list calls a layer: its own name, or what it is. */
-export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : l.type === "group" ? (l.box ? "Frame" : "Group") : SHAPE_NAMES[l.shape]);
+/** What each way of combining shapes is called (contracts/design.ts GroupLayer `boolean`). */
+export const BOOLEAN_NAMES = { union: "Union", subtract: "Subtract", intersect: "Intersect", exclude: "Exclude" } as const;
+export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : l.type === "group" ? (l.box ? "Frame" : l.boolean ? BOOLEAN_NAMES[l.boolean] : "Group") : SHAPE_NAMES[l.shape]);
 export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame ${k + 1}`;
 
 /**
@@ -319,9 +323,20 @@ export const rehome = <L extends { x: number; y: number }>(layers: readonly L[],
  * a line's heads), its blurs and its shadows (each where it falls, as soft as its blur). Generous: a few pixels too
  * many cost nothing, one too few cuts a shadow off in a square.
  */
+/** A path's box and where its curves swing past it (handles pulled far out), through its turn. */
+function curveBox(l: PathLayer): Rect {
+  const c = pathBounds(l.points, !!l.closed);
+  const xs = [Math.min(0, c.x), Math.max(1, c.x + c.w)].map((v) => v * l.w);
+  const ys = [Math.min(0, c.y), Math.max(1, c.y + c.h)].map((v) => v * l.h);
+  const at = xs.flatMap((x) => ys.map((y) => outOf(l, { x, y })));
+  const x0 = Math.min(...at.map((p) => p.x));
+  const y0 = Math.min(...at.map((p) => p.y));
+  return { x: x0, y: y0, w: Math.max(...at.map((p) => p.x)) - x0, h: Math.max(...at.map((p) => p.y)) - y0 };
+}
+
 export function paintedBox(l: Layer): Rect {
   // a container paints its layers too (through its turn), past its box unless it cuts them there
-  const b = isGroup(l) && !l.clip && l.layers.some((k) => !k.hidden) ? boundsOf([l, ...l.layers.filter((k) => !k.hidden).map((k) => layerOut(l, paintedBox(k)))]) : boundsOf([l]);
+  const b = isGroup(l) && !l.clip && l.layers.some((k) => !k.hidden) ? boundsOf([l, ...l.layers.filter((k) => !k.hidden).map((k) => layerOut(l, paintedBox(k)))]) : l.type === "path" ? curveBox(l) : boundsOf([l]);
   const fx = effectsOf(l).filter((e) => !e.hidden);
   const lines = Math.max(0, ...strokesOf(l).map((s) => Math.max(s.width, ...(s.sides ?? [])) * (s.join === "miter" ? 5 : 1) + (s.start || s.end ? Math.max(s.width, 2) * 5 : 0)));
   // words may run a little past their box, and sticker letters by their outline
@@ -339,6 +354,15 @@ export function paintedBox(l: Layer): Rect {
     y1 = Math.max(y1, b.y + b.h + e.y + r);
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * A frame's layers while the words of layer `id` are typed in the box over it: that layer left out, but for a mask and
+ * a part of a combined shape (they shape what is drawn: left out, a photo cut to the words would show whole).
+ */
+export function withoutTyped(layers: readonly Layer[], id: string): Layer[] {
+  if (findLayer(layers, id)?.mask || parentOf(layers, id)?.boolean) return layers as Layer[];
+  return mapLayers(layers, (l) => (l.id === id ? null : l));
 }
 
 /**

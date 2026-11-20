@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Design, DesignAnswer, DesignListed, DesignSummary, GroupLayer, SplitAnswer } from "../contracts/design";
+import type { Design, DesignAnswer, DesignListed, DesignSummary, GroupLayer, Layer, SplitAnswer } from "../contracts/design";
 import { everyLayer } from "../src/lib/design/tree";
 
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "designs-"));
@@ -269,6 +269,57 @@ describe("designs: an AI that designs", () => {
     const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [badge] }] })).body.design;
     const second = (await write(d.id, { changes: [{ frame: d.pages[0]!.id, layer: "badge", set: { h: 200 } }] })).body.design;
     expect([at(second, "badge").h, at(second, "tag").y]).toEqual([at(first, "badge").h, at(first, "tag").y]);
+  });
+
+  it("a hugging box on the canvas, named apart from another's, takes its own size back when an AI gives it a height", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const word = { type: "text", id: "w", font: "Inter", size: 40, color: "#ffffff", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" }, text: "NEW" };
+    const tag = { type: "shape", shape: "rect", id: "tag", fill: "#ff0000", x: 0, y: 40, w: 20, h: 6, absolute: true, pin: { y: "bottom" } };
+    const badge = { type: "group", box: true, id: "badge", x: 0, y: 0, w: 10, h: 10, layout: { dir: "row", pad: 10 }, sizing: { w: "hug", h: "hug" }, layers: [word, tag] };
+    // two pieces on the canvas, each with a layer "badge": the second is "c1" to an AI
+    const piece = (id: string, y: number) => ({ id, loose: true, x: 2000, y, background: "#ffffff", layers: [badge] });
+    await call("PUT", `/api/designs/${d.id}`, { pages: [d.pages[0], piece("k1", 0), piece("k2", 600)] });
+    const read = (await call<{ canvas?: { id: string; y: number }[] }>("GET", `/api/designs/${d.id}/pages`)).body;
+    expect(read.canvas!.map((l) => l.id)).toEqual(["badge", "c1"]);
+    const box = (ps: Design["pages"]) => ps.find((p) => p.id === "k2")!.layers[0] as GroupLayer;
+    // how far the tag's bottom lies from the box's bottom (it is pinned to it)
+    const gap = (g: GroupLayer) => g.h - (g.layers.find((l) => l.id === "tag") as Layer).y - 6;
+    const first = box((await call<Design>("GET", `/api/designs/${d.id}`)).body.pages);
+    const after = box((await write(d.id, { changes: [{ frame: "canvas", layer: "c1", set: { h: 200 } }] })).body.design.pages);
+    // laid out at its size before: it hugs its words again and its tag goes back with its bottom
+    expect(after.h).toBeLessThan(200);
+    expect(gap(after)).toBeCloseTo(gap(first), 1);
+  });
+
+  it("a saved box the server stretches with its frame keeps its layer pinned to its bottom on it", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const words = { type: "text", id: "w", font: "Inter", size: 40, color: "#111111", align: "left", x: 0, y: 0, w: 280, h: 10, sizing: { w: "fill", h: "hug" }, text: "words that wrap over a few lines here" };
+    const tag = { type: "shape", shape: "rect", id: "tag", fill: "#ff0000", x: 0, y: 40, w: 20, h: 6, absolute: true, pin: { y: "bottom" } };
+    const card = { type: "group", box: true, id: "card", x: 100, y: 100, w: 300, h: 10, pin: { x: "both" }, layout: { dir: "column", pad: 10 }, sizing: { h: "hug" }, layers: [words, tag] };
+    const at = (b: Design, id: string) => everyLayer(b.pages[0]!.layers).find((l) => l.id === id)! as GroupLayer;
+    const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [card] }] })).body.design;
+    // the tag sits 4 above the card's bottom
+    const gap = at(first, "card").h - at(first, "tag").y - at(first, "tag").h;
+    // the frame 600 wider: the card with it, its words on fewer lines, so it hugs shorter: the tag goes up with its bottom
+    const wide = (await write(d.id, { frames: [{ id: d.pages[0]!.id, w: 1680 }] })).body.design;
+    expect(at(wide, "card").w).toBe(900);
+    expect(at(wide, "card").h).toBeLessThan(at(first, "card").h);
+    expect(at(wide, "card").h - at(wide, "tag").y - at(wide, "tag").h).toBeCloseTo(gap, 1);
+  });
+
+  it("an AI writes a ring as a subtract group and a picture inside the headline's letters, and reads how", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const how = (await call<{ how: string }>("GET", `/api/designs/${d.id}/pages`)).body.how;
+    for (const part of ['"boolean":"subtract"', '"mask":"alpha"', "luminance"]) expect(how).toContain(part);
+    const disc = (x: number, w: number) => ({ type: "shape", shape: "ellipse", x, y: x, w, h: w, fill: "#000000" });
+    const ring = { type: "group", id: "ring", boolean: "subtract", x: 600, y: 600, w: 10, h: 10, fills: [{ type: "solid", color: "#ff5a36" }], layers: [disc(0, 300), disc(75, 150)] };
+    const words = { type: "text", id: "head", text: "SUMMER", mask: "alpha", font: "Inter", size: 200, color: "#000000", align: "center", x: 0, y: 0, w: 1000, h: 240 };
+    const photo = { type: "shape", id: "photo", shape: "rect", x: 0, y: 0, w: 1000, h: 240, fills: [{ type: "gradient", angle: 0, stops: [{ at: 0, color: "#ff0000" }, { at: 1, color: "#0000ff" }] }] };
+    const r = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [ring, { type: "group", id: "inwords", x: 40, y: 80, w: 10, h: 10, layers: [words, photo] }] }] })).body;
+    const [g, m] = r.design.pages[0]!.layers as GroupLayer[];
+    expect([g!.boolean, g!.x, g!.y, g!.w, g!.h, g!.layers.length]).toEqual(["subtract", 600, 600, 300, 300, 2]);
+    expect(m!.layers.map((l) => [l.id, l.mask])).toEqual([["head", "alpha"], ["photo", undefined]]);
+    expect(r.notes).toEqual([]);
   });
 
   it("reads every frame with its id, size, words and layers, and how a design is changed", async () => {

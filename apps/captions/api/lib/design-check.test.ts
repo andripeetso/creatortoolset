@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DESIGN_LIMITS } from "../../contracts/design";
+import { DESIGN_LIMITS, type Layer } from "../../contracts/design";
 import { cleanPages, coverPage, plainPages, plainWords, safeSvg, slideWords, withFrames } from "./design-check";
 
 const rules = { w: 1080, h: 1350, pictures: ["ab12cd34.jpg"] };
@@ -579,5 +579,41 @@ describe("a design's containers, checked", () => {
   it("keeps an older design's shared group names as they are", () => {
     const { pages } = cleanPages([{ layers: [rect({ group: "Hero Badge" }), rect({ group: "hero-badge" })] }], rules);
     expect(pages[0]!.layers.map((l) => [l.type, l.group])).toEqual([["shape", "hero-badge"], ["shape", "hero-badge"]]);
+  });
+});
+
+describe("combined shapes and masks, checked", () => {
+  const disc = (more: object = {}) => ({ type: "shape", shape: "ellipse", x: 0, y: 0, w: 400, h: 400, fill: "#ff5a36", ...more });
+  const take = (layers: unknown[]) => cleanPages([{ background: "#ffffff", layers }], rules);
+
+  it("keeps a boolean group plain, hugging its shape, in its own fills or its bottom layer's", () => {
+    const { pages, notes } = take([{ type: "group", boolean: "subtract", box: true, layout: { dir: "row" }, x: 100, y: 100, w: 9, h: 9, layers: [disc(), disc({ x: 300, y: 100, w: 400, h: 200 })] }]);
+    const g = pages[0]!.layers[0] as Extract<Layer, { type: "group" }>;
+    // the bottom disc's box, not the box round both; no box, no layout; the bottom disc's fill
+    expect([g.boolean, g.box, g.layout, g.x, g.y, g.w, g.h, g.fills]).toEqual(["subtract", undefined, undefined, 100, 100, 400, 400, [{ type: "solid", color: "#ff5a36" }]]);
+    expect(notes.join(" ")).toContain('a boolean group is a plain group');
+    const own = take([{ type: "group", boolean: "union", fills: [{ type: "solid", color: "#111111" }], strokes: [{ color: "#ffffff", width: 4 }], layers: [disc()] }]).pages[0]!.layers[0] as Extract<Layer, { type: "group" }>;
+    expect([own.fills, own.strokes]).toEqual([[{ type: "solid", color: "#111111" }], [{ color: "#ffffff", width: 4 }]]);
+  });
+
+  it("draws a boolean group with no fills over a picture in grey, saying so", () => {
+    const { pages, notes } = take([{ type: "group", boolean: "subtract", layers: [{ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 400, h: 400 }, disc({ x: 100, y: 100, w: 200, h: 200 })] }]);
+    expect((pages[0]!.layers[0] as Extract<Layer, { type: "group" }>).fills).toEqual([{ type: "solid", color: "#d9d9d9" }]);
+    expect(notes.join(" ")).toContain('drawn in its own "fills"');
+  });
+
+  it("says a mask in an auto layout box takes a place in the flow, and to group it with what it cuts", () => {
+    const { notes } = take([{ type: "group", box: true, layout: { dir: "row" }, layers: [disc({ mask: "alpha" }), disc()] }]);
+    expect(notes.join(" ")).toContain("put the mask and what it cuts in a plain group");
+    expect(take([{ type: "group", box: true, layout: { dir: "row" }, layers: [{ type: "group", layers: [disc({ mask: "alpha" }), disc()] }] }]).notes).toEqual([]);
+    // out of the flow (absolute) it takes no place in it: no note
+    expect(take([{ type: "group", box: true, layout: { dir: "row" }, layers: [disc({ mask: "alpha", absolute: true }), disc()] }]).notes).toEqual([]);
+  });
+
+  it("drops a way of combining or masking it does not know, saying so; a plain group keeps no fills", () => {
+    const { pages, notes } = take([{ type: "group", boolean: "merge", fills: [{ type: "solid", color: "#111111" }], layers: [disc({ mask: "stencil" }), disc({ mask: "luminance" })] }]);
+    const g = pages[0]!.layers[0] as Extract<Layer, { type: "group" }>;
+    expect([g.boolean, g.fills, g.layers.map((l) => l.mask)]).toEqual([undefined, undefined, [undefined, "luminance"]]);
+    expect(notes.join(" ")).toMatch(/"boolean" is "union".*a mask is "alpha"/);
   });
 });

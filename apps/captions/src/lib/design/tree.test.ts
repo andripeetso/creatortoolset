@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { DesignPage, GroupLayer, Layer } from "@contracts/design";
 import { boundsOf, mergeFrames, resizeBox } from "./hands";
 import { fitContents } from "./resize";
-import { depthOf, dropInto, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
+import { guessWidth, layoutLayers } from "./layout";
+import { depthOf, dropInto, maskWithNext, seenBox, shapeBounds, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
 
 const rect = (id: string, x: number, y: number, w = 20, h = 10, more: object = {}): Layer => ({ id, type: "shape", shape: "rect", fill: "#ff0000", x, y, w, h, ...more }) as Layer;
 const group = (id: string, x: number, y: number, w: number, h: number, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x, y, w, h, layers, ...more });
@@ -145,5 +146,52 @@ describe("containers: layers that hold layers", () => {
     const merged = mergeFrames(mine, base, theirs);
     expect(onFrame(merged[0]!.layers, "c")[0]).toBe(300);
     expect(merged[1]!.name).toBe("Renamed");
+  });
+});
+
+describe("a boolean group's box", () => {
+  const a = rect("a", 0, 0, 100, 100);
+  const b = rect("b", 60, 40, 100, 100);
+  it("is its shape's: the bottom layer's for subtract, the overlap for intersect, all of them else", () => {
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, b], { boolean: "subtract" }))).toEqual({ x: 0, y: 0, w: 100, h: 100 });
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, b], { boolean: "intersect" }))).toEqual({ x: 60, y: 40, w: 40, h: 60 });
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, b], { boolean: "exclude" }))).toEqual({ x: 0, y: 0, w: 160, h: 140 });
+    // nothing overlaps: a pixel, never no size; a hidden layer is not in the shape
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [a, rect("c", 300, 300)], { boolean: "intersect" }))).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [{ ...a, hidden: true }, b], { boolean: "subtract" }))).toEqual({ x: 60, y: 40, w: 100, h: 100 });
+  });
+  it("is hugged as it is drawn: its layers keep their place on the frame", () => {
+    const [g] = hug([group("g", 10, 10, 500, 500, [a, b], { boolean: "subtract" })]) as GroupLayer[];
+    expect([g!.x, g!.y, g!.w, g!.h, g!.layers[1]!.x]).toEqual([10, 10, 100, 100, 60]);
+  });
+});
+
+describe("masks in a list", () => {
+  const mask = rect("m", 10, 10, 30, 30, { mask: "alpha" });
+  const photo = rect("ph", 0, 0, 200, 100);
+  it("ungrouped, a mask stays a mask only when nothing comes after its group", () => {
+    const g = group("g", 0, 0, 200, 100, [mask, photo]);
+    const after = unwrap([rect("bg", 0, 0, 400, 400), g, rect("title", 0, 0, 50, 20)], ["g"]);
+    expect(after.map((l) => [l.id, l.mask])).toEqual([["bg", undefined], ["m", undefined], ["ph", undefined], ["title", undefined]]);
+    expect(unwrap([rect("bg", 0, 0, 400, 400), g], ["g"]).map((l) => [l.id, l.mask])).toEqual([["bg", undefined], ["m", "alpha"], ["ph", undefined]]);
+  });
+  it("a group with a mask at the bottom hugs the mask; a masked layer is seen in the mask's box", () => {
+    expect(shapeBounds(group("g", 0, 0, 1, 1, [mask, photo]))).toEqual({ x: 10, y: 10, w: 30, h: 30 });
+    expect(seenBox([mask, photo], photo)).toEqual({ x: 10, y: 10, w: 30, h: 30 });
+    expect(seenBox([photo], photo)).toEqual({ x: 0, y: 0, w: 200, h: 100 });
+  });
+  it("made a mask in an auto layout box, it is grouped with the layer above it: one place in the flow, the photo still over it", () => {
+    const word = rect("w", 0, 0, 100, 40);
+    const pic = rect("p", 120, 0, 100, 40);
+    const row = group("row", 0, 0, 300, 40, [word, pic, rect("x", 240, 0, 40, 40)], { box: true, layout: { dir: "row", gap: 20 } });
+    const next = maskWithNext(row.layers, "w", "mg")!;
+    expect(next.map((l) => l.id)).toEqual(["mg", "x"]);
+    const mg = next[0] as GroupLayer;
+    expect(mg.layers.map((l) => [l.id, l.mask])).toEqual([["w", "alpha"], ["p", undefined]]);
+    const laid = layoutLayers([{ ...row, layers: next }], guessWidth)[0] as GroupLayer;
+    const inner = (laid.layers[0] as GroupLayer).layers;
+    // the photo still lies where the word does relative to it, inside one place of the row
+    expect(inner[1]!.x - inner[0]!.x).toBe(120);
+    expect(maskWithNext(row.layers, "x", "mg")).toBeNull();
   });
 });

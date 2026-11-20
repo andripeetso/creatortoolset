@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { dropTarget, paintedBox, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hovers, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { dropTarget, paintedBox, withoutTyped, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hovers, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -326,4 +326,29 @@ describe("lining up inside a container", () => {
     expect(alignLayers([l], "right", { x: 100, y: 50, w: 200, h: 100 })).toEqual([{ ...l, x: 280 }]);
     expect(alignLayers([l], "middle", { x: 100, y: 50, w: 200, h: 100 })).toEqual([{ ...l, y: 95 }]);
   });
+});
+
+describe("the words being typed", () => {
+  const word = (id: string, more: object = {}) => ({ id, type: "text", text: "Hop", font: "Inter", size: 40, color: "#000000", align: "left", x: 0, y: 0, w: 100, h: 50, ...more }) as Layer;
+  it("are left out of the drawing under the box they are typed in, but a mask's or a combined shape's part's", () => {
+    expect(withoutTyped([word("a"), word("b")], "a").map((l) => l.id)).toEqual(["b"]);
+    const masking = [word("a", { mask: "alpha" }), word("b")];
+    expect(withoutTyped(masking, "a")).toBe(masking);
+    const ring = [{ id: "g", type: "group", boolean: "subtract", x: 0, y: 0, w: 100, h: 50, layers: [word("a"), word("b")] } as Layer];
+    expect(withoutTyped(ring, "b")).toBe(ring);
+  });
+});
+
+it("a path's painted box reaches where its curve swings past its box", () => {
+  const bulge = { id: "p", type: "path", x: 20, y: 30, w: 40, h: 20, closed: true, fill: "#000000", points: [{ x: 0, y: 1, out: [0, -2] }, { x: 1, y: 1, in: [0, -2] }] } as Layer;
+  // the curve's top is half the height above the box
+  expect(paintedBox(bulge)).toEqual({ x: 20, y: 20, w: 40, h: 30 });
+});
+
+it("a box drawn across picks a masked layer only where it is seen", () => {
+  const mask = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 50, h: 50, mask: "alpha" } as Layer;
+  const photo = { id: "ph", type: "shape", shape: "rect", fill: "#0000ff", x: 0, y: 0, w: 400, h: 400 } as Layer;
+  const frames = [{ rect: { x: 0, y: 0, w: 1000, h: 1000 }, layers: [mask, photo] }];
+  expect(boxPick(frames, { x: 200, y: 200, w: 50, h: 50 }, { home: 0 })).toBeNull();
+  expect(boxPick(frames, { x: 20, y: 20, w: 10, h: 10 }, { home: 0 })).toEqual({ at: 0, layers: ["m", "ph"] });
 });

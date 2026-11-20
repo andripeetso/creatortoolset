@@ -17,3 +17,11 @@ it("fetches a font once for every card, and forgets the measured words once when
   await fontLoad('400 100px "Caveat"');
   expect([fetchFont.mock.calls.length, forgetWords.mock.calls.length]).toEqual([2, 2]);
 });
+
+it("asks for a font again after a fetch of it failed", async () => {
+  const fetchFont = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue([]);
+  Object.defineProperty(document, "fonts", { configurable: true, value: { load: fetchFont, check: () => false } });
+  await expect(fontLoad('400 100px "Bebas Neue"')).rejects.toThrow("offline");
+  await fontLoad('400 100px "Bebas Neue"');
+  expect(fetchFont).toHaveBeenCalledTimes(2);
+});
