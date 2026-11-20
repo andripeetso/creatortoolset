@@ -502,7 +502,7 @@ const whatItIs = (l: Layer, flowing: boolean): string => {
   const r = l as unknown as Rec;
   const words = typeof r.text === "string" ? r.text.replace(/\r\n/g, "\n").trim() : r.text;
   const name = typeof l.name === "string" ? l.name.replace(/\s+/g, " ").trim() : l.name;
-  return stable([l.type, words, r.picture, r.shape, r.svg, name, r.component, (r.instance as { of?: string } | undefined)?.of]);
+  return stable([l.type, words, r.picture, r.shape, r.svg, name, r.component, (r.instance as { of?: string } | undefined)?.of, ...(flowing ? [] : [Math.round(l.x), Math.round(l.y)])]);
 };
 /** The containers a layer lies in on one side, innermost first. */
 function* ancestors(side: ReadonlyMap<string, At>, id: string): Generator<string> {

@@ -429,4 +429,14 @@ describe("saves on their way, kept and settled (last gate)", () => {
     expect(xs(out)).toEqual(["l1@0", "l3@10", "l9@0"]);
     expect((out[0]!.layers[1] as TextLayer).text).toBe("Hello wor");
   });
+
+  it("never takes another writer's new layer of the same kind elsewhere for the one sent", () => {
+    const base = [f([shape("l1")])];
+    const sent = [f([shape("l1"), shape("l3", "#ff0000", { x: 50 })])];
+    const theirs = [f([shape("l1"), shape("l3", "#ff0000", { x: 900 })])];
+    const out = xs(mergeFrames(sent, base, theirs, [{ pages: sent, base }]));
+    expect(out).toHaveLength(3);
+    expect(out).toContain("l3@900");
+    expect(out.filter((x) => /^l\d+@50$/.test(x) && x !== "l3@50")).toHaveLength(1);
+  });
 });
