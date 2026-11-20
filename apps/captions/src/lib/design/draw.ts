@@ -720,15 +720,16 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
   const grow = Math.max(0, ...fx.map((e) => (e.type === "shadow" ? (e.spread ?? 0) : 0)));
   const bw = l.w + 2 * (reach + grow);
   const bh = l.h + 2 * (reach + grow);
-  const room = exact ? EXACT_WORK_PIXELS : WORK_PIXELS;
+  // a container is all of its layers' detail: worked as finely as a saved file, so a faded card stays sharp
+  const room = exact || isGroup(l) ? EXACT_WORK_PIXELS : WORK_PIXELS;
   let scale = Math.hypot(t.a, t.b);
   if (bw * bh * scale * scale > room) scale = Math.sqrt(room / (bw * bh));
   // a picture or a drawing that has not loaded yet is a grey box: it is worked again once it is there
   const src = sourceOf(l);
   // words are drawn again once a font arrives (their width changes with it)
   // and a container once a picture or a font of a layer in it arrives
-  const inner = isGroup(l) ? everyLayer(l.layers) : [];
-  const ready = (k: Layer) => [sourceOf(k) ? !!loaded.get(sourceOf(k)!)?.width : "", k.type === "text" ? fontsOfText(k).map((f) => measureOn(ctx)(f, "Hamburg 1")) : ""];
+  const inner = isGroup(l) ? [l, ...everyLayer(l.layers)] : [];
+  const ready = (k: Layer) => [sourceOf(k) ? !!loaded.get(sourceOf(k)!)?.width : "", k.type === "text" ? fontsOfText(k).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", fillsOf(k).map((p) => (p.type === "image" ? !!loaded.get(p.picture)?.width : ""))];
   const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : "", l.type === "text" ? fontsOfText(l).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", inner.map(ready), drawing.designing]);
   let mine = workedKept.get(loaded);
   if (!mine) workedKept.set(loaded, (mine = new Map()));

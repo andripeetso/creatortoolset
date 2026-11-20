@@ -1,5 +1,5 @@
 import { DESIGN_LIMITS, type DesignPage, type ImageLayer, type Layer, type SplitAnswer, type SplitBox, type SplitLine, type TextLayer } from "@contracts/design";
-import { freshLayerIds } from "./tree";
+import { everyLayer, freshLayerIds } from "./tree";
 
 /**
  * A picture layer split into layers (POST /api/designs/:id/pictures/:pid/split): in its place on the frame, the picture
@@ -111,7 +111,7 @@ export function splitLayers(page: DesignPage, layerId: string, pic: { width: num
   const paras = paragraphs(lines);
   const pieces = a.pieces.map((p) => ({ ...p, r: place(p) })).filter((p) => seen(p.r));
   // room on the frame: the picture's own place, and what is under the cap
-  const room = DESIGN_LIMITS.layers - (page.layers.length - 1);
+  const room = DESIGN_LIMITS.layers - (everyLayer(taken).length - 1);
   const words = Math.max(0, Math.min(paras.length, room - 1));
   const kept = pieces.map((p, n) => ({ p, n })).sort((x, y) => y.p.w * y.p.h - x.p.w * x.p.h).slice(0, Math.max(0, room - 1 - words)).sort((x, y) => x.n - y.n).map((x) => x.p);
   const original = room - 1 - words - kept.length > 0;

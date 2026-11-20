@@ -537,7 +537,20 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   /** A layer into a frame (or into its container `inside`), on top (or at the back), under an id of its own there: the layer as it is placed. */
   const into = (page: DesignPage, layer: Raw, back: boolean, inside?: Raw): Raw => {
     const t = open(page);
-    const done = { ...layer, id: freeId(t.layers, layer.id) };
+    const done: Raw & { id: string } = { ...layer, id: freeId(t.layers, layer.id) };
+    // every layer inside it an id of its own in the frame too (the one asked for when it is free): an id given out here
+    // never takes one a layer of the frame has, so the layers there keep theirs
+    const taken = new Set([...allRaw(t.layers).map((l) => String(l.id)), done.id]);
+    const own = (list: unknown): unknown[] =>
+      (Array.isArray(list) ? list : []).map((x) => {
+        const r = raw(x);
+        if (!r) return x;
+        let id = typeof r.id === "string" && LAYER_ID.test(r.id) && !taken.has(r.id) ? r.id : "";
+        for (let n = taken.size + 1; !id; n++) if (!taken.has(`l${n}`)) id = `l${n}`;
+        taken.add(id);
+        return { ...r, id, ...(Array.isArray(r.layers) ? { layers: own(r.layers) } : {}) };
+      });
+    if (Array.isArray(done.layers)) done.layers = own(done.layers);
     const list = inside ? (inside.layers as unknown[]) : t.layers;
     if (back) list.unshift(done);
     else list.push(done);

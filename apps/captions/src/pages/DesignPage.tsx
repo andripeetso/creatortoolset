@@ -20,7 +20,7 @@ import { paintPictures } from "@/lib/design/paint";
 import { alignLayers, besideFrames, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
-import { depthOf, everyLayer, hugPages, inFrame, inScope, isGroup, mapLayers, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
+import { depthOf, everyLayer, findLayer, hugPages, inFrame, inScope, isGroup, mapLayers, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
@@ -368,7 +368,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     setLive(null);
     // a loose picture keeps to the box round it, whatever changed it
     // and a plain group to the box round its layers
-    setHist((h) => (!h ? h : join ? { ...h, now: hugLoose(hugPages(fn(h.now))) } : histChange(h, (all) => hugLoose(hugPages(fn(all))))));
+    // a frame still showing an open container's layers (tree.ts inScope) is made whole before it is kept
+    const whole = (all: Page[]) => hugLoose(hugPages(unscope(fn(all), all)));
+    setHist((h) => (!h ? h : join ? { ...h, now: whole(h.now) } : histChange(h, whole)));
   }, [locked]);
   /** Frames changed in one step: each takes the place of the one with its id, and one with a new id is added (a picture dragged out of its frame). */
   const setPages = useCallback(
@@ -469,14 +471,15 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       if (all.filter((p) => p.loose).length >= DESIGN_LIMITS.loose) return setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`), null;
       const ids = Array.from({ length: count }, (_, n) => `l${n + 1}`);
       // its box is drawn round its layers (hugLoose); after every frame and every other loose piece
-      change((now) => [...now, { id: `p${Date.now().toString(36)}`, loose: true, x: 0, y: 0, w: DESIGN_LIMITS.frameMin, h: DESIGN_LIMITS.frameMin, background: "#ffffff", layers: make(ids) }]);
+      change((now) => [...now, { id: `p${Date.now().toString(36)}`, loose: true, x: 0, y: 0, w: DESIGN_LIMITS.frameMin, h: DESIGN_LIMITS.frameMin, background: "#ffffff", layers: reid(make(ids), ids, []) }]);
       pick(all.length, ids);
       return ids;
     }
     const real = latest.current[to];
     if (!real || !count) return null;
-    // onto the frame of the picked layers: among them, in the container they lie in
-    const target = to === k ? inScope(real, scope) : real;
+    // a paste or a copy (just above a picked layer): among the picked layers, in the container they lie in; anything new
+    // drawn or dropped: on the frame itself
+    const target = to === k && above ? inScope(real, scope) : real;
     const ids = freshIds(real, count);
     // every layer inside a copied container gets an id of its own too; a group among the new layers stays a group among
     // themselves (copies do not join the group they were copied from)
@@ -519,7 +522,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     return fresh;
   };
   /** A copy of the current frame in another size beside the frames, its layers placed by their pins and their share of it. */
-  const copySize = (size: { w: number; h: number; name: string }) => base && !base.loose && addFrame({ ...resized(base, size, "share"), name: `${pageName(base, k)} ${size.name}`.slice(0, 60) }, undefined, size);
+  const copySize = (size: { w: number; h: number; name: string }) => top && !top.loose && addFrame({ ...resized(top, size, "share"), name: `${pageName(top, k)} ${size.name}`.slice(0, 60) }, undefined, size);
   /** A box drawn with the frame tool: a click makes a frame the size of the current one (the first frame of a canvas: the design's own size), a drag the size drawn. */
   const makeFrame = (r: Rect, dragged: boolean) => {
     setTool("move");
@@ -593,6 +596,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     if (!base || !top || !mine.length) return;
     // containers go so deep at most, counting the one they are in
     if ((pathTo(top.layers, mine[0]!.id)?.length ?? 0) + 1 + depthOf(mine) > DESIGN_LIMITS.depth) return setError(`Groups go at most ${DESIGN_LIMITS.depth} deep`);
+    if (everyLayer(top.layers).length >= DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups`);
     const [id] = freshIds(top, 1);
     const next = wrap(base.layers, selected, id!, box);
     if (!next) return;
@@ -640,7 +644,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   };
   /** The copied layers onto this frame, where they were on theirs. A picture this design does not have stays behind. */
   const paste = () => {
-    const layers = (clip?.layers ?? []).filter((l) => l.type !== "image" || design?.pictures.includes(l.picture));
+    const layers = mapLayers(clip?.layers ?? [], (l) => (l.type !== "image" || design?.pictures.includes(l.picture) ? l : null));
     // a canvas with no frame yet: they lie loose in the middle of the view
     if (!here) {
       if (!layers.length) return;
@@ -818,8 +822,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, cut] } : d));
       // onto the layer as it is by now: the cutting took a while
       const page = latest.current.find((p) => p.id === onto);
-      const now = page?.layers.find((x) => x.id === l.id);
-      if (page && now?.type === "image") setPage({ ...page, layers: page.layers.map((x) => (x.id === l.id ? { ...now, picture: cut, uncut: now.uncut ?? now.picture } : x)) });
+      const now = page && findLayer(page.layers, l.id);
+      if (page && now?.type === "image") setPage({ ...page, layers: mapLayers(page.layers, (x) => (x.id === l.id ? { ...now, picture: cut, uncut: now.uncut ?? now.picture } : x)) });
     } catch (e) {
       setError(message(e));
     } finally {
@@ -842,9 +846,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       if (!a) return;
       setDesign((d) => (d ? { ...d, pictures: [...d.pictures, a.background, ...a.pieces.map((p) => p.picture)] } : d));
       // onto the frame as it is by now: the Mac took a while
-      const page = latest.current.find((p) => p.id === onto);
-      if (page?.layers.some((x) => x.id === l.id && x.type === "image")) {
-        const next = splitLayers(page, l.id, { width: img.naturalWidth, height: img.naturalHeight }, a, latest.current.find((x) => x.id === page.id)?.layers);
+      // among the layers of the container it lies in (tree.ts inScope), its new layers' ids the frame's own
+      const real = latest.current.find((p) => p.id === onto);
+      const page = real && inScope(real, scopeOf(real.layers, [l.id]));
+      if (real && page?.layers.some((x) => x.id === l.id && x.type === "image")) {
+        const next = splitLayers(page, l.id, { width: img.naturalWidth, height: img.naturalHeight }, a, real.layers);
         setPage(next);
         setSelected(next.layers.filter((x) => !page.layers.some((y) => y.id === x.id)).map((x) => x.id));
         if (!a.lines.length && !a.pieces.length) setError("No words or objects found in this picture: it is one layer named Background");

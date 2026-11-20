@@ -79,6 +79,8 @@ describe("containers: layers that hold layers", () => {
     const nudged = { ...open, layers: open.layers.map((l) => (l.id === "b" ? { ...l, x: l.x + 7 } : l)) };
     const [whole] = unscope([nudged], [p]);
     expect(whole).not.toHaveProperty("scope");
+    // a frame new since (a copy made from an open container) is made whole too: it never keeps a scope
+    expect(unscope([{ ...open, id: "p9" }], [p])[0]).not.toHaveProperty("scope");
     expect(onFrame(whole!.layers, "b")).toEqual([107, 50, 20, 10]);
     // the rest of the container stays where it was on the frame
     expect(onFrame(whole!.layers, "c")).toEqual(onFrame(tree, "c"));
@@ -117,6 +119,8 @@ describe("containers: layers that hold layers", () => {
     // let go outside the card it was in: out to the frame
     expect(dropInto(loose, ["t"], { x: 10, y: 10 }, "card", 4)).toBeNull();
     expect(dropInto(loose, ["t"], { x: 150, y: 150 }, "card", 4)).toBe("card");
+    // something bigger than the box (a background nudged under it) never goes into it
+    expect(dropInto([card, rect("bg", 0, 0, 1080, 1350)], ["bg"], { x: 150, y: 150 }, null, 4)).toBeNull();
     const moved = moveInto(loose, ["s"], "card");
     expect(scopeOf(moved, ["s"])).toBe("card");
     expect(onFrame(moved, "s")).toEqual([0, 0, 20, 10]);

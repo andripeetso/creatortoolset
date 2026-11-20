@@ -342,6 +342,14 @@ describe("designs: an AI that designs", () => {
     const g = made.design.pages[0]!.layers[0]!;
     expect(g).toMatchObject({ type: "group", box: true, x: 100, y: 200, radius: 40 });
     expect(g.type === "group" && g.layers.map((l) => [l.id, l.type, l.x, l.y])).toEqual([["word", "text", 0, 0], ["star", "shape", 10, 10]]);
+    // a group added with layers of its own: they get ids the frame does not use, so the layers there keep theirs
+    const more = (await write(d.id, { changes: [{ frame: "p1", at: "back", add: { type: "group", layers: [{ id: "word", type: "shape", shape: "rect", fill: "#00ff00", x: 0, y: 0, w: 10, h: 10 }, { type: "shape", shape: "rect", fill: "#00ff00", x: 20, y: 0, w: 10, h: 10 }] }, as: "spare" }] })).body;
+    const spare = more.design.pages[0]!.layers[0]!;
+    const ids = more.design.pages[0]!.layers.flatMap((l) => [l.id, ...(l.type === "group" ? l.layers.map((x) => x.id) : [])]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(more.design.pages[0]!.layers[1]).toMatchObject({ id: "badge" });
+    expect(spare.type === "group" && spare.layers.every((x) => x.id !== "word")).toBe(true);
+    await write(d.id, { changes: [{ frame: "p1", layer: "spare", remove: true }] });
     // a layer inside is named by its id as any other, and moved out it stays where it is on the frame
     const out = (await write(d.id, { changes: [{ frame: "p1", layer: "word", set: { color: "#ff0000" } }, { frame: "p1", layer: "star", in: "frame" }] })).body;
     expect(out.notes).toEqual([]);

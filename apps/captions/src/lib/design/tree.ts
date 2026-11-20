@@ -257,6 +257,8 @@ export function unscope<P extends DesignPage>(next: readonly P[], now: readonly 
  */
 export function dropInto(layers: readonly Layer[], ids: readonly string[], mid: { x: number; y: number }, scope: string | null, depth: number): string | null {
   const moving = ids.map((id) => findLayer(layers, id)).filter((l): l is Layer => !!l);
+  // what is bigger than a box never goes into it (a background nudged under a card stays the background)
+  const size = boundsOf(moving.map((l) => inFrame(layers, l.id)!));
   const tall = depthOf(moving);
   let best: { id: string; deep: number } | null = null;
   for (const g of everyLayer(layers)) {
@@ -264,6 +266,7 @@ export function dropInto(layers: readonly Layer[], ids: readonly string[], mid: 
     const path = pathTo(layers, g.id) ?? [];
     if ([g, ...path].some((c) => ids.includes(c.id) || c.hidden || c.locked) || path.length + 1 + tall > depth) continue;
     const f = inFrame(layers, g.id)!;
+    if (g.id !== scope && (size.w > f.w || size.h > f.h)) continue;
     const p = into(f, mid);
     if (p.x < 0 || p.y < 0 || p.x > f.w || p.y > f.h) continue;
     if (!best || path.length >= best.deep) best = { id: g.id, deep: path.length };

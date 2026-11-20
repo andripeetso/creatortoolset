@@ -600,7 +600,7 @@ export function Stage({
         const inCanvas = (gap: Gap): Gap => (gap.axis === "x" ? { ...gap, from: gap.from + g.x, to: gap.to + g.x, at: gap.at + g.y } : { ...gap, from: gap.from + g.y, to: gap.to + g.y, at: gap.at + g.x });
         setGuides({ ...(m.lockX || s.x === undefined ? {} : { x: g.x + s.x }), ...(m.lockY || s.y === undefined ? {} : { y: g.y + s.y }), span: g, gaps: [...(evenX?.gaps ?? []), ...(evenY?.gaps ?? [])].map(inCanvas) });
         // an id of its own in the frame it lands in
-        const taken = new Set(host.layers.filter((l) => to !== k || copy || !ids.includes(l.id)).map((l) => l.id));
+        const taken = new Set(everyLayer((real[to] ?? host).layers).filter((l) => to !== k || copy || !ids.includes(l.id)).map((l) => l.id));
         const fresh = freshIds(real[to] ?? host, moving.length);
         const moved = moving.map((l, n) => ({ ...l, x: l.x + dx, y: l.y + dy, id: taken.has(l.id) || (copy && to === k) ? fresh[n]! : l.id }));
         // a copy, or a container landing in another frame: every layer inside it an id of its own there
