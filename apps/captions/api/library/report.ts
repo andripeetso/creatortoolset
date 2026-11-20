@@ -11,6 +11,7 @@ import { isTeamMember } from "../lib/workspaces";
 import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { blursFaces, libraryDb } from "./db";
 import { workspaceLibrary } from "./upload-gate";
+import { pluginKeepsBlurred } from "../lib/plugin";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
@@ -55,7 +56,9 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
   const name = new Map([...owned, ...(await sharedProjects(d.owner))].map((p) => [p.id, p.name]));
   const blurs = new Map<string, Promise<boolean>>();
   const guarded = (id: string) => {
-    if (!blurs.has(id)) blurs.set(id, workspaceLibrary(d.owner, id).then(async (lib) => (!!lib && blursFaces(lib)) || servedByPlugin(d.owner, id)));
+    // Blur faces on, a plug-in serving its media now, or one keeping it blurred whatever is open (its catalog); a failure: guarded
+    if (!blurs.has(id))
+      blurs.set(id, workspaceLibrary(d.owner, id).then(async (lib) => (!!lib && blursFaces(lib)) || (await servedByPlugin(d.owner, id)) || pluginKeepsBlurred(d.owner, id)).catch(() => true));
     return blurs.get(id)!;
   };
   return Promise.all(

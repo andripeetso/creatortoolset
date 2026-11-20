@@ -114,9 +114,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
 
     // before super: the page's drop event (and its "dropped" ask) comes from inside super's handling
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        // footage of another server's Blur faces workspace never reaches this page, which would upload it unblurred
-        let paths = droppedItems(sender.draggingPasteboard).compactMap { $0["path"] as? String }
-        if let site, let refused = MediaFiles.blurredElsewhere(paths, server: MediaFiles.serverKey(site())) {
+        // footage of another server's Blur faces workspace never reaches this page, which would upload it unblurred (every
+        // file of the drag, not only the first 50 the page is told about)
+        if let refused = blurredElsewhere(sender.draggingPasteboard) {
             drag.exited()
             super.draggingExited(sender)   // the page's drop zone lets go, as when the drag leaves
             refuse(refused)
@@ -124,6 +124,24 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         }
         drag.dropped()
         return super.performDragOperation(sender)
+    }
+
+    /// Cmd-V of files copied in Finder: the same check as a drop (the window gets the key before the Edit menu does).
+    /// shortcut: Edit → Paste chosen with the mouse isn't checked; a paste(_:) of our own once WebKit exposes it.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, event.charactersIgnoringModifiers == "v",
+           let refused = blurredElsewhere(NSPasteboard.general) {
+            refuse(refused)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// The refusal line for a drag or a paste whose files lie in another server's Blur faces Media folder, else nil.
+    private func blurredElsewhere(_ board: NSPasteboard) -> String? {
+        guard let site else { return nil }
+        let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return urls.isEmpty ? nil : MediaFiles.blurredElsewhere(urls.map(\.path), server: MediaFiles.serverKey(site()))
     }
 
     /// One line in a sheet over this window: why a drop or a pick didn't reach the page.

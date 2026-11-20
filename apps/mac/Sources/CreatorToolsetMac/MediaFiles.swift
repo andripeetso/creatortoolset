@@ -158,13 +158,17 @@ enum MediaFiles {
     static func blurredElsewhere(_ paths: [String], server: String, signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil },
                                  reachable: (String) -> Bool = { Places.shared.reachable($0) }) -> String? {
         let page = server.lowercased()
+        // each dropped path resolved once (links followed); "/" (the whole disk) holds everything
+        let mine = paths.map { (given: $0, real: Imports.resolved($0)) }
+        let under = { (p: String, root: String) in root == "/" || p == root || p.hasPrefix(root + "/") }
         for (key, folders) in signedInServers(signedIn) where key.lowercased() != page {
             for f in folders where f.use == "media" && f.guarded != [] {
-                let real = reachable(f.path)
-                let under = { (p: String, root: String) in real ? Imports.inside(p, [root]) != nil : underByName(p, [root]) }
+                // a folder whose disk answers by its real path, resolved once; one that doesn't by name, never waited on
+                let root = reachable(f.path) ? Imports.resolved(f.path) : f.path.precomposedStringWithCanonicalMapping
                 let workspace = f.guarded?.first
-                for p in paths {
-                    let into = under(p, f.path), holds = !into && under(f.path, p)
+                for (p, real) in mine {
+                    let at = reachable(f.path) ? real : p.precomposedStringWithCanonicalMapping
+                    let into = under(at, root), holds = !into && under(root, at)
                     guard into || holds else { continue }
                     let what = holds ? "\(p) holds" : "\(p) is in"
                     guard let workspace else { return "\(what) a Media folder on \(key) that hasn't said whether it must be blurred: add it from that server's own page" }

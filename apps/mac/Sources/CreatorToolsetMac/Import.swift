@@ -362,7 +362,7 @@ final class Imports: @unchecked Sendable {
         return root
     }
 
-    private static func resolved(_ path: String) -> String {
+    static func resolved(_ path: String) -> String {
         let near = MediaFiles.nearestExisting(path)
         guard let r = realpath(near, nil) else { return path.precomposedStringWithCanonicalMapping }
         defer { free(r) }

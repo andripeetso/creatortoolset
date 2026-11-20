@@ -213,6 +213,8 @@ final class ImportTests: XCTestCase {
         // a server that doesn't say which workspaces blur: fails closed; one this Mac left: nothing
         XCTAssertEqual(check([oldClip], "ct.tiny.test"), "\(oldClip) is in a Media folder on old.tiny.test that hasn't said whether it must be blurred: add it from that server's own page")
         XCTAssertNil(check([goneClip], "ct.tiny.test"))
+        // the whole disk dropped holds it too
+        XCTAssertEqual(check(["/"], "ct.tiny.test"), "/ holds Tiny Classes's Media folder on studio.tiny.test: blurred footage only leaves through Tiny Classes")
         // a NAS that doesn't answer is compared by name, never waited on
         XCTAssertNotNil(MediaFiles.blurredElsewhere([clip], server: "ct.tiny.test", signedIn: signedIn, reachable: { _ in false }))
     }

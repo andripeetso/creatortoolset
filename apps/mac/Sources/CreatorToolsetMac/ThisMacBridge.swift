@@ -142,6 +142,11 @@ extension Shell {
         open.prompt = "Choose"
         open.message = "Choose the folder with your videos. Nothing is moved."
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
+        // another server's Blur faces Media folder never becomes this server's folder (its scans would send pictures of it)
+        if let refused = MediaFiles.blurredElsewhere([url.path], server: MediaFiles.serverKey(base)) {
+            (webView as? AppWebView)?.refuse(refused)
+            return ["path": NSNull()]
+        }
         Imports.chose(url.path)   // a Media Library copy may write into it (Import.swift)
         MediaFiles.add(url.path)  // and its videos are read here later: shot descriptions, transcripts, playing originals
         // the names of the folders in it and beside it: setup finds Source media, Project files and Final exports by them
