@@ -862,19 +862,12 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               body: (pps) => <CaptionsBody pps={pps} link={tl.captions} clip={cap ? cap.clip : undefined} captioning={!!cap?.captioning} stale={captionsStale(shown)} busy={capBusy} cards={captionCards(tl)}
                 readOnly={readOnly} onUpdate={() => run("updateCaptions")} onOpen={() => tl.captions && captions.open(captionsHref(tl.captions))} />,
             } : undefined}
-            tools={!full ? (
+            tools={
               <>
                 <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
+                {full && <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>}
                 <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there. W or ⌘B splits at the playhead" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
-                {sep}
-                <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
-                <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
-              </>
-            ) : (
-              <>
-                <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
-                <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
-                <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there. W or ⌘B splits at the playhead" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
+                {full && (<>
                 <button type="button" aria-pressed={tool === "slide"} aria-label="Slide" title="Slide: drag a clip between its neighbours, they trim" onClick={() => setTool("slide")} className={iconBtn(tool === "slide")}><MoveHorizontal className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "stretch"} aria-label="Rate Stretch" title="Rate Stretch: drag an end, the clip plays faster or slower" onClick={() => setTool("stretch")} className={iconBtn(tool === "stretch")}><Gauge className="size-3.5" /></button>
                 {sep}
@@ -887,12 +880,13 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 </span>
                 <button type="button" aria-pressed={snap} aria-label="Snapping" title="Snapping (N)" onClick={() => setSnap(!snap)} className={iconBtn(snap)}><Magnet className="size-3.5" /></button>
                 <button type="button" aria-pressed={linkSel} aria-label="Linked Selection" title={`Linked Selection${tip("linkedSelection")}`} onClick={toggleLinkSel} className={iconBtn(linkSel)}><Link2 className="size-3.5" /></button>
+                </>)}
                 {sep}
                 <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
                 <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
-                <button type="button" aria-label="Keyboard Customization" title={`Keyboard Customization${tip("keyboard")}`} onClick={() => setKeysOpen(true)} className={iconBtn(false)}><Keyboard className="size-3.5" /></button>
+                {full && <button type="button" aria-label="Keyboard Customization" title={`Keyboard Customization${tip("keyboard")}`} onClick={() => setKeysOpen(true)} className={iconBtn(false)}><Keyboard className="size-3.5" /></button>}
               </>
-            )}
+            }
             end={<span className="flex min-w-0 items-center gap-2 truncate">{status}</span>} />
           {full && <NleMeter clock={tln.clock} />}
           </div>

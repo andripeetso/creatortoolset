@@ -286,7 +286,9 @@ export const NleTracks = memo(function NleTracks({
   // the middle button drags the view, left and right and up and down
   const pan = useRef<{ x0: number; y0: number; left0: number; top0: number } | null>(null);
   const every = trackOrder(tl);
-  const used = every.filter((id) => tl.tracks[id].items.length);
+  // a track a drag is emptying stays until the drop: the rows under the pointer never move mid-drag
+  const held = drag.current?.base ?? tl;
+  const used = every.filter((id) => tl.tracks[id].items.length || held.tracks[id]?.items.length);
   const order = compact && used.length ? used : every;
   const picked = new Set(selected);
 
