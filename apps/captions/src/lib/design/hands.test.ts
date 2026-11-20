@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, ImageLayer, Layer } from "@contracts/design";
-import { DESIGN_GAP } from "@contracts/design";
-import { cropBox, shownPart, stretched, dropTarget, paintedBox, withoutTyped, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hovers, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { DESIGN_GAP, DESIGN_LIMITS } from "@contracts/design";
+import { carryLayer, cropBox, shownPart, stretched, dropTarget, paintedBox, withoutTyped, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hovers, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -391,5 +391,31 @@ describe("cropping and stretching a picture", () => {
     expect(stretched(img, { ...img, w: 50 }, pic).crop).toEqual({ x: 0.25, y: 0, w: 0.5, h: 1 });
     expect(stretched(img, { ...img, w: 200, h: 200 }, pic).crop).toBeUndefined();
     expect(stretched(img, { ...img, w: 50 }, undefined).crop).toBeUndefined();
+  });
+});
+
+describe("carryLayer", () => {
+  const rect = (id: string, x = 10): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x, y: 20, w: 50, h: 50 });
+  const a = { id: "p1", background: "#ffffff", x: 0, y: 0, w: 500, h: 500, layers: [rect("l1"), rect("l2", 100)] };
+  const b = { id: "p2", background: "#ffffff", x: 600, y: 0, w: 500, h: 500, layers: [rect("l1", 300)] };
+
+  it("takes a layer to another frame with an id of its own there, at its place in the frame, beside the row it was let go on", () => {
+    const done = carryLayer(a, a, "l1", b, b, "l1", "behind");
+    if (!done || done === "full") throw new Error("not carried");
+    expect(done.from.layers.map((l) => l.id)).toEqual(["l2"]);
+    // every frame has its own l1: the carried one is not the one already there
+    expect(done.id).not.toBe("l1");
+    expect(done.to.layers.map((l) => l.id)).toEqual([done.id, "l1"]);
+    expect(done.to.layers[0]).toMatchObject({ x: 10, y: 20 });
+  });
+
+  it("keeps a loose piece's layer where it lies on the canvas, and says when the frame is full or the layer is not there", () => {
+    const loose = { id: "k1", loose: true as const, background: "#ffffff", x: 700, y: 50, w: 50, h: 50, layers: [rect("l9", 0)] };
+    const done = carryLayer(loose, loose, "l9", b, b, null, "front");
+    if (!done || done === "full") throw new Error("not carried");
+    expect(done.to.layers.at(-1)).toMatchObject({ id: "l9", x: 100, y: 70 });
+    expect(carryLayer(a, a, "nope", b, b, null, "front")).toBeNull();
+    const full = { ...b, layers: Array.from({ length: DESIGN_LIMITS.layers }, (_, n) => rect(`l${n + 1}`)) };
+    expect(carryLayer(a, a, "l2", full, full, null, "front")).toBe("full");
   });
 });

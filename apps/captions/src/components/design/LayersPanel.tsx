@@ -32,6 +32,13 @@ type Drop = { key: string; after: boolean; into?: boolean };
 
 const WIDTH_KEY = "ct-design-layers-width";
 const [MIN_W, MAX_W] = [180, 480];
+const keepWidth = (w: number) => {
+  try {
+    localStorage.setItem(WIDTH_KEY, String(w));
+  } catch {
+    // the width is only kept where the browser lets it
+  }
+};
 const savedWidth = () => {
   try {
     const n = Number(localStorage.getItem(WIDTH_KEY));
@@ -171,7 +178,7 @@ export function LayersPanel({
       if (!dragging.current && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
       dragging.current = true;
       const row = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-row]");
-      const key = row?.dataset.row;
+      const key = row?.dataset.instancePart === undefined ? row?.dataset.row : undefined;
       const r = row?.getBoundingClientRect();
       // the middle of a container's row: into it
       const inside = row?.dataset.container !== undefined && r && Math.abs(ev.clientY - r.top - r.height / 2) < r.height / 4;
@@ -226,7 +233,9 @@ export function LayersPanel({
           <div
             role="treeitem"
             data-row={key}
-            {...(isGroup(l) ? { "data-container": "", "aria-expanded": inner } : {})}
+            // an instance's layers are its main's, made again from it: nothing dropped goes into it or among them
+            {...(isGroup(l) ? { "aria-expanded": inner, ...(isInstance(l) ? {} : { "data-container": "" }) } : {})}
+            {...(owner ? { "data-instance-part": "" } : {})}
             aria-label={layerName(l)}
             aria-selected={on}
             onPointerDown={(e) =>
@@ -357,11 +366,23 @@ export function LayersPanel({
       </ContextMenuTrigger>
       {menu}
       </ContextMenu>
-      {/* its right edge sets its width, kept for the next visit */}
+      {/* its right edge sets its width (dragged, or ← → when focused), kept for the next visit */}
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label="Layers width"
+        tabIndex={0}
+        aria-valuenow={width}
+        aria-valuemin={MIN_W}
+        aria-valuemax={MAX_W}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          e.stopPropagation();
+          const w = Math.min(MAX_W, Math.max(MIN_W, width + (e.key === "ArrowLeft" ? -16 : 16)));
+          setWidth(w);
+          keepWidth(w);
+        }}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.preventDefault();
@@ -372,16 +393,12 @@ export function LayersPanel({
           const up = () => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
-            try {
-              localStorage.setItem(WIDTH_KEY, String(w));
-            } catch {
-              // the width is only kept where the browser lets it
-            }
+            keepWidth(w);
           };
           window.addEventListener("pointermove", move);
           window.addEventListener("pointerup", up);
         }}
-        className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-[#0d99ff]/40"
+        className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize outline-none hover:bg-[#0d99ff]/40 focus-visible:bg-[#0d99ff]/60"
       />
     </nav>
   );

@@ -2,7 +2,7 @@ import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type DesignStyles, type Ima
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
-import { boundsOf, everyLayer, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, nextOf, outOf, parentOf, same, seenBox, stable } from "./tree";
+import { boundsOf, everyLayer, findLayer, freshLayerIds, inFrame, isGroup, layerOut, mapLayers, moveRow, nextOf, outOf, parentOf, reid, same, seenBox, stable } from "./tree";
 import { pathBounds } from "./path";
 import { syncInstances } from "./components";
 import { mergeStyles, styled } from "./styles";
@@ -145,6 +145,23 @@ export function cropBox(l: ImageLayer, handle: Handle, dx: number, dy: number, p
   const x = c.x + (l.flipX ? inX - leftIn : leftIn) / px;
   const y = c.y + (l.flipY ? inY - topIn : topIn) / py;
   return { ...r, crop: { x: part4(Math.min(1 - w, Math.max(0, x))), y: part4(Math.min(1 - h, Math.max(0, y))), w: part4(w), h: part4(h) } };
+}
+
+/**
+ * Layer `id` of frame `from` (lying at `fromAt` on the canvas) taken to frame `to` (at `toAt`): a drag in the layers
+ * list. It keeps its place in the frame (from or to a loose piece, whose box is on the canvas: its place on the canvas),
+ * takes an id of its own there (every frame has its own l1) and is in none of that frame's groups, and goes beside its
+ * layer `by` (in front of it, behind it, or into it), else on top. Null: no such layer; "full": `to` has no room for it.
+ */
+export function carryLayer(from: DesignPage, fromAt: Rect, id: string, to: DesignPage, toAt: Rect, by: string | null, how: "front" | "behind" | "into"): { from: DesignPage; to: DesignPage; id: string } | null | "full" {
+  const me = inFrame(from.layers, id);
+  if (!me) return null;
+  if (everyLayer(to.layers).length + everyLayer([me]).length > DESIGN_LIMITS.layers) return "full";
+  const moved = from.loose || to.loose ? { ...me, x: me.x + fromAt.x - toAt.x, y: me.y + fromAt.y - toAt.y } : me;
+  const fresh = everyLayer(to.layers).some((x) => x.id === moved.id) ? freshIds(to, 1)[0]! : moved.id;
+  const [placed] = regroup(reid([moved], [fresh], to.layers), to.layers);
+  const there = { ...to, layers: [...to.layers, placed!] };
+  return { from: { ...from, layers: mapLayers(from.layers, (l) => (l.id === id ? null : l)) }, to: (by && moveRow(there, placed!.id, by, how)) || there, id: placed!.id };
 }
 
 /** A container's layers following its new size (resize.ts fitContents); anything else as it is. */

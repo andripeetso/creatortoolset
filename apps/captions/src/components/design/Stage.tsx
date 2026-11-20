@@ -158,7 +158,7 @@ export function Stage({
   onCrop: (id: string | null) => void;
   /** a layer pointed at in the layers list */
   pointed: string | null;
-  /** a layer's handles keep its shape (Shift lets go of it; a text's box never keeps it) */
+  /** a layer's corner handles keep its shape (Shift lets go of it; a text's box never keeps it) */
   keepRatio: boolean;
   /** the dropper is out: a press on the canvas gives it the colour under the pointer, and picks nothing */
   dropper: ((hex: string) => void) | null;
@@ -798,8 +798,9 @@ export function Stage({
       e,
       (ev) => {
         const to = world(ev);
-        // its shape kept by the lock (Shift lets go of it, or keeps it when unlocked); a text's box is for its words
-        const keep = picked.some((l) => l.type === "text") ? ev.shiftKey : keepRatio !== ev.shiftKey;
+        // a corner keeps its shape by the lock (Shift lets go of it, or keeps it when unlocked); a side pulls one way only
+        // (an auto layout box's other side keeps hugging), and a text's box is for its words
+        const keep = h.length === 2 && !picked.some((l) => l.type === "text") ? keepRatio !== ev.shiftKey : ev.shiftKey;
         const o = { keep, center: ev.altKey, min: MIN };
         const cropped = cut && pic ? cropBox(cut, h, to.x - from.x, to.y - from.y, pic, o) : null;
         // a side that hugged or filled is fixed at the size it is pulled to (layout.ts fixedBy)

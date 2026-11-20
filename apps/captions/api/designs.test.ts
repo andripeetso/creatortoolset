@@ -260,6 +260,20 @@ describe("designs: an AI that designs", () => {
     expect(at(fourth, "dot").x).toBe(50);
   });
 
+  it("an AI's fit, zoom or focus on a cropped picture shows: the crop gives way, unless it sent a crop too", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    const pic = (await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "dot.png", type: "image/png", data: png.toString("base64") })).body.id;
+    const crop = { x: 0.25, y: 0, w: 0.5, h: 1 };
+    const photo = { type: "image", id: "photo", picture: pic, fit: "cover", x: 0, y: 0, w: 100, h: 100, crop };
+    await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [photo] }] });
+    const at = async (set: Record<string, unknown>) => (await write(d.id, { changes: [{ frame: d.pages[0]!.id, layer: "photo", set }] })).body.design.pages[0]!.layers[0] as unknown as Record<string, unknown>;
+    expect(await at({ zoom: 2, crop: { x: 0, y: 0, w: 0.5, h: 0.5 } })).toMatchObject({ zoom: 2, crop: { x: 0, y: 0, w: 0.5, h: 0.5 } });
+    const zoomed = await at({ zoom: 3 });
+    expect(zoomed.zoom).toBe(3);
+    expect(zoomed.crop).toBeUndefined();
+  });
+
   it("a hugging box an AI gives a height to takes its own back, its layer pinned to its bottom with it", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
     const word = { type: "text", id: "w", font: "Inter", size: 40, color: "#ffffff", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" }, text: "NEW" };
