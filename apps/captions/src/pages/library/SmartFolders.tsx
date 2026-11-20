@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Collection, ReorganizeWay } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -15,6 +15,9 @@ import { setFolderRule, suggestWays } from "./api";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** The last ways the AI proposed for each library, kept while the app runs: the dialog closing never loses a paid read */
+const readWays = new Map<string, { ways: ReorganizeWay[]; about: boolean }>();
 
 /** What goes in one folder, in the person's own words. Saving sorts the library into it again. */
 export function SmartFolderDialog({
@@ -99,30 +102,38 @@ export function ReorganizeDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [ways, setWays] = useState<ReorganizeWay[] | null>(null);
-  const [about, setAbout] = useState(false);
+  const [ways, setWays] = useState<ReorganizeWay[] | null>(() => readWays.get(libraryId)?.ways ?? null);
+  const [about, setAbout] = useState(() => readWays.get(libraryId)?.about ?? false);
   const [error, setError] = useState<string | null>(null);
   const [using, setUsing] = useState<number | null>(null);
   // The AI only runs on a second, deliberate press inside the dialog: the page's button just explains it
-  const [asked, setAsked] = useState(false);
+  const [asked, setAsked] = useState(() => readWays.has(libraryId));
+  // Closing keeps what the AI read (owner, 2026-11-19: a stray click made him read the library three times); only
+  // Other ideas reads it again
+  const shown = useRef(libraryId);
   const ask = () => {
     setAsked(true);
     setWays(null);
     setError(null);
-    suggestWays(libraryId).then(
+    const lib = libraryId;
+    suggestWays(lib).then(
       (r) => {
+        readWays.set(lib, r);
+        if (lib !== shown.current) return; // another library is open now: its own read is kept for it
         setWays(r.ways);
         setAbout(r.about);
       },
-      (e) => setError(message(e)),
+      (e) => lib === shown.current && setError(message(e)),
     );
   };
   useEffect(() => {
-    if (!open) return;
-    setAsked(false);
-    setWays(null);
+    shown.current = libraryId; // a library switch shows that library's own read, if it has one
+    const kept = readWays.get(libraryId);
+    setAsked(!!kept);
+    setWays(kept?.ways ?? null);
+    setAbout(kept?.about ?? false);
     setError(null);
-  }, [open, libraryId]);
+  }, [libraryId]);
 
   const use = async (way: ReorganizeWay, i: number) => {
     setUsing(i);
@@ -153,7 +164,12 @@ export function ReorganizeDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent aria-describedby={undefined} className="flex max-h-[90dvh] flex-col gap-4 overflow-y-auto sm:max-w-lg">
+      <DialogContent
+        aria-describedby={undefined}
+        // a click or a screenshot outside never closes it: only Close, the X or Escape do
+        onInteractOutside={(e) => e.preventDefault()}
+        className="flex max-h-[90dvh] flex-col gap-4 overflow-y-auto sm:max-w-lg"
+      >
         <DialogTitle className="text-base">Reorganize</DialogTitle>
         {!asked && (
           <div className="flex flex-col gap-2 text-sm text-zinc-500">
