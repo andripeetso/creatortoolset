@@ -363,20 +363,6 @@ function DesignPage({ id }: { id: string }) {
   useEffect(() => {
     if (editing && !base?.layers.some((l) => l.id === editing)) setEditing(null);
   }, [editing, base]);
-  // Escape with the words being typed and focus in the style panel ends the typing; the text stays picked. Before the
-  // canvas's own keys (which would pick nothing); Escape in the words themselves is theirs (TypedText)
-  useEffect(() => {
-    if (!editing) return;
-    const end = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || typingIn(e.target)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setEditing(null);
-      setTextSel(null);
-    };
-    window.addEventListener("keydown", end, true);
-    return () => window.removeEventListener("keydown", end, true);
-  }, [editing]);
   // the picked frame by its id: a change that takes it away (a loose piece left empty, ⌘Z, a write from elsewhere) never
   // lets `at` and the picked ids land on another frame's layers (new loose layers are l1… like a frame's first ones)
   const pickedOn = useRef<{ at: number; selected: string[]; id?: string }>({ at, selected });
