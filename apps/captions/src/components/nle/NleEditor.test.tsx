@@ -332,6 +332,10 @@ describe("autosaves", () => {
     expect(p.length()).toBe(150);
     await key("z", { metaKey: true, code: "KeyZ" });
     expect(p.length()).toBe(125);
+    p.done();
+  });
+});
+
 describe("the person's own keys (Keyboard Customization)", () => {
   it("a key changed there runs its command, the old one runs nothing, and the clip's menu shows the new key", async () => {
     useWorkPrefs.setState({ prefs: { ...DEFAULT_WORK_PREFS, keys: { "⌘A": "", G: "selectAll", R: "delete", Backspace: "" } } });
