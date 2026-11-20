@@ -274,17 +274,27 @@ describe("auto layout", () => {
 
     it("a new box stretched by its parent keeps its layer out of the flow where it was given", () => {
       const footer = box([rect("dot", 10, 10, { x: 570, y: 0, absolute: true, pin: { x: "right" } })], { dir: "row" }, { id: "f", w: 10, h: 30, sizing: { w: "fill" } });
-      const laid = layoutLayers([box([footer], { dir: "column" }, { id: "par", w: 590, h: 100 })], measure, undefined, new Set())[0]!;
+      const laid = layoutLayers([box([footer], { dir: "column" }, { id: "par", w: 590, h: 100 })], measure, undefined, new Map())[0]!;
       expect([inside(laid, "f").w, inside(laid, "dot").x]).toEqual([590, 570]);
     });
 
     it("a size given rounded to whole pixels is the size it was laid out at; a frame's boxes are its own", () => {
       const b = box([text("t", "a".repeat(20)), rect("dot", 4, 4, { x: 183.44, absolute: true, pin: { x: "right" } })], { dir: "row" }, { id: "b", w: 187.44, h: 23, sizing: { w: "hug" } });
       // the box hugs 200: the dot keeps its distance to the right edge
-      expect(inside(layoutLayers([b], measure, undefined, new Set(["b 187 23"]))[0]!, "dot").x).toBe(196);
-      expect(inside(layoutLayers([b], measure, undefined, new Set(["b 300 23"]))[0]!, "dot").x).toBe(183.44);
+      expect(inside(layoutLayers([b], measure, undefined, new Map([["b", [{ w: 187, h: 23 }]]]))[0]!, "dot").x).toBe(196);
+      expect(inside(layoutLayers([b], measure, undefined, new Map([["b", [{ w: 300, h: 23 }]]]))[0]!, "dot").x).toBe(183.44);
       const two = settledBoxes([{ id: "p1", background: "#ffffff", layers: [b] }, { id: "p2", background: "#ffffff", layers: [] }]);
-      expect([[...two.get("p1")!], [...two.get("p2")!]]).toEqual([["b 187 23"], []]);
+      expect([[...two.get("p1")!], [...two.get("p2")!]]).toEqual([[["b", [{ w: 187.44, h: 23 }]]], []]);
+    });
+
+    it("a size within a pixel of the one laid out at is that size, either side of a half pixel", () => {
+      const b = (w: number) => box([text("t", "a".repeat(20)), rect("dot", 4, 4, { x: w - 4, absolute: true, pin: { x: "right" } })], { dir: "row" }, { id: "b", w, h: 23, sizing: { w: "hug" } });
+      const saved = new Map([["b", [{ w: 187.46, h: 23 }]]]);
+      // given back as 187.5 (rounded the other way): still laid out at it, so the dot follows the right edge to 196
+      expect(inside(layoutLayers([b(187.5)], measure, undefined, saved)[0]!, "dot").x).toBe(196);
+      expect(inside(layoutLayers([b(187.46)], measure, undefined, saved)[0]!, "dot").x).toBe(196);
+      // two pixels off: a new size, the dot stays where it is given
+      expect(inside(layoutLayers([b(189.5)], measure, undefined, saved)[0]!, "dot").x).toBe(185.5);
     });
   });
 
