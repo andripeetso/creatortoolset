@@ -1431,7 +1431,7 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
     const tmp = path.join(picturesOf(d.owner, d.id), `.split-${randomBytes(6).toString("hex")}.png`);
     try {
       const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
-      // made small enough to keep outside the turn (ffmpeg takes a while): the biggest pieces there may be room for
+      // made small enough to keep outside the turn (making a picture smaller takes a while): the biggest pieces there may be room for
       const bySize = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h);
       const behind = await keepable(made.background, tmp, "The picture behind");
       const kept: Buffer[] = [];
