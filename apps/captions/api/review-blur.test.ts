@@ -57,14 +57,16 @@ it("approves an unblurred cut only from its owner, as filmed", async () => {
   const approve = (body: Record<string, unknown>, who?: string) => app.request(`/assets/${id}/approval`, send("POST", { status: "approved", ...body }, who));
   const no = await approve({});
   expect(no.status).toBe(409);
-  expect((await json(no)).error).toBe("The faces in this cut aren't blurred. Approve it as filmed?");
+  expect(await json(no)).toEqual({ error: "The faces in this cut aren't blurred. Approve it as filmed?", code: "not_blurred" });
   expect((await asset(id)).approval.status).toBe("none");
   // an admin who is not its owner, and a reviewer on its link (members, say): never, confirm or not
-  expect((await approve({ asFilmed: true }, "root")).status).toBe(403);
+  const admin = await approve({ asFilmed: true }, "root");
+  expect(admin.status).toBe(403);
+  expect(await json(admin)).toEqual({ error: "Only the owner can approve a cut whose faces aren't blurred", code: "owner_only" });
   const link = await json(app.request(`/assets/${id}`, send("PATCH", { share: { enabled: true } })));
   const guest = await app.request(`/s/${link.share.token}/approval`, send("POST", { status: "approved", asFilmed: true }, "ben"));
   expect(guest.status).toBe(403);
-  expect((await json(guest)).error).toBe("Only the owner can approve a cut whose faces aren't blurred");
+  expect(await json(guest)).toEqual({ error: "Only the owner can approve a cut whose faces aren't blurred", code: "owner_only" });
   expect((await asset(id)).approval.status).toBe("none");
   // the owner's confirm: approved, as filmed, with who and when
   expect((await approve({ asFilmed: true })).status).toBe(200);
