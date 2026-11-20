@@ -84,23 +84,45 @@ struct ServersView: View {
     }
 }
 
-/// The header's connection line: after 800 ms of a state, so short reconnects never flash. A tap opens Computers.
+/// The connection's banner under the bar: a capsule saying what is off ("Reconnecting to Sam's MacBook Pro", "You are
+/// offline"), with a spinner while it tries again. After 800 ms of a state, so short reconnects never flash. A tap opens
+/// Computers. When every computer looks connected but the reads fail, it says `fallback`, else "No connection".
 struct ConnectionHeaderStatus: View {
+    var fallback: String? = nil
     @ObservedObject private var connections = Connections.shared
+    @ObservedObject private var chats = ChatsModel.shared
     @State private var open = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.4)) { context in
-            if let line = ConnectionWords.header(connections.servers, states: connections.states, offline: connections.offline, now: context.date) {
+            let line = ConnectionWords.header(connections.servers, states: connections.states, offline: connections.offline, now: context.date)
+            if let text = line ?? fallback ?? (chats.offline ? "No connection" : nil) {
                 Button { open = true } label: {
-                    Label(line, systemImage: connections.offline ? "wifi.slash" : "arrow.triangle.2.circlepath")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        if connections.offline {
+                            Image(systemName: "wifi.slash")
+                        } else if text.hasPrefix("Reconnecting") {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
+                        Text(text).lineLimit(1)
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 36)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color(.separator), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
                 }
                 .buttonStyle(.plain)
-                .transition(.opacity)
+                .accessibilityHint("Opens Computers")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .animation(.easeOut(duration: 0.2), value: connections.offline)
         .sheet(isPresented: $open) { NavigationStack { ServersView() } }
     }
 }

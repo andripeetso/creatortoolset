@@ -8,7 +8,7 @@ struct ChatRow: Identifiable, Hashable {
     /// The page of the website it opens ("/editor/<id>", "/review/<id>"): one row per thing.
     let id: String
     let route: AppRoute
-    let title: String
+    var title: String
     /// The line under the title: what happened last, or what it waits for.
     let detail: String
     var detailIsError = false
@@ -29,11 +29,15 @@ struct ChatRow: Identifiable, Hashable {
     var workspace: String?
     /// An assistant's chat put away on any device (`GET /api/assistant/chats`): it folds away in Chats, as on the desktop.
     var fold: Fold?
+    /// Pinned on any device, and when (ms): at the top of Chats, the newest pin first.
+    var pinned: Double?
+    /// Snoozed until then: it is back in the list at that time.
+    var snoozedUntil: Date?
 
     /// Where a row sits: with the ones in play, under "Working" while a job runs, under "Done" when it is over.
     enum Shelf: String { case active, working, done }
     /// Snoozed (out of the list until a time) or settled (done with it, kept).
-    enum Fold: String { case snoozed, settled }
+    enum Fold { case snoozed, settled }
 }
 
 /// A video in Review as the list sends it (`GET /api/review`): only what its row needs.
@@ -304,8 +308,12 @@ final class ChatsModel: ObservableObject {
     private var others: [ChatRow] = []
     /// Each chat's workspace (`GET /api/assistant/chats`), by chat id: each chat's row says its own.
     private var chatSpaces: [String: String] = [:]
-    /// The chats put away on any device, by chat id (same list).
-    private var chatFolds: [String: ChatRow.Fold] = [:]
+    /// Each chat as the list of chats tells it (put away, pinned, its name), by chat id.
+    private var chatInfo: [String: ChatSummary] = [:]
+    /// When the list shown was asked for: an answer to an older ask is dropped.
+    private var chatsAskedAt = Date.distantPast
+    /// A re-read when the first snoozed chat is due back.
+    private var wake: Task<Void, Never>?
     /// The workspace the edits and Review videos are of (the phone's pick when they were read).
     private var workspace: String?
     private var opened: [String: Double]
@@ -427,13 +435,69 @@ final class ChatsModel: ObservableObject {
         foldsTask?.cancel()
         foldsTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled, let api = ToolsetAPI.current, api.cacheKey == self?.key,
-                  let list = (try? await api.get("/api/assistant/chats") as ChatSummary.List)?.chats.items,
-                  let self, api.cacheKey == self.key else { return }
-            chatSpaces = ChatList.spaces(list)
-            chatFolds = ChatList.folds(list)
-            rebuild()
+            guard !Task.isCancelled else { return }
+            await self?.readChats()
         }
+    }
+
+    private func readChats() async {
+        guard let api = ToolsetAPI.current, api.cacheKey == key else { return }
+        let asked = Date()
+        guard let list = (try? await api.get("/api/assistant/chats") as ChatSummary.List)?.chats.items,
+              api.cacheKey == key else { return }
+        take(chats: list, asked: asked)
+    }
+
+    /// The list of chats as asked for at `asked`; a snoozed chat is read again when it is due back.
+    private func take(chats list: [ChatSummary], asked: Date) {
+        guard asked >= chatsAskedAt else { return }
+        chatsAskedAt = asked
+        chatSpaces = ChatList.spaces(list)
+        chatInfo = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        rebuild()
+        wake?.cancel()
+        guard let due = list.compactMap(\.snoozed).min() else { return }
+        wake = Task { [weak self] in
+            // a second past it: the server says it is back only once its time has gone
+            try? await Task.sleep(for: .seconds(max(1, due / 1000 - Date().timeIntervalSince1970 + 1)))
+            guard !Task.isCancelled else { return }
+            await self?.readChats()
+        }
+    }
+
+    /// A chat on screen here, with what ended in it: read on every device.
+    func seen(_ id: String) async {
+        guard let api = ToolsetAPI.current else { return }
+        _ = try? await api.send("/api/assistant/chats/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/seen")
+        await readChats()
+    }
+
+    // MARK: A chat's own controls, as on the desktop
+
+    enum ChatAction { case settle(Bool), pin(Bool), snooze(Date?), rename(String), unread, delete }
+    struct Refusal: LocalizedError { let text: String; var errorDescription: String? { text } }
+
+    /// What the desktop's menu on a chat does, from the phone. The server tells every device's list.
+    func act(_ action: ChatAction, on id: String) async throws {
+        guard let api = ToolsetAPI.current else { return }
+        let chat = "/api/assistant/chats/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
+        switch action {
+        case .settle(let on): _ = try await api.send("\(chat)/settle", json: ["settled": on])
+        case .pin(let on): _ = try await api.send("\(chat)/pin", json: ["pinned": on])
+        case .snooze(let until):
+            _ = try await api.send("\(chat)/snooze", json: ["until": until.map { ($0.timeIntervalSince1970 * 1000).rounded() as Any } ?? NSNull()])
+        case .rename(let name): _ = try await api.send("\(chat)/title", json: ["title": name])
+        case .unread: _ = try await api.send("\(chat)/unread")
+        case .delete:
+            // only an earlier chat can be deleted: the open one is put among them first, as New chat does
+            if AssistantModel.shared.view?.id == id {
+                guard !AssistantModel.shared.unsent else { throw Refusal(text: "A message in this chat hasn't gone yet. It can be deleted once it has.") }
+                await AssistantModel.shared.newChat()
+            }
+            _ = try await api.send("/api/assistant/past/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)", method: "DELETE")
+            await AssistantModel.shared.load()
+        }
+        await readChats()
     }
 
     func load() async {
@@ -468,6 +532,7 @@ final class ChatsModel: ObservableObject {
             do {
                 async let list: Tolerant<ReviewListItem> = orNothing(Tolerant()) { try await api.get("/api/review") }
                 // an older server has no list of chats: then every chat shows
+                let asked = Date()
                 async let chats = (try? await api.get("/api/assistant/chats") as ChatSummary.List)?.chats.items
                 var fresh: [ChatRow] = []
                 for source in Self.sources { fresh += try await source(api) }
@@ -475,10 +540,7 @@ final class ChatsModel: ObservableObject {
                 let seen = read.items
                 let spaces = await chats
                 guard api.cacheKey == key else { return }
-                if let spaces {
-                    chatSpaces = ChatList.spaces(spaces)
-                    chatFolds = ChatList.folds(spaces)
-                }
+                if let spaces { take(chats: spaces, asked: asked) }
                 couldNotRead = unreadable + read.skipped
                 videos = seen
                 others = fresh
@@ -540,7 +602,7 @@ final class ChatsModel: ObservableObject {
         }
         // every workspace's chats, each in its own
         let fresh: [ChatRow] = link == .none ? [] : ChatList.arrange(
-            rows: edits + ChatList.placed(ChatList.chats(assistant), spaces: chatSpaces, folds: chatFolds, open: assistant),
+            rows: edits + ChatList.placed(ChatList.chats(assistant), spaces: chatSpaces, chats: chatInfo, open: assistant),
             opened: opened.mapValues(Date.init(timeIntervalSince1970:)), since: since)
         if fresh != rows { rows = fresh }
     }
@@ -660,6 +722,11 @@ struct ChatsView: View {
     @AppStorage("chats.snoozed.open") private var snoozedOpen = false
     @AppStorage("chats.settled.open") private var settledOpen = false
     @State private var signingIn = false
+    @State private var snoozing: ChatRow?
+    @State private var renaming: ChatRow?
+    @State private var name = ""
+    @State private var deleting: ChatRow?
+    @State private var failed: String?
 
     var body: some View {
         Group {
@@ -695,18 +762,13 @@ struct ChatsView: View {
         // one workspace on this computer: naming it on every row says nothing
         let many = (workspaces.lists[servers.currentId ?? ""]?.count ?? 0) > 1
         return List {
-            if model.link == .expired || model.offline { header }
-            // one kind of thing, one flat list: a chat that asks on top, then the newest; a search finds every chat
+            if model.link == .expired { header }
+            // one kind of thing, one flat list: pinned ones first, then a chat that asks, then the newest; a search finds every chat
             let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
-            let row = { (row: ChatRow) in
-                Button { AppNavigator.shared.open(row.route) } label: {
-                    ChatListRow(title: row.title, detail: row.detail, status: row.status,
-                                workspace: many ? workspaces.entry(row.workspace) : nil)
-                }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-            }
-            ForEach(searching ? shown : shown.filter { $0.fold == nil }, content: row)
+            let row = { (row: ChatRow) in chatRow(row, many: many) }
+            let main = searching ? shown : shown.filter { $0.fold == nil }
+            let pinned = main.filter { $0.pinned != nil }.sorted { ($0.pinned ?? 0) > ($1.pinned ?? 0) }
+            ForEach(pinned + main.filter { $0.pinned == nil }, content: row)
             // put away on any device: folded under Snoozed and Settled, as on the desktop
             if !searching {
                 let snoozed = shown.filter { $0.fold == .snoozed }
@@ -727,17 +789,106 @@ struct ChatsView: View {
         .refreshable { await model.load() }
         // the round New chat button sits over the end of the list
         .contentMargins(.bottom, 84, for: .scrollContent)
-    }
-
-    /// What is off, when something is.
-    private var header: some View {
-        Group {
-            if model.link == .expired {
-                Button("Sign in again") { signingIn = true }.font(.subheadline.weight(.semibold)).frame(minHeight: 44)
-            } else {
-                QuietNotice(text: "No connection")
+        .confirmationDialog("Snooze until", isPresented: Binding(get: { snoozing != nil }, set: { if !$0 { snoozing = nil } }),
+                            titleVisibility: .visible, presenting: snoozing) { row in
+            ForEach(SnoozeChoice.all(), id: \.label) { choice in
+                Button("\(choice.label) · \(choice.when)") { act(.snooze(choice.until), row) }
             }
         }
+        .alert("Rename chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { row in
+            TextField("Name", text: $name)
+            Button("Save") {
+                let words = name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                if !words.isEmpty, words != row.title { act(.rename(words), row) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert(deleting.map { "Delete \"\($0.title)\"?" } ?? "Delete chat?",
+               isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { row in
+            Button("Delete", role: .destructive) { act(.delete, row) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The chat and its pictures are deleted.")
+        }
+        .alert("Couldn't change the chat", isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(failed ?? "")
+        }
+    }
+
+    /// A chat's row, with the desktop's controls: swipe left to Settle or Delete, right to Snooze or Pin, and a long press
+    /// for all of them with Rename and Mark as unread.
+    private func chatRow(_ row: ChatRow, many: Bool) -> some View {
+        var busy = row.status.waitsOnYou
+        if case .working = row.status { busy = true }
+        let detail = row.snoozedUntil.map { "Snoozed until \(SnoozeChoice.when($0))" } ?? row.detail
+        return Button { AppNavigator.shared.open(row.route) } label: {
+            ChatListRow(title: row.title, detail: detail, status: row.status,
+                        workspace: many ? workspaces.entry(row.workspace) : nil) {
+                if row.pinned != nil {
+                    Image(systemName: "pin.fill").font(.caption).foregroundStyle(.orange).accessibilityLabel("Pinned")
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .swipeActions(edge: .trailing, allowsFullSwipe: !busy) {
+            if row.fold == .settled {
+                Button("Un-settle", systemImage: "arrow.uturn.backward") { act(.settle(false), row) }.tint(.blue)
+            } else if !busy {
+                // a chat that asks or is writing can't be settled
+                Button("Settle", systemImage: "checkmark") { act(.settle(true), row) }.tint(.green)
+            }
+            Button("Delete", systemImage: "trash") { deleting = row }.tint(.red)
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if row.fold == .snoozed {
+                Button("Wake", systemImage: "alarm") { act(.snooze(nil), row) }.tint(.indigo)
+            } else if row.fold == nil {
+                Button("Snooze", systemImage: "clock") { snoozing = row }.tint(.indigo)
+            }
+            Button(row.pinned == nil ? "Pin" : "Unpin", systemImage: row.pinned == nil ? "pin" : "pin.slash") {
+                act(.pin(row.pinned == nil), row)
+            }
+            .tint(.orange)
+        }
+        .contextMenu {
+            Button(row.pinned == nil ? "Pin" : "Unpin", systemImage: row.pinned == nil ? "pin" : "pin.slash") { act(.pin(row.pinned == nil), row) }
+            Button("Rename", systemImage: "pencil") {
+                name = row.title
+                renaming = row
+            }
+            Button("Mark as unread", systemImage: "circlebadge") { act(.unread, row) }
+            if row.fold == .snoozed {
+                Button("Wake now", systemImage: "alarm") { act(.snooze(nil), row) }
+            } else if row.fold == nil {
+                Menu("Snooze", systemImage: "clock") {
+                    ForEach(SnoozeChoice.all(), id: \.label) { choice in
+                        Button("\(choice.label) · \(choice.when)") { act(.snooze(choice.until), row) }
+                    }
+                }
+            }
+            if row.fold == .settled {
+                Button("Un-settle", systemImage: "arrow.uturn.backward") { act(.settle(false), row) }
+            } else if !busy {
+                Button("Settle", systemImage: "checkmark") { act(.settle(true), row) }
+            }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) { deleting = row }
+        }
+    }
+
+    private func act(_ action: ChatsModel.ChatAction, _ row: ChatRow) {
+        guard case .chat(let id) = row.route else { return }
+        Task {
+            do { try await model.act(action, on: id) } catch { failed = error.localizedDescription }
+        }
+    }
+
+    /// The sign-in has run out (a dropped connection is the banner under the bar).
+    private var header: some View {
+        Button("Sign in again") { signingIn = true }.font(.subheadline.weight(.semibold)).frame(minHeight: 44)
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
     }
@@ -917,5 +1068,37 @@ private extension View {
     /// A row of a shelf: close to its neighbours, no line between them.
     func slimListRow() -> some View {
         listRowSeparator(.hidden).listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+    }
+}
+
+/// The times a chat can be snoozed until, as on the desktop: in 1 and 3 hours, this evening at six, tomorrow at nine and
+/// next Monday at nine; ones already past are left out, and two at the same minute are one.
+struct SnoozeChoice {
+    let label: String
+    let until: Date
+    var when: String { Self.when(until) }
+
+    static func all(now: Date = Date(), calendar: Calendar = .current) -> [SnoozeChoice] {
+        func day(_ ahead: Int, _ hour: Int) -> Date {
+            let date = calendar.date(byAdding: .day, value: ahead, to: now) ?? now
+            return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: date) ?? date
+        }
+        // weekday: 1 is Sunday; next Monday is 1 to 7 days on
+        let monday = (9 - calendar.component(.weekday, from: now)) % 7
+        let all = [SnoozeChoice(label: "In 1 hour", until: now.addingTimeInterval(3600)),
+                   SnoozeChoice(label: "In 3 hours", until: now.addingTimeInterval(3 * 3600)),
+                   SnoozeChoice(label: "This evening", until: day(0, 18)),
+                   SnoozeChoice(label: "Tomorrow", until: day(1, 9)),
+                   SnoozeChoice(label: "Next week", until: day(monday == 0 ? 7 : monday, 9))]
+        var minutes = Set<Int>()
+        return all.filter { $0.until > now }.sorted { $0.until < $1.until }
+            .filter { minutes.insert(Int($0.until.timeIntervalSince1970 / 60)).inserted }
+    }
+
+    /// Its clock time, with the weekday when it is not today.
+    static func when(_ date: Date, now: Date = Date()) -> String {
+        Calendar.current.isDate(date, inSameDayAs: now)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 }

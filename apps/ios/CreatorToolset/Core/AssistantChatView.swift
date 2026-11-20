@@ -53,6 +53,11 @@ struct AssistantChatView: View {
                 Task { await draft.add(items) }
             }
             .onChange(of: model.view?.navigate, initial: true) { _, path in follow(path) }
+            // looked at here, and every reply that ends while it is: read on every device
+            .task(id: "\(model.view?.id ?? "")|\(model.view?.messages.last?.id ?? "")|\(model.view?.thinking == nil)") {
+                guard let id = model.view?.id, model.view?.thinking == nil, model.view?.messages.isEmpty == false else { return }
+                await ChatsModel.shared.seen(id)
+            }
             .onDisappear { voice.cancel() }
             .onAppear {
                 AppNavigator.shared.composing = false
@@ -209,7 +214,7 @@ struct AssistantChatView: View {
                 }
                 .padding(.horizontal, 12)
             }
-            if model.offline { QuietNotice(text: "No connection").padding(.horizontal, 22) }
+            if model.offline { ConnectionHeaderStatus(fallback: "No connection").padding(.horizontal, 12) }
             if let notice = draft.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
             if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 22) }
             if let thinking {

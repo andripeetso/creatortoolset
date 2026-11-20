@@ -289,6 +289,12 @@ struct ChatSummary: Decodable, Equatable {
     var settled: Bool?
     /// Snoozed until this time (ms).
     var snoozed: Double?
+    /// Its name.
+    var title: String?
+    /// Pinned, and when (ms).
+    var pinned: Double?
+    /// Its newest reply has not been looked at on any device.
+    var unread: Bool?
 
     struct List: Decodable { var chats: Tolerant<ChatSummary> }
 }
@@ -441,9 +447,9 @@ extension View {
         .connectionHeader()
     }
 
-    /// The connection's line in the bar's middle once a state has lasted 800 ms (nothing while every computer is
+    /// The connection's banner under the bar once a state has lasted 800 ms (nothing while every computer is
     /// connected): on the first screen of every tab.
     func connectionHeader() -> some View {
-        toolbar { ToolbarItem(placement: .principal) { ConnectionHeaderStatus() } }
+        safeAreaInset(edge: .top, spacing: 0) { ConnectionHeaderStatus() }
     }
 }

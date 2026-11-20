@@ -43,24 +43,30 @@ extension ChatList {
         Dictionary(chats.compactMap { c in c.workspace.map { (c.id, $0) } }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// The chats settled or snoozed on any device, by chat id. The server leaves the mark off once one asks or works again.
-    static func folds(_ chats: [ChatSummary]) -> [String: ChatRow.Fold] {
-        Dictionary(chats.compactMap { c in
-            c.settled == true ? (c.id, .settled) : c.snoozed != nil ? (c.id, .snoozed) : nil
-        }, uniquingKeysWith: { first, _ in first })
-    }
-
     /// Every chat row, each marked with its own workspace (from the list of chats, or the open chat's own); none is
     /// left out, whatever workspace the app is in.
-    static func placed(_ rows: [ChatRow], spaces: [String: String], folds: [String: ChatRow.Fold] = [:], open: AssistantView?) -> [ChatRow] {
+    /// What the list of chats says of each (`chats`, by id) goes on its row too: its name, its pin, and whether it is put away
+    /// (settled, or snoozed till a time still to come) or unread.
+    static func placed(_ rows: [ChatRow], spaces: [String: String], chats: [String: ChatSummary] = [:], open: AssistantView?,
+                       now: Date = Date()) -> [ChatRow] {
         rows.map { row in
             guard case .chat(let id) = row.route else { return row }
             var row = row
             row.workspace = spaces[id] ?? (open?.id == id ? open?.workspace : nil)
+            guard let info = chats[id] else { return row }
+            if let name = info.title, !name.isEmpty { row.title = name }
+            row.pinned = info.pinned
             // a chat that asks or works again is in play, whatever an older read of the list said
             var busy = row.status.waitsOnYou
             if case .working = row.status { busy = true }
-            row.fold = busy ? nil : folds[id]
+            guard !busy else { return row }
+            if info.settled == true {
+                row.fold = .settled
+            } else if let ms = info.snoozed, Date(timeIntervalSince1970: ms / 1000) > now {
+                row.fold = .snoozed
+                row.snoozedUntil = Date(timeIntervalSince1970: ms / 1000)
+            }
+            if info.unread == true, case .time = row.status { row.status = .done }
             return row
         }
     }

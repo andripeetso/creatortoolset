@@ -158,18 +158,41 @@ final class WorkspaceTests: XCTestCase {
     }
 
     func testChatsSettledOrSnoozedOnTheDesktopFoldAwayOnThePhone() throws {
-        let json = #"{"chats":[{"id":"c1","settled":true},{"id":"c2","snoozed":1900000000000},{"id":"c3"},{"id":"c4","asks":true}]}"#
-        let folds = ChatList.folds(try JSONDecoder().decode(ChatSummary.List.self, from: Data(json.utf8)).chats.items)
-        XCTAssertEqual(folds, ["c1": .settled, "c2": .snoozed])
-        let rows = ["c1", "c2", "c3", "c4"].map { id in
-            ChatRow(id: "/?chat=\(id)", route: .chat(id), title: id, detail: "", status: .done, at: .distantPast)
+        let json = #"""
+        {"chats":[{"id":"c1","settled":true},{"id":"c2","snoozed":1900000000000},{"id":"c3","title":"Named","pinned":5,"unread":true},
+                  {"id":"c4","asks":true},{"id":"c5","snoozed":1000}]}
+        """#
+        let list = try JSONDecoder().decode(ChatSummary.List.self, from: Data(json.utf8)).chats.items
+        let chats = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let rows = ["c1", "c2", "c3", "c4", "c5"].map { id in
+            ChatRow(id: "/?chat=\(id)", route: .chat(id), title: id, detail: "", status: .time(.distantPast), at: .distantPast)
         }
-        let placed = ChatList.placed(rows, spaces: [:], folds: folds, open: nil)
-        XCTAssertEqual(placed.map(\.fold), [.settled, .snoozed, nil, nil])
+        let placed = ChatList.placed(rows, spaces: [:], chats: chats, open: nil, now: now)
+        // a snooze whose time has gone is back in the list
+        XCTAssertEqual(placed.map(\.fold), [.settled, .snoozed, nil, nil, nil])
+        XCTAssertEqual(placed[1].snoozedUntil, Date(timeIntervalSince1970: 1_900_000_000))
+        // its name, its pin and its unread mark come from the list of chats
+        XCTAssertEqual(placed[2].title, "Named")
+        XCTAssertEqual(placed[2].pinned, 5)
+        XCTAssertEqual(placed[2].status, .done)
         // one that asks since that list was read is in play again
         var asks = rows[0]
         asks.status = .approval
-        XCTAssertNil(ChatList.placed([asks], spaces: [:], folds: folds, open: nil)[0].fold)
+        XCTAssertNil(ChatList.placed([asks], spaces: [:], chats: chats, open: nil, now: now)[0].fold)
+    }
+
+    func testSnoozeChoicesAreTheDesktopsInOrderWithoutPastOnes() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        // Monday 2026-11-23 at 17:30 UTC: "This evening" (18:00) comes first; next week is the Monday after
+        let now = Date(timeIntervalSince1970: 1_795_455_000)
+        let choices = SnoozeChoice.all(now: now, calendar: calendar)
+        XCTAssertEqual(choices.map(\.label), ["This evening", "In 1 hour", "In 3 hours", "Tomorrow", "Next week"])
+        XCTAssertEqual(choices[4].until, Date(timeIntervalSince1970: 1_795_455_000 + 6 * 86400 + 15.5 * 3600))
+        XCTAssertEqual(calendar.component(.hour, from: choices[4].until), 9)
+        // at 19:00 this evening has gone
+        XCTAssertFalse(SnoozeChoice.all(now: now.addingTimeInterval(5400), calendar: calendar).map(\.label).contains("This evening"))
     }
 
     func testProjectsAreGroupedLikeTheWorkshop() {
