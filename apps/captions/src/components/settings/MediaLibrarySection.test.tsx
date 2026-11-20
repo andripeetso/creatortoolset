@@ -184,7 +184,7 @@ describe("Settings → Media Library, the owner's page", () => {
   it("with Use default folders off, a Source media folder not chosen yet shows Set…", async () => {
     const off: LibrarySummary = { ...library, settings: { ...SETTINGS, defaultFolders: false } };
     await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
-    const setButtons = [...host!.querySelectorAll("button")].filter((b) => b.textContent === LIBRARY_WORDS.setFolder);
+    const setButtons = [...host!.querySelectorAll("button")].filter((b) => b.textContent === LIBRARY_WORDS.setFolder && !b.closest("[inert]"));
     expect(setButtons.length).toBe(3);
   });
 
