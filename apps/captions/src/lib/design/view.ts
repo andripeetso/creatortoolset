@@ -89,7 +89,7 @@ export const useView = (s: ViewStore): View => useSyncExternalStore(s.subscribe,
 export const useZoom = (s: ViewStore): number => useSyncExternalStore(s.subscribe, () => s.get().z);
 
 /** The zooms that + and − stop at. */
-export const ZOOM_STOPS = [0.02, 0.03, 0.06, 0.13, 0.25, 0.5, 1, 2, 4, 8, 16, 32] as const;
+export const ZOOM_STOPS = [0.02, 0.03, 0.06, 0.13, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256] as const;
 /** The next stop in from `z` (`in` true) or out from it; at the last one, the far end. */
 export function zoomStop(z: number, closer: boolean): number {
   // a zoom a hair off a stop (0.4999) is on it

@@ -4,7 +4,8 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
 import { boundsOf, boxPick, frameOf, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
-import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
+import { framePlan, keptScale, useView, zoomStop, type KeptFrame, type ViewStore } from "@/lib/design/view";
+import { edgePan, SNAP_PX, turnTo } from "@/lib/design/feel";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,7 +35,8 @@ import { cn } from "@/lib/utils";
  *               the layer's rotation; just outside a corner turns it (Shift: steps of 15°). Several layers resize
  *               together.
  *   The view    the wheel scrolls, ⌘ or Ctrl with the wheel (or a pinch) zooms about the pointer, Space or the hand
- *               tool or the middle button drags the canvas.
+ *               tool or the middle button drags the canvas; Z held, a click zooms in there (Alt: out). A drag that
+ *               moves, draws or boxes near the canvas's edge runs the view on (feel.ts edgeSpeed).
  *   Drawing     while the view or a layer moves, every frame that did not change is put on the canvas as the picture
  *               kept of it (lib/design/view.ts framePlan), so a step of the wheel costs a few pictures copied, not
  *               every layer of every frame drawn again; a moment after the last move the frames are exact again.
@@ -45,7 +47,7 @@ export type Tool = "move" | "hand" | "frame" | DesignShape | "text" | "pen";
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 const CURSOR: Record<Handle, string> = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
 /** How near (in screen pixels) a line catches what is moving. */
-const SNAP = 6;
+const SNAP = SNAP_PX;
 /** No layer is resized smaller than this, in design pixels. */
 const MIN = 8;
 const BLUE = "#0d99ff";
@@ -151,6 +153,8 @@ export function Stage({
   const [drawn, setDrawn] = useState<Rect | null>(null);
   const [hover, setHover] = useState<{ k: number; id: string } | null>(null);
   const [space, setSpace] = useState(false);
+  /** Z held: a click zooms in where it is, with Alt out */
+  const [zooming, setZooming] = useState(false);
   /** The line the pen is drawing: its frame, its points in that frame's pixels, and where the pointer is on the canvas. */
   const [pen, setPen] = useState<{ k: number; points: Anchor[] } | null>(null);
   const [penAt, setPenAt] = useState<Point | null>(null);
@@ -365,11 +369,22 @@ export function Stage({
       e.preventDefault();
       setSpace(true);
     };
-    const off = () => setSpace(false);
+    const off = () => (setSpace(false), setZooming(false));
+    const z = (e: KeyboardEvent) => {
+      if (e.code !== "KeyZ") return;
+      if (e.type === "keyup") return setZooming(false);
+      const a = document.activeElement;
+      if (e.metaKey || e.ctrlKey || (a && a !== document.body && a !== box.current)) return;
+      setZooming(true);
+    };
+    window.addEventListener("keydown", z);
+    window.addEventListener("keyup", z);
     window.addEventListener("keydown", key);
     window.addEventListener("keyup", key);
     window.addEventListener("blur", off);
     return () => {
+      window.removeEventListener("keydown", z);
+      window.removeEventListener("keyup", z);
       window.removeEventListener("keydown", key);
       window.removeEventListener("keyup", key);
       window.removeEventListener("blur", off);
@@ -393,18 +408,48 @@ export function Stage({
   const dragging = useRef<(() => void) | null>(null);
   useEffect(() => () => dragging.current?.(), []);
 
-  /** Follows the pointer until it lifts. Nothing moves before the pointer has: a click is not a drag. */
-  const drag = (e: React.PointerEvent, move: (ev: PointerEvent) => void, up: (moved: boolean) => void = () => {}) => {
+  /**
+   * Follows the pointer until it lifts. Nothing moves before the pointer has: a click is not a drag. `edge`: held near
+   * the canvas's edge (or past it), the view runs on that way and what is dragged goes with the pointer.
+   */
+  const drag = (e: React.PointerEvent, move: (ev: PointerEvent) => void, up: (moved: boolean) => void = () => {}, edge = false) => {
     e.preventDefault();
     const x0 = e.clientX;
     const y0 = e.clientY;
     let moved = false;
+    let last: PointerEvent | null = null;
+    let tick = 0;
+    let then = 0;
+    const run = (at: number) => {
+      tick = 0;
+      const r = box.current?.getBoundingClientRect();
+      if (!last || !r) return;
+      const v = edgePan(last.clientX - r.left, last.clientY - r.top, r.width, r.height);
+      if (!v.x && !v.y) return;
+      // seconds since the last picture, at most a twentieth: a stalled tab does not jump the view when it wakes
+      const dt = then ? Math.min(0.05, (at - then) / 1000) : 0;
+      then = at;
+      if (dt) {
+        const now = live.current;
+        setView({ ...now, x: now.x + v.x * dt, y: now.y + v.y * dt });
+        move(last);
+      }
+      tick = requestAnimationFrame(run);
+    };
     const onMove = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
       moved = true;
+      last = ev;
       move(ev);
+      if (edge && !tick) {
+        then = 0;
+        tick = requestAnimationFrame(run);
+      }
     };
     const onUp = () => {
+      cancelAnimationFrame(tick);
+      tick = 0;
+      last = null;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -516,6 +561,7 @@ export function Stage({
           onPick(k, one ? groupOf(p.layers, one) : [hit]);
         }
       },
+      true,
     );
   };
 
@@ -555,9 +601,11 @@ export function Stage({
       },
       (moved) => {
         setBand(null);
-        // a press that drew no box: nothing is picked any more (with Shift, what was picked stays)
-        if (!moved && !add) onPick(home, []);
+        // a press that drew no box: nothing is picked any more (with Shift, what was picked stays); on the background
+        // of the frame whose layers are picked, that frame is
+        if (!moved && !add) onPick(home, [], k >= 0 && k === at && selected.length > 0 && !pages[k]!.loose);
       },
+      true,
     );
   };
 
@@ -583,6 +631,7 @@ export function Stage({
         if (k < 0) onMakeFrame(made, !!r);
         else onMake(k, { ...made, x: made.x - ox, y: made.y - oy }, !!r);
       },
+      true,
     );
   };
 
@@ -618,9 +667,7 @@ export function Stage({
     drag(
       e,
       (ev) => {
-        let r = (l.rotate ?? 0) + angle(world(ev)) - a0;
-        if (ev.shiftKey) r = Math.round(r / 15) * 15;
-        r = Math.round((((r % 360) + 540) % 360) - 180);
+        const r = turnTo(l.rotate ?? 0, angle(world(ev)) - a0, ev.shiftKey);
         last = withLayers(page, [{ ...l, rotate: r || undefined }]);
         onLive([last]);
       },
@@ -707,8 +754,11 @@ export function Stage({
     );
   };
 
-  /** A frame dragged by its name: it catches on the other frames' edges and middles. A press without a drag only picks it. */
-  const moveFrame = (e: React.PointerEvent, k: number) => {
+  /**
+   * A frame dragged by its name: it catches on the other frames' edges and middles. A press without a drag only picks
+   * it; one that started on its layer `child` (the frame was picked) picks that layer.
+   */
+  const moveFrame = (e: React.PointerEvent, k: number, child?: string[]) => {
     // the hand, the dropper, a making tool and the other buttons are the canvas's own press
     if (e.button !== 0 || space || tool !== "move" || dropper) return;
     e.stopPropagation();
@@ -745,8 +795,10 @@ export function Stage({
         setGuides(null);
         onLive(null);
         if (last) onCommit(last);
+        else if (!moved && child) onPick(k, child);
         else if (!moved && many) onPick(k, [], true);
       },
+      true,
     );
   };
 
@@ -788,6 +840,12 @@ export function Stage({
       return;
     }
     if (e.button === 1 || (e.button === 0 && (space || tool === "hand"))) return pan(e);
+    if (zooming && e.button === 0) {
+      e.preventDefault();
+      const r = box.current!.getBoundingClientRect();
+      const v = held.aim();
+      return held.glide(zoomAt(v, zoomStop(v.z, !e.altKey), e.clientX - r.left, e.clientY - r.top));
+    }
     const p = world(e);
     const k = frameUnder(p);
     const hit = hitAt(k, p);
@@ -814,12 +872,14 @@ export function Stage({
       if (onto < 0) return;
       return tool === "pen" ? penDown(e, p, onto) : make(e, onto);
     }
-    // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it)
-    if (!hit && k >= 0 && (framedIds.includes(pages[k]!.id) || !pages[k]!.layers.some((l) => !l.hidden && !l.locked))) return moveFrame(e, k);
-    if (!hit) return marquee(e, k);
-    const mine = k === at ? selected : [];
     // a layer of a group picks the whole group; with ⌘ (or Ctrl) the one layer inside it
     const deep = e.metaKey || (e.ctrlKey && !ON_A_MAC);
+    // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it): a drag
+    // from one of its layers moves the frame, a click picks that layer
+    if (k >= 0 && framedIds.includes(pages[k]!.id) && (!hit || (!deep && !e.shiftKey))) return moveFrame(e, k, hit ? groupOf(pages[k]!.layers, hit) : undefined);
+    if (!hit && k >= 0 && !pages[k]!.layers.some((l) => !l.hidden && !l.locked)) return moveFrame(e, k);
+    if (!hit) return marquee(e, k);
+    const mine = k === at ? selected : [];
     const whole = deep ? [hit.id] : groupOf(pages[k]!.layers, hit);
     if (e.shiftKey) return onPick(k, mine.includes(hit.id) ? mine.filter((id) => !whole.includes(id)) : [...new Set([...mine, ...whole])]);
     const ids = mine.includes(hit.id) && !deep ? mine : whole;
@@ -870,7 +930,7 @@ export function Stage({
           role="application"
           aria-label="Canvas"
           className="absolute inset-0 touch-none select-none overflow-hidden outline-none"
-          style={{ cursor: dropper ? "crosshair" : panning ? "grabbing" : space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
+          style={{ cursor: dropper ? "crosshair" : zooming ? "zoom-in" : panning ? "grabbing" : space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
           onPointerDown={down}
           onPointerMove={over}
           onPointerLeave={() => setHover(null)}

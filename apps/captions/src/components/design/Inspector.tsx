@@ -32,6 +32,7 @@ import {
   Unlink2,
   WrapText,
   X,
+  LayoutGrid,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import type { Design, DesignPage, Gradient, Layer, Stroke } from "@contracts/design";
@@ -44,6 +45,7 @@ import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
 import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
+import { scrubBy } from "@/lib/design/feel";
 import { ColourPicker } from "./ColourPicker";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
@@ -51,7 +53,7 @@ import { cn } from "@/lib/utils";
 /**
  * The properties of what is picked: where it is, its size, how it looks, its fill and line, its type. No layer picked:
  * the frame's own (its name, its place on the canvas, its size, its colour). A number is typed (Enter or leaving the field sets it, the arrows step it, Shift by ten) or dragged
- * by its label; while it is dragged the canvas shows it, and it is one step to undo when let go. A choice made in a
+ * by its label (half a step a pixel; Shift ten times that, Alt a tenth); while it is dragged the canvas shows it, and it is one step to undo when let go. A choice made in a
  * menu here gives the keys back to the canvas at once: ⌘Z right after picking a font undoes the font.
  */
 
@@ -59,7 +61,7 @@ const FIELD = "flex h-6 min-w-0 items-center gap-1.5 rounded-[5px] border border
 const DIM = "text-zinc-500 dark:text-[#b3b3b3]";
 const round = (n: number) => Math.round(n * 100) / 100;
 
-function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Infinity, step = 1 }: { label: ReactNode; title: string; value: number | null; onLive?: (n: number | null) => void; onCommit: (n: number) => void; min?: number; max?: number; step?: number }) {
+function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Infinity, step = 1, rate = 0.5 }: { label: ReactNode; title: string; value: number | null; onLive?: (n: number | null) => void; onCommit: (n: number) => void; min?: number; max?: number; step?: number; /** steps a pixel dragged on the label */ rate?: number }) {
   const [draft, setDraft] = useState<string | null>(null);
   const dropped = useRef(false);
   const fit = (n: number) => round(Math.min(max, Math.max(min, n)));
@@ -67,14 +69,19 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
     const n = Number(text.replace(",", "."));
     if (text.trim() !== "" && Number.isFinite(n) && fit(n) !== value) onCommit(fit(n));
   };
-  /** The label is a handle: dragged sideways it steps the number, a pixel a step. */
+  /** The label is a handle: dragged sideways it steps the number, `rate` steps a pixel; the keys held are read at every move. */
   const scrub = (e: React.PointerEvent) => {
     if (value === null) return;
     e.preventDefault();
-    const x0 = e.clientX;
+    let x = e.clientX;
+    let sum = 0;
     let last = value;
     const move = (ev: PointerEvent) => {
-      last = fit(value + Math.round(ev.clientX - x0) * step);
+      sum += scrubBy(ev.clientX - x, rate, { shift: ev.shiftKey, alt: ev.altKey });
+      x = ev.clientX;
+      // in whole steps, or tenths of one with Alt
+      const q = ev.altKey ? 0.1 : 1;
+      last = fit(value + Math.round(sum / q) * q * step);
       onLive?.(last);
     };
     const up = () => {
@@ -363,6 +370,7 @@ export function Inspector({
   onPagePreview,
   onAlign,
   onDistribute,
+  onTidy,
   view,
   onZoom,
   framesPicked,
@@ -394,6 +402,8 @@ export function Inspector({
   onPagePreview: (page: DesignPage | null) => void;
   onAlign: (how: Align) => void;
   onDistribute: (axis: "x" | "y") => void;
+  /** the picked layers or frames tidied up (a row, a column or a grid evened out); none when they are not one */
+  onTidy?: () => void;
   /** the canvas's view: only the zoom's number reads it, and only that is drawn again when it moves */
   view: ViewStore;
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
@@ -430,7 +440,7 @@ export function Inspector({
   };
   const every = (is: (l: Layer) => boolean) => picked.length > 0 && picked.every(is);
   /** A number field for the picked layers: `to` gives each layer with the number set. */
-  const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number } = {}) => (
+  const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number; rate?: number } = {}) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
   );
   /** A slider for the picked layers, like `num`. */
@@ -488,6 +498,27 @@ export function Inspector({
   const fnum = (label: string, title: string, value: number, set: (n: number) => Partial<DesignPage>, more: { min: number; max: number }) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPagePreview(n === null ? null : { ...page, ...set(n) })} onCommit={(n) => onPage({ ...page, ...set(n) })} />
   );
+  /** The align and space-out buttons, for `count` picked layers or frames. */
+  const lineUp = (count: number) => (
+    <div className="flex justify-between">
+      {ALIGNS.map(([how, label, Icon]) => (
+        <Tap key={how} label={label} onClick={() => onAlign(how)}>
+          <Icon className="h-3.5 w-3.5" />
+        </Tap>
+      ))}
+      <Tap label="Space out sideways" disabled={count < 3} onClick={() => onDistribute("x")}>
+        <AlignHorizontalSpaceAround className="h-3.5 w-3.5" />
+      </Tap>
+      <Tap label="Space out down the page" disabled={count < 3} onClick={() => onDistribute("y")}>
+        <AlignVerticalSpaceAround className="h-3.5 w-3.5" />
+      </Tap>
+    </div>
+  );
+  const tidyTap = (
+    <Tap label="Tidy up" disabled={!onTidy} onClick={() => onTidy?.()}>
+      <LayoutGrid className="h-3.5 w-3.5" />
+    </Tap>
+  );
   const far = { min: -DESIGN_LIMITS.canvas, max: DESIGN_LIMITS.canvas };
   const big = { min: DESIGN_LIMITS.frameMin, max: DESIGN_LIMITS.frameMax };
 
@@ -509,6 +540,13 @@ export function Inspector({
         <ZoomMenu view={view} onZoom={onZoom} />
         </div>
       </div>
+
+      {/* several frames picked: lined up, spaced out and tidied like layers */}
+      {!box && framesPicked.length > 1 && (
+        <Section title="Position" action={tidyTap}>
+          {lineUp(framesPicked.length)}
+        </Section>
+      )}
 
       {/* several frames picked: what one frame is (its name, place, size and fill) is not shown for them all */}
       {!box && framesPicked.length < 2 && (
@@ -579,20 +617,8 @@ export function Inspector({
 
       {box && (
         <>
-          <Section title="Position">
-            <div className="flex justify-between">
-              {ALIGNS.map(([how, label, Icon]) => (
-                <Tap key={how} label={label} onClick={() => onAlign(how)}>
-                  <Icon className="h-3.5 w-3.5" />
-                </Tap>
-              ))}
-              <Tap label="Space out sideways" disabled={picked.length < 3} onClick={() => onDistribute("x")}>
-                <AlignHorizontalSpaceAround className="h-3.5 w-3.5" />
-              </Tap>
-              <Tap label="Space out down the page" disabled={picked.length < 3} onClick={() => onDistribute("y")}>
-                <AlignVerticalSpaceAround className="h-3.5 w-3.5" />
-              </Tap>
-            </div>
+          <Section title="Position" action={tidyTap}>
+            {lineUp(picked.length)}
             <div className="grid grid-cols-2 gap-2">
               {/* a loose picture's place is on the canvas: its own box only follows it */}
               {num("X", "X", box.x + (page.loose ? (page.x ?? 0) : 0), (n) => (l) => ({ ...l, x: round(l.x + n - box.x - (page.loose ? (page.x ?? 0) : 0)) }))}
@@ -619,7 +645,7 @@ export function Inspector({
                   return o === null ? null : Math.round(o * 100);
                 })(),
                 (n) => (l) => ({ ...l, opacity: n >= 100 ? undefined : n / 100 }),
-                { min: 0, max: 100 },
+                { min: 0, max: 100, rate: 0.4 },
               )}
               {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
                 num(
