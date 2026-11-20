@@ -378,6 +378,17 @@ describe("the player", () => {
     expect(skin.style.getPropertyValue("--media-object-fit")).toBe("contain");
   });
 
+  it("the picture before play fills the player and is contained in it: the skin's layered rule is restated outside any layer", async () => {
+    await open(strip);
+    const css = document.getElementById("video-skin-css")!.textContent!;
+    // the app's own `img { height: auto }` is unlayered and would win over the skin's @layer rule (an upright picture cropped)
+    const at = css.lastIndexOf(".media-skin .media-poster-image { height: 100%; }");
+    expect(at).toBeGreaterThan(0);
+    // at the top level of the sheet: every block opened before it is closed, so it is in no @layer
+    const before = css.slice(0, at);
+    expect(before.split("{").length).toBe(before.split("}").length);
+  });
+
   it("a turned clip is a plain video with no bar: a click plays and pauses", async () => {
     await open({ ...strip, turn: 90 });
     expect(host.querySelector(".video-skin")).toBeNull();

@@ -19,7 +19,7 @@ import { knownShots } from "./index";
 import { noteLines, sourceSpan, workspaceSetup } from "./plan";
 import { fileInReview, previewFile, saidOf } from "./preview";
 import { macAway } from "./script";
-import { editDir, markDraft, readDraft, readStep, saveStep, type DraftFile, type EditMeta } from "./store";
+import { editDir, markDraft, readDraft, readStep, type DraftFile, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
 
 /**
@@ -212,14 +212,13 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
 export async function critiqueStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
   if (!d || !existsSync(previewFile(edit.id, variant))) throw new Error(`Make ${variant || "the"} preview first`);
-  const then = (kind: "file" | "draft") => enqueueJob(libraryDb(), edit.workspaceId, `${edit.id}:${variant}`, kind, job.actor, true, "edit_jobs");
   const { due, ...looked } = d;
   // `skipped`: the look or the fix that could not be made, said on the Review version and kept with the draft
   const file = async (c: Critique | undefined, skipped?: string) => {
     const kept = { ...looked, ...(c ? { critique: c } : {}), ...(skipped ? { unchecked: skipped } : {}) };
     await markDraft(edit.id, variant, kept);
     await fileInReview(edit, variant, d.timeline, saidOf(kept), job.actor);
-    then("file");
+    enqueueJob(libraryDb(), edit.workspaceId, `${edit.id}:${variant}`, "file", job.actor, true, "edit_jobs");
   };
   // Why a look or a fix can't be made, in the person's words, or null while it is to be tried again. A rendered cut
   // never waits on its check: the plan's limit (days, on a weekly one), an AI that isn't connected and footage still
@@ -235,12 +234,11 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
   const shots = readStep(edit.id, "shots");
   const saved = shots?.[variant];
   if (!due || !saved) return file(d.critique);
-  const round = due === 2 && saved.fix ? 2 : 1;
-  // looked at already by a try that stopped after it (the fix failed or waited): not asked again
-  let c = d.critique?.round === round ? d.critique : undefined;
+  // looked at already by a try that stopped after it: not asked again
+  let c = d.critique;
   if (!c) {
     try {
-      c = await look(edit, job.actor!, variant, saved.plan, d, round, signal);
+      c = await look(edit, job.actor!, variant, saved.plan, d, 1, signal);
     } catch (e) {
       const why = await cant(e);
       if (why) return file(undefined, `Not checked before Review: ${why}`);
@@ -248,12 +246,6 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
     }
     if (signal.aborted) return;
     await markDraft(edit.id, variant, { ...d, critique: c });
-  }
-  if (round === 2) {   // shortcut: only a fix round started before 2026-11-19 gets here; delete with PlannedVersion.fix once none is left
-    const first = saved.fix!.first;
-    if (c.fails.length < first.fails.length) return file(c);
-    await saveStep(edit.id, "shots", { ...shots, [variant]: { ...saved.fix!.was, critique: first } });
-    return void then("draft");
   }
   return file(c);
 }

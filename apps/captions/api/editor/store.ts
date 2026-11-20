@@ -161,15 +161,10 @@ export interface StepFiles {
   read: { at: number };
 }
 
-/**
- * A planned version's plan (plan.ts). `fix` and `critique` were the fix round's (critique.ts), which no longer runs
- * (owner, 2026-11-19): read only for a fix started before then.
- */
+/** A planned version's plan (plan.ts). */
 export interface PlannedVersion {
   plan: EditPlan;
   notes: string[];
-  fix?: { first: Critique; was: { plan: EditPlan; notes: string[] } };
-  critique?: Critique;
 }
 
 export function readStep<K extends keyof StepFiles>(id: string, name: K): StepFiles[K] | null {
@@ -202,8 +197,8 @@ export const saveStep = <K extends keyof StepFiles>(id: string, name: K, value: 
 export interface DraftFile {
   timeline: Timeline;
   notes: string[];
-  /** a planned version's cut as the AI made it: the round of the look it waits for before Review (critique.ts) */
-  due?: 1 | 2;
+  /** a planned version's cut as the AI made it: it waits for the look before Review (critique.ts) */
+  due?: 1;
   /** the look at this cut before Review: the shots that don't hold up */
   critique?: Critique;
   /** the look, or the fix after it, could not be made (a usage limit, no AI connected, a failure): the cut went to

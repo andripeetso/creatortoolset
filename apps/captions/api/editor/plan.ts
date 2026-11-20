@@ -1438,6 +1438,6 @@ export async function draftPlan(edit: EditMeta, variant: string, saved: PlannedV
   const timeline = planTimeline(plan, sources, `${edit.name} ${variant}`, sfx);
   if (!timeline.tracks.V1.items.length) throw new Error(`Nothing in ${variant}'s plan can be shown`);
   // the AI's cut waits for its look before Review (critique.ts); a plan whose cut was looked at already carries the look
-  await saveDraft(edit.id, variant, { timeline, notes: saved.notes, ...(saved.critique ? { critique: saved.critique } : { due: saved.fix ? 2 : 1 }) });
+  await saveDraft(edit.id, variant, { timeline, notes: saved.notes, due: 1 });
   await clearPasses(edit.id, variant);
 }
