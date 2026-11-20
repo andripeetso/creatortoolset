@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
-import { addAutosave, fingerprint, markSaved, readAutosaves, setAutosaveStore, toRestore, type AutosaveStore, type Ring } from "./autosave";
+import { addAutosave, fingerprint, markSaved, readAutosaves, sealAutosave, setAutosaveStore, toRestore, type AutosaveStore, type Ring } from "./autosave";
 import type { NleTimeline } from "./model";
 
 const tl = (rec: number) => ({ timeline: { fps: 25 }, sources: {}, tracks: { V1: { items: [{ src: "a", rec, len: 10, in: 0 }] } } }) as unknown as NleTimeline;
@@ -39,6 +39,25 @@ describe("autosaves", () => {
     expect(toRestore(r, base)).toBeNull();
     expect(r.list).toHaveLength(3); // a save keeps them, to restore by hand
     expect(toRestore(await addAutosave("tiny/D2", { at: 40, base, tl: tl(4) }), base)?.tl).toEqual(tl(4));
+  });
+
+  it("the live one is rewritten in place until sealed, by a save or by the next session", async () => {
+    const s = memStore();
+    setAutosaveStore(s);
+    const ats = async () => (await readAutosaves("tiny/D2")).list.map((a) => `${a.at}${a.live ? "*" : ""}`);
+    await addAutosave("tiny/D2", { at: 1, base: "b", tl: tl(1) });
+    await addAutosave("tiny/D2", { at: 2, base: "b", tl: tl(2), live: true });
+    await addAutosave("tiny/D2", { at: 3, base: "b", tl: tl(3), live: true });
+    expect(await ats()).toEqual(["1", "3*"]);
+    await sealAutosave("tiny/D2");
+    await addAutosave("tiny/D2", { at: 4, base: "b", tl: tl(4), live: true });
+    expect(await ats()).toEqual(["1", "3", "4*"]);
+    expect(s.disk.get("tiny/D2")!.list.at(-1)!.live).toBe(true); // on disk already: a crash loses nothing
+    setAutosaveStore(memStore(s.disk)); // a reload
+    await addAutosave("tiny/D2", { at: 5, base: "b", tl: tl(5), live: true });
+    expect(await ats()).toEqual(["1", "3", "4", "5*"]);
+    await markSaved("tiny/D2", 6);
+    expect(await ats()).toEqual(["1", "3", "4", "5"]);
   });
 
   it("move the copy kept in localStorage before them into the ring once, and remove it", async () => {

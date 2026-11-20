@@ -11,7 +11,7 @@ import { COMMANDS, runAll, stateView, type NleRun, type NleState } from "@/lib/n
 import { nlePending, nleReply, type NleAsk } from "@/lib/editor";
 import { clientId, onTopic } from "@/lib/sync";
 import { dragging, type Dragged } from "@/lib/nle/drag";
-import { addAutosave, AUTOSAVE_MS, fingerprint, markSaved, readAutosaves, toRestore, type Autosave } from "@/lib/nle/autosave";
+import { addAutosave, AUTOSAVE_MS, fingerprint, LIVE_MS, markSaved, readAutosaves, sealAutosave, toRestore, type Autosave } from "@/lib/nle/autosave";
 import { cn } from "@/lib/utils";
 import { commandOfKey, keyAction } from "@/lib/nle/keys";
 import { CAMERA_FILE, readCamera, rangeReader } from "@/lib/nle/camera";
@@ -205,20 +205,27 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
-  // autosaves: unsaved edits kept in this browser every 30 s, on leaving the window and on closing the timeline, each
-  // time only when they changed since the last one, so a reload, a crash or the page opened again never loses them
+  // autosaves: unsaved edits kept in this browser a moment after each change (the live one, rewritten), sealed every
+  // 30 s, on leaving the window and on closing the timeline when they changed, so a reload, a crash or the page opened
+  // again never loses them
   const [autosaves, setAutosaves] = useState<Autosave[]>([]);
   const latest = useRef({ hist, saved });
   latest.current = { hist, saved };
   const snapped = useRef<NleTimeline | null>(null);
-  const autosave = useCallback(() => {
+  const keep = useCallback((live: boolean) => {
     const { hist: h, saved: s } = latest.current;
     const o = opened.current;
-    if (h.now === s || h.now === snapped.current) return;
-    snapped.current = h.now;
-    void addAutosave(o.key, { at: Date.now(), base: o.base, label: h.labels?.[h.past.length], tl: h.now })
-      .then((r) => opened.current.key === o.key && setAutosaves(r.list));
+    const p = h.now !== s && h.now !== snapped.current
+      ? ((snapped.current = h.now), addAutosave(o.key, { at: Date.now(), base: o.base, label: h.labels?.[h.past.length], tl: h.now, ...(live ? { live: true as const } : {}) }))
+      : live ? null : sealAutosave(o.key);
+    void p?.then((r) => opened.current.key === o.key && setAutosaves(r.list));
   }, []);
+  const autosave = useCallback(() => keep(false), [keep]);
+  useEffect(() => {
+    if (hist.now === saved) return;
+    const t = setTimeout(() => keep(true), LIVE_MS);
+    return () => clearTimeout(t);
+  }, [hist.now, saved, keep]);
   useEffect(() => {
     if (hist.now === saved) return;
     const t = setInterval(autosave, AUTOSAVE_MS);
@@ -271,6 +278,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   }, [resetKey]);
   /** An autosave picked in History: back to it as one step, so undo goes back to where it was left. */
   const restore = (a: Autosave) => {
+    autosave(); // where it was stays an autosave too
     snapped.current = a.tl;
     setHist((h) => histChange(h, () => a.tl, "Restore autosave"));
   };

@@ -250,25 +250,46 @@ describe("autosaves", () => {
   beforeEach(() => { disk.clear(); puts.length = 0; store(); });
   afterEach(() => { vi.useRealTimers(); setAutosaveStore(); });
 
-  it("are taken every 30 s while there are unsaved edits, only when they changed, and on leaving the window", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  it("write the live one a moment after each change, seal it every 30 s and on leaving the window, only when it changed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
     const p = await mount(tl, { resetKey: "tiny/a1" });
+    const ring = () => puts.at(-1)!.list.map((a) => `${lengthOf(a.tl)}${a.live ? "*" : ""}`);
     await wait(60_000);
     expect(puts).toHaveLength(0);
     await p.deliver(longer("a1", 5));
-    await wait(29_000);
+    await wait(500);
     expect(puts).toHaveLength(0);
-    await wait(1_000);
-    expect(puts.map((r) => r.list.map((a) => lengthOf(a.tl)))).toEqual([[125]]);
+    await wait(500);
+    expect(ring()).toEqual(["125*"]);
+    await wait(29_000); // the 30 s tick seals it
+    expect(ring()).toEqual(["125"]);
     await wait(90_000); // nothing changed since
-    expect(puts).toHaveLength(1);
+    expect(puts).toHaveLength(2);
     await p.deliver(longer("a2", 4));
+    await wait(1_000);
+    await p.deliver(longer("a3", 6));
+    await wait(1_000);
+    expect(ring()).toEqual(["125", "150*"]);
     await blur();
+    expect(ring()).toEqual(["125", "150"]);
     await blur();
-    expect(puts.at(-1)!.list.map((a) => lengthOf(a.tl))).toEqual([125, 100]);
-    expect(puts).toHaveLength(2);
+    expect(puts).toHaveLength(5);
     p.done();
-    expect(puts).toHaveLength(2);
+    expect(puts).toHaveLength(5);
+  });
+
+  it("a crash a second after a change loses nothing: the reopen gives it back with no 30 s wait", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    const p = await mount(tl, { resetKey: "tiny/a4" });
+    await p.deliver(longer("d1", 5));
+    await wait(1_000);
+    const crashed = structuredClone(disk.get("tiny/a4"));
+    p.done();
+    disk.set("tiny/a4", crashed!); // nothing written on closing: the app was gone
+    store();
+    const again = await mount(tl, { resetKey: "tiny/a4" });
+    expect(again.length()).toBe(125);
+    again.done();
   });
 
   it("a reopen gives the unsaved edits back, on that same timeline only and never from before a save", async () => {

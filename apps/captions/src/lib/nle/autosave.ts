@@ -8,14 +8,17 @@ import type { NleTimeline } from "./model";
  * back on reopen only on that same timeline, and only when it is newer than the last save made here. Without IndexedDB
  * (a private window, storage full or blocked) they live in memory for this session only, and editing goes on as ever.
  */
-export type Autosave = { at: number; base: string; label?: string; tl: NleTimeline };
+/** `live`: the newest one, still rewritten a moment after each change (so a crash loses nothing) until it is sealed. */
+export type Autosave = { at: number; base: string; label?: string; tl: NleTimeline; live?: true };
 /** A timeline's autosaves, oldest first, and when it was last saved here (0: never). */
 export type Ring = { list: Autosave[]; savedAt: number };
 export type AutosaveStore = { get(key: string): Promise<Ring | undefined>; put(key: string, ring: Ring): Promise<void> };
 
 export const KEEP = 20;
-/** How often the editor takes an autosave while there are unsaved edits that changed since the last one. */
+/** How often the editor seals the live autosave while there are unsaved edits that changed since the last one. */
 export const AUTOSAVE_MS = 30_000;
+/** How long after a change the live autosave is written. */
+export const LIVE_MS = 1_000;
 
 /** A short fingerprint of a timeline as opened (FNV-1a over its JSON). */
 export function fingerprint(tl: NleTimeline): string {
@@ -74,7 +77,8 @@ async function load(key: string): Promise<Ring> {
   } catch {
     /* no IndexedDB: this session's autosaves only */
   }
-  const ring: Ring = got?.list ? got : { list: [], savedAt: 0 };
+  // a live one left by another session (a crash, a reload) is sealed: this session starts its own
+  const ring: Ring = got?.list ? { ...got, list: got.list.map(unlive) } : { list: [], savedAt: 0 };
   // the one copy kept before autosaves (localStorage): moved into the ring once, and removed when the ring has it
   try {
     const old = `ct-nle-unsaved:${key}`;
@@ -96,21 +100,28 @@ export function readAutosaves(key: string): Promise<Ring> {
   return p;
 }
 
+const unlive = (a: Autosave): Autosave => (a.live ? { ...a, live: undefined } : a);
+
 function change(key: string, fn: (r: Ring) => Ring): Promise<Ring> {
   const p = readAutosaves(key).then((r) => {
     const next = fn(r);
-    void write(key, next);
+    if (next !== r) void write(key, next);
     return next;
   });
   rings.set(key, p);
   return p;
 }
 
-/** One more autosave; the oldest goes past 20. */
-export const addAutosave = (key: string, a: Autosave) => change(key, (r) => ({ ...r, list: [...r.list, a].slice(-KEEP) }));
+/** The newest autosave: in place of the live one, else one more (the oldest goes past 20). */
+export const addAutosave = (key: string, a: Autosave) =>
+  change(key, (r) => ({ ...r, list: [...(r.list.at(-1)?.live ? r.list.slice(0, -1) : r.list), a].slice(-KEEP) }));
 
-/** Saved: a reopen gives back only autosaves made after this. The autosaves stay, to be restored by hand. */
-export const markSaved = (key: string, at = Date.now()) => change(key, (r) => ({ ...r, savedAt: at }));
+/** The live autosave stays as it is: the next change starts a new one. */
+export const sealAutosave = (key: string) =>
+  change(key, (r) => (r.list.at(-1)?.live ? { ...r, list: r.list.map(unlive) } : r));
+
+/** Saved: a reopen gives back only autosaves made after this. The autosaves stay, sealed, to be restored by hand. */
+export const markSaved = (key: string, at = Date.now()) => change(key, (r) => ({ ...r, savedAt: at, list: r.list.map(unlive) }));
 
 /** What a reopen gives back: the newest autosave made on this same timeline (`base`) since it was last saved here. */
 export function toRestore(r: Ring, base: string): Autosave | null {
