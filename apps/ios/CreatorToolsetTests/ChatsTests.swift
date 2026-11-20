@@ -185,7 +185,7 @@ final class ChatsTests: XCTestCase {
     func testWhatIsNewToTell() throws {
         let rows = ChatList.arrange(rows: ChatList.merge(videos: try decode(Self.reviews), others: []))
         let first = AppNotifications.fresh(rows, shown: [])
-        XCTAssertEqual(first.notes, [AppNotifications.Note(key: "ef173602-861d-44e0-8529-894f2a06243e:v1#review", title: "V1A-1",
+        XCTAssertEqual(first.notes, [AppNotifications.Note(key: "ef173602-861d-44e0-8529-894f2a06243e:v1", title: "V1A-1",
                                                            body: "Needs your review", path: "/review/ef173602-861d-44e0-8529-894f2a06243e")])
         // told once
         XCTAssertTrue(AppNotifications.fresh(rows, shown: first.shown).notes.isEmpty)
@@ -193,7 +193,7 @@ final class ChatsTests: XCTestCase {
         let gone = AppNotifications.fresh([], shown: first.shown)
         XCTAssertTrue(AppNotifications.fresh(rows, shown: gone.shown).notes.isEmpty)
         let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1}]}"#.utf8))
-        XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1#review", title: "Teaser", body: "Needs your review", path: "/review/r1")])
+        XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1", title: "Teaser", body: "Needs your review", path: "/review/r1")])
     }
 
     // 2026-11-20: a look after an empty one told all 28 waiting videos again, one notification each
@@ -218,7 +218,7 @@ final class ChatsTests: XCTestCase {
         let next = AppNotifications.fresh([ChatList.row(v2)] + rows.dropFirst(), shown: short.shown)
         XCTAssertEqual(AppNotifications.summary(next.notes)?.title, "Cut 1")
         XCTAssertNil(AppNotifications.summary([]))
-        // a name told before names said what happened still counts: an update tells nothing again
+        // what a phone told before this change still counts: the update tells nothing again
         XCTAssertTrue(AppNotifications.fresh(rows, shown: (1...28).map { "r\($0):v1" }).notes.isEmpty)
     }
 

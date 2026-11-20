@@ -57,9 +57,9 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
             case .failed: body = "Failed: \(row.detail)"
             default: body = sentences(row.detail)
             }
-            // the name says what happened too: the same job that waited and later failed is news twice
-            let what = row.status == .review ? "review" : row.status == .failed ? "failed" : "go"
-            return Note(key: (row.keys.isEmpty ? [row.id] : row.keys).map { "\($0)#\(what)" }.joined(separator: " "),
+            // a failure has its own name: the same job that waited and later failed is news twice
+            let failed = row.status == .failed ? "#failed" : ""
+            return Note(key: (row.keys.isEmpty ? [row.id] : row.keys).map { $0 + failed }.joined(separator: " "),
                         title: row.title, body: body, path: row.id)
         }
     }
@@ -74,9 +74,7 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
     /// shortcut: the same job waiting twice (a second look sheet) is told once; key a wait by its time if that matters.
     nonisolated static func fresh(_ rows: [ChatRow], shown: [String]) -> (notes: [Note], shown: [String]) {
         let told = Set(shown)
-        // a name from before names said what happened (no "#") still counts as told
-        let seen = { (name: String) in told.contains(name) || told.contains(String(name.prefix { $0 != "#" })) }
-        let new = notes(rows).filter { !$0.key.components(separatedBy: " ").allSatisfy(seen) }
+        let new = notes(rows).filter { !told.isSuperset(of: $0.key.components(separatedBy: " ")) }
         var added: [String] = []
         for name in new.flatMap({ $0.key.components(separatedBy: " ") }) where !told.contains(name) && !added.contains(name) { added.append(name) }
         return (new, Array((shown + added).suffix(shownCap)))

@@ -278,7 +278,7 @@ final class NativeToolsTests: XCTestCase {
         XCTAssertEqual(AppNotifications.fresh(failed, shown: then.shown).notes.map(\.title), ["Tummy time: 3 mistakes"])
         // a video in Review with no edit behind it
         let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1}]}"#.utf8))
-        XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1#review", title: "Teaser", body: "Needs your review", path: "/review/r1")])
+        XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1", title: "Teaser", body: "Needs your review", path: "/review/r1")])
     }
 
     func testAnEditsThreadInOrder() throws {
