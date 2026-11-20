@@ -1805,8 +1805,8 @@ export async function workspaceFolders(owner: string, has: (ws?: string) => bool
 const processing = (m: Meta) =>
   m.versions.some((x) => x.status === "processing");
 
-/** Two assets' locks, always in id order so crossing moves can't deadlock. */
-function withLocks<T>(a: string, b: string, fn: () => Promise<T>): Promise<T> {
+/** Two assets' locks, always in id order so crossing moves can't deadlock. Plug-ins use it to move versions between two videos. */
+export function withReviewLocks<T>(a: string, b: string, fn: () => Promise<T>): Promise<T> {
   const [x, y] = [a, b].sort();
   return withLock(x, () => withLock(y, fn));
 }
@@ -1835,7 +1835,7 @@ reviewApp.post("/assets/:id/stack", async (c) => {
   if (!v || !UUID.test(fromId) || fromId === v.meta.id) return c.json({ error: "Not found" }, 404);
   const toId = v.meta.id;
   // Both locks are held: read and write the files directly, never updateMeta.
-  const result = await withLocks(toId, fromId, async () => {
+  const result = await withReviewLocks(toId, fromId, async () => {
     const [to, from] = await Promise.all([readMeta(toId), readMeta(fromId)]);
     if (!to || !from || from.owner !== to.owner) return 404 as const;
     if (processing(to) || processing(from)) return 409 as const;
