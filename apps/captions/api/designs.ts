@@ -608,6 +608,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     if (!s) return was;
     const changed: Raw = { ...was, ...Object.fromEntries(Object.entries(s).map(([k, v]) => [k, raw(v) && raw(was[k]) ? { ...raw(was[k]), ...raw(v) } : v])), id: was.id };
     // new words for a text with runs and no runs of their own: its runs move with the words, as when they are typed
+    // a picture's fit, zoom or focus changed: they show again (its crop, a part stretched to the box, would win over them)
+    if (was.type === "image" && ["fit", "zoom", "focus"].some((k) => k in s) && !("crop" in s)) delete changed.crop;
     if (typeof s.text === "string" && !("runs" in s) && was.type === "text" && typeof was.text === "string" && Array.isArray(was.runs)) changed.runs = retext(was as unknown as TextLayer, s.text).runs;
     return changed;
   };

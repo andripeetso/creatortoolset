@@ -330,6 +330,8 @@ export interface ImageLayer extends Box {
   zoom?: number;
   /** which part of the picture stays in the box when it is cut: 0 = its left (top) edge, 1 = its right (bottom); absent = the middle */
   focus?: { x: number; y: number };
+  /** the part of the picture shown, as fractions of its width and height, stretched to the box (`fit`, `zoom` and `focus` are then not read): what a crop or a resize that changes its shape leaves */
+  crop?: { x: number; y: number; w: number; h: number };
   /** changes to the picture's colours, each -100 to 100 */
   adjust?: Partial<Record<DesignAdjust, number>>;
   /** two colours in place of the picture's own: its darks become `dark`, its lights `light` (black and white for a black and white picture) */

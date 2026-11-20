@@ -479,6 +479,7 @@ describe("fills and lines as lists", () => {
             text({ strokes: [{ color: "#ffffff", width: 99 }, { color: "#000000", width: 8 }], fills: [{ type: "image", picture: "ab12cd34.jpg", mode: "fit" }] }),
             { type: "path", x: 0, y: 0, w: 100, h: 100, points: [{ x: 0, y: 0 }, { x: 1, y: 1 }], strokes: [{ color: "#000000", width: 6, start: "circle", end: "arrow" }, { color: "#000000", width: 6, end: "spear" }] },
             { type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, smooth: 0.6, strokes: [{ color: "#000000", width: 4 }] },
+            { type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, crop: { x: 0.12345, y: -1, w: 0.95, h: 3 } },
           ],
         },
       ],
@@ -488,6 +489,8 @@ describe("fills and lines as lists", () => {
     expect(p!.fills).toEqual([{ type: "solid", color: "#ffffff80" }, { type: "image", picture: "ab12cd34.jpg", mode: "tile", scale: 4, opacity: 0.4, blend: "multiply" }]);
     expect(p!.strokes).toEqual([{ color: "#ff0000", width: 12, side: "inside", sides: [0, 0, 12, 0] }]);
     const [shape, words, path, picture] = p!.layers as unknown as Record<string, unknown>[];
+    // a picture layer's crop: inside the picture, to a ten-thousandth
+    expect((p!.layers[4] as unknown as Record<string, unknown>).crop).toEqual({ x: 0.05, y: 0, w: 0.95, h: 1 });
     expect(shape!.smooth).toBe(1);
     expect(shape!.fills).toEqual([
       { type: "gradient", kind: "diamond", angle: 360, stops: [{ at: 0, color: "#ffffff00" }, { at: 0.5, color: "#000000" }, { at: 1, color: "#000000" }], hidden: true },
