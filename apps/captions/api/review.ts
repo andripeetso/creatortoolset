@@ -2571,16 +2571,16 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     }
     // a person's own choice, so any status from any other: APPROVAL_MOVES holds back only what the app sets by itself (setApproval);
     // a cut with unblurred faces is approved only by its owner, as filmed (asFilmed: the page asked AS_FILMED_ASK)
-    let refused: [string, 403 | 409] | undefined;
+    let refused: [string, 403 | 409, string] | undefined;
     const meta = await updateMeta(v.meta.id, (m) => {
       if (status === "approved" && waitsOnBlur(m)) {
-        if (!v.user || v.user !== m.owner) return void (refused = [AS_FILMED_OWNER, 403]);
-        if (body?.asFilmed !== true) return void (refused = [AS_FILMED_ASK, 409]);
+        if (!v.user || v.user !== m.owner) return void (refused = [AS_FILMED_OWNER, 403, "owner_only"]);
+        if (body?.asFilmed !== true) return void (refused = [AS_FILMED_ASK, 409, "not_blurred"]);
         m.versions.at(-1)!.approvedAsFilmed = { by: v.user, at: Date.now() };
       }
       m.approval = { status, by, at: Date.now() };
     });
-    if (refused) return c.json({ error: refused[0] }, refused[1]);
+    if (refused) return c.json({ error: refused[0], code: refused[2] }, refused[1]);
     if (!meta) return c.json({ error: "Not found" }, 404);
     if (status === "approved") {
       const turn = jobTurn(c.req.header("authorization"));
