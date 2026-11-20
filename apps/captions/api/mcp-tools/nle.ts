@@ -11,7 +11,9 @@ async function ask(ctx: ToolContext, body: Args): Promise<unknown> {
   // the edit route refuses an edit that is not this account's (404); its view says which workspace it is in and its drafts
   const e = await ctx.json<{ projectId?: string; drafts?: unknown }>(`/api/editor/${encodeURIComponent(page.edit)}`);
   if (page.workspace && e.projectId && e.projectId !== page.workspace) throw new ToolError("That draft is in another workspace than this chat's: switch the app to its workspace first.");
-  if (Array.isArray(e.drafts) && !e.drafts.includes(page.draft)) throw new ToolError("Not found, or not this account's.");
+  // the app's editor lists its drafts by name, a plug-in's (the studio's) as { name, … }
+  const drafts = Array.isArray(e.drafts) ? e.drafts.map((d) => (typeof d === "string" ? d : (d as { name?: unknown } | null)?.name)) : null;
+  if (drafts && !drafts.includes(page.draft)) throw new ToolError("Not found, or not this account's.");
   return ctx.json("/api/editor/nle/wait", "POST", body);
 }
 
