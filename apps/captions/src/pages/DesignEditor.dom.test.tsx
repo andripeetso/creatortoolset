@@ -30,10 +30,12 @@ beforeEach(() => {
   Object.defineProperty(document, "fonts", { configurable: true, value: { load: async () => [] } });
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
 });
-afterEach(() => {
+afterEach(async () => {
   act(() => root?.unmount());
   host?.remove();
   root = host = undefined;
+  // leaving sends what was not saved (a failed save's change): that save is this test's, not the next one's
+  await new Promise((r) => setTimeout(r, 0));
   saveDesign.mockClear();
 });
 
