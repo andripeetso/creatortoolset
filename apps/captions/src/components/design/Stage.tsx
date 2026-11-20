@@ -84,6 +84,7 @@ export function Stage({
   framed,
   framedIds,
   onPick,
+  onError,
   onLive,
   onCommit,
   tool,
@@ -122,6 +123,8 @@ export function Stage({
   framedIds: readonly string[];
   /** `frames`: every frame picked, by id, when more than the one at `at` */
   onPick: (at: number, ids: string[], framed?: boolean, frames?: string[]) => void;
+  /** says why a hand did less than asked (the canvas full) */
+  onError?: (why: string) => void;
   /** frames while a drag is under way (not a step to undo) */
   onLive: (pages: DesignPage[] | null) => void;
   /** frames once a drag or an edit ends (one step to undo, however many frames it changed; `merge`: joined to the step before it of the same name) */
@@ -522,6 +525,9 @@ export function Stage({
     const b0 = boundsOf(moving);
     const looseId = `p${Date.now().toString(36)}`;
     let last: { pages: DesignPage[]; to: number; ids: string[] } | null = null;
+    // the canvas holds no more loose pieces: layers taken off their frame stay in it (and it says why when let go)
+    const canvasFull = pages.filter((q) => q.loose).length >= DESIGN_LIMITS.loose;
+    let keptIn = false;
     drag(
       e,
       (ev) => {
@@ -530,8 +536,9 @@ export function Stage({
         const fits = (n: number) => pages[n]!.layers.length + moving.length <= DESIGN_LIMITS.layers;
         // layers taken wholly off their frame onto empty canvas lie loose there, uncut (hands.ts dropTarget)
         const lands = dropTarget(pages.map((q, n) => ({ rect: fr[n]!, loose: q.loose, full: !fits(n) })), k, { ...b0, x: f.x + b0.x + m.dx, y: f.y + b0.y + m.dy });
-        const out = lands < 0;
-        const to = out ? k : lands;
+        keptIn = lands < 0 && canvasFull;
+        const out = lands < 0 && !canvasFull;
+        const to = lands < 0 ? k : lands;
         if (!out && to === k && copy && !fits(k)) return;
         const host = pages[to]!;
         const g = fr[to]!;
@@ -575,6 +582,7 @@ export function Stage({
           // a loose picture whose last picture went into a frame is gone, and the frames after it move up one
           const gone = p.loose && !copy && last.to !== k && !last.pages[0]!.layers.length;
           if (last.to !== k || copy) onPick(gone && last.to > k ? last.to - 1 : last.to, last.ids);
+          if (keptIn) onError?.(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
         } else if (!moved && ids.length > 1) {
           // a click on one of several picked: that one alone (with its group)
           const one = p.layers.find((l) => l.id === hit);
@@ -908,8 +916,8 @@ export function Stage({
   const over = (e: React.PointerEvent) => {
     const p = world(e);
     if (pen) setPenAt(p);
-    const { k, hit: under } = pickAt(p);
-    const hit = !e.buttons && tool === "move" && !space ? under : null;
+    // mid-drag (a button down), with another tool or Space held, nothing is hovered: no hit test on every move
+    const { k, hit } = !e.buttons && tool === "move" && !space ? pickAt(p) : { k: -1, hit: null };
     if ((hit?.id ?? null) !== (hover?.id ?? null) || (hit && k !== hover?.k)) setHover(hit ? { k, id: hit.id } : null);
   };
 

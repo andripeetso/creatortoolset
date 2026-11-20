@@ -90,6 +90,15 @@ describe("the hands on the canvas", () => {
     expect(mergeFrame(mine, undefined, theirs)).toBe(mine);
   });
 
+  it("keeps a frame's fills and lines changed here when the server changed something else, and any field frames get later", () => {
+    const base: DesignPage = { id: "p1", x: 0, y: 0, w: 1080, h: 1350, background: "#ffffff", layers: [] };
+    const theirs: DesignPage = { ...base, name: "From the server" };
+    const mine = { ...base, fills: ["#ff0000"], strokes: [{ color: "#000000", width: 4 }], later: 1 } as unknown as DesignPage;
+    expect(mergeFrame(mine, base, theirs)).toEqual({ ...theirs, fills: ["#ff0000"], strokes: [{ color: "#000000", width: 4 }], later: 1 });
+    // fills taken off here stay off; the id is always the server's frame
+    expect(mergeFrame({ ...base, id: "p9" }, { ...base, fills: ["#ff0000"] } as DesignPage, { ...theirs, fills: ["#ff0000"] } as DesignPage)).toEqual(theirs);
+  });
+
   it("does this window's work again on the design as the server has it: frames made, deleted, moved and reordered here, beside what changed there", () => {
     const f = (id: string, more: Partial<DesignPage> = {}): DesignPage => ({ id, x: 0, y: 0, w: 100, h: 100, background: "#ffffff", layers: [], ...more });
     const base = [f("a"), f("b"), f("c")];

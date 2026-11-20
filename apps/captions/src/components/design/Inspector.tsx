@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlignCenter,
@@ -1123,9 +1123,12 @@ function OpacityNum({ value, onLive, onCommit }: { value: number | undefined; on
 }
 
 /** A gradient's colours on a strip: each stop a handle to drag along it (or pick), a press between them adds one there. */
-function StopsBar({ stops, picked, onPick, onSet }: { stops: GradientStop[]; picked: number; onPick: (n: number) => void; onSet: (stops: GradientStop[], merge?: string) => void }) {
+export function StopsBar({ stops, picked, onPick, onSet }: { stops: GradientStop[]; picked: number; onPick: (n: number) => void; onSet: (stops: GradientStop[], merge?: string) => void }) {
   const bar = useRef<HTMLDivElement>(null);
   const gestures = useRef(0);
+  // a drag still on when the bar goes (its popover closed mid-drag) lets go of the window
+  const ending = useRef<(() => void) | null>(null);
+  useEffect(() => () => ending.current?.(), []);
   const place = (x: number) => {
     const r = bar.current!.getBoundingClientRect();
     return Math.round(Math.min(1, Math.max(0, (x - r.left) / r.width)) * 100) / 100;
@@ -1137,11 +1140,16 @@ function StopsBar({ stops, picked, onPick, onSet }: { stops: GradientStop[]; pic
     const merge = `stop ${++gestures.current}`;
     const move = (ev: PointerEvent) => onSet(stops.map((s, k) => (k === n ? { ...s, at: place(ev.clientX) } : s)), merge);
     const up = () => {
+      ending.current = null;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
+    ending.current?.();
+    ending.current = up;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
   const css = [...stops].sort((a, b) => a.at - b.at).map((s) => `${s.color} ${Math.round(s.at * 100)}%`).join(", ");
   return (
