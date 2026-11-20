@@ -69,7 +69,9 @@ export interface ServerPlugin {
   // The first plug-in that answers wins; null or absent = the account's own library's A-roll folder. A throw refuses (fails closed).
   // editor.steps: post-processing steps of the AI Editor (contracts/editor-steps.ts), run in `order` after the B-roll and
   // before the preview (api/editor/post.ts); Settings → AI Editor lists them for each account to use or not.
-  editor?: { footageTarget?: (username: string) => FootageTarget | null | Promise<FootageTarget | null>; steps?: EditorStep[] };
+  // editor.timelinePages: the page paths that show a draft's timeline, each with the edit id and the draft name as its first
+  // two groups, in place of the app's own /editor/:id/:draft (api/editor/nle-bridge.ts): the chat's editor commands are there.
+  editor?: { footageTarget?: (username: string) => FootageTarget | null | Promise<FootageTarget | null>; steps?: EditorStep[]; timelinePages?: RegExp[] };
   // Workshop "check now" for a post he pasted or shared (PATCH /sessions/:id with posted): reads it and matches it to a version.
   // The session's own write stays in core; the first plug-in that answers wins. `account` is the project's Instagram account.
   workshop?: {
@@ -884,6 +886,9 @@ export function admissionProblem(admitted: ServerPlugin[], candidate: ServerPlug
     return e instanceof Error ? e.message : String(e);
   }
 }
+
+/** The loaded plug-ins' timeline pages (editor.timelinePages); none: the app's own. */
+export const pluginTimelinePages = (): RegExp[] => loaded.flatMap((p) => p.editor?.timelinePages ?? []);
 
 /** The first loaded plug-in's footage target for this account (editor.ingest), or null for the default. */
 export async function pluginFootageTarget(username: string): Promise<FootageTarget | null> {

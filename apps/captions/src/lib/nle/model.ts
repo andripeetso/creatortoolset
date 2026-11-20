@@ -515,6 +515,25 @@ export function extendTo(tl: NleTimeline, key: string, f: number): NleTimeline {
   return prev ? roll(tl, prev._k!, d) : trim(tl, key, "head", d);
 }
 
+/**
+ * The timeline made `f` frames long: V1's last shot (and its linked voice) runs on to `f` as far as its source goes, and
+ * everything on the unlocked tracks past `f` is cut off there.
+ */
+export function lengthTo(tl: NleTimeline, f: number): NleTimeline {
+  const last = tl.tracks.V1?.items.reduce<NleItem | undefined>((a, i) => (!a || endOf(i) > endOf(a) ? i : a), undefined);
+  const longer = last && endOf(last) < f ? trim(tl, last._k!, "tail", f - endOf(last)) : tl;
+  const bladed = blade(longer, f);
+  const out = clone(bladed);
+  let cut = false;
+  for (const t of Object.values(out.tracks)) {
+    if (t.locked) continue;
+    const kept = t.items.filter((i) => i.rec < f);
+    cut ||= kept.length < t.items.length;
+    t.items = kept;
+  }
+  return cut ? out : bladed;
+}
+
 /** What each clip field is when it does nothing (crop: all zero; flip: none). */
 const PLAIN: Record<string, unknown> = { zoom: 1, pan: 0, tilt: 0, rot: 0, opacity: 1, speed: 1, gain_db: 0, fade_in: 0, fade_out: 0 };
 const plainField = (f: string, v: unknown) =>

@@ -121,6 +121,7 @@ A plug-in has one or both of these files, and any other files beside them:
 | Work that starts with the server | `start` | `plugin.ts` |
 | Media Library sources, filters and badges | `library` | both |
 | A post-processing step in the AI Editor (it changes the footage a draft plays: the voice, the colour, faces) | `editor.steps` | `plugin.ts` |
+| Its own pages that show a draft's timeline, where the chat's editor commands are listed (in place of `/editor/:id/:draft`) | `editor.timelinePages` | `plugin.ts` |
 | AI provider kinds and presets | `providers` | `plugin.ts` |
 | Another way to set up a tool: the tool's row on Home and in setup names it, and the tool counts as set up once the account has it | `needs` | `plugin.ts` |
 | A skill for one of a tool's AI steps (text, checked like a pack's; each person switches it on on its tool's page in Settings → Tools or in Community → Skills, never the assistant) | `skills` | `plugin.ts` |
