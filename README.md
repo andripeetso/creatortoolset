@@ -1,267 +1,278 @@
 <p align="center">
-  <img src="apps/captions/public/icons/icon-192.png" width="72" alt="" />
+  <picture><source media="(prefers-color-scheme: dark)" srcset="apps/captions/public/icons/icon-192.png" /><img src="apps/captions/public/icons/icon-192.png" width="88" alt="Creator Toolset icon" /></picture>
 </p>
+<!-- One tile reads on both themes. If a light and a dark mark are drawn later, point each source at its own file. -->
 
 <h1 align="center">Creator Toolset</h1>
 
+<p align="center"><b>Plan, make and review your video and posts, on your own computer, with the AI you already pay for.</b></p>
+
 <p align="center">
-  An AI video editor and a full creative suite, on your own computer, with the AI plan you already pay for.
-  <br />
-  <a href="../../releases/latest"><b>Download for Mac</b></a> ·
-  <a href="#run-it-from-source">Run from source</a> ·
-  <a href="SELF_HOSTING.md">Self-host</a> ·
-  <a href="LICENSE">MIT</a>
+  One Mac app with the whole server inside: find the posts that work, write the script, cut the raw takes,
+  caption the result, and get a client's notes on the exact frame.
 </p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.webp" />
-  <img src="docs/screenshots/chat-light.webp" alt="Chat mode: the chats on the left, the open chat in the middle, and the Content Workshop script that chat wrote on the right" />
-</picture>
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue" /></a>
+  <img alt="Mac app: macOS 14 or newer, Apple silicon" src="https://img.shields.io/badge/Mac%20app-macOS%2014%2B%20Apple%20silicon-lightgrey" />
+</p>
 
-Creator Toolset is for people who make video and content for a living. Research what works, write the script, cut
-raw takes into draft timelines, caption them, get a client's notes on the exact frame, and keep the finished pieces
-in one place. It is one app with one sign-in and one data folder. Your files stay on your computer or your own server,
-and the AI runs on your own account: your Claude, ChatGPT, Gemini or Grok plan, or your own API key.
+<p align="center">
+  <a href="../../releases/latest"><b>Download for Mac</b></a> ·
+  <a href="#phone">Phone</a> ·
+  <a href="https://creatortoolset.com/docs"><b>Docs</b></a> ·
+  <a href="SELF_HOSTING.md">Self-host</a> ·
+  <a href="https://creatortoolset.com/docs/plug-ins-and-packs">Plug-ins</a>
+</p>
 
-You can click through every tool, or tell the assistant what you want and watch it happen on the page beside the
-chat.
+<!-- Demo video (30-60 s, not uploaded yet): drag the MP4 into GitHub's web editor, then put the returned user-attachments URL alone on a line here (in place of the GIF below), captioned "Watch the 1-minute tour". -->
+<p align="center">
+  <img src="docs/screenshots/demo-teaser.gif" width="100%" alt="Review: a click on a comment at 00:00:14 jumps the video to that frame, then the status is set to Changes requested" /><br />
+  <sub>Review: a click on a comment jumps the video to its frame.</sub>
+</p>
 
-## Talk to it
+<table>
+<tr>
+<td width="50%" valign="top"><h3>🖥️ Your machine</h3>Your files stay in one data folder on your Mac, or on a server you run. Nothing goes to Creator Toolset by default.</td>
+<td width="50%" valign="top"><h3>🔑 Your AI, your keys</h3>The app has no AI of its own. Use the subscription you already have, paste an API key, or run a model on your own machine. Each service gets only what its feature needs.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><h3>🧩 Change it with your AI</h3>Packs change how an AI writes or how a caption looks. Plug-ins add features to your copy of the app.</td>
+<td width="50%" valign="top"><h3>💬 Drive it from your chat</h3>Connect Claude Code, Codex, ChatGPT or Claude, and they can read and change your work from their own chat.</td>
+</tr>
+</table>
 
-The assistant answers on the AI app you connected (Claude Code, Codex, Gemini or Grok), and it works with the app's
-own tools: it reads and writes your Workshop scripts, finds clips in the Media Library, starts AI Editor edits, answers
-Review comments, makes designs and schedules tasks. Drop a video on it and say what you want: it goes to Review, Video
-Notes or Caption Studio.
+## Right for you if
 
-**Chat mode** (the speech-bubble button at the top, or ⌘J) gives the whole window to it: your chats on the left,
-grouped into Needs you, Working and Recent, the open chat beside them, and the page that chat is working on to the
-right. A new chat starts on **What should we make?**, where you pick a piece of work to carry on with or start
-something new. Chats run side by side, so one can cut a video while another writes captions.
+- You caption in one app, send review links from another and paste scripts into a third.
+- Clients say "the thing at the end", and you want them to point at second 14 instead of writing a paragraph.
+- You come back from a long recording with one good minute and no time to find it.
+- You want to search your footage by what is said, what is shown or what happens, with no tags.
+- You already pay for Claude, ChatGPT, Gemini or Grok, and you do not want a second subscription.
 
-What you tell it about yourself and your work it keeps for later chats, in your own words. Settings → Memory lists
-what is kept, each with a Remove.
+Not for you if you need a Windows or Android app (there is none), or a hosted service with no setup (Creator Toolset Cloud is not open to add yet).
 
-## The tools
+<p align="center">
+  <a href="#tools">Tools</a> · <a href="#chat-mode">Chat</a> · <a href="#your-ai">Your AI</a> · <a href="#built-for-agents">Agents</a> · <a href="#phone">Phone</a> · <a href="#contributing">Contributing</a>
+</p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/home-dark.webp" />
-  <img src="docs/screenshots/home-light.webp" alt="Home: Plan, Make and Distribute stages with their tools, and the Extras underneath" />
-</picture>
+## Tools
 
-Home follows how a video gets made: **Plan → Make → Distribute**, with the **Extras** underneath. Settings → Tools
-picks which tiles show.
+Four groups on Home: Plan, Make, Distribute and Extras. The tools share one library, one set of workspaces and one AI setup.
 
-### AI Editor
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/home-dark.webp" /><img src="docs/screenshots/home-light.webp" width="100%" alt="Home: Plan, Make and Distribute stages with their tools, and the Extras underneath" /></picture>
+</p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/editor-dark.webp" />
-  <img src="docs/screenshots/editor-light.webp" alt="AI Editor's New edit: a clip picked from the Media Library, a name, an editing style, a description, and the number of versions to make" />
-</picture>
+### Plan
 
-Pick raw takes from the Media Library, or add files from your computer, and say what the video is. The AI picks the
-best take of each line and cuts the restarts and pauses. You get draft timelines for your own editor (OTIO and
-FCPXML), with a preview in Review, and up to five versions to choose from. **Edit by hand** trims a cut on its own
-timeline. In Review you mark changes on the cut's timeline, and **Make the next version** cuts them in, with no AI.
+<table>
+<tr>
+<!-- shot: content-analyzer: the Content Analyzer list of saved posts sorted by virality, each marked with the Workshop idea it went to, two picked, and the selection bar with Kept for, Add to topic and Send to Content Workshop (light and dark: docs/screenshots/content-analyzer-light.webp, content-analyzer-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/content-analyzer-dark.webp" /><img src="docs/screenshots/content-analyzer-light.webp" width="100%" alt="Content Analyzer: saved posts sorted by virality, two picked and ready to send to a Content Workshop session" /></picture> <br><sub>Saved posts sorted by virality, with the best ones picked for a Content Workshop session.</sub> <h4>Content Analyzer</h4> Save the posts you learn from, paste links or a profile, and sort by rating, virality or plays. Group posts that share a hook. Needs an Apify key, or your own Instagram sign-in.<br> <a href="https://creatortoolset.com/docs/content-analyzer">Learn more</a> </td>
+<!-- shot: content-workshop: a Content Workshop session (three saved posts as sources) with the reel draft beside the chat, and the accuracy check open over it: a contradicted and a partly supported claim with their rewordings, the other claims supported, a 0 to 100 score (light and dark: docs/screenshots/content-workshop-light.webp, content-workshop-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/content-workshop-dark.webp" /><img src="docs/screenshots/content-workshop-light.webp" width="100%" alt="Content Workshop: a reel draft beside the chat, with the accuracy check marking each claim" /></picture> <br><sub>A reel draft from the sources, revised in chat, with each claim checked against them.</sub> <h4>Content Workshop</h4> Draft a reel, carousel or ad from the sources, or write a script, newsletter or thread in the chat. Each project keeps one brand's voice and files apart from the rest.<br> <a href="https://creatortoolset.com/docs/content-workshop">Learn more</a> </td>
+</tr>
+</table>
 
-New edit starts from one of three places:
+### Make
 
-- **My footage**: your takes, as above.
-- **A script, nothing filmed**: one of your ElevenLabs voices reads the script and the picture is cut from your B-roll.
-- **Short videos from a long recording**: a podcast or a talk goes in, and the parts that stand on their own come out,
-  each cut as a short video of its own: vertical (or 4:5, 1:1), the picture following whoever is talking. In Review,
-  Reframe moves the frame on a shot or sets who it follows, and the exported timelines carry the moving frame.
-  Footage with no faces (game capture, a product, sport) follows the subject its description names, or the one you
-  click in Review, on a computer with an NVIDIA graphics card; without one the frame stays in the middle.
+<table>
+<tr>
+<!-- shot: media-library: the Media Library with a search for a phrase, each hit (a transcript line or a shot) listed at its second beside the clip it is in (a hit opens the clip there, with More like this and the shot-quality marks) (light and dark: docs/screenshots/media-library-light.webp, media-library-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/media-library-dark.webp" /><img src="docs/screenshots/media-library-light.webp" width="100%" alt="Media Library: a search for a phrase, with each match listed at its moment in the clip" /></picture> <br><sub>A search for a phrase opens each clip at the second it is said.</sub> <h4>Media Library</h4> Search by words, by meaning (needs an OpenAI key) or by picture. Smart folders fill from a rule in plain words, and footage folders on your computer join as new videos arrive. Reorganize proposes a sort you can accept.<br> <a href="https://creatortoolset.com/docs/media-library">Learn more</a> </td>
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/editor-dark.webp" /><img src="docs/screenshots/editor-light.webp" width="100%" alt="Editor, New project: a clip picked from the Media Library, a description, a name, an editing style, and the number of versions to make" /></picture> <br><sub>A new project: pick the footage, say what the video is, choose a style, and ask for up to five versions.</sub> <h4>Editor</h4> Raw takes or a script in, draft timelines out. Check each version, then cut by hand on the timeline. Export OTIO for Resolve or FCPXML for Final Cut Pro.<br> <a href="https://creatortoolset.com/docs/editor">Learn more</a> </td>
+</tr>
+<tr>
+<!-- shot: review: the Review page with three frame-stamped comments from two reviewers and their markers on the timeline (light and dark: docs/screenshots/review-light.webp, review-dark.webp) -->
+<td colspan="2" width="100%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.webp" /><img src="docs/screenshots/review-light.webp" width="100%" alt="Review: a video with three frame-stamped comments from two reviewers, and their markers on the timeline" /></picture> <br><sub>Comments pinned to the frame, from people who never made an account.</sub> <h4>Review</h4> Share one link. Reviewers type a name, comment on a frame or a range, and draw on the picture. Every version has a status, and you can cut the next one from the marks with no AI.<br> <a href="https://creatortoolset.com/docs/review">Learn more</a> </td>
+</tr>
+</table>
 
-**Editing styles** and **Animation styles** keep how you like your videos cut and your text animated. Make one by
-telling the assistant about it, with examples, or with a form.
+### Distribute
 
-### Caption Studio
+Finals holds the finished videos you will post, each one a reel, carousel or other piece with one winning version
+([help](https://creatortoolset.com/docs/finals)).
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/captions-dark.webp" />
-  <img src="docs/screenshots/captions-light.webp" alt="Caption Studio: the transcript on the left, the video with a boxed caption in the middle, the caption style on the right, caption blocks on the timeline" />
-</picture>
+### Extras
 
-Drop in a video and it is transcribed with the engine you picked in Settings → AI → Voice: Deepgram or OpenAI on your
-key, or a speech model on your own computers. Without either, Whisper runs in your browser. Each line of the transcript
-becomes a caption you can edit, restyle and move on the timeline. You export the video with the captions burned in
-(MP4, H.264 or H.265), or the captions alone: a transparent overlay (ProRes 4444, VP9 WebM or a PNG sequence) that goes
-on top of your edit, or an SRT, WebVTT or ASS file.
+<table>
+<tr>
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/captions-dark.webp" /><img src="docs/screenshots/captions-light.webp" width="100%" alt="Caption Studio: the transcript on the left, the video with a boxed caption in the middle, the caption style on the right, caption blocks on the timeline" /></picture> <br><sub>The transcript, the caption style and the caption blocks on the timeline, in one view.</sub> <h4>Caption Studio</h4> Transcribe with Deepgram, OpenAI, a speech model on your computer or Whisper in the browser. Export MP4 with captions burned in, or captions alone as ProRes 4444, VP9 WebM or a PNG sequence for an overlay.<br> <a href="https://creatortoolset.com/docs/caption-studio">Learn more</a> </td>
+<!-- shot: designer: a Designer canvas with a three-frame carousel, its layers list, the fill and stroke lists beside the frame, and the PNG export button (light and dark: docs/screenshots/designer-light.webp, designer-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/designer-dark.webp" /><img src="docs/screenshots/designer-light.webp" width="100%" alt="Designer: a three-frame carousel on the canvas, its layers and fill list beside it" /></picture> <br><sub>A three-frame carousel as layers, each frame exported at its exact size.</sub> <h4>Designer</h4> Carousels, covers and thumbnails as editable layers. Keep a carousel style and start the next one from it. Export each frame as a PNG at its exact size.<br> <a href="https://creatortoolset.com/docs/designer">Learn more</a> </td>
+</tr>
+<tr>
+<!-- shot: story-splitter: one finished video cut into numbered stories of about 20 seconds on a timeline, with the cut markers and a download ZIP button (light and dark: docs/screenshots/story-splitter-light.webp, story-splitter-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/story-splitter-dark.webp" /><img src="docs/screenshots/story-splitter-light.webp" width="100%" alt="Story Splitter: one video cut into numbered stories of about 20 seconds, with the cut markers and a download button" /></picture> <br><sub>One finished video, cut into numbered stories of about 20 seconds.</sub> <h4>Story Splitter</h4> Runs in the browser, with no AI key and no upload. Add or remove cuts by hand, then download the numbered MP4s as one ZIP.<br> <a href="https://creatortoolset.com/docs/story-splitter">Learn more</a> </td>
+<!-- shot: video-notes: the Video Notes page for one recording, its chapters beside the player, and the takeaways and summary under it (light and dark: docs/screenshots/video-notes-light.webp, video-notes-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/video-notes-dark.webp" /><img src="docs/screenshots/video-notes-light.webp" width="100%" alt="Video Notes: one recording with its chapters beside the player, and takeaways and a summary under it" /></picture> <br><sub>Chapters beside the player, with takeaways and a summary under it.</sub> <h4>Video Notes</h4> Drop in a screen or camera recording and get a transcript with word timings. Ask for takeaways, an action plan, a summary, chapters or quotes.<br> <a href="https://creatortoolset.com/docs/video-notes">Learn more</a> </td>
+</tr>
+<tr>
+<!-- shot: guide-builder: a five-step guide made from a screen recording, its first step with the screenshot cut from the recording, and Share set to Anyone with the link (light and dark: docs/screenshots/guide-builder-light.webp, guide-builder-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/guide-builder-dark.webp" /><img src="docs/screenshots/guide-builder-light.webp" width="100%" alt="Guide Builder: a step-by-step guide with a screenshot cut from the recording, shared with anyone who has the link" /></picture> <br><sub>Each step gets the screenshot from the moment it describes.</sub> <h4>Guide Builder</h4> A guide from one recording (up to 12 steps), or a document from up to eight recordings in order. Check the steps against the recording, then share by link.<br> <a href="https://creatortoolset.com/docs/guide-builder">Learn more</a> </td>
+<!-- shot: audio-enhancer: the Audio Enhancer with a Before and After switch on the player, a Strength control and the choice between NVIDIA Studio Voice and ElevenLabs Voice Isolator (light and dark: docs/screenshots/audio-enhancer-light.webp, audio-enhancer-dark.webp) -->
+<td width="50%" valign="top"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/audio-enhancer-dark.webp" /><img src="docs/screenshots/audio-enhancer-light.webp" width="100%" alt="Audio Enhancer: a Before and After switch on the player, with a Strength control and the choice of engine" /></picture> <br><sub>Before and after the cleanup, with Strength to mix the original back in.</sub> <h4>Audio Enhancer</h4> Take the noise and room sound out of one recording, with NVIDIA Studio Voice or ElevenLabs Voice Isolator. Needs an NVIDIA or ElevenLabs key. Compare the clean voice with the original, then download it.<br> <a href="https://creatortoolset.com/docs/audio-enhancer">Learn more</a> </td>
+</tr>
+</table>
 
-### Review
+The Screen Recorder (Mac app, macOS 15 or newer) records a screen, window or area with your camera and voice, then sends the
+take to Review or Video Notes ([help](https://creatortoolset.com/docs/screen-recorder)). Dictation types your words wherever the
+cursor is: press F13, with Microphone and Accessibility permission ([help](https://creatortoolset.com/docs/dictation)).
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.webp" />
-  <img src="docs/screenshots/review-light.webp" alt="Review: a video with three frame-stamped comments from two reviewers, and their markers on the timeline" />
-</picture>
+## Chat mode
 
-Upload a cut and share one link. Reviewers comment on the exact frame, draw on the picture, and approve or ask for
-changes, all without an account. Each new version stacks on the same video, so you can compare V1 with V2. Upload the
-timeline file too (OTIO, FCP 7 XML, FCPXML or EDL) and its tracks show under the player.
+Open the assistant in chat mode and the window has three parts: your chats on the left, the open chat in the middle, and
+the page you are working on at the right. Ask in plain words, such as "draft three carousels from the posts I saved this
+week". It finds the right tool and makes the change. Anything that changes a file on your Mac waits for your confirmation.
 
-Reviewers have to be able to reach the server the link came from. A link from the Mac app opens on that Mac, and on
-your own network once **Network access** is on and you put the Mac's address in the link in place of
-`127.0.0.1`. For a reviewer on the internet you need [your own server](SELF_HOSTING.md).
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.webp" /><img src="docs/screenshots/chat-light.webp" width="100%" alt="Chat mode: the chats on the left, the open chat in the middle, and the Content Workshop script that chat wrote on the right" /></picture>
+</p>
 
-### Content Workshop
+The chat list keeps your last 100 chats, each marked with its workspace, and you can filter to one workspace. [Assistant help](https://creatortoolset.com/docs/assistant).
 
-This is where you write reel scripts, carousels, ads, YouTube scripts, newsletters, X threads and articles (the right
-half of the first picture). Research a topic across the posts you've saved, keep notes, and draft with AI in your own
-voice, using a storytelling framework you pick. Before you post, **Check accuracy** tests the claims against the web.
-Each workspace keeps its own instructions (who you write for, how you sound, what never to say), and the AI reads only
-the workspace you're in.
+## Phone
 
-### And the rest
+The iPhone app talks to any Creator Toolset server, your Mac included. Chat with the assistant, watch your edits and Review
+videos, upload from the camera roll (uploads keep going with the phone locked), and read your scripts while you film. Pair
+it in **Settings → Computers → Add phone**, which shows a QR code. A phone reaches your Mac only while the Mac app runs
+with **Network access** on. For now you build the app yourself in Xcode from
+[apps/ios](apps/ios).
 
-| Stage | Tool | What you do with it |
+## Workspaces and teams
+
+Each workspace is a separate space for one client or project. On a hosted server you invite people by email or link and
+choose which apps and workspaces each one gets ([help](https://creatortoolset.com/docs/teams)).
+
+## Built for agents
+
+Every server has an address that AI apps use to reach your work: MCP, at `/api/mcp`. An AI app you already use can read and
+change your work: find clips, draft Workshop pieces, start Editor edits, read and answer Review comments. Changes show in
+the app at once. **Settings → Headless access** adds Creator Toolset to Claude Code or Codex in one click. For any other AI
+app, create a key on the **Another app** row.
+
+With the server added to Claude Code, you can ask:
+
+> Find the clips where I talk to camera, cut a 30-second reel from them in the Editor, and send the cut to Review for my client.
+
+The agent works through tools such as `media_search`, `editor_create` and `review_share`. Plug-in tools that remove things
+ask you before they run. Removing a row in Headless access ends that connection and its key.
+
+For another AI app on this Mac, the Mac app's own server is at `http://127.0.0.1:43128`:
+
+```json
+{
+  "mcpServers": {
+    "creator-toolset": {
+      "type": "http",
+      "url": "http://127.0.0.1:43128/api/mcp",
+      "headers": { "Authorization": "Bearer <key from Settings → Headless access>" }
+    }
+  }
+}
+```
+
+Details: [Headless access](https://creatortoolset.com/docs/headless-access). The tools are in
+[apps/captions/api/mcp-tools](apps/captions/api/mcp-tools).
+
+## Your files
+
+Your files live in one data folder, `~/Library/Application Support/Creator Toolset/data` by default. You can move it to an
+external disk from **This Mac → Data location**. Clear frees only the copies the app made, such as proxies and downloaded
+models, never your original video. A trashed clip stays in the trash for 14 days by default. [Storage help](https://creatortoolset.com/docs/storage).
+
+## Your AI
+
+The app has no AI of its own. You connect one, and you choose a provider and model for each kind of work in
+[AI by job](https://creatortoolset.com/docs/ai-by-job).
+
+- **Your subscription.** The Mac app runs the AI app you installed (Claude Code, Codex, Gemini CLI or Grok) under your own
+  sign-in. Requests go only to that app. Antigravity works too, with a Google sign-in and no key.
+- **Your API keys.** **Settings → API keys** holds keys for Anthropic, OpenAI, Gemini, Deepgram, ElevenLabs, NVIDIA,
+  Perplexity, Apify, YouTube and more. Only the last four characters are shown.
+- **A model on your own machine.** Set a **Local model** address, such as `http://localhost:11434`, and the tools use it
+  first. Hosted servers refuse it.
+- **Speech on your own computer.** Whisper and Parakeet run on a Mac or Linux computer you add. A computer is a Mac or Linux
+  machine you sign in to your server. Without a key or a speech model, Caption Studio transcribes in the browser.
+- **Social accounts.** Sign in to Instagram, Facebook, YouTube or TikTok in **Settings → Social accounts**, so Content
+  Analyzer can read your numbers and posts. [Connectors help](https://creatortoolset.com/docs/connectors).
+
+Pay-per-use calls are billed by the provider, and a subscription counts against its plan. **Settings → Usage** shows what
+each tool used. A Gemini key sends a small copy of each video it watches to Google, and a free Gemini key has daily limits
+set by Google. [Connect your AI](https://creatortoolset.com/docs/connect-your-ai) walks through each route.
+
+## Plug-ins
+
+Packs are data. They change how an AI writes, how a caption looks or how Home is laid out, and they cannot change who may
+open a tool. Plug-ins add features to your copy of the app. Browse both in **Community**, from the account menu at the top
+right, and switch each one on for all workspaces or only some. The five starter packs are in
+[apps/captions/packs](apps/captions/packs).
+
+The Obsidian plug-in keeps one vault folder in step with your Content Workshop projects, both ways
+([help](https://creatortoolset.com/docs/obsidian-plugin)). To make your own, see [Plug-ins and packs](https://creatortoolset.com/docs/plug-ins-and-packs) and
+[PLUGINS.md](PLUGINS.md).
+
+## Download
+
+The Mac app is the one app you install, and there is no Windows or Android app yet. It has the server inside, a **Servers**
+menu to switch between This Mac and any server of yours (⌥⌘1 to ⌥⌘9), a menu bar item, and it updates itself. The download is
+`CreatorToolset-<version>.dmg`, signed and notarized by Apple.
+
+| You want | Get it | You need |
 |---|---|---|
-| Plan | **Content Analyzer** | Save Instagram accounts and posts, and YouTube videos, with captions, transcripts, comments and numbers. Search them, rate each from one to five stars, and sort by rating or plays. With a TypeSafe Jev key, an account's page adds **What works**: how its posts did by hook, format and call to action. |
-| Make | **Media Library** | Your footage in one place, searchable by what is said in it, with watch folders, folders, smart folders, share links and a trash. It can keep the files on your computer, on Bunny Storage, or on Amazon S3 or Cloudflare R2. |
-| Distribute | **Finals** | Your finished reels, carousels and other pieces: the versions of each, the winner, and where it was posted. |
-| Extras | **Audio Enhancer** | Clean up the sound of a recording, with a before-and-after player. |
-| Extras | **Designer** | Carousels, covers and thumbnails on a canvas of frames: your AI designs them (text, shapes, pictures, its own drawings), you move, resize, retype and restyle anything, and export each frame as a PNG. Start from a Workshop carousel, a video's frame, a picture you drop in, or a blank canvas. |
-| Extras | **Story Splitter** | Cut a video into stories of about 20 seconds, on its own cuts, pauses and beats, and download them as one zip. |
-| Extras | **Video Notes** | Screen and camera recordings. Each one gets a transcript and, with an AI connected, a title, a summary and chapters. |
-| Extras | **Guide Builder** | Put recordings in order, have AI draft a step-by-step page, and publish it as an unlisted link. |
-| Extras | **Screen Recorder** | In the Mac app, on macOS 15 or newer: record your screen, a window, an area or a connected iPhone or iPad, with your camera, your voice and the Mac's sound. Make a version that zooms where you clicked and follows your face, and send it to Review, Video Notes, the Guide Builder or the AI Editor; or one with no background, saved as a video with a transparent background to lay over other video. |
+| The Mac app | [Download for Mac](../../releases/latest) | Apple silicon, macOS 14 or newer (Screen Recorder needs 15) |
+| The iPhone app | Build [apps/ios](apps/ios) in Xcode | A Mac or server to pair with |
+| Your own server | [SELF_HOSTING.md](SELF_HOSTING.md), the Docker kit | x86_64 Linux, 4 vCPU, 8 GB RAM, ports 80 and 443 open, a domain |
+| From source | The commands below | Node.js 22 or newer, pnpm 10, `ffmpeg` and `zip` |
 
-On Home, Review sits in Make, the Content Workshop in Plan and Caption Studio in the Extras.
-
-## Your own AI, your own keys
-
-Creator Toolset doesn't come with an AI account. You bring your own, in one of two ways:
-
-1. **Your subscription, on your computer.** Sign in to Claude Code, Codex, Gemini or Grok with the plan you already
-   have. The Mac app passes your requests to it, and only yours. Setup finds the ones on your Mac and installs or signs
-   in with one button; Settings → Providers lists them.
-2. **Your API key.** Add an Anthropic key in Settings → API keys. Anthropic bills you directly.
-
-Every other paid service works the same way: transcription, voices, audio engines, research and Apify each run on a
-key you add, and that provider bills you. Instagram is read only through the official login (for your own posts) and
-your own Apify key (for other creators), never by scraping web pages.
-
-**Speech** is set in Settings → Voice: the languages you speak (a workspace's videos are heard in the language set in
-Settings → Workspace → Details, when it has one), and for captions, Media Library
-transcripts, the AI Editor and talking to the assistant, which engine hears it. That can be Deepgram or OpenAI on your
-key, or Whisper and Parakeet models running on your own computers, a Mac or a Linux machine (Settings → Devices → Add
-computer). The same page turns on reading the assistant's replies aloud.
-
-**Your own AI chat.** You can skip the window and work from the AI app you already use. Creator Toolset adds itself to
-Claude Code or Codex as an MCP server with one click, and Settings → Headless access gives the address and a key for
-any other MCP app. ChatGPT and Claude can sign in to it with your account instead of a key. From that chat you can
-draft and edit Workshop pieces, read and resolve Review comments, run AI Editor steps and schedule tasks.
-[Connect your AI](apps/captions/docs/features/connect-your-ai.md) has the steps.
-
-Without any AI, the rest still works. Captions transcribe in the browser, and Review, Story Splitter and the Media
-Library need no AI at all.
-
-## Make it work your way
-
-The app is open source, so your AI can change it for you. Give this repository to Claude Code, Codex or another coding
-AI and say what you want different: a tool you miss, a step that should go another way, a page for your own process.
-It builds that as a **plug-in**, a folder of your own. With the Mac app you install nothing: your AI writes the folder,
-and you switch it on in Community → Installed. The app's code stays as it is, so you keep getting updates.
-[PLUGINS.md](PLUGINS.md) tells your AI how.
-
-**Community** has plug-ins and packs for each tool: writing frameworks, writing guides, caption styles, editing
-styles, Analyzer guides and Home layouts. Settings → Tools shows what is added to each tool.
-
-## Run it on your Mac
-
-The Mac app (Apple silicon, macOS 14 or newer; its Screen Recorder needs macOS 15) has the whole server inside it, so
-there's nothing else to install.
-
-1. **Download it** from [Releases](../../releases/latest): open the disk image and drag Creator Toolset to
-   Applications. It updates itself after that.
-2. **Open it.** It starts the server and makes your account. It doesn't ask for a password, because the account's
-   secret is kept in your Keychain.
-3. **Follow the setup.** Five short screens: **Pick your look**; **Connect your AI** (the AI apps on this Mac for the
-   ChatGPT, Claude, Google, Grok or Meta plan you already have, each with Install, Sign in or Connect); **What do you
-   make?** (turns on the tools that fit and makes your first workspace); **What do you want to do first?**; and **How do
-   you work best?** (talk to your AI in the app, in your own AI, or both). For your own AI, a last screen adds Creator
-   Toolset to Claude Code or Codex with one click. Sign-in, the Instagram login and other keys are optional.
-4. **Use it from other devices (optional).** Turn on **This Mac → Network access** (Servers → This Mac… in
-   the app's menu bar) and choose a password. Phones and other computers sign in with it.
-
-Your data lives in `~/Library/Application Support/Creator Toolset/data`. You can move it to an external disk in
-**This Mac → Data location**.
-
-The app also does **dictation** anywhere on your Mac: press a talk key (F13 by default, or hold fn), speak, and the
-words are pasted where the cursor is. It is set in Settings → AI → Voice → Dictation and runs on this Mac or on your
-key.
-
-The downloaded app sends anonymous usage and crash reports to creatortoolset.com, which may pass them to PostHog and
-Sentry. A report holds a random install id, the version and system, which of the app's pages were opened and how often,
-whether Connect is on, which kinds of AI are set up, and the message and code location of any error. It never holds
-your name, account, files or content. Turn it off in **Settings → General → Usage and crash reports**.
-A server you build or host yourself sends none (`api/lib/telemetry.ts`).
-
-The **Servers** menu, or the picker right of the window buttons, switches the window between this Mac's server and any
-server of yours added by address (⌥⌘1…⌥⌘9). **Servers → Run your own server…** walks you through one. More in
-[apps/mac/README.md](apps/mac/README.md).
-
-## On your phone
-
-[apps/ios](apps/ios/README.md) is the iPhone app: your chats with the assistant, your edits and Review videos, uploads
-from the camera roll that keep going with the phone locked, your finals, and your scripts to read while you film. It
-talks to any Creator Toolset server, your Mac included. You build it yourself in Xcode for now; add the phone in
-Settings → Devices → Add phone.
-
-## Run it from source
-
-You need Node.js 22+, [pnpm](https://pnpm.io) 10 (`corepack enable`), and `ffmpeg` and `zip` on your PATH.
+The first open shows a few setup screens, each one skippable. From source:
 
 ```sh
-git clone <this repository> creator-toolset
-cd creator-toolset
+git clone <this repository> creatortoolset
+cd creatortoolset
+corepack enable
 pnpm install
 pnpm --filter @creator-toolset/captions dev   # http://localhost:43127
 ```
 
-With no `.env`, sign-in is off and you are the local admin. Projects are kept in `~/.caption-studio` (set `DATA_DIR`
-to change it). Every setting is explained in [apps/captions/.env.example](apps/captions/.env.example). `pnpm test` and
-`pnpm check` run the tests and the type check.
+With no `.env`, sign-in is off and you are the local admin. `pnpm test` and `pnpm check` run the tests and the type check.
 
-## Run it on your own server
+## Self-host
 
-[SELF_HOSTING.md](SELF_HOSTING.md) is written so that you, or an AI agent, can follow it step by step. It covers
-choosing a server and a domain, starting the Docker kit (the app plus Caddy for HTTPS), connecting the Mac app,
-backups and updates. On the server, `apps/captions/scripts/setup-server.sh <your domain>` writes `.env` with a random
-`APP_SECRET` and starts the kit in one go. `docker compose exec app node scripts/doctor.mjs` checks the running install
-and lists what's missing.
+Run the server on a Linux machine of your own with Docker and HTTPS on your own domain, then connect the Mac app for AI.
+[SELF_HOSTING.md](SELF_HOSTING.md) takes you through it one step at a time, with a check after each step. An AI agent can follow it too.
 
-To let your own computers join one account through Cloudflare Tunnel, run the Connect broker in
-[apps/relay/](apps/relay/) with your own Cloudflare zone. [docs/operations/self-host-relay.md](docs/operations/self-host-relay.md)
-is the step-by-step guide.
+```sh
+git clone <this repository> /opt/creator-toolset
+cd /opt/creator-toolset
+apps/captions/scripts/setup-server.sh your.domain.example
+```
 
-## Repository
+Your own computers can join one account through a Cloudflare Tunnel ([apps/relay](apps/relay)).
 
-| Path | What |
-|---|---|
-| [`apps/captions/`](apps/captions/README.md) | The web app and its server: React, Vite, Hono, tRPC, TypeScript |
-| [`apps/mac/`](apps/mac/README.md) | The Mac app (SwiftUI) |
-| [`apps/ios/`](apps/ios/README.md) | The iPhone app (SwiftUI) |
-| [`apps/relay/`](apps/relay/) | The Connect broker: your computers in one account, and the sign-in for AI apps |
-| [`apps/obsidian/`](apps/obsidian/README.md) | The Obsidian plugin: vault notes and Workshop projects kept in step |
-| [`SELF_HOSTING.md`](SELF_HOSTING.md) | Running it on your own server |
-| [`docs/operations/self-host-relay.md`](docs/operations/self-host-relay.md) | Running the Connect broker on your own server |
-| [`PLUGINS.md`](PLUGINS.md) | Changing the app for yourself with a plug-in |
-| [`AGENTS.md`](AGENTS.md) | Rules and commands for contributors and their coding agents |
+## What are you selling? Nothing
+
+- **The code is MIT.** Use it, change it, run it for your clients.
+- **You bring the AI and the keys.** The public code has no payment or billing.
+- **No account is needed for the Mac app.** Its first run offers Sign in with Apple or Google, and you can skip it.
+- **Anonymous usage and crash reports** go from the downloaded Mac app to creatortoolset.com. They hold no name, account, file
+  or content. Turn them off in **Settings → General → Usage and crash reports**.
+- **Creator Toolset Cloud is not open to add yet.** The Mac app shows it as "Coming soon".
+- **Limits are written down.** The Mac app needs Apple silicon, the iPhone app is built in Xcode for now, and the Docker
+  kit needs x86_64 Linux.
 
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) first. Turn on the repository hooks once per clone with
-`git config core.hooksPath .githooks`. They block any commit that contains a secret or a private name.
+Read [AGENTS.md](AGENTS.md) first. It is the guide for coding agents and for people: the layout of the repo, the commands
+to run, and the rules for each app. Found a bug or want a feature? Open an issue. Made a pack or a plug-in?
+[PLUGINS.md](PLUGINS.md) explains how to share it.
 
-## License
+## License and credits
 
-[MIT](LICENSE). Copyright (c) 2026 Creator Toolset contributors.
-
-The fonts in `apps/captions/public/fonts/` are Google Fonts under the SIL Open Font License 1.1 (see `OFL.txt` there).
-Other third-party parts, including the GPL FFmpeg build that the Docker image downloads, are listed in
+Creator Toolset is [MIT](LICENSE), copyright 2026 Creator Toolset contributors. The fonts in `apps/captions/public/fonts/` are Google Fonts under the SIL Open Font License 1.1. Other
+third-party parts, including the GPL FFmpeg build that the Docker image downloads, are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-The footage in the screenshots is from *Tears of Steel*, (CC) Blender Foundation | [mango.blender.org](https://mango.blender.org),
-licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The studio, people and comments around it are
-made up for the screenshots.
+The screenshots show a made-up brand, Northlight Films. The footage is from *Tears of Steel* (Blender Foundation,
+[mango.blender.org](https://mango.blender.org)), licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
