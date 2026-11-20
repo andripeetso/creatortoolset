@@ -29,7 +29,7 @@ export type Align = "left" | "center" | "right" | "top" | "middle" | "bottom";
 export const frameOf = (p: Pick<DesignPage, "x" | "y" | "w" | "h">, k: number, w: number, h: number): Rect => ({ x: p.x ?? k * (w + DESIGN_GAP), y: p.y ?? 0, w: p.w ?? w, h: p.h ?? h });
 /** Where a new frame of this size goes: beside the rightmost frame, level with `like` (the frame it is made from). */
 export const besideFrames = (frames: readonly Rect[], like: Rect | undefined, size: { w: number; h: number }): Rect => ({ x: frames.length ? Math.max(...frames.map((f) => f.x + f.w)) + DESIGN_GAP : 0, y: like?.y ?? 0, w: size.w, h: size.h });
-export const ZOOM = { min: 0.02, max: 32 } as const;
+export const ZOOM = { min: 0.02, max: 256 } as const;
 const zoomIn = (z: number) => Math.min(ZOOM.max, Math.max(ZOOM.min, z));
 const round = (n: number) => Math.round(n * 100) / 100;
 
@@ -40,9 +40,11 @@ export function zoomAt(v: View, z: number, sx: number, sy: number): View {
 }
 
 /** The view that shows `box` whole, in the middle of the room, zoomed in no further than `most`. */
-export function fitView(box: Rect, room: { w: number; h: number }, pad = 56, most: number = ZOOM.max): View {
-  const z = zoomIn(Math.min(most, Math.max(1, room.w - 2 * pad) / box.w, Math.max(1, room.h - 2 * pad) / box.h));
-  return { z, x: (room.w - box.w * z) / 2 - box.x * z, y: (room.h - box.h * z) / 2 - box.y * z };
+export function fitView(box: Rect, room: { w: number; h: number }, pad: number | { x: number; top: number; bottom: number } = 56, most: number = ZOOM.max): View {
+  const p = typeof pad === "number" ? { x: pad, top: pad, bottom: pad } : pad;
+  const tall = room.h - p.top - p.bottom;
+  const z = zoomIn(Math.min(most, Math.max(1, room.w - 2 * p.x) / Math.max(box.w, 1e-6), Math.max(1, tall) / Math.max(box.h, 1e-6)));
+  return { z, x: (room.w - box.w * z) / 2 - box.x * z, y: p.top + (tall - box.h * z) / 2 - box.y * z };
 }
 
 /** The upright box round every layer given, each through its own rotation. */

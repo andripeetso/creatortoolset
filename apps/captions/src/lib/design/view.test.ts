@@ -103,7 +103,10 @@ describe("the zoom's stops", () => {
     expect(zoomStop(0.5, true)).toBe(1);
     expect(zoomStop(0.5, false)).toBe(0.25);
     expect(zoomStop(0.4999, true)).toBe(1);
-    expect(zoomStop(32, true)).toBe(32);
+    expect(zoomStop(32, true)).toBe(64);
+    expect(zoomStop(256, true)).toBe(256);
+    // out from 100 %: 50, 25, 13, 6, 3, 2
+    expect([1, 0.5, 0.25, 0.13, 0.06, 0.03].map((z) => zoomStop(z, false))).toEqual([0.5, 0.25, 0.13, 0.06, 0.03, 0.02]);
     expect(zoomStop(0.02, false)).toBe(0.02);
   });
 });
