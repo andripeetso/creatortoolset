@@ -110,6 +110,17 @@ final class ActionCardTests: XCTestCase {
         XCTAssertEqual(none.actions, [])
     }
 
+    // the setup card as the server sends it (contracts/library.ts actionCard): a member's says the owner sets it up and
+    // has nothing to press; an owner's own workspace gets the real card with its buttons
+    func testTheSetupCardShowsAMemberAndAnOwnerAsTheServerSendsThem() throws {
+        let member = try action(#"{"kind":"setup","workspace":"ws_p","workspaceName":"Tiny Acrobatics","owner":false,"href":"/library?setup=1","libraryId":"","device":null,"title":"Set up the Media Library for Tiny Acrobatics first","line":"This Media Library isn't set up yet: the workspace's owner sets it up.","actions":[]}"#)
+        XCTAssertEqual(member.title, "Set up the Media Library for Tiny Acrobatics first")
+        XCTAssertEqual(member.line, "This Media Library isn't set up yet: the workspace's owner sets it up.")
+        XCTAssertEqual(member.actions, [])
+        let owner = try action(#"{"kind":"setup","workspace":"ws_p","workspaceName":"Tiny Acrobatics","owner":true,"href":"/library?setup=1","libraryId":"lib_1","device":"dev_1","title":"Set up the Media Library for Tiny Acrobatics first","line":"Quick setup.","actions":[{"id":"setup","label":"Set up","primary":true,"call":{"method":"POST","path":"/api/library/lib_1/setup/quick"}}]}"#)
+        XCTAssertEqual(owner.actions?.map(\.label), ["Set up"])
+    }
+
     // MARK: call
 
     private let turnOn = CardAction.Call(method: "PUT", path: "/api/work/downloads", body: ["library": .string("lib_1"), "mode": .string("needed")], workspace: "ws_p")

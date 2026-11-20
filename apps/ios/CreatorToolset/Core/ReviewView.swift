@@ -33,6 +33,8 @@ struct ReviewAssetView: View {
     @State private var sending = false
     @State private var deciding: ReviewStatus?
     @State private var deleting: ReviewComment?
+    /// The server's question before its owner approves a cut whose faces aren't blurred.
+    @State private var asFilmedAsk: String?
     /// The comment just written, or the one being answered: the list scrolls to it.
     @State private var scrollTarget: String?
     @State private var loadError: String?
@@ -89,6 +91,10 @@ struct ReviewAssetView: View {
         } message: { comment in
             if comments.contains(where: { $0.parentId == comment.id }) { Text("Its replies go with it.") }
         }
+        .alert(asFilmedAsk ?? "", isPresented: Binding(get: { asFilmedAsk != nil }, set: { if !$0 { asFilmedAsk = nil } })) {
+            Button("Approve as filmed") { Task { await decide(.approved, asFilmed: true) } }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     // MARK: The screen
@@ -101,6 +107,15 @@ struct ReviewAssetView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             VStack(spacing: 10) {
+                                if let tag = shown?.blurTag {
+                                    Text(tag)
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Self.amber)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(Self.amber.opacity(0.16), in: Capsule())
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                                 decision(asset)
                                 if let extras = ReviewExtras.actions { extras(asset, comments) }
                             }
@@ -128,7 +143,7 @@ struct ReviewAssetView: View {
     private var versionMenu: some View {
         Menu {
             Picker("Version", selection: Binding(get: { version }, set: { show($0) })) {
-                ForEach((asset?.versions ?? []).reversed()) { v in Text("V\(v.n)").tag(v.n) }
+                ForEach((asset?.versions ?? []).reversed()) { v in Text(["V\(v.n)", v.blurTag].compactMap { $0 }.joined(separator: " · ")).tag(v.n) }
             }
         } label: {
             HStack(spacing: 3) {
@@ -140,6 +155,9 @@ struct ReviewAssetView: View {
         }
         .accessibilityLabel("Version \(version)")
     }
+
+    /// The website's amber (#f59e0b).
+    private static let amber = Color(red: 0.96, green: 0.62, blue: 0.04)
 
     private var versionWord: some View {
         Text("V\(version)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
@@ -451,10 +469,24 @@ struct ReviewAssetView: View {
         if replyTo?.id == comment.id { replyTo = nil }
     }
 
-    private func decide(_ status: ReviewStatus) async {
+    private func decide(_ status: ReviewStatus, asFilmed: Bool = false) async {
+        guard let api = ToolsetAPI.current else { return }
         deciding = status
         defer { deciding = nil }
-        guard let data = await write("/approval", json: ["status": status.rawValue]) else { return }
+        let data: Data
+        do {
+            switch try await ReviewApproval.send(api, asset: id, status, asFilmed: asFilmed) {
+            case .ask(let line):
+                asFilmedAsk = line
+                return
+            case .done(let answer):
+                data = answer
+            }
+            writeError = nil
+        } catch {
+            writeError = error.localizedDescription
+            return
+        }
         if let fresh = try? JSONDecoder().decode(ReviewAsset.self, from: data) {
             asset = fresh
         } else {

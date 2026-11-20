@@ -203,7 +203,7 @@ struct AssistantAction: Decodable, Hashable {
         case "setup":
             return owner
                 ? ("Set up \(whose) Media Library on your computer", nil, href ?? "/settings/library")
-                : ("This Media Library isn't set up yet.", "Its owner sets it up.", nil)
+                : ("This Media Library isn't set up yet: the workspace's owner sets it up.", nil, nil)
         case "downloads":
             return ("Turn on Automatic downloads on your computer",
                     "This edit needs the files on your computer: Settings → Media Library → Downloads.", "/settings/library")
