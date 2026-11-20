@@ -131,6 +131,11 @@ final class ImportTests: XCTestCase {
         XCTAssertEqual((reply["failed"] as? [[String: String]])?.map { $0["error"] }, ["Gone isn't connected."])
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("Gone")))
         XCTAssertNil(Imports.destination(media + "/A001.mov", MediaFiles.importsFolders))   // the Media folder itself: never
+        // a picked folder around a Media folder whose drive is away: still refused by the Media folder, never its parent
+        let picked = Imports().copy(id: "m2", [ImportPair(from: a, to: at("Gone/Imports/Summer reel/A001.mov"))],
+                                    sources: [at("Downloads")], destinations: MediaFiles.importsFolders + [root.path]) { _ in }
+        XCTAssertEqual((picked["failed"] as? [[String: String]])?.map { $0["error"] }, ["Gone isn't connected."])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: at("Gone")))
     }
 
     func testScanFindsMediaOnlyInGrantedFolders() throws {

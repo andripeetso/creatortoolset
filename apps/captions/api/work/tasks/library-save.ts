@@ -53,12 +53,12 @@ taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
   can: (d, t) => !!t.input.folders[d.id],
   serve: (t, name) => (name === "file" ? (t.input as LibrarySaveInput).staged : undefined),
   async run(input, ctx) {
-    const src = await ctx.file("file");
     const folder = (await ctx.call("folder", null)) as { id: string; path: string; media?: string } | null;
     if (!folder) throw new Error("This computer has no folder for it");
     const home = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(homedir(), p.slice(1)) : p);
-    // the Media folder's drive away: the save waits for it, never makes the folder on the internal disk
+    // the Media folder's drive away: the save waits for it, before the file is fetched (nothing on the internal disk)
     if (folder.media && !existsSync(home(folder.media))) throw new TaskWaits(`Waiting for ${path.basename(folder.media)}: its drive isn't connected`);
+    const src = await ctx.file("file");
     const dir = home(folder.path);
     const at = await keepIn(dir, input.filename, src);
     const quick = await quickPrint(at);

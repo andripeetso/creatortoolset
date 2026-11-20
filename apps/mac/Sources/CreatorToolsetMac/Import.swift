@@ -92,8 +92,9 @@ final class Imports: @unchecked Sendable {
     /// The library's default folder on this Mac: every copy destination under it is allowed.
     static var home = FileManager.default.homeDirectoryForCurrentUser
     static var defaultRoot: String { home.appendingPathComponent("Movies/Creator Toolset").path }
-    /// The folders a copy may write into: the default, each one chosen in this app's folder picker, each Media folder's Imports/.
-    static var destinations: [String] { [defaultRoot] + (UserDefaults.standard.stringArray(forKey: chosenKey) ?? []) + MediaFiles.importsFolders }
+    /// The folders a copy may write into: each Media folder's Imports/ first (so a copy there checks that Media folder is
+    /// there, never a picked folder around it), the default, each one chosen in this app's folder picker.
+    static var destinations: [String] { MediaFiles.importsFolders + [defaultRoot] + (UserDefaults.standard.stringArray(forKey: chosenKey) ?? []) }
     static func chose(_ folder: String) {
         let old = UserDefaults.standard.stringArray(forKey: chosenKey) ?? []
         if !old.contains(folder) { UserDefaults.standard.set(old + [folder], forKey: chosenKey) }
