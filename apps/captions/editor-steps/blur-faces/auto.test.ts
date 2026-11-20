@@ -22,7 +22,7 @@ vi.mock("../../api/lib/devices", async (real) => ({
 }));
 
 const { Hono } = await import("hono");
-const { libraryDb } = await import("../../api/library/db");
+const { fileBlur, libraryDb, playOf } = await import("../../api/library/db");
 const { saveToLibrary } = await import("../../api/library/routes");
 const { default: plugin, autoJobs, queueVersion, resetAuto, AUTO_LIMITS } = await import("./plugin");
 
@@ -36,21 +36,25 @@ app.use(async (c, next) => {
 app.route("/api/x/blur-faces", plugin.routes!);
 const call = (method: string, url: string, body?: unknown) =>
   app.request(`/api/x/blur-faces${url}`, { method, headers: { "Content-Type": "application/json" }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode: "all", who: "Every child's face", look: "blur", auto: true, ...s });
+const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode: "all", who: "Every child's face", look: "blur", ...s });
 
 let n = 0;
-/** A file added to Ana's library the way an upload adds one; its version id. */
-async function added(ext: "mp4" | "jpg" | "m4a", bytes = ext === "jpg" ? Buffer.from([0xff, 0xd8, 0xff, 0xe0, ++n]) : Buffer.from(`\0\0\0\x18ftypmp42${++n}`, "latin1")): Promise<string> {
+/** A file added to Ana's library the way an upload adds one, with its blur answer (marked Blur faces by default); its version id. */
+async function added(ext: "mp4" | "jpg" | "m4a", blur: "yes" | "no" = "yes"): Promise<string> {
+  const bytes = ext === "jpg" ? Buffer.from([0xff, 0xd8, 0xff, 0xe0, ++n]) : Buffer.from(`\0\0\0\x18ftypmp42${++n}`, "latin1");
   const file = path.join(dir, `in-${n}.${ext}`);
   writeFileSync(file, bytes);
   const r = await saveToLibrary("ana", file, `Tiny take ${n}.${ext}`, [], "lib_a", true);
   if (!r || !("versionId" in r)) throw new Error(`not added: ${JSON.stringify(r)}`);
+  libraryDb().prepare("UPDATE assets SET blur = ? WHERE current_version_id = ?").run(blur, r.versionId);
   return r.versionId;
 }
 const event = (versionId: string) => ({ libraryId: "lib_a", versionId, owner: "ana" });
 const assets = () => (libraryDb().prepare("SELECT title FROM assets WHERE library_id = 'lib_a' ORDER BY created_at, title").all() as { title: string }[]).map((a) => a.title);
 
-beforeAll(() => {
+beforeAll(async () => {
+  // the library's own account (access.ts accountOf): its covered copy becomes the clip's blurred render
+  (await import("../../api/users")).createUser("ana", "secret-ana-acrobatics");
   // Upload all: the server keeps what is saved here (under none a save goes to a computer: library/save-on-computer.test.ts)
   libraryDb().prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_a', 'ana', 'A', 'local', '{"upload":"all"}', 0)`).run();
 });
@@ -64,10 +68,11 @@ beforeEach(async () => {
 });
 
 describe("what comes into the Media Library", () => {
-  it("is queued only with the switch on, and only photos and videos", async () => {
-    const off = await added("mp4");
-    expect(await queueVersion(event(off))).toBe(false);
-    await settings({});
+  it("is queued only for a file marked Blur faces with no blurred render yet, and only photos and videos", async () => {
+    expect(await queueVersion(event(await added("mp4", "no")))).toBe(false);
+    const done = await added("mp4");
+    libraryDb().prepare("UPDATE asset_versions SET blurred_of = sha256 WHERE id = ?").run(done); // a blurred render itself
+    expect(await queueVersion(event(done))).toBe(false);
     expect(await queueVersion(event(await added("mp4")))).toBe(true);
     expect(await queueVersion(event(await added("jpg")))).toBe(true);
     expect(await queueVersion(event(await added("m4a")))).toBe(false);
@@ -103,7 +108,7 @@ describe("a Mac's job", () => {
     expect(((await (await call("GET", "/auto")).json()) as { failed: unknown[] }).failed).toEqual([]); // fine: nothing to say
   });
 
-  it("adds the covered copy beside the original, linked to it and never covered again", async () => {
+  it("makes the covered copy its original's blurred render, played in its place and never covered again", async () => {
     await settings({});
     const v = await added("jpg");
     await queueVersion(event(v));
@@ -113,13 +118,33 @@ describe("a Mac's job", () => {
     expect(await autoJobs.file("mac-1", job.id, copy, "covered.jpg")).toMatchObject({ status: 400 }); // not a JPEG
     writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 7, 7]));
     expect(await autoJobs.file("mac-1", job.id, copy, "covered.jpg")).toEqual({ reply: { ok: true } });
-    const made = libraryDb()
-      .prepare("SELECT a.title, a.library_id, d.version_id FROM derived_from d JOIN asset_versions v ON v.id = d.version_id JOIN assets a ON a.id = v.asset_id WHERE d.source_version_id = ?")
-      .get(v) as { title: string; library_id: string; version_id: string };
-    expect(made.library_id).toBe("lib_a"); // the original's library, so the original's workspace
-    expect(made.title).toMatch(/ blurred$/);
-    expect(libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ?").get(v)).toBeTruthy(); // the original stays
-    expect(await queueVersion(event(made.version_id))).toBe(false); // the copy comes in too: never covered again
+    const blurred = fileBlur(v)?.blurredVersionId;
+    expect(blurred).toBeTruthy();
+    expect(playOf(v)).toBe(blurred); // the AI Editor reads it in the original's place
+    const both = libraryDb().prepare("SELECT asset_id FROM asset_versions WHERE id IN (?, ?)").all(v, blurred!) as { asset_id: string }[];
+    expect(new Set(both.map((r) => r.asset_id)).size).toBe(1); // a version of the original's own clip, in its library
+    expect(libraryDb().prepare("SELECT 1 FROM derived_from WHERE version_id = ?").get(blurred!)).toBeUndefined();
+    expect(await queueVersion(event(blurred!))).toBe(false); // the copy comes in too: never covered again
+  });
+
+  it("covers a member's clip on the library account's Mac, and links a copy only for the library's own account", async () => {
+    await settings({});
+    const v = await added("jpg");
+    // a member added it: the job is the library account's (its Mac has the file, its copy is trusted)
+    expect(await queueVersion({ libraryId: "lib_a", versionId: v, owner: "bo" })).toBe(true);
+    expect(autoJobs.waits("bo")).toBe(false);
+    expect(autoJobs.waits("ana")).toBe(true);
+    const job = autoJobs.claim(mac)!;
+    // the library is no longer the job's account's by the time the copy comes: nothing is linked as its blurred render
+    libraryDb().prepare("UPDATE libraries SET workspace_id = 'nobody' WHERE id = 'lib_a'").run();
+    try {
+      const copy = path.join(dir, "covered-not-trusted.jpg");
+      writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 9, 9]));
+      await autoJobs.file("mac-1", job.id, copy, "covered.jpg");
+      expect(fileBlur(v)?.blurredVersionId).toBeNull();
+    } finally {
+      libraryDb().prepare("UPDATE libraries SET workspace_id = 'ana' WHERE id = 'lib_a'").run();
+    }
   });
 
   it("in Only some faces, a failed AI writes nothing and the file says why, until Try again", async () => {
@@ -180,7 +205,7 @@ describe("workspaces", () => {
     writeFileSync(path.join(dir, "workshop", "users", "ana.json"), JSON.stringify({ currentProjectId: "ws-tiny" }));
     for (const [lib, ws] of [["lib_tiny", "ws-tiny"], ["lib_homes", "ws-homes"]])
       libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'ana', ?, 'local', ?, 0)").run(lib, lib, JSON.stringify({ projectId: ws }));
-    await settings({}); // auto on (in the workspace this request works in, the current one)
+    await settings({}); // in the workspace this request works in, the current one
     const into = async (lib: string) => {
       const v = await added("jpg");
       return queueVersion({ libraryId: lib, versionId: v, owner: "ana" });

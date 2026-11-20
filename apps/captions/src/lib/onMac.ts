@@ -212,9 +212,10 @@ export const deviceHere = async () => ((await thisMacBridge()?.postMessage("stat
 /**
  * Indexes `file` (at `path` on this Mac) into `libraryId`: { assetId } or { duplicateOf }. Nothing of the video is sent.
  * `blur`: the library has Blur faces on: the whole file's SHA-256 goes with it (the key its blurred render links on) and
- * no card picture or strip (the server keeps none of a clip not blurred).
+ * no card picture or strip (the server keeps none of a clip not blurred). `asFilmed`: the person unticked Blur faces, so
+ * the file's blur answer is no (contracts Blur).
  */
-export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal, blur = false): Promise<{ assetId?: string; duplicateOf?: string; duplicate?: true }> {
+export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal, blur = false, asFilmed = false): Promise<{ assetId?: string; duplicateOf?: string; duplicate?: true }> {
   const [quick, read, device, sha256] = await Promise.all([
     file instanceof File ? quickPrint(file) : file.quick,
     readIndex(file, signal, path),
@@ -226,7 +227,7 @@ export async function indexOnMac(libraryId: string, file: File | MacFile, path: 
   const r = await fetch(`/api/library/${libraryId}/on-mac`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index, ...(sha256 ? { sha256 } : {}) }),
+    body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index, ...(sha256 ? { sha256 } : {}), ...(asFilmed ? { blur: false } : {}) }),
     signal,
   });
   const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; duplicate?: true; error?: string };

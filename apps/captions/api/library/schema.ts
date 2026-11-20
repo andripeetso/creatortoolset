@@ -695,4 +695,11 @@ export const MIGRATIONS: string[] = [
   // the server process a listing began in (report.ts): one of a computer that numbers no pages, begun before a restart,
   // marks nothing gone
   `ALTER TABLE listing_starts ADD COLUMN boot TEXT;`,
+  // a file's blur answer, set once when it comes in (contracts Blur, owner 2026-11-20): 'yes' | 'no'; null (from before)
+  // reads the library's Blur faces (db.ts BLUR_SQL). An upload carries the answer it was started with
+  `ALTER TABLE assets ADD COLUMN blur TEXT;
+  ALTER TABLE uploads ADD COLUMN blur TEXT;`,
+  // what an AI Editor version's pictures were made of when its steps started (editor/preview.ts markStart), the server's
+  // own record (a computer's result never writes it): a cut is filed blurred only when its start and its end say so
+  `CREATE TABLE render_marks (edit_id TEXT NOT NULL, variant TEXT NOT NULL, mark TEXT NOT NULL, PRIMARY KEY (edit_id, variant));`,
 ];

@@ -7,7 +7,7 @@ import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
 import { s3Blobs, s3Client, type S3Place } from "./storage/s3";
 import type { BlobStore } from "./storage/types";
-import { hostsOriginals, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, proxyQualityOf, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
+import { hostsOriginals, hostsProxies, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, lookLevelOf, proxyQualityOf, type Blur, type LibraryUpload, type LookLevel, type ProxyQuality } from "../../contracts/library";
 
 /**
  * The library database uses Node's built-in `node:sqlite`: no native dependency. It needs Node 22.13+ (the
@@ -223,8 +223,37 @@ const finalsUploadStored = (libraryId: string): LibraryUpload => {
  */
 export const blursFaces = (libraryId: string): boolean =>
   (libraryDb().prepare("SELECT json_extract(settings, '$.blurFaces') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v === 1;
-/** mayLeave in SQL (upload-gate.ts): version `v` of library `l` may have pictures cut of it, kept or handed out. */
-export const LEAVES_SQL = "(v.blurred_of IS NOT NULL OR json_extract(l.settings, '$.blurFaces') IS NOT 1)";
+/**
+ * Asset `a` is a sound with no picture: filed as audio (by its name) and every version of it read with no video stream
+ * (a probe with no video codec and no width). A file named like a sound that holds a picture, or one not read yet, is not.
+ */
+export const SOUND_ONLY_SQL = `(a.kind = 'audio' AND NOT EXISTS (SELECT 1 FROM asset_versions pv WHERE pv.asset_id = a.id
+  AND (pv.probe IS NULL OR COALESCE(json_extract(pv.probe, '$.vcodec'), '') <> '' OR COALESCE(json_extract(pv.probe, '$.width'), 0) <> 0)))`;
+/**
+ * Asset `a`'s blur answer (assets.blur, contracts Blur): a file nobody answered for (null) reads its library's Blur faces;
+ * a sound with no picture is no (a song never gets a blurred render, and never waits for one).
+ */
+export const BLUR_SQL = `CASE WHEN ${SOUND_ONLY_SQL} THEN 'no' ELSE COALESCE(a.blur, CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END) END`;
+/** mayLeave in SQL (upload-gate.ts): version `v` of asset `a` may have pictures cut of it, kept or handed out. */
+export const LEAVES_SQL = `(v.blurred_of IS NOT NULL OR ${BLUR_SQL} = 'no')`;
+/**
+ * One version's blur answer and the blurred render that plays in its place (itself when it is one; else the newest made of
+ * its bytes; null: none yet). Undefined: not a Library version. The AI Editor reads it per source (the SPEC's editor rule).
+ */
+export function fileBlur(versionId: string): { blur: Blur; blurredVersionId: string | null } | undefined {
+  return libraryDb()
+    .prepare(
+      `SELECT ${BLUR_SQL} AS blur, CASE WHEN v.blurred_of IS NOT NULL THEN v.id ELSE (SELECT b.id FROM asset_versions b WHERE b.asset_id = a.id
+         AND b.blurred_of IN (v.sha256, v.full_sha256) ORDER BY b.n DESC LIMIT 1) END AS blurredVersionId
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
+    )
+    .get(versionId) as { blur: Blur; blurredVersionId: string | null } | undefined;
+}
+/** The version the AI Editor reads for `versionId` (the editor source rule): a file marked yes plays as its blurred render, any other as filmed. */
+export function playOf(versionId: string): string {
+  const f = fileBlur(versionId);
+  return f?.blur === "yes" && f.blurredVersionId ? f.blurredVersionId : versionId;
+}
 /** A version is a blurred render (asset_versions.blurred_of: the full SHA-256 of the original it was made from). */
 export const isBlurred = (versionId: string): boolean =>
   !!(libraryDb().prepare("SELECT blurred_of FROM asset_versions WHERE id = ?").get(versionId) as { blurred_of: string | null } | undefined)?.blurred_of;
@@ -240,8 +269,8 @@ export function versionUpload(versionId: string): LibraryUpload {
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(versionId) as { lib: string; fin: number } | undefined;
-  // a blurred render follows what the owner chose; under Blur faces any other clip reads none
-  if (r && blursFaces(r.lib) && isBlurred(versionId)) return r.fin ? finalsUploadStored(r.lib) : libraryUploadStored(r.lib);
+  // a blurred render, or a file kept as filmed, follows what the owner chose; under Blur faces any other clip reads none
+  if (r && blursFaces(r.lib) && (isBlurred(versionId) || fileBlur(versionId)?.blur === "no")) return r.fin ? finalsUploadStored(r.lib) : libraryUploadStored(r.lib);
   return !r ? "none" : r.fin ? finalsUpload(r.lib) : libraryUpload(r.lib);
 }
 

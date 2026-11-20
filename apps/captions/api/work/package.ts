@@ -6,7 +6,7 @@ import { WORK_V, type WorkFile, type WorkPackage, type WorkTable } from "../../c
 import { aiFor } from "../ai-complete";
 import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
-import { libraryDb } from "../library/db";
+import { libraryDb, playOf } from "../library/db";
 import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
@@ -14,6 +14,7 @@ import { atFor, foldersOf, lightKey } from "../editor/reach";
 import { downloadsAllowFor } from "./offline";
 import { serverOpen } from "./place";
 import { editDir, editRole, ownerOf, readDraft, readEdit, seesEdit, sourcesWorkspace, type EditMeta } from "../editor/store";
+import { editLeaves, markStart } from "../editor/preview";
 
 /** The server's copy of a package handed out: what the result is merged against. */
 export const keptPath = (jobId: number) => path.join(env.dataDir, "work", `${jobId}.json`);
@@ -85,6 +86,10 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
   // own account only: a computer never runs another person's step (design 4.3)
   if (!job.actor || job.actor !== device.owner) throw new Error("This step is not this computer's account's");
   const ids = jobFiles(edit, variant);
+  // the editor source rule: no path or copy of a file marked Blur faces goes out before its blurred render is in
+  const left = editLeaves(editId, variant);
+  if (!left.ok) throw new Error(left.body.message);
+  markStart(editId, variant, left.mark); // what the computer's step starts from (the cut's honest mark, editor/preview.ts)
   // the access rule the worker checks at every step (worker.ts stillReadable), over every file the step may read
   // and the library's own per-clip check for a teammate (store.ts seesEdit: a clip a library policy hides from them never goes down)
   if (sourcesWorkspace(ownerOf(edit), ids) !== edit.workspaceId || !(await editRole(job.actor, edit)) || !(await seesEdit(job.actor, edit))) throw new Error("Some footage was deleted or cannot be read by this account");
@@ -125,10 +130,13 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
      LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
   );
   const files: WorkFile[] = readsOf(job.kind, edit, variant, ids).flatMap((id) => {
-    const r = q.get(id) as
+    // a file marked Blur faces is read as its blurred render, under its own id (the editor source rule, db.ts playOf)
+    const play = playOf(id);
+    const found = q.get(play) as
       | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; bytes: number; quick: string | null; probe: string | null; title: string; library_id: string; proxy: string | null; proxy_bytes: number | null }
       | undefined;
-    if (!r) return [];
+    if (!found) return [];
+    const r = play === id ? found : { ...found, id, play };
     const at = atFor(r, device.id, folders, allows, serverRuns);
     // a proxies-only library's source is its proxy (library/worker.ts dropOriginal): that is the proxy, not an original
     // (or the original itself when it needs no proxy: reach.ts lightKey). No copy when the rule gives none (Downloads, server rendering)

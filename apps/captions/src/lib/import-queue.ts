@@ -19,6 +19,8 @@ export interface QueueItem extends Upload {
   mac: boolean;
   /** the library has Blur faces on (lib/onMac.ts indexOnMac) */
   blur?: boolean;
+  /** Blur faces unticked for this import: the file's blur answer is no (contracts Blur) */
+  asFilmed?: boolean;
 }
 
 interface Queue {
@@ -58,6 +60,8 @@ export interface AddOptions {
   copies?: Map<File, string>;
   mac: boolean;
   blur?: boolean;
+  /** Blur faces unticked for this import (owner or admin only, LibrarySummary.mayKeepAsFilmed) */
+  asFilmed?: boolean;
   /** ask what the batch costs (false at Effort Off: no cost is shown) */
   cost: boolean;
 }
@@ -69,6 +73,7 @@ export function addImports(files: File[], o: AddOptions): void {
     libraryId: o.libraryId,
     mac: o.mac,
     ...(o.blur ? { blur: true } : {}),
+    ...(o.asFilmed ? { asFilmed: true } : {}),
     file,
     sent: 0,
     folderId: o.folderId,
@@ -144,7 +149,7 @@ async function send(u: QueueItem, retry = false): Promise<void> {
     const r = await gates.index(() => {
       ctl.signal.throwIfAborted();
       patch(u.key, { status: "uploading", sent: 0, error: undefined });
-      return uploadFile(lib, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: u.mac, blur: u.blur });
+      return uploadFile(lib, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: u.mac, blur: u.blur, asFilmed: u.asFilmed });
     });
     patch(u.key, r.duplicateOf || r.duplicate ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size, assetId: r.assetId });
     for (const fn of landed) fn(lib, u.folderId);

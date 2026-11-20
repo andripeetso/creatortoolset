@@ -25,6 +25,8 @@ export interface CoreEvents {
   "library.changed": Record<string, never>;
   /** A file came into a built-in Media Library and was read (its probe is done): `owner` is who added it. Again when it is read again. */
   "library.version.probed": { libraryId: string; versionId: string; owner: string };
+  /** A file was marked to blur after it came in (PUT /api/library/:id/assets/:assetId/blur): Face Blur queues its version. */
+  "library.version.blur": { libraryId: string; versionId: string; owner: string };
   /**
    * Something now waits on `owner`: an AI Editor cut ready for review, an edit waiting on them, a job that failed, a final
    * delivered. One line each, no chat text or media: a phone notification is made from it (connect/activity.ts).

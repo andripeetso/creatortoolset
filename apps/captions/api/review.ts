@@ -155,6 +155,10 @@ interface Version {
   notBlurred?: boolean;
   /** Its filer blurred every face in it (an editor that blurs): under Blur faces only such a version is shared or shown. */
   blurred?: true;
+  /** Nothing in it is left to blur, and some of it plays as filmed (a file kept as filmed), as the server worked out (an
+   *  AI Editor cut, editor/preview.ts editLeaves; a plug-in's editor that checked the same): under Blur faces a signed-in
+   *  teammate who may see the edit sees it (viewer); a share link, a download link or a public page never (only `blurred`). */
+  asFilmed?: true;
   /** Its owner approved it with the faces as filmed. */
   approvedAsFilmed?: { by: string; at: number };
   /** What approving it starts, in a word ("B-roll", "cards"): an edit in passes sets it on each pass's cut but the last. */
@@ -188,7 +192,7 @@ const blurFacesIn = async (owner: string, workspace?: string) => {
   return !!lib && blursFaces(lib);
 };
 /** Under Blur faces Review keeps only a cut its filer blurred (an editor that blurs its render): upload-gate.ts mayLeave. */
-const takesCut = async (owner: string, workspace: string | undefined, blurred: boolean) => mayLeave(await workspaceLibrary(owner, workspace), { blurred });
+const takesCut = async (owner: string, workspace: string | undefined, blurred: boolean, asFilmed = false) => mayLeave(await workspaceLibrary(owner, workspace), { blurred, asFilmed });
 const AS_FILMED_ASK = "The faces in this cut aren't blurred. Approve it as filmed?";
 const AS_FILMED_OWNER = "Only the owner can approve a cut whose faces aren't blurred";
 const NOT_NEWEST = "A newer version is in Review: open it there";
@@ -910,7 +914,12 @@ export async function reviewVersionLeaves(id: string, n: number): Promise<boolea
  */
 export async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
   const v = await viewerOf(c);
-  return v && !v.manage && showsUnblurred(v.meta) && (await blurFacesIn(v.meta.owner, v.meta.workspace)) ? null : v;
+  if (!v || v.manage) return v;
+  // under Blur faces a share link sees only blurred versions; a signed-in teammate who may see the edit sees an as-filmed
+  // cut too (ruling 5: faces need not be hidden from the team), never one with nothing to say for it
+  const shared = c.req.param("token") !== undefined;
+  const hides = shared ? showsUnblurred(v.meta) : v.meta.versions.some((x) => !x.blurred && !x.asFilmed && !x.removed);
+  return hides && (await blurFacesIn(v.meta.owner, v.meta.workspace)) ? null : v;
 }
 
 async function viewerOf(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
@@ -998,6 +1007,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred ? { blurred: true } : {}),
+      ...(v.asFilmed ? { asFilmed: true } : {}),
       ...(v.approvedAsFilmed ? { approvedAsFilmed: v.approvedAsFilmed } : {}),
       ...(v.next ? { next: v.next } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
@@ -1130,7 +1140,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean; blurred?: boolean; next?: string },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean; blurred?: boolean; asFilmed?: boolean; next?: string },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1138,7 +1148,7 @@ export async function addVersion(
   const now = Date.now();
   const workspace = v.workspace ?? (await folderWorkspace(v.projectId));
   // Blur faces: a cut whose filer did not blur every face in it is never kept (`blurred`: an editor that blurred it)
-  const left = await takesCut(v.owner, (assetId && (await readMeta(assetId))?.workspace) || workspace, !!v.blurred && !v.notBlurred);
+  const left = await takesCut(v.owner, (assetId && (await readMeta(assetId))?.workspace) || workspace, !!v.blurred && !v.notBlurred, !!v.asFilmed && !v.notBlurred);
   if (!left.ok) throw new Error(left.body.message);
   if (!assetId) {
     await mkdir(assetDir(id), { recursive: true });
@@ -1180,6 +1190,7 @@ export async function addVersion(
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred && !v.notBlurred ? { blurred: true as const } : {}),
       ...(v.next ? { next: v.next } : {}),
+      ...(v.asFilmed && !v.blurred && !v.notBlurred ? { asFilmed: true as const } : {}),
       createdAt: now,
     });
   });
@@ -2391,6 +2402,10 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const n = Number(c.req.param("n"));
     const version = v?.meta.versions.find((x) => x.n === n);
     if (!v || !version) return c.json({ error: "Not found" }, 404);
+    // under Blur faces nothing of a version a viewer may not see goes, a removed one's still included: on a share link a
+    // version not filed as blurred, for a teammate one neither blurred nor as filmed (viewer)
+    const seen = version.blurred || (c.req.param("token") === undefined && version.asFilmed);
+    if (!v.manage && !seen && (await blurFacesIn(v.meta.owner, v.meta.workspace))) return c.json({ error: "Not found" }, 404);
     const id = v.meta.id;
     const file = c.req.param("file");
     if (file === "thumb") return sendFile(c, thumbPath(id, n), "image/jpeg");

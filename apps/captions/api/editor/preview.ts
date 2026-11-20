@@ -5,7 +5,7 @@ import type { Item, Renders, Timeline } from "../../contracts/editor";
 import { addVersion, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
-import { blobs, libraryDb } from "../library/db";
+import { blobs, fileBlur, isBlurred, libraryDb, playOf, SOUND_ONLY_SQL } from "../library/db";
 import { readable } from "./media";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
@@ -21,9 +21,12 @@ import { fitted } from "./framing";
 import { sayFor } from "./progress";
 import { followPicked, HELD_NOTE } from "./subject";
 import { renderPlanPreview, sfxMix } from "./plan-render";
-import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveDraft, saveFiled, saveStep } from "./store";
+import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readEdit, readStep, saveDraft, saveFiled, saveStep } from "./store";
 import { nextPass, PASS_WORD } from "./passes";
-import { mayLeave, workspaceLibrary } from "../library/upload-gate";
+import { refuse, type Received } from "../library/upload-gate";
+import { jobFiles } from "./reach";
+import { kindOf } from "../library/routes";
+import { emitEvent } from "../lib/events";
 import type { StepContext } from "./worker";
 
 /**
@@ -273,10 +276,12 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
       out[id] = pathOf(id);
       continue;
     }
-    const row = q.get(id) as { source_key: string; title: string; proxy: string | null } | undefined;
+    // a file marked Blur faces is read as its blurred render (the editor source rule, db.ts playOf)
+    const play = playOf(id);
+    const row = q.get(play) as { source_key: string; title: string; proxy: string | null } | undefined;
     if (!row) throw new Error("Some footage was not found in the Media Library");
     if (!proxies && row.source_key === row.proxy) throw new Error(onlyProxy(row.title));
-    out[id] = await (proxies ? readable(id, row.source_key) : blobs.localCopy(row.source_key));
+    out[id] = await (proxies ? readable(play, row.source_key) : blobs.localCopy(row.source_key));
   }
   return out;
 }
@@ -284,22 +289,81 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
 /** Where a version's preview is rendered, before Review takes it. */
 export const previewFile = (editId: string, variant: string) => path.join(editDir(editId), "previews", `${variant}.mp4`);
 
+/** What a cut honestly is (SPEC "Honest marks"): every picture in it a blurred render, or some of it as filmed. */
+export type CutMark = "blurred" | "asFilmed";
+
+/**
+ * The editor source rule (owner, 2026-11-20) for one cut of an edit: a source marked Blur faces is read as its blurred
+ * render (playOf); while any has none yet the cut stops, named for the first, is never rendered from an original nor kept
+ * here, and Face Blur is asked for each (library.version.blur: an old file, or one from before Face Blur was on, gets its
+ * job; each is queued once). Every other file plays as filmed; a sound has no picture (db.ts BLUR_SQL reads it no). This
+ * editor runs no face detection of its own. A cut that may go answers its mark, read from the cut's own sources (its
+ * draft's, else the edit's): "blurred" only when every picture source is a Library file read as its blurred render;
+ * anything else with a picture (a file kept as filmed, one of the edit's own, a clip no longer in the Library) "asFilmed".
+ */
+export function editLeaves(editId: string, variant: string): { ok: true; mark: CutMark } | Extract<Received, { ok: false }> {
+  const db = libraryDb();
+  const waiting = jobFiles({ version_id: `${editId}:${variant}` }).filter((r) => {
+    const f = fileBlur(r.id);
+    return f?.blur === "yes" && !f.blurredVersionId;
+  });
+  if (waiting.length) {
+    const of = db.prepare("SELECT a.title, a.library_id, a.created_by FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?");
+    const titles = waiting.map((r) => {
+      const a = of.get(r.id) as { title: string; library_id: string; created_by: string } | undefined;
+      if (a) emitEvent("library.version.blur", { libraryId: a.library_id, versionId: r.id, owner: a.created_by });
+      return a?.title;
+    });
+    return refuse(`Waiting for blur on ${titles[0] ?? "a clip"}`);
+  }
+  const tl = readDraft(editId, variant)?.timeline.sources;
+  const e = readEdit(editId);
+  const ids = tl ? Object.keys(tl) : [...(e?.sources ?? []), ...(typeof e?.song === "string" ? [e.song] : [])];
+  const soundOf = db.prepare(`SELECT ${SOUND_ONLY_SQL} AS sound FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`);
+  let pictures = 0;
+  let asFilmed = false;
+  for (const id of ids) {
+    const own = tl?.[id]?.file;
+    // a sound has no picture: an own file by its name (a voice take the editor made), a Library one by what was read in it
+    const row = own ? null : (soundOf.get(id) as { sound: number } | undefined);
+    if (own ? kindOf(own) === "audio" : row?.sound) continue;
+    pictures++;
+    // the edit's own file, or one the Library no longer has: as filmed
+    if (own || !row || !isBlurred(playOf(id))) asFilmed = true;
+  }
+  return { ok: true, mark: pictures > 0 && !asFilmed ? "blurred" : "asFilmed" };
+}
+
 /**
  * The preview step (one version): render, then into Review as the next version of the draft's Review video. A planned
  * cut the AI made waits for its look (critique.ts), which files it.
  */
 /**
- * Blur faces for an edit: its workspace's Media Library's rule (upload-gate.ts mayLeave). This editor blurs no face, so a
- * cut of it is never rendered for the server nor kept there where Blur faces is on: the refusal, else ok.
+ * A step of version `variant` starts (editor/worker.ts runStep on the server, work/package.ts for a computer): what its
+ * pictures are made of now. Once any step of it started with something as filmed it stays so: a copy made then (a post
+ * step's, a render's) may be in the cut, whatever its sources are switched to later.
  */
-export async function editLeaves(edit: Pick<EditMeta, "createdBy" | "projectId"> & { workspaceId?: string }) {
-  return mayLeave(await workspaceLibrary(ownerOf(edit), edit.projectId), {});
+export function markStart(editId: string, variant: string, mark: CutMark): void {
+  libraryDb()
+    .prepare(
+      `INSERT INTO render_marks (edit_id, variant, mark) VALUES (?, ?, ?)
+       ON CONFLICT (edit_id, variant) DO UPDATE SET mark = CASE WHEN render_marks.mark = 'asFilmed' THEN 'asFilmed' ELSE excluded.mark END`,
+    )
+    .run(editId, variant, mark);
 }
+
+/** The mark a cut is filed with: blurred only when its steps started blurred and it still is (no start known: as filmed). */
+const markOf = (editId: string, variant: string): { blurred?: true; asFilmed?: true } => {
+  const left = editLeaves(editId, variant);
+  if (!left.ok) return {};
+  const start = (libraryDb().prepare("SELECT mark FROM render_marks WHERE edit_id = ? AND variant = ?").get(editId, variant) as { mark: CutMark } | undefined)?.mark;
+  return left.mark === "blurred" && start === "blurred" ? { blurred: true } : { asFilmed: true };
+};
 
 export async function previewStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   // on the server only: a computer's render is refused where its files arrive (work/result.ts)
   if (!onComputer.on) {
-    const left = await editLeaves(edit);
+    const left = editLeaves(edit.id, variant);
     if (!left.ok) throw new Error(left.body.message);
   }
   let d = readDraft(edit.id, variant);
@@ -359,7 +423,10 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   const pass = nextPass(edit, variant);
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
-  const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId, ...(pass ? { next: PASS_WORD[pass] } : {}) };
+  const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId, ...(pass ? { next: PASS_WORD[pass] } : {}),
+    // honest marks (SPEC), computed here, never a computer's word: blurred only when every picture is a blurred render;
+    // a cut with nothing left to blur but some of it as filmed passes as asFilmed; one still waiting for a blur, neither
+    ...markOf(edit.id, variant) };
   // `given`: the thumbnail and waveform made where the preview was rendered (a computer, api/work/result.ts), so Review
   // and the library take them instead of decoding the preview again
   const place = async (dest: string) => {

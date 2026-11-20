@@ -1,11 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { asTurn } from "./turn";
-import { proxySize, type AssetCard, type AssetKind, type AssetPage, type LibrarySort, type SearchQuery } from "../../contracts/library";
+import { proxySize, type AssetCard, type AssetKind, type Blur, type AssetPage, type LibrarySort, type SearchQuery } from "../../contracts/library";
 import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
 import { facetClauses } from "./sources";
 import { deviceOf } from "../lib/devices";
-import { libraryProxyQuality } from "./db";
+import { BLUR_SQL, libraryProxyQuality } from "./db";
 import { placeWordOf } from "../../contracts/places";
 import { folderStatesFor } from "./places";
 import { GONE_ON_COMPUTER_SQL, ON_COMPUTER_SQL, whereIsMany } from "./whereis";
@@ -118,7 +118,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
 
 export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at, v.bytes AS bytes,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
-  (v.blurred_of IS NULL AND (SELECT json_extract(l.settings, '$.blurFaces') FROM libraries l WHERE l.id = a.library_id) = 1) AS not_blurred,
+  ${BLUR_SQL} AS blur, (v.blurred_of IS NULL AND ${BLUR_SQL} = 'yes') AS not_blurred,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
   (SELECT d.cell_w || 'x' || d.cell_h FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS sprite_cell,
@@ -135,6 +135,7 @@ export interface CardRow {
   library_id: string;
   /** Blur faces is on and this version is not a blurred render */
   not_blurred?: number;
+  blur?: Blur;
   kind: AssetKind;
   title: string;
   created_at: number;
@@ -306,6 +307,7 @@ export function toCard(r: CardRow): AssetCard {
     ...(turn ? { turn } : {}),
     // a turned clip's pictures were made again: a new address, so no window shows the one it kept
     ...(notBlurred ? { notBlurred: true as const } : {}),
+    ...(r.blur ? { blur: r.blur } : {}),
     ...(r.has_thumb && !notBlurred ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${turn ? `?t=${turn}` : ""}` } : {}),
     // a strip made again in the clip's shape has a new address too (its frame size), so no window keeps the old one
     ...(r.has_sprite && !notBlurred ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined })}` } : {}),

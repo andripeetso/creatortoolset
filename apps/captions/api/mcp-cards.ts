@@ -4,6 +4,7 @@ import { env } from "./lib/env";
 import { innerCall, sessionOf } from "./auth";
 import { findUser } from "./users";
 import { hasProxy } from "./library/routes";
+import { mayGoPublic } from "./library/upload-gate";
 import { reviewVersionLeaves } from "./review";
 import { libraryGatedByPlugin } from "./library/sources";
 import { CARD_HTML } from "./mcp-card-view";
@@ -84,6 +85,8 @@ const ID = /^[A-Za-z0-9_-]{1,80}$/;
 /** The app's own route a link stands for, built from the token's fields and nothing else: one GET of one file. */
 function pathOf(t: Pick<Token, "m" | "i" | "n">): string | null {
   if (typeof t.i !== "string" || !ID.test(t.i) || t.i.startsWith("ext_")) return null;
+  // a bearer link is public: under Blur faces only a blurred render's pictures (library/upload-gate.ts mayGoPublic)
+  if ((t.m === "lt" || t.m === "lp") && !mayGoPublic(t.i).ok) return null;
   if (t.m === "lt") return `/api/library/media/${t.i}/thumb`;
   if (t.m === "lp") return hasProxy(t.i) ? `/api/library/media/${t.i}/proxy` : null;
   if (t.m !== "rt" && t.m !== "rp") return null;

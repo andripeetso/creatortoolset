@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import type { Sound } from "../../../contracts/library";
+import type { Blur, Sound } from "../../../contracts/library";
 import type { SaveAfter } from "../../library/routes";
 import { probe } from "../../library/media/probe";
 import { makeThumb } from "../../library/media/thumb";
@@ -32,6 +32,10 @@ export interface LibrarySaveInput {
   footage: boolean;
   sound?: Sound;
   sources: string[];
+  /** the new clip's blur answer (saveToLibrary's): a chat's file is kept as filmed */
+  blur?: Blur;
+  /** a blurred render of the original with this full SHA-256 (saveToLibrary's): indexed as that clip's version */
+  blurredOf?: string;
   /** what runs once it is there */
   after?: SaveAfter;
 }
@@ -96,7 +100,7 @@ taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
     if (!folder || r.folder !== folder.id) throw new Error("Not the folder this save was given");
     const d = libraryDb();
     const collectionId = t.input.sound ? soundFolder(d, t.input.lib, t.input.sound, t.actor) : undefined;
-    const done = await indexOnMac(t.input.lib, t.actor, { ...x, device, folder: folder.id, ...(collectionId ? { collectionId } : {}) });
+    const done = await indexOnMac(t.input.lib, t.actor, { ...x, device, folder: folder.id, ...(collectionId ? { collectionId } : {}), ...(t.input.blur ? { blur: t.input.blur } : {}), ...(t.input.blurredOf ? { blurredOf: t.input.blurredOf } : {}) });
     if ("versionId" in done) fileSaved(d, done.assetId, done.versionId, t.actor, t.input);
     await rm(t.input.staged, { force: true });
     const asset = "assetId" in done ? done.assetId : "duplicateOf" in done ? done.duplicateOf : null;

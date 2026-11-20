@@ -36,7 +36,6 @@ type Settings = {
   softness: number;
   size: number;
   color: string;
-  auto: boolean;
 };
 /** plugin.ts GET /auto */
 type Auto = { can: boolean; why?: string; failed: { versionId: string; title: string; error: string }[] };
@@ -352,24 +351,18 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
 }
 
 /**
- * "New Media Library files": its switch, which cannot be moved where no computer of this account can cover them (the
- * description then says why; while it is on it can always be turned off); and the files it could not cover, each with why
- * and Retry.
+ * New Media Library files marked Blur faces are covered by themselves: nothing shows while that works. Where no computer
+ * of this account can cover them, why; and the files it could not cover, each with why and Retry.
  */
-function AutoRows({ settings, save }: ReturnType<typeof useSettings>) {
+function AutoRows({ settings }: ReturnType<typeof useSettings>) {
   const [auto, setAuto] = useState<Auto | null>(null);
   const load = () => void call<Auto>(`${API}/auto`).then(setAuto, () => setAuto(null));
   useEffect(load, []);
-  if (!settings || !auto) return null;
+  if (!settings || !auto || (auto.can && !auto.failed.length)) return null;
   const retry = (versionId: string) => call(`${API}/auto/retry`, "POST", { versionId }).then(load, (e: Error) => saveFailed(e.message));
-  const can = auto.can || settings.auto;
   return (
     <Card>
-      <Row
-        title="New Media Library files"
-        description={can ? "Adds a covered copy beside each new photo and video." : auto.why}
-        control={<Switch checked={settings.auto} disabled={!can} onCheckedChange={(on) => void save({ ...settings, auto: on })} aria-label="New Media Library files" />}
-      />
+      {!auto.can && <Row title="New Media Library files" description={auto.why} />}
       {auto.failed.map((f) => (
         <Row
           key={f.versionId}

@@ -5,10 +5,12 @@ import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { confirmDialog } from "@/lib/dialogs";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
 import { fmtBytes } from "@/lib/exports";
-import { alikeShots, getAsset, getWhere, listTags, relatedAssets, rerunJobs, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
+import { alikeShots, getAsset, getWhere, listTags, relatedAssets, rerunJobs, setAssetBlur, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { placeLine } from "@/lib/wording";
@@ -37,6 +39,8 @@ type Props = {
   inTrash: boolean;
   /** someone else's library to look at: nothing to edit, move, turn or delete (only the owner changes or deletes footage) */
   readOnly?: boolean;
+  /** this person may turn Blur faces off for a file (LibrarySummary.mayKeepAsFilmed) */
+  mayKeepAsFilmed?: boolean;
   /** where Move to can take the clip: the top level (id null) and the folders, `depth` under their parents */
   moveTo: { id: string | null; name: string; depth: number }[];
   /** true: to the trash; false: back out of it */
@@ -57,7 +61,7 @@ export function ClipPanel(props: Props) {
   return <Panel key={props.asset.id} {...props} />;
 }
 
-function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, moveTo, onTrash, onMove, onSaved, onError, onPrev, onNext }: Props) {
+function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayKeepAsFilmed, moveTo, onTrash, onMove, onSaved, onError, onPrev, onNext }: Props) {
   const media = useRef<(HTMLVideoElement & HTMLAudioElement) | null>(null);
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [reread, setReread] = useState(0);
@@ -181,6 +185,11 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
   const newEdit = () => navigate("/editor?new=1", { state: { pick: [{ versionId: a.versionId, title: a.title }] } });
   // the folders it is in are read again after the move: its Folder line says where it is now
   const move = (id: string | null) => void onMove(id).then(() => setReread((n) => n + 1));
+  // the file's blur answer (contracts Blur): turning it off asks first, turning it on queues the blur
+  const changeBlur = async (on: boolean) => {
+    if (!on && !(await confirmDialog({ title: "Turn off Blur faces?", body: "This file will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" }))) return;
+    await setAssetBlur(libraryId, a.id, on ? "yes" : "no").then(() => setReread((n) => n + 1), (e) => onError(message(e)));
+  };
   // a quarter turn each press: the player, the thumbnail and the strip show it so (api/library/turn.ts)
   const rotate = (by: 90 | 270) => void updateAsset(libraryId, a.id, { turn: ((a.turn ?? 0) + by) % 360 }).then(saved, (e) => onError(message(e)));
 
@@ -291,6 +300,12 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, move
             {copiedPath ? "Copied" : "Copy path"}
           </Button>
         </div>
+      )}
+      {a.blur && !fixed && (a.blur === "no" || mayKeepAsFilmed) && (
+        <label className="flex items-center justify-between gap-2 text-sm">
+          Blur faces
+          <Switch checked={a.blur === "yes"} onCheckedChange={(on) => void changeBlur(on)} />
+        </label>
       )}
       <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
       {placeWord ? (

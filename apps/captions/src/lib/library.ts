@@ -1,5 +1,6 @@
 import { hostsOriginals, hostsProxies, uploadSent } from "@contracts/library";
 import type {
+  Blur,
   TagCount,
   AssetKind,
   AssetCard,
@@ -119,6 +120,9 @@ export const setLibraryStorage = (libraryId: string, input: LibraryStorageInput)
 /** Title, tags (the whole list) or the human description ("" removes it, the AI's shows again). */
 export const updateAsset = (libraryId: string, assetId: string, patch: { title?: string; tags?: string[]; aiTags?: string[]; description?: string; turn?: number }) =>
   send<AssetDetail>(`/api/library/${libraryId}/assets/${assetId}`, "PATCH", patch);
+
+/** A file's blur answer changed later (contracts Blur): yes queues its blur; no only for the owner or an admin. */
+export const setAssetBlur = (libraryId: string, assetId: string, blur: Blur) => send<{ blur: Blur }>(`/api/library/${libraryId}/assets/${assetId}/blur`, "PUT", { blur });
 
 /** The person's own line for one shot of a clip (empty: the AI's shows again). */
 export const updateShot = (libraryId: string, assetId: string, seg: number, text: string) =>
@@ -351,12 +355,12 @@ const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
  * A file the Mac app knows the place of, added where it is (api/library/routes.ts in-place): asked again while the
  * server is still reading it. null when this server or library cannot take it in place: it is uploaded instead.
  */
-async function addInPlace(libraryId: string, where: string, size: number, collectionId?: string): Promise<UploadResult | null> {
+async function addInPlace(libraryId: string, where: string, size: number, collectionId?: string, asFilmed = false): Promise<UploadResult | null> {
   for (let again = false; ; again = true) {
     const r = await fetch(`/api/library/${libraryId}/in-place`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: where, size, collectionId, again }),
+      body: JSON.stringify({ path: where, size, collectionId, again, ...(asFilmed ? { blur: false } : {}) }),
     });
     if (r.status === 202) continue;
     if (r.status === 400 || r.status === 403) return null;
@@ -400,17 +404,18 @@ export async function uploadFile(
   /**
    * `signal`: Cancel; the upload stops, what reached the server is deleted, and it never resumes by itself.
    * `onMac`: the Mac app with a server elsewhere and uploading off: the file is indexed where it is (lib/onMac.ts) and
-   * no byte of it is sent; with no known path it is refused, never uploaded.
+   * no byte of it is sent; with no known path it is refused, never uploaded. `blur`: the library has Blur faces on;
+   * `asFilmed`: the person unticked Blur faces for this import, the file's blur answer is no (contracts Blur).
    */
-  opts: { signal?: AbortSignal; onMac?: boolean; blur?: boolean } = {},
+  opts: { signal?: AbortSignal; onMac?: boolean; blur?: boolean; asFilmed?: boolean } = {},
 ): Promise<UploadResult> {
   const { signal, onMac } = opts;
   const where = knownPath ?? (await pathOnMac(file));
   if (where) {
     onProgress(0, true);
-    const kept = await addInPlace(libraryId, where, file.size, collectionId);
+    const kept = await addInPlace(libraryId, where, file.size, collectionId, opts.asFilmed);
     if (kept) return kept;
-    if (onMac) return indexOnMac(libraryId, file, where, collectionId, signal, opts.blur);
+    if (onMac) return indexOnMac(libraryId, file, where, collectionId, signal, opts.blur && !opts.asFilmed, opts.asFilmed);
     onProgress(0, false);
   }
   if (onMac) throw new NotUploaded("Not added: where it is on this Mac is unknown. Drop it from Finder");
@@ -430,6 +435,7 @@ export async function uploadFile(
       ...(where ? { fromPath: where } : {}),
       ...(fromDevice ? { fromDevice } : {}),
       ...(quick ? { quick, send: true } : {}),
+      ...(opts.asFilmed ? { blur: false } : {}),
     }),
     signal,
   }).then((r) => json<{ id: string; offset: number; chunkSize: number; direct?: { partSize: number; urls: string[] }; sent?: true; assetId?: string; duplicateOf?: string }>(r));

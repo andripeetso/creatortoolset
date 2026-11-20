@@ -150,6 +150,26 @@ describe("applyResult", () => {
   });
 });
 
+describe("a source marked Blur faces with no blurred render yet", () => {
+  it("is not packaged for a computer, and no media of its step is taken, read by the job's version (a sheet too)", async () => {
+    const j = held("v2", "preview");
+    await buildPackage(j, me);
+    const body = (s: string) => Readable.from([Buffer.from(s)]);
+    const sheet = `editor/${EDIT}/previews/v2.sheets/1.jpg`;
+    expect(await acceptUpload(j.id, me.id, sheet, body("jpg"))).toBe(true); // the job's own version, not "1.jpg"
+    expect(await acceptUpload(j.id, me.id, `editor/${EDIT}/previews/v1.mp4`, body("x"))).toBe(false); // another version's preview
+    const mark = (blur: string | null) => libraryDb().prepare("UPDATE assets SET blur = ? WHERE id = 'ast_a1'").run(blur);
+    mark("yes");
+    try {
+      expect(await acceptUpload(j.id, me.id, sheet, body("jpg"))).toBe(false);
+      expect(await acceptUpload(j.id, me.id, `editor/${EDIT}/previews/v2.mp4`, body("video"))).toBe(false);
+      await expect(buildPackage(j, me)).rejects.toThrow("Waiting for blur on Take 1");
+    } finally {
+      mark(null);
+    }
+  });
+});
+
 describe("acceptUpload", () => {
   it("takes only allowed paths of the step it holds, and moves them into place on apply", async () => {
     const j = held("v1", "preview");

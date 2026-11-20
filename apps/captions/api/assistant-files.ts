@@ -13,8 +13,8 @@ import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary, librariesHere, mainSourceFor } from "./library/access";
-import { mayLeave, mayReceive, workspaceLibrary } from "./library/upload-gate";
-import { libraryDb, libraryUpload } from "./library/db";
+import { blurAtIntake, mayReceive } from "./library/upload-gate";
+import { libraryDb, libraryUpload, libraryUploadStored } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { watchAllowed } from "./library/watch";
 import { pluginReceiveFile } from "./lib/plugin";
@@ -303,12 +303,6 @@ export async function useFile(
   if (sound && to !== "library") throw new Error("A song or a sound effect goes to the Media Library.");
   const file = fileOf(user.username, id);
   const title = (name?.trim() || meta.name).slice(0, 120);
-  // Blur faces: a dropped file is not known to be blurred, so it becomes no Video Note or Caption Studio project (each keeps
-  // and shows it); the library and Review ask the same rule in their own way (saveToLibrary, addVersion)
-  if (to === "notes" || to === "captions") {
-    const left = mayLeave(await workspaceLibrary(user.username, await currentWorkspaceId(user)), {});
-    if (!left.ok) throw new Error(left.body.message);
-  }
   if (to === "notes") {
     const made = await notesFromFile(file, title, meta.mime, user);
     return { to, id: made.id, name: title, href: `/video-notes/${made.id}` };
@@ -325,10 +319,13 @@ export async function useFile(
     await ensureLibrary(user.username);
     // the library saveToLibrary would pick, asked first: a chat file is a person's original, as on the library's own upload
     const lib = (await librariesHere(user.username))[0]?.id;
-    // under Upload none it goes to their computer instead (saveToLibrary): nothing is refused for it
-    const gate = lib && !hostsNone(libraryUpload(lib)) ? mayReceive("original", { id: lib }, "person") : null;
+    // a file dropped in a chat is kept as filmed (owner, 2026-11-20): marked no, it plays as filmed and nothing blurs it.
+    // Only the owner or an admin keeps a file as filmed: a member's drop is marked yes (blurAtIntake)
+    const blur = lib ? blurAtIntake(user.username, lib, false) : undefined;
+    // Under Upload none it goes to their computer instead (saveToLibrary): nothing is refused for it
+    const gate = lib && !hostsNone(blur === "no" ? libraryUploadStored(lib) : libraryUpload(lib)) ? mayReceive("original", { id: lib, ...(blur ? { blur } : {}) }, "person") : null;
     if (gate && !gate.ok) throw new Error(gate.body.message);
-    const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound, importName ? { importName } : {});
+    const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound, { ...(blur ? { blur } : {}), ...(importName ? { importName } : {}) });
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
     // id: the save's own, which names the chat's card for it (library-save:<id>): it ends when the file lands, or is dropped

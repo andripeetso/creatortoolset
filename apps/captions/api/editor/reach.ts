@@ -8,7 +8,7 @@ import { mayClaim, readBalance, type WorkerSeen } from "../lib/balance";
 import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
 import { folderFor, hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
-import { libraryDb, libraryUpload } from "../library/db";
+import { libraryDb, libraryUpload, playOf } from "../library/db";
 import { mayLeave } from "../library/upload-gate";
 import { triesOn } from "../library/places";
 import { needsProxy } from "../library/media/proxy";
@@ -40,6 +40,8 @@ export interface FileRow {
   library_id?: string;
   /** the version's probe (JSON), when known: a file light enough to need no proxy is its own light copy */
   probe?: string | null;
+  /** the version read in its place, whose file this row is: its blurred render (db.ts playOf); none: itself */
+  play?: string;
 }
 
 /**
@@ -48,7 +50,7 @@ export interface FileRow {
  */
 export function lightKey(r: FileRow): string | null {
   // Blur faces: a held copy of a clip not blurred (from before it was on) goes to no computer
-  if (r.library_id && !mayLeave(r.library_id, { versionId: r.id }).ok) return null;
+  if (r.library_id && !mayLeave(r.library_id, { versionId: r.play ?? r.id }).ok) return null;
   if (r.proxy) return r.proxy;
   if (r.source_key.startsWith("mac:") || !r.probe) return null;
   try {
@@ -70,7 +72,7 @@ export function fileFor(r: FileRow, host: string, folders: StorageFolder[], here
   }
   // a file on a computer: the first path this one tries (its own place, its root on this computer's disks, a shared
   // folder, where it was indexed: library/places.ts placesFor)
-  const first = triesOn(r, host, folders)[0];
+  const first = triesOn({ ...r, id: r.play ?? r.id }, host, folders)[0];
   if (first) return { path: first };
   // else the server's proxy; an original the server holds is never downloaded to analyse or cut
   return lightKey(r) ? { copy: "proxy" } : null;
@@ -97,13 +99,21 @@ export function editFiles(editId: string, more: string[] = []): FileRow[] {
   if (!e) return [];
   const ids = [...new Set([...e.sources, ...(typeof e.song === "string" ? [e.song] : []), ...more])];
   if (!ids.length) return [];
-  return libraryDb()
+  // a file marked Blur faces is read as its blurred render, under its own id (the editor source rule, db.ts playOf); an
+  // original and its blurred render may both be sources, each keeps its row
+  const plays = [...new Set(ids.map(playOf))];
+  const rows = libraryDb()
     .prepare(
       `SELECT v.id, v.source_key, v.source_path, v.mac_path, v.mac_device, v.probe, a.library_id,
          (SELECT storage_key FROM derivatives WHERE version_id = v.id AND kind = 'proxy') AS proxy
-       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (${ids.map(() => "?").join(", ")})`,
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (${plays.map(() => "?").join(", ")})`,
     )
-    .all(...ids) as unknown as FileRow[];
+    .all(...plays) as unknown as FileRow[];
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.flatMap((id) => {
+    const r = byId.get(playOf(id));
+    return r ? [r.id === id ? r : { ...r, id, play: r.id }] : [];
+  });
 }
 
 /** The files a step reads: the edit's sources and song, and for a version's step its draft's other sources (B-roll). */
@@ -146,7 +156,7 @@ export function heldCopy(device: string, jobId: number, versionId: string, origi
   const job = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(jobId, device) as Pick<JobRow, "version_id"> | undefined;
   const r = job && jobFiles(job).find((f) => f.id === versionId);
   if (!r) return null;
-  if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && hostsOriginals(libraryUpload(r.library_id)) && mayLeave(r.library_id, { versionId }).ok) return r.source_key;
+  if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && hostsOriginals(libraryUpload(r.library_id)) && mayLeave(r.library_id, { versionId: r.play ?? versionId }).ok) return r.source_key;
   return lightKey(r);
 }
 

@@ -43,7 +43,7 @@ const { createUser, newApiKey } = await import("../users");
 const { workspaceScope } = await import("../lib/workshop/workspace");
 const { mainSourceFor } = await import("./access");
 const { mainSource } = await import("./sources");
-const { libraryDb } = await import("./db");
+const { fileBlur, libraryDb } = await import("./db");
 const { saveToLibrary } = await import("./routes");
 const { saveMyKey } = await import("../my-keys");
 const { useFile } = await import("../assistant-files");
@@ -89,12 +89,13 @@ describe("the Media Library's main source, per workspace", () => {
 
   it("Face Blur covers a file in another workspace and saves the covered copy into that workspace's library; never in the plug-in's", async () => {
     expect((await req(B, "/api/plugins/blur-faces/workspaces", { method: "PUT", body: { only: [A, B] } })).status).toBe(200);
-    for (const ws of [A, B]) expect((await req(ws, "/api/x/blur-faces/settings", { method: "PUT", body: { mode: "all", who: "Every child's face", look: "blur", auto: true } })).status).toBe(200);
+    for (const ws of [A, B]) expect((await req(ws, "/api/x/blur-faces/settings", { method: "PUT", body: { mode: "all", who: "Every child's face", look: "blur" } })).status).toBe(200);
     const added = async (lib: string) => {
       const file = path.join(dir, `in-${randomUUID()}.jpg`);
       writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, Math.floor(Math.random() * 255), Math.floor(Math.random() * 255)]));
       const r = await saveToLibrary("ana", file, "Tiny take.jpg", [], lib, true);
       if (!r || !("versionId" in r)) throw new Error(`not added: ${JSON.stringify(r)}`);
+      d.prepare("UPDATE assets SET blur = 'yes' WHERE current_version_id = ?").run(r.versionId); // marked Blur faces: Face Blur covers it
       return r.versionId;
     };
     expect(await inWs(A, () => autoCan("ana"))).toEqual({ can: false, why: "Not available while this workspace's Media Library comes from a plug-in." });
@@ -108,7 +109,9 @@ describe("the Media Library's main source, per workspace", () => {
     const copy = path.join(dir, "covered.jpg");
     writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 7, 7]));
     expect(await autoJobs.file("mac-1", Number(job.id), copy, "covered.jpg")).toEqual({ reply: { ok: true } });
-    const made = d.prepare("SELECT a.library_id FROM derived_from f JOIN asset_versions v ON v.id = f.version_id JOIN assets a ON a.id = v.asset_id WHERE f.source_version_id = ?").get(v) as { library_id: string };
+    // the covered copy is the original's blurred render: a version of its clip, so in that workspace's library
+    const blurred = fileBlur(v)?.blurredVersionId;
+    const made = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(blurred ?? "") as { library_id: string };
     expect(made.library_id).toBe("lib_b");
     expect(autoJobs.claim(mac)).toBeNull(); // nothing from the plug-in's workspace was queued
   });

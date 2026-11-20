@@ -49,7 +49,7 @@ async function render(el: ReactNode) {
 }
 
 const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: null };
-const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", settings: SETTINGS };
+const library: LibrarySummary = { id: "lib_1", name: "Tiny Acrobatics", storage: "local", mayKeepAsFilmed: true, settings: SETTINGS };
 const buttons = (text: string) => [...(host?.querySelectorAll("button") ?? [])].filter((b) => b.textContent?.trim() === text);
 
 describe("EffortCost: About $N on the Effort row", () => {

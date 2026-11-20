@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import { link, mkdir, rename, symlink } from "node:fs/promises";
 import path from "node:path";
 import type { TimelineSource } from "../../contracts/editor";
-import { blobs, libraryDb } from "../library/db";
-import { mayServe, type Received } from "../library/upload-gate";
+import { blobs, fileBlur, libraryDb, playOf } from "../library/db";
+import { mayServe, refuse, type Received } from "../library/upload-gate";
 import { OWN } from "../library/places";
 import { onComputer, pathOf } from "../work/on-computer";
 import { editDir, type EditMeta } from "./store";
@@ -35,6 +35,8 @@ export const LINK_TTL_S = 86_400;
 
 interface Row {
   id: string;
+  /** the version whose file this row is: a file marked Blur faces names its blurred render (db.ts playOf); none: itself */
+  play?: string;
   library_id: string;
   title: string;
   source_key: string;
@@ -131,10 +133,24 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
     `SELECT v.id, a.title, a.library_id, v.source_key, v.source_path, v.mac_path, v.mime, l.storage_kind FROM asset_versions v
      JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?`,
   );
-  // the edit's footage first, in the order picked, so its names never change; then the clips only the cut names
-  const rows = [...new Set([...edit.sources, ...keys])].map((id) => q.get(id) as Row | undefined).filter((r): r is Row => !!r);
-  const names = namesOf(rows);
   const out: MediaPaths = { files: {}, downloads: [], own: [] };
+  const ids = [...new Set([...edit.sources, ...keys])];
+  // a file marked Blur faces with no blurred render yet: no path to it is named, nothing of it goes (the editor source rule)
+  const waiting = ids.find((id) => {
+    const f = fileBlur(id);
+    return f?.blur === "yes" && !f.blurredVersionId;
+  });
+  if (waiting) {
+    out.refused = refuse(`Waiting for blur on ${(q.get(waiting) as Row | undefined)?.title ?? "a clip"}`);
+    return out;
+  }
+  // the edit's footage first, in the order picked, so its names never change; then the clips only the cut names. A file
+  // marked Blur faces is named by its blurred render, under its own id
+  const rows = ids.flatMap((id) => {
+    const r = q.get(playOf(id)) as Row | undefined;
+    return r ? [r.id === id ? r : { ...r, id, play: r.id }] : [];
+  });
+  const names = namesOf(rows);
   for (const k of keys) {
     const file = sources?.[k]?.file;
     if (!file) continue;
@@ -148,7 +164,7 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
     const name = names[r.id]!;
     // a bucket or Bunny zone that signs links: the worker downloads the file itself
     // a file indexed on a Mac: the timeline names it where it is there, for the editor on that Mac
-    const there = device ? (own.get(device, r.id) as { path: string | null } | undefined)?.path : null;
+    const there = device ? (own.get(device, r.play ?? r.id) as { path: string | null } | undefined)?.path : null;
     if (there || r.mac_path) {
       out.files[r.id] = there || r.mac_path!;
       continue;
@@ -156,7 +172,7 @@ export async function mediaPaths(edit: EditMeta, keys: string[], sources?: Recor
     // under Upload none (or a setting that keeps no original) the server hands out no copy of it, except to the owner's
     // computer while no computer holds it (a phone's upload, held): a path the person's computer keeps (source_path,
     // indexed in place) is only named, never sent; anything else is refused
-    const gate = await mayServe({ id: r.library_id, versionId: r.id }, "original", { toComputer: true });
+    const gate = await mayServe({ id: r.library_id, versionId: r.play ?? r.id }, "original", { toComputer: true });
     if (!gate.ok) {
       if (r.source_path) out.files[r.id] = r.source_path;
       else out.refused ??= gate;

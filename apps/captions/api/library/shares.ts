@@ -7,6 +7,7 @@ import { env } from "../lib/env";
 import type { AssetCard, ShareCreated, ShareInput, ShareRow, SharedItem, SharedView } from "../../contracts/library";
 import { libraryRole } from "./access";
 import { libraryDb } from "./db";
+import { mayGoPublic } from "./upload-gate";
 import { savedQuery } from "./collections";
 import { mediaFile, serveBlob, serveGate, viewerOf, visibleCards } from "./routes";
 import { buildAssetQuery, CARD, MAX_LIMIT, pageOf, toCard, type CardRow } from "./query";
@@ -94,7 +95,8 @@ function shareName(s: ShareDb): string {
  * are asked on every view, so a link stops showing what its creator lost access to).
  */
 async function sharedCards(s: ShareDb): Promise<AssetCard[]> {
-  return visibleCards(viewerOf(s.created_by, s.library_id), s.library_id, targetCards(s.library_id, s.target_kind, s.target_id));
+  // a link is public: under Blur faces it holds only blurred renders, never a file kept as filmed (upload-gate.ts mayGoPublic)
+  return (await visibleCards(viewerOf(s.created_by, s.library_id), s.library_id, targetCards(s.library_id, s.target_kind, s.target_id))).filter((card) => mayGoPublic(card.versionId).ok);
 }
 
 /**
@@ -309,6 +311,8 @@ publicShareApp.get("/s/:token/media/:versionId/:kind", async (c) => {
   if (kind === "source" && s.scope !== "download") return notFound(c);
   // ponytail: the link's items are read per request; a direct membership query when a collection grows large
   if (!(await sharedCards(s)).some((card) => card.versionId === versionId)) return notFound(c);
+  const pub = mayGoPublic(versionId);
+  if (!pub.ok) return c.json(pub.body, pub.status);
   const file = mediaFile(versionId, kind);
   if (!file) return notFound(c);
   if (!file.key) return c.json({ error: "Not ready", code: "conflict" }, 409);
