@@ -115,6 +115,13 @@ export interface AssistantMedia {
   poster?: string;
   href: string;
   duration?: number;
+  /**
+   * A cut waiting in Review (an editor's ready line, workEnded `media`): under the player the app's own buttons, never words
+   * sent to the AI. Approve (left) is POST /api/review/assets/<asset>/approval { status: "approved", version: n }; Request
+   * changes (right) puts the cursor in the chat box, and the answer goes to the editor as notes; the title opens `href`.
+   * `next`: what approving starts ("B-roll", "cards"), so Approve reads "Approve · add B-roll"; absent, plain Approve.
+   */
+  cut?: { asset: string; n: number; next?: string };
 }
 
 /**

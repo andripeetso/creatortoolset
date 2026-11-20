@@ -826,8 +826,8 @@ async function noteEnded(meta: Meta): Promise<void> {
       meta.owner,
       `notes:${meta.id}`,
       meta.status === "ready"
-        ? { status: "done", detail: "Ready", say: `“${meta.name}” is ready.`, choices: ["Sum it up", "Show me"] }
-        : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}`, choices: ["Show me"] },
+        ? { status: "done", detail: "Ready", say: `“${meta.name}” is ready.`, choices: ["Sum it up"] }
+        : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}` },
     );
   }
   if (active.get(meta.id) === meta) active.delete(meta.id);

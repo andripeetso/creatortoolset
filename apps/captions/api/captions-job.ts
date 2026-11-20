@@ -230,9 +230,9 @@ function end(projectId: string, outcome: { lines: number; note?: string } | unkn
   if (!done) console.warn(`[captions] ${projectId} was not captioned: ${why}`);
   const ended = done
     ? done.lines
-      ? { status: "done" as const, detail: done.note ?? "Captions are ready", say: `The captions for “${name}” are ready.`, choices: ["Show me", "What do they say?"] }
-      : { status: "done" as const, detail: "No words were heard", say: `No words were heard in “${name}”, so it has no captions.`, choices: ["Show me"] }
-    : { status: "failed" as const, detail: why, say: `The captions for “${name}” were not made: ${why}.`, choices: ["Show me"] };
+      ? { status: "done" as const, detail: done.note ?? "Captions are ready", say: `The captions for “${name}” are ready.`, choices: ["What do they say?"] }
+      : { status: "done" as const, detail: "No words were heard", say: `No words were heard in “${name}”, so it has no captions.` }
+    : { status: "failed" as const, detail: why, say: `The captions for “${name}” were not made: ${why}.` };
   // first no longer "being captioned", then told: a page that has the project open reads it again on this notice,
   // takes the captions and offers Transcribe again (also when none were made)
   captioning.delete(projectId);

@@ -225,7 +225,7 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     expect(await card()).toMatchObject({ status: "done", detail: "Captions are ready", href: `/captions?project=${sent.id}` });
     await end();
     const said = (await viewOf(cookie)).messages.at(-1)!;
-    expect([said.role, said.text, said.choices]).toEqual(["assistant", "The captions for “Tiny tumbles” are ready.", ["Show me", "What do they say?"]]);
+    expect([said.role, said.text, said.choices]).toEqual(["assistant", "The captions for “Tiny tumbles” are ready.", ["What do they say?"]]);
 
     // "What do they say?": each line with its start time, and the link
     const next = await turn(cookie, "What do they say?");
@@ -341,7 +341,7 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     await broken.end();
     await until(async () => expect(await broken.card()).toEqual({ id: `captions:${broken.sent.id}`, kind: "captions", title: "Broken", href: broken.sent.href, status: "failed", detail: "This file could not be read as a video" }));
     const said = (await viewOf(cookie)).messages.at(-1)!;
-    expect([said.text, said.choices]).toEqual(["The captions for “Broken” were not made: This file could not be read as a video.", ["Show me"]]);
+    expect([said.text, said.choices]).toEqual(["The captions for “Broken” were not made: This file could not be read as a video.", undefined]);
     expect(engine.cloud).toEqual([]);
     expect((await projectOf(cookie, broken.sent.id)).captioning).toBeUndefined();
   });
@@ -357,7 +357,7 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     const refused = await captionThis(cookie, "Loud");
     await refused.end();
     await until(async () => expect(await refused.card()).toMatchObject({ status: "failed", detail: "Deepgram 500: quota" }));
-    expect(await lastLine()).toEqual(["The captions for “Loud” were not made: Deepgram 500: quota.", ["Show me"]]);
+    expect(await lastLine()).toEqual(["The captions for “Loud” were not made: Deepgram 500: quota.", undefined]);
     expect((await projectOf(cookie, refused.sent.id)).revision).toBe(0);
     // nothing was saved, and the open page is told all the same: it offers Transcribe again
     await until(async () => expect(noticesSince(heard).at(-1)?.captioning.includes(refused.sent.id)).toBe(false));
@@ -372,7 +372,7 @@ describe("a video dropped in the chat and sent to Caption Studio", () => {
     const quiet = await captionThis(cookie, "Quiet");
     await quiet.end();
     await until(async () => expect(await quiet.card()).toMatchObject({ status: "done", detail: "No words were heard" }));
-    expect(await lastLine()).toEqual(["No words were heard in “Quiet”, so it has no captions.", ["Show me"]]);
+    expect(await lastLine()).toEqual(["No words were heard in “Quiet”, so it has no captions.", undefined]);
     const p = await projectOf(cookie, quiet.sent.id);
     expect(p.clips[0]).toMatchObject({ words: [], cues: [], originalWords: [] });
     expect(p.clips[0]!.peaks).toHaveLength(500);
