@@ -145,11 +145,10 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
           devices={devices}
           serverDisks={store.data.serverDisks}
           here={store.data.here}
-          onChanged={() => {
-            refresh();
-            // a Project files or Final exports folder picked by itself: these are no longer the default ones, so not locked
-            if (adding !== "footage" && defaults) void setDefaults(false);
-          }}
+          workspace={workspace}
+          onChanged={refresh}
+          // a Project files or Final exports folder picked by itself: these are no longer the default ones, so not locked
+          onAdded={() => adding !== "footage" && defaults && void setDefaults(false)}
         />
       )}
     </Card>

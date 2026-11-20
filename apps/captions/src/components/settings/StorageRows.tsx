@@ -467,8 +467,10 @@ const NEW_MAC = "this-mac:new";
  * A folder the person already has, as a Media folder, on a drive of one of the account's computers. With two or more
  * workspaces the first field is the workspace it is for: the one Settings shows, else the window's.
  */
-export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, w, onChanged }: {
-  open: boolean; onOpenChange: (o: boolean) => void; role: AddFolderBody["role"]; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; w?: SettingsWorkspace; onChanged: () => void;
+export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks, w, workspace: forWorkspace, onChanged, onAdded }: {
+  open: boolean; onOpenChange: (o: boolean) => void; role: AddFolderBody["role"]; devices: Computer[]; serverDisks?: Disk[]; here?: string[]; w?: SettingsWorkspace;
+  /** the workspace the folder is for, when the page names one (Library settings' own) */ workspace?: string | null;
+  onChanged: () => void; /** only after a folder was added (onChanged also runs while a network share is looked at) */ onAdded?: () => void;
 }) {
   // a folder added joins the Media Library at once (11-19: no dialog; its row says what indexing it takes, and the
   // library's monthly budget guards the cost). `here` (the server's own computers) is kept for callers, not read now
@@ -491,7 +493,7 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
   const hosts = [...(unpaired ? [{ id: NEW_MAC, name: mac.computer ?? "This Mac" }] : []), ...devices];
   const host = hosts.some((d) => d.id === pickHost) ? pickHost : hosts[0]?.id ?? "";
   const known = (id?: string | null) => (id && w?.workspaces.some((p) => p.id === id) ? id : null);
-  const workspace = known(pickWorkspace) ?? known(w?.id) ?? known(windowIn) ?? w?.workspaces[0]?.id ?? null;
+  const workspace = forWorkspace ?? known(pickWorkspace) ?? known(w?.id) ?? known(windowIn) ?? w?.workspaces[0]?.id ?? null;
 
   const submit = async () => {
     setBusy(true);
@@ -505,6 +507,7 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
         foldersChanged();
         onOpenChange(false);
         onChanged();
+        onAdded?.();
       } catch (x) {
         setErr(msg(x));
       }
