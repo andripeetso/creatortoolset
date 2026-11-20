@@ -24,6 +24,26 @@ const shot = (key: string, patch: Partial<ItemEdit>): ItemEdit[] => mergeEdit([]
 const hole = { id: "h1", track: "V2", rec: 100, len: 50, look: "card" as const };
 
 describe("edit history", () => {
+  it("names steps for a history list; undo and redo keep each name on its value; unnamed steps add none", () => {
+    expect(histChange(freshHist(0), (n) => n + 1).labels).toBeUndefined();
+    let h = histChange(freshHist(0), (n) => n + 1, "Blade");
+    h = histChange(h, (n) => n + 1);
+    h = histChange(h, (n) => n + 1, "Move");
+    expect([...h.past, h.now]).toEqual([0, 1, 2, 3]);
+    expect(h.labels).toEqual([undefined, "Blade", undefined, "Move"]);
+    h = histUndo(histUndo(h));
+    expect(h.now).toBe(1);
+    expect(h.labels).toEqual([undefined, "Blade", undefined, "Move"]);
+    h = histChange(h, (n) => n + 10, "Trim");
+    expect([...h.past, h.now, ...h.future]).toEqual([0, 1, 11]);
+    expect(h.labels).toEqual([undefined, "Blade", "Trim"]);
+    for (let i = 0; i < 120; i++) h = histChange(h, (n) => n + 1, `step ${i}`);
+    expect(h.past).toHaveLength(100);
+    expect(h.labels).toHaveLength(101);
+    expect(h.labels!.at(-1)).toBe("step 119");
+    expect(h.labels![0]).toBe("step 19");
+  });
+
   it("makes one step per real change, and none for a no-op", () => {
     const h = histChange(freshHist([] as ItemEdit[]), (l) => mergeEdit(l, "a", "Shot a", { zoom: 1.2 }));
     expect(h.past).toHaveLength(1);

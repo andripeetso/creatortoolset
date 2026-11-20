@@ -16,21 +16,27 @@ import type { ReviewSentEntry } from "@/lib/plugin";
 export type Pending = { edits: ItemEdit[]; hole: Placeholder | null };
 export const EMPTY_PENDING: Pending = { edits: [], hole: null };
 
-export type Hist<T> = { past: T[]; now: T; future: T[] };
+/** `labels`: what made each value, for a history list, by place in past…, now, future… (undo and redo keep the places);
+ *  absent until a step is named. */
+export type Hist<T> = { past: T[]; now: T; future: T[]; labels?: (string | undefined)[] };
 export const freshHist = <T>(now: T): Hist<T> => ({ past: [], now, future: [] });
 
-/** One step: `fn` gives the new value; the same value back (nothing changed) makes no step. */
-export function histChange<T>(h: Hist<T>, fn: (t: T) => T): Hist<T> {
+/** One step: `fn` gives the new value; the same value back (nothing changed) makes no step. `label` names it. */
+export function histChange<T>(h: Hist<T>, fn: (t: T) => T, label?: string): Hist<T> {
   const now = fn(h.now);
-  return now === h.now ? h : { past: [...h.past.slice(-99), h.now], now, future: [] };
+  if (now === h.now) return h;
+  const past = [...h.past.slice(-99), h.now];
+  if (label === undefined && !h.labels) return { past, now, future: [] };
+  const was = Array.from({ length: h.past.length + 1 }, (_, i) => h.labels?.[i]);
+  return { past, now, future: [], labels: [...was.slice(-past.length), label] };
 }
 
 export function histUndo<T>(h: Hist<T>): Hist<T> {
-  return h.past.length ? { past: h.past.slice(0, -1), now: h.past.at(-1)!, future: [h.now, ...h.future] } : h;
+  return h.past.length ? { ...h, past: h.past.slice(0, -1), now: h.past.at(-1)!, future: [h.now, ...h.future] } : h;
 }
 
 export function histRedo<T>(h: Hist<T>): Hist<T> {
-  return h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h;
+  return h.future.length ? { ...h, past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h;
 }
 
 /** A placeholder as a comment carries it (no id: the panel gives one). Null when the data is not one. */
