@@ -157,7 +157,7 @@ type Drag = {
 
 export const NleTracks = memo(function NleTracks({
   tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onLowerUnderVoice, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
-  trans = null, onTrans, onMarker, lane,
+  trans = null, onTrans, onMarker, lane, cached,
 }: {
   tl: NleTimeline;
   /** the playhead at rest (a pause, a seek): a new one draws the timeline again */
@@ -199,6 +199,8 @@ export const NleTracks = memo(function NleTracks({
   onMarker?: (frame: number) => void;
   /** a lane under the video tracks: its head, and what is on it at `pps` pixels a second */
   lane?: { head: ReactNode; body: (pps: number) => ReactNode };
+  /** the render bar: the V1 ranges [rec, len] a render takes from the render cache (lib/nle/cache.ts), green under the ruler */
+  cached?: readonly (readonly [number, number])[];
 }) {
   const gate = useContext(NleGate);
   const fps = tl.timeline.fps;
@@ -682,6 +684,9 @@ export const NleTracks = memo(function NleTracks({
           {marks[0] !== null && marks[1] !== null && (
             <div className="pointer-events-none absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
           )}
+          {cached?.map(([r, l]) => (
+            <div key={r} data-cached={r} className="pointer-events-none absolute bottom-0 h-0.5 bg-emerald-500" style={{ left: (r / fps) * pps, width: (l / fps) * pps }} />
+          ))}
           {markersOf(tl).map((m) => (
             <div key={m.frame} data-marker={m.frame} role="button" aria-label={`Marker ${m.name}`} title={[m.name, m.note].filter(Boolean).join("\n")}
               className="absolute bottom-0 z-[11] h-3 cursor-pointer" style={{ left: (m.frame / fps) * pps - 5, width: Math.max(10, ((m.dur ?? 1) / fps) * pps + 5) }}

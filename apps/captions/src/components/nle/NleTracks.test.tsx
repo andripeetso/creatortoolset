@@ -342,3 +342,21 @@ describe("keyframes and the volume line on the timeline", () => {
     act(() => root.unmount());
   });
 });
+
+describe("the render bar", () => {
+  it("is green under the ruler where the cache holds V1, each range at its place and length", async () => {
+    const { host, root } = await mount({ cached: [[0, 100], [200, 50]] });
+    const bars = [...host.querySelectorAll("[data-cached]")] as HTMLElement[];
+    expect(bars.map((b) => b.dataset.cached)).toEqual(["0", "200"]);
+    const [a, b] = bars.map((x) => [parseFloat(x.style.left), parseFloat(x.style.width)]);
+    expect(b![0]).toBeCloseTo(a![0] + 2 * a![1]);   // 200 frames in = twice the first's 100
+    expect(b![1]).toBeCloseTo(a![1] / 2);
+    act(() => root.unmount());
+  });
+
+  it("is not drawn with nothing cached", async () => {
+    const { host, root } = await mount();
+    expect(host.querySelector("[data-cached]")).toBeNull();
+    act(() => root.unmount());
+  });
+});

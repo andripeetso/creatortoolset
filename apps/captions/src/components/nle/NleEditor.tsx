@@ -11,6 +11,7 @@ import { COMMANDS, runAll, stateView, type NleRun, type NleState } from "@/lib/n
 import { nlePending, nleReply, type NleAsk } from "@/lib/editor";
 import { clientId, onTopic } from "@/lib/sync";
 import { dragging, type Dragged } from "@/lib/nle/drag";
+import { stillCached } from "@/lib/nle/cache";
 import { addAutosave, AUTOSAVE_MS, fingerprint, LIVE_MS, markSaved, readAutosaves, sealAutosave, toRestore, type Autosave } from "@/lib/nle/autosave";
 import { cn } from "@/lib/utils";
 import { chordLabel, chordsOf, commandOfKey } from "@/lib/nle/keys";
@@ -153,7 +154,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered, cached }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -185,6 +186,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   /** the render of the timeline as saved (its texts and effects drawn), played in the Viewer as Rendered while nothing is
    *  unsaved; `first`: the Viewer opens on it */
   rendered?: { url: string; first?: boolean } | null;
+  /** the V1 ranges [rec, len] of the timeline as last saved that the render cache holds: the render bar under the ruler */
+  cached?: readonly (readonly [number, number])[];
 }) {
   const [first] = useState(() => openOf(initial, resetKey));
   // the timeline open now (its key and fingerprint), for keeping its unsaved edits
@@ -315,6 +318,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const tl = hist.now;
   const sel = selected.filter((k) => find(tl, k));
   const shown = live ?? tl;
+  const cachedNow = useMemo(() => stillCached(shown, saved, cached), [shown, saved, cached]);
   const fps = tl.timeline.fps;
   const end = lengthOf(shown) / fps;
   // the cut's last frame: playing stops on it and End goes to it, so the viewer ends on a picture, never on past-the-end
@@ -824,7 +828,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => view === "source" && show("timeline")}>
           <Timeline tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
-            trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit}
+            trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit} cached={cachedNow}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}
