@@ -10,7 +10,7 @@ struct ChatRow: Identifiable, Hashable {
     let route: AppRoute
     var title: String
     /// The line under the title: what happened last, or what it waits for.
-    let detail: String
+    var detail: String
     var detailIsError = false
     var status: RowStatus
     /// Its newest activity: the order inside a group.
@@ -35,6 +35,8 @@ struct ChatRow: Identifiable, Hashable {
     var snoozedUntil: Date?
     /// Settled on any device (folded only while it neither asks nor works).
     var settled = false
+    /// The Review video its newest cut waits in: a tap opens it there, at the newest version.
+    var review: String?
 
     /// Where a row sits: with the ones in play, under "Working" while a job runs, under "Done" when it is over.
     enum Shelf: String { case active, working, done }
@@ -56,6 +58,15 @@ struct ReviewListItem: Decodable {
     var source: String?
     /// The picture of its newest version that is ready.
     var picture: String?
+    /// Its newest version: its number and length in seconds ("v2 is ready · 1:30").
+    var newest: Int?
+    var duration: Double?
+
+    /// "v2 is ready · 1:30": the line of a video that waits for review.
+    var ready: String {
+        let n = newest ?? max(versions, 1)
+        return "v\(n) is ready" + ((duration ?? 0) > 0 ? " · \(clock(duration ?? 0))" : "")
+    }
 
     private enum Keys: String, CodingKey { case id, name, approval, versions, newComments, updatedAt, createdAt }
     private struct Approval: Decodable { var status: String? }
@@ -65,10 +76,11 @@ struct ReviewListItem: Decodable {
         var status: String?
         var removed: Bool?
         var createdAt: Double?
+        var duration: Double?
         var source: Source?
         struct Source: Decodable { var href: String? }
 
-        private enum Keys: String, CodingKey { case n, status, removed, createdAt, source }
+        private enum Keys: String, CodingKey { case n, status, removed, createdAt, duration, source }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: Keys.self)
@@ -76,6 +88,7 @@ struct ReviewListItem: Decodable {
             status = try? c.decode(String.self, forKey: .status)
             removed = try? c.decode(Bool.self, forKey: .removed)
             createdAt = try? c.decode(Double.self, forKey: .createdAt)
+            duration = try? c.decode(Double.self, forKey: .duration)
             source = try? c.decode(Source.self, forKey: .source)
         }
     }
@@ -88,6 +101,8 @@ struct ReviewListItem: Decodable {
         let all = (try? c.decode([Version].self, forKey: .versions)) ?? []
         versions = all.count
         source = all.last?.source?.href
+        newest = all.last?.n
+        duration = all.last?.duration
         // the same address Review's own screen asks (`ReviewAsset.media`)
         if let ready = all.last(where: { $0.status == "ready" && $0.removed != true }), let n = ready.n {
             picture = "/api/review/assets/\(id)/v/\(n)/thumb?c=\(Int(ready.createdAt ?? 0))"
@@ -213,9 +228,9 @@ enum ChatList {
 
     /// A Review video's row: Review while it waits for the person, under Done once approved.
     static func row(_ video: ReviewListItem) -> ChatRow {
-        var words = [video.status == "changes" ? "Changes requested" : video.status == "rejected" ? "Rejected" : "V\(max(video.versions, 1))"]
-        if video.newComments > 0 { words.append("\(video.newComments) new comment\(video.newComments == 1 ? "" : "s")") }
         let waits = video.status == "needs_review"
+        var words = [video.status == "changes" ? "Changes requested" : video.status == "rejected" ? "Rejected" : waits ? video.ready : "v\(max(video.versions, 1))"]
+        if video.newComments > 0 { words.append("\(video.newComments) new comment\(video.newComments == 1 ? "" : "s")") }
         let when = date(ms: video.at)
         return ChatRow(id: path(.review(video.id, version: nil)), route: .review(video.id, version: nil), title: video.name,
                        detail: words.joined(separator: " · "), status: waits ? .review : .time(when), at: when,
@@ -234,6 +249,11 @@ enum ChatList {
         let rows = others.map { row in
             var row = row
             row.picture = newest.first { maker($0) == row.id }?.picture ?? row.picture
+            // its cut waits in Review: the row opens the cut there and says which version is ready, not the file's name
+            if row.status == .review, let video = videos.filter({ maker($0) == row.id }).max(by: { $0.at < $1.at }) {
+                row.review = video.id
+                row.detail = video.ready
+            }
             return row
         }
         return rows + videos.filter { maker($0) == nil }.map(row)
@@ -1104,6 +1124,11 @@ struct EditRows: View {
     private func card(_ row: ChatRow) -> some View {
         Button { tap(row) } label: { WorkCard(row: row) }
             .buttonStyle(.plain)
+            .contextMenu {
+                if row.review != nil, case .edit = row.route {
+                    Button("Open project", systemImage: "chevron.right") { AppNavigator.shared.open(row.route) }
+                }
+            }
             .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
@@ -1119,6 +1144,11 @@ struct EditRows: View {
                 return
             default: break
             }
+        }
+        // a cut that waits for review opens in Review at its newest version; Open project is the long press
+        if row.status == .review, let asset = row.review {
+            AppNavigator.shared.open(.review(asset, version: nil))
+            return
         }
         AppNavigator.shared.open(row.route)
     }
