@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, EDIT_STEPS, TRACKS, type EditSlot, type EditStep, type EditSummary, type Timeline, type TrackId, type VersionMark, type VersionPlan } from "../../contracts/editor";
+import { EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, EDIT_STEPS, TRACKS, type EditSlot, type EditStep, type EditSummary, type Timeline, type VersionMark, type VersionPlan } from "../../contracts/editor";
 import { deviceOf } from "../lib/devices";
 import { innerCall, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
@@ -21,11 +21,14 @@ import { wordsOf } from "../library/transcribe";
 import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
 import { statSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
+import { handCheck, refusal } from "../../src/lib/nle/check";
+import { fromNle, toNle } from "../../src/lib/nle/draft";
+import type { NleTimeline } from "../../src/lib/nle/model";
+import { rendersOf } from "./preview";
 import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
 import { cardsApp } from "./cards/routes";
@@ -505,15 +508,57 @@ editorApp.post("/:id/drafts/:name/cut", async (c) => {
       throw e;
     }
     const count = `${edits.length} timeline edit${edits.length === 1 ? "" : "s"}`;
-    // what was changed, so a later chat turn knows (an AI key's cut, a chat's editor_cut, is not the person's own)
-    const by = c.req.header("authorization") && !c.req.header("cookie") ? AI_NOTE : HAND_NOTE;
-    const note = `${by} ${inReview ? "in Review" : "on the timeline"}: ${count}${on} (${describeEdits(edits, base.fps)})`;
-    // the earlier cuts stay with it, the last five in all, so the chat knows every change, not only the newest
-    const isCut = (n: string) => n.startsWith(HAND_NOTE) || n.startsWith(AI_NOTE);
-    let older = d.notes.filter(isCut).length - 4;
-    await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !isCut(n) || --older < 0), note] });
+    await saveCutDraft(c, r, name, d, timeline, `${inReview ? "in Review" : "on the timeline"}: ${count}${on} (${describeEdits(edits, base.fps)})`);
   }
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
+});
+
+/** A cut kept as the draft (the one it replaces kept as a revision), with a note of what changed, so a later chat turn knows. */
+async function saveCutDraft(c: C, r: Loaded, name: string, d: NonNullable<ReturnType<typeof readDraft>>, timeline: Timeline, what: string) {
+  // an AI key's cut (a chat's editor_cut) is not the person's own
+  const by = c.req.header("authorization") && !c.req.header("cookie") ? AI_NOTE : HAND_NOTE;
+  // the earlier cuts stay with it, the last five in all, so the chat knows every change, not only the newest
+  const isCut = (n: string) => n.startsWith(HAND_NOTE) || n.startsWith(AI_NOTE);
+  let older = d.notes.filter(isCut).length - 4;
+  await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !isCut(n) || --older < 0), `${by} ${what}`] });
+}
+
+/**
+ * The editor's whole timeline (src/lib/nle, as it saves it) kept as the draft and rendered, with no AI: judged first
+ * (lib/nle/check.ts; a version this server doesn't render is refused, never saved down), every field it doesn't know
+ * kept. A clip new to the draft must be a Media Library clip in the edit's workspace that the caller sees; its frame
+ * rate, length and size come from the library. Then post-processing, its render, and Review, as /cut.
+ */
+editorApp.put("/:id/drafts/:name/timeline", async (c) => {
+  const r = await load(c, true);
+  const name = c.req.param("name");
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
+  const b = await body(c);
+  const bad = (error: string, code: "invalid" | "conflict" = "invalid") => c.json({ error, code }, code === "invalid" ? 400 : 409);
+  const nle = b.timeline as NleTimeline | undefined;
+  if (!nle || typeof nle !== "object" || typeof nle.tracks !== "object" || typeof nle.sources !== "object" || typeof nle.timeline !== "object") return bad("timeline is the editor's whole timeline");
+  if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return bad("This version is still being made", "conflict");
+  const added = Object.keys(nle.sources).filter((k) => !d.timeline.sources[k]);
+  if (added.length && (await editSources(r.user, added)) !== r.e.workspaceId) return bad("A clip on the timeline isn't in this edit's workspace's Media Library");
+  const db = libraryDb();
+  const sources = { ...nle.sources };
+  for (const k of added) {
+    const row = db.prepare("SELECT a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(k) as { title: string; probe: string | null } | undefined;
+    const probe = row?.probe ? (JSON.parse(row.probe) as ProbeSummary) : null;
+    if (!row || !probe?.duration) return bad(`${row?.title ?? "A clip"} is not ready yet`, "conflict");
+    sources[k] = { ...sources[k], ...sourceOf(k, row.title, probe) };
+  }
+  // what the draft already had that the renders don't draw (a planned edit's speeds) stays; nothing new is added
+  const problems = handCheck({ ...nle, sources }, rendersOf(d.timeline), toNle(d.timeline));
+  if (problems.length) return bad(refusal(problems));
+  const timeline = fromNle({ ...nle, sources });
+  // a draft keeps its five tracks, whatever the editor sent
+  for (const t of TRACKS) timeline.tracks[t] ??= { name: t, items: [] };
+  await saveCutDraft(c, r, name, d, timeline, "on the timeline: the whole timeline saved");
+  if (added.length) await saveEdit({ ...r.e, sources: [...new Set([...r.e.sources, ...added])] });
+  enqueueJob(db, r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
   return c.json(viewFor(r));
 });
 
@@ -538,43 +583,18 @@ editorApp.post("/:id/drafts/:name/duplicate", async (c) => {
 });
 
 /**
- * A Media Library clip put on the draft (AddClip): on `track` from frame `rec`, or the first frame after it that is free
- * there for the whole clip. A picture clip on V1 brings its sound on A1, linked, unless `sound` is false. The clip must be
- * in the edit's workspace and seen by the caller; it joins the edit's footage. The draft it replaces is kept as a revision.
+ * A Media Library clip as the editor lays it on this draft (the bin): its source as the draft would keep it (rate,
+ * length, size from the library) and whether it has sound, so a picture with none brings no voice clip. The clip must be
+ * in the edit's workspace and seen by the caller; 409 while it isn't probed yet.
  */
-editorApp.post("/:id/drafts/:name/clips", async (c) => {
+editorApp.get("/:id/clips/:clip", async (c) => {
   const r = await load(c, true);
-  const name = c.req.param("name");
-  const d = r && readDraft(r.e.id, name);
-  if (!r || !d) return notFound(c);
-  const b = await body(c);
-  const bad = (error: string, status: 400 | 409 = 400) => c.json({ error, code: status === 400 ? "invalid" : "conflict" }, status);
-  const track = b.track as TrackId;
-  if (!TRACKS.includes(track)) return bad(`track is one of ${TRACKS.join(", ")}`);
-  if (!Number.isInteger(b.rec) || (b.rec as number) < 0) return bad("rec is a frame on the timeline, 0 or more");
-  const clip = typeof b.clip === "string" ? b.clip : "";
-  if (!clip || (await editSources(r.user, [clip])) !== r.e.workspaceId) return notFound(c);
-  if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return bad("This version is still being made", 409);
+  const clip = c.req.param("clip");
+  if (!r || (await editSources(r.user, [clip])) !== r.e.workspaceId) return notFound(c);
   const row = libraryDb().prepare("SELECT a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(clip) as { title: string; probe: string | null } | undefined;
   const probe = row?.probe ? (JSON.parse(row.probe) as ProbeSummary) : null;
-  if (!row || !probe?.duration) return bad("This clip is not ready yet", 409);
-  const tl: Timeline = structuredClone(d.timeline);
-  const src = (tl.sources[clip] ??= sourceOf(clip, row.title, probe));
-  if (track[0] === "V" && !src.w) return bad("This clip has no picture");
-  if (track[0] === "A" && !probe.acodec) return bad("This clip has no sound");
-  const lanes: TrackId[] = track === "V1" && b.sound !== false && probe.acodec ? ["V1", "A1"] : [track];
-  // ponytail: an hour at most on one clip; a longer one is put on in part, trimmed on the timeline
-  const len = Math.max(1, Math.min(Math.floor(probe.duration * tl.fps), 3600 * tl.fps));
-  let rec = b.rec as number;
-  for (let moved = true; moved; ) {
-    moved = false;
-    for (const l of lanes) for (const i of tl.tracks[l].items) if (i.rec < rec + len && rec < i.rec + i.len) { rec = i.rec + i.len; moved = true; }
-  }
-  const link = lanes.length > 1 ? randomUUID().slice(0, 8) : undefined;
-  for (const l of lanes) tl.tracks[l].items.push({ src: clip, in: 0, len, rec, ...(link ? { link } : {}) });
-  await saveDraft(r.e.id, name, { ...d, timeline: tl });
-  if (!r.e.sources.includes(clip)) await saveEdit({ ...r.e, sources: [...r.e.sources, clip] });
-  return c.json({ view: draftView(tl, wordsFor(tl)), key: `${track}:${rec}` }, 201);
+  if (!row || !probe?.duration) return c.json({ error: "This clip is not ready yet", code: "conflict" }, 409);
+  return c.json({ source: sourceOf(clip, row.title, probe), sound: !!probe.acodec });
 });
 
 /** The editor's sources' sound for Normalize and Lower Under Voice (sound.ts): `sources` are library version ids. */
@@ -602,7 +622,7 @@ editorApp.get("/:id/drafts/:name", async (c) => {
         return o ? [[n, o.timeline]] : [];
       }),
   );
-  return c.json({ ...d, qa: qaOf(d.timeline, others), exportGaps: exportGaps(d.timeline, !!(await gradeOf(ownerOf(r.e), r.e.bundle))), view: draftView(d.timeline, wordsFor(d.timeline)), filed: filedAs(r.e.id, name, d.timeline) });
+  return c.json({ ...d, qa: qaOf(d.timeline, others), exportGaps: exportGaps(d.timeline, !!(await gradeOf(ownerOf(r.e), r.e.bundle))), view: draftView(d.timeline, wordsFor(d.timeline)), filed: filedAs(r.e.id, name, d.timeline), renders: rendersOf(d.timeline) });
 });
 
 /** The draft for the user's own editor: OTIO, FCPXML, FCP 7 XML (`xml`, Premiere), or all three in a zip (with download links when the footage is in a bucket). */

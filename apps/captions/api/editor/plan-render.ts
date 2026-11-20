@@ -1,14 +1,14 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PlanEffect, PlanText } from "../../contracts/edit-plan";
-import type { Item, Timeline } from "../../contracts/editor";
+import type { Item, Timeline, TrackId } from "../../contracts/editor";
 import { filterEscape, requireFontsDir } from "../export";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
 import { frameDuration } from "./fcpxml";
 import { fitted } from "./framing";
 import { cdlFilter, type Cdl } from "./grade";
 import { LETTERBOX, sourceSpan, speedAt } from "./plan";
-import { previewSize, shotFilter } from "./preview";
+import { fadeFilter, previewSize, shotFilter } from "./preview";
 
 /**
  * The preview of a planned edit (plan.ts): each shot drawn with its speed, effects, entry and the texts over it, its
@@ -224,18 +224,21 @@ export function atempo(k: number): string[] {
 }
 
 /**
- * The sound effects on A3 as ffmpeg inputs (from input `first` on) and a filter that mixes them under `bed` (a label)
- * into [sfxm]: each one trimmed, at its level, delayed to its place. Null when A3 is empty. `files`: source key → file.
+ * The clips on sound `tracks` (the sound effects on A3) as ffmpeg inputs (from input `first` on) and a filter that mixes
+ * them under `bed` (a label) into [sfxm]: each one trimmed, at its level and fades, delayed to its place. Null when none
+ * is heard. `files`: source key → file.
  */
-export function sfxMix(tl: Timeline, files: Record<string, string>, first: number, bed: string): { inputs: string[]; filter: string } | null {
-  const items = tl.tracks.A3.items;
+export function sfxMix(tl: Timeline, files: Record<string, string>, first: number, bed: string, tracks: TrackId[] = ["A3"]): { inputs: string[]; filter: string } | null {
+  // a muted track and a clip switched off are not heard
+  const items = tracks.filter((t) => !tl.tracks[t]?.mute).flatMap((t) => tl.tracks[t]?.items ?? []).filter((it) => it.enabled !== false);
   if (!items.length) return null;
   const inputs: string[] = [];
   const chains: string[] = [];
   items.forEach((it, k) => {
     inputs.push("-ss", (it.in / tl.sources[it.src]!.fps).toFixed(6), "-i", files[it.src]!);
+    const fades = fadeFilter(it, 0, it.len, tl.fps, true).map((f) => `${f},`).join("");
     chains.push(
-      `[${first + k}:a]atrim=0:${(it.len / tl.fps).toFixed(6)},asetpts=PTS-STARTPTS,${it.gainDb ? `volume=${it.gainDb}dB,` : ""}adelay=${Math.round((it.rec / tl.fps) * 1000)}:all=1,aresample=48000,aformat=channel_layouts=stereo[f${k}]`,
+      `[${first + k}:a]atrim=0:${(it.len / tl.fps).toFixed(6)},asetpts=PTS-STARTPTS,${it.gainDb ? `volume=${it.gainDb}dB,` : ""}${fades}adelay=${Math.round((it.rec / tl.fps) * 1000)}:all=1,aresample=48000,aformat=channel_layouts=stereo[f${k}]`,
     );
   });
   chains.push(`${bed}${items.map((_, k) => `[f${k}]`).join("")}amix=inputs=${items.length + 1}:duration=first:normalize=0[sfxm]`);
