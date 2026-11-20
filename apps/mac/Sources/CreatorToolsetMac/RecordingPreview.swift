@@ -56,8 +56,10 @@ final class RecordingPreviewBusy: ObservableObject {
     }
 
     /// The person's workspaces and the one a share goes to unless another is picked.
-    static func setWorkspaces(_ list: [RecordWorkspace], chosen: String?) {
-        guard let busy = current?.busy else { return }
+    /// `id`: the recording that asked; a late answer for a panel since closed is dropped.
+    static func setWorkspaces(_ list: [RecordWorkspace], chosen: String?, for id: String) {
+        guard let current, current.projectID == id else { return }
+        let busy = current.busy
         busy.workspaces = list
         busy.chosen = list.contains { $0.id == chosen } ? chosen : list.first?.id
     }
@@ -67,8 +69,10 @@ final class RecordingPreviewBusy: ObservableObject {
         static let size = NSSize(width: 340, height: 210)
         let panel: NSPanel
         let busy = RecordingPreviewBusy()
+        let projectID: String
 
         init(project: LocalProject, actions: Actions) {
+            projectID = project.id
             panel = NSPanel(contentRect: NSRect(origin: .zero, size: Controller.size),
                             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
                             backing: .buffered, defer: false)

@@ -969,7 +969,7 @@ final class Recorder: ObservableObject {
             discard: { [weak self] in self?.delete(project) }))
         Task { [weak self] in
             guard let got = await self?.workspaces?() else { return }
-            RecordingPreview.setWorkspaces(got.list, chosen: got.current)
+            RecordingPreview.setWorkspaces(got.list, chosen: got.current, for: project.id)
         }
     }
 

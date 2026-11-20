@@ -159,7 +159,10 @@ final class Shell: NSObject, ObservableObject {
             var site = await self.client()
             site.workspace = workspace
             if workspace == nil { site.workspace = await self.pageWorkspace() }   // the /record page's Share: the window's workspace
-            return try await site.uploadRecording(project, to: destination, progress: progress)
+            let page = try await site.uploadRecording(project, to: destination, progress: progress)
+            // picked on the panel: the page opens in that workspace (src/lib/workspace.ts openedIn), so a guide made there lands there too
+            guard let workspace, let ws = workspace.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(.init(charactersIn: "-_"))) else { return page }
+            return page + (page.contains("?") ? "&" : "?") + "ws=\(ws)"
         }
         recorder.workspaces = { [weak self] in
             guard let self else { return ([], nil) }
@@ -819,13 +822,13 @@ final class Shell: NSObject, ObservableObject {
         }
     }
 
-    /// The site's cookies from the web view's store, for the requests below.
     /// The workspace the window's page is in (src/lib/current-workspace.ts sets window.ctWorkspace); nil for a page from before.
     func pageWorkspace() async -> String? {
         let id = (try? await webView.evaluateJavaScript("typeof window.ctWorkspace === 'string' ? window.ctWorkspace : ''")) as? String
         return id?.isEmpty == false ? id : nil
     }
 
+    /// The site's cookies from the web view's store, for the requests below.
     func client() async -> Site {
         let base = self.base   // the site open when asked, not the one opened while the cookies were read
         let all: [HTTPCookie] = await withCheckedContinuation { continuation in
