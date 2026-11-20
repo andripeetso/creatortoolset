@@ -1,6 +1,7 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
+import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
 
 /**
@@ -47,6 +48,43 @@ const strokeMore = (v: unknown): Partial<Stroke> => {
   const dash = Array.isArray(v.dash) && v.dash.length === 2 ? ([round(num(v.dash[0], 0, 2000, 0)), round(num(v.dash[1], 0, 2000, 0))] as [number, number]) : null;
   return { ...(dash && dash[1] > 0 ? { dash } : {}), ...(v.round === true ? { round: true } : {}), ...(v.side === "inside" || v.side === "outside" ? { side: v.side } : {}) };
 };
+
+/**
+ * A text's style beside its font, size and colour as it may be saved: a weight in hundreds, switches, a size and
+ * spacing in range. `run`: a run's, which may also set a font, size and colour, and a switch off (the layer's is on).
+ */
+function textStyle(v: Record<string, unknown>, fonts: readonly string[], run: boolean): TextStyle {
+  const out: TextStyle = {};
+  if (typeof v.weight === "number" && Number.isFinite(v.weight)) out.weight = Math.round(num(v.weight, 100, 900, 400) / 100) * 100;
+  for (const k of ["italic", "underline", "strike"] as const) if (v[k] === true || (run && v[k] === false)) out[k] = v[k] as boolean;
+  if (!run) return out;
+  if (typeof v.font === "string" && fonts.includes(v.font)) out.font = v.font;
+  if (typeof v.size === "number") out.size = round(num(v.size, 8, 600, 48));
+  if (typeof v.color === "string" && COLOR.test(v.color.trim())) out.color = sixDigits(color(v.color, "#111111"));
+  if (typeof v.spacing === "number") out.spacing = round(num(v.spacing, -20, 200, 0));
+  return out;
+}
+
+/**
+ * A text's runs as they may be saved: each from a letter to a letter of the text (`start`, `end`), or every place a
+ * phrase of it is in (`words`, as a highlighter's), with a style that says something. Put in order and joined up after.
+ */
+function textRuns(v: unknown, text: string, fonts: readonly string[]): { runs?: TextRun[] } {
+  const out: TextRun[] = [];
+  const lower = text.toLowerCase();
+  for (const r of (Array.isArray(v) ? v : []).filter(obj).slice(0, RUNS_MAX)) {
+    const style = textStyle(r, fonts, true);
+    if (!Object.keys(style).length) continue;
+    const words = typeof r.words === "string" ? r.words.toLowerCase() : "";
+    if (words) for (let at = lower.indexOf(words); at >= 0; at = lower.indexOf(words, at + words.length)) out.push({ start: at, end: at + words.length, ...style });
+    else if (typeof r.start === "number" && typeof r.end === "number") {
+      const start = Math.round(num(r.start, 0, text.length, 0));
+      const end = Math.round(num(r.end, 0, text.length, 0));
+      if (end > start) out.push({ start, end, ...style });
+    }
+  }
+  return out.length ? { runs: out } : {};
+}
 
 /** A text's highlighter strokes as they may be saved: a few, each a colour and (or not) the words it goes behind. */
 function marks(v: unknown): { marks?: { color: string; words?: string; low?: true }[] } {
@@ -229,11 +267,12 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       if (x !== box.x || y !== box.y || w !== box.w || h !== box.h) say("words that stuck out of the page were moved onto it");
       place = { ...box, x, y, w, h };
     }
-    return {
-      type: "text",
+    const fonts = r.fonts?.length ? [...FONTS, ...r.fonts] : FONTS;
+    return normalRuns<Omit<TextLayer, "id">>({
+      type: "text" as const,
       ...place,
       text,
-      font: oneOf(raw.font, r.fonts?.length ? [...FONTS, ...r.fonts] : FONTS, DEFAULT_FONT),
+      font: oneOf(raw.font, fonts, DEFAULT_FONT),
       size: round(num(raw.size, 8, 600, 48)),
       color: color(raw.color, "#111111"),
       ...gradient(raw.gradient),
@@ -245,8 +284,11 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...(raw.valign === "middle" || raw.valign === "bottom" ? { valign: raw.valign } : {}),
       ...(typeof raw.lineHeight === "number" ? { lineHeight: round(num(raw.lineHeight, 0.8, 3, 1.15)) } : {}),
       ...(raw.upper === true ? { upper: true } : {}),
+      ...(raw.case === "upper" || raw.case === "lower" || raw.case === "title" || raw.case === "small" ? { case: raw.case as "upper" | "lower" | "title" | "small" } : {}),
+      ...textStyle(raw, fonts, false),
+      ...textRuns(raw.runs, text, fonts),
       ...(outline ? { outline } : {}),
-    };
+    });
   }
   if (raw.type === "image") {
     if (typeof raw.picture !== "string" || !r.pictures.includes(raw.picture)) {

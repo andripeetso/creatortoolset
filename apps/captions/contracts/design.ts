@@ -101,6 +101,27 @@ interface Box {
   locked?: boolean;
 }
 
+/** How a part of a text is set, beside the layer's own: what a run leaves out is the layer's. */
+export interface TextStyle {
+  font?: string;
+  /** 100 to 900; absent = the weight of the font's own face. A weight the family has no face for is drawn in its nearest one */
+  weight?: number;
+  /** slanted: the family's italic face when it has one, else its upright face leaned over */
+  italic?: boolean;
+  size?: number;
+  /** "#rrggbb" */
+  color?: string;
+  underline?: boolean;
+  /** a line through the letters ("was €49") */
+  strike?: boolean;
+  spacing?: number;
+}
+/** A part of a text set its own way: from letter `start` up to (not with) letter `end` of `text`, counted in UTF-16 units as a JavaScript string is. */
+export interface TextRun extends TextStyle {
+  start: number;
+  end: number;
+}
+
 export interface TextLayer extends Box {
   type: "text";
   text: string;
@@ -123,6 +144,15 @@ export interface TextLayer extends Box {
   /** line height as a multiple of the size; absent = 1.15 */
   lineHeight?: number;
   upper?: boolean;
+  /** the letters' case as drawn, the words kept as typed: "small" sets small letters as small capitals; absent = `upper`'s, else as typed */
+  case?: "upper" | "lower" | "title" | "small";
+  /** the whole text's weight, slant and lines (TextStyle); a run sets its own part apart from these */
+  weight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  /** parts of the text set apart (a word in another colour, size, font or weight), in order, none overlapping */
+  runs?: TextRun[];
   /** a line round each letter (sticker letters): its colour and its width in pixels */
   outline?: { color: string; width: number };
   /**

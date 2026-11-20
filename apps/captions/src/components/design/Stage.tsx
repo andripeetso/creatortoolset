@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
+import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
 import { boundsOf, boxPick, frameOf, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
 import { cn } from "@/lib/utils";
+import { TypedText, type TypedHandle } from "./TypedText";
 
 /**
  * The canvas: every frame of the design where it lies, each drawn as it will be saved, and the hands on them.
@@ -85,6 +86,7 @@ export function Stage({
   onMakeFrame,
   editing,
   onEdit,
+  onTextSelect,
   onMakePath,
   shaping,
   onShape,
@@ -127,6 +129,8 @@ export function Stage({
   /** the text layer being typed in */
   editing: string | null;
   onEdit: (id: string | null) => void;
+  /** the letters picked in the words being typed (none: only the caret is in them), for the style panel to style */
+  onTextSelect?: (sel: { start: number; end: number } | null) => void;
   /** a line drawn with the pen, in its frame's pixels: its box and its points in parts of that box */
   onMakePath: (at: number, path: { x: number; y: number; w: number; h: number; points: PathLayer["points"]; closed: boolean }) => void;
   /** the path layer whose points are shown, and the one of them that is picked */
@@ -144,7 +148,7 @@ export function Stage({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const typing = useRef<HTMLTextAreaElement>(null);
+  const typing = useRef<TypedHandle>(null);
   const [guides, setGuides] = useState<Guides | null>(null);
   const [band, setBand] = useState<Rect | null>(null);
   /** the box a making tool is drawing, in the canvas's pixels */
@@ -200,7 +204,7 @@ export function Stage({
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
   const typed = page?.layers.find((l): l is TextLayer => l.id === editing && l.type === "text");
   // the words being typed are set at the size they are drawn at (their own, or the one they shrank to)
-  const typedAs = typed ? { ...typed, size: setText(typed, measurer(fontOf(typed))).size } : typed;
+  const typedAs = typed ? { ...typed, size: textSize(typed) } : typed;
   const cropped = page?.layers.find((l): l is ImageLayer => l.id === cropping && l.type === "image");
   const shaped = page?.layers.find((l): l is PathLayer => l.id === shaping?.id && l.type === "path");
   // the wheel or a pinch over a picture that is being moved in its box zooms the picture, not the canvas
@@ -218,13 +222,6 @@ export function Stage({
         : null;
   });
 
-  // the words to type get the keys without the canvas scrolling to them: a box partly off the canvas would otherwise
-  // drag everything on it sideways, and the pointer would then be off by that much (found in a real browser)
-  const typedId = typed?.id;
-  useEffect(() => {
-    typing.current?.focus({ preventScroll: true });
-    typing.current?.select();
-  }, [typedId]);
 
   // The frames, drawn. A frame that fits a kept picture at this zoom is put on the canvas as that picture, made again
   // only when its content changed; the others are copied. `sharp` moves a moment after the last drawing that left a
@@ -712,7 +709,7 @@ export function Stage({
     // the hand, the dropper, a making tool and the other buttons are the canvas's own press
     if (e.button !== 0 || space || tool !== "move" || dropper) return;
     e.stopPropagation();
-    if (typing.current) return typing.current.blur();
+    if (typing.current) return typing.current.end();
     box.current?.focus({ preventScroll: true });
     const id = pages[k]!.id;
     // Shift: this frame joins the picked ones, or leaves them; nothing is dragged
@@ -774,7 +771,7 @@ export function Stage({
 
   const down = (e: React.PointerEvent) => {
     // a press beside the words being typed ends the typing and keeps them; it picks or moves nothing
-    if (typing.current) return typing.current.blur();
+    if (typing.current) return typing.current.end();
     box.current?.focus({ preventScroll: true });
     if (dropper) {
       // the colour as it is drawn, read off the canvas itself (a browser's own dropper is not in every browser); a
@@ -1025,25 +1022,22 @@ export function Stage({
             </div>
           )}
           {typed && typedAs && page && (
-            <textarea
+            <TypedText
+              key={typed.id}
               ref={typing}
-              aria-label="The words of this layer"
-              defaultValue={typed.text}
-              maxLength={DESIGN_LIMITS.text}
-              onPointerDown={(e) => e.stopPropagation()}
-              onDoubleClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") e.currentTarget.blur();
-                e.stopPropagation();
-              }}
-              onBlur={(e) => {
-                const text = e.currentTarget.value.replace(/\r\n/g, "\n").trim();
+              layer={typed}
+              scale={typedAs.size / typed.size}
+              z={view.z}
+              style={place(at, typed)}
+              onSelect={(sel) => onTextSelect?.(sel)}
+              // the words so far, while focus is in the style panel: saved, the typing still on
+              onSave={(l) => void (JSON.stringify(l) !== JSON.stringify(typed) && onCommit([withLayers(page, [l])]))}
+              onDone={(l) => {
                 onEdit(null);
+                onTextSelect?.(null);
                 // words taken out whole: the layer goes with them
-                if (text !== typed.text) onCommit([text ? withLayers(page, [{ ...typed, text }]) : { ...page, layers: page.layers.filter((l) => l.id !== typed.id) }]);
+                if (JSON.stringify(l) !== JSON.stringify(typed)) onCommit([l.text ? withLayers(page, [l]) : { ...page, layers: page.layers.filter((x) => x.id !== typed.id) }]);
               }}
-              className="absolute resize-none overflow-hidden border-0 bg-transparent p-0 outline outline-1 outline-[#0d99ff]"
-              style={{ ...place(at, typed), font: fontOf(typedAs, view.z), lineHeight: `${lineHeightOf(typedAs) * view.z}px`, letterSpacing: typed.spacing ? `${typed.spacing * view.z}px` : undefined, color: typed.color, textAlign: typed.align, textTransform: typed.upper ? "uppercase" : undefined }}
             />
           )}
         </div>

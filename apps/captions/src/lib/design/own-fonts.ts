@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { DesignFont } from "@contracts/design";
+import { setOwnFamilies } from "./fonts";
 
 /**
  * The person's own fonts in this window: read from the server once, each made known to the browser under the name its
@@ -28,6 +29,8 @@ function set(list: readonly DesignFont[]) {
     faces.delete(id);
   }
   own = list;
+  // their faces are weights and slants of each other (fonts.ts faceOf)
+  setOwnFamilies(list.map((f) => f.family));
   for (const h of heard) h();
 }
 

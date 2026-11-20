@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2, X } from "lucide-react";
-import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
+import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer, type TextLayer } from "@contracts/design";
 import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -30,6 +30,7 @@ import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { patchRange, viewRange } from "@/lib/design/runs";
 import { useOwnFonts } from "@/lib/design/own-fonts";
 import { cn } from "@/lib/utils";
 
@@ -101,6 +102,10 @@ function DesignPage({ id }: { id: string }) {
   /** The other frames picked with the one at `at`, by id (a box drawn round several, or Shift on a name). */
   const [others, setOthers] = useState<string[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
+  /** the letters picked in the words being typed: what the style panel styles while they are */
+  const [textSel, setTextSel] = useState<{ start: number; end: number } | null>(null);
+  /** A change of the style panel's, made only to the picked letters when some are (their style; the rest of it to the layer). */
+  const toLetters = (fn: (l: Layer) => Layer) => (l: Layer): Layer => (textSel && l.id === editing && l.type === "text" ? patchRange(l, fn as (l: TextLayer) => TextLayer, textSel.start, textSel.end) : fn(l));
   /** The picture layer being moved inside its box, and whether a picture's background is being cut away. */
   const [cropping, setCropping] = useState<string | null>(null);
   const [cutting, setCutting] = useState(false);
@@ -189,6 +194,8 @@ function DesignPage({ id }: { id: string }) {
   const mine = base ? base.layers.filter((l) => selected.includes(l.id)) : [];
   const colours = useMemo(() => coloursOn(pages), [pages]);
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
+  // the text being typed in, as the style panel shows it: in the style of its picked letters
+  const pickedShown = textSel ? picked.map((l) => (l.id === editing && l.type === "text" ? viewRange(l, textSel.start, textSel.end) : l)) : picked;
   /** Every frame that is picked, by id: the one at `at` first. A frame that is gone (deleted somewhere else) is not among them. */
   const framedIds = useMemo(() => (framed && base ? [base.id, ...others.filter((id) => id !== base.id && pages.some((p) => p.id === id))] : []), [framed, base, others, pages]);
   const framedAt = framedIds.map((id) => pages.findIndex((p) => p.id === id));
@@ -1000,6 +1007,7 @@ function DesignPage({ id }: { id: string }) {
               onMakeFrame={makeFrame}
               editing={editing}
               onEdit={setEditing}
+              onTextSelect={setTextSel}
               onMakePath={makePath}
               shaping={shaping}
               onShape={setShaping}
@@ -1090,12 +1098,12 @@ function DesignPage({ id }: { id: string }) {
           page={page}
           at={k}
           count={frameCount}
-          picked={picked}
+          picked={pickedShown}
           onPreview={(fn) => {
-            const next = fn && through(fn);
+            const next = fn && through(toLetters(fn));
             setLive(next ? [next] : null);
           }}
-          onPatch={patch}
+          onPatch={(fn, merge) => patch(toLetters(fn), merge)}
           onPage={setPage}
           onPagePreview={(next) => setLive(next ? [next] : null)}
           onAlign={(how) => arrange(alignLayers(mine, how, here))}
