@@ -749,6 +749,14 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(where()).toBe("?f=col_a");
   });
 
+  it("a top folder called Photos is the only Photos tab", async () => {
+    localStorage.setItem("library:view", "gallery");
+    server.folders = [...folders, { id: "col_p", name: "Photos", parentId: null, kind: "manual", count: 1, createdBy: "admin" }];
+    server.items = [clip("pic", { kind: "image" })];
+    const host = await mount();
+    expect([...host.querySelectorAll('nav[aria-label="Library tabs"] button')].map((b) => b.textContent)).toEqual(["All", "A-roll0", "B-roll0", "Music0", "Photos1"]);
+  });
+
   it("a clip moved onto a folder's tab stays in the Gallery's All; Undo takes it back out, then asks the server", async () => {
     localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.folders = folders;

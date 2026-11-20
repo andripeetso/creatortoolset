@@ -685,7 +685,8 @@ export default function LibraryPage() {
                 ]
               : [];
           }),
-          ...((counts.data?.image ?? 0) > 0
+          // a top-level folder already called Photos is the photos tab (owner, 2026-11-19: two Photos tabs, one undeletable)
+          ...((counts.data?.image ?? 0) > 0 && !collections.some((c) => c.parentId === null && holdsClips(c) && c.name.trim().toLowerCase() === "photos")
             ? [{ id: "photos", label: "Photos", count: counts.data?.image, active: !open && kind === "image" && !roll, onOpen: () => go(null, "image") }]
             : []),
           ...collections
