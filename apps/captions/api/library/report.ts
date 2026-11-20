@@ -8,7 +8,7 @@ import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
 import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
-import { ensureLibrary, librariesHere, libraryChanged } from "./access";
+import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
@@ -58,8 +58,13 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
  *  only found there (version_places on this computer), never indexed, never new versions. */
 export type FolderLibrary = { id: string; locate: boolean };
 
+/** Whether a Media folder in workspace `id` (of `owner`) fills no core library: a plug-in serves that workspace's media
+ *  itself (servedByPlugin), so its rows index and locate nothing there. P2 (the Blur faces gate) replaces this condition. */
+const keptFromLibrary = (owner: string, id?: string): Promise<boolean> => servedByPlugin(owner, id);
+
 /** The libraries a folder fills: one per workspace it is in (made when missing), every workspace's for "*". A member
- *  never gets a library of a workspace they were given: the owner's one is used, locate only. */
+ *  never gets a library of a workspace they were given: the owner's one is used, locate only. A workspace a plug-in
+ *  serves itself gets none (keptFromLibrary). */
 export async function librariesOf(owner: string, f: StorageFolder, make = true): Promise<FolderLibrary[]> {
   const ws = await workspacesOf(owner, f);
   const owned = await ownedProjects(owner);
@@ -70,7 +75,7 @@ export async function librariesOf(owner: string, f: StorageFolder, make = true):
   const libraryFor = (id?: string) => (make ? ensureLibrary(owner, id) : librariesHere(owner, id ?? "").then((l) => l[0]?.id ?? null));
   // an account with no workspaces: its one library. A member given workspaces but none of their own makes none (theirs are the owner's)
   if (!ids.length) {
-    if (member && given.size) return [];
+    if ((member && given.size) || (await keptFromLibrary(owner))) return [];
     const one = await libraryFor();
     return one ? [{ id: one, locate: false }] : [];
   }
@@ -80,6 +85,8 @@ export async function librariesOf(owner: string, f: StorageFolder, make = true):
   };
   for (const id of ids) {
     const from = given.get(id);
+    // asked as the workspace's owner: a plug-in answers for its own brands
+    if (await keptFromLibrary(from ?? owner, id)) continue;
     if (from) {
       const lib = (await librariesHere(from, id))[0]?.id;
       if (lib) add(lib, true);
