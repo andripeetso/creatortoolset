@@ -167,15 +167,16 @@ export async function pathOnMac(file: File): Promise<string | undefined> {
  * pointed at where it lies instead of uploaded, and a file's reply needn't wait for its upload. undefined in a browser or
  * a Mac app from before it could; [] when none.
  */
-export async function droppedOnMac(): Promise<Array<{ path: string; folder: boolean }> | undefined> {
+export async function droppedOnMac(o: { chosen?: boolean } = {}): Promise<Array<{ path: string; folder: boolean }> | undefined> {
   const bridge = thisMacBridge();
   if (!bridge) return undefined;
   try {
     const r = ((await bridge.postMessage("dropped")) ?? {}) as unknown as { items?: Array<{ path?: unknown; folder?: unknown }> };
     if (!Array.isArray(r.items)) return undefined;
     const items = r.items.flatMap((x) => (typeof x.path === "string" ? [{ path: x.path, folder: x.folder === true }] : []));
-    // the drop's workspace, so the AI Editor copies these in only for an edit of it (MediaFiles.chosen); an older app ignores it
-    const workspace = currentWorkspace();
+    // `chosen` (a chat's drop): its workspace, so the AI Editor copies these in only for an edit of it (MediaFiles.chosen);
+    // an older app ignores it. Any other drop (setup's folder, the Library's own) gives the AI Editor nothing
+    const workspace = o.chosen ? currentWorkspace() : null;
     if (workspace && items.length) void bridge.postMessage(`import:chosen:${JSON.stringify({ workspace, paths: items.map((i) => i.path) })}`).catch(() => {});
     return items;
   } catch {
