@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GroupLayer, Layer, ShapeLayer, TextLayer } from "../../../contracts/design";
-import { addAutoLayout, dropSlot, fixedBy, settledBoxes, forgetWords, flowInsert, flowSlot, guessWidth, layoutLayers, layoutPages, withSizing, withoutLayout, wordsSize } from "./layout";
+import { addAutoLayout, carrySettled, dropSlot, fixedBy, settledBoxes, forgetWords, flowInsert, flowSlot, guessWidth, layoutLayers, layoutPages, withSizing, withoutLayout, wordsSize } from "./layout";
 import { mergeFrames } from "./hands";
 import { fitContents } from "./resize";
 import { sizedCopy } from "./resize";
@@ -285,6 +285,18 @@ describe("auto layout", () => {
       expect(inside(layoutLayers([b], measure, undefined, new Map([["b", [{ w: 300, h: 23 }]]]))[0]!, "dot").x).toBe(183.44);
       const two = settledBoxes([{ id: "p1", background: "#ffffff", layers: [b] }, { id: "p2", background: "#ffffff", layers: [] }]);
       expect([[...two.get("p1")!], [...two.get("p2")!]]).toEqual([[["b", [{ w: 187.44, h: 23 }]]], []]);
+    });
+
+    it("a box the server resizes inside a group is laid out at its new size only when it was at its old one", () => {
+      const inner = box([], { dir: "row" }, { id: "in", w: 100, h: 20 });
+      const other = box([], { dir: "row" }, { id: "new", w: 50, h: 20 });
+      const before = [{ id: "g", type: "group", x: 0, y: 0, w: 200, h: 40, layers: [inner, other] }];
+      const after = [{ ...before[0], w: 400, layers: [{ ...inner, w: 200 }, { ...other, w: 100 }] }];
+      const s = new Map([["in", [{ w: 100, h: 20 }]]]);
+      carrySettled(s, before, after);
+      expect([...s]).toEqual([["in", [{ w: 100, h: 20 }, { w: 200, h: 20 }]]]);
+      // what is not a list of layers is passed over
+      carrySettled(s, [{ type: "group", layers: "x" }, null], [7]);
     });
 
     it("a size within a pixel of the one laid out at is that size, either side of a half pixel", () => {

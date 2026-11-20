@@ -5,7 +5,7 @@ import { Hono, type Context } from "hono";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_HEADS, DESIGN_FORMATS, DESIGN_GAP, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_LIMITS, DESIGN_SAFE, DESIGN_SHAPES, formatOf, PICTURE_SIDE_MAX, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type Layer, type SplitAnswer, type TextLayer } from "../contracts/design";
 import { DESIGN_FONTS, weightsOf } from "../src/lib/design/fonts";
 import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
-import { flows, settleAt, settledBoxes } from "../src/lib/design/layout";
+import { carrySettled, flows, settleAt, settledBoxes } from "../src/lib/design/layout";
 import { retext } from "../src/lib/design/runs";
 import { everyLayer, layerIn, layerOut, unwrap } from "../src/lib/design/tree";
 import type { AuthVars } from "./auth";
@@ -721,10 +721,14 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     }
     // a group given a new size (its layers not given whole): they follow it, as when it is resized by hand
     if (changed.type === "group" && Array.isArray(changed.layers) && !raw(c.set)?.layers) {
+      const before = changed;
       changed = fitContents(placed(layer), placed(changed)) as unknown as Raw;
       // its layers out of the flow now lie for that size: from it they follow its edges again (a box that hugs takes
-      // the size of its layers back, and they go back with it)
-      if (page && flows(changed as unknown as Layer)) settleAt(settled.get(page.id) ?? settled.set(page.id, new Map()).get(page.id)!, changed as unknown as Layer);
+      // the size of its layers back, and they go back with it); and so do those of a box in it it resized
+      const home = page?.id ?? was!.home;
+      const mine = settled.get(home) ?? settled.set(home, new Map()).get(home)!;
+      carrySettled(mine, [before], [changed]);
+      if (flows(changed as unknown as Layer)) settleAt(mine, changed as unknown as Layer);
     }
     givenAt.set(changed, at);
     if (page) {
@@ -750,7 +754,12 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const size = (v: unknown, or: number | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.round(v))) : or);
     const [w, h] = [size(t.more.w, was.w), size(t.more.h, was.h)];
     // a new size without the layers given whole: they follow the frame's edges as their pins say
-    if (!t.whole && was.w && was.h && w && h && (w !== was.w || h !== was.h)) t.layers = placeLayers(t.layers.filter(raw) as Placed[], { w: was.w, h: was.h }, { w, h }, "stay");
+    if (!t.whole && was.w && was.h && w && h && (w !== was.w || h !== was.h)) {
+      const before = t.layers;
+      t.layers = placeLayers(t.layers.filter(raw) as Placed[], { w: was.w, h: was.h }, { w, h }, "stay");
+      // a saved box it stretched is laid out at its new size: its pinned layers follow its edges from there
+      carrySettled(settled.get(id) ?? settled.set(id, new Map()).get(id)!, before, t.layers);
+    }
     // layers given whole never drop a reference (the video's frame designed over): one sent again stays a reference, one
     // left out is kept under the rest. Otherwise it would show in every picture made of the frame, or the backdrop be gone
     const refs = t.whole && !t.isNew ? was.layers.filter((l) => l.reference) : [];

@@ -271,6 +271,22 @@ describe("designs: an AI that designs", () => {
     expect([at(second, "badge").h, at(second, "tag").y]).toEqual([at(first, "badge").h, at(first, "tag").y]);
   });
 
+  it("a saved box the server stretches with its frame keeps its layer pinned to its bottom on it", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const words = { type: "text", id: "w", font: "Inter", size: 40, color: "#111111", align: "left", x: 0, y: 0, w: 280, h: 10, sizing: { w: "fill", h: "hug" }, text: "words that wrap over a few lines here" };
+    const tag = { type: "shape", shape: "rect", id: "tag", fill: "#ff0000", x: 0, y: 40, w: 20, h: 6, absolute: true, pin: { y: "bottom" } };
+    const card = { type: "group", box: true, id: "card", x: 100, y: 100, w: 300, h: 10, pin: { x: "both" }, layout: { dir: "column", pad: 10 }, sizing: { h: "hug" }, layers: [words, tag] };
+    const at = (b: Design, id: string) => everyLayer(b.pages[0]!.layers).find((l) => l.id === id)! as GroupLayer;
+    const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [card] }] })).body.design;
+    // the tag sits 4 above the card's bottom
+    const gap = at(first, "card").h - at(first, "tag").y - at(first, "tag").h;
+    // the frame 600 wider: the card with it, its words on fewer lines, so it hugs shorter: the tag goes up with its bottom
+    const wide = (await write(d.id, { frames: [{ id: d.pages[0]!.id, w: 1680 }] })).body.design;
+    expect(at(wide, "card").w).toBe(900);
+    expect(at(wide, "card").h).toBeLessThan(at(first, "card").h);
+    expect(at(wide, "card").h - at(wide, "tag").y - at(wide, "tag").h).toBeCloseTo(gap, 1);
+  });
+
   it("reads every frame with its id, size, words and layers, and how a design is changed", async () => {
     const d = await fromPiece();
     const got = await read(d.id);

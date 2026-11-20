@@ -241,6 +241,20 @@ export const settleAt = (s: Settled, g: Pick<Layer, "id" | "w" | "h">): void => 
 /** The ids of the boxes of a pass that are new (never laid out at the size they are given). */
 type Fresh = ReadonlySet<string>;
 const NONE: Fresh = new Set();
+/**
+ * Boxes resized by the server itself (a frame given a new size, a container whose layers follow its new size): each one
+ * that was laid out at its size before is laid out at its new one too, so its layers out of the flow follow its edges
+ * from there. `before` and `after`: the same layers before and after, as given (an AI's, not checked yet).
+ */
+export function carrySettled(s: Settled, before: unknown, after: unknown): void {
+  const all = (ls: unknown): Layer[] => (Array.isArray(ls) ? ls.flatMap((l) => (l && typeof l === "object" ? [l as Layer, ...all((l as GroupLayer).type === "group" ? (l as GroupLayer).layers : [])] : [])) : []);
+  const was = new Map(all(before).filter(flows).map((g) => [g.id, g]));
+  for (const g of all(after)) {
+    const o = was.get(g.id);
+    if (o && flows(g) && Number.isFinite(g.w) && Number.isFinite(g.h) && laidOutAt(s, o) && !laidOutAt(s, g)) settleAt(s, g);
+  }
+}
+
 /** The auto layout boxes of each frame (by the frame's id), each at the size it was laid out at. */
 export function settledBoxes(pages: readonly DesignPage[]): Map<string, Settled> {
   return new Map(
