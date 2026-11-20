@@ -305,10 +305,10 @@ export function setRuns(l: TextLayer, measure: Measure): { size: number; scale: 
   const linesAt = (k: number) => paras.flatMap((p) => wrap(p, l.w, k));
   const fits = (k: number) => {
     const lines = linesAt(k);
-    return lines.reduce((n, ws) => n + sizeOfLine(ws) * lh * k, 0) <= l.h + 0.5 && lines.every((ws) => lineWidth(ws, k) <= l.w + 0.5);
+    return lines.reduce((n, ws) => n + sizeOfLine(ws) * lh * k, 0) <= l.h + 0.5 && lines.every((ws) => lineWidth(ws, k) <= l.w + 0.5) && (!l.lines || lines.length <= l.lines);
   };
   let k = 1;
-  if (l.fit === "shrink" && !fits(1)) {
+  if ((l.fit === "shrink" || l.lines) && !fits(1)) {
     let lo = Math.min(1, SMALLEST / l.size);
     let hi = 1;
     for (let n = 0; n < 12; n++) {
@@ -318,20 +318,35 @@ export function setRuns(l: TextLayer, measure: Measure): { size: number; scale: 
     }
     k = lo;
   }
-  const words = !l.balance
-    ? linesAt(k)
-    : paras.flatMap((para) => {
-        const own = wrap(para, l.w, k);
-        if (own.length < 2) return own;
-        let lo = 0;
-        let hi = l.w;
-        for (let n = 0; n < 10; n++) {
-          const mid = (lo + hi) / 2;
-          if (wrap(para, mid, k).length <= own.length) hi = mid;
-          else lo = mid;
-        }
-        return wrap(para, hi, k);
-      });
+  // held to a number of lines: no word alone on a paragraph's last line (as draw.ts setText), by shrinking a little more when that is enough
+  const orphaned = (at: number) => paras.some((para) => {
+    const ls = wrap(para, l.w, at);
+    return ls.length > 1 && ls.at(-1)!.length === 1;
+  });
+  if (l.lines && orphaned(k))
+    for (let s = k * 0.99; s >= k * 0.92; s -= k * 0.01)
+      if (fits(s) && !orphaned(s)) {
+        k = s;
+        break;
+      }
+  const words = paras.flatMap((para) => {
+    let out = wrap(para, l.w, k);
+    if (l.balance && out.length > 1) {
+      let lo = 0;
+      let hi = l.w;
+      for (let n = 0; n < 10; n++) {
+        const mid = (lo + hi) / 2;
+        if (wrap(para, mid, k).length <= out.length) hi = mid;
+        else lo = mid;
+      }
+      out = wrap(para, hi, k);
+    }
+    // still alone: the word before it comes down to keep it company, when the two fit the width together
+    const last = out.at(-1)!;
+    const before = out.at(-2);
+    if (l.lines && last.length === 1 && before && before.length > 1 && lineWidth([before.at(-1)!, ...last], k) <= l.w + 0.5) out = [...out.slice(0, -2), before.slice(0, -1), [before.at(-1)!, ...last]];
+    return out;
+  });
   const lines = words.map((ws): RunLine => {
     // pieces at the size they are drawn at, the space between words among them
     const pieces = ws.flatMap((w, j) => [...w.pieces, ...(j < ws.length - 1 && w.gap ? [w.gap] : [])]).map((p) => ({ ...p, size: p.size * k, width: widthOf(p, k) }));

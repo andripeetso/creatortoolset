@@ -143,6 +143,18 @@ describe("laying out a text with runs", () => {
     expect(setRuns(text({ text: "Roll", spacing: 5, italic: true }), measure).lines[0]!.width).toBe(55);
   });
 
+  it("keeps a styled text to a number of lines with no word alone on the last, as a plain text", () => {
+    const six = (more: Partial<TextLayer>) => setRuns(text({ text: "aa bb cc dd ee ff", runs: [{ start: 0, end: 2, color: "#ff0000" }], h: 1000, lines: 2, ...more }), measure);
+    expect(six({ w: 140 }).lines.map((l) => l.text)).toEqual(["aa bb cc dd", "ee ff"]);
+    expect(six({ w: 140 }).size).toBe(100);
+    const near = six({ w: 160 });
+    expect(near.lines.map((l) => l.text)).toEqual(["aa bb cc dd ee ff"]);
+    expect(near.size).toBeGreaterThanOrEqual(92);
+    expect(near.size).toBeLessThan(95);
+    expect(six({ w: 140, lines: undefined }).lines.map((l) => l.text)).toEqual(["aa bb cc dd ee", "ff"]);
+    expect(six({ w: 100, lines: 1 }).lines).toHaveLength(1);
+  });
+
   it("sets small capitals as capitals, smaller", () => {
     const [line] = setRuns(text({ text: "Roll", case: "small" }), measure).lines;
     expect(line!.pieces.map((p) => [p.text, p.size])).toEqual([

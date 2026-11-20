@@ -231,7 +231,7 @@ describe("designs: an AI that designs", () => {
     // every frame in two sizes: a row a size under the frames, each copy under its frame, named for its size
     const sized = await write(d.id, { sizes: { to: ["cover", { name: "Wide", w: 1600, h: 900 }, "huge"] } });
     expect(sized.status).toBe(200);
-    expect(sized.body.notes[0]).toContain('A size that is neither a format');
+    expect(sized.body.notes[0]).toContain('sizes.to[2]: a size that is neither a format');
     const copies = sized.body.design.pages.filter((p) => sized.body.touched.includes(p.id));
     expect(copies.map((p) => [p.name, p.x, p.y, p.w, p.h])).toEqual([
       ["Frame 1 Vertical cover 9:16", 0, 1590, 1080, 1920],
@@ -249,7 +249,7 @@ describe("designs: an AI that designs", () => {
       ["02 Proof", 2920, 0, 1080, "Second", false],
       ["Frame 1 2", 4120, 0, 1080, "Third", true],
     ]);
-    expect(filled.body.notes).toEqual(['Frame 1 has no layer named "Price": give the layers to fill a "name"']);
+    expect(filled.body.notes).toEqual(['fill.rows: Frame 1 has no layer named "Price": give the layers to fill a "name"']);
     // the design is full: the copies that fit are made, the rest named
     const full = await write(d.id, { sizes: { frames: ["p1"], to: ["square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover"] } });
     expect(full.body.touched).toHaveLength(12);
@@ -267,7 +267,7 @@ describe("designs: an AI that designs", () => {
       ],
     });
     expect(out.status).toBe(200);
-    expect(out.body.notes).toEqual(["There is no frame nope: this design's are p1, p2, p3", "Frame 2: “Buy the course” is not in its own words: left out"]);
+    expect(out.body.notes).toEqual(['frames[1]: there is no frame nope: this design\'s are p1, p2, p3 (a new frame has no "id": name it with "as")', "frames[0].layers[2], frame p2 (Frame 2): “Buy the course” is not in its own words: left out"]);
     expect(out.body.touched).toEqual(["p2", "p3"]);
     const [one, two, three] = out.body.design.pages;
     expect(two).toMatchObject({ id: "p2", background: "#102030", x: 1200, block: "b2" });
@@ -306,7 +306,7 @@ describe("designs: an AI that designs", () => {
     })).body;
     expect(out.design.pages[0]!.layers.map((l) => l.id)).toEqual(["moon", "title", "sun"]);
     expect(out.design.pages[0]!.layers[1]).toMatchObject({ type: "text", text: "Hello there", size: 600, x: 10, font: "Anton" });
-    expect(out.notes).toEqual(["Frame 1 has no layer ghost", 'A change names no frame of this design (p9): its frames are p1, and "canvas" holds what lies outside them']);
+    expect(out.notes).toEqual(["changes[3], frame p1 (Frame 1): there is no layer ghost: its layers are moon, title, sun", 'changes[4]: names no frame of this design (p9): its frames are p1, and "canvas" holds what lies outside them']);
     const gone = (await write(d.id, { changes: [{ frame: "p1", layer: "moon", remove: true }] })).body;
     expect(gone.design.pages[0]!.layers.map((l) => l.id)).toEqual(["title", "sun"]);
     // a field that is a set of fields takes the ones given and keeps the rest; null takes it off whole
@@ -318,7 +318,42 @@ describe("designs: an AI that designs", () => {
     const piece = await fromPiece();
     const held = (await write(piece.id, { changes: [{ frame: "p3", layer: "l1", set: { text: "Buy now" } }, { frame: "p3", add: { ...text, text: "Try it today" } }] })).body;
     expect(held.design.pages[2]!.layers.map((l) => l.type === "text" && l.text)).toEqual(["Try it today"]);
-    expect(held.notes).toEqual(["Frame 3: “Buy now” is not in its own words: left out"]);
+    expect(held.notes).toEqual(["changes[0], frame p3 (Frame 3), layer l1: “Buy now” is not in its own words: left out"]);
+  });
+
+  it("names a new frame or layer with as for the changes after it in the same call, and leads each note with the change it is about", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const rect = { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100 };
+    const out = (await write(d.id, {
+      frames: [{ as: "two", w: 1080, h: 1920, name: "Story", layers: [] }],
+      changes: [
+        { frame: "p1", add: { ...rect, id: "badge" } },
+        { frame: "two", add: rect, as: "Badge" },
+        { frame: "two", layer: "Badge", set: { fill: "#00ff00" } },
+        { frame: "two", add: { type: "rect", x: 0 } },
+        { frame: "p1", add: { ...rect, id: "badge" }, as: "badge" },
+        { frame: "p1", layer: "badge", set: { fill: "#0000ff" } },
+      ],
+    })).body as Wrote & { named: Record<string, string> };
+    const two = out.named.two!;
+    const [one, story] = out.design.pages;
+    expect(story).toMatchObject({ id: two, name: "Story", w: 1080, h: 1920 });
+    // "Badge" cannot be an id: it became l1, and the change after it found it by its name
+    expect(story!.layers).toMatchObject([{ id: "l1", fill: "#00ff00" }]);
+    expect(out.named).toEqual({ two, Badge: "l1", badge: "l2" });
+    // the second "badge" of p1 took another id, and the change that named it changed that one, not the first
+    expect(one!.layers).toMatchObject([{ id: "badge", fill: "#ff0000" }, { id: "l2", fill: "#0000ff" }]);
+    expect(out.notes).toEqual([`changes[3], frame ${two} (Frame 2): a layer of no type that can be drawn ("rect"): left out; the types are text, shape, path, image and drawing`]);
+    // the same in one call with a move onto the canvas and copies: a moved layer is found where it went by its name,
+    // and "fill" copies a frame the call made, by its "as"
+    const more = (await write(d.id, {
+      frames: [{ as: "card", w: 1080, h: 1080, name: "Card", layers: [{ ...rect, name: "Ground" }] }],
+      changes: [{ frame: "p1", layer: "badge", to: "canvas" }, { frame: "canvas", layer: "badge", set: { fill: "#123456" } }, { frame: "card", add: { type: "video" } }],
+      fill: { frame: "card", rows: [{ name: "Card copy" }] },
+    })).body as Wrote & { named: Record<string, string> };
+    expect(more.design.pages.filter((p) => !p.loose).map((p) => p.name)).toEqual([undefined, "Story", "Card", "Card copy"]);
+    expect((await read(d.id)).canvas).toEqual([expect.objectContaining({ id: "badge", fill: "#123456" })]);
+    expect(more.notes).toEqual([`changes[2], frame ${more.named.card} (Frame 3): a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image and drawing`]);
   });
 
   it("layers lying on the canvas outside every frame: seen, added, changed, moved into a frame and out, removed, each checked", async () => {
@@ -332,7 +367,7 @@ describe("designs: an AI that designs", () => {
     expect(seen.how).toContain('"frame":"canvas"');
     // added on the canvas, in its pixels; a value out of range is held like a frame's; a bad "to" and a missing layer are named
     const added = (await write(d.id, { changes: [{ frame: "canvas", add: { ...box, id: "note", x: 2000, y: -300, fill: "nope", opacity: 7 } }, { frame: "canvas", layer: "l1", to: "p9" }, { frame: "canvas", layer: "ghost", remove: true }] })).body;
-    expect(added.notes).toEqual(['"to" names no frame of this design (p9): give a frame\'s id or "canvas"', "The canvas has no layer ghost"]);
+    expect(added.notes).toEqual(['changes[1], the canvas: "to" names no frame of this design (p9): give a frame\'s id or "canvas"', "changes[2], the canvas: there is no layer ghost: its layers are l1, note"]);
     const note = added.design.pages.find((p) => p.loose && p.layers.some((l) => l.id === "note"))!;
     expect(note).toMatchObject({ loose: true, x: 2000, y: -300, w: 100, h: 50, layers: [{ id: "note", x: 0, y: 0, fill: "#dddddd" }] });
     expect(note.layers[0]).not.toHaveProperty("opacity");
@@ -484,7 +519,7 @@ describe("designs: an AI that designs", () => {
     expect((await read(d.id, "?look=Nope")).look).toBe("There is no look called Nope");
     const out = (await write(d.id, { frames: [{ id: "p1", layers: [{ type: "image", picture: d.pictures[0], fit: "cover", x: 0, y: 0, w: 1280, h: 720 }, { ...text, text: "3 MISTAKES" }, { type: "image", picture: "ffffffff.png", x: 0, y: 0, w: 10, h: 10 }] }] })).body;
     expect(out.design.pages[0]!.layers).toMatchObject([{ type: "image" }, { type: "text", text: "3 MISTAKES" }]);
-    expect(out.notes).toEqual(["Frame 1: a picture that is not in this design: left out"]);
+    expect(out.notes).toEqual(["frames[0].layers[2], frame p1 (Frame 1): a picture that is not in this design: left out"]);
   });
 
   it("with several carousel styles the AI is told to pick one and read it first; animation styles and a plug-in's own looks are listed after, read when named, their pictures made small", async () => {

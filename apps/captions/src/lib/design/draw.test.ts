@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
-import { markBoxes, cornersOf, drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, setText, setTextOnce, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
+import { markBoxes, cornersOf, drawingUrl, fontOf, inLayer, keptOr, layerAt, lineHeightOf, orphaned, setText, setTextOnce, shapePoints, shownText, sourceOf, textWidth, wrapLines } from "./draw";
 
 /** Every letter 10 wide: widths a test can count. */
 const measure = (s: string) => s.length * 10;
@@ -60,6 +60,30 @@ describe("drawing a design", () => {
     expect(setText({ ...six, text: "aa bb cc dd ee ff\ngg\nhh ii jj kk ll mm", balance: true }, measure).lines).toEqual(["aa bb cc", "dd ee ff", "gg", "hh ii jj", "kk ll mm"]);
     // capitals are measured as they are drawn
     expect(setText({ text: "ab", upper: true, size: 100, w: 100, h: 500 }, (s) => (s === "AB" ? 30 : 999)).lines).toEqual(["AB"]);
+  });
+
+  it("keeps words to a number of lines: shrunk until they take no more, and never a word alone on a last line", () => {
+    // one line of 160 at size 100 in a box 100 wide: shrunk to 62.5
+    const one = setText({ text: "Roll the mat out", size: 100, w: 100, h: 1000, lines: 1 }, measure);
+    expect(one.lines).toEqual(["Roll the mat out"]);
+    expect(one.size).toBeGreaterThan(62);
+    expect(one.size).toBeLessThanOrEqual(62.5);
+    // two lines already and none alone: its own size
+    expect(setText({ text: "Roll the mat out", size: 100, w: 100, h: 1000, lines: 2 }, measure)).toEqual({ size: 100, lines: ["Roll the", "mat out"] });
+    // "ff" alone on the last line: 6 % smaller takes it onto one line, within the 8 % it may shrink for that
+    const six = { text: "aa bb cc dd ee ff", size: 100, h: 1000, lines: 2 };
+    const near = setText({ ...six, w: 160 }, measure);
+    expect(near.lines).toEqual(["aa bb cc dd ee ff"]);
+    expect(near.size).toBeGreaterThanOrEqual(92);
+    expect(near.size).toBeLessThan(95);
+    // too far for that: the word before it comes down to keep it company, at its own size
+    expect(setText({ ...six, w: 140 }, measure)).toEqual({ size: 100, lines: ["aa bb cc dd", "ee ff"] });
+    // without lines a text wraps as it always has
+    expect(setText({ ...six, w: 140, lines: undefined }, measure).lines).toEqual(["aa bb cc dd ee", "ff"]);
+    // a paragraph of one word after its own line break is no orphan
+    expect(setText({ text: "aa bb cc\nff", size: 100, w: 200, h: 1000, lines: 3 }, measure).lines).toEqual(["aa bb cc", "ff"]);
+    expect(orphaned(["aa bb cc", "ff"], "aa bb cc\nff")).toBe(false);
+    expect(orphaned(["aa bb", "cc", "dd ee"], "aa bb cc\ndd ee")).toBe(true);
   });
 
   it("sets a layer's words once: drawn again as it is, one string is measured; a font that arrived since, or a changed layer, sets it again", () => {

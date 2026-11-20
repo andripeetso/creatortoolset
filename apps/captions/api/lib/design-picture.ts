@@ -23,6 +23,8 @@ export interface PagePicture {
   jpeg: string;
   /** the words on the page that do not fit their box, as the AI is told them */
   spills: string[];
+  /** what the drawing worked out for each text that shrinks: the size it is drawn at and its lines (left out by an older drawing) */
+  drawn?: string[];
 }
 export interface Look {
   pictures: PagePicture[];
