@@ -366,7 +366,7 @@ export function libraryStatus(libraryId: string): LibraryStatus {
   const rows = db
     .prepare(
       `SELECT j.kind, SUM(j.state = 'done') AS done, SUM(j.state = 'failed') AS failed, SUM(j.state IN ('queued', 'running', 'needs_key')) AS open
-       FROM jobs j JOIN assets a ON a.current_version_id = j.version_id WHERE a.library_id = ? AND a.trashed_at IS NULL GROUP BY j.kind`,
+       FROM jobs j JOIN assets a ON a.current_version_id = j.version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL GROUP BY j.kind`,
     )
     .all(libraryId) as { kind: string; done: number; failed: number; open: number }[];
   const stages = STAGES.flatMap((kind) => {

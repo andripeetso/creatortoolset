@@ -313,7 +313,8 @@ export async function settleSilent(now: number): Promise<string[]> {
     for (const w of leftWaiting.values()) w.delete(h.id);
     // a copy known elsewhere (another computer, an upload found again): shown, never trashed
     if (known(h.id, await listsOf(h.library_id)) || trashHeld(h.id, now)) showLeft(h.id);
-    else {
+    // still hidden after the lists were read: one shown or restored meanwhile is never trashed by this pass
+    else if (d.prepare("SELECT 1 FROM assets WHERE id = ? AND left_hidden_at IS NOT NULL AND trashed_at IS NULL").get(h.id)) {
       setTrashedAt(h.id, now);
       d.prepare("UPDATE assets SET left_trashed_from = ? WHERE id = ?").run(name, h.id);
     }

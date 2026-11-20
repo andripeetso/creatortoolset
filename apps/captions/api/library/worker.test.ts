@@ -383,3 +383,14 @@ describe("strips of frames", () => {
     expect(await backfillSprite()).toBe(false);
   });
 });
+
+describe("a clip hidden while it waits on Folders left out (report.ts)", () => {
+  it("has no queued job picked until it is shown again", () => {
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, left_hidden_at) VALUES ('ast_hid', 'lib_a', 'video', 'H', 'ver_hid', 'local', 1, 1)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES ('ver_hid', 'ast_hid', 1, 'k_hid', 1, 's_hid', 'ready', 'local', 1)").run();
+    enqueueJob(d, "lib_a", "ver_hid", "describe", "local");
+    expect(nextJob(d, Date.now() + 1000, ["describe"])).toBeNull();
+    d.prepare("UPDATE assets SET left_hidden_at = NULL WHERE id = 'ast_hid'").run();
+    expect(nextJob(d, Date.now() + 1000, ["describe"])).not.toBeNull();
+  });
+});

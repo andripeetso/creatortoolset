@@ -16,6 +16,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const { createUser } = await import("../users");
 const { applyReport, forgetOnRestart, indexForDevice, librariesOf, MOVED_IN, settleSilent } = await import("./report");
 const { indexOnMac } = await import("./on-mac");
+const { sendLater } = await import("./derived");
 const { searchApp } = await import("./search");
 const { libraryDb } = await import("./db");
 const { buildAssetQuery, indexAsset } = await import("./query");
@@ -471,5 +472,19 @@ describe("each computer's own path decides", () => {
     );
     await x.away("B");
     expect(hidden(840)).toBe(false);
+  });
+});
+
+describe("a Mac-app add sent later of a hidden clip's file", () => {
+  it("is really added: the hidden clip is no duplicate", async () => {
+    const m = computer("Tiny Mac D1");
+    await m.setUp();
+    const at = await m.index("A", "Day/send.mov", 850);
+    await m.away("B");
+    await m.list("A", [{ rel: "Private/send.mov", q: 850 }]);
+    expect(hidden(850)).toBe(true);
+    const r = sendLater(at.library, "tia", { filename: "send.mov", size: 10, fromPath: "/Users/tia/Desktop/send.mov", device: m.mac.id, quick: quick(850) });
+    expect("duplicateOf" in r).toBe(false);
+    expect((r as { assetId: string }).assetId).not.toBe(clip(850).id);
   });
 });

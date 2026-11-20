@@ -295,7 +295,8 @@ export async function saveToLibrary(
     await copyFile(file, staged);
     const sha256 = await sha256File(staged);
     const dup = db()
-      .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL LIMIT 1")
+      // a clip hidden while it waits on Folders left out (report.ts) is no duplicate: the file is really added
+      .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 1")
       .get(lib, sha256) as { id: string } | undefined;
     if (dup) return { duplicateOf: dup.id };
     const versionId = randomUUID();
