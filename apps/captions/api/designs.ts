@@ -462,7 +462,11 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         continue;
       }
       page = { id: `f${Date.now().toString(36)}${next.length}`, background: "#ffffff", layers: [] };
-      if (typeof f.as === "string" && f.as) named.set(f.as, page.id);
+      // a name that is already a frame's id keeps naming that frame: the new one is found by its own id (in "named")
+      if (typeof f.as === "string" && f.as) {
+        if (next.some((p) => p.id === f.as)) notes.push(`${at}: "as" ${f.as} is already a frame's id: the new frame is ${page.id}`);
+        else named.set(f.as, page.id);
+      }
       // after the frames, before the loose pictures: its place among frames is its number
       const k = frameIds().length;
       next.splice(k, 0, page);

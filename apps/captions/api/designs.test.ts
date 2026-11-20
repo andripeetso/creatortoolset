@@ -364,6 +364,15 @@ describe("designs: an AI that designs", () => {
     expect(out.design.pages.find((p) => p.id === "p1")!.layers).toMatchObject([{ id: "l1", fill: "#00ff00" }, { id: "l2", fill: "#0000ff" }]);
   });
 
+  it("a new frame named with an existing frame's id leaves that id naming the existing frame", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const out = (await write(d.id, { frames: [{ as: "p1", background: "#000000", layers: [] }], changes: [{ frame: "p1", add: { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100, id: "box" } }] })).body;
+    expect(out.notes).toEqual([expect.stringContaining('"as" p1 is already a frame\'s id')]);
+    const pages = (await call<Design>("GET", `/api/designs/${d.id}`)).body.pages;
+    expect(pages.find((p) => p.id === "p1")!.layers.map((l) => l.id)).toEqual(["box"]);
+    expect(pages.find((p) => p.id !== "p1")!.layers).toEqual([]);
+  });
+
   it("a text moved onto a slide's frame that is not in its words stays where it was, and the AI is told", async () => {
     const d = await fromPiece();
     const put = (await write(d.id, { changes: [{ frame: "canvas", add: { ...text, x: 4000, text: "Save 20%" }, as: "sale" }] })).body as Wrote & { named: Record<string, string> };
