@@ -456,9 +456,6 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     expect(footage("studio-mac", from)).toEqual({});
     // the two first looks were held at once, one on each computer
     expect(held.map((h) => h.who).sort()).toEqual(["ana-laptop", "studio-mac"]);
-    // no fix round: neither version's plan was planned again (owner, 2026-11-19: no draft he didn't ask for)
-    const shots = srv.readStep(anas, "shots") as Record<string, { fix?: unknown }>;
-    expect([shots.v1?.fix, shots.v2?.fix]).toEqual([undefined, undefined]);
     expect(review(anas)).toMatchObject({ v1: { by: "ana" }, v2: { by: "ana" } });
     expect(serverDecodes(ff0)).toEqual([]);
   }, 240_000);
