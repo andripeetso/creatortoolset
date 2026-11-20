@@ -18,6 +18,7 @@ vi.mock("@/lib/editor", async (orig) => ({
   ...(await orig<typeof import("@/lib/editor")>()),
   nlePending: async () => ({ requests: bridge.queue.splice(0) }),
   nleReply: async (r: { id: string }) => void bridge.replies.push(r),
+  listLuts: async () => [],
 }));
 vi.mock("@/lib/sync", async (orig) => ({
   ...(await orig<typeof import("@/lib/sync")>()),

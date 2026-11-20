@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Link2, Loader2, Magnet, MousePointer2, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
-import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
+import { freshHist, histChange, histGo, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, blade, clipOfPart, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
   loopNext, loopPart, markedPart, NO_MARKS, place, setTrack, sourceTimeline,
   timecode, toSaved, unlink, withKeys, type Gap, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
-import { COMMANDS, runAll, stateView, type NleState } from "@/lib/nle/commands";
+import { COMMANDS, runAll, stateView, type NleRun, type NleState } from "@/lib/nle/commands";
 import { nlePending, nleReply, type NleAsk } from "@/lib/editor";
 import { clientId, onTopic } from "@/lib/sync";
 import { dragging, type Dragged } from "@/lib/nle/drag";
 import { fingerprint, keepUnsaved, readUnsaved } from "@/lib/nle/unsaved";
 import { cn } from "@/lib/utils";
 import { commandOfKey, keyAction } from "@/lib/nle/keys";
-import { NleInspector } from "./NleInspector";
+import { CHAT_STEP, NleInspector } from "./NleInspector";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
@@ -168,9 +168,14 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [selected, setSelected] = useState<string[]>([]);
   // a gap picked on the timeline (its clips' selection let go); any edit lets it go
   const [gap, setGap] = useState<Gap | null>(null);
+  // a transition picked on the timeline (the clip after its cut); picking clips lets it go
+  const [transPick, pickTrans] = useState<string | null>(null);
   const pick = useCallback((keys: string[]) => {
     setSelected(keys);
-    if (keys.length) setGap(null);
+    if (keys.length) {
+      setGap(null);
+      pickTrans(null);
+    }
   }, []);
   const [tool, setTool] = useState<Tool>("select");
   const [snap, setSnap] = useState(true);
@@ -321,7 +326,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   if (control) control.current = { put: (d) => lay(marked(d), { track: "V1", frame: marks[0] ?? Math.round(now() * fps) }), source: openSource };
 
   // the registry's commands (lib/nle/commands.ts) on the timeline as it is now; keys, the menu and the chat all run them
-  const stateNow = (): NleState => ({ tl, sel, playhead: Math.round(now() * fps), marks, clipboard, mode, gap });
+  const stateNow = (): NleState => ({ tl, sel, playhead: Math.round(now() * fps), marks, clipboard, mode, gap, trans: transPick });
   /** A command's state after, onto the page: a changed timeline as one undo step named `label` (read only: nothing), then
    *  the picks, the marks, what Paste lays and the playhead. */
   const apply = (s: NleState, next: NleState, label: string) => {
@@ -330,6 +335,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       commit(next.tl, label);
     } else if (next.gap !== s.gap) setGap(next.gap ?? null);
     if (next.sel !== s.sel) setSelected(next.sel);
+    if ((next.trans ?? null) !== (s.trans ?? null)) pickTrans(next.trans ?? null);
     if (next.marks !== s.marks) setMarks(next.marks);
     if (next.clipboard !== s.clipboard) clipboard = next.clipboard ?? [];
     if (next.playhead !== s.playhead) seek(next.playhead / fps);
@@ -337,6 +343,16 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const run = (id: string) => {
     const s = stateNow();
     if (COMMANDS[id].enabled(s)) apply(s, COMMANDS[id].run(s, {}), COMMANDS[id].title);
+  };
+  /** The Inspector's commands on clips `on` (the picks when left out), one undo step; the picks stay. */
+  const runOn = (list: NleRun[], on?: string[]) => {
+    const s = stateNow();
+    try {
+      const next = runAll(on ? { ...s, sel: on } : s, list);
+      apply(s, { ...next, sel: s.sel }, [...new Set(list.map((r) => COMMANDS[r.id]?.title ?? r.id))].join(", "));
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
   };
 
   // The chat's editor commands (api/editor/nle-bridge.ts): asked for on topic nle:<this window>, taken once each, and run
@@ -356,7 +372,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         try {
           const list = a.commands ?? [];
           const next = runAll(s, list);
-          apply(s, next, list.map((r) => COMMANDS[r.id]?.title ?? r.id).join(", "));
+          apply(s, next, CHAT_STEP + list.map((r) => COMMANDS[r.id]?.title ?? r.id).join(", "));
           s = next;
           reply({ result: stateView(next) });
         } catch (e) {
@@ -542,7 +558,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               } />
           </Panel>
         }
-        inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} />}
+        inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} playhead={Math.round(tln.time * fps)}
+          transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => setHist((h) => histGo(h, i))} />}
         timeline={
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>

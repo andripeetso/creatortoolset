@@ -39,6 +39,14 @@ export function histRedo<T>(h: Hist<T>): Hist<T> {
   return h.future.length ? { ...h, past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h;
 }
 
+/** Back or on to place `i` in past…, now, future… (a history list's row); the steps after it stay as redo. */
+export function histGo<T>(h: Hist<T>, i: number): Hist<T> {
+  let out = h;
+  while (out.past.length > i && out.past.length) out = histUndo(out);
+  while (out.past.length < i && out.future.length) out = histRedo(out);
+  return out;
+}
+
 /** A placeholder as a comment carries it (no id: the panel gives one). Null when the data is not one. */
 export function holeOf(v: unknown): Omit<Placeholder, "id"> | null {
   const h = v as Record<string, unknown> | null;

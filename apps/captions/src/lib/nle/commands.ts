@@ -3,6 +3,7 @@ import {
   setMark, setTrack, type Gap, type Marks, type NleItem, type NleTimeline, type PlaceMode,
 } from "./model";
 import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans } from "./loudness";
+import { INSPECTOR_COMMANDS } from "./inspector-commands";
 
 // Every edit that can be made to an open timeline, by id: the keys (keys.ts), the menus and the chat's nle_run all run
 // these (keys.ts commandOfKey), so a key and the chat do the same thing. A command is pure: the editor's state in, the state after it out.
@@ -22,12 +23,16 @@ export interface NleState {
   mode?: PlaceMode;
   /** a gap picked on the timeline: either delete key closes it */
   gap?: Gap | null;
+  /** a transition picked on the timeline: the handle of the clip after its cut */
+  trans?: string | null;
 }
 
 export interface NleParam {
-  type: "number";
+  type: "number" | "text";
   about: string;
   optional?: true;
+  /** a text param's only values */
+  oneOf?: readonly string[];
 }
 
 export interface NleCommand {
@@ -37,7 +42,8 @@ export interface NleCommand {
   /** false: the page does it (see above); the chat never sends it */
   chat: boolean;
   enabled: (s: NleState) => boolean;
-  run: (s: NleState, p: Record<string, number>) => NleState;
+  /** `t`: the text params */
+  run: (s: NleState, p: Record<string, number>, t?: Record<string, string>) => NleState;
 }
 
 const fpsOf = (s: NleState) => s.tl.timeline.fps;
@@ -164,6 +170,7 @@ const LIST: NleCommand[] = [
   }),
   cmd("setLength", "Set the timeline's length: V1's last shot and its voice run on to it, or everything past it is cut", any,
     (s, p) => ({ ...s, tl: lengthTo(s.tl, Math.max(1, Math.round(p.seconds * fpsOf(s)))) }), { seconds: seconds("the new length in seconds") }),
+  ...INSPECTOR_COMMANDS,
 ];
 
 export const COMMANDS: Record<string, NleCommand> = Object.fromEntries(LIST.map((c) => [c.id, c]));
@@ -171,7 +178,7 @@ export const COMMANDS: Record<string, NleCommand> = Object.fromEntries(LIST.map(
 /** The chat's command list, a line each: `id(param: about, …) title`. */
 export const commandLines = (): string =>
   LIST.filter((c) => c.chat)
-    .map((c) => `${c.id}${Object.keys(c.params).length ? `(${Object.entries(c.params).map(([k, v]) => `${k}${v.optional ? "?" : ""}: ${v.about}`).join(", ")})` : ""} ${c.title}`)
+    .map((c) => `${c.id}${Object.keys(c.params).length ? `(${Object.entries(c.params).map(([k, v]) => `${k}${v.optional ? "?" : ""}: ${v.about}${v.oneOf ? ` (${v.oneOf.join(" | ")})` : ""}`).join(", ")})` : ""} ${c.title}`)
     .join("\n");
 
 /** "V2:3": the third clip on V2 (by where it starts); its handle, or null. */
@@ -199,12 +206,17 @@ export function runAll(start: NleState, list: NleRun[]): NleState {
     const no = (why: string) => new Error(`Command ${n + 1} (${r.id}): ${why}`);
     if (!c || !c.chat) throw no("not a command here");
     const p: Record<string, number> = {};
+    const t: Record<string, string> = {};
     for (const [k, v] of Object.entries(r.params ?? {})) {
-      if (!c.params[k]) throw no(`takes no ${k}`);
-      if (typeof v !== "number" || !Number.isFinite(v)) throw no(`${k} is a number`);
-      p[k] = v;
+      const spec = c.params[k];
+      if (!spec) throw no(`takes no ${k}`);
+      if (spec.type === "text") {
+        if (typeof v !== "string" || (spec.oneOf && !spec.oneOf.includes(v))) throw no(`${k} is ${spec.oneOf ? `one of ${spec.oneOf.join(", ")}` : "text"}`);
+        t[k] = v;
+      } else if (typeof v !== "number" || !Number.isFinite(v)) throw no(`${k} is a number`);
+      else p[k] = v;
     }
-    for (const [k, spec] of Object.entries(c.params)) if (!spec.optional && p[k] === undefined) throw no(`needs ${k}`);
+    for (const [k, spec] of Object.entries(c.params)) if (!spec.optional && p[k] === undefined && t[k] === undefined) throw no(`needs ${k}`);
     if (r.ref !== undefined) {
       const refs = Array.isArray(r.ref) ? r.ref : [r.ref];
       const keys = refs.map((x) => clipOfRef(start.tl, String(x)));
@@ -213,7 +225,7 @@ export function runAll(start: NleState, list: NleRun[]): NleState {
     }
     if (!c.enabled(s)) throw no("nothing to do it on: pick clips with ref (paste: copy first)");
     try {
-      s = c.run(s, p);
+      s = c.run(s, p, t);
     } catch (e) {
       throw no((e as Error).message);
     }
