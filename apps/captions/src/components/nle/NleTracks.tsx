@@ -200,6 +200,7 @@ export const NleTracks = memo(function NleTracks({
   /** a lane under the video tracks: its head, and what is on it at `pps` pixels a second */
   lane?: { head: ReactNode; body: (pps: number) => ReactNode };
 }) {
+  const gate = useContext(NleGate);
   const fps = tl.timeline.fps;
   const content = lengthOf(tl) / fps;
   const drag = useRef<Drag | null>(null);
@@ -738,9 +739,10 @@ export const NleTracks = memo(function NleTracks({
                   {t.locked ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
                 </button>
                 <button type="button" aria-pressed={!!off} aria-label={v ? (off ? `Show ${id}` : `Hide ${id}`) : off ? `Unmute ${id}` : `Mute ${id}`}
-                  title={v ? (off ? "Hidden" : "Shown") : off ? "Muted" : "Heard"}
+                  disabled={!off && !!gate.field([id], v ? "hidden" : "mute")}
+                  title={(!off && gate.field([id], v ? "hidden" : "mute")) || (v ? (off ? "Hidden" : "Shown") : off ? "Muted" : "Heard")}
                   onClick={() => onTrack(id, v ? { hidden: off ? undefined : true } : { mute: off ? undefined : true })}
-                  className={cn("rounded p-0.5 hover:bg-zinc-800", off ? "text-amber-400" : "text-zinc-500")}>
+                  className={cn("rounded p-0.5 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent", off ? "text-amber-400" : "text-zinc-500")}>
                   {v ? (off ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />) : off ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
                 </button>
               </div>
@@ -907,13 +909,18 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
     const got = id?.[0] === k ? addTrackAt(tl, k, no) : null;
     return got ? () => onCommit(got.tl) : null;
   };
-  const adds: [string, (() => void) | null][] = [
-    ["Video Track", () => onCommit(addTrack(tl, "V").tl)],
-    ["Audio Track", () => onCommit(addTrack(tl, "A").tl)],
-    ["Video Track Above", at("V", n + 1)],
-    ["Video Track Below", at("V", n - 1)],
-    ["Audio Track Above", at("A", n - 1)],
-    ["Audio Track Below", at("A", n + 1)],
+  // a track this server's renders don't draw: greyed (its clips would vanish from the render)
+  const row = (l: string, fn: (() => void) | null, newId: string): [string, (() => void) | null, string?] => {
+    const why = gate.field([newId], "");
+    return [l, why ? null : fn, why ?? undefined];
+  };
+  const adds = [
+    row("Video Track", () => onCommit(addTrack(tl, "V").tl), addTrack(tl, "V").id),
+    row("Audio Track", () => onCommit(addTrack(tl, "A").tl), addTrack(tl, "A").id),
+    row("Video Track Above", at("V", n + 1), `V${n + 1}`),
+    row("Video Track Below", at("V", n - 1), `V${n - 1}`),
+    row("Audio Track Above", at("A", n - 1), `A${n - 1}`),
+    row("Audio Track Below", at("A", n + 1), `A${n + 1}`),
   ];
   const moveRow = (label: string, up: boolean): [string, (() => void) | null] => {
     const other = id ? moveTarget(tl, id, up) : null;
@@ -930,9 +937,9 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
     ["Delete Empty Tracks", empties !== tl ? () => onCommit(empties) : null],
     null,
     [t?.locked ? "Unlock Track" : "Lock Track", id ? () => onTrack(id, { locked: t!.locked ? undefined : true }) : null],
-    v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", () => onTrack(id!, { hidden: t!.hidden ? undefined : true })]
-      : [t?.mute ? "Unmute Track" : "Mute Track", id ? () => onTrack(id, { mute: t!.mute ? undefined : true }) : null],
-    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", gate ? null : () => onLowerUnderVoice(id), gate ?? undefined] as [string, (() => void) | null, string?]] : []),
+    v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", !t!.hidden && gate.field([id!], "hidden") ? null : () => onTrack(id!, { hidden: t!.hidden ? undefined : true }), (!t!.hidden && gate.field([id!], "hidden")) || undefined]
+      : [t?.mute ? "Unmute Track" : "Mute Track", !id || (!t!.mute && gate.field([id], "mute")) ? null : () => onTrack(id, { mute: t!.mute ? undefined : true }), (id && !t!.mute && gate.field([id], "mute")) || undefined],
+    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", gate.v2 ? null : () => onLowerUnderVoice(id), gate.v2 ?? undefined] as [string, (() => void) | null, string?]] : []),
   ];
   const run = (fn: () => void) => () => {
     onClose();
@@ -944,7 +951,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
         <div className="group/sub relative">
           <button type="button" role="menuitem" aria-haspopup="menu" className={MENU_ROW}><span>Add Track</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
           <div role="menu" aria-label="Add Track" className={cn("absolute -top-1 left-full hidden w-48 group-focus-within/sub:block group-hover/sub:block", MENU)}>
-            {adds.map(([l, fn]) => <button key={l} type="button" role="menuitem" disabled={!fn} className={MENU_ROW} onClick={fn ? run(fn) : undefined}>{l}</button>)}
+            {adds.map(([l, fn, why]) => <button key={l} type="button" role="menuitem" disabled={!fn} title={why} className={MENU_ROW} onClick={fn ? run(fn) : undefined}>{l}</button>)}
           </div>
         </div>
         {rows.map((r, i) => (r ? (

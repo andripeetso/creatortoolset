@@ -400,7 +400,7 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     await stopAll(id);
   });
 
-  it("an empty timeline: an edit with no footage and v1; clips are put on it, a picture with its sound, at the first free frame", async () => {
+  it("an empty timeline: an edit with no footage and v1; a clip as the editor lays it, with its sound or none", async () => {
     libraryDb().prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a1'").run(JSON.stringify({ duration: 2, width: 1920, height: 1080, fps: 25, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" }));
     const res = await call("maker", "POST", "/api/editor/empty", { name: "Tiny blank" });
     expect(res.status).toBe(201);
@@ -409,33 +409,22 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     const e = await json<Edit>(call("maker", "GET", `/api/editor/${id}`));
     expect(e).toMatchObject({ name: "Tiny blank", sources: [], drafts: ["v1"], jobs: [], workspaceId: "maker" });
     expect(readDraft(id, "v1")!.timeline).toMatchObject({ fps: 25, width: 1080, height: 1920, sources: {} });
-    const add = (body: object, user = "maker") => call(user, "POST", `/api/editor/${id}/drafts/v1/clips`, body);
-    expect((await add({ clip: "ver_a1", track: "V9", rec: 0 })).status).toBe(400);
-    expect((await add({ clip: "ver_a1", track: "V1", rec: -1 })).status).toBe(400);
-    expect((await add({ clip: "ver_b", track: "V1", rec: 0 })).status).toBe(404);
-    expect((await add({ clip: "ver_a1", track: "V1", rec: 0 }, "other")).status).toBe(404);
-    expect((await add({ clip: "ver_a2", track: "V1", rec: 0 })).status).toBe(409); // no probe yet
-    const first = await add({ clip: "ver_a1", track: "V1", rec: 0 });
-    expect(first.status).toBe(201);
-    expect(((await first.json()) as { key: string }).key).toBe("V1:0");
-    const second = await json<{ key: string; view: { tracks: { id: string; items: { key: string }[] }[] } }>(add({ clip: "ver_a1", track: "V1", rec: 10 }));
-    expect(second.key).toBe("V1:50");
-    expect(second.view.tracks.find((t) => t.id === "A1")!.items.map((i) => i.key)).toEqual(["A1:0", "A1:50"]);
-    const tl = readDraft(id, "v1")!.timeline;
-    expect(tl.tracks.V1.items[1]).toMatchObject({ src: "ver_a1", in: 0, len: 50, rec: 50 });
-    expect(tl.tracks.A1.items[1]!.link).toBe(tl.tracks.V1.items[1]!.link);
-    expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).sources).toEqual(["ver_a1"]);
-    // picture only on V2
-    expect((await json<{ key: string }>(add({ clip: "ver_a1", track: "V2", rec: 0 }))).key).toBe("V2:0");
-    expect(readDraft(id, "v1")!.timeline.tracks.A1.items).toHaveLength(2);
+    const clip = (c: string, user = "maker") => call(user, "GET", `/api/editor/${id}/clips/${c}`);
+    expect((await clip("ver_b")).status).toBe(404); // another workspace's
+    expect((await clip("ver_a1", "other")).status).toBe(404);
+    expect((await clip("ver_a2")).status).toBe(409); // no probe yet
+    expect(await json(clip("ver_a1"))).toEqual({ source: { versionId: "ver_a1", name: "Take 1", fps: 25, tc: 0, dur: 50, w: 1920, h: 1080 }, sound: true });
   });
 
-  it("the editor's whole timeline: judged, kept with every field it doesn't know, a version-2 timeline refused while the renders take version 1", async () => {
-    expect(await json(call("maker", "GET", "/api/editor/renders"))).toEqual({ edj_version: 1 });
+  it("the editor's whole timeline: judged, kept with every field it doesn't know; version 2 and fields the renders don't draw refused", async () => {
     const id = await made();
     const timeline = { ...cutOf(), speakers: [{ rec: 0, len: 30, speaker: 1 }] };
+    // gain on a picture clip: not drawn, but the draft came with it, so it stays
     Object.assign(timeline.tracks.V1.items[0]!, { gainDb: -3, zoom: 1.2, fx: [{ kind: "shake" }] });
     await saveDraft(id, "v1", { timeline, notes: [] });
+    const { rendersOf } = await import("./preview");
+    expect((await json(call("maker", "GET", `/api/editor/${id}/drafts/v1`))).renders).toEqual(rendersOf(timeline));
+    expect(rendersOf(timeline).tracks.V1).not.toContain("rot");
     const { toNle } = await import("../../src/lib/nle/draft");
     const nle = toNle(timeline as never);
     nle.tracks.V1.items[1]!.len = 20; // a trim
@@ -448,6 +437,12 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     keyed.tracks.V1.items[0]!.keys = { zoom: [[0, 1, "ease"], [20, 1.5, "ease"]] };
     expect(await json(put(keyed))).toMatchObject({ code: "invalid", error: expect.stringContaining("Not in this server's renders yet") });
     expect(await json(put({ ...nle, edj_version: 7 }))).toMatchObject({ error: expect.stringContaining("version 7") });
+    const turned = structuredClone(nle);
+    turned.tracks.V1.items[0]!.rot = 10;
+    expect(await json(put(turned))).toMatchObject({ error: expect.stringContaining("Not in this server's renders yet: V1 rot") });
+    const v3 = structuredClone(nle);
+    v3.tracks.V3 = { items: [{ src: "ver_a1", rec: 0, in: 0, len: 10 }] };
+    expect((await json(put(v3))).error).toContain("Not in this server's renders yet: V3");
     const over = structuredClone(nle);
     over.tracks.V1.items[1]!.rec = 10;
     expect((await json(put(over))).error).toContain("starts on top of the clip before it on V1");
@@ -456,17 +451,20 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     expect((await put({ ...nle, sources: { ...nle.sources, ver_b: { name: "Theirs" } } })).status).toBe(400);
     expect((await put({ ...nle, sources: { ...nle.sources, ver_a2: { name: "Take 2" } } })).status).toBe(409);
 
+    nle.tracks.V1.items[0]!.fade_in = 5; // drawn by the renders
     const e = await json<Edit>(put(nle));
     expect(queued(e)).toEqual([["post", "v1"]]);
     const d = readDraft(id, "v1")!;
     expect(d.timeline.speakers).toEqual(timeline.speakers);
-    expect(d.timeline.tracks.V1.items[0]).toEqual({ ...timeline.tracks.V1.items[0], mine: "kept" });
+    expect(d.timeline.tracks.V1.items[0]).toEqual({ ...timeline.tracks.V1.items[0], mine: "kept", fade_in: 5 });
     expect(d.timeline.tracks.V1.items[1]!.len).toBe(20);
     expect(d.notes).toEqual(["Cut by hand on the timeline: the whole timeline saved"]);
     expect(await json(put(nle))).toMatchObject({ code: "conflict", error: "This version is still being made" });
     await stopAll(id);
     // a new library clip: its rate, length and size come from the library, and it joins the edit's footage
-    libraryDb().prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a2'").run(JSON.stringify({ duration: 4, width: 1920, height: 1080, fps: 25, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" }));
+    libraryDb().prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a2'").run(JSON.stringify({ duration: 4, width: 1920, height: 1080, fps: 25, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p" }));
+    // a picture with no sound: the bin lays it with no voice clip
+    expect((await json(call("maker", "GET", `/api/editor/${id}/clips/ver_a2`))).sound).toBe(false);
     const added = structuredClone(nle);
     added.sources.ver_a2 = { versionId: "ver_a2", name: "Take 2", fps: 30, dur: 1 };
     added.tracks.V2!.items.push({ src: "ver_a2", rec: 0, in: 0, len: 25 });

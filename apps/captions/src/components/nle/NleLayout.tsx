@@ -2,8 +2,13 @@ import { createContext, useRef, useState, type MutableRefObject, type PointerEve
 import { Images, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** Why the controls that only make version-2 timeline fields are greyed (lib/nle/check.ts NOT_RENDERED); null: they work. */
-export const NleGate = createContext<string | null>(null);
+/**
+ * What the server's renders don't draw, for greying controls (lib/nle/check.ts NOT_RENDERED, or null where they work):
+ * `v2` the controls that only make version-2 fields; `field(tracks, f)` a clip or track field on those tracks (f "" the
+ * tracks themselves).
+ */
+export interface Gate { v2: string | null; field: (tracks: string[], f: string) => string | null }
+export const NleGate = createContext<Gate>({ v2: null, field: () => null });
 
 // The editor's panels, as a non-linear editor lays them out: Media, Viewer and Inspector side by side on top, the
 // Timeline across the bottom taking the rest of the height. Each panel has its own title bar; the splitters between

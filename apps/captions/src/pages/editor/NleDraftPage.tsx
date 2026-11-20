@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 import { Download, Eye, MoreHorizontal } from "lucide-react";
-import type { Draft, Edit } from "@contracts/editor";
+import type { Draft, Edit, Renders } from "@contracts/editor";
 import type { AssetCard, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { NleEditor, type NleControl, type NleDrop, type NleFile } from "@/components/nle/NleEditor";
@@ -12,7 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "@/components/ui/input";
 import { canChange, useMe } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
-import { duplicateVersion, exportUrl, getDraft, getEdit, markVersion, rendersVersion, saveTimeline } from "@/lib/editor";
+import { clipSource, duplicateVersion, exportUrl, getDraft, getEdit, markVersion, saveTimeline } from "@/lib/editor";
 import { listAssets, listLibraries } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { toNle } from "@/lib/nle/draft";
@@ -25,17 +25,24 @@ import { versionTitle } from "./ProjectView";
  * One version on the timeline (/editor/:id/:draft), in the editor (components/nle): it plays the clips from the Media
  * Library as they are edited, and Save (⌘S) keeps the whole timeline as this version with no AI (PUT …/timeline): it
  * stays the same version, its new render is filed in Review as that video's next version. Clips come from the media
- * bin in the Media Pool. Edits that this server's renders don't take yet are greyed (GET /api/editor/renders).
+ * bin in the Media Pool. What this server's renders don't draw is greyed (the draft's `renders`). While nothing is
+ * unsaved the Viewer can show the render itself (Rendered): a planned edit opens on it, so its texts and effects show.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const BIN_MIME = "application/x-ct-bin-clip";
 
-/** A library clip as the editor lays it: keyed by its version id; the server fills in its rate, length and size on Save. */
-const dropOf = (a: AssetCard): NleDrop => ({
-  path: a.title, name: a.title, seconds: a.durationS, w: a.width ?? 0, h: a.height ?? 0, sound: true,
-  src: a.versionId, source: { versionId: a.versionId, name: a.title, tc: 0 },
-});
+/** A server from before the editor came here says nothing of its renders: version 1, none of the editor's own fields. */
+const OLD_SERVER: Renders = { edj_version: 1, tracks: {} };
+/** What the bin's drag carries: the clip's version id. */
+type BinClip = { versionId: string };
+
+/** A library clip as the editor lays it, keyed by its version id: its rate, length and size from the server, and a picture
+ *  with no sound brings no voice clip. */
+async function dropOf(edit: string, clip: string): Promise<NleDrop> {
+  const { source, sound } = await clipSource(edit, clip);
+  return { path: source.name, name: source.name, seconds: source.dur / source.fps, fps: source.fps, w: source.w, h: source.h, sound, src: clip, source: { ...source } };
+}
 
 export function NleDraftPage({ id, name }: { id: string; name: string }) {
   const editable = canChange(useMe(), "editor");
@@ -44,21 +51,32 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
   const e = edit.data;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [renders, setRenders] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const control = useRef<NleControl | null>(null);
+  // the Review version that is exactly the saved timeline
+  const [filed, setFiled] = useState<Draft["filed"]>(null);
 
   useEffect(() => {
     let gone = false;
     setDraft(null);
-    getDraft(id, name).then((d) => !gone && setDraft(d), (x) => !gone && setLoadError(message(x)));
+    getDraft(id, name).then((d) => {
+      if (gone) return;
+      setDraft(d);
+      setFiled(d.filed ?? null);
+    }, (x) => !gone && setLoadError(message(x)));
     return () => void (gone = true);
   }, [id, name]);
-  // a server that can't say renders version 1, as every server before the editor came here
-  useEffect(() => void rendersVersion().then((r) => setRenders(r.edj_version), () => setRenders(1)), []);
   const initial = useMemo(() => (draft ? toNle(draft.timeline) : null), [draft]);
   const making = e?.jobs.find((j) => j.variant === name && (j.state === "queued" || j.state === "running"));
+  // read again when a step of this version ends (its render filed)
+  const doneKey = e ? e.jobs.filter((j) => j.variant === name && j.state === "done").length : 0;
+  useEffect(() => {
+    if (!doneKey) return;
+    let gone = false;
+    getDraft(id, name).then((d) => !gone && setFiled(d.filed ?? null), () => {});
+    return () => void (gone = true);
+  }, [id, name, doneKey]);
 
   // a library clip plays from the server (its proxy, or the original); a card made in the edit's own folder doesn't play here
   const urlOf = useCallback((src: string, tl: NleTimeline): NleFile | null => {
@@ -70,6 +88,7 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
     setRefused(null);
     try {
       edit.set(await saveTimeline(id, name, tl));
+      setFiled(null); // its render is of the timeline before
       toast.success(e?.previews[name] ? "Saved: its render goes to Review as the next version" : "Saved: rendering it");
     } catch (x) {
       setRefused(message(x));
@@ -101,7 +120,6 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
     navigate(`/editor/${id}`);
     undoable("version deleted", () => markVersion(id, name, { trashed: false }));
   });
-  const filed = draft?.filed ?? null;
 
   return (
     <div className="flex h-dvh flex-col">
@@ -129,14 +147,16 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
         )}
       </AppBar>
       <div className="flex min-h-0 flex-1 flex-col">
-        {initial && renders !== null ? (
-          <NleEditor initial={initial} resetKey={`${id}/${name}`} urlOf={urlOf} onSave={save} renders={renders} control={control}
+        {initial && draft ? (
+          <NleEditor initial={initial} resetKey={`${id}/${name}`} urlOf={urlOf} onSave={save} control={control}
+            renders={draft.renders ?? OLD_SERVER}
+            rendered={filed ? { url: `/api/review/assets/${filed.assetId}/v/${filed.n}/play`, first: !!draft.timeline.plan } : null}
             readOnly={!editable}
             saving={saving ? { line: "Saving" } : null}
-            bin={editable ? <MediaBin onUse={(d) => control.current?.put(d)} /> : undefined}
+            bin={editable ? <MediaBin onUse={(clip) => void dropOf(id, clip).then((d) => control.current?.put(d), (x) => toast.error(message(x)))} /> : undefined}
             readDrop={async (dt) => {
               const raw = dt.getData(BIN_MIME);
-              return raw ? (JSON.parse(raw) as NleDrop) : null;
+              return raw ? dropOf(id, (JSON.parse(raw) as BinClip).versionId) : null;
             }}
             status={refused ? <span className="min-w-0 truncate text-red-400" title={refused}>{refused}</span> : making ? <span className="text-zinc-500">Rendering this version</span> : null} />
         ) : (
@@ -148,7 +168,7 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
 }
 
 /** The Media Library's clips, searched: drag one onto a track, or click a video to put it at the playhead on V1. */
-function MediaBin({ onUse }: { onUse: (d: NleDrop) => void }) {
+function MediaBin({ onUse }: { onUse: (clip: string) => void }) {
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [q, setQ] = useState("");
   const [items, setItems] = useState<AssetCard[] | null>(null);
@@ -175,8 +195,8 @@ function MediaBin({ onUse }: { onUse: (d: NleDrop) => void }) {
         {items?.filter((a) => a.state === "ready").map((a) => (
           <li key={a.id}>
             <button type="button" draggable title={a.title}
-              onDragStart={(x) => { x.dataTransfer.setData(BIN_MIME, JSON.stringify(dropOf(a))); x.dataTransfer.effectAllowed = "copy"; }}
-              onClick={a.kind === "video" ? () => onUse(dropOf(a)) : undefined}
+              onDragStart={(x) => { x.dataTransfer.setData(BIN_MIME, JSON.stringify({ versionId: a.versionId } satisfies BinClip)); x.dataTransfer.effectAllowed = "copy"; }}
+              onClick={a.kind === "video" ? () => onUse(a.versionId) : undefined}
               className="flex w-full flex-col overflow-hidden rounded-md border border-zinc-500/20 text-left hover:border-zinc-500/50">
               <span className="relative block aspect-video w-full overflow-hidden bg-zinc-800">
                 <Picture src={a.thumbUrl ?? `/api/library/media/${a.versionId}/thumb`} alt="" className="absolute inset-0 h-full w-full object-cover" />

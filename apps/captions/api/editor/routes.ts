@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, EDIT_STEPS, TRACKS, type EditSlot, type EditStep, type EditSummary, type Timeline, type TrackId, type VersionMark, type VersionPlan } from "../../contracts/editor";
+import { EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, EDIT_STEPS, TRACKS, type EditSlot, type EditStep, type EditSummary, type Timeline, type VersionMark, type VersionPlan } from "../../contracts/editor";
 import { deviceOf } from "../lib/devices";
 import { innerCall, type AuthVars } from "../auth";
 import { libraryDb } from "../library/db";
@@ -21,15 +21,14 @@ import { wordsOf } from "../library/transcribe";
 import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
 import { statSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
 import { handCheck, refusal } from "../../src/lib/nle/check";
-import { fromNle } from "../../src/lib/nle/draft";
+import { fromNle, toNle } from "../../src/lib/nle/draft";
 import type { NleTimeline } from "../../src/lib/nle/model";
-import { RENDERS_EDJ } from "./preview";
+import { rendersOf } from "./preview";
 import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
 import { cardsApp } from "./cards/routes";
@@ -193,9 +192,6 @@ editorApp.get("/footage-target", async (c) => {
 // the defaults are registered before /:id, so "defaults" is never read as an edit id
 // the defaults of the workspace the request works in (the window's, or the one picked in Settings: X-CT-Workspace);
 // in a workspace given to the person, the workspace's own (its owner's): what a new edit there is made with
-/** The highest timeline version (contracts/editor.ts edj_version) this server's renders take: the editor greys the rest. */
-editorApp.get("/renders", (c) => c.json({ edj_version: RENDERS_EDJ }));
-
 editorApp.get("/defaults", async (c) => c.json(await editorDefaults(await settingsOf(c), await currentWorkspaceId(c.get("user")))));
 
 /** One slot's default in that workspace: an item id the person can choose from, or null for back to the pack's or the built-in one. */
@@ -554,7 +550,8 @@ editorApp.put("/:id/drafts/:name/timeline", async (c) => {
     if (!row || !probe?.duration) return bad(`${row?.title ?? "A clip"} is not ready yet`, "conflict");
     sources[k] = { ...sources[k], ...sourceOf(k, row.title, probe) };
   }
-  const problems = handCheck({ ...nle, sources }, RENDERS_EDJ);
+  // what the draft already had that the renders don't draw (a planned edit's speeds) stays; nothing new is added
+  const problems = handCheck({ ...nle, sources }, rendersOf(d.timeline), toNle(d.timeline));
   if (problems.length) return bad(refusal(problems));
   const timeline = fromNle({ ...nle, sources });
   // a draft keeps its five tracks, whatever the editor sent
@@ -586,43 +583,18 @@ editorApp.post("/:id/drafts/:name/duplicate", async (c) => {
 });
 
 /**
- * A Media Library clip put on the draft (AddClip): on `track` from frame `rec`, or the first frame after it that is free
- * there for the whole clip. A picture clip on V1 brings its sound on A1, linked, unless `sound` is false. The clip must be
- * in the edit's workspace and seen by the caller; it joins the edit's footage. The draft it replaces is kept as a revision.
+ * A Media Library clip as the editor lays it on this draft (the bin): its source as the draft would keep it (rate,
+ * length, size from the library) and whether it has sound, so a picture with none brings no voice clip. The clip must be
+ * in the edit's workspace and seen by the caller; 409 while it isn't probed yet.
  */
-editorApp.post("/:id/drafts/:name/clips", async (c) => {
+editorApp.get("/:id/clips/:clip", async (c) => {
   const r = await load(c, true);
-  const name = c.req.param("name");
-  const d = r && readDraft(r.e.id, name);
-  if (!r || !d) return notFound(c);
-  const b = await body(c);
-  const bad = (error: string, status: 400 | 409 = 400) => c.json({ error, code: status === 400 ? "invalid" : "conflict" }, status);
-  const track = b.track as TrackId;
-  if (!TRACKS.includes(track)) return bad(`track is one of ${TRACKS.join(", ")}`);
-  if (!Number.isInteger(b.rec) || (b.rec as number) < 0) return bad("rec is a frame on the timeline, 0 or more");
-  const clip = typeof b.clip === "string" ? b.clip : "";
-  if (!clip || (await editSources(r.user, [clip])) !== r.e.workspaceId) return notFound(c);
-  if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return bad("This version is still being made", 409);
+  const clip = c.req.param("clip");
+  if (!r || (await editSources(r.user, [clip])) !== r.e.workspaceId) return notFound(c);
   const row = libraryDb().prepare("SELECT a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(clip) as { title: string; probe: string | null } | undefined;
   const probe = row?.probe ? (JSON.parse(row.probe) as ProbeSummary) : null;
-  if (!row || !probe?.duration) return bad("This clip is not ready yet", 409);
-  const tl: Timeline = structuredClone(d.timeline);
-  const src = (tl.sources[clip] ??= sourceOf(clip, row.title, probe));
-  if (track[0] === "V" && !src.w) return bad("This clip has no picture");
-  if (track[0] === "A" && !probe.acodec) return bad("This clip has no sound");
-  const lanes: TrackId[] = track === "V1" && b.sound !== false && probe.acodec ? ["V1", "A1"] : [track];
-  // ponytail: an hour at most on one clip; a longer one is put on in part, trimmed on the timeline
-  const len = Math.max(1, Math.min(Math.floor(probe.duration * tl.fps), 3600 * tl.fps));
-  let rec = b.rec as number;
-  for (let moved = true; moved; ) {
-    moved = false;
-    for (const l of lanes) for (const i of tl.tracks[l].items) if (i.rec < rec + len && rec < i.rec + i.len) { rec = i.rec + i.len; moved = true; }
-  }
-  const link = lanes.length > 1 ? randomUUID().slice(0, 8) : undefined;
-  for (const l of lanes) tl.tracks[l].items.push({ src: clip, in: 0, len, rec, ...(link ? { link } : {}) });
-  await saveDraft(r.e.id, name, { ...d, timeline: tl });
-  if (!r.e.sources.includes(clip)) await saveEdit({ ...r.e, sources: [...r.e.sources, clip] });
-  return c.json({ view: draftView(tl, wordsFor(tl)), key: `${track}:${rec}` }, 201);
+  if (!row || !probe?.duration) return c.json({ error: "This clip is not ready yet", code: "conflict" }, 409);
+  return c.json({ source: sourceOf(clip, row.title, probe), sound: !!probe.acodec });
 });
 
 /** The editor's sources' sound for Normalize and Lower Under Voice (sound.ts): `sources` are library version ids. */
@@ -650,7 +622,7 @@ editorApp.get("/:id/drafts/:name", async (c) => {
         return o ? [[n, o.timeline]] : [];
       }),
   );
-  return c.json({ ...d, qa: qaOf(d.timeline, others), exportGaps: exportGaps(d.timeline, !!(await gradeOf(ownerOf(r.e), r.e.bundle))), view: draftView(d.timeline, wordsFor(d.timeline)), filed: filedAs(r.e.id, name, d.timeline) });
+  return c.json({ ...d, qa: qaOf(d.timeline, others), exportGaps: exportGaps(d.timeline, !!(await gradeOf(ownerOf(r.e), r.e.bundle))), view: draftView(d.timeline, wordsFor(d.timeline)), filed: filedAs(r.e.id, name, d.timeline), renders: rendersOf(d.timeline) });
 });
 
 /** The draft for the user's own editor: OTIO, FCPXML, FCP 7 XML (`xml`, Premiere), or all three in a zip (with download links when the footage is in a bucket). */

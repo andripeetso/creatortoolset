@@ -255,9 +255,12 @@ describe("markers, transitions, lift and extract on the page", () => {
   });
 });
 
+// renders at version 1 that draw V1's zoom, tilt and fades and A1's level, and nothing else
+const V1_ONLY = { edj_version: 1, tracks: { V1: ["zoom", "tilt", "fade_in", "fade_out"], A1: ["gain_db"] } };
+
 describe("a server whose renders take timeline version 1", () => {
   it("greys the version-2 controls with the line, makes no version-2 edit from a key or the chat, and the rest still works", async () => {
-    const p = await mount(two, { renders: 1 });
+    const p = await mount(two, { renders: V1_ONLY });
     // ⌘T would add a transition: nothing changes
     await key("t", { code: "KeyT", metaKey: true });
     expect(p.changes.at(-1)?.tracks.V1.items[1].trans).toBeUndefined();
@@ -288,7 +291,21 @@ describe("a server whose renders take timeline version 1", () => {
     p.done();
   });
 
-  it("where the renders take version 2 nothing is greyed", async () => {
+  it("greys each control whose field the renders don't draw on its clips' track, and refuses that edit from the chat", async () => {
+    const p = await mount(two, { renders: V1_ONLY });
+    await key("a", { code: "KeyA", metaKey: true });
+    const greyed = (label: string) => !!p.host.querySelector(`fieldset[disabled][title="Not in this server's renders yet"] [title="${label}"]`);
+    expect(greyed("Rotation Angle")).toBe(true);
+    expect(greyed("Position")).toBe(true);
+    expect(greyed("Opacity")).toBe(true);
+    expect(greyed("Zoom")).toBe(false);
+    expect(greyed("Fade in")).toBe(false);
+    await p.deliver(ask({ id: "e1", commands: [{ id: "enable", params: {} }] }));
+    expect(bridge.replies.at(-1)).toEqual({ id: "e1", error: "Not in this server's renders yet: V1 enabled, A1 enabled" });
+    p.done();
+  });
+
+  it("where nothing is said of the renders nothing is greyed", async () => {
     const p = await mount(two);
     await key("t", { code: "KeyT", metaKey: true });
     expect(p.now().tracks.V1.items[1].trans).toBeTruthy();

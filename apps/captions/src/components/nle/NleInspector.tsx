@@ -118,6 +118,19 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
   );
 }
 
+/** Controls of clip field `field` on clips `keys`, greyed with why where the server's renders don't draw it (NleGate);
+ *  `line`: the why written under them too. */
+function Gated({ e, keys, field, line, children }: { e: Edit; keys: string[]; field: string; line?: boolean; children: ReactNode }) {
+  const off = useContext(NleGate).field([...new Set(keys.flatMap((k) => find(e.tl, k)?.track ?? []))], field);
+  if (!off) return <>{children}</>;
+  return (
+    <fieldset disabled title={off} className="min-w-0 opacity-40">
+      {children}
+      {line && <p className="px-2 pb-1 text-[11px] text-zinc-300">{off}</p>}
+    </fieldset>
+  );
+}
+
 type Edit = {
   tl: NleTimeline; onLive: (tl: NleTimeline | null) => void; onCommit: (tl: NleTimeline, label?: string) => void;
   playhead: number; onRun: (list: NleRun[], on?: string[]) => void;
@@ -211,10 +224,16 @@ function VideoTab({ keys, ...e }: Edit & { keys: string[] }) {
       <Section title="Transform" {...part(e, keys, "transform", ["zoom", "pan", "tilt", "rot", "flip"], bump)}>
         <NumberRow edit={e} label="Zoom" tags={["X", "Y"]} value={at("zoom")} def={1} step={0.01} min={0.05} max={10} digits={3}
           make={(v) => (has("zoom") ? keyAt(e, keys, { zoom: v }) : set({ zoom: v === 1 ? undefined : v }))} k={keyCtl(e, keys, ["zoom"])} />
-        <PairRow label="Position" tags={["X", "Y"]} value={[at("pan"), at("tilt")]} def={[0, 0]} step={1} digits={3}
-          onLive={(v) => e.onLive(v && pos(v))} onCommit={(v) => onCommit(pos(v), "Position")} k={keyCtl(e, keys, ["pan", "tilt"])} />
-        <NumberRow edit={e} label="Rotation Angle" slider value={at("rot")} def={0} step={0.1} min={-360} max={360} digits={3}
-          make={(v) => (has("rot") ? keyAt(e, keys, { rot: v }) : set({ rot: v || undefined }))} k={keyCtl(e, keys, ["rot"])} />
+        {/* shortcut: Position greys with pan, though its Y (tilt) may render; split the row if that matters */}
+        <Gated e={e} keys={keys} field="pan">
+          <PairRow label="Position" tags={["X", "Y"]} value={[at("pan"), at("tilt")]} def={[0, 0]} step={1} digits={3}
+            onLive={(v) => e.onLive(v && pos(v))} onCommit={(v) => onCommit(pos(v), "Position")} k={keyCtl(e, keys, ["pan", "tilt"])} />
+        </Gated>
+        <Gated e={e} keys={keys} field="rot">
+          <NumberRow edit={e} label="Rotation Angle" slider value={at("rot")} def={0} step={0.1} min={-360} max={360} digits={3}
+            make={(v) => (has("rot") ? keyAt(e, keys, { rot: v }) : set({ rot: v || undefined }))} k={keyCtl(e, keys, ["rot"])} />
+        </Gated>
+        <Gated e={e} keys={keys} field="flip">
         <Row label="Flip" reset={item.flip ? () => onCommit(set({ flip: undefined })) : null}>
           <div className="flex gap-1.5">
             {(["h", "v"] as const).map((a) => (
@@ -225,21 +244,28 @@ function VideoTab({ keys, ...e }: Edit & { keys: string[] }) {
             ))}
           </div>
         </Row>
+        </Gated>
       </Section>
       <Section title="Cropping" {...part(e, keys, "crop", ["crop"], bump)}>
-        {([["Crop Left", 0], ["Crop Right", 2], ["Crop Top", 1], ["Crop Bottom", 3]] as const).map(([l, i]) => (
-          <NumberRow key={l} edit={e} label={l} slider value={Math.round(crop[i] * 10000) / 100} def={0} step={0.5} min={0} max={95} unit="%" digits={2} make={cropAt(i)} />
-        ))}
+        <Gated e={e} keys={keys} field="crop" line>
+          {([["Crop Left", 0], ["Crop Right", 2], ["Crop Top", 1], ["Crop Bottom", 3]] as const).map(([l, i]) => (
+            <NumberRow key={l} edit={e} label={l} slider value={Math.round(crop[i] * 10000) / 100} def={0} step={0.5} min={0} max={95} unit="%" digits={2} make={cropAt(i)} />
+          ))}
+        </Gated>
       </Section>
       <Section title="Composite" {...part(e, keys, "composite", ["opacity", "fade_in", "fade_out"], bump)}>
-        <NumberRow edit={e} label="Opacity" slider value={Math.round(at("opacity") * 10000) / 100} def={100} step={1} min={0} max={100} digits={2}
-          make={(v) => (has("opacity") ? keyAt(e, keys, { opacity: Math.max(0, v) / 100 }) : set({ opacity: v >= 100 ? undefined : Math.max(0, v) / 100 }))}
-          k={keyCtl(e, keys, ["opacity"])} />
-        {fadeRows(e, keys, item)}
+        <Gated e={e} keys={keys} field="opacity">
+          <NumberRow edit={e} label="Opacity" slider value={Math.round(at("opacity") * 10000) / 100} def={100} step={1} min={0} max={100} digits={2}
+            make={(v) => (has("opacity") ? keyAt(e, keys, { opacity: Math.max(0, v) / 100 }) : set({ opacity: v >= 100 ? undefined : Math.max(0, v) / 100 }))}
+            k={keyCtl(e, keys, ["opacity"])} />
+        </Gated>
+        <Gated e={e} keys={keys} field="fade_in">{fadeRows(e, keys, item)}</Gated>
       </Section>
       <Section title="Speed Change" {...part(e, keys, "speed", ["speed"], bump)}>
-        <NumberRow edit={e} label="Speed" value={(item.speed ?? 1) * 100} def={100} step={1} min={10} max={1600} unit="%" digits={2}
-          make={(v) => setSpeed(tl, keys, v / 100)} />
+        <Gated e={e} keys={keys} field="speed" line>
+          <NumberRow edit={e} label="Speed" value={(item.speed ?? 1) * 100} def={100} step={1} min={10} max={1600} unit="%" digits={2}
+            make={(v) => setSpeed(tl, keys, v / 100)} />
+        </Gated>
       </Section>
       <CameraSection {...e} keys={keys} />
     </>
@@ -251,10 +277,12 @@ function AudioTab({ keys, ...e }: Edit & { keys: string[] }) {
   const item = find(e.tl, keys[0])!.item;
   return (
     <Section title="Volume" {...part(e, keys, "volume", ["gain_db", "fade_in", "fade_out"], bump)}>
-      <NumberRow edit={e} label="Volume" slider value={valueOn(e.tl, keys[0], "gain_db", e.playhead)} def={0} step={0.1} min={-60} max={24} unit="dB" digits={2}
-        make={(v) => (keyed(e.tl, keys, ["gain_db"]) ? keyAt(e, keys, { gain_db: Math.round(v * 100) / 100 })
-          : setItems(e.tl, keys, { gain_db: v ? Math.round(v * 100) / 100 : undefined }))} k={keyCtl(e, keys, ["gain_db"])} />
-      {fadeRows(e, keys, item)}
+      <Gated e={e} keys={keys} field="gain_db">
+        <NumberRow edit={e} label="Volume" slider value={valueOn(e.tl, keys[0], "gain_db", e.playhead)} def={0} step={0.1} min={-60} max={24} unit="dB" digits={2}
+          make={(v) => (keyed(e.tl, keys, ["gain_db"]) ? keyAt(e, keys, { gain_db: Math.round(v * 100) / 100 })
+            : setItems(e.tl, keys, { gain_db: v ? Math.round(v * 100) / 100 : undefined }))} k={keyCtl(e, keys, ["gain_db"])} />
+      </Gated>
+      <Gated e={e} keys={keys} field="fade_in">{fadeRows(e, keys, item)}</Gated>
     </Section>
   );
 }
@@ -268,15 +296,19 @@ function FileTab({ item, keys, fps, ...e }: Edit & { item: NleItem; keys: string
   return (
     <>
       <Section title="Timing">
-        <Row label="On">
-          <input type="checkbox" checked={item.enabled !== false} aria-label="Clip on"
-            onChange={(ev) => onCommit(setItems(tl, keys, { enabled: ev.target.checked ? undefined : false }))} className="size-3.5 accent-zinc-300" />
-        </Row>
+        <Gated e={e} keys={keys} field="enabled">
+          <Row label="On">
+            <input type="checkbox" checked={item.enabled !== false} aria-label="Clip on"
+              onChange={(ev) => onCommit(setItems(tl, keys, { enabled: ev.target.checked ? undefined : false }))} className="size-3.5 accent-zinc-300" />
+          </Row>
+        </Gated>
         <NumberRow edit={e} label="Start" value={sec(item.rec)} step={1 / fps} min={0} unit="s" digits={2} make={(v) => move(tl, [item._k!], Math.round(v * fps) - item.rec)} />
         <NumberRow edit={e} label="Length" value={sec(item.len)} step={1 / fps} min={1 / fps} unit="s" digits={2} make={(v) => trim(tl, item._k!, "tail", Math.round(v * fps) - item.len)} />
         <NumberRow edit={e} label="Source in" value={Math.round((item.in / sfps) * 1000) / 1000} step={1 / sfps} min={0} unit="s" digits={2}
           make={(v) => slip(tl, item._k!, Math.round((v * sfps - item.in) / rateOf(tl, item)))} />
-        <NumberRow edit={e} label="Speed" value={item.speed ?? 1} def={1} step={0.05} min={0.1} max={16} unit="×" digits={2} make={(v) => setSpeed(tl, keys, v)} />
+        <Gated e={e} keys={keys} field="speed">
+          <NumberRow edit={e} label="Speed" value={item.speed ?? 1} def={1} step={0.05} min={0.1} max={16} unit="×" digits={2} make={(v) => setSpeed(tl, keys, v)} />
+        </Gated>
       </Section>
       <Section title="File">
         <Row label="Name"><span className="block truncate text-zinc-200" title={path}>{path.split("/").pop()}</span></Row>
@@ -591,7 +623,7 @@ function KeyButtons({ label, k }: { label: string; k: KeyCtl }) {
       </button>
       <ContextMenu>
         <ContextMenuTrigger asChild disabled={!k.on}>
-          <button type="button" aria-label={`${label} keyframe`} aria-pressed={k.on} disabled={!!gate} title={gate ?? (k.on ? "Delete keyframe (right-click: Linear, Ease, Hold)" : "Add keyframe")}
+          <button type="button" aria-label={`${label} keyframe`} aria-pressed={k.on} disabled={!!gate.v2} title={gate.v2 ?? (k.on ? "Delete keyframe (right-click: Linear, Ease, Hold)" : "Add keyframe")}
             onClick={k.toggle} className="inline-flex size-4 items-center justify-center rounded-sm text-zinc-400 hover:text-zinc-100 disabled:text-zinc-700 disabled:hover:text-zinc-700">
             <Diamond className="size-3" fill={k.on ? RED : "none"} stroke={k.on ? RED : "currentColor"} />
           </button>
@@ -687,8 +719,8 @@ function CameraSection({ keys, ...e }: Edit & { keys: string[] }) {
   };
   return (
     <Section title="Camera">
-      <fieldset disabled={!!gate} title={gate ?? undefined} className="grid min-w-0 gap-1 px-2 disabled:opacity-40">
-        {gate && <p className="text-[11px] text-zinc-400">{gate}</p>}
+      <fieldset disabled={!!gate.v2} title={gate.v2 ?? undefined} className="grid min-w-0 gap-1 px-2 disabled:opacity-40">
+        {gate.v2 && <p className="text-[11px] text-zinc-400">{gate.v2}</p>}
         <Radios label="Camera" value={value} options={options} onPick={(pick) => e.onRun([{ id: "camera", params: { pick } }], keys)} />
         <button type="button" onClick={() => file.current?.click()} className="w-fit rounded-sm px-1 text-left text-zinc-300 hover:bg-white/5 hover:text-zinc-100">Add LUT…</button>
         <input ref={file} type="file" accept=".cube" hidden aria-label="LUT file" onChange={(ev) => {

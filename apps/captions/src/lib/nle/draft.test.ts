@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Timeline } from "@contracts/editor";
-import { handCheck, NOT_RENDERED } from "./check";
+import { handCheck, NOT_RENDERED, unrendered } from "./check";
 import { fromNle, toNle } from "./draft";
 import { toSaved, trim, withKeys } from "./model";
 
@@ -49,29 +49,35 @@ describe("a draft in the editor and back", () => {
   });
 });
 
+/** Renders that draw every field of the editor's on the five tracks, at timeline version `v`. */
+const all = (v: number) => {
+  const f = ["zoom", "pan", "tilt", "rot", "flip", "crop", "opacity", "speed", "gain_db", "fade_in", "fade_out", "enabled", "hidden", "mute"];
+  return { edj_version: v, tracks: Object.fromEntries(["V1", "V2", "A1", "A2", "A3"].map((t) => [t, f])) };
+};
+
 describe("handCheck: the save's rules", () => {
   const nle = () => toNle(draft());
   it("takes a version-1 timeline, and reads it without changing it", () => {
     const tl = nle();
     const before = structuredClone(tl);
-    expect(handCheck(tl, 1)).toEqual([]);
+    expect(handCheck(tl, all(1))).toEqual([]);
     expect(tl).toEqual(before);
   });
   it("refuses version 2 where the renders take version 1, takes it where they take 2; an unknown version never", () => {
     const tl = nle();
     tl.tracks.V1.items[0]!.keys = { zoom: [[0, 1, "ease"], [30, 1.4, "linear"]] };
-    expect(handCheck(tl, 1)).toEqual([expect.stringContaining(NOT_RENDERED)]);
-    expect(handCheck(tl, 2)).toEqual([]);
-    expect(handCheck({ ...nle(), edj_version: 3 }, 2)[0]).toContain(NOT_RENDERED);
-    expect(handCheck({ ...nle(), edj_version: "2" }, 2)[0]).toContain("doesn't know");
+    expect(handCheck(tl, all(1))).toEqual([expect.stringContaining(NOT_RENDERED)]);
+    expect(handCheck(tl, all(2))).toEqual([]);
+    expect(handCheck({ ...nle(), edj_version: 3 }, all(2))[0]).toContain(NOT_RENDERED);
+    expect(handCheck({ ...nle(), edj_version: "2" }, all(2))[0]).toContain("doesn't know");
     tl.tracks.V1.items[0]!.norm_db = 99;
     tl.tracks.V1.items[0]!.keys = { crop: [[0, 1, "ease"]] } as never;
-    expect(handCheck(tl, 2)).toEqual([expect.stringContaining("crop can't be keyed"), expect.stringContaining("norm_db 99")]);
+    expect(handCheck(tl, all(2))).toEqual([expect.stringContaining("crop can't be keyed"), expect.stringContaining("norm_db 99")]);
   });
   it("names what would fail a render: frames, overlaps, past the file's end, a missing source, a transition with no room", () => {
     const tl = nle();
     tl.tracks.V1.items.push({ src: "ver_w", in: 880, len: 40, rec: 50 }, { src: "gone", in: 0, len: 10, rec: 200 }, { src: "ver_w", in: 0.5, len: 10, rec: 300 });
-    const bad = handCheck(tl, 1);
+    const bad = handCheck(tl, all(1));
     expect(bad).toEqual([
       expect.stringContaining("starts on top of the clip before it on V1"),
       expect.stringContaining("runs 20 source frames past the end"),
@@ -80,7 +86,31 @@ describe("handCheck: the save's rules", () => {
     ]);
     const cut = nle();
     cut.tracks.V1.items.push({ src: "ver_w", in: 0, len: 30, rec: 60, trans: { type: "dissolve", len: 20, at: "center" } });
-    expect(handCheck(cut, 2)).toEqual([expect.stringContaining("transition needs more of the clips")]);
-    expect(handCheck({ ...nle(), tracks: {} }, 1)).toEqual(["there is nothing on the timeline"]);
+    expect(handCheck(cut, all(2))).toEqual([expect.stringContaining("transition needs more of the clips")]);
+    expect(handCheck({ ...nle(), tracks: {} }, all(1))).toEqual(["there is nothing on the timeline"]);
+  });
+});
+
+describe("what the renders don't draw", () => {
+  const renders = { edj_version: 1, tracks: { V1: ["zoom", "tilt", "fade_in", "fade_out"], A1: ["gain_db"] } };
+  it("names each track and field used that isn't drawn; a value that changes nothing counts as unused", () => {
+    const tl = toNle(draft());
+    // the draft: a wide take's zoom (drawn), tilt (drawn), A1 gain (drawn); A2 and A3 empty
+    expect(unrendered(tl, renders)).toEqual([]);
+    Object.assign(tl.tracks.V1.items[0]!, { rot: 0, opacity: 1, speed: 1, crop: [0, 0, 0, 0], rot2: 5 });
+    expect(unrendered(tl, renders)).toEqual([]);
+    Object.assign(tl.tracks.V1.items[0]!, { rot: 5, enabled: false });
+    tl.tracks.A1.mute = true;
+    tl.tracks.V3 = { items: [{ src: "ver_w", rec: 0, in: 0, len: 5 }] };
+    expect(unrendered(tl, renders).sort()).toEqual(["A1 mute", "V1 enabled", "V1 rot", "V3"]);
+  });
+  it("the save refuses only what is new: a field the draft came with stays, one more is refused", () => {
+    const base = toNle(draft());
+    base.tracks.V1.items[0]!.speed = 1.5; // a planned edit's
+    const tl = structuredClone(base);
+    tl.tracks.V1.items[0]!.speed = 2;
+    expect(handCheck(tl, renders, base)).toEqual([]);
+    tl.tracks.V1.items[0]!.opacity = 0.5;
+    expect(handCheck(tl, renders, base)).toEqual([`${NOT_RENDERED}: V1 opacity`]);
   });
 });

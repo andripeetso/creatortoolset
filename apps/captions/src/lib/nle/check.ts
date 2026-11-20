@@ -2,11 +2,44 @@
 // for every server that takes the editor's whole timeline. It only reads: every field it does not know is kept as sent.
 // The rules about files on disk and which footage may play where belong to the server that has them.
 
-import { edjVersion, KEY_EASES, KEY_PROPS, TRANS_TYPES, type Edj } from "@contracts/editor";
+import { edjVersion, KEY_EASES, KEY_PROPS, TRANS_TYPES, type Edj, type Renders } from "@contracts/editor";
 import { handlesAt, maxLen, withKeys, type NleItem, type NleTimeline } from "./model";
 
 /** What a timeline's version is refused with when this server's renders don't take it yet; the editor greys those controls with it. */
 export const NOT_RENDERED = "Not in this server's renders yet";
+
+/** A clip field's value that changes nothing (a field left out changes nothing too). */
+const NEUTRAL: Record<string, unknown> = { zoom: 1, pan: 0, tilt: 0, rot: 0, opacity: 1, speed: 1, gain_db: 0, fade_in: 0, fade_out: 0, enabled: true, hidden: false, mute: false };
+/** The clip fields the editor's controls set, and the track ones. */
+const CLIP_FIELDS = ["zoom", "pan", "tilt", "rot", "opacity", "speed", "gain_db", "fade_in", "fade_out", "enabled", "flip", "crop"];
+const TRACK_FIELDS = ["hidden", "mute"];
+const used = (v: unknown, f: string) =>
+  v !== undefined && v !== null && v !== "" && (f === "crop" ? Array.isArray(v) && v.some((x) => x !== 0) : !(f in NEUTRAL) || v !== NEUTRAL[f]);
+
+/**
+ * What the timeline uses that `renders` doesn't draw: "<track> <field>" for a clip or track field, "<track>" for a track
+ * with clips on it that isn't drawn at all. The editor's gate and the save both compare it with the timeline as it was
+ * opened, so a draft that came with such a field (a planned edit's speeds) keeps it, and nothing new is added.
+ */
+export function unrendered(tl: NleTimeline, renders: Renders): string[] {
+  const out = new Set<string>();
+  for (const [id, t] of Object.entries(tl.tracks ?? {})) {
+    const ok = renders.tracks[id];
+    if (!ok) {
+      if (t.items?.length) out.add(id);
+      continue;
+    }
+    for (const f of TRACK_FIELDS) if (used(t[f], f) && !ok.includes(f)) out.add(`${id} ${f}`);
+    for (const it of t.items ?? []) for (const f of CLIP_FIELDS) if (used(it[f], f) && !ok.includes(f)) out.add(`${id} ${f}`);
+  }
+  return [...out];
+}
+
+/** What `tl` uses that the renders don't draw and `base` (the timeline as it was opened) didn't use already. */
+export const newlyUnrendered = (tl: NleTimeline, renders: Renders, base?: NleTimeline) => {
+  const had = new Set(base ? unrendered(base, renders) : []);
+  return unrendered(tl, renders).filter((x) => !had.has(x));
+};
 
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const whole = (x: unknown, min = 0) => Number.isInteger(x) && (x as number) >= min;
@@ -34,14 +67,17 @@ function v2Problems(it: NleItem): string[] {
 }
 
 /**
- * The timeline's problems that would fail a render on a server whose engine renders `edj_version` up to `renders`
- * (empty: it can be kept). A version above that (or one that isn't a whole number) is refused, never saved down.
+ * The timeline's problems that would fail a render on a server whose renders draw `renders` (empty: it can be kept). A
+ * version above its `edj_version` (or one that isn't a whole number) is refused, never saved down, and so is a field or a
+ * track the renders don't draw that `base` (the draft as it is kept) didn't have: it would vanish from the render.
  */
-export function handCheck(tl: NleTimeline, renders: number): string[] {
+export function handCheck(tl: NleTimeline, renders: Renders, base?: NleTimeline): string[] {
   const said = tl.edj_version;
   if (said !== undefined && (!Number.isInteger(said) || (said as number) < 1)) return [`it was saved by an editor this server doesn't know (version ${JSON.stringify(said)})`];
   const need = Math.max(typeof said === "number" ? said : 1, edjVersion(tl as unknown as Edj));
-  if (need > renders) return [`${NOT_RENDERED}: it uses version ${need} of the timeline, this server renders version ${renders}`];
+  if (need > renders.edj_version) return [`${NOT_RENDERED}: it uses version ${need} of the timeline, this server renders version ${renders.edj_version}`];
+  const extra = newlyUnrendered(tl, renders, base);
+  if (extra.length) return [`${NOT_RENDERED}: ${extra.join(", ")}`];
   const t = tl.timeline ?? ({} as NleTimeline["timeline"]);
   if (!(["fps", "width", "height"] as const).every((k) => num(t[k]) && (t[k] as number) > 0)) return ["its frame rate or size isn't set"];
   const fps = t.fps;

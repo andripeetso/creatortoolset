@@ -23,9 +23,10 @@ import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
 import { NleGate, NleLayout, Panel } from "./NleLayout";
-import { EDJ_VERSION, edjVersion, type Edj } from "@contracts/editor";
-import { NOT_RENDERED } from "@/lib/nle/check";
+import { edjVersion, type Edj, type Renders } from "@contracts/editor";
+import { newlyUnrendered, NOT_RENDERED, unrendered } from "@/lib/nle/check";
 import { NleMeter } from "./NleMeter";
+import { NleRendered } from "./NleRendered";
 import { LowerUnderVoiceDialog, NormalizeDialog } from "./NleSound";
 import { soundKeys } from "@/lib/nle/loudness";
 import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
@@ -152,7 +153,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders = EDJ_VERSION }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -178,8 +179,12 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   /** the Captions lane (lib/nle/captions.ts): `send` gives the saved cut's render to Caption Studio (made, or moved from
    *  the timeline's older captions) and answers with its clip; `open` goes to Caption Studio. None: no Captions lane */
   captions?: { send: () => Promise<{ project: string; clip: string; note?: string }>; open: (href: string) => void };
-  /** the highest timeline version (edj_version) the server's renders take: an edit that needs a newer one is refused here */
-  renders?: number;
+  /** what the server's renders draw (contracts/editor.ts Renders): an edit they wouldn't draw is refused, its controls
+   *  greyed; absent: everything draws */
+  renders?: Renders;
+  /** the render of the timeline as saved (its texts and effects drawn), played in the Viewer as Rendered while nothing is
+   *  unsaved; `first`: the Viewer opens on it */
+  rendered?: { url: string; first?: boolean } | null;
 }) {
   const [first] = useState(() => openOf(initial, resetKey));
   // the timeline open now (its key and fingerprint), for keeping its unsaved edits
@@ -215,7 +220,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   // the source viewer: the clip open in it, each source's own marks (by file, kept while the editor is open), which shows
   const [source, setSource] = useState<NleDrop | null>(null);
   const [srcMarks, setSrcMarks] = useState<Record<string, Marks>>({});
-  const [view, setView] = useState<"source" | "timeline">("timeline");
+  // Rendered: the timeline's render (`rendered`) over the frame, while nothing is unsaved
+  const [view, setView] = useState<"source" | "timeline" | "rendered">(() => (rendered?.first ? "rendered" : "timeline"));
   const [loop, setLoop] = useState(() => {
     try {
       return localStorage.getItem(LOOP_KEY) === "1";
@@ -334,9 +340,10 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const inSource = view === "source" && !!srcTl;
   const T = inSource ? srcT : tln;
   const tfps = inSource ? sfps : fps;
-  const show = (v: "source" | "timeline") => {
+  const show = (v: "source" | "timeline" | "rendered") => {
     if (v === view) return;
-    (v === "source" ? tln : srcT).play(false);
+    if (v === "source") tln.play(false);
+    else if (view === "source") srcT.play(false);
     setView(v);
   };
   const toggleLoop = () => {
@@ -349,17 +356,31 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     }
   };
 
-  // the one rule for what the server's renders don't take yet: an edit that needs a newer timeline version is not made
-  const beyond = useCallback((next: NleTimeline) => edjVersion(next as unknown as Edj) > renders, [renders]);
-  // the controls that only make version-2 fields, greyed while the server's renders take version 1
-  const gate = renders < 2 ? NOT_RENDERED : null;
+  // the one rule for what the server's renders don't draw: an edit that needs a newer timeline version, or adds a field or
+  // a track they don't draw (one the timeline came with stays), is not made (lib/nle/check.ts, as the save judges it)
+  const base = opened.current.saved;
+  const why = useCallback((next: NleTimeline): string | null => {
+    if (!renders) return null;
+    const v = edjVersion(next as unknown as Edj);
+    if (v > renders.edj_version) return `${NOT_RENDERED}: this server renders timeline version ${renders.edj_version}`;
+    const extra = newlyUnrendered(next, renders, base);
+    return extra.length ? `${NOT_RENDERED}: ${extra.join(", ")}` : null;
+  }, [renders, base]);
+  const beyond = useCallback((next: NleTimeline) => why(next) !== null, [why]);
+  // the controls that only make version-2 fields, greyed while the server's renders take version 1; and each field's
+  const gate = renders && renders.edj_version < 2 ? NOT_RENDERED : null;
+  const baseOff = useMemo(() => new Set(renders ? unrendered(base, renders) : []), [renders, base]);
+  const fieldOff = useCallback((tracks: string[], f: string) =>
+    renders && tracks.some((t) => (f ? !renders.tracks[t]?.includes(f) : !renders.tracks[t]) && !baseOff.has(f ? `${t} ${f}` : t)) ? NOT_RENDERED : null, [renders, baseOff]);
+  const gateCtx = useMemo(() => ({ v2: gate, field: fieldOff }), [gate, fieldOff]);
   const commit = useCallback((next: NleTimeline, label?: string) => {
     setLive(null);
     setGap(null);
     if (readOnly) return;
-    if (beyond(next)) return void toast(NOT_RENDERED);
+    const no = why(next);
+    if (no) return void toast(no);
     setHist((h) => histChange(h, () => next, label));
-  }, [readOnly, beyond]);
+  }, [readOnly, why]);
   const live_ = useCallback((next: NleTimeline | null) => !readOnly && setLive(next), [readOnly]);
 
   // a text clip plays its design's PNG from the server; a design deleted since is a red clip (asked once a PNG)
@@ -585,7 +606,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         try {
           const list = a.commands ?? [];
           const next = runAll(s, list);
-          if (next.tl !== s.tl && beyond(next.tl)) throw new Error(`${NOT_RENDERED}: this server renders timeline version ${renders}`);
+          const no = next.tl !== s.tl ? why(next.tl) : null;
+          if (no) throw new Error(no);
           apply(s, next, CHAT_STEP + list.map((r) => COMMANDS[r.id]?.title ?? r.id).join(", "));
           s = next;
           reply({ result: stateView(next) });
@@ -714,7 +736,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   };
 
   return (
-    <NleGate.Provider value={gate}>
+    <NleGate.Provider value={gateCtx}>
       <NleLayout panelKeys={panelKeys}
         center={
           <>
@@ -743,9 +765,10 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             bar={
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Viewer shows">
-                  {(["source", "timeline"] as const).map((v) => (
-                    <button key={v} type="button" aria-pressed={view === v} disabled={v === "source" && !source} onClick={() => show(v)}
-                      title={v === "source" ? "The clip opened from the Media Pool: mark In and Out, drag it on, F9 insert, F10 overwrite (Q back)" : "The timeline"}
+                  {(["source", "timeline", ...(rendered ? ["rendered" as const] : [])] as const).map((v) => (
+                    <button key={v} type="button" aria-pressed={view === v || (v === "timeline" && view === "rendered" && dirty)} disabled={(v === "source" && !source) || (v === "rendered" && dirty)} onClick={() => show(v)}
+                      title={v === "source" ? "The clip opened from the Media Pool: mark In and Out, drag it on, F9 insert, F10 overwrite (Q back)"
+                        : v === "rendered" ? (dirty ? "Save to render the edits" : "The render of the saved timeline, with its texts and effects") : "The timeline"}
                       className={cn("h-5 rounded-[3px] px-1.5 capitalize disabled:opacity-40", view === v ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{v}</button>
                   ))}
                 </span>
@@ -763,6 +786,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               onDragStart={inSource ? (e) => { e.dataTransfer.setData(VIEWER_MIME, "1"); e.dataTransfer.effectAllowed = "copy"; note(source); } : undefined}
               onDragEnd={() => note(null)}
               over={inSource ? (!srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} clock={srcT.clock} /> : null)
+                : view === "rendered" && rendered && !dirty ? <NleRendered url={rendered.url} clock={tln.clock} playing={tln.playing} />
                 : cap?.clip && !captionsStale(shown) ? <CaptionsOver clip={cap.clip} clock={T.clock} fps={fps} /> : null}
               below={inSource ? (
                 <SourceStrip clock={srcT.clock} seconds={srcSecs} from={sm[0] !== null ? sm[0] / sfps : null} to={sm[1] !== null ? (sm[1] + 1) / sfps : null}
@@ -798,7 +822,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
           ) : null} />}
         timeline={
           // a click in the timeline puts the viewer back on it
-          <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>
+          <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => view === "source" && show("timeline")}>
           <Timeline tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
             trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}

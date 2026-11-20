@@ -28,12 +28,14 @@ const fake = vi.hoisted(() => ({
   replies: [] as Array<{ id: string; result?: unknown; error?: string }>,
   topics: new Map<string, () => void>(),
   saved: [] as Array<[string, string, NleTimeline]>,
+  draft: null as unknown as Draft,
 }));
+const SOUND = ["gain_db", "fade_in", "fade_out", "enabled", "mute"];
+const renders = { edj_version: 1, tracks: { V1: ["zoom", "tilt", "fade_in", "fade_out", "enabled"], V2: ["zoom", "tilt", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND } };
 vi.mock("@/lib/editor", async (orig) => ({
   ...(await orig<typeof import("@/lib/editor")>()),
   getEdit: async () => ({ id: "e1", name: "Rolls", jobs: [], plans: [], previews: {}, marks: {} }) as unknown as Edit,
-  getDraft: async () => ({ timeline, notes: [], qa: { ok: true, notes: [], shared: [] }, filed: null }) as Draft,
-  rendersVersion: async () => ({ edj_version: 1 }),
+  getDraft: async () => fake.draft,
   saveTimeline: async (id: string, name: string, tl: NleTimeline) => (fake.saved.push([id, name, tl]), { id: "e1", name: "Rolls", jobs: [], plans: [], previews: {}, marks: {} }),
   nlePending: async () => ({ requests: fake.queue.splice(0) }),
   nleReply: async (r: { id: string }) => void fake.replies.push(r),
@@ -60,6 +62,7 @@ beforeEach(() => {
   fake.queue.length = 0;
   fake.replies.length = 0;
   fake.saved.length = 0;
+  fake.draft = { timeline, notes: [], qa: { ok: true, notes: [], shared: [] }, filed: null, renders };
   window.history.pushState({}, "", "/editor/e1/v1");
   // the clips' files and thumbnails: none here
   vi.stubGlobal("fetch", async () => new Response(null, { status: 404 }));
@@ -85,6 +88,23 @@ describe("the public timeline page on the editor", () => {
     const back = fromNle(tl);
     expect(back.tracks.V1.items[0]).toMatchObject({ len: 125, line: "Roll forward", link: "l" });
     expect(back.tracks.A1.items[0]).toMatchObject({ len: 125 });
+    act(() => root.unmount());
+  });
+
+  it("a planned edit opens on its render (Rendered), so its texts and effects show; an unsaved edit goes back to the timeline", async () => {
+    fake.draft = { ...fake.draft, timeline: { ...timeline, plan: { kind: "talking head", texts: [{ text: "Tiny", from: 0, to: 2 } as never] } }, filed: { assetId: "rev-1", n: 3 } };
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    await act(async () => root.render(<MemoryRouter initialEntries={["/editor/e1/v1"]}><NleDraftPage id="e1" name="v1" /></MemoryRouter>));
+    await flush();
+    await flush();
+    const rendered = () => host.querySelector<HTMLVideoElement>('video[aria-label="Rendered"]');
+    const button = () => [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Viewer shows"] button')].find((b) => b.textContent === "rendered")!;
+    expect(rendered()?.getAttribute("src")).toBe("/api/review/assets/rev-1/v/3/play");
+    expect(button().getAttribute("aria-pressed")).toBe("true");
+    await deliver({ id: "r3", commands: [{ id: "setLength", params: { seconds: 5 } }] });
+    expect(rendered()).toBeNull();
+    expect(button().disabled).toBe(true);
     act(() => root.unmount());
   });
 });

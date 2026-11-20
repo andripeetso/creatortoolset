@@ -261,7 +261,7 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
               <>
                 {menu.src && <MenuRow label="Select on timeline" onClick={() => { onPick(menu.src); setMenu(null); }} />}
                 {menu.src && onRelink && <MenuRow label="Relink…" onClick={() => { onRelink(); setMenu(null); }} />}
-                {onNewText && <MenuRow label="New Text" off={gate} onClick={() => { onNewText(); setMenu(null); }} />}
+                {onNewText && <MenuRow label="New Text" off={gate.v2} onClick={() => { onNewText(); setMenu(null); }} />}
               </>
             ) : viewMenu!.what === "view" ? (
               <>

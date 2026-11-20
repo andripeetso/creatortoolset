@@ -4,7 +4,7 @@ import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInp
 import type { ItemEdit } from "@contracts/edit-timeline";
 import type { NleRun } from "./nle/commands";
 import type { NleTimeline } from "./nle/model";
-import type { Draft, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
+import type { Draft, TimelineSource, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
 
 /** The Editor's calls to api/editor/routes.ts. */
 
@@ -103,8 +103,8 @@ export const reviewDraft = (id: string, name: string) => send<Edit>(`${base(id)}
 export const makeCut = (id: string, name: string, body: { asset: string; n: number; edits: ItemEdit[] }) => send<Edit>(`${base(id)}/drafts/${name}/cut`, "POST", body);
 /** Save on the timeline page: the editor's whole timeline kept as the same version, then rendered and filed in Review. */
 export const saveTimeline = (id: string, name: string, timeline: NleTimeline) => send<Edit>(`${base(id)}/drafts/${encodeURIComponent(name)}/timeline`, "PUT", { timeline });
-/** The highest timeline version (edj_version) this server's renders take. */
-export const rendersVersion = () => send<{ edj_version: number }>("/api/editor/renders");
+/** A Media Library clip as the editor lays it on the edit's timeline: its source and whether it has sound. */
+export const clipSource = (id: string, clip: string) => send<{ source: TimelineSource; sound: boolean }>(`${base(id)}/clips/${encodeURIComponent(clip)}`);
 export const getDraft = (id: string, name: string) => send<Draft>(`${base(id)}/drafts/${encodeURIComponent(name)}`);
 /** The version's timeline as a new version (no AI); its preview is made. */
 export const duplicateVersion = (id: string, name: string) => send<{ name: string }>(`${base(id)}/drafts/${name}/duplicate`, "POST");
