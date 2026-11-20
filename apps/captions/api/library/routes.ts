@@ -286,12 +286,17 @@ export async function saveToLibrary(
   if ((await freeBytes(stagingDir())) - (await pendingBytes(username)) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
     return { error: "Not enough free disk space for this file", code: "disk_reserve" };
   }
-  // Upload none: the file goes to the asker's computer and is indexed there, never kept here
-  // (under Blur faces Upload reads none for anything not blurred, so it goes there too)
-  // a file kept as filmed follows the Upload the owner chose (upload-gate.ts uploadFor)
-  // a file kept as filmed, and a blurred render, follow the Upload the owner chose (upload-gate.ts uploadFor)
   const { blurredOf } = opts;
+  // a blurred render is never the original's bytes, nor any clip of the library not blurred (as a computer's upload,
+  // receives()): read once here, before either way in, the computer's (Upload none) included
+  if (blurredOf) {
+    const got = await sha256File(file);
+    if (got === blurredOf || unblurredBytes(lib, got)) return { error: REFUSED_NOT_BLURRED, code: "failed" };
+  }
   const from = blurredOf ? [] : sources; // a blurred render is a version of its original's clip, never a file made from it
+  // Upload none: the file goes to the asker's computer and is indexed there, never kept here (under Blur faces Upload
+  // reads none for anything not blurred, so it goes there too); a file kept as filmed, and a blurred render, follow the
+  // Upload the owner chose (upload-gate.ts uploadFor)
   const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" || blurredOf ? libraryUploadStored(lib) : libraryUpload(lib);
   if (serverKind() !== "local" && hostsNone(upload)) return saveOnComputer(username, lib, file, filename, from, footage, sound, opts.after, opts.importName, opts.blur, blurredOf);
   // kept here: under Blur faces only a file made wholly of blurred renders (a sound has no picture); the rule said once more
@@ -304,7 +309,6 @@ export async function saveToLibrary(
   try {
     await copyFile(file, staged);
     const sha256 = await sha256File(staged);
-    if (blurredOf === sha256) return { error: REFUSED_NOT_BLURRED, code: "failed" };
     const dup = db()
       // a clip hidden while it waits on Folders left out (report.ts) is no duplicate: the file is really added
       .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.sha256 = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 1")
@@ -1528,7 +1532,8 @@ libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
   if (!a || !(await mayAdd(user, libraryId)) || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (blur === "no" && !mayKeepAsFilmed(user.username, libraryId)) return c.json({ error: "Only the workspace owner or an admin can keep a file as filmed", code: "forbidden" }, 403);
   db().prepare("UPDATE assets SET blur = ? WHERE id = ?").run(blur, assetId);
-  if (blur === "yes") await dropUnblurred(a.current_version_id);
+  // every version of it that is not a blurred render: what the server cut from each goes (an older one too)
+  if (blur === "yes") for (const v of db().prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL").all(assetId) as { id: string }[]) await dropUnblurred(v.id);
   if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });
   return c.json({ blur });
 });

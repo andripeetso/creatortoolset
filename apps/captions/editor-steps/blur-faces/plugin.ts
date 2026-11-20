@@ -235,9 +235,11 @@ export const resetAuto = async () => {
  * is marked Blur faces and has no blurred render yet (api/library/db.ts fileBlur), and Face Blur is on in its workspace.
  * Never a copy this made, or a finished file made from a clip.
  */
-export async function queueVersion(e: { libraryId: string; versionId: string; owner: string }): Promise<boolean> {
-  const f = fileBlur(e.versionId);
+export async function queueVersion(ev: { libraryId: string; versionId: string; owner: string }): Promise<boolean> {
+  const f = fileBlur(ev.versionId);
   if (f?.blur !== "yes" || f.blurredVersionId) return false;
+  // the library's own account covers it, whoever added it: its Mac has the file, and its copy is trusted as the blurred render
+  const e = { ...ev, owner: libraryAccount(ev.libraryId) ?? ev.owner };
   const workspace = await workspaceOfLibrary(e.owner, e.libraryId);
   if (await mainSourceFor(e.owner, workspace)) return false;
   if (!(await pluginOnIn(faceBlur, e.owner, workspace))) return false;

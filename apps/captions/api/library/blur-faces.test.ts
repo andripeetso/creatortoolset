@@ -349,6 +349,22 @@ describe("the public AI Editor follows each source's blur answer", () => {
     const only = async (sources: string[]) => filed((await createEdit("tinyacrobatics", { name: "Tiny Acrobatics one", sources }, false, "ws_kids"))!);
     expect(await only([no.versionId])).toEqual({ blurred: false, asFilmed: true }); // only files kept as filmed
     expect(await only([yes.versionId])).toEqual({ blurred: true, asFilmed: false }); // only blurred renders
+    // the mark is read from the cut's own sources: a card (an edit's own file) is as filmed, and so is a clip no longer
+    // in the Library (deleted while the cut rendered), never "blurred"
+    const { saveDraft } = await import("../editor/store");
+    const cut = (await createEdit("tinyacrobatics", { name: "Tiny Acrobatics card", sources: [yes.versionId] }, false, "ws_kids"))!;
+    const draft = async (sources: Record<string, unknown>) => {
+      await saveDraft(cut.id, "v1", { timeline: { ...(TIMELINE as object), sources }, notes: [] } as never);
+      return editLeaves(cut.id, "v1");
+    };
+    expect(await draft({ [yes.versionId]: {} })).toEqual({ ok: true, mark: "blurred" });
+    expect(await draft({ [yes.versionId]: {}, card: { file: "cards/1.png" } })).toEqual({ ok: true, mark: "asFilmed" });
+    expect(await draft({ [yes.versionId]: {}, ver_deleted_mid_render: {} })).toEqual({ ok: true, mark: "asFilmed" });
+    // a song in it (a sound has no picture, and never gets a blurred render): nothing waits for it, the mark is the pictures'
+    const song = (await body(onMac("lib_kids", "Song.m4a"))) as { versionId: string };
+    expect(fileBlur(song.versionId)?.blur).toBe("no");
+    expect(mayLeave("lib_kids", { versionId: song.versionId }).ok).toBe(true);
+    expect(await draft({ [yes.versionId]: {}, [song.versionId]: {} })).toEqual({ ok: true, mark: "blurred" });
     // what the AI Editor's worker is told of each Library source (the SPEC's contract)
     expect(fileBlur(yes.versionId)).toEqual({ blur: "yes", blurredVersionId: b.versionId });
     expect(fileBlur(no.versionId)).toEqual({ blur: "no", blurredVersionId: null });
@@ -434,6 +450,25 @@ describe("the chat dock under Blur faces", () => {
   });
 });
 
+describe("a blurred render saved by the server (Face Blur's covered copy)", () => {
+  it("is never the original's bytes, nor any clip not blurred: refused before either Upload way in", async () => {
+    const { saveToLibrary } = await import("./routes");
+    const known = await body(onMac("lib_kids", "Known original.mov", { sha256: sha("known-original-bytes") }));
+    expect(known.versionId).toBeTruthy();
+    const file = path.join(dir, "covered-copy.mp4");
+    for (const lib of ["lib_kids", "lib_kids_off"]) {
+      // the original sent back unchanged (a broken computer), Blurred (kept here) and Off (sent to a computer) alike
+      writeFileSync(file, "original-bytes-unchanged");
+      expect(await saveToLibrary("tinyacrobatics", file, "Copy.mp4", [], lib, true, undefined, { blurredOf: sha("original-bytes-unchanged") })).toEqual({ error: REFUSED_NOT_BLURRED, code: "failed" });
+      // the bytes of another clip of the library that is not blurred
+      writeFileSync(file, "known-original-bytes");
+      expect(await saveToLibrary("tinyacrobatics", file, "Copy.mp4", [], "lib_kids", true, undefined, { blurredOf: sha("some-other-original") })).toEqual({ error: REFUSED_NOT_BLURRED, code: "failed" });
+    }
+    REFUSED_BYTES.push("original-bytes-unchanged");
+    rmSync(file);
+  });
+});
+
 describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)", () => {
   const blurOf = (assetId: string) => (d.prepare("SELECT blur FROM assets WHERE id = ?").get(assetId) as { blur: string | null }).blur;
 
@@ -473,6 +508,9 @@ describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)
     expect(mayLeave("lib_kids", { versionId: yes.versionId })).toMatchObject({ ok: false, body: { message: REFUSED_BLUR } });
     expect(mayLeave("lib_kids", {}).ok).toBe(false);
     expect(mayLeave("lib_kids", { blur: "no" }).ok).toBe(true);
+    // a version the server does not know: refused under Blur faces, as before; elsewhere it says nothing against it
+    expect(mayLeave("lib_kids", { versionId: "ver_unknown" })).toMatchObject({ ok: false, body: { message: REFUSED_BLUR } });
+    expect(mayLeave("lib_plain", { versionId: "ver_unknown" }).ok).toBe(true);
     expect((await mayServe({ id: "lib_kids", versionId: yes.versionId }, "proxy")).ok).toBe(false);
   });
 

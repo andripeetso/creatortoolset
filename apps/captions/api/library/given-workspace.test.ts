@@ -95,8 +95,11 @@ it("a member's chat drop is never kept as filmed in the owner's Blur faces libra
   writeFileSync(path.join(at, "meta.json"), JSON.stringify({ id, name: "Member drop.mov", mime: "video/quicktime", size: 16, at: Date.now() }));
   process.env.CT_LOCAL = "1";
   try {
-    // the owner's library is not the member's to save into, or the file is saved as a yes-file: never "no"
-    await workspaceScope.run({ id: FIRST }, () => useFile({ username: "bo", role: "user", cloud: false, off: [] } as never, id, "library")).catch(() => null);
+    // the owner's library is the owner's to save into (saveToLibrary asks libraryRole): a member's drop is not saved there
+    // at all, so never as filmed
+    const before = (d.prepare("SELECT COUNT(*) AS n FROM assets").get() as { n: number }).n;
+    await expect(workspaceScope.run({ id: FIRST }, () => useFile({ username: "bo", role: "user", cloud: false, off: [] } as never, id, "library"))).rejects.toThrow("no Media Library it may add to");
+    expect(d.prepare("SELECT COUNT(*) AS n FROM assets").get()).toEqual({ n: before });
     expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE blur = 'no'").get()).toEqual({ n: 0 });
   } finally {
     delete process.env.CT_LOCAL;

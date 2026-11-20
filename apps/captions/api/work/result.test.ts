@@ -157,6 +157,7 @@ describe("a source marked Blur faces with no blurred render yet", () => {
     const body = (s: string) => Readable.from([Buffer.from(s)]);
     const sheet = `editor/${EDIT}/previews/v2.sheets/1.jpg`;
     expect(await acceptUpload(j.id, me.id, sheet, body("jpg"))).toBe(true); // the job's own version, not "1.jpg"
+    expect(await acceptUpload(j.id, me.id, `editor/${EDIT}/previews/v1.mp4`, body("x"))).toBe(false); // another version's preview
     const mark = (blur: string | null) => libraryDb().prepare("UPDATE assets SET blur = ? WHERE id = 'ast_a1'").run(blur);
     mark("yes");
     try {

@@ -156,7 +156,8 @@ interface Version {
   /** Its filer blurred every face in it (an editor that blurs): under Blur faces only such a version is shared or shown. */
   blurred?: true;
   /** Nothing in it is left to blur, and some of it plays as filmed (a file kept as filmed), as the server worked out (an
-   *  AI Editor cut, editor/preview.ts editLeaves): the team sees it; a share link under Blur faces does not (only `blurred`). */
+   *  AI Editor cut, editor/preview.ts editLeaves; a plug-in's editor that checked the same): under Blur faces a signed-in
+   *  teammate who may see the edit sees it (viewer); a share link, a download link or a public page never (only `blurred`). */
   asFilmed?: true;
   /** Its owner approved it with the faces as filmed. */
   approvedAsFilmed?: { by: string; at: number };
@@ -913,7 +914,12 @@ export async function reviewVersionLeaves(id: string, n: number): Promise<boolea
  */
 export async function viewer(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {
   const v = await viewerOf(c);
-  return v && !v.manage && showsUnblurred(v.meta) && (await blurFacesIn(v.meta.owner, v.meta.workspace)) ? null : v;
+  if (!v || v.manage) return v;
+  // under Blur faces a share link sees only blurred versions; a signed-in teammate who may see the edit sees an as-filmed
+  // cut too (ruling 5: faces need not be hidden from the team), never one with nothing to say for it
+  const shared = c.req.param("token") !== undefined;
+  const hides = shared ? showsUnblurred(v.meta) : v.meta.versions.some((x) => !x.blurred && !x.asFilmed && !x.removed);
+  return hides && (await blurFacesIn(v.meta.owner, v.meta.workspace)) ? null : v;
 }
 
 async function viewerOf(c: Context<{ Variables: AuthVars }>): Promise<Viewer | null> {

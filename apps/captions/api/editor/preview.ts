@@ -21,10 +21,11 @@ import { fitted } from "./framing";
 import { sayFor } from "./progress";
 import { followPicked, HELD_NOTE } from "./subject";
 import { renderPlanPreview, sfxMix } from "./plan-render";
-import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveDraft, saveFiled, saveStep } from "./store";
+import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readEdit, readStep, saveDraft, saveFiled, saveStep } from "./store";
 import { nextPass, PASS_WORD } from "./passes";
 import { refuse, type Received } from "../library/upload-gate";
 import { jobFiles } from "./reach";
+import { kindOf } from "../library/routes";
 import { emitEvent } from "../lib/events";
 import type { StepContext } from "./worker";
 
@@ -290,34 +291,46 @@ export const previewFile = (editId: string, variant: string) => path.join(editDi
 
 /** What a cut honestly is (SPEC "Honest marks"): every picture in it a blurred render, or some of it as filmed. */
 export type CutMark = "blurred" | "asFilmed";
-const AUDIO_FILE = /\.(mp3|m4a|wav|aac|flac|ogg|opus)$/i;
 
 /**
  * The editor source rule (owner, 2026-11-20) for one cut of an edit: a source marked Blur faces is read as its blurred
- * render (playOf); one with none yet stops the cut, which is never rendered from its original nor kept here, and Face Blur
- * is asked for it (library.version.blur: an old file, or one from before Face Blur was on, gets its job; it is queued once).
- * Every other file plays as filmed. This editor runs no face detection of its own. A cut that may go answers its mark:
- * "blurred" only when every picture source is a blurred render, else "asFilmed" (a file kept as filmed, one of the edit's own).
+ * render (playOf); while any has none yet the cut stops, named for the first, is never rendered from an original nor kept
+ * here, and Face Blur is asked for each (library.version.blur: an old file, or one from before Face Blur was on, gets its
+ * job; each is queued once). Every other file plays as filmed; a sound has no picture (db.ts BLUR_SQL reads it no). This
+ * editor runs no face detection of its own. A cut that may go answers its mark, read from the cut's own sources (its
+ * draft's, else the edit's): "blurred" only when every picture source is a Library file read as its blurred render;
+ * anything else with a picture (a file kept as filmed, one of the edit's own, a clip no longer in the Library) "asFilmed".
  */
 export function editLeaves(editId: string, variant: string): { ok: true; mark: CutMark } | Extract<Received, { ok: false }> {
-  const files = jobFiles({ version_id: `${editId}:${variant}` });
-  const waiting = files.find((r) => {
+  const db = libraryDb();
+  const waiting = jobFiles({ version_id: `${editId}:${variant}` }).filter((r) => {
     const f = fileBlur(r.id);
     return f?.blur === "yes" && !f.blurredVersionId;
-  })?.id;
-  if (waiting) {
-    const a = libraryDb().prepare("SELECT a.title, a.library_id, a.created_by FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(waiting) as
-      | { title: string; library_id: string; created_by: string }
-      | undefined;
-    if (a) emitEvent("library.version.blur", { libraryId: a.library_id, versionId: waiting, owner: a.created_by });
-    return refuse(`Waiting for blur on ${a?.title ?? "a clip"}`);
+  });
+  if (waiting.length) {
+    const of = db.prepare("SELECT a.title, a.library_id, a.created_by FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?");
+    const titles = waiting.map((r) => {
+      const a = of.get(r.id) as { title: string; library_id: string; created_by: string } | undefined;
+      if (a) emitEvent("library.version.blur", { libraryId: a.library_id, versionId: r.id, owner: a.created_by });
+      return a?.title;
+    });
+    return refuse(`Waiting for blur on ${titles[0] ?? "a clip"}`);
   }
-  const kind = libraryDb().prepare("SELECT a.kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?");
-  const pictures = files.filter((r) => (kind.get(r.id) as { kind: string } | undefined)?.kind !== "audio");
-  // the edit's own files (a voice take, a made clip): outside the Library, so as filmed unless only sound
-  const own = Object.values(readDraft(editId, variant)?.timeline.sources ?? {}).filter((s) => s.file && !AUDIO_FILE.test(s.file));
-  const blurred = pictures.length > 0 && !own.length && pictures.every((r) => isBlurred(r.play ?? r.id));
-  return { ok: true, mark: blurred ? "blurred" : "asFilmed" };
+  const tl = readDraft(editId, variant)?.timeline.sources;
+  const e = readEdit(editId);
+  const ids = tl ? Object.keys(tl) : [...(e?.sources ?? []), ...(typeof e?.song === "string" ? [e.song] : [])];
+  const kindOfVersion = db.prepare("SELECT a.kind FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?");
+  let pictures = 0;
+  let asFilmed = false;
+  for (const id of ids) {
+    const own = tl?.[id]?.file;
+    const kind = own ? kindOf(own) : (kindOfVersion.get(id) as { kind: string } | undefined)?.kind;
+    if (kind === "audio") continue;
+    pictures++;
+    // the edit's own file, or one the Library no longer has: as filmed
+    if (own || !kind || !isBlurred(playOf(id))) asFilmed = true;
+  }
+  return { ok: true, mark: pictures > 0 && !asFilmed ? "blurred" : "asFilmed" };
 }
 
 /**

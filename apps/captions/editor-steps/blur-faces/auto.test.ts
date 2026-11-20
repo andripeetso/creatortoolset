@@ -127,6 +127,26 @@ describe("a Mac's job", () => {
     expect(await queueVersion(event(blurred!))).toBe(false); // the copy comes in too: never covered again
   });
 
+  it("covers a member's clip on the library account's Mac, and links a copy only for the library's own account", async () => {
+    await settings({});
+    const v = await added("jpg");
+    // a member added it: the job is the library account's (its Mac has the file, its copy is trusted)
+    expect(await queueVersion({ libraryId: "lib_a", versionId: v, owner: "bo" })).toBe(true);
+    expect(autoJobs.waits("bo")).toBe(false);
+    expect(autoJobs.waits("ana")).toBe(true);
+    const job = autoJobs.claim(mac)!;
+    // the library is no longer the job's account's by the time the copy comes: nothing is linked as its blurred render
+    libraryDb().prepare("UPDATE libraries SET workspace_id = 'nobody' WHERE id = 'lib_a'").run();
+    try {
+      const copy = path.join(dir, "covered-not-trusted.jpg");
+      writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 9, 9]));
+      await autoJobs.file("mac-1", job.id, copy, "covered.jpg");
+      expect(fileBlur(v)?.blurredVersionId).toBeNull();
+    } finally {
+      libraryDb().prepare("UPDATE libraries SET workspace_id = 'ana' WHERE id = 'lib_a'").run();
+    }
+  });
+
   it("in Only some faces, a failed AI writes nothing and the file says why, until Try again", async () => {
     await settings({ mode: "some" });
     const v = await added("mp4");

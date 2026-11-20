@@ -223,8 +223,12 @@ const finalsUploadStored = (libraryId: string): LibraryUpload => {
  */
 export const blursFaces = (libraryId: string): boolean =>
   (libraryDb().prepare("SELECT json_extract(settings, '$.blurFaces') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v === 1;
-/** Asset `a`'s blur answer (assets.blur, contracts Blur): a file from before it was asked (null) reads its library's Blur faces. */
-export const BLUR_SQL = "COALESCE(a.blur, CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END)";
+/**
+ * Asset `a`'s blur answer (assets.blur, contracts Blur): a file nobody answered for (null) reads its library's Blur faces;
+ * a sound has no picture, so it is no (a song never gets a blurred render, and never waits for one).
+ */
+export const BLUR_SQL =
+  "CASE WHEN a.kind = 'audio' THEN 'no' ELSE COALESCE(a.blur, CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END) END";
 /** mayLeave in SQL (upload-gate.ts): version `v` of asset `a` may have pictures cut of it, kept or handed out. */
 export const LEAVES_SQL = `(v.blurred_of IS NOT NULL OR ${BLUR_SQL} = 'no')`;
 /**

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 import type { AuthVars } from "./auth";
 
 // A cut whose footage nobody has blurred yet (an editor files it with notBlurred): Review says so, only its owner
@@ -191,4 +191,28 @@ it("shares an unblurred cut as before where Blur faces is off, and a blurred one
   const blurred = await cut(STORE, false);
   expect((await json(app.request(`/assets/${blurred}`, send("PATCH", { share: { enabled: true, download: true } })))).share).toMatchObject({ enabled: true, download: true });
   expect((await app.request(`/assets/${blurred}/approval`, send("POST", { status: "approved" }))).status).toBe(200);
+});
+
+it("under Blur faces a teammate who may see the edit sees an as-filmed cut; a share link to it is refused", async () => {
+  blurFaces(true);
+  try {
+    const added = await addVersion(undefined, { owner: "ana", name: "Team cut.mp4", mime: "video/mp4", bytes: 1, workspace: STORE, asFilmed: true, draft: { edit: "e_team", name: "v1" } }, async (dest) => writeFileSync(dest, "x"));
+    await reviewJobsDone();
+    const id = added!.meta.id;
+    const v = (await asset(id)).versions[0];
+    expect(v.asFilmed).toBe(true);
+    expect(v.blurred).toBeUndefined(); // as filmed is never called blurred
+    // ben may see the edit it is made from (editor/store.ts editRole, seesEdit)
+    vi.doMock("./editor/store", async (orig) => ({ ...(await orig<object>()), readEdit: () => ({ id: "e_team" }), editRole: async () => "member", seesEdit: async () => true }));
+    try {
+      expect((await app.request(`/assets/${id}`, { headers: { "x-as": "ben" } })).status).toBe(200);
+    } finally {
+      vi.doUnmock("./editor/store");
+    }
+    // a share link is public: only a blurred cut goes out on one
+    const r = await app.request(`/assets/${id}`, send("PATCH", { share: { enabled: true } }));
+    expect(r.status).toBe(409);
+  } finally {
+    blurFaces(false);
+  }
 });
