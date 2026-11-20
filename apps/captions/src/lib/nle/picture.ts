@@ -79,7 +79,7 @@ function cuts(tl: NleTimeline) {
 }
 
 /** The timeline frames a clip plays: from a transition's start into it to the end of one out of it (its handles). */
-function spanOf(tl: NleTimeline, it: NleItem): [number, number] {
+export function spanOf(tl: NleTimeline, it: NleItem): [number, number] {
   const c = cuts(tl).get(it);
   return [c?.into ? c.into.start : it.rec, c?.out ? c.out.start + c.out.len : endOf(it)];
 }

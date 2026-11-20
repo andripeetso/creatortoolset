@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { readSound } from "@/lib/synced-sound";
 import { fadePoints, isSoundFile, nleAudio, runningAudio, type NleClock } from "@/lib/nle/audio";
 import { lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
-import { chains, drawScale, envPoints, keyed, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, steer, type SoundPiece } from "@/lib/nle/picture";
+import { chains, drawScale, envPoints, keyed, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, spanOf, steer, type SoundPiece } from "@/lib/nle/picture";
 import { localFileState, pathLine } from "@/lib/local-files";
 import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type ShotOp } from "@/lib/nle/shot";
 
@@ -416,7 +416,9 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
           if (item.fx === "flash") continue;
           const key = keyOf(item);
           const m = media(chain.get(key) ?? key, item.src, false);
-          const at = track === "V1" ? shotTime(item, "main", 0, fps, srcFps) : sourceTime(t, item, item.rec / fps);
+          // waiting on the first frame it shows: a transition into it starts before its cut (its head handle)
+          const k = spanOf(t, item)[0] - item.rec;
+          const at = track === "V1" ? shotTime(item, "main", k, fps, srcFps) : sourceTime(t, item, (item.rec + k) / fps);
           if (m && !m.seq && m.el instanceof HTMLVideoElement) keep(m.el, at + m.lead, false, 1);
         }
       }
