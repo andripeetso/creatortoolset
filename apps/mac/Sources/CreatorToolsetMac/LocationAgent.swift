@@ -400,11 +400,24 @@ final class QuickCache: @unchecked Sendable {
 }
 
 /// What the server lists a file by, made on this Mac (as the page's src/lib/onMac.ts readIndex does): its length and
-/// size, a card picture (480 wide, at a tenth), the hover strip (20 frames of 160×90) and four stills (512 wide).
+/// size, a card picture (480 wide, at a tenth), the hover strip (20 frames in the clip's own shape, at most 256 on the
+/// longer side: the server's media/sprite.ts SPRITE_SIDE, so an upright clip's strip is never remade) and four stills (512 wide).
 /// A file AVFoundation can't read is indexed by its name and size only.
 enum MacIndex {
     private static let pictures: Set<String> = Set(MediaFiles.types.filter { $0.value.hasPrefix("image/") }.keys)
     static let spriteFrames = 20
+    /// The longer side of a strip frame (contracts/library.ts SPRITE_SIDE).
+    static let spriteSide = 256
+
+    /// One strip frame's size for a clip of `size`: its shape, the longer side `spriteSide`, both even (as ffmpeg's
+    /// force_original_aspect_ratio=decrease:force_divisible_by=2 makes them on the server).
+    static func spriteCell(_ size: CGSize) -> (width: Int, height: Int) {
+        guard size.width > 0, size.height > 0 else { return (spriteSide, spriteSide * 9 / 16 / 2 * 2) }
+        let even = { (v: Double) in max(2, Int(v / 2) * 2) }
+        return size.width >= size.height
+            ? (spriteSide, even(Double(spriteSide) * size.height / size.width))
+            : (even(Double(spriteSide) * size.width / size.height), spriteSide)
+    }
     static let stills = 4
 
     static func read(_ path: String) -> [String: Any] {
@@ -425,20 +438,23 @@ enum MacIndex {
         guard let size, size.width > 0 else { return duration > 0 ? ["duration": duration, "frames": [String]()] : ["frames": [String]()] }
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 640, height: 640)
+        generator.maximumSize = CGSize(width: 640, height: 640) // above spriteSide, so a strip frame is never scaled up
         let at = { (t: Double) in wait { try await generator.image(at: CMTime(seconds: min(max(0, t), max(0, duration - 0.05)), preferredTimescale: 600)).image } }
         let frameAt = { (i: Int, n: Int) in (Double(i) + 0.5) * duration / Double(n) }
         var out: [String: Any] = ["duration": duration, "width": Int(size.width), "height": Int(size.height)].merging(videoFilmed(asset)) { a, _ in a }
         if let first = at(duration * 0.1) { out["thumb"] = jpeg(scaled(first, width: 480), 0.8) }
-        let strip = CGContext(data: nil, width: 160 * spriteFrames, height: 90, bitsPerComponent: 8, bytesPerRow: 0,
+        let (cw, ch) = spriteCell(size)
+        let strip = CGContext(data: nil, width: cw * spriteFrames, height: ch, bitsPerComponent: 8, bytesPerRow: 0,
                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        strip?.interpolationQuality = .high
         for i in 0..<spriteFrames {
             guard let f = at(frameAt(i, spriteFrames)) else { continue }
-            let s = max(160 / CGFloat(f.width), 90 / CGFloat(f.height))
+            // the frame fills its cell, cut to it where a frame's shape differs from the clip's (a turned or odd frame)
+            let s = max(CGFloat(cw) / CGFloat(f.width), CGFloat(ch) / CGFloat(f.height))
             let w = CGFloat(f.width) * s, h = CGFloat(f.height) * s
             strip?.saveGState()
-            strip?.clip(to: CGRect(x: CGFloat(i * 160), y: 0, width: 160, height: 90))
-            strip?.draw(f, in: CGRect(x: CGFloat(i * 160) + (160 - w) / 2, y: (90 - h) / 2, width: w, height: h))
+            strip?.clip(to: CGRect(x: CGFloat(i * cw), y: 0, width: CGFloat(cw), height: CGFloat(ch)))
+            strip?.draw(f, in: CGRect(x: CGFloat(i * cw) + (CGFloat(cw) - w) / 2, y: (CGFloat(ch) - h) / 2, width: w, height: h))
             strip?.restoreGState()
         }
         if let image = strip?.makeImage() { out["sprite"] = jpeg(image, 0.7) }
