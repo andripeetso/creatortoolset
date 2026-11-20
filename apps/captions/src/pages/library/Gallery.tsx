@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import type { AssetCard } from "@contracts/library";
+import { LIBRARY_WORDS, type AssetCard } from "@contracts/library";
 import { cn } from "@/lib/utils";
 import { cardColumns } from "./views";
 import { across, clock, frameAt, frameStyle, KIND_ICON, NoPictureChip, noPictureYet, PhotoMasonry, useStrip, type Drag } from "./ClipCards";
@@ -92,6 +92,12 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
       )}
       {a.durationS !== undefined && (
         <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] text-white">{clock(a.durationS)}</span>
+      )}
+      {a.notBlurred && a.state !== "missing" && a.state !== "failed" && (
+        <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          {LIBRARY_WORDS.notBlurred}
+        </span>
       )}
       {(a.state === "missing" || a.state === "failed") && (
         <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">

@@ -13,6 +13,7 @@ import { blobs, libraryDb } from "./db";
 import { triesOn } from "./places";
 import { downloadName } from "./routes";
 import { dropOriginal } from "./worker";
+import { mayLeave } from "./upload-gate";
 
 /**
  * Copies of a Media Library in folders on its owner's computers (Settings → Media Library → Copies;
@@ -495,8 +496,12 @@ export async function copyFile(device: string, id: number): Promise<{ key: strin
   }
   if (h.from) return { open: (req) => relayOpen(h, req) };
   const v = db()
-    .prepare(`SELECT CASE WHEN ${STORED} THEN v.source_key ELSE (SELECT s.storage_key FROM copy_sends s WHERE s.version_id = v.id) END AS k FROM asset_versions v WHERE v.id = ?`)
-    .get(h.key) as { k: string | null } | undefined;
+    .prepare(`SELECT a.library_id, CASE WHEN ${STORED} THEN v.source_key ELSE (SELECT s.storage_key FROM copy_sends s WHERE s.version_id = v.id) END AS k
+      FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`)
+    .get(h.key) as { library_id: string; k: string | null } | undefined;
+  // Blur faces: a stored copy of a clip not blurred (from before it was on) is not handed out; the live relay between the
+  // owner's own computers above stays as it is
+  if (v && !mayLeave(v.library_id, { versionId: h.key }).ok) return null;
   return v?.k ? { key: v.k } : null;
 }
 

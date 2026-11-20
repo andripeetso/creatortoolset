@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
 import { ChevronRight, Gauge, Keyboard, Link2, Loader2, Magnet, MousePointer2, MoveHorizontal, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
 import { freshHist, histChange, histGo, histRedo, histUndo, type Hist } from "@/lib/edit-history";
@@ -28,6 +28,10 @@ import { LowerUnderVoiceDialog, NormalizeDialog } from "./NleSound";
 import { soundKeys } from "@/lib/nle/loudness";
 import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
 import { NleViewer, SoundCard, SourceStrip, Timecode } from "./NleViewer";
+import { NleText } from "./NleText";
+import { getDesign } from "@/lib/designs";
+import { canGrab, designFile, isDesign, placeText, renderScale } from "@/lib/nle/text-clip";
+import { drawFrame, grabDesign, grabFrame, makeText } from "@/lib/nle/text-design";
 
 export type { NleFile };
 import { NleTracks as Timeline, useLinkedSelection, type MenuAt, type Tool } from "./NleTracks";
@@ -59,6 +63,9 @@ export interface NleControl {
   /** a clip from the bin opened in the viewer as the source, to mark and lay */
   source: (d: NleDrop) => void;
 }
+
+// the designer is loaded when it is first opened, not with the editor
+const DesignEditor = lazy(() => import("@/pages/DesignPage").then((m) => ({ default: m.DesignEditor })));
 
 let clipboard: { track: string; item: NleItem }[] = [];
 /** A drag from the source viewer's picture: the source's marked part. */
@@ -137,7 +144,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -337,9 +344,82 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   }, [readOnly]);
   const live_ = useCallback((next: NleTimeline | null) => !readOnly && setLive(next), [readOnly]);
 
+  // a text clip plays its design's PNG from the server; a design deleted since is a red clip (asked once a PNG)
+  const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
+  const urlOf = useCallback((src: string, t: NleTimeline): NleFile | null => (isDesign(t.sources[src]) ? designFile(t.sources[src], gone) : pageUrlOf(src, t)), [pageUrlOf, gone]);
+  const asked = useRef(new Set<string>());
+  useEffect(() => {
+    for (const s of Object.values(tl.sources)) {
+      const url = isDesign(s) ? designFile(s, gone).url : "";
+      if (!url || asked.current.has(url)) continue;
+      asked.current.add(url);
+      void fetch(url, { method: "HEAD" }).then((r) => r.status === 404 && setGone((g) => new Set(g).add(String(s.path))), () => {});
+    }
+  }, [tl.sources]); // eslint-disable-line react-hooks/exhaustive-deps -- each PNG once
+  // a new text clip's design, made once its clip is laid (by the menu or the chat): every step that has the clip gets it,
+  // so undo and redo never make it twice
+  const making = useRef(new Set<string>());
+  useEffect(() => {
+    for (const s of Object.values(tl.sources)) {
+      const id = s.pending;
+      if (!isDesign(s) || typeof id !== "string" || making.current.has(id)) continue;
+      making.current.add(id);
+      void makeText(String(s.words ?? ""), Number(s.w), Number(s.h)).then(
+        (made) => fill(id, made),
+        (e: Error) => fill(id, { kind: "design", failed: e.message }),
+      );
+    }
+  }, [tl.sources]); // eslint-disable-line react-hooks/exhaustive-deps -- each new text once
+  const fill = (id: string, made: NleSource) => {
+    const one = (t: NleTimeline) => {
+      const k = Object.keys(t.sources).find((x) => t.sources[x].pending === id);
+      return k ? { ...t, sources: { ...t.sources, [k]: made } } : t;
+    };
+    setHist((h) => ({ ...h, past: h.past.map(one), now: one(h.now), future: h.future.map(one) }));
+  };
+  /** A text clip's source drawn again (a new PNG): one step. */
+  const redrawn = (src: string, made: NleSource) => setHist((h) => histChange(h, (t) => (t.sources[src]?.design === made.design ? { ...t, sources: { ...t.sources, [src]: made } } : t), "Text"));
+
+  // Design full screen over the editor (its keys are its own while it is open): a text clip's design, or a frame of the
+  // video to design over, laid at frame `at` once it is done
+  const [designing, setDesigning] = useState<{ id: string; src: string } | { id: string; at: number } | null>(null);
+  const [reread, setReread] = useState(0);
+  const viewerBox = useRef<HTMLElement | null>(null);
+  const designDone = async () => {
+    const was = designing;
+    setDesigning(null);
+    setReread((n) => n + 1);
+    if (!was || readOnly) return;
+    try {
+      const d = await getDesign(was.id);
+      if ("src" in was) {
+        const s = latest.current.hist.now.sources[was.src];
+        if (s) redrawn(was.src, await drawFrame(d, String(s.frame), renderScale(latest.current.hist.now, was.src, Number(s.w), Number(s.h))));
+      } else if (d.pages[0]?.layers.some((l) => !l.reference && !l.hidden)) {
+        const made = await drawFrame(d, d.pages[0].id, 1);
+        setHist((h) => histChange(h, (t) => placeText(t, made, was.at).tl, "Design on This Frame"));
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const designOnFrame = async () => {
+    const box = viewerBox.current?.closest<HTMLElement>("[data-frame]");
+    if (!box) return;
+    tln.play(false);
+    const at = Math.round(now() * fps);
+    const [W, H] = [tl.timeline.width || 1080, tl.timeline.height || 1920];
+    try {
+      const d = await grabDesign(await grabFrame(box, W, H), W, H);
+      setDesigning({ id: d.id, at });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
   const urlFor = useCallback((src: string) => urlOf(src, shown), [urlOf, shown]);
   const srcUrl = useCallback((k: string) => (srcTl ? urlOf(k, srcTl) : null), [urlOf, srcTl]);
-  const nameOfSrc = useCallback((src: string) => String(shown.sources[src]?.path ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
+  const nameOfSrc = useCallback((src: string) => isDesign(shown.sources[src]) ? "Text" : String(shown.sources[src]?.path ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
   const nameOf = useCallback((it: NleItem) => (typeof it.name === "string" && it.name) || (typeof it.line === "string" && it.line ? `${it.line} · ${nameOfSrc(it.src)}` : nameOfSrc(it.src)), [nameOfSrc]);
 
   // a clip from the bin: its picture on a video track, its sound with it on a free sound track (F9 / F10: the one given),
@@ -490,6 +570,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   const save = async () => {
     if (!dirty || saving || readOnly) return;
+    if (Object.values(tl.sources).some((s) => isDesign(s) && !s.path)) return void toast("A text is still being drawn", { description: "Save again in a moment, or delete it" });
     const now = tl;
     try {
       await onSave(toSaved(now));
@@ -504,6 +585,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (designing) return;
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
       const k = commandOfKey(e, keys);
       const c = k && COMMANDS[k.id];
@@ -565,6 +647,10 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   /** a command's first chord, as the menus write it ("" when it has none) */
   const kl = (id: string) => chordLabel(chordsOf(keys, id)[0] ?? "");
   const tip = (id: string) => (kl(id) ? ` (${kl(id)})` : "");
+  // one text clip picked: Design's text panel on it in the Inspector
+  const textSrc = sel.length === 1 ? find(tl, sel[0])?.item.src : undefined;
+  const textSource = textSrc && isDesign(tl.sources[textSrc]) && typeof tl.sources[textSrc].path === "string" ? tl.sources[textSrc] : null;
+  const newTextRow: MenuRow = ["New Text", "", () => run("newText"), !!readOnly];
   const menuRow = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
   const linked = sel.some((k) => find(tl, k)?.item.link !== undefined);
   const iconBtn = (on: boolean) => cn("inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[11px]", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
@@ -605,7 +691,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
           </>
         }
         media={
-          <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} onRelink={onRelink}
+          <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} onRelink={onRelink} onNewText={readOnly ? undefined : () => run("newText")}
             onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))}
             onOpen={(src) => { const d = dropOfSrc(src); if (d) openSource(d); }}
             onDrag={(src) => note(src ? dropOfSrc(src) : null)} onBinDrag={binDrag} />
@@ -630,6 +716,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
             }>
             <NleViewer tl={inSource ? srcTl! : shown} playhead={T.clock} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
               nameOf={inSource ? () => source!.name : nameOfSrc} onClick={() => T.play(!T.playing)}
+              onMenu={(e) => { e.preventDefault(); viewerBox.current = e.currentTarget; setMenu({ x: e.clientX, y: e.clientY, on: "viewer" }); }}
               loop={loop ? (inSource ? loopPart(sm, srcFrames, sfps) : lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null) : null}
               onDragStart={inSource ? (e) => { e.dataTransfer.setData(VIEWER_MIME, "1"); e.dataTransfer.effectAllowed = "copy"; note(source); } : undefined}
               onDragEnd={() => note(null)}
@@ -661,7 +748,11 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         }
         inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} playhead={Math.round(tln.time * fps)}
           transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => setHist((h) => histGo(h, i))}
-          autosaves={autosaves} onAutosave={restore} />}
+          autosaves={autosaves} onAutosave={restore}
+          text={textSource && !readOnly ? (
+            <NleText key={textSrc} source={textSource} scale={renderScale(tl, textSrc!, Number(textSource.w), Number(textSource.h))} reread={reread}
+              onDrawn={(s) => redrawn(textSrc!, s)} onOpen={() => { tln.play(false); setDesigning({ id: String(textSource.design), src: textSrc! }); }} />
+          ) : null} />}
         timeline={
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>
@@ -719,11 +810,15 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                 </div>
               </div>
             )}
-            {(menu.on === "gap" ? [["Close Gap", kl("closeGap"), () => run("closeGap"), false] as MenuRow]
+            {(menu.on === "gap" ? [["Close Gap", kl("closeGap"), () => run("closeGap"), false], newTextRow] as MenuRow[]
               : menu.on === "ruler" ? [
                 ["Add Marker", kl("addMarker"), marker, false],
                 ["Export Markers…", kl("exportMarkers"), exportMarkers, !markersOf(tl).length],
+                newTextRow,
               ] as MenuRow[]
+              : menu.on === "lane" ? [newTextRow]
+              // a catalog original is never drawn into a design: only blurred copies, his own files and designs (canGrab)
+              : menu.on === "viewer" ? [["Design on This Frame", "", () => void designOnFrame(), readOnly || inSource || !canGrab(shown, Math.round(tln.now() * fps), urlFor)] as MenuRow]
               : [
               ["Cut", kl("cut"), () => run("cut"), false],
               ["Copy", kl("copy"), () => run("copy"), false],
@@ -742,6 +837,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         </div>
       )}
       {keysOpen && <NleKeyboard onClose={() => setKeysOpen(false)} />}
+      {designing && <Suspense><DesignEditor id={designing.id} onDone={() => void designDone()} /></Suspense>}
       {markerEdit !== null && markersOf(tl).some((m) => m.frame === markerEdit) && (
         <NleMarkerDialog key={markerEdit} marker={markersOf(tl).find((m) => m.frame === markerEdit)!} fps={fps} onClose={() => setMarkerEdit(null)}
           onDone={(patch) => { commit(setMarker(tl, markerEdit, patch), "Edit marker"); setMarkerEdit(null); }}

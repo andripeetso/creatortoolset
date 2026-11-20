@@ -3,6 +3,7 @@ import { PICTURE_FILE, type LibrarySummary } from "@contracts/library";
 import { droppedFiles } from "@/components/assistant/draft";
 import { droppedOnMac, thisMacBridge } from "@/lib/thisMac";
 import { pathsInDrop } from "@/lib/onMac";
+import { holdsMediaFolder } from "./Import";
 
 /**
  * Files and folders dropped anywhere on the Media Library page, with no question: a dropped folder's media files and
@@ -54,9 +55,13 @@ export function useLibraryDrop({
       // takes the drop's items now: they are gone after the event
       droppedFiles(e.dataTransfer, readsFolders ? droppedOnMac : undefined).then(
         async (d) => {
+          const dropped = (await items) ?? [];
+          // a folder holding any workspace's Media folder (~/Movies with each workspace's inside): nothing of it goes in
+          const holds = await holdsMediaFolder([...new Set([...d.folders, ...dropped.filter((i) => i.folder).map((i) => i.path)])]);
+          if (holds) return onError(holds);
           // a folder's files: only what the library takes (a loose file dropped by itself goes in as it is)
           const files = d.files.filter((f) => !inFolder(f) || MEDIA.test(f.name));
-          const paths = onMac ? pathsInDrop(files, (await items) ?? [], d.paths) : d.paths;
+          const paths = onMac ? pathsInDrop(files, dropped, d.paths) : d.paths;
           if (files.length) void addFiles(files, paths.size ? paths : undefined);
         },
         (x: unknown) => onError(x instanceof Error ? x.message : String(x)),

@@ -47,7 +47,7 @@ const folded = new Set<string>();
 const parked = new Map<string, Record<string, Partial<NleItem>> | null>();
 let lastTab: Tab = "video";
 
-export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave }: {
+export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave, text }: {
   /** the timeline as committed (what a change is made from) */
   tl: NleTimeline;
   keys: string[];
@@ -68,6 +68,8 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
   /** this timeline's autosaves, oldest first, listed under the steps; a click restores one as a step */
   autosaves?: Autosave[];
   onAutosave?: (a: Autosave) => void;
+  /** at the top of the Video tab: a text clip's words and their style (NleText) */
+  text?: ReactNode;
 }) {
   const [pref, setPref] = useState<Tab>(lastTab);
   const fps = tl.timeline.fps;
@@ -107,7 +109,7 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-scroll bg-[#19191c] pb-4 text-[11.5px]" role="tabpanel">
         {tab === "timeline" ? <TimelineTab tl={tl} onCommit={onCommit} notes={notes} onRun={e.onRun} />
           : tab === "history" ? <HistoryTab hist={hist!} onHistory={onHistory ?? (() => {})} autosaves={autosaves} onAutosave={onAutosave ?? (() => {})} />
-          : tab === "video" ? (trans ? <TransitionTab {...e} k={trans} /> : <VideoTab {...e} keys={videos} />)
+          : tab === "video" ? (trans ? <TransitionTab {...e} k={trans} /> : <>{text}<VideoTab {...e} keys={videos} /></>)
           : tab === "audio" ? <AudioTab {...e} keys={sounds} />
           : tab === "color" ? <ColorTab {...e} keys={videos} nameOf={nameOf} onClose={() => pick("video")} />
           : <FileTab {...e} item={first!.item} keys={hits.map((h) => h.item._k!)} fps={fps} />}

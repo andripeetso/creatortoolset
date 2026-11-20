@@ -8,6 +8,7 @@ import { parseJsonObject } from "../lib/instagram/vision";
 import { keyFor } from "../my-keys";
 import type { SessionUser } from "../users";
 import { blobs, libraryDb } from "./db";
+import { mayLeave } from "./upload-gate";
 import { FINISHED } from "./query";
 
 /**
@@ -140,6 +141,9 @@ export interface Verdict {
 
 /** The clip's pictures the library keeps (its card picture, its frame strip), for the AI to look at. */
 async function picturesOf(d: DatabaseSync, versionId: string): Promise<{ jpegBase64: string }[]> {
+  // Blur faces: a picture of a clip not blurred, kept from before it was on, goes into no AI call
+  const lib = (d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined)?.library_id;
+  if (!mayLeave(lib, { versionId }).ok) return [];
   const rows = d.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind IN ('thumb', 'sprite') AND storage_key IS NOT NULL ORDER BY kind DESC").all(versionId) as {
     storage_key: string;
   }[];

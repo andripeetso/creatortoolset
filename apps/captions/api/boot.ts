@@ -24,6 +24,7 @@ import { searchApp } from "./library/search";
 import { relatedApp } from "./library/related";
 import { publicShareApp, shareApp } from "./library/shares";
 import { libraryJobsAtRisk, releaseRunningJobs, startLibraryWorker } from "./library/worker";
+import { clearHeldStills } from "./library/on-mac";
 import { killProcesses } from "./library/media/run";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
@@ -581,6 +582,8 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
   void migrateOnce().catch((e) => console.warn("[library] the one-time migration failed:", e instanceof Error ? e.message : e)); // once per data folder (library/migrated.json)
   // libraries with clips are set up (setupAt, UNIFIED-PRD 4.6); without it every existing workspace would get the setup card
   void migrateLibraries().catch((e) => console.error("library migration failed", e));
+  // Blur faces: a description's stills written out for a call a stop cut short (on-mac.ts heldDir) never outlive it
+  void clearHeldStills();
   startLibraryWorker();
   setInterval(() => {
     try {

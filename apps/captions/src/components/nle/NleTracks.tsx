@@ -37,7 +37,7 @@ import { Timecode } from "./NleViewer";
 
 export type Tool = "select" | "trim" | "blade" | "slide" | "stretch";
 /** what a right-click opened the editor's menu on: a clip (`cut`: the clip after the cut it was at), a gap, the ruler */
-export type MenuAt = { x: number; y: number; on?: "clip" | "gap" | "ruler"; cut?: string | null };
+export type MenuAt = { x: number; y: number; on?: "clip" | "gap" | "ruler" | "lane" | "viewer"; cut?: string | null };
 
 const LABEL_W = 152;
 const RULER_H = 30;
@@ -761,8 +761,10 @@ export const NleTracks = memo(function NleTracks({
             </div>
             <div data-lane={id} className={cn("relative flex-1", t.locked && "bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(255,255,255,0.03)_6px_12px)]")}
               onContextMenu={(e) => {
-                const g = e.target === e.currentTarget ? gapAt(tl, id, frameAt(e.clientX)) : null;
-                if (!g) return;
+                if (e.target !== e.currentTarget) return;
+                const g = gapAt(tl, id, frameAt(e.clientX));
+                // past the last clip: the timeline's own menu (New Text)
+                if (!g) return void (e.preventDefault(), onMenu({ x: e.clientX, y: e.clientY, on: "lane" }, ""));
                 onSelect([]);
                 onGap?.(g);
                 onMenu({ x: e.clientX, y: e.clientY, on: "gap" }, "");

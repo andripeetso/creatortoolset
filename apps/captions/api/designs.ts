@@ -1,8 +1,8 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_HEADS, DESIGN_FORMATS, DESIGN_GAP, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_LIMITS, DESIGN_SAFE, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type Layer, type SplitAnswer, type TextLayer } from "../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_HEADS, DESIGN_FORMATS, DESIGN_GAP, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_LIMITS, DESIGN_SAFE, DESIGN_SHAPES, formatOf, PICTURE_SIDE_MAX, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type Layer, type SplitAnswer, type TextLayer } from "../contracts/design";
 import { DESIGN_FONTS, weightsOf } from "../src/lib/design/fonts";
 import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
 import { retext } from "../src/lib/design/runs";
@@ -25,6 +25,7 @@ import { blobs, libraryDb } from "./library/db";
 import { ownedProjects, resolveProjectId } from "./lib/workshop/workspace";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { ownedSession, readDoc } from "./workshop";
+import { mayLeave, REFUSED_BLUR } from "./library/upload-gate";
 
 /**
  * Designs (contracts/design.ts): a canvas of frames, each a picture made of layers, that the person's AI designs and
@@ -183,8 +184,10 @@ async function addPicture(d: Design, bytes: Buffer, ext: string, given?: unknown
 async function videoFrame(owner: string, version: string, t: number): Promise<{ frame: Buffer; title: string }> {
   const ws = sourcesWorkspace(owner, [version]);
   if (!ws) throw new DesignError("Not found", 404);
-  const row = libraryDb().prepare("SELECT v.source_key, v.mac_path, v.mac_device, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; mac_path: string | null; mac_device: string | null; title: string } | undefined;
+  const row = libraryDb().prepare("SELECT v.source_key, v.mac_path, v.mac_device, a.title, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; mac_path: string | null; mac_device: string | null; title: string; library_id: string } | undefined;
   if (!row) throw new DesignError("Not found", 404);
+  // Blur faces: a design keeps the frame, so only one of a blurred render (upload-gate.ts mayLeave)
+  if (!mayLeave(row.library_id, { versionId: version }).ok) throw new DesignError(REFUSED_BLUR, 409);
   const ms = Math.round(t * 1000);
   const frames = path.join(dirOf(owner), ".frames");
   let got: Awaited<ReturnType<typeof frameAt>>;
@@ -1243,6 +1246,45 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
     }
   }),
 );
+
+/**
+ * A frame drawn as a PNG for the video editor (a text clip, contracts/editor.ts EdjDesignSource): kept by its content
+ * in $DATA_DIR/designs/<owner>/<id>/renders/, so a new drawing is a new file and a draft that uses an older one stays
+ * right. The editor's worker fetches it from inside the owner's designs folder; a deleted design takes them with it.
+ */
+const RENDER = /^[0-9a-f]{20}\.png$/;
+const rendersOf = (d: Design) => path.join(picturesOf(d.owner, d.id), "renders");
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/** A PNG's size from its header, or null when it is not a PNG. */
+export const pngSize = (b: Buffer): { w: number; h: number } | null =>
+  b.length > 24 && b.subarray(0, 8).equals(PNG_MAGIC) && b.toString("latin1", 12, 16) === "IHDR" ? { w: b.readUInt32BE(16), h: b.readUInt32BE(20) } : null;
+
+designsApp.post("/:id/renders", (c) =>
+  answer(c, async () => {
+    const d = await mine(c);
+    // drawn for a timeline of the workspace the window is in: a design kept in another one is not there
+    const keep = await inCurrentWorkspace(c.get("user"));
+    if (keep && !keep(d.project)) throw new DesignError("Not found", 404);
+    const b = await body(c);
+    const bytes = typeof b.png === "string" ? Buffer.from(b.png, "base64") : null;
+    const size = bytes && pngSize(bytes);
+    if (!bytes || !size) throw new DesignError("Send the frame as a PNG");
+    if (size.w > PICTURE_SIDE_MAX || size.h > PICTURE_SIDE_MAX) throw new DesignError(`A frame's picture is at most ${PICTURE_SIDE_MAX} pixels a side`);
+    const file = path.join(rendersOf(d), `${createHash("sha256").update(bytes).digest("hex").slice(0, 20)}.png`);
+    await mkdir(rendersOf(d), { recursive: true });
+    const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+    await writeFile(tmp, bytes);
+    await rename(tmp, file);
+    return { path: file, ...size };
+  }),
+);
+
+designsApp.get("/:id/renders/:name", async (c) => {
+  const d = await read(c.get("user").username, c.req.param("id"));
+  const name = c.req.param("name");
+  const bytes = d && RENDER.test(name) ? await readFile(path.join(rendersOf(d), name)).catch(() => null) : null;
+  return bytes ? c.body(new Uint8Array(bytes), 200, { "Content-Type": "image/png" }) : c.json({ error: "Not found" }, 404);
+});
 
 designsApp.get("/:id/pictures/:pid", async (c) => {
   const d = await read(c.get("user").username, c.req.param("id"));

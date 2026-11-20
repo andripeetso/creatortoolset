@@ -472,6 +472,11 @@ async function importAsk<T>(ask: string, on = macImports()): Promise<T> {
  *  Imports/ was one, for a Media folder added with Allow on this Mac. The file is then used where it is. */
 export const NOT_A_COPY_FOLDER = "Not a folder this app copies into.";
 
+/** The Mac app's refusals about the file itself (Import.swift copy): in a Media folder already, another workspace's or
+ *  server's, or not one it can vouch for as dropped or picked here. Shown as they are, never worked around by uploading
+ *  the file instead. */
+export const FILE_REFUSED = / is in the Media folder .*: drop the folder with the footage itself$|^Not a file from a drop or a pick in this window\.$/;
+
 export type ImportCopied = { copied: { from: string; to: string }[]; failed: { from: string; error: string }[]; stopped?: boolean };
 /** Copies each `from` to `to` ("~/" is this Mac's home folder), never over another file; answers when all are done. */
 export const importCopy = (id: string, files: { from: string; to: string }[]) =>
@@ -503,6 +508,9 @@ export const importThumb = (path: string, max = 480) =>
   );
 export const importPrint = (paths: string[]) =>
   importAsk<{ prints?: Record<string, string> }>(`import:print:${JSON.stringify({ paths })}`).then((r) => r.prints ?? {});
+/** The whole files' SHA-256 (Import.swift hash), by path; a file this app may not read or that can't be read has none. */
+export const importHash = (paths: string[]) =>
+  importAsk<{ hashes?: Record<string, string> }>(`import:hash:${JSON.stringify({ paths })}`).then((r) => r.hashes ?? {}, () => ({}) as Record<string, string>);
 /** Locate… (apps/mac Locate.swift): which of `files` are gone from their path here, and the files in `folder` of their sizes with fingerprints. */
 export const importLocate = (files: { id: string; path: string; bytes: number }[], folder?: string) =>
   importAsk<{ gone?: string[]; files?: { path: string; size: number; quick: string }[] }>(`import:locate:${JSON.stringify({ folder, files })}`).then((r) => ({

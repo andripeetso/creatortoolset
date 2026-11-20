@@ -9,6 +9,7 @@ import { isOnline, isThisMachine, listDevices } from "../lib/devices";
 import { env } from "../lib/env";
 import { folderFor, hostPath, parseStorageFile, storageFilePath, withMounts } from "../lib/storage";
 import { libraryDb, libraryUpload } from "../library/db";
+import { mayLeave } from "../library/upload-gate";
 import { triesOn } from "../library/places";
 import { needsProxy } from "../library/media/proxy";
 import type { ProbeSummary } from "../library/media/probe";
@@ -46,6 +47,8 @@ export interface FileRow {
  * no proxy (a 1080p H.264 phone clip, a song: library/media/proxy.ts needsProxy), as it is then no heavier than one.
  */
 export function lightKey(r: FileRow): string | null {
+  // Blur faces: a held copy of a clip not blurred (from before it was on) goes to no computer
+  if (r.library_id && !mayLeave(r.library_id, { versionId: r.id }).ok) return null;
   if (r.proxy) return r.proxy;
   if (r.source_key.startsWith("mac:") || !r.probe) return null;
   try {
@@ -143,7 +146,7 @@ export function heldCopy(device: string, jobId: number, versionId: string, origi
   const job = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(jobId, device) as Pick<JobRow, "version_id"> | undefined;
   const r = job && jobFiles(job).find((f) => f.id === versionId);
   if (!r) return null;
-  if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && hostsOriginals(libraryUpload(r.library_id))) return r.source_key;
+  if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && hostsOriginals(libraryUpload(r.library_id)) && mayLeave(r.library_id, { versionId }).ok) return r.source_key;
   return lightKey(r);
 }
 

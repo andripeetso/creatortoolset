@@ -13,7 +13,7 @@ import { currentWorkspaceId } from "./lib/workspace-scope";
 import { createProjectFromFile, linkOrCopy } from "./projects";
 import { captionEngine, captionInBackground } from "./captions-job";
 import { ensureLibrary, librariesHere, mainSourceFor } from "./library/access";
-import { mayReceive } from "./library/upload-gate";
+import { mayLeave, mayReceive, workspaceLibrary } from "./library/upload-gate";
 import { libraryDb, libraryUpload } from "./library/db";
 import { saveToLibrary } from "./library/routes";
 import { watchAllowed } from "./library/watch";
@@ -303,6 +303,12 @@ export async function useFile(
   if (sound && to !== "library") throw new Error("A song or a sound effect goes to the Media Library.");
   const file = fileOf(user.username, id);
   const title = (name?.trim() || meta.name).slice(0, 120);
+  // Blur faces: a dropped file is not known to be blurred, so it becomes no Video Note or Caption Studio project (each keeps
+  // and shows it); the library and Review ask the same rule in their own way (saveToLibrary, addVersion)
+  if (to === "notes" || to === "captions") {
+    const left = mayLeave(await workspaceLibrary(user.username, await currentWorkspaceId(user)), {});
+    if (!left.ok) throw new Error(left.body.message);
+  }
   if (to === "notes") {
     const made = await notesFromFile(file, title, meta.mime, user);
     return { to, id: made.id, name: title, href: `/video-notes/${made.id}` };

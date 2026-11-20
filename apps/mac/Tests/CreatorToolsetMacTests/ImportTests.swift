@@ -39,6 +39,7 @@ final class ImportTests: XCTestCase {
         XCTAssertEqual(importAsk("import:cancel:c1"), .cancel("c1"))
         XCTAssertEqual(importAsk(#"import:scan:{"path":"/Volumes/Footage"}"#), .scan("/Volumes/Footage"))
         XCTAssertEqual(importAsk(#"import:print:{"paths":["/a.mov"]}"#), .print(["/a.mov"]))
+        XCTAssertEqual(importAsk(#"import:hash:{"paths":["/a.mov"]}"#), .hash(["/a.mov"]))
         XCTAssertNil(importAsk("import:progress:a b"))
         XCTAssertNil(importAsk(#"import:copy:{"id":"c1","files":[{"from":"/a.mov"}]}"#))   // a pair without `to`
         XCTAssertNil(importAsk("import:delete:{}"))
@@ -138,6 +139,50 @@ final class ImportTests: XCTestCase {
                                     sources: [at("Downloads")], destinations: MediaFiles.importsFolders(server: "s") + [root.path]) { _ in }
         XCTAssertEqual((picked["failed"] as? [[String: String]])?.map { $0["error"] }, ["Gone isn't connected."])
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("Gone")))
+    }
+
+    /// Another workspace's or another signed-in server's footage is never copied into a library: a file inside any of
+    /// their Media folders, by its real path (a link to it too), is refused. A server this Mac has no sign-in for any more
+    /// never blocks a drop. And a Media folder not allowed here yet says so.
+    func testNeverCopiesFromAMediaFolderAndSaysWhenOneIsNotAllowed() throws {
+        let suite = "import-tests-\(UUID().uuidString)"
+        let was = MediaFiles.defaults
+        MediaFiles.defaults = UserDefaults(suiteName: suite)!
+        defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
+        let mine = at("Tiny Footage"), other = at("Movies/Creator Toolset/Other/Media"), waiting = at("Waiting"), studio = at("Studio/FOOTAGE")
+        for d in [mine, waiting] { try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true) }
+        let clip = try write("Movies/Creator Toolset/Other/Media/clip.mov")
+        let studioClip = try write("Studio/FOOTAGE/Shoot/clip.mov")
+        try FileManager.default.createSymbolicLink(atPath: at("Movies/alias"), withDestinationPath: other)
+        // the page's server "s" (two workspaces), another signed-in server "studio.tiny.test:8443", one with no sign-in left
+        MediaFiles.setServerFolders([.init(id: "f1", path: mine, workspaces: ["a"], use: "media"), .init(id: "f2", path: other, workspaces: ["b"], use: "media"),
+                                     .init(id: "f3", path: waiting, workspaces: ["a"], use: "media")], server: "s")
+        MediaFiles.setServerFolders([.init(id: "f4", path: studio, workspaces: ["*"], use: "media")], server: "studio.tiny.test:8443")
+        MediaFiles.setServerFolders([.init(id: "f9", path: at("Downloads"), workspaces: ["*"], use: "media")], server: "gone")
+        MediaFiles.allow(mine, server: "s")
+        let media = MediaFiles.signedInMediaFolders(signedIn: { $0 != "gone" })
+        XCTAssertEqual(Set(media), [mine, other, waiting, studio])
+        let a = try write("Downloads/A001.mov"), b = try write("Downloads/B.mov")
+        let pairs = [ImportPair(from: clip, to: mine + "/Imports/x/clip.mov"), ImportPair(from: at("Movies/alias/clip.mov"), to: mine + "/Imports/x/clip 2.mov"),
+                     ImportPair(from: studioClip, to: mine + "/Imports/x/studio.mov"), ImportPair(from: a, to: waiting + "/Imports/x/A001.mov"),
+                     ImportPair(from: b, to: mine + "/Imports/x/B.mov")]
+        let reply = Imports().copy(id: "g1", pairs, sources: [at("Movies"), at("Downloads"), at("Studio")], destinations: Imports.copyDestinations(server: "s"),
+                                   waiting: MediaFiles.importsFolders(server: "s", allowed: false), media: media) { _ in }
+        XCTAssertEqual((reply["failed"] as? [[String: String]])?.map { $0["error"] ?? "" }, [
+            "\(clip) is in the Media folder \(other): drop the folder with the footage itself",
+            "\(at("Movies/alias/clip.mov")) is in the Media folder \(other): drop the folder with the footage itself",
+            "\(studioClip) is in the Media folder \(studio): drop the folder with the footage itself",   // another server's
+            "Allow Waiting on this Mac in Settings → Folders first.",
+        ])
+        // an IPv6 server keys as "fd00::5:8443" and its token by host "fd00::5": its folders still count
+        MediaFiles.setServerFolders([.init(id: "f6", path: at("Six"), workspaces: ["*"], use: "media")], server: "fd00::5:8443")
+        XCTAssertTrue(MediaFiles.signedInMediaFolders(signedIn: { $0 == "fd00::5" }).contains(at("Six")))
+        // a path this window wasn't given: the same answer whether or not it is in a library (nothing to probe)
+        let probe = Imports().copy(id: "g2", [ImportPair(from: studioClip, to: mine + "/Imports/x/s.mov"), ImportPair(from: at("Nowhere/x.mov"), to: mine + "/Imports/x/n.mov")],
+                                   sources: [], destinations: Imports.copyDestinations(server: "s"), media: media) { _ in }
+        XCTAssertEqual((probe["failed"] as? [[String: String]])?.map { $0["error"] ?? "" }, Array(repeating: "Not a file from a drop or a pick in this window.", count: 2))
+        // Downloads is a Media folder only of a server this Mac left: it blocks nothing
+        XCTAssertEqual((reply["copied"] as? [[String: String]])?.map { $0["to"] }, [mine + "/Imports/x/B.mov"])
     }
 
     func testScanFindsMediaOnlyInGrantedFolders() throws {
