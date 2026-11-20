@@ -28,14 +28,20 @@ afterEach(() => {
 });
 
 /** This computer's Source media rows, as the storage list has them (another computer's row is left out). */
-function storage(rows: { path: string; host?: string; role?: string }[]) {
+function storage(rows: { path: string; host?: string; role?: string; workspace?: string }[]) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ folders: rows.map((r) => ({ id: r.path, role: r.role ?? "footage", origin: { host: r.host ?? "mac_1", path: r.path } })) }))),
+    vi.fn(async () => new Response(JSON.stringify({ folders: rows.map((r) => ({ id: r.path, role: r.role ?? "footage", workspace: r.workspace, origin: { host: r.host ?? "mac_1", path: r.path } })) }))),
   );
 }
 
 describe("where copies go", () => {
+  it("the workspace's own Media folder comes before one every workspace uses, whatever the list order", async () => {
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Shared/Footage", workspace: "*" }, { path: "/Volumes/Tiny/Footage", workspace: "ws_tiny" }]);
+    expect(await sourceRowsHere()).toEqual(["/Volumes/Tiny/Footage", "/Volumes/Shared/Footage"]);
+  });
+
   it("a copy keeps the dropped folder's name under the first Source media row, and a loose file goes in by its own name", () => {
     const inFolder = new File(["x"], "a.mp4");
     Object.defineProperty(inFolder, "webkitRelativePath", { value: "Trip/Day 1/a.mp4" });

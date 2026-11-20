@@ -1822,7 +1822,6 @@ export function resumeFromDisk(): void {
 const chatOf = (conv: Conv, id: string | undefined): Chat | null =>
   !id ? null : conv.id === id ? (conv as Chat) : (conv.past?.find((p) => p.id === id) ?? null);
 
-/** The chat a message is in (the chat a scheduled task was made from: the reply that made it). */
 /** The name of the chat a reply is written in (its title in the list), or null: the Imports/ folder its files go into. */
 export function chatNameOfTurn(username: string, turn: string): string | null {
   const conv = load(username);
@@ -1830,6 +1829,7 @@ export function chatNameOfTurn(username: string, turn: string): string | null {
   return chat ? (chat.title ?? titleOf(chat.messages)) : null;
 }
 
+/** The chat a message is in (the chat a scheduled task was made from: the reply that made it). */
 export function chatOfTurn(username: string, turn: string): string | null {
   const conv = load(username);
   if (conv.messages.some((m) => m.id === turn)) return conv.id!;

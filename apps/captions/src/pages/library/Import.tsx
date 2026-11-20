@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { LibrarySummary } from "@contracts/library";
 import { folderName } from "@/components/LibraryProcessing";
-import { importTarget, underFolder, type StorageFolder, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, importTarget, underFolder, type StorageFolder, type StorageView } from "@contracts/storage";
 import { PLACES_MAX } from "@contracts/places";
 import { Button } from "@/components/ui/button";
 import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
@@ -31,12 +31,14 @@ export const copyAvailable = (from: AddFrom, serverCopies = false) => (from === 
 /** Where a copy of a dropped file goes: under `dir` (importTarget), with its folder's name (webkitRelativePath) or its own. */
 export const copyInto = (dir: string, file: File): string => `${dir.replace(/\/+$/, "")}/${file.webkitRelativePath || file.name}`;
 
-/** The Source media folders on this computer, in the order the folder list has them. */
+/** The Source media folders on this computer: the workspace's own first, then one every workspace uses (as a save on a
+ *  computer picks, api/library/routes.ts saveOnComputer), each in the order the folder list has them. */
 export async function sourceRowsHere(): Promise<string[]> {
   const me = thisMacDevice();
   const r = me ? await fetch("/api/devices/storage").catch(() => null) : null;
   const view = r?.ok ? ((await r.json()) as StorageView) : null;
-  return (view?.folders ?? []).filter((f) => f.role === "footage" && f.origin.host === me).map((f) => f.origin.path);
+  const here = (view?.folders ?? []).filter((f) => f.role === "footage" && f.origin.host === me);
+  return [...here].sort((a, b) => Number(a.workspace === EVERY_WORKSPACE) - Number(b.workspace === EVERY_WORKSPACE)).map((f) => f.origin.path);
 }
 
 /**
