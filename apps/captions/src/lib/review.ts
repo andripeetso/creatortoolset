@@ -516,8 +516,9 @@ export function reviewApi(base: string) {
     editComment: (id: string, patch: { text?: string; resolved?: boolean }) =>
       call<ReviewComment>(`${base}/comments/${id}`, send("PATCH", patch)),
     deleteComment: (id: string) => call<{ ok: true }>(`${base}/comments/${id}`, send("DELETE")),
+    /** An owner's or admin's Approve also puts the newest version in Finals: `finals` says how that went. */
     approve: (status: Approval, author?: string, asFilmed?: boolean) =>
-      call<ReviewAsset>(`${base}/approval`, send("POST", { status, author, ...(asFilmed ? { asFilmed } : {}) })),
+      call<ReviewAsset & { finals?: { pieceId: string } | { error: string } }>(`${base}/approval`, send("POST", { status, author, ...(asFilmed ? { asFilmed } : {}) })),
   };
 }
 
