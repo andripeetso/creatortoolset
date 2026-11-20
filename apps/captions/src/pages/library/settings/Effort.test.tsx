@@ -76,14 +76,16 @@ describe("EffortCost: About $N on the Effort row", () => {
 
 describe("OwnerFolders: the Library folder box (11-19 sign-off D1)", () => {
   const owner = (defaultFolders: boolean): LibrarySummary => ({ ...library, settings: { ...SETTINGS, defaultFolders } });
+  // the buttons one can press now (the folded rows, or the summary once unrolled, are inert)
+  const shown = (label: string) => buttons(label).filter((b) => !b.closest("[inert]"));
 
   // replaced (Andri 13:00 sign-off: D1, the owner page has the setup's box; no Use default folders mode hides Set…)
   it("with no folder made yet, every folder's row has Set…, Use default folders on or off, and the Library folder Change…", async () => {
     storageFolders = [];
     await render(<OwnerFolders library={owner(true)} workspace={null} onChange={() => {}} onError={() => {}} />);
-    expect(buttons(LIBRARY_WORDS.setFolder)).toHaveLength(3);
+    expect(shown(LIBRARY_WORDS.setFolder)).toHaveLength(3);
     expect(buttons("Add folder…")).toHaveLength(0);
-    expect(buttons(LIBRARY_WORDS.changeFolder)).toHaveLength(1);
+    expect(shown(LIBRARY_WORDS.changeFolder)).toHaveLength(1);
   });
 
   it("the three in one folder: the Library folder is it, the summary names each, and ⋯ unrolls their rows and folds them back", async () => {
@@ -93,12 +95,15 @@ describe("OwnerFolders: the Library folder box (11-19 sign-off D1)", () => {
     });
     await render(<OwnerFolders library={owner(true)} workspace={null} onChange={() => {}} onError={() => {}} />);
     expect(host!.textContent?.replace(/\u200b/g, "")).toContain("/Volumes/Tiny/Lib");
-    expect([...host!.querySelectorAll('[aria-label="The folders"] dd')].map((d) => d.textContent)).toEqual(["FOOTAGE", "Project files", "EXPORTS"]);
+    expect([...host!.querySelectorAll('[aria-label="The folders"] dd > span:first-child')].map((d) => d.textContent)).toEqual(["FOOTAGE", "Project files", "EXPORTS"]);
+    // 11-20 (Andri: "why can I not set all the folders individually"): each line picks its own folder, folded too
+    expect([...host!.querySelectorAll('[aria-label="The folders"] dd button')].map((b) => b.textContent)).toEqual(["Add folder…", "Change…", "Change…"]);
     const dots = host!.querySelector<HTMLButtonElement>('button[aria-label="Choose each folder"]')!;
-    expect(buttons("Add folder…")[0]!.closest("[inert]")).not.toBeNull();
+    const rowAdd = () => buttons("Add folder…").at(-1)!;
+    expect(rowAdd().closest("[inert]")).not.toBeNull();
     await act(async () => dots.click());
     expect(dots.getAttribute("aria-expanded")).toBe("true");
-    expect(buttons("Add folder…")[0]!.closest("[inert]")).toBeNull();
+    expect(rowAdd().closest("[inert]")).toBeNull();
     await act(async () => dots.click());
     expect(dots.getAttribute("aria-expanded")).toBe("false");
   });
@@ -106,7 +111,7 @@ describe("OwnerFolders: the Library folder box (11-19 sign-off D1)", () => {
   it("with Use default folders off, every folder not chosen yet shows Set…", async () => {
     storageFolders = [];
     await render(<OwnerFolders library={owner(false)} workspace={null} onChange={() => {}} onError={() => {}} />);
-    expect(buttons(LIBRARY_WORDS.setFolder)).toHaveLength(3);
+    expect(shown(LIBRARY_WORDS.setFolder)).toHaveLength(3);
     expect(buttons("Add folder…")).toHaveLength(0);
   });
 });
