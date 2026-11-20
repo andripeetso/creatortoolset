@@ -365,6 +365,25 @@ describe("designs: an AI that designs", () => {
     expect([n.x, n.color]).toEqual([0, "#111111"]);
     expect(c2.instance!.overrides).toEqual({ n: { text: "x".repeat(2000), color: "#111111" } });
     expect(all.find((l) => l.id === "lost")).toMatchObject({ instance: { of: "nowhere" }, layers: [] });
+    // an override nested without end is left out, never kept or thrown on
+    let nest: Record<string, unknown> = { color: "#000000" };
+    for (let i = 0; i < 2000; i++) nest = { a: nest };
+    const deep = (await write(d.id, { changes: [{ frame: p2, layer: "c2", set: { instance: { of: "chip", overrides: { n: { effects: nest } } } } }] }));
+    expect(deep.status).toBe(200);
+    const c2now = everyLayer(deep.body.design.pages.flatMap((p) => p.layers)).find((l) => l.id === "c2") as GroupLayer;
+    expect(JSON.stringify(c2now.instance)).not.toContain('"a":');
+  });
+
+  it("an AI fills a slide whose number chip is a main: each copy gets an instance with its own number, the main stays one", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const p1 = d.pages[0]!.id;
+    const chip = { type: "group", id: "chip", box: true, component: "chip", x: 900, y: 40, w: 120, h: 60, layers: [{ type: "text", id: "n", text: "1/3", bind: { text: "Number" }, font: "Inter", size: 30, color: "#000000", align: "center", x: 0, y: 0, w: 120, h: 60 }] };
+    await write(d.id, { frames: [{ id: p1, layers: [chip] }] });
+    const r = (await write(d.id, { fill: { frame: p1, rows: [{ Number: "2/3" }, { Number: "3/3" }] } })).body;
+    const copies = r.design.pages.filter((p) => p.id !== p1);
+    expect(copies.map((p) => (p.layers[0] as GroupLayer).instance)).toEqual([{ of: "chip", props: { Number: "2/3" } }, { of: "chip", props: { Number: "3/3" } }]);
+    expect(copies.map((p) => ((p.layers[0] as GroupLayer).layers[0] as { text: string }).text)).toEqual(["2/3", "3/3"]);
+    expect(everyLayer(r.design.pages.flatMap((p) => p.layers)).filter((l) => (l as GroupLayer).component).length).toBe(1);
   });
 
   it("keeps what the person changed on an instance as its override, and makes a stale one from its main", async () => {

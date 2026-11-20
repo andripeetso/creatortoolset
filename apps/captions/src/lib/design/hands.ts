@@ -426,7 +426,13 @@ export function mergeLayers(mine: readonly Layer[], base: readonly Layer[], thei
   });
   // what was added here goes in where it lies among this window's layers
   for (const l of added) out.splice(Math.min(mine.indexOf(l), out.length), 0, l);
-  return out;
+  // reordered here: the layers both sides have go in this window's order, the others stay where they are
+  const common = (list: readonly Layer[]) => list.filter((l) => was.has(l.id) && here.has(l.id) && there.has(l.id)).map((l) => l.id);
+  if (common(mine).join() === common(base).join()) return out;
+  const order = common(mine);
+  const byId = new Map(out.map((l) => [l.id, l]));
+  let n = 0;
+  return out.map((l) => (order.includes(l.id) ? byId.get(order[n++]!)! : l));
 }
 
 /**

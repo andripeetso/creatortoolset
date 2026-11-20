@@ -1,4 +1,4 @@
-import { INSTANCE_FIXED, INSTANCE_FROM_MAIN, type DesignInstance, type DesignPage, type GroupLayer, type Layer } from "../../../contracts/design";
+import { DESIGN_LIMITS, INSTANCE_FIXED, INSTANCE_FROM_MAIN, type DesignInstance, type DesignPage, type GroupLayer, type Layer } from "../../../contracts/design";
 import { fitContents } from "./resize";
 import { retext } from "./runs";
 import { everyLayer, isGroup, mapLayers } from "./tree";
@@ -19,7 +19,11 @@ export const isInstance = (l: Layer | null | undefined): l is Instance => isGrou
 /** Whether any frame has a main or an instance (else syncInstances has nothing to do). */
 export const usesComponents = (pages: readonly DesignPage[]): boolean => pages.some((p) => everyLayer(p.layers).some((l) => isGroup(l) && (l.component !== undefined || !!l.instance)));
 
-const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+/** Two values alike, whatever order their fields were written in (a check writes them in its own order). */
+const stable = (v: unknown): string => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+const same = (a: unknown, b: unknown) => a === b || stable(a) === stable(b);
+/** How many layers one pass may make: what a design can hold many times over, so a component placed inside itself through property values or a hostile write stops. */
+const BUDGET = 20_000;
 const FIXED = new Set(INSTANCE_FIXED);
 const FROM_MAIN = new Set(INSTANCE_FROM_MAIN);
 const MAIN_ONLY = ["component", "set", "variant"];
@@ -28,7 +32,14 @@ type Rec = Record<string, unknown>;
 /** Every main of the design by its key, with the frame it lies on: the first of a key in the frames' order. */
 export function mainsOf(pages: readonly DesignPage[]): Map<string, { page: string; main: Main }> {
   const out = new Map<string, { page: string; main: Main }>();
-  for (const p of pages) for (const l of everyLayer(p.layers)) if (isMain(l) && !out.has(l.component)) out.set(l.component, { page: p.id, main: l });
+  // never one inside an instance: those layers are a main's copies
+  const walk = (p: DesignPage, ls: readonly Layer[]) => {
+    for (const l of ls) {
+      if (isMain(l) && !out.has(l.component)) out.set(l.component, { page: p.id, main: l });
+      if (isGroup(l) && !isInstance(l)) walk(p, l.layers);
+    }
+  };
+  for (const p of pages) walk(p, p.layers);
   return out;
 }
 
@@ -36,8 +47,10 @@ export function mainsOf(pages: readonly DesignPage[]): Map<string, { page: strin
 interface Made {
   mains: Map<string, Main>;
   made: Map<string, Main | null>;
+  /** layers this pass may still make */
+  budget: number;
 }
-const madeFrom = (pages: readonly DesignPage[]): Made => ({ mains: new Map([...mainsOf(pages)].map(([k, v]) => [k, v.main])), made: new Map() });
+const madeFrom = (pages: readonly DesignPage[]): Made => ({ mains: new Map([...mainsOf(pages)].map(([k, v]) => [k, v.main])), made: new Map(), budget: BUDGET });
 
 /** A main with the instances inside it made; undefined when there is none of that key, or it is being made (a loop). */
 function madeMain(key: string, c: Made): Main | undefined {
@@ -45,7 +58,7 @@ function madeMain(key: string, c: Made): Main | undefined {
   const m = c.mains.get(key);
   if (!m) return undefined;
   c.made.set(key, null);
-  const out = { ...m, layers: mapLayers(m.layers, (l) => (isInstance(l) ? make(l, c) : l)) };
+  const out = { ...m, layers: mapLayers(m.layers, (l) => (isInstance(l) ? make(l, c, [key]) : l)) };
   c.made.set(key, out);
   return out;
 }
@@ -82,7 +95,9 @@ function withProps(l: Layer, props: Record<string, string | boolean>): Layer {
  * its overrides, its own place and fade, its main's size unless it was given its own (its layers then follow the main's
  * pins). Kept as it is when its main is not in the design or would hold itself.
  */
-function make(inst: Instance, c: Made): Instance {
+function make(inst: Instance, c: Made, chain: readonly string[] = []): Instance {
+  // `chain`: the mains being made round it; one shown inside itself (through a swap) or past the depth a design holds stops
+  if (chain.includes(inst.instance.of) || chain.length > DESIGN_LIMITS.depth + 1 || c.budget <= 0) return inst;
   const m = madeMain(inst.instance.of, c);
   if (!m) return inst;
   const pre = `${inst.id}.`;
@@ -100,11 +115,12 @@ function make(inst: Instance, c: Made): Instance {
   };
   const flowing = (g: Layer) => isGroup(g) && !!g.box && !!g.layout;
   const copy = (l: Layer, inFlow: boolean): Layer => {
+    c.budget--;
     let n = { ...l, id: pre + l.id } as Layer;
     for (const f of MAIN_ONLY) delete (n as unknown as Rec)[f];
     n = laidOut(overridden(withProps(n, props), o[l.id], (f) => !FIXED.has(f)), had.get(pre + l.id), inFlow);
     // a nested instance shown as another main (a swap, a property) is made from that one
-    if (isInstance(n) && isInstance(l) && !same(n.instance, l.instance)) return overridden(make({ ...n, layers: [] }, c), o[l.id], (f) => !FIXED.has(f) && f !== "instance");
+    if (isInstance(n) && isInstance(l) && !same(n.instance, l.instance)) return overridden(make({ ...n, layers: [] }, c, [...chain, inst.instance.of]), o[l.id], (f) => !FIXED.has(f) && f !== "instance");
     return isGroup(n) && isGroup(l) ? { ...n, layers: l.layers.map((k) => copy(k, flowing(l))) } : n;
   };
   const root: Rec = {};
@@ -123,7 +139,10 @@ function noticed(inst: Instance, c: Made, before: ReadonlyMap<string, Layer>): I
   if (!inst.layers.length || !before.has(inst.id)) return inst;
   // shown as another main now (a variant, a swap): its overrides go to the layers named alike there
   const old = before.get(inst.id);
-  if (isInstance(old) && old.instance.of !== inst.instance.of && c.mains.has(inst.instance.of)) {
+  // (only while its layers are still the old main's: a window that switched it sends them made from the new one, its
+  // overrides moved already; told by their ids, as a check may have laid them out again)
+  const ids = (ls: readonly Layer[]) => everyLayer(ls).map((l) => l.id).join("|");
+  if (isInstance(old) && old.instance.of !== inst.instance.of && c.mains.has(inst.instance.of) && ids(inst.layers) === ids(old.layers)) {
     const { overrides, ...rest } = inst.instance;
     const moved = overrides ? remapped(overrides, c.mains.get(old.instance.of), c.mains.get(inst.instance.of)!) : {};
     return { ...inst, layers: [], instance: { ...rest, ...(Object.keys(moved).length ? { overrides: moved } : {}) } };
@@ -142,7 +161,8 @@ function noticed(inst: Instance, c: Made, before: ReadonlyMap<string, Layer>): I
     const r = l as unknown as Rec;
     for (const f of new Set([...Object.keys(r), ...Object.keys(w)])) {
       const v = r[f];
-      if (!ok(f) || same(v, w[f]) || (p && same(v, p[f]))) continue;
+      // the runs of words that are a property's move with its value: never an override of their own
+      if (!ok(f) || same(v, w[f]) || (p && same(v, p[f])) || (f === "runs" && l.bind?.text)) continue;
       changed = true;
       const b = l.bind;
       const swapped = f === "instance" && b?.swap && isInstance(l) && isInstance(w as unknown as Layer) && same({ ...l.instance, of: (w as unknown as Instance).instance.of }, (w as unknown as Instance).instance);
@@ -203,6 +223,7 @@ export function syncInstances<P extends DesignPage>(pages: readonly P[], was?: r
     const c = madeFrom(out);
     out = out.map((p) => {
       const b = was.find((q) => q.id === p.id);
+      if (b === p) return p;
       const before = new Map(b ? everyLayer(b.layers).map((l) => [l.id, l]) : []);
       const layers = mapLayers(p.layers, (l) => (isInstance(l) ? noticed(l, c, before) : l));
       return layers === p.layers ? p : { ...p, layers };
@@ -292,9 +313,22 @@ export function detached(inst: Instance): GroupLayer {
   return rest;
 }
 
+/** A layer that is no main, no instance and shows no property (pasted from another design, where its keys meant something else). */
+export function plainOf(l: Layer): Layer {
+  const { component: _c, set: _s, variant: _v, instance: _i, bind: _b, ...rest } = l as GroupLayer;
+  return (isGroup(l) || l.bind ? rest : l) as Layer;
+}
+
+/** A frame to copy from (a template filled row by row): its mains placed as instances of themselves, made, so what is filled in them is their property values. */
+export function asInstances<P extends DesignPage>(page: P, pages: readonly DesignPage[]): P {
+  const placed = { ...page, layers: mapLayers(page.layers, (l) => (isMain(l) ? ({ ...plainOf(l), layers: [], instance: { of: l.component } } as Layer) : l)) };
+  return syncInstances([...pages, placed]).at(-1) as P;
+}
+
 /** A key no main of the design has: c1, c2 … */
 export function freshKey(pages: readonly DesignPage[]): string {
-  const taken = new Set(pages.flatMap((p) => everyLayer(p.layers).flatMap((l) => (isGroup(l) && l.component ? [l.component] : []))));
+  // nor one an instance names whose main is gone: it would take those instances over
+  const taken = new Set(pages.flatMap((p) => everyLayer(p.layers).flatMap((l) => (isGroup(l) ? [l.component, l.instance?.of].filter((k): k is string => !!k) : []))));
   let n = 1;
   while (taken.has(`c${n}`)) n++;
   return `c${n}`;
@@ -319,18 +353,33 @@ export function componentCheck<P extends DesignPage>(pages: readonly P[], limit:
     if (seen.has(key)) return seen.get(key)!;
     const out = new Set<string>();
     seen.set(key, out);
-    for (const l of everyLayer(mains.get(key)?.main.layers ?? [])) if (isInstance(l) && !out.has(l.instance.of)) [l.instance.of, ...shows(l.instance.of)].forEach((k) => out.add(k));
+    for (const l of everyLayer(mains.get(key)?.main.layers ?? [])) if (isInstance(l)) for (const t of targets(l)) if (!out.has(t)) [t, ...shows(t)].forEach((k) => out.add(k));
     return out;
   };
+  /** The mains an instance may show: its own, and any its property values name (a swap). */
+  const targets = (l: Instance) => [l.instance.of, ...Object.values(l.instance.props ?? {}).filter((v): v is string => typeof v === "string" && mains.has(v))];
+  // how many layers a main comes to with its instances made (each instance its main's): one past what a frame holds is no main
+  const sizes = new Map<string, number>();
+  const size = (key: string): number => {
+    if (sizes.has(key)) return sizes.get(key)!;
+    sizes.set(key, 0);
+    const count = (ls: readonly Layer[]): number => ls.reduce((n, l) => n + 1 + (isInstance(l) ? size(l.instance.of) : isGroup(l) ? count(l.layers) : 0), 0);
+    const n = count(mains.get(key)?.main.layers ?? []);
+    sizes.set(key, n);
+    return n;
+  };
+  for (const k of keys) if (!over.has(k) && size(k) > DESIGN_LIMITS.layers) (over.add(k), notes.push(`component "${k}" comes to ${size(k)} layers with its instances made, past the ${DESIGN_LIMITS.layers} a frame holds: made a plain group`));
   /** `inside`: the keys of the mains these layers lie in. */
   const mend = (p: DesignPage, ls: readonly Layer[], inside: readonly string[]): Layer[] =>
     ls.flatMap((l): Layer[] => {
       if (!isGroup(l)) return [l];
       if (isInstance(l)) {
-        const loop = inside.find((k) => k === l.instance.of || shows(l.instance.of).has(k));
+        const loop = inside.find((k) => targets(l).some((t) => k === t || shows(t).has(k)));
         if (loop) return notes.push(`frame ${p.id}, layer ${l.id}: an instance of "${l.instance.of}" inside main "${loop}", which it would hold: left out`), [];
         if (!mains.has(l.instance.of)) notes.push(`frame ${p.id}, layer ${l.id}: an instance of "${l.instance.of}", which this design has no main component of: kept as it was${l.layers.length ? "" : " (nothing to draw)"}`);
-        return [l];
+        // what it holds is a main's copy: never a main of its own
+        const inner = mapLayers(l.layers, (k) => (isGroup(k) && (k.component !== undefined || k.set !== undefined || k.variant !== undefined) ? plainOf(k) : k));
+        return [inner === l.layers ? l : { ...l, layers: inner }];
       }
       if (isMain(l) && over.has(l.component)) {
         const { component: _c, set: _s, variant: _v, ...rest } = l;
@@ -356,7 +405,11 @@ export function overridesAsKept<P extends DesignPage>(pages: readonly P[]): P[] 
       const overrides: Record<string, Rec> = {};
       for (const [k, ov] of Object.entries(l.instance.overrides)) {
         const at = k ? byId.get(pre + k) : (l as unknown as Rec);
-        if (!at) continue;
+        // a layer the check cut (past what a frame holds) keeps its override for when there is room again
+        if (!at) {
+          overrides[k] = ov;
+          continue;
+        }
         const kept: Rec = {};
         for (const [f, v] of Object.entries(ov)) {
           if (at[f] !== undefined) kept[f] = at[f];

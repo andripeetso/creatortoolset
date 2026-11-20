@@ -8,7 +8,7 @@ import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../sr
 import { carrySettled, flows, settleAt, settledBoxes } from "../src/lib/design/layout";
 import { retext } from "../src/lib/design/runs";
 import { everyLayer, layerIn, layerOut, unwrap } from "../src/lib/design/tree";
-import { componentCheck, overridesAsKept, syncInstances, usesComponents } from "../src/lib/design/components";
+import { asInstances, componentCheck, overridesAsKept, syncInstances, usesComponents } from "../src/lib/design/components";
 import type { AuthVars } from "./auth";
 import type { AnimationStyle } from "../contracts/editor-styles";
 import { animationStyles, carouselApp, carouselStyles } from "./editor/animation-styles";
@@ -148,7 +148,8 @@ async function settle(d: Design, was: readonly DesignPage[], notes?: string[], a
   const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), ...(ai ? {} : { measure: null }) });
   notes?.push(...again.notes);
   const kept = new Map(overridesAsKept(again.pages).map((p) => [p.id, p]));
-  return { ...d, pages: synced.map((p) => kept.get(p.id) ?? p) };
+  // a frame the check took away (a loose piece left empty) is gone, never kept unchecked
+  return { ...d, pages: synced.flatMap((p) => (!changed.includes(p) ? [p] : kept.has(p.id) ? [kept.get(p.id)!] : [])) };
 }
 
 /** When a design is changed now: always after its last change, so a window can tell that it has not seen this one (`since`, on a save). */
@@ -951,9 +952,11 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw, named: 
       const missing = new Set<string>();
       for (const [n, row] of rows.entries()) {
         if (full) break;
-        const { page: given, missing: none } = fillRow(p, row);
-        // what the row changed in an instance is its property values and overrides (its main is on any frame)
-        const filled = syncInstances(pages.map((x) => (x.id === p.id ? given : x)), pages).find((x) => x.id === p.id) ?? given;
+        // its mains are instances in the copies (the main stays where it is), and what the row fills in an instance is
+        // its property values and overrides
+        const from = { ...asInstances(p, pages), id: "fill-template" };
+        const { page: given, missing: none } = fillRow(from, row);
+        const filled = syncInstances([...pages, given], [...pages, from]).at(-1)!;
         none.forEach((k) => missing.add(k));
         const name = filled.name && filled.name !== p.name ? filled.name : `${label(p)} ${n + 1}`;
         const x = right + gap;

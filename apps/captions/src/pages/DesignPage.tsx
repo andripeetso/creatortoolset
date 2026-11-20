@@ -20,7 +20,7 @@ import { fillsOf, paintPictures, strokesOf } from "@/lib/design/paint";
 import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
-import { detached, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
+import { detached, plainOf, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
 import { ComponentSection } from "@/components/design/ComponentSection";
 import { depthOf, everyLayer, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
@@ -94,7 +94,8 @@ const BAR = "border-[#e6e6e6] bg-white text-zinc-50 dark:border-[#444] dark:bg-[
  * text. `wrote`: the computer's clipboard took that text, so a later copy somewhere else is noticed and pasted instead.
  * ponytail: where the browser keeps the clipboard shut, the layers copied last are pasted until the page is reloaded.
  */
-let clip: { layers: Layer[]; text: string; wrote: boolean } | null = null;
+/** `from`: the design copied from (a main or an instance means nothing in another design). */
+let clip: { layers: Layer[]; text: string; wrote: boolean; from?: string } | null = null;
 
 /** One designer a design: another design's address starts it afresh (what is picked, the view, the steps to undo). */
 export default function DesignRoute() {
@@ -746,7 +747,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   };
   const copy = () => {
     if (!mine.length) return;
-    const taken: NonNullable<typeof clip> = { layers: mine, text: mine.map(layerName).join("\n"), wrote: false };
+    const taken: NonNullable<typeof clip> = { layers: mine, text: mine.map(layerName).join("\n"), wrote: false, from: design?.id };
     clip = taken;
     try {
       void navigator.clipboard?.writeText(taken.text).then(() => void (taken.wrote = true), () => {});
@@ -761,7 +762,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   };
   /** The copied layers onto this frame, where they were on theirs. A picture this design does not have stays behind. */
   const paste = () => {
-    const layers = mapLayers(clip?.layers ?? [], (l) => (l.type !== "image" || design?.pictures.includes(l.picture) ? l : null));
+    // from another design: its components are plain layers here (a key there names nothing, or another component, here)
+    const elsewhere = clip?.from !== design?.id;
+    const layers = mapLayers(clip?.layers ?? [], (l) => (l.type === "image" && !design?.pictures.includes(l.picture) ? null : elsewhere ? plainOf(l) : l));
     // a canvas with no frame yet: they lie loose in the middle of the view
     if (!here) {
       if (!layers.length) return;

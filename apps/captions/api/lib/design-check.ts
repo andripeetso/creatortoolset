@@ -448,6 +448,9 @@ function componentOf(raw: Record<string, unknown>, say: (why: string) => void): 
       const kept = Object.fromEntries(Object.entries(v).filter(([f]) => (k ? !FIXED.has(f) : FROM_MAIN.has(f))));
       if (Object.keys(kept).length) overrides[k] = kept;
     }
+    // values as a layer has them: a few levels deep at most (a fill's stops), never a nest without end
+    const deep = (v: unknown, d: number): boolean => !!v && typeof v === "object" && (d > 5 || Object.values(v).some((x) => deep(x, d + 1)));
+    for (const [k, v] of Object.entries(overrides)) if (deep(v, 0)) delete overrides[k];
     const big = JSON.stringify(overrides).length > DESIGN_LIMITS.overrideBytes;
     if (big) say(`an instance's overrides run past ${DESIGN_LIMITS.overrideBytes} characters: left out`);
     return { instance: { of: i.of, ...(Object.keys(props).length ? { props } : {}), ...(!big && Object.keys(overrides).length ? { overrides } : {}) } };

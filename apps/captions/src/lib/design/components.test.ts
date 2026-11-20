@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, GroupLayer, Layer, TextLayer } from "@contracts/design";
-import { componentCheck, detached, freshKey, isInstance, overridesAsKept, propsOf, syncInstances, variantWith, type Instance } from "./components";
+import { asInstances, componentCheck, detached, freshKey, isInstance, overridesAsKept, plainOf, propsOf, syncInstances, variantWith, type Instance } from "./components";
 import { everyLayer, findLayer, reid } from "./tree";
 import { mergeFrames } from "./hands";
 
@@ -137,7 +137,8 @@ describe("components and instances", () => {
     const pages = syncInstances([page("p1", [pill(), inst("i", "pill", { instance: { of: "pill", overrides: { bg: { fill: "#ff0000" }, nope: { fill: "#000000" } } } })])]);
     // the check cut a field down (as cleanPages would a too-long text)
     const cut = pages.map((p) => ({ ...p, layers: mapAll(p.layers, (l) => (l.id === "i.bg" ? { ...l, fill: "#00ff00" } : l)) }));
-    expect(at(overridesAsKept(cut), "p1", "i").instance).toEqual({ of: "pill", overrides: { bg: { fill: "#00ff00" } } });
+    // (one of a layer it does not have is kept by the check, which may have cut it; a change drops it, below)
+    expect(at(overridesAsKept(cut), "p1", "i").instance).toEqual({ of: "pill", overrides: { bg: { fill: "#00ff00" }, nope: { fill: "#000000" } } });
     const pruned = edit(pages, (l) => l);
     expect(at(pruned, "p1", "i").instance).toEqual({ of: "pill", overrides: { bg: { fill: "#ff0000" } } });
   });
@@ -161,7 +162,73 @@ describe("components and instances", () => {
     expect(at(pages, "p9", "k.bg").fill).toBe("#ff0000");
   });
 
-  it("gives a new main a key no other has", () => {
+  it("gives a new main a key no other has, nor one an instance of a deleted main still names", () => {
     expect(freshKey([page("p1", [main("m", "c1", []), main("n", "c2", [])])])).toBe("c3");
+    expect(freshKey([page("p1", [main("m", "c1", []), inst("i", "c2")])])).toBe("c3");
+  });
+
+  describe("held against a hostile or odd design (review)", () => {
+    const variants = () => {
+      const a = main("a", "dark", [{ ...shape("bg"), name: "Back" }, { ...text("t", "GO"), name: "Label" }], { set: "Pill", variant: { Theme: "Dark" } });
+      const b = main("b", "light", [{ ...text("t2", "GO"), name: "Label" }, { ...shape("bg2", "#ffffff"), name: "Back" }], { set: "Pill", variant: { Theme: "Light" }, x: 400 });
+      return edit(syncInstances([page("p1", [a, b]), page("p2", [inst("i", "dark")])]), (l) => (l.id === "i.t" ? ({ ...l, color: "#ff00ff" } as Layer) : l));
+    };
+
+    it("keeps the overrides of a variant switched in the window when the server makes it again against what it had", () => {
+      const stored = variants();
+      const window = edit(stored, (l) => (l.id === "i" && isInstance(l) ? { ...l, instance: { ...l.instance, of: "light" } } : l));
+      expect(at(window, "p2", "i").instance).toEqual({ of: "light", overrides: { t2: { color: "#ff00ff" } } });
+      // the server: the window's frames against the stored ones (the remote merge in another window does the same)
+      const saved = syncInstances(window, stored);
+      expect(at(saved, "p2", "i").instance).toEqual({ of: "light", overrides: { t2: { color: "#ff00ff" } } });
+      expect(at(saved, "p2", "i.t2").color).toBe("#ff00ff");
+    });
+
+    it("stops a component shown inside itself through a swap property, and the check says so", () => {
+      const a = main("ma", "A", [{ ...inst("inner", "B", { instance: { of: "B", props: { Icon: "A" } } }), bind: { swap: "Icon" } }]);
+      const b = main("mb", "B", [shape("o")], { x: 600 });
+      const pages = [page("p1", [a, b]), page("p2", [inst("i", "A", { instance: { of: "A", props: { Icon: "A" } } })])];
+      expect(() => syncInstances(pages)).not.toThrow();
+      expect(componentCheck(pages, 60).notes.join("\n")).toMatch(/which it would hold/);
+    });
+
+    it("makes a main plain when its instances would make it more layers than a frame holds, and never makes more than its budget", () => {
+      const many = (id: string, of: string) => main(id, id, Array.from({ length: 39 }, (_, n) => inst(`${id}-${n}`, of)));
+      const m1 = main("m1", "m1", Array.from({ length: 39 }, (_, n) => shape(`r${n}`)));
+      const pages = [page("p1", [m1]), page("p2", [many("m2", "m1")]), page("p3", [many("m3", "m2")]), page("p4", [many("m4", "m3")]), page("p5", [many("m5", "m4")])];
+      const checked = componentCheck(pages, 60);
+      expect(checked.notes.join("\n")).toMatch(/component "m2" comes to \d+ layers/);
+      const t = Date.now();
+      const out = syncInstances(pages);
+      expect(Date.now() - t).toBeLessThan(5000);
+      expect(out.reduce((n, p) => n + everyLayer(p.layers).length, 0)).toBeLessThan(30_000);
+    });
+
+    it("takes no main out of an instance's layers, and keeps an override of a layer the check cut", () => {
+      const odd = inst("i", "gone", { layers: [main("x", "pill", [shape("s")])] });
+      const checked = componentCheck([page("p1", [pill()]), page("p2", [odd])], 60);
+      expect(at(checked.pages, "p2", "x").component).toBeUndefined();
+      const cut = [page("p1", [pill(), inst("i", "pill", { instance: { of: "pill", overrides: { label: { color: "#ff0000" } } }, layers: [] })])];
+      expect(at(overridesAsKept(cut), "p1", "i").instance).toEqual({ of: "pill", overrides: { label: { color: "#ff0000" } } });
+    });
+
+    it("keeps a bound text's runs out of its overrides: they follow its property's words", () => {
+      const pages = edit(start(), (l) => (l.id === "i2.label" ? ({ ...l, text: "Hi there", runs: [{ start: 0, end: 2, color: "#ff0000" }] } as Layer) : l));
+      expect(at(pages, "p2", "i2").instance).toEqual({ of: "pill", props: { Handle: "Hi there" } });
+    });
+
+    it("leaves an instance as it is when only the order of its fields differs (a check writes its own order)", () => {
+      const pages = start();
+      const reordered = pages.map((p) => ({ ...p, layers: p.layers.map((l) => Object.fromEntries(Object.entries(l).reverse()) as unknown as Layer) }));
+      expect(syncInstances(reordered)).toBe(reordered);
+    });
+
+    it("fills a template's main as an instance of it, and pastes another design's components as plain layers", () => {
+      const tpl = asInstances(page("p1", [pill()]), [page("p1", [pill()])]);
+      expect(tpl.layers[0]).toMatchObject({ id: "m", instance: { of: "pill" } });
+      expect((tpl.layers[0] as GroupLayer).layers.map((l) => l.id)).toEqual(["m.bg", "m.label"]);
+      expect(plainOf(pill())).not.toHaveProperty("component");
+      expect(plainOf(inst("i", "x"))).not.toHaveProperty("instance");
+    });
   });
 });
