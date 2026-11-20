@@ -16,7 +16,7 @@ import { pluginOnIn } from "../../api/lib/plugin-workspaces";
 import { projectOf } from "../../api/lib/project-of";
 import { currentWorkspaceId } from "../../api/lib/workspace-scope";
 import type { SessionUser } from "../../api/users";
-import { blobs, libraryDb } from "../../api/library/db";
+import { blobs, fileBlur, libraryDb } from "../../api/library/db";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { saveToLibrary } from "../../api/library/routes";
 import { mainSourceFor } from "../../api/library/access";
@@ -26,7 +26,7 @@ import { EXAMPLE_JPEG } from "./example";
  * Face Blur: every face, or the ones the person names, covered in photos and videos on their own Mac or iPhone (the apps'
  * FaceBlur engine, Apple's face detector). The server keeps each account's settings and, in "Only some faces" mode, asks
  * the person's own AI which faces match their words (README.md has the whole contract).
- *   GET/PUT /api/x/blur-faces/settings   { mode, who, look, strength, softness, size, color, auto }; a PUT changes only
+ *   GET/PUT /api/x/blur-faces/settings   { mode, who, look, strength, softness, size, color }; a PUT changes only
  *                                        the fields it sends
  *   GET     /api/x/blur-faces/example    { picture }: the example picture (base64 JPEG) the style is previewed on
  *   POST    /api/x/blur-faces/pick       { who, faces: [{ id, picture, note }] } → { blur: [ids] }; 409 + { error } when
@@ -35,8 +35,9 @@ import { EXAMPLE_JPEG } from "./example";
  *   GET     /api/x/blur-faces/auto       { can, why?, failed: [{ versionId, title, error }] }: whether new Media Library
  *                                        files can be covered by themselves here, and the ones that could not
  *   POST    /api/x/blur-faces/auto/retry { versionId }   a failed one again
- * With `auto` on, each photo or video that comes into the account's built-in Media Library is covered by a Mac of its
- * own (the device job `faceblur`, deviceJobs below) and the covered copy is added beside it; the original stays.
+ * Each photo or video that comes into the account's built-in Media Library marked Blur faces (contracts Blur "yes") is
+ * covered by a Mac of its own (the device job `faceblur`, deviceJobs below) and the covered copy is added beside it; the
+ * original stays.
  */
 
 export type Look = "blur" | "mosaic" | "solid";
@@ -44,8 +45,8 @@ export type Look = "blur" | "mosaic" | "solid";
  * The style is the engine's (FaceBlur/Cover.swift LookPreset): strength 0…1 (the blur, or the mosaic's squares), softness
  * 0…1 (how far the edge fades out), size 0.8…2 (the cover against the face), color (Solid's).
  */
-export type Settings = { mode: "all" | "some"; who: string; look: Look; strength: number; softness: number; size: number; color: string; auto: boolean };
-export const DEFAULTS: Omit<Settings, "softness"> = { mode: "all", who: "Every child's face", look: "blur", strength: 0.5, size: 1, color: "#343434", auto: false };
+export type Settings = { mode: "all" | "some"; who: string; look: Look; strength: number; softness: number; size: number; color: string };
+export const DEFAULTS: Omit<Settings, "softness"> = { mode: "all", who: "Every child's face", look: "blur", strength: 0.5, size: 1, color: "#343434" };
 /** the edge a look has when the person never set one: Solid's is hard, as before there was a choice */
 export const softnessOf = (look: Look) => (look === "solid" ? 0 : 0.45);
 export const LIMITS = { who: 500, faces: 40, picture: 200_000, note: 300, size: [0.8, 2] as const };
@@ -70,7 +71,8 @@ const readSaved = (user: string): Saved => {
 export function settingsOf(user: string, workspace?: string): Settings {
   const { workspaces, ...base } = readSaved(user);
   const saved = { ...base, ...(workspace ? workspaces?.[workspace] : {}) };
-  const merged = { ...DEFAULTS, ...saved };
+  // `auto` (a switch before each file carried its blur answer) is read no more
+  const { auto: _auto, ...merged } = { ...DEFAULTS, ...saved } as Settings & { auto?: unknown };
   return { ...merged, softness: saved.softness ?? softnessOf(merged.look) };
 }
 
@@ -96,11 +98,10 @@ export function checkSettings(b: unknown, current: Settings = { ...DEFAULTS, sof
   if (s.softness !== undefined && !within(s.softness, 0, 1)) return "softness is between 0 and 1.";
   if (s.size !== undefined && !within(s.size, ...LIMITS.size)) return `size is between ${LIMITS.size[0]} and ${LIMITS.size[1]}.`;
   if (s.color !== undefined && (typeof s.color !== "string" || !/^#[0-9a-f]{6}$/i.test(s.color))) return "color is #rrggbb.";
-  if (s.auto !== undefined && typeof s.auto !== "boolean") return "auto is true or false.";
   const pick = <K extends keyof Settings>(k: K): Settings[K] => (s[k] ?? current[k]) as Settings[K];
   return {
     mode: pick("mode"), who: pick("who"), look: pick("look"), strength: pick("strength"), softness: pick("softness"),
-    size: pick("size"), color: pick("color").toLowerCase(), auto: pick("auto"),
+    size: pick("size"), color: pick("color").toLowerCase(),
   };
 }
 
@@ -230,13 +231,16 @@ export const resetAuto = async () => {
 };
 
 /**
- * A file of `owner`'s came into a built-in Media Library: queued for their Mac when they asked for it in that library's
- * workspace, and Face Blur is on there. Never a copy this made, or a finished file made from a clip.
+ * A file of `owner`'s came into a built-in Media Library, or was marked to blur later: queued for their Mac when the file
+ * is marked Blur faces and has no blurred render yet (api/library/db.ts fileBlur), and Face Blur is on in its workspace.
+ * Never a copy this made, or a finished file made from a clip.
  */
 export async function queueVersion(e: { libraryId: string; versionId: string; owner: string }): Promise<boolean> {
+  const f = fileBlur(e.versionId);
+  if (f?.blur !== "yes" || f.blurredVersionId) return false;
   const workspace = await workspaceOfLibrary(e.owner, e.libraryId);
   if (await mainSourceFor(e.owner, workspace)) return false;
-  if (!settingsOf(e.owner, workspace).auto || !(await pluginOnIn(faceBlur, e.owner, workspace))) return false;
+  if (!(await pluginOnIn(faceBlur, e.owner, workspace))) return false;
   if (jobs().jobs.some((j) => j.versionId === e.versionId)) return false;
   const db = libraryDb();
   const a = db.prepare("SELECT a.kind, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL").get(e.versionId) as
@@ -382,6 +386,10 @@ const faceBlur = definePlugin({
   gates: { ids: ["blur-faces"] },
   routes,
   deviceJobs: [autoJobs],
-  start: () => void onEvent("library.version.probed", (e) => void queueVersion(e).catch((err: unknown) => console.warn(`[blur-faces] ${(err as Error).message}`))),
+  start: () => {
+    const queue = (e: { libraryId: string; versionId: string; owner: string }) => void queueVersion(e).catch((err: unknown) => console.warn(`[blur-faces] ${(err as Error).message}`));
+    onEvent("library.version.probed", queue);
+    onEvent("library.version.blur", queue);
+  },
 });
 export default faceBlur;

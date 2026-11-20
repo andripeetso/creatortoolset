@@ -6,7 +6,7 @@ import { WORK_V, type WorkFile, type WorkPackage, type WorkTable } from "../../c
 import { aiFor } from "../ai-complete";
 import { env } from "../lib/env";
 import { sha256File } from "../lib/uploads";
-import { libraryDb } from "../library/db";
+import { libraryDb, playOf } from "../library/db";
 import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
@@ -125,10 +125,13 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
      LEFT JOIN derivatives d ON d.version_id = v.id AND d.kind = 'proxy' WHERE v.id = ?`,
   );
   const files: WorkFile[] = readsOf(job.kind, edit, variant, ids).flatMap((id) => {
-    const r = q.get(id) as
+    // a file marked Blur faces is read as its blurred render, under its own id (the editor source rule, db.ts playOf)
+    const play = playOf(id);
+    const found = q.get(play) as
       | { id: string; source_key: string; source_path: string | null; mac_path: string | null; mac_device: string | null; bytes: number; quick: string | null; probe: string | null; title: string; library_id: string; proxy: string | null; proxy_bytes: number | null }
       | undefined;
-    if (!r) return [];
+    if (!found) return [];
+    const r = play === id ? found : { ...found, id, play };
     const at = atFor(r, device.id, folders, allows, serverRuns);
     // a proxies-only library's source is its proxy (library/worker.ts dropOriginal): that is the proxy, not an original
     // (or the original itself when it needs no proxy: reach.ts lightKey). No copy when the rule gives none (Downloads, server rendering)

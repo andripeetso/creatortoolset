@@ -76,6 +76,13 @@ it("lists and opens the owner's library in the given workspace only, read-only",
   expect(own.libraries[0]!.readOnly).toBeUndefined();
 });
 
+it("says who may keep a file as filmed (Blur faces off): the owner, never a plain member", async () => {
+  const listed = (await (await call("bo", "/api/library", {}, FIRST)).json()) as { libraries: { id: string; mayKeepAsFilmed: boolean }[] };
+  expect(listed.libraries).toEqual([expect.objectContaining({ id: "lib_old", mayKeepAsFilmed: false })]);
+  const own = (await (await call("ana", "/api/library", {}, FIRST)).json()) as { libraries: { id: string; mayKeepAsFilmed: boolean }[] };
+  expect(own.libraries).toEqual([expect.objectContaining({ id: "lib_old", mayKeepAsFilmed: true })]);
+});
+
 it("only the owner deletes footage: a member (an admin account too) never trashes, restores or empties the trash", async () => {
   const d = libraryDb();
   d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('ast_m', 'lib_old', 'video', 'Master', 'v_m', 'ana', 0)").run();

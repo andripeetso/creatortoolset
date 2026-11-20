@@ -89,12 +89,13 @@ describe("the Media Library's main source, per workspace", () => {
 
   it("Face Blur covers a file in another workspace and saves the covered copy into that workspace's library; never in the plug-in's", async () => {
     expect((await req(B, "/api/plugins/blur-faces/workspaces", { method: "PUT", body: { only: [A, B] } })).status).toBe(200);
-    for (const ws of [A, B]) expect((await req(ws, "/api/x/blur-faces/settings", { method: "PUT", body: { mode: "all", who: "Every child's face", look: "blur", auto: true } })).status).toBe(200);
+    for (const ws of [A, B]) expect((await req(ws, "/api/x/blur-faces/settings", { method: "PUT", body: { mode: "all", who: "Every child's face", look: "blur" } })).status).toBe(200);
     const added = async (lib: string) => {
       const file = path.join(dir, `in-${randomUUID()}.jpg`);
       writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xe0, Math.floor(Math.random() * 255), Math.floor(Math.random() * 255)]));
       const r = await saveToLibrary("ana", file, "Tiny take.jpg", [], lib, true);
       if (!r || !("versionId" in r)) throw new Error(`not added: ${JSON.stringify(r)}`);
+      d.prepare("UPDATE assets SET blur = 'yes' WHERE current_version_id = ?").run(r.versionId); // marked Blur faces: Face Blur covers it
       return r.versionId;
     };
     expect(await inWs(A, () => autoCan("ana"))).toEqual({ can: false, why: "Not available while this workspace's Media Library comes from a plug-in." });

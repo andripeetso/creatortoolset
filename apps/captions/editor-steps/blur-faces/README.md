@@ -29,10 +29,9 @@ account's settings from before they were per workspace, which each workspace sta
   strength: number;  // 0…1: the blur, or the mosaic's squares
   softness: number;  // 0…1: how far the edge fades out (Solid's starts at 0, the others at 0.45)
   size: number;      // 0.8…2: the cover against the face it covers (smaller would leave the face showing)
-  color: string;     // "#rrggbb", Solid's
-  auto: boolean }
+  color: string }    // "#rrggbb", Solid's
 // default { mode: "all", who: "Every child's face", look: "blur", strength: 0.5, softness: 0.45, size: 1,
-//           color: "#343434", auto: false }
+//           color: "#343434" }
 ```
 
 The style is the engine's (`FaceBlur/Cover.swift` `LookPreset`): the Mac app's jobs and test runs, the automatic covers
@@ -44,24 +43,24 @@ and written nowhere. With "Only some faces" the person's AI picks from the faces
 
 `who` is used only in "some" mode. At most 500 characters.
 
-## New Media Library files (`auto`)
+## New Media Library files
 
-With `auto` on in a workspace where Face Blur is on, each photo and video that comes into one of that workspace's
-built-in Media Libraries (the library's `settings.projectId`) is covered by a Mac of the account's own, with the same settings, and the covered copy is added to the same library (so the same workspace) as
+Each photo and video marked Blur faces (the file's blur answer, set when it comes in: `blur` "yes", contracts `Blur`)
+that comes into one of the built-in Media Libraries of a workspace where Face Blur is on (the library's `settings.projectId`) is covered by a Mac of the account's own, with the same settings, and the covered copy is added to the same library (so the same workspace) as
 "<title> blurred", linked to the original (`derived_from`). The original is never changed, hidden or deleted.
 
-- **Trigger:** the core event `library.version.probed` (the library's worker, after a file is read; not for music).
-  Queued once per version, never for a file made from another (a covered copy, an export).
+- **Trigger:** the core event `library.version.probed` (the library's worker, after a file is read; not for music), and
+  `library.version.blur` (a file marked Blur faces later). Queued once per version, never for a file marked no, one with
+  a blurred render already, or a file made from another (a covered copy, an export).
 - **Queue:** `<data dir>/plugins/blur-faces/auto.json`. A Mac claims a file with the device job `faceblur` (the plug-in
   slot `deviceJobs`, PLUGINS.md); the claim carries `options: { mode, look, media }`. A Mac that goes quiet gives its file
   back; after three times, or a Mac's own failure, the file is failed and says why.
 - **The Mac** (`FaceBlurAutoJob.swift`): `GET /api/devices/relay/job/faceblur/<id>` the original; in "some" mode `POST …/<id>`
   `{ faces }` → `{ blur }` (the server asks the person's AI, as `/pick`; a failed AI fails the file and nothing is
   written); no face covered → `POST …/<id>` `{ nothing: why }` and no copy; else `POST …/<id>/file` the MP4 or JPEG.
-- **Where it shows:** Settings → Face Blur → New Media Library files. The switch can be turned on when a Mac of the account lists
-  `faceblur` (the Mac app from this version) and the Media Library is the built-in one (no plug-in's source is `main`),
-  and turned off whenever it is on; otherwise it is disabled and its description says why. Files that could not be
-  covered are listed there with why and Retry; nothing is shown while all goes well. `GET /api/x/blur-faces/auto`, `POST /api/x/blur-faces/auto/retry`.
+- **Where it shows:** Settings → Face Blur → New Media Library files, only when something is wrong: why no Mac of the
+  account can cover files (none lists `faceblur`, or the Media Library is a plug-in's), and the files that could not be
+  covered, with why and Retry. Nothing is shown while all goes well. `GET /api/x/blur-faces/auto`, `POST /api/x/blur-faces/auto/retry`.
 
 ## Choosing faces (only "some" mode)
 

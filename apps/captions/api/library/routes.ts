@@ -7,18 +7,18 @@ import type { DatabaseSync } from "node:sqlite";
 import { isPhoneSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { BLUR_UPLOADS, hasMembers, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
+import { blurAtIntake, BLUR_UPLOADS, hasMembers, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { accountOf, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
+import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
-import { notifyLibraryChanges } from "../lib/events";
-import { BLURRED_UPLOADS, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { emitEvent, notifyLibraryChanges } from "../lib/events";
+import { BLURRED_UPLOADS, type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -185,19 +185,22 @@ export function recordVersion(
     origin?: string | null;
     /** a blurred render: its original's full SHA-256. It becomes a version of that original's clip, and its current one */
     blurredOf?: string | null;
+    /** a new clip's blur answer (upload-gate.ts blurAtIntake); none: its library's Blur faces. A new version keeps its clip's */
+    blur?: Blur | null;
   },
 ): string {
   const now = Date.now();
   const linked = !o.assetId && o.blurredOf ? originalClipOf(d, o.libraryId, o.blurredOf) : undefined;
   const assetId = o.assetId ?? linked ?? randomUUID();
   if (!o.assetId && !linked) {
-    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)").run(
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, blur) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)").run(
       assetId,
       o.libraryId,
       kindOf(o.filename),
       path.parse(o.filename).name.slice(0, 160) || "Untitled",
       o.by,
       now,
+      o.blur ?? (blursFaces(o.libraryId) ? "yes" : "no"),
     );
   }
   const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
@@ -266,7 +269,7 @@ export async function saveToLibrary(
   /** finals: a final, which follows the library's Finals setting, not its Upload; after: what runs once a save that
    *  waited for a computer lands there (work/tasks/library-save.ts); importName: the chat or edit it came from, whose
    *  Imports/ folder a save on a computer goes into (contracts/storage.ts importTarget) */
-  opts: { finals?: boolean; after?: SaveAfter; importName?: string } = {},
+  opts: { finals?: boolean; after?: SaveAfter; importName?: string; blur?: Blur } = {},
 ): Promise<SavedTo | null> {
   const lib =
     libraryId ??
@@ -283,11 +286,13 @@ export async function saveToLibrary(
   }
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here
   // (under Blur faces Upload reads none for anything not blurred, so it goes there too)
-  if (serverKind() !== "local" && hostsNone(opts.finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after, opts.importName);
+  // a file kept as filmed follows the Upload the owner chose (upload-gate.ts uploadFor)
+  const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" ? libraryUploadStored(lib) : libraryUpload(lib);
+  if (serverKind() !== "local" && hostsNone(upload)) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after, opts.importName, opts.blur);
   // kept here: under Blur faces only a file made wholly of blurred renders (a sound has no picture); the rule said once more
   // where the routing above changes. This Mac keeps its own (the server is the owner's computer, as mayReceive reads it)
   if (serverKind() !== "local" && kindOf(filename) !== "audio") {
-    const left = mayLeave(lib, { blurred: sources.length > 0 && sources.every((v) => isBlurred(v)) });
+    const left = mayLeave(lib, { blurred: sources.length > 0 && sources.every((v) => isBlurred(v)), ...(opts.blur ? { blur: opts.blur } : {}) });
     if (!left.ok) return { error: left.body.message, code: "failed" };
   }
   const staged = path.join(stagingDir(), `save-${randomUUID()}`);
@@ -306,7 +311,7 @@ export async function saveToLibrary(
     d.exec("BEGIN");
     try {
       const collectionId = sound ? soundFolder(d, lib, sound, username) : undefined;
-      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId });
+      const assetId = recordVersion(d, { libraryId: lib, versionId, sourceKey, filename, size, sha256, by: username, collectionId, blur: opts.blur ?? null });
       // before the probe runs (same commit): the tag is what keeps the worker's AI steps off it
       fileSaved(d, assetId, versionId, username, { footage, sound, sources });
       d.exec("COMMIT");
@@ -373,7 +378,7 @@ export const COMPUTER_SAVE = { ms: 30_000 };
  * Source media folder (the import rule, importTarget; a finished file: its Final exports folder) on whichever of the asker's computers takes the task (work/tasks/library-save.ts), which
  * indexes it there in place. With none online it waits for one, and the answer is the one line naming the folder.
  */
-async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter, importName?: string): Promise<SavedTo> {
+async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter, importName?: string, blur?: Blur): Promise<SavedTo> {
   const { librariesOf, useOf } = await import("./report");
   const { storageOf } = await import("../devices-storage");
   const { awaitTask, startTask, taskOf } = await import("../work/tasks");
@@ -404,7 +409,7 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const staged = path.join(stagingDir(), `computer-${lib}-${quick}`);
   await copyFile(file, staged);
   const ref = `${lib}:${quick}`;
-  const started = await startTask("library-save", ref, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, folders, footage, ...(sound ? { sound } : {}), sources, ...(after ? { after } : {}) });
+  const started = await startTask("library-save", ref, username, libraryWorkspace(lib), { lib, filename: finalsDirName(filename), staged, folders, footage, ...(sound ? { sound } : {}), ...(blur ? { blur } : {}), sources, ...(after ? { after } : {}) });
   const name = (id: string) => deviceOf(id)?.name ?? "Your computer";
   const where = (id: string) => `${label} (${folders[id]!.path})`;
   if (started.state === "queued" && started.line) return { waiting: `${name(first[0])} is offline. I'll save it to ${where(first[0])} when it's back.`, save: ref };
@@ -438,6 +443,8 @@ interface UploadRow {
   origin: string | null;
   /** a computer's blurred render: its original's full SHA-256 (asset_versions.blurred_of) */
   blurred_of: string | null;
+  /** the file's blur answer, taken at the start (upload-gate.ts blurAtIntake; a new version's is its clip's) */
+  blur: Blur | null;
 }
 
 const db = () => libraryDb();
@@ -493,7 +500,7 @@ const receives = (row: UploadRow, got?: string) => {
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
   // a blurred render is declared only by a computer of the uploader's own (startUpload checks it too)
   const blurredOf = sender?.owner === row.created_by && sender.owner === libraryAccount(row.library_id) ? row.blurred_of : null;
-  const into = { id: row.library_id, collectionId: row.collection_id, blurredOf };
+  const into = { id: row.library_id, collectionId: row.collection_id, blurredOf, ...(row.blur ? { blur: row.blur } : {}) };
   const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
   // at the finish: bytes that are the original itself, or any clip of the library not blurred, are not its blurred render
   if (blurredOf && got && (got === blurredOf || unblurredBytes(row.library_id, got))) return refuse(REFUSED_NOT_BLURRED);
@@ -612,6 +619,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       fromDevice: row.from_device,
       origin: row.origin,
       blurredOf: row.blurred_of,
+      blur: row.blur,
     });
     if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
     d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -693,6 +701,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     if (!target || !(await mayWrite(user.username, libraryId, replaces, target.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
     if (inReview(replaces)) return c.json(IN_REVIEW, 409);
   }
+  // the file's blur answer (contracts Blur): kept as filmed only on the owner's or an admin's word; a new version keeps its clip's
+  const blur = replaces ? (db().prepare(`SELECT ${BLUR_SQL} AS b FROM assets a WHERE a.id = ?`).get(replaces) as { b: Blur }).b : blurAtIntake(user.username, libraryId, body?.blur);
   const collection = collectionOf;
   if (collection) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(collection, libraryId) as { kind: string } | undefined;
@@ -711,7 +721,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     body?.send === true && from && !replaces && sender?.owner === user.username && (sender.work?.v ?? 0) >= WORK_MIN &&
     typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
   ) {
-    const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection });
+    const r = sendLater(libraryId, user.username, { filename, size, fromPath: from, device: sender.id, quick: body.quick, collectionId: collection, blur });
     return c.json("versionId" in r ? { ...r, sent: true } : r);
   }
   // what the phone made of the file itself (derived.ts Made): only to a library this server files it for
@@ -723,7 +733,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const computer = deviceForToken(c.req.header("authorization"));
   // and only the library's own account's computer: a member's computer is not where the originals are kept
   const blurredOf = from && computer && computer.id === fromDevice && computer.owner === user.username && computer.owner === libraryAccount(libraryId) && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
-  const into = { id: libraryId, collectionId: collection, blurredOf };
+  const into = { id: libraryId, collectionId: collection, blurredOf, ...(blur ? { blur } : {}) };
   // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
   // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isPhoneSession), never a browser's or a Mac's
   const phone = !from && c.req.header("x-ct-origin") === "phone" && isPhoneSession(c, user.username);
@@ -748,8 +758,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin, blurred_of)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin, blurred_of, blur)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -767,6 +777,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
       made ? JSON.stringify(made) : null,
       phone ? "phone" : null,
       blurredOf,
+      blur,
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -789,7 +800,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   if (!watchAllowed(user.username)) return c.json({ error: "This server is not on your computer: upload the file", code: "forbidden" }, 403);
-  const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; size?: unknown; collectionId?: unknown; again?: unknown };
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as { path?: unknown; size?: unknown; collectionId?: unknown; again?: unknown; blur?: unknown };
   const given = typeof body.path === "string" ? body.path : "";
   const refuse = (error: string) => c.json({ error, code: "invalid" }, 400);
   if (!path.isAbsolute(given)) return refuse("Not a full path");
@@ -815,7 +826,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   if (collectionId && !db().prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(collectionId, libraryId)) {
     return c.json({ error: "Not found", code: "not_found" }, 404);
   }
-  const folder = { path: path.dirname(real), mode: "reference" as const, collectionId, addedBy: user.username };
+  const folder = { path: path.dirname(real), mode: "reference" as const, collectionId, addedBy: user.username, blur: blurAtIntake(user.username, libraryId, body.blur) };
   const taking = takeFile(libraryId, folder, real, s.size, Math.floor(s.mtimeMs));
   taking.catch((e) => console.error("[library] in place:", real, e instanceof Error ? e.message : e));
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -853,8 +864,10 @@ libraryApp.post("/:id/on-mac", async (c) => {
     // the app sends a member's file by upload where Hosted media takes it; this path is never a member's folder
     return c.json({ error: MEMBER_NOT_INDEXED, code: "forbidden" }, 403);
   }
-  const x = parseOnMac(await c.req.json().catch(() => null));
-  if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
+  const raw = (await c.req.json().catch(() => null)) as { blur?: unknown } | null;
+  const parsed = parseOnMac(raw);
+  if (typeof parsed === "string") return c.json({ error: parsed, code: "invalid" }, 400);
+  const x = { ...parsed, blur: blurAtIntake(user.username, libraryId, raw?.blur) };
   // inside a folder one of the caller's Media folders leaves out: never indexed, a scan's file or a drop alike
   if (await leftOut(user.username, libraryId, x.path, x.device)) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (x.collectionId) {
@@ -1015,6 +1028,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         fromDevice: row.from_device,
         origin: row.origin,
         blurredOf: row.blurred_of,
+        blur: row.blur,
       });
       if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -1054,6 +1068,7 @@ libraryApp.get("/", async (c) => {
       settings: settingsOf(r.settings),
       ...(given ? { readOnly: true as const, ...(mayChange(user, "media") ? { canAdd: true as const } : {}) } : {}),
       ...((await hasMembers(r.id)) ? { shared: true as const } : {}),
+      mayKeepAsFilmed: mayKeepAsFilmed(user.username, r.id),
     })),
   );
   // uploadTakes: an upload start here takes what a phone made of a video itself (derived.ts Made)
@@ -1179,7 +1194,7 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     storage_kind: LibrarySummary["storage"];
     settings: string;
   };
-  const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings) };
+  const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings), mayKeepAsFilmed: mayKeepAsFilmed(c.get("user").username, libraryId) };
   return c.json(updated);
 }
 
@@ -1233,7 +1248,7 @@ libraryApp.post("/", async (c) => {
   db()
     .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, ?, 'local', ?, ?)")
     .run(id, homeOf(user.username), name, newLibrarySettings(ws ? { projectId: ws } : {}), Date.now());
-  const created: LibrarySummary = { id, name, storage: "local", settings: settingsOf("{}") };
+  const created: LibrarySummary = { id, name, storage: "local", settings: settingsOf("{}"), mayKeepAsFilmed: mayKeepAsFilmed(user.username, id) };
   return c.json(created, 201);
 });
 
@@ -1472,6 +1487,26 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
   setTrashedAt(assetId, trash ? Date.now() : null);
   return c.json({ ok: true });
 }
+
+/**
+ * PUT /api/library/:id/assets/:assetId/blur { blur: "yes" | "no" } → { blur }: a file's blur answer changed later (contracts
+ * Blur). Anyone who may change the file marks it yes, which queues its blur; only the owner or an admin keeps it as filmed.
+ */
+libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const assetId = c.req.param("assetId");
+  const blur = ((await c.req.json().catch(() => null)) as { blur?: unknown } | null)?.blur;
+  if (blur !== "yes" && blur !== "no") return c.json({ error: "blur is yes or no", code: "invalid" }, 400);
+  const a = db().prepare("SELECT created_by, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(assetId, libraryId) as
+    | { created_by: string; current_version_id: string }
+    | undefined;
+  if (!a || !(await mayAdd(user, libraryId)) || !(await mayWrite(user.username, libraryId, assetId, a.current_version_id))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (blur === "no" && !mayKeepAsFilmed(user.username, libraryId)) return c.json({ error: "Only the workspace owner or an admin can keep a file as filmed", code: "forbidden" }, 403);
+  db().prepare("UPDATE assets SET blur = ? WHERE id = ?").run(blur, assetId);
+  if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });
+  return c.json({ blur });
+});
 
 // DELETE /api/library/:id/assets/:assetId → the trash; its share links stop working until it is restored
 libraryApp.delete("/:id/assets/:assetId", (c) => setTrashed(c, true));

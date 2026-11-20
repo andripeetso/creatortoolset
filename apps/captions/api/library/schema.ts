@@ -695,4 +695,8 @@ export const MIGRATIONS: string[] = [
   // the server process a listing began in (report.ts): one of a computer that numbers no pages, begun before a restart,
   // marks nothing gone
   `ALTER TABLE listing_starts ADD COLUMN boot TEXT;`,
+  // a file's blur answer, set once when it comes in (contracts Blur, owner 2026-11-20): 'yes' | 'no'; null (from before)
+  // reads the library's Blur faces (db.ts BLUR_SQL). An upload carries the answer it was started with
+  `ALTER TABLE assets ADD COLUMN blur TEXT;
+  ALTER TABLE uploads ADD COLUMN blur TEXT;`,
 ];

@@ -60,11 +60,8 @@ export async function acceptUpload(jobId: number, deviceId: string, rel: string,
   if (!heldBy(jobId, deviceId)) return false;
   const ok = allowed(jobId, rel);
   if (!ok) return false;
-  // Blur faces: a preview of an edit there is not kept (this editor blurs no face; editor/preview.ts editLeaves)
-  if (rel.startsWith(`editor/${ok.editId}/previews/`)) {
-    const e = readEdit(ok.editId);
-    if (e && !(await editLeaves(e)).ok) return false;
-  }
+  // a preview with a source marked Blur faces that has no blurred render yet is not kept (editor/preview.ts editLeaves)
+  if (rel.startsWith(`editor/${ok.editId}/previews/`) && !editLeaves(ok.editId, path.basename(rel, ".mp4")).ok) return false;
   const out = path.join(incoming(ok.editId, jobId), rel);
   await mkdir(path.dirname(out), { recursive: true });
   let n = 0;

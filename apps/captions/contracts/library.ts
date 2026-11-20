@@ -9,6 +9,13 @@ import type { PlaceWord, WhereIs } from "./places";
 export type AssetKind = "video" | "image" | "audio" | "doc";
 export type VersionState = "processing" | "ready" | "failed" | "missing";
 
+/**
+ * A file's blur answer, set once when it comes in (assets.blur): yes = only its blurred render leaves the owner's
+ * computers; no = kept as filmed. A chat drop is no; an import is yes where the library has Blur faces on. Only the
+ * library's owner or an admin may choose no (api/library/upload-gate.ts blurAtIntake).
+ */
+export type Blur = "yes" | "no";
+
 export interface AssetCard {
   id: string;
   libraryId: string;
@@ -45,6 +52,8 @@ export interface AssetCard {
   finished?: true;
   /** its file is on a computer: read in place from a folder there, or sent from there (Show in Finder can find it) */
   onComputer?: true;
+  /** the file's blur answer, set when it came in (Blur): "no" plays as filmed, to the team too */
+  blur?: Blur;
   /** Blur faces is on and the clip has no blurred render yet: no picture, nothing plays off its computer (LIBRARY_WORDS.notBlurred) */
   notBlurred?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
@@ -498,6 +507,8 @@ export interface LibrarySummary {
   canAdd?: true;
   /** shared with members of the owner's workspace: the server serves its proxies to them under any Upload setting (team proxies, R2) */
   shared?: true;
+  /** the signed-in person may keep a file as filmed here (Blur no): the workspace's owner or an admin (upload-gate.ts mayKeepAsFilmed) */
+  mayKeepAsFilmed: boolean;
 }
 
 /**

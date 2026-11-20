@@ -130,7 +130,7 @@ async function mount(kind: Kind, inline = false) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  const library = { id: "lib_1", name: "Tiny", storage: "local" as const, settings: { describe: true, embed: true, look: true, timeline: true, proxy: true, upload: "none" as const, lookLevel: "standard" as const, lookBudget: null } };
+  const library = { id: "lib_1", name: "Tiny", storage: "local" as const, mayKeepAsFilmed: true, settings: { describe: true, embed: true, look: true, timeline: true, proxy: true, upload: "none" as const, lookLevel: "standard" as const, lookBudget: null } };
   act(() => {
     root!.render(
       <MemoryRouter>
@@ -260,7 +260,7 @@ describe("Media Library setup: scratch, This Mac", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    const library = { id: "lib_1", name: "Tiny", storage: "local" as const, settings: {} };
+    const library = { id: "lib_1", name: "Tiny", storage: "local" as const, mayKeepAsFilmed: true, settings: {} };
     // the Library page behind it takes drops as imports (its onDrop)
     act(() => root!.render(<MemoryRouter><div onDrop={behind}><LibrarySetup inline library={library as never} watchAllowed onDone={onDone} onClose={onClose} /></div></MemoryRouter>));
     await flush();

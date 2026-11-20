@@ -5,7 +5,7 @@ import type { Item, Renders, Timeline } from "../../contracts/editor";
 import { addVersion, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
-import { blobs, libraryDb } from "../library/db";
+import { blobs, fileBlur, libraryDb, playOf } from "../library/db";
 import { readable } from "./media";
 import { libraryRole } from "../library/access";
 import { ffmpeg, ffmpegTo } from "../library/media/run";
@@ -23,7 +23,8 @@ import { followPicked, HELD_NOTE } from "./subject";
 import { renderPlanPreview, sfxMix } from "./plan-render";
 import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveDraft, saveFiled, saveStep } from "./store";
 import { nextPass, PASS_WORD } from "./passes";
-import { mayLeave, workspaceLibrary } from "../library/upload-gate";
+import { refuse, type Received } from "../library/upload-gate";
+import { jobFiles } from "./reach";
 import type { StepContext } from "./worker";
 
 /**
@@ -273,10 +274,12 @@ export async function localFiles(tl: Timeline, editId?: string, proxies = false)
       out[id] = pathOf(id);
       continue;
     }
-    const row = q.get(id) as { source_key: string; title: string; proxy: string | null } | undefined;
+    // a file marked Blur faces is read as its blurred render (the editor source rule, db.ts playOf)
+    const play = playOf(id);
+    const row = q.get(play) as { source_key: string; title: string; proxy: string | null } | undefined;
     if (!row) throw new Error("Some footage was not found in the Media Library");
     if (!proxies && row.source_key === row.proxy) throw new Error(onlyProxy(row.title));
-    out[id] = await (proxies ? readable(id, row.source_key) : blobs.localCopy(row.source_key));
+    out[id] = await (proxies ? readable(play, row.source_key) : blobs.localCopy(row.source_key));
   }
   return out;
 }
@@ -289,17 +292,24 @@ export const previewFile = (editId: string, variant: string) => path.join(editDi
  * cut the AI made waits for its look (critique.ts), which files it.
  */
 /**
- * Blur faces for an edit: its workspace's Media Library's rule (upload-gate.ts mayLeave). This editor blurs no face, so a
- * cut of it is never rendered for the server nor kept there where Blur faces is on: the refusal, else ok.
+ * The editor source rule (owner, 2026-11-20) for one cut of an edit: a source marked Blur faces is read as its blurred
+ * render (playOf); one with none yet stops the cut, which is never rendered from its original nor kept here. Every other
+ * file plays as filmed. This editor runs no face detection of its own.
  */
-export async function editLeaves(edit: Pick<EditMeta, "createdBy" | "projectId"> & { workspaceId?: string }) {
-  return mayLeave(await workspaceLibrary(ownerOf(edit), edit.projectId), {});
+export function editLeaves(editId: string, variant: string): Received {
+  const waiting = jobFiles({ version_id: `${editId}:${variant}` }).find((r) => {
+    const f = fileBlur(r.id);
+    return f?.blur === "yes" && !f.blurredVersionId;
+  })?.id;
+  if (!waiting) return { ok: true };
+  const title = (libraryDb().prepare("SELECT a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(waiting) as { title: string } | undefined)?.title;
+  return refuse(`Waiting for blur on ${title ?? "a clip"}`);
 }
 
 export async function previewStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   // on the server only: a computer's render is refused where its files arrive (work/result.ts)
   if (!onComputer.on) {
-    const left = await editLeaves(edit);
+    const left = editLeaves(edit.id, variant);
     if (!left.ok) throw new Error(left.body.message);
   }
   let d = readDraft(edit.id, variant);

@@ -36,15 +36,17 @@ app.use(async (c, next) => {
 app.route("/api/x/blur-faces", plugin.routes!);
 const call = (method: string, url: string, body?: unknown) =>
   app.request(`/api/x/blur-faces${url}`, { method, headers: { "Content-Type": "application/json" }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode: "all", who: "Every child's face", look: "blur", auto: true, ...s });
+const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode: "all", who: "Every child's face", look: "blur", ...s });
 
 let n = 0;
-/** A file added to Ana's library the way an upload adds one; its version id. */
-async function added(ext: "mp4" | "jpg" | "m4a", bytes = ext === "jpg" ? Buffer.from([0xff, 0xd8, 0xff, 0xe0, ++n]) : Buffer.from(`\0\0\0\x18ftypmp42${++n}`, "latin1")): Promise<string> {
+/** A file added to Ana's library the way an upload adds one, with its blur answer (marked Blur faces by default); its version id. */
+async function added(ext: "mp4" | "jpg" | "m4a", blur: "yes" | "no" = "yes"): Promise<string> {
+  const bytes = ext === "jpg" ? Buffer.from([0xff, 0xd8, 0xff, 0xe0, ++n]) : Buffer.from(`\0\0\0\x18ftypmp42${++n}`, "latin1");
   const file = path.join(dir, `in-${n}.${ext}`);
   writeFileSync(file, bytes);
   const r = await saveToLibrary("ana", file, `Tiny take ${n}.${ext}`, [], "lib_a", true);
   if (!r || !("versionId" in r)) throw new Error(`not added: ${JSON.stringify(r)}`);
+  libraryDb().prepare("UPDATE assets SET blur = ? WHERE current_version_id = ?").run(blur, r.versionId);
   return r.versionId;
 }
 const event = (versionId: string) => ({ libraryId: "lib_a", versionId, owner: "ana" });
@@ -64,10 +66,11 @@ beforeEach(async () => {
 });
 
 describe("what comes into the Media Library", () => {
-  it("is queued only with the switch on, and only photos and videos", async () => {
-    const off = await added("mp4");
-    expect(await queueVersion(event(off))).toBe(false);
-    await settings({});
+  it("is queued only for a file marked Blur faces with no blurred render yet, and only photos and videos", async () => {
+    expect(await queueVersion(event(await added("mp4", "no")))).toBe(false);
+    const done = await added("mp4");
+    libraryDb().prepare("UPDATE asset_versions SET blurred_of = sha256 WHERE id = ?").run(done); // a blurred render itself
+    expect(await queueVersion(event(done))).toBe(false);
     expect(await queueVersion(event(await added("mp4")))).toBe(true);
     expect(await queueVersion(event(await added("jpg")))).toBe(true);
     expect(await queueVersion(event(await added("m4a")))).toBe(false);
@@ -180,7 +183,7 @@ describe("workspaces", () => {
     writeFileSync(path.join(dir, "workshop", "users", "ana.json"), JSON.stringify({ currentProjectId: "ws-tiny" }));
     for (const [lib, ws] of [["lib_tiny", "ws-tiny"], ["lib_homes", "ws-homes"]])
       libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'ana', ?, 'local', ?, 0)").run(lib, lib, JSON.stringify({ projectId: ws }));
-    await settings({}); // auto on (in the workspace this request works in, the current one)
+    await settings({}); // in the workspace this request works in, the current one
     const into = async (lib: string) => {
       const v = await added("jpg");
       return queueVersion({ libraryId: lib, versionId: v, owner: "ana" });

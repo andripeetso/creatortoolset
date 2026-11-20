@@ -7,13 +7,14 @@
  * 720p copy, which every library takes; a computer's proxy must hash to the SHA-256 it declared, and from every sender a proxy
  * no smaller than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
  */
-import { blursFaces, finalsUpload, isBlurred, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
+import { blursFaces, fileBlur, finalsUpload, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
 import { hostsNone, hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
-import { accountOf, librariesHere } from "./access";
+import { accountOf, librariesHere, libraryRole } from "./access";
 import { workspaceOf } from "../lib/workspaces";
 import { projectOf } from "../lib/project-of";
-import type { SessionUser } from "../users";
+import { findUser, type SessionUser } from "../users";
+import type { Blur } from "../../contracts/library";
 import { serverKind } from "../work/server-work";
 
 /**
@@ -62,13 +63,13 @@ export const provesProxies = (sender: Pick<Device, "work"> | undefined | null): 
  * Where bytes go: a library, the collection they are sent into, or the version they belong to. `blurredOf`: a new file a
  * computer declares a blurred render of the original with that full SHA-256 (asset_versions.blurred_of).
  */
-export type ReceiveInto = { id: string; collectionId?: string | null; versionId?: string; blurredOf?: string | null };
+export type ReceiveInto = { id: string; collectionId?: string | null; versionId?: string; blurredOf?: string | null; blur?: Blur };
 
 /** The setting a file sent into `library` follows: a final the Finals one, anything else the library's Upload. */
 export const uploadFor = (library: ReceiveInto): LibraryUpload =>
   library.versionId
     ? versionUpload(library.versionId)
-    : library.blurredOf && blursFaces(library.id)
+    : (library.blurredOf || library.blur === "no") && blursFaces(library.id)
       ? libraryUploadStored(library.id)
       : library.collectionId && isFinalsCollection(library.collectionId)
       ? finalsUpload(library.id)
@@ -95,16 +96,33 @@ const HEX = /^[0-9a-f]{64}$/;
 export const proxyTooBig = (bytes: number, original: number | undefined): boolean => original !== undefined && bytes >= original;
 
 /**
- * Blur faces, the one rule for a workspace (contracts LibrarySettings.blurFaces): whether a file of `libraryId` may be
- * stored on or served by this server. Off: always. On: only a blurred render and what is cut from it, by its version
- * (asset_versions.blurred_of), or a new file declared one (`blurredOf`, a computer's; `blurred`, an editor that blurred
- * its own render). An original, its proxy, and a thumbnail, strip or still cut from it never leave the owner's computers.
- * Asked by every route that takes or hands out a clip's bytes or pictures, the plug-ins' too (upload-gate.test.ts).
+ * Blur faces, the one rule (contracts Blur): whether a file of `libraryId` may be stored on or served by this server. A
+ * file marked no (kept as filmed) always; a file marked yes only as a blurred render and what is cut from it, by its
+ * version (asset_versions.blurred_of), or a new file declared one (`blurredOf`, a computer's; `blurred`, an editor that
+ * blurred its own render). A new file with no answer (`blur`) gets its library's Blur faces. A yes-file's original, its
+ * proxy, and a thumbnail, strip or still cut from it never leave the owner's computers. Asked by every route that takes
+ * or hands out a clip's bytes or pictures, the plug-ins' too (upload-gate.test.ts).
  */
-export function mayLeave(libraryId: string | null | undefined, file: { versionId?: string; blurredOf?: string | null; blurred?: boolean }): Received {
-  if (!libraryId || !blursFaces(libraryId)) return { ok: true };
-  const blurred = file.versionId ? isBlurred(file.versionId) : !!file.blurred || (!!file.blurredOf && HEX.test(file.blurredOf));
-  return blurred ? { ok: true } : refuse(REFUSED_BLUR);
+export function mayLeave(libraryId: string | null | undefined, file: { versionId?: string; blurredOf?: string | null; blurred?: boolean; blur?: Blur }): Received {
+  if (!libraryId) return { ok: true };
+  if (file.versionId) {
+    const f = fileBlur(file.versionId);
+    return !f || f.blur === "no" || f.blurredVersionId === file.versionId ? { ok: true } : refuse(REFUSED_BLUR);
+  }
+  if ((file.blur ?? (blursFaces(libraryId) ? "yes" : "no")) === "no") return { ok: true };
+  return file.blurred || (!!file.blurredOf && HEX.test(file.blurredOf)) ? { ok: true } : refuse(REFUSED_BLUR);
+}
+
+/** Whether `username` may mark a file of `libraryId` no (kept as filmed): the library's owner or an admin, nobody else. */
+export const mayKeepAsFilmed = (username: string, libraryId: string): boolean => findUser(username)?.role === "admin" || libraryRole(username, libraryId) === "owner";
+
+/**
+ * The blur answer a new file of `libraryId` gets (contracts Blur): `asked` false (kept as filmed) only where
+ * mayKeepAsFilmed, ignored from anyone else; true is yes; else the library's Blur faces.
+ */
+export function blurAtIntake(username: string, libraryId: string, asked: unknown): Blur {
+  if (asked === false && mayKeepAsFilmed(username, libraryId)) return "no";
+  return asked === true || blursFaces(libraryId) ? "yes" : "no";
 }
 
 /**
@@ -125,12 +143,13 @@ export function mayReceive(
   // This Mac: the server is the owner's computer, so nothing leaves it
   if (kind === "data" || kind === "held" || serverKind() === "local") return { ok: true };
   // a blurred render is a computer's own (the job that blurred it), never a person's or a phone's declaration
-  const left = mayLeave(library.id, { ...(library.versionId ? { versionId: library.versionId } : {}), blurredOf: origin === "computer" ? library.blurredOf : null });
+  const left = mayLeave(library.id, { ...(library.versionId ? { versionId: library.versionId } : {}), blurredOf: origin === "computer" ? library.blurredOf : null, ...(library.blur ? { blur: library.blur } : {}) });
   if (!left.ok) return left;
   if (kind === "derivative" || kind === "serving") return { ok: true };
   const upload = uploadFor(library);
-  // under Blur faces what passed is a blurred render: it is the clip's proxy, kept under Blurred (stored "proxies")
-  if (blursFaces(library.id)) return hostsNone(upload) ? refuse(origin === "computer" ? REFUSED_COMPUTER_OFF : REFUSED_NONE) : { ok: true };
+  // under Blur faces what passed is a blurred render: it is the clip's proxy, kept under Blurred (stored "proxies"). A file
+  // kept as filmed follows the stored Upload as any file does (uploadFor)
+  if (blursFaces(library.id) && library.blur !== "no" && !(library.versionId && fileBlur(library.versionId)?.blur === "no")) return hostsNone(upload) ? refuse(origin === "computer" ? REFUSED_COMPUTER_OFF : REFUSED_NONE) : { ok: true };
   // a person's own file is refused under proxies too (UNIFIED-PRD §4.2): nothing drops it yet, so the server would keep it
   if (kind === "original") {
     // a person's own file (browser or phone) is theirs to send under proxies too: the server keeps its proxy (UNIFIED-PRD §4.2)
@@ -165,7 +184,7 @@ export async function mayServe(
   if (!left.ok) return left;
   if (serverKind() === "local") return { ok: true };
   const upload = uploadFor(version);
-  if (blursFaces(version.id)) return hostsNone(upload) ? refuse(REFUSED_NONE) : { ok: true };
+  if (blursFaces(version.id) && fileBlur(version.versionId)?.blur !== "no") return hostsNone(upload) ? refuse(REFUSED_NONE) : { ok: true };
   if (what === "original" ? hostsOriginals(upload) : hostsProxies(upload)) return { ok: true };
   // held until a computer has it (PLAN-final decision 1): the server hands it to a computer of the owner, and only until then
   // only the iPhone app's own file (asset_versions.origin): any other original under none is refused, held or not

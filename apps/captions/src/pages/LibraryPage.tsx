@@ -15,6 +15,7 @@ import { persistSort, storedSort } from "@/components/browse/views";
 import { LibrarySetup } from "./library/Setup";
 import { LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
@@ -144,6 +145,8 @@ export default function LibraryPage() {
   const [sourceList, setSources] = useState<{ id: string; label: string }[] | null>(null); // null: not read yet
   const sources = sourceList ?? [];
   const picker = useRef<HTMLInputElement>(null);
+  // Blur faces unticked by the owner or an admin: the library whose next files are kept as filmed (contracts Blur "no")
+  const [asFilmed, setAsFilmed] = useState<string | null>(null);
   const seq = useRef(0);
   const loading = useRef<string | null>(null); // the cursor of the page on its way
   const loc = useLocation();
@@ -414,7 +417,7 @@ export default function LibraryPage() {
   // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
   const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
     if (!libId) return;
-    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, blur: !!library?.settings.blurFaces, cost: levelOf(library?.settings ?? {}) !== "off" });
+    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, blur: !!library?.settings.blurFaces, asFilmed: keepsAsFilmed, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
   // a file of this library went in: its clips (and the folder's count) read again
   useEffect(
@@ -830,6 +833,14 @@ export default function LibraryPage() {
   const chooseFiles = () => picker.current?.click();
   const changing = !!library && !readOnly && !trash;
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
+  // the Blur faces checkbox beside Upload: only where the library blurs and this person may keep files as filmed
+  const blurChoice = mayAdd && !!library.settings.blurFaces && library.mayKeepAsFilmed;
+  const keepsAsFilmed = blurChoice && asFilmed === library.id;
+  const chooseBlur = async (on: boolean) => {
+    if (on || !library) return setAsFilmed(null);
+    const ok = await confirmDialog({ title: "Turn off Blur faces?", body: "These files will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" });
+    if (ok) setAsFilmed(library.id);
+  };
   // Look for new files (the ⋯ menu): the server reads this computer's folders itself (This Mac, the owner), or the Mac
   // app reads its own Source media folders for a server elsewhere (the owner, or a member who may add, on their computer)
   const serverReads = !!watch?.allowed;
@@ -1066,6 +1077,12 @@ export default function LibraryPage() {
                   </Button>
                 )}
                 {changing && !smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
+                {blurChoice && (
+                  <label className="flex h-8 items-center gap-1.5 text-sm">
+                    <Checkbox checked={!keepsAsFilmed} onCheckedChange={(v) => void chooseBlur(v === true)} />
+                    Blur faces
+                  </label>
+                )}
                 {mayAdd && (
                   <Button size="sm" className="h-8" onClick={chooseFiles}>
                     <Upload className="h-4 w-4" />
@@ -1224,6 +1241,7 @@ export default function LibraryPage() {
               serverPlays={!library || hostsOriginals(library.settings.upload) || hostsProxies(library.settings.upload) || !!library.shared || !!preview.finished}
               inTrash={trash}
               readOnly={readOnly}
+              mayKeepAsFilmed={!!library?.mayKeepAsFilmed}
               moveTo={moveOptions(collections, into)}
               onTrash={(t) => void trashMany([preview], t)}
               onPrev={((i) => (i > 0 ? () => openClip(shown[i - 1]!) : undefined))(shown.findIndex((x) => x.id === preview.id))}

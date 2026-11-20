@@ -40,12 +40,12 @@ describe("Face Blur's settings", () => {
   const start = { ...DEFAULTS, softness: 0.45 };
   it("start from the defaults, keep each account's own, and refuse what isn't one", async () => {
     expect(await (await call("GET", "/settings")).json()).toEqual(start);
-    const mine = { mode: "some", who: "Everyone but me", look: "mosaic", strength: 0.8, softness: 0.2, size: 1.4, color: "#112233", auto: false };
+    const mine = { mode: "some", who: "Everyone but me", look: "mosaic", strength: 0.8, softness: 0.2, size: 1.4, color: "#112233" };
     expect((await call("PUT", "/settings", mine)).status).toBe(200);
     expect(await (await call("GET", "/settings")).json()).toEqual(mine);
     expect(await (await as("ada")("GET", "/settings")).json()).toEqual(start);
     const bad = [
-      { mode: "most" }, { look: "emoji" }, { who: "x".repeat(LIMITS.who + 1) }, { who: 3 }, { auto: "yes" }, { strength: 1.5 },
+      { mode: "most" }, { look: "emoji" }, { who: "x".repeat(LIMITS.who + 1) }, { who: 3 }, { strength: 1.5 },
       { softness: -0.1 }, { size: 0.7 }, { size: 2.5 }, { size: "1" }, { color: "red" }, { color: "#12345" }, null, [],
     ];
     for (const b of bad) expect((await call("PUT", "/settings", b)).status).toBe(400);
@@ -54,10 +54,10 @@ describe("Face Blur's settings", () => {
 
   it("change only what a save sends, so an app from before the style keeps it", async () => {
     const u = as("grace");
-    await u("PUT", "/settings", { look: "solid", size: 1.2, color: "#ABCDEF", auto: true });
+    await u("PUT", "/settings", { look: "solid", size: 1.2, color: "#ABCDEF" });
     // an older phone app sends only these three
     const r = await u("PUT", "/settings", { mode: "some", who: "The people in the background", look: "solid" });
-    expect(await r.json()).toEqual({ ...start, mode: "some", who: "The people in the background", look: "solid", size: 1.2, color: "#abcdef", auto: true });
+    expect(await r.json()).toEqual({ ...start, mode: "some", who: "The people in the background", look: "solid", size: 1.2, color: "#abcdef" });
   });
 
   it("read settings saved before the style as today's look: Solid stays hard-edged", async () => {
