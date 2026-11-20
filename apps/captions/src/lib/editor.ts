@@ -3,7 +3,8 @@ import type { StepsView } from "@contracts/editor-steps";
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
 import type { ItemEdit } from "@contracts/edit-timeline";
 import type { NleRun } from "./nle/commands";
-import type { AddClip, AddedClip, Draft, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
+import type { NleTimeline } from "./nle/model";
+import type { Draft, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
 
 /** The Editor's calls to api/editor/routes.ts. */
 
@@ -100,14 +101,15 @@ export const putLines = (id: string, body: PlansPatch) => send<Edit>(`${base(id)
 export const reviewDraft = (id: string, name: string) => send<Edit>(`${base(id)}/drafts/${name}/review`, "POST");
 /** Review's timeline edits on version `n` of the draft's Review video, cut into the draft: its next version is made from them. */
 export const makeCut = (id: string, name: string, body: { asset: string; n: number; edits: ItemEdit[] }) => send<Edit>(`${base(id)}/drafts/${name}/cut`, "POST", body);
-/** Save on the timeline page: the edits made on the draft as it is now (Draft.view), cut into it as the same version, then rendered and filed in Review. */
-export const saveCut = (id: string, name: string, edits: ItemEdit[]) => send<Edit>(`${base(id)}/drafts/${name}/cut`, "POST", { edits });
+/** Save on the timeline page: the editor's whole timeline kept as the same version, then rendered and filed in Review. */
+export const saveTimeline = (id: string, name: string, timeline: NleTimeline) => send<Edit>(`${base(id)}/drafts/${encodeURIComponent(name)}/timeline`, "PUT", { timeline });
+/** The highest timeline version (edj_version) this server's renders take. */
+export const rendersVersion = () => send<{ edj_version: number }>("/api/editor/renders");
 export const getDraft = (id: string, name: string) => send<Draft>(`${base(id)}/drafts/${encodeURIComponent(name)}`);
 /** The version's timeline as a new version (no AI); its preview is made. */
 export const duplicateVersion = (id: string, name: string) => send<{ name: string }>(`${base(id)}/drafts/${name}/duplicate`, "POST");
 /** Rename ({ label }, "" clears) or delete ({ trashed: true }; false is its Undo) a version. */
 export const markVersion = (id: string, name: string, change: { label: string } | { trashed: boolean }) => send<Record<string, VersionMark>>(`${base(id)}/versions/${name}`, "PATCH", change);
-export const addClip = (id: string, name: string, clip: AddClip) => send<AddedClip>(`${base(id)}/drafts/${name}/clips`, "POST", clip);
 /** An edit with no footage and one empty timeline. */
 export const createEmpty = (body: { name?: string }) => send<{ id: string; draft: string }>("/api/editor/empty", "POST", body);
 export const restoreEdit = (id: string) => send<{ ok: true }>(`${base(id)}/restore`, "POST");

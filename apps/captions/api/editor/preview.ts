@@ -34,6 +34,13 @@ import type { StepContext } from "./worker";
  * (derived_from).
  */
 
+/**
+ * The highest timeline version (contracts/editor.ts edj_version) these renders take. Version 2's keys, transitions,
+ * camera conversions, design clips, captions and norm_db are not drawn here yet, so the editor greys them
+ * (GET /api/editor/renders) and the save refuses them. Raise it only once every version-2 field renders.
+ */
+export const RENDERS_EDJ = 1;
+
 /** The longest side of a preview: 1080x1920 from a 4K vertical timeline. */
 const MAX_SIDE = 1920;
 const even = (x: number) => Math.max(2, Math.round(x / 2) * 2);

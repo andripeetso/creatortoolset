@@ -430,6 +430,52 @@ describe.skipIf(rootReplaced)("Editor: projects, versions and the timeline page"
     expect(readDraft(id, "v1")!.timeline.tracks.A1.items).toHaveLength(2);
   });
 
+  it("the editor's whole timeline: judged, kept with every field it doesn't know, a version-2 timeline refused while the renders take version 1", async () => {
+    expect(await json(call("maker", "GET", "/api/editor/renders"))).toEqual({ edj_version: 1 });
+    const id = await made();
+    const timeline = { ...cutOf(), speakers: [{ rec: 0, len: 30, speaker: 1 }] };
+    Object.assign(timeline.tracks.V1.items[0]!, { gainDb: -3, zoom: 1.2, fx: [{ kind: "shake" }] });
+    await saveDraft(id, "v1", { timeline, notes: [] });
+    const { toNle } = await import("../../src/lib/nle/draft");
+    const nle = toNle(timeline as never);
+    nle.tracks.V1.items[1]!.len = 20; // a trim
+    nle.tracks.V1.items[0]!.mine = "kept";
+    const put = (tl: unknown, user = "maker") => call(user, "PUT", `/api/editor/${id}/drafts/v1/timeline`, { timeline: tl });
+    expect((await put(nle, "other")).status).toBe(404);
+    expect((await put({})).status).toBe(400);
+    // keys are version 2: refused, never saved down; the draft as it was
+    const keyed = structuredClone(nle);
+    keyed.tracks.V1.items[0]!.keys = { zoom: [[0, 1, "ease"], [20, 1.5, "ease"]] };
+    expect(await json(put(keyed))).toMatchObject({ code: "invalid", error: expect.stringContaining("Not in this server's renders yet") });
+    expect(await json(put({ ...nle, edj_version: 7 }))).toMatchObject({ error: expect.stringContaining("version 7") });
+    const over = structuredClone(nle);
+    over.tracks.V1.items[1]!.rec = 10;
+    expect((await json(put(over))).error).toContain("starts on top of the clip before it on V1");
+    expect(readDraft(id, "v1")!.timeline).toEqual(timeline);
+    // clips new to the draft: another workspace's is refused, one of this workspace's not probed yet waits
+    expect((await put({ ...nle, sources: { ...nle.sources, ver_b: { name: "Theirs" } } })).status).toBe(400);
+    expect((await put({ ...nle, sources: { ...nle.sources, ver_a2: { name: "Take 2" } } })).status).toBe(409);
+
+    const e = await json<Edit>(put(nle));
+    expect(queued(e)).toEqual([["post", "v1"]]);
+    const d = readDraft(id, "v1")!;
+    expect(d.timeline.speakers).toEqual(timeline.speakers);
+    expect(d.timeline.tracks.V1.items[0]).toEqual({ ...timeline.tracks.V1.items[0], mine: "kept" });
+    expect(d.timeline.tracks.V1.items[1]!.len).toBe(20);
+    expect(d.notes).toEqual(["Cut by hand on the timeline: the whole timeline saved"]);
+    expect(await json(put(nle))).toMatchObject({ code: "conflict", error: "This version is still being made" });
+    await stopAll(id);
+    // a new library clip: its rate, length and size come from the library, and it joins the edit's footage
+    libraryDb().prepare("UPDATE asset_versions SET probe = ? WHERE id = 'ver_a2'").run(JSON.stringify({ duration: 4, width: 1920, height: 1080, fps: 25, rotation: 0, format: "mp4", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" }));
+    const added = structuredClone(nle);
+    added.sources.ver_a2 = { versionId: "ver_a2", name: "Take 2", fps: 30, dur: 1 };
+    added.tracks.V2!.items.push({ src: "ver_a2", rec: 0, in: 0, len: 25 });
+    expect((await put(added)).status).toBe(200);
+    expect(readDraft(id, "v1")!.timeline.sources.ver_a2).toMatchObject({ versionId: "ver_a2", name: "Take 2", fps: 25, dur: 100, w: 1920, h: 1080 });
+    expect((await json<Edit>(call("maker", "GET", `/api/editor/${id}`))).sources).toEqual(["ver_a1", "ver_a2"]);
+    await stopAll(id);
+  });
+
   it("restore takes an edit out of the trash, for its maker only", async () => {
     const id = await made();
     expect((await call("maker", "POST", `/api/editor/${id}/restore`)).status).toBe(404); // not in the trash

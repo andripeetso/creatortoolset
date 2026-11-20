@@ -26,6 +26,10 @@ import path from "node:path";
 import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
+import { handCheck, refusal } from "../../src/lib/nle/check";
+import { fromNle } from "../../src/lib/nle/draft";
+import type { NleTimeline } from "../../src/lib/nle/model";
+import { RENDERS_EDJ } from "./preview";
 import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
 import { cardsApp } from "./cards/routes";
@@ -189,6 +193,9 @@ editorApp.get("/footage-target", async (c) => {
 // the defaults are registered before /:id, so "defaults" is never read as an edit id
 // the defaults of the workspace the request works in (the window's, or the one picked in Settings: X-CT-Workspace);
 // in a workspace given to the person, the workspace's own (its owner's): what a new edit there is made with
+/** The highest timeline version (contracts/editor.ts edj_version) this server's renders take: the editor greys the rest. */
+editorApp.get("/renders", (c) => c.json({ edj_version: RENDERS_EDJ }));
+
 editorApp.get("/defaults", async (c) => c.json(await editorDefaults(await settingsOf(c), await currentWorkspaceId(c.get("user")))));
 
 /** One slot's default in that workspace: an item id the person can choose from, or null for back to the pack's or the built-in one. */
@@ -505,15 +512,56 @@ editorApp.post("/:id/drafts/:name/cut", async (c) => {
       throw e;
     }
     const count = `${edits.length} timeline edit${edits.length === 1 ? "" : "s"}`;
-    // what was changed, so a later chat turn knows (an AI key's cut, a chat's editor_cut, is not the person's own)
-    const by = c.req.header("authorization") && !c.req.header("cookie") ? AI_NOTE : HAND_NOTE;
-    const note = `${by} ${inReview ? "in Review" : "on the timeline"}: ${count}${on} (${describeEdits(edits, base.fps)})`;
-    // the earlier cuts stay with it, the last five in all, so the chat knows every change, not only the newest
-    const isCut = (n: string) => n.startsWith(HAND_NOTE) || n.startsWith(AI_NOTE);
-    let older = d.notes.filter(isCut).length - 4;
-    await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !isCut(n) || --older < 0), note] });
+    await saveCutDraft(c, r, name, d, timeline, `${inReview ? "in Review" : "on the timeline"}: ${count}${on} (${describeEdits(edits, base.fps)})`);
   }
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
+});
+
+/** A cut kept as the draft (the one it replaces kept as a revision), with a note of what changed, so a later chat turn knows. */
+async function saveCutDraft(c: C, r: Loaded, name: string, d: NonNullable<ReturnType<typeof readDraft>>, timeline: Timeline, what: string) {
+  // an AI key's cut (a chat's editor_cut) is not the person's own
+  const by = c.req.header("authorization") && !c.req.header("cookie") ? AI_NOTE : HAND_NOTE;
+  // the earlier cuts stay with it, the last five in all, so the chat knows every change, not only the newest
+  const isCut = (n: string) => n.startsWith(HAND_NOTE) || n.startsWith(AI_NOTE);
+  let older = d.notes.filter(isCut).length - 4;
+  await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !isCut(n) || --older < 0), `${by} ${what}`] });
+}
+
+/**
+ * The editor's whole timeline (src/lib/nle, as it saves it) kept as the draft and rendered, with no AI: judged first
+ * (lib/nle/check.ts; a version this server doesn't render is refused, never saved down), every field it doesn't know
+ * kept. A clip new to the draft must be a Media Library clip in the edit's workspace that the caller sees; its frame
+ * rate, length and size come from the library. Then post-processing, its render, and Review, as /cut.
+ */
+editorApp.put("/:id/drafts/:name/timeline", async (c) => {
+  const r = await load(c, true);
+  const name = c.req.param("name");
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
+  const b = await body(c);
+  const bad = (error: string, code: "invalid" | "conflict" = "invalid") => c.json({ error, code }, code === "invalid" ? 400 : 409);
+  const nle = b.timeline as NleTimeline | undefined;
+  if (!nle || typeof nle !== "object" || typeof nle.tracks !== "object" || typeof nle.sources !== "object" || typeof nle.timeline !== "object") return bad("timeline is the editor's whole timeline");
+  if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return bad("This version is still being made", "conflict");
+  const added = Object.keys(nle.sources).filter((k) => !d.timeline.sources[k]);
+  if (added.length && (await editSources(r.user, added)) !== r.e.workspaceId) return bad("A clip on the timeline isn't in this edit's workspace's Media Library");
+  const db = libraryDb();
+  const sources = { ...nle.sources };
+  for (const k of added) {
+    const row = db.prepare("SELECT a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(k) as { title: string; probe: string | null } | undefined;
+    const probe = row?.probe ? (JSON.parse(row.probe) as ProbeSummary) : null;
+    if (!row || !probe?.duration) return bad(`${row?.title ?? "A clip"} is not ready yet`, "conflict");
+    sources[k] = { ...sources[k], ...sourceOf(k, row.title, probe) };
+  }
+  const problems = handCheck({ ...nle, sources }, RENDERS_EDJ);
+  if (problems.length) return bad(refusal(problems));
+  const timeline = fromNle({ ...nle, sources });
+  // a draft keeps its five tracks, whatever the editor sent
+  for (const t of TRACKS) timeline.tracks[t] ??= { name: t, items: [] };
+  await saveCutDraft(c, r, name, d, timeline, "on the timeline: the whole timeline saved");
+  if (added.length) await saveEdit({ ...r.e, sources: [...new Set([...r.e.sources, ...added])] });
+  enqueueJob(db, r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
   return c.json(viewFor(r));
 });
 

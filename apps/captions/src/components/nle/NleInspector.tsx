@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useContext, useEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, Diamond, FileText, Film, FlipHorizontal2, FlipVertical2, History, Link2, MessageCircle, Music, Palette,
   RotateCcw, Rows3, type LucideIcon,
@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuRadioGroup, ContextMenuRadioItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { GradePanel } from "@/components/GradePanel";
-import { Panel } from "./NleLayout";
+import { NleGate, Panel } from "./NleLayout";
 
 // The Inspector panel, laid out like Resolve's: tabs with icons (Video: Transform, Cropping, Composite with the fades,
 // Speed Change; Audio: Volume with the fades; File: on, start, length, source in, speed, the file) and the timeline's
@@ -582,6 +582,7 @@ const EASES: [KeyEase, string][] = [["linear", "Linear"], ["ease", "Ease"], ["ho
 
 /** ◀ ◆ ▶ at the right of a keyed row: ◆ adds a key at the playhead or (filled: one is there) deletes it; right-click it for its ease. */
 function KeyButtons({ label, k }: { label: string; k: KeyCtl }) {
+  const gate = useContext(NleGate);
   const arrow = "inline-flex h-4 w-3 items-center justify-center rounded-sm text-zinc-500 hover:text-zinc-100 disabled:text-zinc-800 disabled:hover:text-zinc-800";
   return (
     <span className="-ml-0.5 flex shrink-0 items-center">
@@ -590,8 +591,8 @@ function KeyButtons({ label, k }: { label: string; k: KeyCtl }) {
       </button>
       <ContextMenu>
         <ContextMenuTrigger asChild disabled={!k.on}>
-          <button type="button" aria-label={`${label} keyframe`} aria-pressed={k.on} title={k.on ? "Delete keyframe (right-click: Linear, Ease, Hold)" : "Add keyframe"}
-            onClick={k.toggle} className="inline-flex size-4 items-center justify-center rounded-sm text-zinc-400 hover:text-zinc-100">
+          <button type="button" aria-label={`${label} keyframe`} aria-pressed={k.on} disabled={!!gate} title={gate ?? (k.on ? "Delete keyframe (right-click: Linear, Ease, Hold)" : "Add keyframe")}
+            onClick={k.toggle} className="inline-flex size-4 items-center justify-center rounded-sm text-zinc-400 hover:text-zinc-100 disabled:text-zinc-700 disabled:hover:text-zinc-700">
             <Diamond className="size-3" fill={k.on ? RED : "none"} stroke={k.on ? RED : "currentColor"} />
           </button>
         </ContextMenuTrigger>
@@ -660,6 +661,7 @@ function TransitionTab({ k, ...e }: Edit & { k: string }) {
 
 /** The picked clips' file's camera conversion (per file: every clip of it gets it): None, what the file says, a curve, an added LUT. */
 function CameraSection({ keys, ...e }: Edit & { keys: string[] }) {
+  const gate = useContext(NleGate);
   const [luts, setLuts] = useState<CameraLut[]>([]);
   const [error, setError] = useState<string | null>(null);
   const file = useRef<HTMLInputElement>(null);
@@ -685,7 +687,8 @@ function CameraSection({ keys, ...e }: Edit & { keys: string[] }) {
   };
   return (
     <Section title="Camera">
-      <div className="grid min-w-0 gap-1 px-2">
+      <fieldset disabled={!!gate} title={gate ?? undefined} className="grid min-w-0 gap-1 px-2 disabled:opacity-40">
+        {gate && <p className="text-[11px] text-zinc-400">{gate}</p>}
         <Radios label="Camera" value={value} options={options} onPick={(pick) => e.onRun([{ id: "camera", params: { pick } }], keys)} />
         <button type="button" onClick={() => file.current?.click()} className="w-fit rounded-sm px-1 text-left text-zinc-300 hover:bg-white/5 hover:text-zinc-100">Add LUT…</button>
         <input ref={file} type="file" accept=".cube" hidden aria-label="LUT file" onChange={(ev) => {
@@ -693,7 +696,7 @@ function CameraSection({ keys, ...e }: Edit & { keys: string[] }) {
           ev.target.value = "";
         }} />
         {error && <p role="alert" className="text-[11px] text-red-400">{error}</p>}
-      </div>
+      </fieldset>
     </Section>
   );
 }

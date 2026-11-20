@@ -1,6 +1,9 @@
-import { useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createContext, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Images, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+/** Why the controls that only make version-2 timeline fields are greyed (lib/nle/check.ts NOT_RENDERED); null: they work. */
+export const NleGate = createContext<string | null>(null);
 
 // The editor's panels, as a non-linear editor lays them out: Media, Viewer and Inspector side by side on top, the
 // Timeline across the bottom taking the rest of the height. Each panel has its own title bar; the splitters between

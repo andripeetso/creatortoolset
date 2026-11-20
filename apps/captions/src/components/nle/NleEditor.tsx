@@ -22,7 +22,9 @@ import { CHAT_STEP, NleInspector } from "./NleInspector";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
-import { NleLayout, Panel } from "./NleLayout";
+import { NleGate, NleLayout, Panel } from "./NleLayout";
+import { EDJ_VERSION, edjVersion, type Edj } from "@contracts/editor";
+import { NOT_RENDERED } from "@/lib/nle/check";
 import { NleMeter } from "./NleMeter";
 import { LowerUnderVoiceDialog, NormalizeDialog } from "./NleSound";
 import { soundKeys } from "@/lib/nle/loudness";
@@ -57,6 +59,10 @@ export interface NleDrop {
   /** the part laid, seconds into the file (its marked In–Out); the whole file when absent */
   from?: number;
   to?: number;
+  /** the timeline's key for its source, when the page names it (a library clip by its id); else the file's name */
+  src?: string;
+  /** more of what the page knows of the source, kept on it */
+  source?: Record<string, unknown>;
 }
 
 export interface NleControl {
@@ -79,7 +85,7 @@ const STEPS = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "prevEd
 const HOME_END = new Set(["start", "end"]);
 const VIEWER = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "start", "end", "markIn", "markOut", "clearMarks", "clearIn", "clearOut"]);
 /** a row of the editor's menu: its words, its key, what it does, greyed */
-type MenuRow = [string, string, () => void, boolean];
+type MenuRow = [string, string, () => void, boolean, string?];
 /** The edit and draft a timeline page's path shows, as api/editor/nle-bridge.ts reads it. */
 const PAGE = /^\/editor\/(?!p\/)([^/?#]+)\/([^/?#]+)/;
 /** The chat's requests already taken by this window: one delivered twice is run once. */
@@ -146,7 +152,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders = EDJ_VERSION }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -172,6 +178,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   /** the Captions lane (lib/nle/captions.ts): `send` gives the saved cut's render to Caption Studio (made, or moved from
    *  the timeline's older captions) and answers with its clip; `open` goes to Caption Studio. None: no Captions lane */
   captions?: { send: () => Promise<{ project: string; clip: string; note?: string }>; open: (href: string) => void };
+  /** the highest timeline version (edj_version) the server's renders take: an edit that needs a newer one is refused here */
+  renders?: number;
 }) {
   const [first] = useState(() => openOf(initial, resetKey));
   // the timeline open now (its key and fingerprint), for keeping its unsaved edits
@@ -341,12 +349,17 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     }
   };
 
+  // the one rule for what the server's renders don't take yet: an edit that needs a newer timeline version is not made
+  const beyond = useCallback((next: NleTimeline) => edjVersion(next as unknown as Edj) > renders, [renders]);
+  // the controls that only make version-2 fields, greyed while the server's renders take version 1
+  const gate = renders < 2 ? NOT_RENDERED : null;
   const commit = useCallback((next: NleTimeline, label?: string) => {
     setLive(null);
     setGap(null);
     if (readOnly) return;
+    if (beyond(next)) return void toast(NOT_RENDERED);
     setHist((h) => histChange(h, () => next, label));
-  }, [readOnly]);
+  }, [readOnly, beyond]);
   const live_ = useCallback((next: NleTimeline | null) => !readOnly && setLive(next), [readOnly]);
 
   // a text clip plays its design's PNG from the server; a design deleted since is a red clip (asked once a PNG)
@@ -424,14 +437,15 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
 
   const urlFor = useCallback((src: string) => urlOf(src, shown), [urlOf, shown]);
   const srcUrl = useCallback((k: string) => (srcTl ? urlOf(k, srcTl) : null), [urlOf, srcTl]);
-  const nameOfSrc = useCallback((src: string) => isDesign(shown.sources[src]) ? "Text" : String(shown.sources[src]?.path ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
+  const nameOfSrc = useCallback((src: string) => isDesign(shown.sources[src]) ? "Text" : String(shown.sources[src]?.path ?? shown.sources[src]?.name ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
   const nameOf = useCallback((it: NleItem) => (typeof it.name === "string" && it.name) || (typeof it.line === "string" && it.line ? `${it.line} · ${nameOfSrc(it.src)}` : nameOfSrc(it.src)), [nameOfSrc]);
 
   // a clip from the bin: its picture on a video track, its sound with it on a free sound track (F9 / F10: the one given),
   // linked; on a sound track its sound alone; only its `from`–`to` part when it has one
   const lay = (d: NleDrop, at: { track: string; frame: number; sound?: string }, how: PlaceMode = mode) => {
     if (readOnly) return;
-    const s = addSource(tl, { path: d.path, fps: d.fps, ...(d.seconds ? { dur: Math.round(d.seconds * (d.fps || fps)) } : {}), w: d.w, h: d.h });
+    const known = { path: d.path, fps: d.fps, ...(d.seconds ? { dur: Math.round(d.seconds * (d.fps || fps)) } : {}), w: d.w, h: d.h };
+    const s = d.src ? { src: d.src, tl: tl.sources[d.src] ? tl : { ...tl, sources: { ...tl.sources, [d.src]: { ...known, ...d.source } } } } : addSource(tl, known);
     let next = s.tl;
     // a file picked on the computer comes with no length: 5 s, pulled out on the timeline
     const item = clipOfPart(s.src, at.frame, fps, Number(next.sources[s.src].fps) || fps, d);
@@ -455,7 +469,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     if (!f?.url || f.frame || f.why || !CAMERA_FILE.test(path) || at.sources[src]?.camera) return;
     void readCamera(rangeReader(f.url)).then((camera) => camera && setHist((h) => {
       const x = h.now.sources[src];
-      return x?.path === path && !x.camera ? { ...h, now: { ...h.now, sources: { ...h.now.sources, [src]: { ...x, camera } } } } : h;
+      const now = { ...h.now, sources: { ...h.now.sources, [src]: { ...x, camera } } };
+      return x?.path === path && !x.camera && !beyond(now) ? { ...h, now } : h;
     }));
   };
   // a drop with the marks its file has in the source viewer: their part only
@@ -475,8 +490,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   };
   const dropOfSrc = (src: string): NleDrop | null => {
     const s = tl.sources[src];
-    if (!s?.path) return null;
-    return { path: s.path, name: nameOfSrc(src), fps: s.fps, w: s.w, h: s.h, ...(s.dur ? { seconds: s.dur / (s.fps || fps) } : {}) };
+    const path = s?.path ?? (typeof s?.name === "string" ? s.name : undefined);
+    if (!path) return null;
+    return { path, src, name: nameOfSrc(src), fps: s.fps, w: s.w, h: s.h, ...(s.dur ? { seconds: s.dur / (s.fps || fps) } : {}) };
   };
   // F9 / F10: the source's marked part at the In mark or the playhead, on V1 and A1 or the picked clips' tracks
   const edit = (how: PlaceMode) => {
@@ -569,6 +585,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         try {
           const list = a.commands ?? [];
           const next = runAll(s, list);
+          if (next.tl !== s.tl && beyond(next.tl)) throw new Error(`${NOT_RENDERED}: this server renders timeline version ${renders}`);
           apply(s, next, CHAT_STEP + list.map((r) => COMMANDS[r.id]?.title ?? r.id).join(", "));
           s = next;
           reply({ result: stateView(next) });
@@ -675,7 +692,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   // one text clip picked: Design's text panel on it in the Inspector
   const textSrc = sel.length === 1 ? find(tl, sel[0])?.item.src : undefined;
   const textSource = textSrc && isDesign(tl.sources[textSrc]) && typeof tl.sources[textSrc].path === "string" ? tl.sources[textSrc] : null;
-  const newTextRow: MenuRow = ["New Text", "", () => run("newText"), !!readOnly];
+  const newTextRow: MenuRow = ["New Text", "", () => run("newText"), !!readOnly || !!gate, gate ?? undefined];
   const menuRow = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
   const linked = sel.some((k) => find(tl, k)?.item.link !== undefined);
   const iconBtn = (on: boolean) => cn("inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[11px]", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
@@ -697,7 +714,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   };
 
   return (
-    <>
+    <NleGate.Provider value={gate}>
       <NleLayout panelKeys={panelKeys}
         center={
           <>
@@ -834,7 +851,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 <button type="button" role="menuitem" aria-haspopup="menu" className={menuRow}><span>Add Transition</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
                 <div role="menu" aria-label="Add Transition" className="absolute -top-1 left-full hidden w-44 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl group-focus-within/sub:block group-hover/sub:block">
                   {(isVideo(find(tl, menu.cut)?.track ?? "V") ? [["Cross Dissolve", "addDissolve"], ["Dip to Black", "addDipToBlack"], ["Dip to White", "addDipToWhite"]] : [["Cross Fade", "addDissolve"]]).map(([l, id]) => (
-                    <button key={id} type="button" role="menuitem" className={menuRow} onClick={() => { setMenu(null); runAtCut(id, menu.cut!); }}>
+                    <button key={id} type="button" role="menuitem" disabled={!!gate} title={gate ?? undefined} className={menuRow} onClick={() => { setMenu(null); runAtCut(id, menu.cut!); }}>
                       <span>{l}</span><span className="text-zinc-500">{kl(id)}</span>
                     </button>
                   ))}
@@ -849,7 +866,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               ] as MenuRow[]
               : menu.on === "lane" ? [newTextRow]
               // a catalog original is never drawn into a design: only blurred copies, his own files and designs (canGrab)
-              : menu.on === "viewer" ? [["Design on This Frame", "", () => void designOnFrame(), readOnly || inSource || !canGrab(shown, Math.round(tln.now() * fps), urlFor)] as MenuRow]
+              : menu.on === "viewer" ? [["Design on This Frame", "", () => void designOnFrame(), readOnly || !!gate || inSource || !canGrab(shown, Math.round(tln.now() * fps), urlFor), gate ?? undefined] as MenuRow]
               : [
               ["Cut", kl("cut"), () => run("cut"), false],
               ["Copy", kl("copy"), () => run("copy"), false],
@@ -858,9 +875,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               ["Delete", kl("delete"), () => run("delete"), false],
               ["Ripple delete", kl("rippleDelete"), () => run("rippleDelete"), false],
               [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), !linked && sel.length < 2],
-              ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !soundKeys(tl, sel).length],
-            ] as MenuRow[]).map(([l, key, fn, off]) => (
-              <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
+              ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !!gate || !soundKeys(tl, sel).length, gate ?? undefined],
+            ] as MenuRow[]).map(([l, key, fn, off, why]) => (
+              <button key={l} type="button" role="menuitem" disabled={off} title={why} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
                 <span>{l}</span><span className="text-zinc-500">{key}</span>
               </button>
             ))}
@@ -888,6 +905,6 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
           onDone={(patch) => { commit(setMarker(tl, markerEdit, patch), "Edit marker"); setMarkerEdit(null); }}
           onDelete={() => { commit(removeMarker(tl, markerEdit), "Delete marker"); setMarkerEdit(null); }} />
       )}
-    </>
+    </NleGate.Provider>
   );
 }

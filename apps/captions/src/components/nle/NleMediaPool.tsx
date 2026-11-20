@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { AlertTriangle, ArrowDownUp, ChevronDown, ChevronRight, ChevronUp, Film, Folder, LayoutGrid, List, Music, PanelLeft, Search, X } from "lucide-react";
 import { isVideo, timecode, type NleTimeline } from "@/lib/nle/model";
 import { thumbAt } from "@/lib/nle/thumbs";
 import { cn } from "@/lib/utils";
 import type { NleFile } from "./NlePlayer";
-import { Panel } from "./NleLayout";
+import { NleGate, Panel } from "./NleLayout";
 
 // The Media Pool, laid out as Resolve's: a Bins column (Master, and under it the timeline's own sources and the page's
 // library), and the open bin's clips as picture cards or as a list with columns. A click opens a clip in the viewer as
@@ -104,6 +104,7 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
   /** New Text, in its menu */
   onNewText?: () => void;
 }) {
+  const gate = useContext(NleGate);
   const [prefs, setPrefs] = useState(loadPrefs);
   const set = (p: Partial<Prefs>) => setPrefs((was) => {
     const now = { ...was, ...p };
@@ -260,7 +261,7 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
               <>
                 {menu.src && <MenuRow label="Select on timeline" onClick={() => { onPick(menu.src); setMenu(null); }} />}
                 {menu.src && onRelink && <MenuRow label="Relink…" onClick={() => { onRelink(); setMenu(null); }} />}
-                {onNewText && <MenuRow label="New Text" onClick={() => { onNewText(); setMenu(null); }} />}
+                {onNewText && <MenuRow label="New Text" off={gate} onClick={() => { onNewText(); setMenu(null); }} />}
               </>
             ) : viewMenu!.what === "view" ? (
               <>
@@ -290,10 +291,10 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
   );
 }
 
-function MenuRow({ label, on, onClick }: { label: string; on?: boolean; onClick: () => void }) {
+function MenuRow({ label, on, off, onClick }: { label: string; on?: boolean; /** greyed, and why */ off?: string | null; onClick: () => void }) {
   return (
-    <button type="button" role={on === undefined ? "menuitem" : "menuitemradio"} aria-checked={on} onClick={onClick}
-      className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800">
+    <button type="button" role={on === undefined ? "menuitem" : "menuitemradio"} aria-checked={on} onClick={onClick} disabled={!!off} title={off ?? undefined}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent">
       <span className="w-3 shrink-0 text-zinc-300">{on ? "✓" : ""}</span>
       {label}
     </button>

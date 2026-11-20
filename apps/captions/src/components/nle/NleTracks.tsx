@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, useContext, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
@@ -16,7 +16,7 @@ import { drawWave, idleLevels, levels, type Levels } from "@/lib/waveform";
 import type { NleClock } from "@/lib/nle/audio";
 import { thumbAt } from "@/lib/nle/thumbs";
 import type { NleFile } from "./NlePlayer";
-import { Panel } from "./NleLayout";
+import { NleGate, Panel } from "./NleLayout";
 import { Timecode } from "./NleViewer";
 
 // The editor's timeline: track headers (name, lock, hide or mute, take off), the clips on their lanes, the ruler and the
@@ -899,6 +899,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
   onLowerUnderVoice?: (track: string) => void;
 }) {
   const t = id ? tl.tracks[id] : null;
+  const gate = useContext(NleGate);
   // a track keeps its number (the AI Editor reads tracks by number): a new one goes on top / at the bottom, or right
   // above / below this one when that number is free
   const n = id ? trackNo(id) : 0;
@@ -920,7 +921,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
   };
   const empties = deleteEmptyTracks(tl);
   const v = !!id && isVideo(id);
-  const rows: ([string, (() => void) | null] | null)[] = [
+  const rows: ([string, (() => void) | null, string?] | null)[] = [
     null,
     moveRow("Move Track Up", true),
     moveRow("Move Track Down", false),
@@ -931,7 +932,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
     [t?.locked ? "Unlock Track" : "Lock Track", id ? () => onTrack(id, { locked: t!.locked ? undefined : true }) : null],
     v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", () => onTrack(id!, { hidden: t!.hidden ? undefined : true })]
       : [t?.mute ? "Unmute Track" : "Mute Track", id ? () => onTrack(id, { mute: t!.mute ? undefined : true }) : null],
-    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", () => onLowerUnderVoice(id)] as [string, () => void]] : []),
+    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", gate ? null : () => onLowerUnderVoice(id), gate ?? undefined] as [string, (() => void) | null, string?]] : []),
   ];
   const run = (fn: () => void) => () => {
     onClose();
@@ -947,7 +948,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
           </div>
         </div>
         {rows.map((r, i) => (r ? (
-          <button key={r[0]} type="button" role="menuitem" disabled={!r[1]} className={MENU_ROW} onClick={r[1] ? run(r[1]) : undefined}>{r[0]}</button>
+          <button key={r[0]} type="button" role="menuitem" disabled={!r[1]} title={r[2]} className={MENU_ROW} onClick={r[1] ? run(r[1]) : undefined}>{r[0]}</button>
         ) : <div key={i} role="separator" className="my-1 h-px bg-zinc-800" />))}
       </div>
     </div>
