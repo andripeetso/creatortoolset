@@ -2,6 +2,7 @@ import type { CameraLut } from "@contracts/camera";
 import type { StepsView } from "@contracts/editor-steps";
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
 import type { ItemEdit } from "@contracts/edit-timeline";
+import type { NleRun } from "./nle/commands";
 import type { AddClip, AddedClip, Draft, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
 
 /** The Editor's calls to api/editor/routes.ts. */
@@ -28,6 +29,10 @@ export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "P
 export const listVoices = () => send<VoicesView>("/api/editor/voice");
 export const makeVoice = (v: NewVoice) => send<MadeVoice | { waiting: string }>("/api/editor/voice", "POST", v);
 export const getEdit = (id: string) => send<Edit>(base(id));
+/** The chat's editor requests for this window (api/editor/nle-bridge.ts), each handed over once, and the page's answer. */
+export type NleAsk = { id: string; edit: string; draft: string; kind: "state" | "run"; commands?: NleRun[] };
+export const nlePending = (client: string) => send<{ requests: NleAsk[] }>(`/api/editor/nle/pending?client=${encodeURIComponent(client)}`);
+export const nleReply = (r: { id: string; result?: unknown; error?: string }) => send<unknown>("/api/editor/nle/reply", "POST", r);
 export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/run`, "POST", from ? { from } : {});
 export const retryJob = (id: string, jobId: number) => send<Edit>(`${base(id)}/jobs/${jobId}/retry`, "POST");
 /** Edit in passes: Carry on queues each version's next pass. */

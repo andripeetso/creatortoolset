@@ -79,6 +79,18 @@ describe("nle commands", () => {
     expect(press("frameBack", stateOf(tl)).playhead).toBe(0);
     expect(press("end", stateOf(tl)).playhead).toBe(lengthOf(tl) - 1);
     expect(press("lock:V2", stateOf(tl)).tl).toEqual(setTrack(tl, "V2", { locked: true }));
+    // the keys the page test does not press
+    const dup = press("duplicate", stateOf(tl, { sel: [b] }));
+    expect(dup.tl.tracks.V2.items).toHaveLength(2);
+    expect(dup.sel).toHaveLength(1);
+    expect(press("deselect", stateOf(tl, { sel: [b] })).sel).toEqual([]);
+    expect(press("selectBack", stateOf(tl, { playhead: 100 })).sel).toEqual(clipsFrom(tl, 100, -1));
+    expect(press("markOut", stateOf(tl, { playhead: 30 })).marks).toEqual(setMark(NO_MARKS, "out", 30));
+    expect(press("clearIn", stateOf(tl, { marks: [1, 5] })).marks).toEqual([null, 5]);
+    expect(press("clearOut", stateOf(tl, { marks: [1, 5] })).marks).toEqual([1, null]);
+    expect(press("frameOn", stateOf(tl)).playhead).toBe(1);
+    expect(press("secondBack", stateOf(tl, { playhead: 30 })).playhead).toBe(5);
+    expect(press("start", stateOf(tl, { playhead: 30 })).playhead).toBe(0);
     // what the page does itself changes nothing here
     for (const a of ["play", "save", "undo", "zoomIn", "insertEdit", "loop"] as const) expect(press(a, stateOf(tl))).toEqual(stateOf(tl));
   });
