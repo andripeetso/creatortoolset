@@ -1,6 +1,7 @@
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { WorkClaimBody, WorkOffline } from "../../contracts/work";
+import type { MadeProxy, WorkClaimBody, WorkOffline } from "../../contracts/work";
+import { PROXY_QUALITIES, type ProxyQuality } from "../../contracts/library";
 import { env } from "../lib/env";
 
 /**
@@ -86,6 +87,66 @@ export const cacheLimit = (): number => {
 };
 
 // the file is named inside the try: no account yet means no cache, and an empty list
+/**
+ * The free space a proxy kept on this computer must leave on its disk: 30 GB (Media Library CEO, 2026-11-20: a full
+ * disk crashes his apps), or CT_PROXY_FLOOR (bytes) when set.
+ */
+export const FLOOR_DEFAULT = 30e9;
+const floor = (): number => {
+  const n = Number(process.env.CT_PROXY_FLOOR);
+  return process.env.CT_PROXY_FLOOR && Number.isFinite(n) && n >= 0 ? n : FLOOR_DEFAULT;
+};
+const freeOn = (dir: string): number => {
+  try {
+    const s = statfsSync(dir);
+    return s.bavail * s.bsize;
+  } catch {
+    return Number.POSITIVE_INFINITY; // a disk that can't say: as before the floor
+  }
+};
+
+/** About how big a proxy of a file will be: the quality's top video rate and its sound for its length, never more than the file. */
+export const proxyBytes = (fileBytes: number, seconds: number, quality: ProxyQuality = "standard"): number => {
+  const q = PROXY_QUALITIES.find((x) => x.value === quality) ?? PROXY_QUALITIES[1]!;
+  return seconds > 0 ? Math.min(fileBytes || Number.POSITIVE_INFINITY, seconds * (q.maxKbps + 128) * 125) : fileBytes;
+};
+
+/**
+ * Room for a proxy of about `bytes` in the cache, keeping the floor free on its disk: the least recently used proxies go
+ * first, never one kept offline or kept here (those still count, as space taken). False when even that is not enough:
+ * then no proxy is written and the original plays.
+ */
+export function roomFor(bytes: number): boolean {
+  const dir = proxiesDir();
+  mkdirSync(dir, { recursive: true });
+  const short = () => floor() + bytes - freeOn(dir);
+  if (short() <= 0) return true;
+  const keep = protectedIds();
+  const old = entries().filter((x) => !x.part && !keep.has(x.id)).sort((a, b) => a.used - b.used);
+  // nothing is trimmed for a proxy that wouldn't fit even with all of them gone
+  if (old.reduce((n, e) => n + e.size, 0) < short()) return false;
+  for (const e of old) {
+    rmSync(path.join(dir, e.file), { force: true });
+    if (short() <= 0) return true;
+  }
+  return short() <= 0;
+}
+
+/** What became of each proxy a plug-in asked for (contracts/work.ts MadeProxy), kept beside the cache: its size, or skipped. */
+const madeFile = () => path.join(proxiesDir(), "made.json");
+export function madeProxies(): Record<string, MadeProxy> {
+  try {
+    const v = JSON.parse(readFileSync(madeFile(), "utf8")) as unknown;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, MadeProxy>) : {};
+  } catch {
+    return {};
+  }
+}
+export function noteMade(id: string, made: MadeProxy): void {
+  mkdirSync(proxiesDir(), { recursive: true });
+  writeFileSync(madeFile(), JSON.stringify({ ...madeProxies(), [id]: made }));
+}
+
 const readIds = (file: () => string): string[] => {
   try {
     const v = JSON.parse(readFileSync(file(), "utf8")) as unknown;
@@ -209,5 +270,11 @@ export function cacheReport(): WorkClaimBody["cache"] {
     ...(offline.length ? { offline } : {}),
     versions,
     ...(parts.length ? { parts } : {}),
+    dir: proxiesDir(),
+    // a size for a proxy still here, and every skip (so it isn't asked for again)
+    ...(() => {
+      const made = Object.fromEntries(Object.entries(madeProxies()).filter(([id, m]) => "skip" in m || versions.includes(id)));
+      return Object.keys(made).length ? { made } : {};
+    })(),
   };
 }

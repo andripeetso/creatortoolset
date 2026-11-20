@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { asTurn } from "./turn";
-import type { AssetCard, AssetKind, AssetPage, LibrarySort, SearchQuery } from "../../contracts/library";
+import { proxySize, type AssetCard, type AssetKind, type AssetPage, type LibrarySort, type SearchQuery } from "../../contracts/library";
 import type { ProbeSummary } from "./media/probe";
 import { inReview } from "./trash";
 import { facetClauses } from "./sources";
 import { deviceOf } from "../lib/devices";
+import { libraryProxyQuality } from "./db";
 import { placeWordOf } from "../../contracts/places";
 import { folderStatesFor } from "./places";
 import { GONE_ON_COMPUTER_SQL, ON_COMPUTER_SQL, whereIsMany } from "./whereis";
@@ -341,11 +342,38 @@ export async function markHere(db: DatabaseSync, cards: AssetCard[], device?: st
           .all(JSON.stringify(ids), device, device) as { id: string }[]).map((r) => r.id),
       )
     : new Set<string>();
+  const proxies = proxiesOf(db, ids, device);
   return cards.map((c) => {
     const w = where.get(c.versionId);
     const placed = w?.computers.some((x) => x.original) ? { placeWord: placeWordOf(w, device) } : {};
-    return { ...c, ...placed, ...(here.has(c.versionId) ? { here: true as const } : {}) };
+    const proxy = proxies.get(c.versionId);
+    return { ...c, ...placed, ...(here.has(c.versionId) ? { here: true as const } : {}), ...(proxy ? { proxy } : {}) };
   });
+}
+
+/**
+ * The videos' proxies that can play (AssetCard.proxy): one the server stores, one in computer `device`'s cache (its
+ * 'proxy' place row, from its work claims). The size from the upright source and the library's Proxy quality.
+ * shortcut: the quality now, not the one it was made at; keep the proxy's own probe if a change of quality shows wrong sizes.
+ */
+function proxiesOf(db: DatabaseSync, ids: string[], device?: string): Map<string, NonNullable<AssetCard["proxy"]>> {
+  const rows = db
+    .prepare(
+      `SELECT v.id, v.probe, a.library_id,
+         EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy' AND x.storage_key IS NOT NULL) AS server,
+         EXISTS (SELECT 1 FROM version_places p WHERE p.version_id = v.id AND p.kind = 'proxy' AND p.device = ? AND p.state IN ('verified','found')) AS cached
+       FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (SELECT value FROM json_each(?)) AND a.kind = 'video'`,
+    )
+    .all(device ?? "", JSON.stringify(ids)) as { id: string; probe: string | null; library_id: string; server: number; cached: number }[];
+  const out = new Map<string, NonNullable<AssetCard["proxy"]>>();
+  for (const r of rows) {
+    const p = (r.probe ? JSON.parse(r.probe) : {}) as Partial<ProbeSummary>;
+    if ((!r.server && !r.cached) || !p.width || !p.height) continue;
+    // the proxy is drawn upright by the file's own rotation (turned when it is made); the library's turn is the player's
+    const [w, h] = (p.rotation ?? 0) % 180 ? [p.height, p.width] : [p.width, p.height];
+    out.set(r.id, { ...proxySize(w, h, libraryProxyQuality(r.library_id)), ...(r.server ? { server: true as const } : {}), ...(r.cached ? { cached: true as const } : {}) });
+  }
+  return out;
 }
 
 /** One page: items, plus the cursor when more follow. */

@@ -3,11 +3,24 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaceCheck } from "@contracts/places";
-import { awayLine, pickSource, useHere, type Here } from "./here";
+import { awayLine, editorProxy, pickSource, useHere, type Here } from "./here";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const root = { key: "smb://office-nas/footage", name: "footage", server: "office-nas" };
+
+describe("editorProxy: what the editor plays in place of a clip's original", () => {
+  const card = (proxy?: { w: number; h: number; server?: true; cached?: true }) => ({ versionId: "v1", ...(proxy ? { proxy } : {}) });
+  it("this computer's cached proxy first, then the server's, else none (the original plays)", () => {
+    expect(editorProxy(card({ w: 1280, h: 720, server: true, cached: true }), { state: "gone", cached: "ctlocal://media/c" })).toEqual({ url: "ctlocal://media/c", w: 1280, h: 720 });
+    expect(editorProxy(card({ w: 720, h: 1280, cached: true }), { state: "cached", url: "ctlocal://media/c" })).toEqual({ url: "ctlocal://media/c", w: 720, h: 1280 });
+    expect(editorProxy(card({ w: 1280, h: 720, server: true }), undefined)).toEqual({ url: "/api/library/media/v1/play", w: 1280, h: 720 });
+    // Upload none: the server plays nothing, and a proxy kept on another computer doesn't play here
+    expect(editorProxy(card({ w: 1280, h: 720, server: true }), undefined, false)).toBeNull();
+    expect(editorProxy(card({ w: 1280, h: 720, cached: true }), { state: "here", path: "/a", url: "ctlocal://media/a" })).toBeNull();
+    expect(editorProxy(card(), { state: "gone", cached: "ctlocal://media/c" })).toBeNull();
+  });
+});
 
 describe("pickSource", () => {
   const rows: [PlaceCheck | undefined, ReturnType<typeof pickSource>][] = [

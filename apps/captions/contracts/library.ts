@@ -57,6 +57,9 @@ export interface AssetCard {
   spriteUrl?: string;
   /** the country it was filmed in (ISO 3166-1 alpha-2), from the file's own location; never the coordinates */
   place?: string;
+  /** a video's proxy where it can play (markHere): on the server (`server`, /api/library/media/<versionId>/play), in the
+   *  asking computer's cache (`cached`), or both; its size as made. The editor plays it in place of the original (src/lib/here.ts editorProxy) */
+  proxy?: { w: number; h: number; server?: true; cached?: true };
 }
 
 /** Frames in a clip's strip (`spriteUrl`), side by side; frame i shows the middle of the clip's i-th share (api/library/media/sprite.ts). */
@@ -279,6 +282,14 @@ export const PROXY_QUALITIES: readonly { value: ProxyQuality; label: string; sho
   { value: "high", label: "High (1080p)", short: 1080, crf: 23, maxKbps: 8000 },
 ];
 export const proxyQualityOf = (v: unknown): ProxyQuality => (PROXY_QUALITIES.some((q) => q.value === v) ? (v as ProxyQuality) : "standard");
+
+/** A proxy's size from its source's upright size (api/library/media/proxy.ts makeProxy's scale): the short side to the quality's cap, never upscaled, both sides even. */
+export function proxySize(width: number, height: number, quality: ProxyQuality): { w: number; h: number } {
+  const q = PROXY_QUALITIES.find((x) => x.value === quality) ?? PROXY_QUALITIES[1]!;
+  const short = Math.min(width, height);
+  const even = (n: number) => Math.trunc(n / 2) * 2;
+  return { w: even(Math.min(width, (q.short * width) / short)), h: even(Math.min(height, (q.short * height) / short)) };
+}
 
 /**
  * Analysis effort (UNIFIED-PRD §4.4): one slider over the existing flags, which stay the store. flagsOf writes them;
@@ -820,7 +831,7 @@ export const LIBRARY_WORDS = {
   smartFolders: { label: "Smart folders", tip: "Clips and photos are filed into a folder for each shoot, by the day and place they were filmed, as they come in. What they show becomes tags. Files on disk never move." },
   organizeYourself: { label: "Organize yourself", tip: "Every clip goes into one library. You make and fill the folders yourself." },
   proxyTitle: "Proxy workflow",
-  generateProxies: { label: "Generate proxies for imported media", tip: "Creates smaller copies of your media files for faster uploads, playback and editing, and easier AI processing." },
+  generateProxies: { label: "Generate proxies for imported media", tip: "Creates smaller copies of your media files for faster uploads, playback and editing, and easier AI processing. Edits still make proxies of the clips they use." },
   proxyQuality: { label: "Proxy quality", tip: "Higher quality looks sharper while editing and takes more space. A proxy is never larger than its original." },
   hostedTitle: "Hosted media",
   uploadToServer: "Upload to server",

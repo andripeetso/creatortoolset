@@ -89,7 +89,7 @@ export interface WorkClaimBody {
   steps: string[];
   /** the proxy cache: bytes kept, its size limit, the versions kept offline, and every version whose proxy it holds.
    * Absent on a worker's first claim, before the answer named its account: the device's last report stands */
-  cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; parts?: string[] };
+  cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; parts?: string[]; dir?: string; made?: Record<string, MadeProxy> };
   /** this worker runs library jobs too (LibraryPackage): a computer that doesn't say so is never handed one */
   library?: true;
   /** this worker runs the picture model (PicturePackage): a computer that doesn't say so is never handed picture work */
@@ -128,7 +128,25 @@ export type WorkClaim = ({ pkg: WorkPackage } | { pkg: null; update?: true; lib?
   /** of the claim's cache.versions and cache.parts, the ones its account may no longer see, or that are gone or in the trash: the
    * computer deletes each proxy and its unfinished download, kept offline or not */
   drop?: string[];
+  /** proxies to make here from a file on this computer and keep (a plug-in's items, ComputerProxy), one at a time while nothing else runs */
+  make?: ComputerProxy[];
 };
+
+/**
+ * A proxy a plug-in asks a computer to make from a file there (lib/plugin.ts ServerPlugin.computerProxies): kept in the
+ * proxy cache as `<id>.mp4`, never sent. The computer reads `path` only when it is inside `under`, with no "..".
+ */
+export interface ComputerProxy {
+  id: string;
+  path: string;
+  under: string;
+  quality?: "low" | "standard" | "high";
+  /** only when the file is heavy (above 1080p, or a format the browser can't play; media/proxy.ts needsProxy): a light one is recorded as `skip` */
+  heavyOnly?: true;
+}
+
+/** What became of a ComputerProxy, in the cache report (`made`): the proxy's size, or `skip` (light, or its proxy was no smaller). */
+export type MadeProxy = { w: number; h: number } | { skip: true };
 
 /**
  * A library job run on one of the uploader's own computers (phase 6), on the same road: claim → package → result.

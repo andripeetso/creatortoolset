@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import nodeModule from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { WORK_V, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
+import { WORK_V, type ComputerProxy, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
 import { Waiting } from "../editor/analyze";
 import { editDir, readEdit } from "../editor/store";
 import { limitWait, markRead, STEPS } from "../editor/worker";
@@ -13,7 +13,10 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
+import { cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, madeProxies, moveFile, noteMade, proxiesDir, proxyBytes, proxyPath, roomFor, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
+import { makeProxy, needsProxy } from "../library/media/proxy";
+import { probe } from "../library/media/probe";
+import { proxySize } from "../../contracts/library";
 import { downloadInto, resolveFiles, type Progress } from "./files";
 import { cancelLibraryJob, LIBRARY_HERE, runLibraryJob, runPictureJob, scratchRoom, stopLibraryJob, sweepScratch } from "./library";
 import { processesGone } from "../library/media/run";
@@ -262,9 +265,64 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
       console.log("[work] the server needs a newer Creator Toolset to hand it steps");
       return "update";
     } else if (claim.offline && (await keepOffline(claim.offline, o))) idleSince = Date.now();
+    else if (claim.make && (await makeKept(claim.make))) idleSince = Date.now();
   }
   return "idle";
 }
+
+/**
+ * Makes one proxy a plug-in asked for (contracts/work.ts ComputerProxy) from its file on this computer into the cache as
+ * `<id>.mp4`, never sent; it counts toward the cache's size limit like any proxy, and one trimmed is made again when asked.
+ * Its size (or that it was skipped) goes in the cache report (`made`). The next claim comes first. Only a file inside the
+ * item's `under`, with no "..", is read. True when it did one.
+ */
+export async function makeKept(list: ComputerProxy[]): Promise<boolean> {
+  const made = madeProxies();
+  // one the size limit trimmed is made again when asked; a skip stands
+  const m = list.find((x) => okId(x.id) && !tried.has(x.id) && !(made[x.id] && "skip" in made[x.id]!) && sizeOf(proxyPath(x.id)) === null);
+  if (!m) return false;
+  // once per run: a file its proxy isn't smaller than (makeProxy keeps none), or one that fails, isn't made on every claim
+  tried.add(m.id);
+  const under = m.under.endsWith("/") ? m.under : `${m.under}/`;
+  if (!m.path.startsWith(under) || m.path.split("/").includes("..")) {
+    console.warn(`[work] proxy ${m.id}: ${m.path} is not inside ${under}`);
+    return false;
+  }
+  // made beside the cache's files under a name the cache doesn't count (makeProxy writes through its own .part)
+  const part = `${proxyPath(m.id)}.new`;
+  try {
+    mkdirSync(proxiesDir(), { recursive: true });
+    const p = await probe(m.path);
+    // a light file plays as it is: recorded, so it isn't asked for again
+    if (m.heavyOnly && !needsProxy(p)) {
+      noteMade(m.id, { skip: true });
+      return true;
+    }
+    const quality = m.quality ?? "standard";
+    // the disk keeps its floor free (cache.ts roomFor): not enough even after trimming, and the original plays
+    if (!roomFor(proxyBytes(sizeOf(m.path) ?? 0, p.duration, quality))) {
+      console.warn(`[work] proxy ${m.id}: not made, the disk would have less than its free-space floor left`);
+      return false;
+    }
+    if (await makeProxy(m.path, part, false, quality, p.duration)) {
+      // a cache file like any other proxy: it counts toward the size limit (cacheLimit) and the oldest go first
+      moveFile(part, proxyPath(m.id));
+      // drawn upright by the file's own rotation (ffmpeg turns it on decode)
+      const [w, h] = p.rotation % 180 ? [p.height, p.width] : [p.width, p.height];
+      noteMade(m.id, proxySize(w, h, quality));
+    } else noteMade(m.id, { skip: true }); // no smaller than its file: the file plays
+    return true;
+  } catch (e) {
+    console.warn(`[work] proxy ${m.id}:`, e instanceof Error ? e.message : e);
+    return false;
+  } finally {
+    rmSync(part, { force: true });
+  }
+}
+
+const tried = new Set<string>();
+/** An id a cache file can be named by (ProxyCache.swift url: no "/", not hidden). */
+const okId = (id: string) => /^[\w-]{1,100}$/.test(id);
 
 /**
  * Downloads one proxy kept offline that the cache lacks, from the server's offline route; the next claim comes first,
