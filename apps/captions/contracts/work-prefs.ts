@@ -8,8 +8,10 @@
  *   askFit: false = the assistant no longer asks whether dropped footage belongs in the open project.
  *   autoResume / snoozeLimited: a chat a usage limit stopped carries on by itself when the limit resets (absent = on) /
  *     is put away till then (absent = off). Each chat's banner changes its own (api/assistant.ts).
+ *   keyPreset / keys: the editor's Keyboard Customization (src/lib/nle/keys.ts): the preset (absent = default) and the
+ *     person's own changes over it, chord → command id ("" = the chord does nothing).
  *
- *   GET /api/work-prefs → WorkPrefs   PUT /api/work-prefs { talk?, check?, editor?, makes?, job?, askFit?, autoResume?, snoozeLimited? } → WorkPrefs
+ *   GET /api/work-prefs → WorkPrefs   PUT /api/work-prefs { talk?, check?, editor?, makes?, job?, askFit?, autoResume?, snoozeLimited?, keyPreset?, keys? } → WorkPrefs
  * First-run setup's "How do you want to use Creator Toolset?" and the MCP tools get_work_prefs / set_work_prefs
  * change the same record.
  */
@@ -22,6 +24,8 @@ export type Make = (typeof MAKES)[number];
 /** Find ideas in posts I like, Write scripts and posts, Edit my videos, Add captions to a video, Just look around. */
 export const JOBS = ["ideas", "write", "edit", "captions", "look"] as const;
 export type Job = (typeof JOBS)[number];
+
+export const KEY_PRESETS = ["default", "resolve"] as const;
 
 export interface WorkPrefs {
   talk: (typeof TALK)[number];
@@ -36,6 +40,10 @@ export interface WorkPrefs {
   autoResume?: boolean;
   /** A chat a usage limit stopped is put away until the limit resets (absent = off). */
   snoozeLimited?: boolean;
+  /** The editor's key preset (absent = default). */
+  keyPreset?: (typeof KEY_PRESETS)[number];
+  /** The editor's keys changed over the preset: chord → command id, "" = none. */
+  keys?: Record<string, string>;
 }
 
 export const DEFAULT_WORK_PREFS: WorkPrefs = { talk: "app", check: "app", editor: null, makes: [], job: null };
