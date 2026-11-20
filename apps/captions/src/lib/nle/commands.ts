@@ -6,6 +6,7 @@ import {
 import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans } from "./loudness";
 import { INSPECTOR_COMMANDS } from "./inspector-commands";
 import { addTransition, handlesAt, removeTransition } from "./trans";
+import { pendingText, placeText } from "./text-clip";
 
 // Every edit that can be made to an open timeline, by id: the keys (keys.ts), the menus and the chat's nle_run all run
 // these (keys.ts commandOfKey), so a key and the chat do the same thing. A command is pure: the editor's state in, the state after it out.
@@ -228,6 +229,11 @@ const LIST: NleCommand[] = [
   }),
   cmd("setLength", "Set the timeline's length: V1's last shot and its voice run on to it, or everything past it is cut", any,
     (s, p) => ({ ...s, tl: lengthTo(s.tl, Math.max(1, Math.round(p.seconds * fpsOf(s)))) }), { seconds: seconds("the new length in seconds") }),
+  // the editor makes its design (lib/nle/text-design.ts) once it is laid
+  cmd("newText", "New Text: a 5 s title at the playhead, on the first free picture track above V1", any, (s, _p, t) => {
+    const made = placeText(s.tl, pendingText(s.tl, t?.words ?? ""), s.playhead);
+    return { ...s, tl: made.tl, sel: [made.key] };
+  }, { words: { type: "text", about: "its words", optional: true } }),
   ...INSPECTOR_COMMANDS,
 ];
 

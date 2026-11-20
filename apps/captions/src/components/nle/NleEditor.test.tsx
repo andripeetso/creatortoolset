@@ -32,6 +32,18 @@ vi.mock("@/lib/sync", async (orig) => ({
   clientId: "tab-1",
   onTopic: (topic: string, fn: () => void) => (bridge.topics.set(topic, fn), () => bridge.topics.delete(topic)),
 }));
+// Design over the editor, and a text clip's design and PNG, stand-ins: what reaches them is what is checked
+const designs = vi.hoisted(() => ({ made: [] as string[], grabbed: 0 }));
+vi.mock("@/pages/DesignPage", () => ({
+  DesignEditor: ({ onDone }: { onDone: () => void }) => <div role="dialog" aria-label="Design"><button type="button" onClick={onDone}>Done</button></div>,
+}));
+vi.mock("@/lib/nle/text-design", async (orig) => ({
+  ...(await orig<typeof import("@/lib/nle/text-design")>()),
+  makeText: async (words: string, w: number, h: number) => (designs.made.push(words), { kind: "design", design: "d1", frame: "p1", path: "/data/designs/u/d1/renders/0123456789abcdef0123.png", w, h }),
+  grabFrame: async () => (designs.grabbed++, new File(["x"], "frame.jpg", { type: "image/jpeg" })),
+  grabDesign: async () => ({ id: "d9", pages: [{ id: "p1", layers: [] }], pictures: [] }),
+}));
+vi.mock("@/lib/designs", async (orig) => ({ ...(await orig<typeof import("@/lib/designs")>()), getDesign: async () => ({ id: "d9", pages: [{ id: "p1", layers: [] }], pictures: [] }) }));
 const { NleEditor } = await import("./NleEditor");
 
 // a Tiny Acrobatics cut: one 3 s shot with its voice
@@ -356,5 +368,59 @@ describe("the person's own keys (Keyboard Customization)", () => {
     await key("˚", { metaKey: true, altKey: true, code: "KeyK" });
     expect(document.body.textContent).toContain("Keyboard Customization");
     p.done();
+  });
+});
+
+describe("text clips and Design on This Frame", () => {
+  it("New Text from the ruler's menu lays a 5 s text clip at the playhead on V2 and fills in its design's PNG", async () => {
+    designs.made.length = 0;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const p = await mount();
+    await key("End", { code: "End" });
+    await rightClick(p.host.querySelector('[title="The playhead"]')!.parentElement!.nextElementSibling!);
+    await act(() => menuItem("New Text").click());
+    await flush();
+    expect(p.now().tracks.V2!.items).toEqual([expect.objectContaining({ src: "text1", rec: 74, len: 125, in: 0 })]);
+    expect(p.now().sources.text1).toEqual({ kind: "design", design: "d1", frame: "p1", path: "/data/designs/u/d1/renders/0123456789abcdef0123.png", w: 1080, h: 1920 });
+    expect(designs.made).toEqual([""]);
+    // one undo step takes it away, and a redo brings it back made, never making it twice
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(p.now().tracks.V2?.items ?? []).toEqual([]);
+    await key("z", { metaKey: true, shiftKey: true, code: "KeyZ" });
+    await flush();
+    expect(p.now().sources.text1!.path).toMatch(/\.png$/);
+    expect(designs.made).toHaveLength(1);
+    p.done();
+    vi.restoreAllMocks();
+  });
+
+  it("is greyed on a catalog original; on a blurred or own file it opens Design over the editor, whose keys are its own", async () => {
+    // the page marks only what may be drawn into a design: a file it doesn't mark (a catalog original) is never grabbed
+    const p = await mount(tl, { urlOf: () => ({ url: "/m/a.mp4" }) });
+    await rightClick(p.host.querySelector("[data-frame]")!);
+    expect(menuItem("Design on This Frame").disabled).toBe(true);
+    p.done();
+    designs.grabbed = 0;
+    const q = await mount(tl, { urlOf: () => ({ url: "/m/a.mp4", grab: true }) });
+    await rightClick(q.host.querySelector("[data-frame]")!);
+    expect(menuItem("Design on This Frame").disabled).toBe(false);
+    await act(() => menuItem("Design on This Frame").click());
+    await flush();
+    expect(designs.grabbed).toBe(1);
+    expect(document.querySelector('[role="dialog"][aria-label="Design"]')).not.toBeNull();
+    // M (a marker) and ⌘A Backspace (delete everything) stay the designer's while it is open
+    await key("m", { code: "KeyM" });
+    await key("a", { metaKey: true, code: "KeyA" });
+    await key("Backspace", { code: "Backspace" });
+    expect(q.now().markers ?? []).toEqual([]);
+    expect(q.length()).toBe(75);
+    // Done with nothing designed on the frame lays nothing; the editor's keys are back
+    await act(() => (document.querySelector('[aria-label="Design"] button') as HTMLButtonElement).click());
+    await flush();
+    expect(document.querySelector('[aria-label="Design"]')).toBeNull();
+    expect(Object.keys(q.now().tracks)).toEqual(["V1", "A1"]);
+    await key("m", { code: "KeyM" });
+    expect(q.now().markers).toHaveLength(1);
+    q.done();
   });
 });
