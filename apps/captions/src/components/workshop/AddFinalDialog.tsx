@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { uploadFinal } from "@/lib/library";
 import { addFromMac, deviceHere } from "@/lib/onMac";
-import { importCancel, IN_A_MEDIA_FOLDER, importCopy, importPrint, importProgress, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { importCancel, FILE_REFUSED, importCopy, importPrint, importProgress, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { getSessionFinals, putFinal, type SessionFinals, type SessionStatus } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 
@@ -105,10 +105,10 @@ export async function copyIn(file: File, folder: string, signal: AbortSignal, on
     const r = await importCopy(id, [{ from, to: `${folder}/${file.name}` }]);
     signal.throwIfAborted();
     const refused = r.failed[0]?.error;
-    if (refused && IN_A_MEDIA_FOLDER.test(refused)) throw new Error(refused);
+    if (refused && FILE_REFUSED.test(refused)) throw new Error(refused);
     return r.copied[0]?.to ?? null;
   } catch (e) {
-    if (signal.aborted || (e instanceof Error && IN_A_MEDIA_FOLDER.test(e.message))) throw e;
+    if (signal.aborted || (e instanceof Error && FILE_REFUSED.test(e.message))) throw e;
     return null;
   } finally {
     clearInterval(tick);

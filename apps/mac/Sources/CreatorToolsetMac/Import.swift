@@ -180,14 +180,13 @@ final class Imports: @unchecked Sendable {
         var stopped = false
         for f in files {
             if with(id, { $0.cancelled }) == true { stopped = true; break }
-            // first, whatever else is wrong with it: the page never uploads a file refused this way instead
-            if let inMedia = Self.inside(f.from, media) {
-                // the folder is named only for a file this window was given: a page never learns where other libraries live
-                let named = Self.inside(f.from, sources) != nil ? inMedia : "of another library"
-                failed.append(["from": f.from, "error": "\(f.from) is in the Media folder \(named): drop the folder with the footage itself"]); continue
-            }
+            // a file this window wasn't given gets the one answer, in a Media folder or not: a page learns nothing of other
+            // paths from it (the page never uploads such a file instead: AddFinalDialog copyIn)
             guard Self.inside(f.from, sources) != nil, let bytes = size(f.from) else {
                 failed.append(["from": f.from, "error": "Not a file from a drop or a pick in this window."]); continue
+            }
+            if let inMedia = Self.inside(f.from, media) {
+                failed.append(["from": f.from, "error": "\(f.from) is in the Media folder \(inMedia): drop the folder with the footage itself"]); continue
             }
             guard let root = Self.destination(f.to, destinations) else {
                 let away = Self.inside(f.to, waiting).map { (($0 as NSString).deletingLastPathComponent as NSString).lastPathComponent }

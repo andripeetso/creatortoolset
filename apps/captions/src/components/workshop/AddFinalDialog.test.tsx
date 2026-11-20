@@ -15,7 +15,13 @@ describe("a final dropped from this Mac (copyIn)", () => {
     await expect(copyIn(file, "/Volumes/Tiny/Projects/Reel", new AbortController().signal, () => {})).rejects.toThrow(said);
   });
 
-  it("any other copy that can't be made: null, so the file is uploaded as before", async () => {
+  it("a file the Mac app can't vouch for as dropped here is refused too, never uploaded instead", async () => {
+    m.pathOnMac.mockResolvedValue(at);
+    m.importCopy.mockResolvedValue({ copied: [], failed: [{ from: at, error: "Not a file from a drop or a pick in this window." }] });
+    await expect(copyIn(file, "/Volumes/Tiny/Projects/Reel", new AbortController().signal, () => {})).rejects.toThrow("Not a file from a drop");
+  });
+
+  it("a folder the Mac app doesn't copy into: null, so the file is uploaded as before", async () => {
     m.pathOnMac.mockResolvedValue("/Users/tiny/Downloads/final.mp4");
     m.importCopy.mockResolvedValue({ copied: [], failed: [{ from: "/Users/tiny/Downloads/final.mp4", error: "Not a folder this app copies into." }] });
     expect(await copyIn(file, "/Volumes/Tiny/Projects/Reel", new AbortController().signal, () => {})).toBeNull();

@@ -176,10 +176,10 @@ final class ImportTests: XCTestCase {
         // an IPv6 server keys as "fd00::5:8443" and its token by host "fd00::5": its folders still count
         MediaFiles.setServerFolders([.init(id: "f6", path: at("Six"), workspaces: ["*"], use: "media")], server: "fd00::5:8443")
         XCTAssertTrue(MediaFiles.signedInMediaFolders(signedIn: { $0 == "fd00::5" }).contains(at("Six")))
-        // a file in another library's Media folder that this window wasn't given: still the Media folder refusal, which the
-        // page never works around by uploading
-        let notDropped = Imports().copy(id: "g2", [ImportPair(from: studioClip, to: mine + "/Imports/x/s.mov")], sources: [], destinations: Imports.copyDestinations(server: "s"), media: media) { _ in }
-        XCTAssertEqual((notDropped["failed"] as? [[String: String]])?.first?["error"], "\(studioClip) is in the Media folder of another library: drop the folder with the footage itself")
+        // a path this window wasn't given: the same answer whether or not it is in a library (nothing to probe)
+        let probe = Imports().copy(id: "g2", [ImportPair(from: studioClip, to: mine + "/Imports/x/s.mov"), ImportPair(from: at("Nowhere/x.mov"), to: mine + "/Imports/x/n.mov")],
+                                   sources: [], destinations: Imports.copyDestinations(server: "s"), media: media) { _ in }
+        XCTAssertEqual((probe["failed"] as? [[String: String]])?.map { $0["error"] ?? "" }, Array(repeating: "Not a file from a drop or a pick in this window.", count: 2))
         // Downloads is a Media folder only of a server this Mac left: it blocks nothing
         XCTAssertEqual((reply["copied"] as? [[String: String]])?.map { $0["to"] }, [mine + "/Imports/x/B.mov"])
     }
