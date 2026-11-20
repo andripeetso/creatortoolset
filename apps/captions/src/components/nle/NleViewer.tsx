@@ -82,7 +82,7 @@ export function NleViewer({ tl, time, playing, rate, urlOf, nameOf, onClick, clo
   return (
     <div className="flex min-h-0 flex-1 select-none flex-col">
       {/* the pasteboard scrolls when the frame is drawn larger than it; its bars sit in its own edge, so nothing moves */}
-      <div ref={board} className={cn("relative min-h-0 flex-1 bg-[#2a2a2e]", prefs.zoom === "fit" ? "overflow-hidden" : "overflow-scroll")}>
+      <div ref={board} data-wheel="snap" className={cn("relative min-h-0 flex-1 bg-[#2a2a2e]", prefs.zoom === "fit" ? "overflow-hidden" : "overflow-scroll")}>
         <div className="flex min-h-full min-w-full items-center justify-center" style={{ padding: PAD, width: prefs.zoom === "fit" ? undefined : W * scale + 2 * PAD, height: prefs.zoom === "fit" ? undefined : H * scale + 2 * PAD }}>
           <div data-frame className="relative shrink-0 shadow-[0_0_0_1px_rgb(255_255_255/0.28),0_4px_24px_rgb(0_0_0/0.45)]"
             style={{ width: W * scale, height: H * scale }} onClick={onClick} draggable={!!onDragStart} onDragStart={onDragStart} onDragEnd={onDragEnd}>

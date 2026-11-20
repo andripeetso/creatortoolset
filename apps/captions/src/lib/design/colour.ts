@@ -1,4 +1,5 @@
 import type { DesignPage } from "@contracts/design";
+import { effectsOf } from "./effects";
 import { fillsOf, strokesOf, takesFills, takesStrokes } from "./paint";
 
 /**
@@ -61,7 +62,7 @@ export function coloursOn(pages: readonly DesignPage[], most = 16): string[] {
         if (f.type === "gradient") f.stops.forEach((s) => add(s.color));
       }
       for (const s of takesStrokes(o) ? strokesOf(o) : []) add(s.color);
-      if ("type" in o) add(o.shadow?.color);
+      if ("type" in o) for (const e of effectsOf(o)) if ("color" in e) add(e.color);
     }
   return [...count].sort((a, b) => b[1] - a[1]).slice(0, most).map(([c]) => c);
 }

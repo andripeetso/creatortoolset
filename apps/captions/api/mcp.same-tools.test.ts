@@ -107,8 +107,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // apart from the notes: 55 bytes of description, text and sources). In main's own list review_set_approval grew by 101
     // (words: the person's own message approving a video, which a style learns from), in the golden
     // find_sound_effects adds 635 (its tool text, with the type list)
-    expect(bytes(dock) - bytes(main(dock))).toBe(9396);
+    // design_update's sizes and fill add 132 (frames copied into other sizes, a frame copied once per row of words: 81 bytes of
+    // description and the two fields)
+    expect(bytes(dock) - bytes(main(dock))).toBe(9528);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(9332);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(9464);
   });
 });

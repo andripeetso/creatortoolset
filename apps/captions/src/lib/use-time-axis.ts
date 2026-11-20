@@ -105,6 +105,7 @@ export function useTimeAxis({ scroller, seconds, left = 0, right = 0, maxPps, no
       }
     };
     el.addEventListener("wheel", wheel, { passive: false });
+    el.dataset.wheel = "snap"; // no glide in the Mac app (lib/mac-wheel.ts)
     return () => {
       el.removeEventListener("wheel", wheel);
       cancelAnimationFrame(frame);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Design } from "@contracts/design";
-import { drawingUrl, drawPage, fontOf, sourceOf, type Loaded } from "@/lib/design/draw";
+import { drawingUrl, drawPage, fontsOfText, sourceOf, type Loaded } from "@/lib/design/draw";
 import { frameOf } from "@/lib/design/hands";
 import { paintPictures } from "@/lib/design/paint";
 import { useOwnFonts } from "@/lib/design/own-fonts";
@@ -43,7 +43,7 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
         img.onload = again;
         img.src = l.type === "image" ? pictureUrl(design.id, src) : drawingUrl(src);
       }
-      if (l.type === "text") void document.fonts.load(fontOf(l)).then(again, () => {});
+      if (l.type === "text") for (const f of fontsOfText(l)) void document.fonts.load(f).then(again, () => {});
     }
     for (const src of paintPictures(page)) {
       if (loaded.has(src)) continue;

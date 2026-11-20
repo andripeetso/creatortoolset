@@ -6,8 +6,10 @@ import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
 
 /**
- * The layers list: every frame of the canvas with its layers under it, the front one on top. A click picks (Shift or
- * ⌘ adds or takes one), a double click on a name renames, the eye hides and the lock locks, and a row is dragged to a
+ * The layers list: every frame of the canvas with its layers under it, the front one on top. A click picks (⌘ adds or
+ * takes one; Shift picks every row from the last one clicked: the layers between, or the frames when the run goes past
+ * a frame, never the layers a picked frame already holds), a double click on a name renames and one on its icon zooms
+ * the canvas to it, the eye hides and the lock locks, and a row is dragged to a
  * new place: a layer among its frame's layers, a frame among the frames. Layers of a group lie under a Group row,
  * which picks them all; a layer's own row picks that layer alone (where two frames lie over each other, the
  * lower one in the list is drawn on top, and the list's order numbers the saved PNGs).
@@ -31,6 +33,7 @@ export function LayersPanel({
   onPage,
   onMovePage,
   onAddPage,
+  onZoomTo,
 }: {
   pages: DesignPage[];
   at: number;
@@ -45,12 +48,40 @@ export function LayersPanel({
   onPage: (page: DesignPage) => void;
   onMovePage: (from: number, to: number) => void;
   onAddPage: () => void;
+  /** the canvas zoomed to frame `at`, or to its layer `id` */
+  onZoomTo: (at: number, id?: string) => void;
 }) {
   const [shut, setShut] = useState<string[]>([]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
   const dropped = useRef(false);
   const dragging = useRef(false);
+  /** The row a Shift-click runs from: the last one clicked without Shift (a frame's row: no layer). */
+  const anchor = useRef<{ page: string; layer?: string } | null>(null);
+  /** Shift-click on frame `k` (its layer `id`, or its own row): the run from the anchor. Within one frame's layers, those layers; past a frame, the frames. */
+  const run = (k: number, id?: string): boolean => {
+    const a = anchor.current;
+    const from = a ? pages.findIndex((p) => p.id === a.page) : -1;
+    if (!a || from < 0) return false;
+    if (from === k && a.layer && id) {
+      const list = [...pages[k]!.layers].reverse().map((l) => l.id);
+      const [lo, hi] = [list.indexOf(a.layer), list.indexOf(id)].sort((x, y) => x - y);
+      if (lo! < 0) return false;
+      onPick(k, list.slice(lo, hi! + 1));
+      return true;
+    }
+    const ids = pages.slice(Math.min(from, k), Math.max(from, k) + 1).filter((p) => !p.loose).map((p) => p.id);
+    if (!ids.length) return false;
+    onPick(pages.findIndex((p) => p.id === ids[0]), [], true, ids);
+    return true;
+  };
+  /** A double click on a row's icon: that row picked and the canvas zoomed to it (not a rename). */
+  const zoomOn = (k: number, id?: string) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (id) onPick(k, [id]);
+    else onPick(k, [], true);
+    onZoomTo(k, id);
+  };
 
   const rename = (was: string, done: (name: string) => void) => (
     <input
@@ -123,7 +154,7 @@ export function LayersPanel({
       </div>
       <div role="tree" className="min-h-0 flex-1 select-none overflow-y-auto py-1">
         {pages.map((p, k) => {
-          // a picture lying loose on the canvas has no frame row: its layers stand on their own
+          // layers lying loose on the canvas have no frame row: they stand on their own
           const open = p.loose || !shut.includes(p.id);
           const pageKey = `p:${p.id}`;
           const layerKey = `l:${p.id}:`;
@@ -148,7 +179,9 @@ export function LayersPanel({
                 }
                 onClick={(e) => {
                   if (dragging.current) return;
-                  // Shift, ⌘ or Ctrl: this frame joins the picked ones, or leaves them
+                  if (e.shiftKey && run(k)) return;
+                  anchor.current = { page: p.id };
+                  // ⌘ or Ctrl (or Shift with nothing to run from): this frame joins the picked ones, or leaves them
                   if (!(e.shiftKey || e.metaKey || e.ctrlKey) || !framedIds.length) return onPick(k, [], true);
                   const next = framedIds.includes(p.id) ? framedIds.filter((id) => id !== p.id) : [...framedIds, p.id];
                   const first = pages.findIndex((x) => x.id === next[0]);
@@ -161,7 +194,9 @@ export function LayersPanel({
                 <button type="button" aria-label={open ? "Close" : "Open"} onClick={(e) => (e.stopPropagation(), setShut((s) => (open ? [...s, p.id] : s.filter((id) => id !== p.id))))} className="flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 dark:text-[#b3b3b3]">
                   {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                 </button>
-                <Frame className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+                <span onDoubleClick={zoomOn(k)} className="flex shrink-0">
+                  <Frame className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+                </span>
                 {renaming === pageKey ? rename(pageName(p, k), (name) => onPage({ ...p, name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{pageName(p, k)}</span>}
                 {line(pageKey)}
               </div>
@@ -208,13 +243,17 @@ export function LayersPanel({
                       onPointerLeave={() => onPoint(null)}
                       onClick={(e) => {
                         if (dragging.current) return;
+                        if (e.shiftKey && run(k, l.id)) return;
+                        anchor.current = { page: p.id, layer: l.id };
                         const mine = k === at ? selected : [];
                         onPick(k, e.shiftKey || e.metaKey || e.ctrlKey ? (mine.includes(l.id) ? mine.filter((id) => id !== l.id) : [...mine, l.id]) : [l.id]);
                       }}
                       onDoubleClick={() => setRenaming(key)}
                       className={cn(ROW, p.loose ? "pl-4" : grouped ? "pl-14" : "pl-9", on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
                     >
-                      <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+                      <span data-icon onDoubleClick={zoomOn(k, l.id)} className="flex shrink-0">
+                        <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+                      </span>
                       {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}
                       <button type="button" aria-label={l.locked ? "Unlock" : "Lock"} aria-pressed={!!l.locked} onClick={(e) => (e.stopPropagation(), set({ locked: l.locked ? undefined : true }))} className={cn("flex h-5 w-5 shrink-0 items-center justify-center rounded-sm hover:bg-zinc-500/20", !l.locked && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100")}>
                         {l.locked ? <Lock className="h-3 w-3" /> : <LockOpen className="h-3 w-3" />}

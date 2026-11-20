@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -14,7 +15,6 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   AlignVerticalSpaceAround,
-  CaseUpper,
   Check,
   ChevronDown,
   Crop,
@@ -22,6 +22,9 @@ import {
   EyeOff,
   FlipHorizontal2,
   FlipVertical2,
+  Italic,
+  Strikethrough,
+  Underline,
   GripVertical,
   Group,
   Link2,
@@ -34,28 +37,36 @@ import {
   Unlink2,
   WrapText,
   X,
+  LayoutGrid,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import type { Design, DesignPage, GradientStop, Layer, Paint, PaintLook, Stroke } from "@contracts/design";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES } from "@contracts/design";
+import type { Design, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke } from "@contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES, EFFECT_PRESETS, EFFECTS_MAX } from "@contracts/design";
+import { effectsOf, withEffects } from "@/lib/design/effects";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { alphaOf, typedHex, withAlpha } from "@/lib/design/colour";
 import { colourAt, fillsOf, moved, strokesOf, takesFills, takesStrokes, withFills, withStrokes } from "@/lib/design/paint";
 import { pictureUrl } from "@/lib/designs";
 import { boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
-import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { DESIGN_FONTS, designWeight, faceOf, WEIGHT_NAMES, weightsOf } from "@/lib/design/fonts";
+import { caseOf } from "@/lib/design/runs";
 import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
 import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
+import { scrubBy } from "@/lib/design/feel";
+import { resized } from "@/lib/design/resize";
+import { CopySizes } from "./CopySizes";
 import { CHECKS, ColourPicker } from "./ColourPicker";
+import { FrameAids } from "./FrameAids";
+import { setAidPref, useAidPrefs } from "@/lib/design/aids";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
 
 /**
  * The properties of what is picked: where it is, its size, how it looks, its fill and line, its type. No layer picked:
  * the frame's own (its name, its place on the canvas, its size, its colour). A number is typed (Enter or leaving the field sets it, the arrows step it, Shift by ten) or dragged
- * by its label; while it is dragged the canvas shows it, and it is one step to undo when let go. A choice made in a
+ * by its label (half a step a pixel; Shift ten times that, Alt a tenth); while it is dragged the canvas shows it, and it is one step to undo when let go. A choice made in a
  * menu here gives the keys back to the canvas at once: ⌘Z right after picking a font undoes the font.
  */
 
@@ -63,7 +74,7 @@ const FIELD = "flex h-6 min-w-0 items-center gap-1.5 rounded-[5px] border border
 const DIM = "text-zinc-500 dark:text-[#b3b3b3]";
 const round = (n: number) => Math.round(n * 100) / 100;
 
-function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Infinity, step = 1 }: { label: ReactNode; title: string; value: number | null; onLive?: (n: number | null) => void; onCommit: (n: number) => void; min?: number; max?: number; step?: number }) {
+function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Infinity, step = 1, rate = 0.5 }: { label: ReactNode; title: string; value: number | null; onLive?: (n: number | null) => void; onCommit: (n: number) => void; min?: number; max?: number; step?: number; /** steps a pixel dragged on the label */ rate?: number }) {
   const [draft, setDraft] = useState<string | null>(null);
   const dropped = useRef(false);
   const fit = (n: number) => round(Math.min(max, Math.max(min, n)));
@@ -71,14 +82,19 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
     const n = Number(text.replace(",", "."));
     if (text.trim() !== "" && Number.isFinite(n) && fit(n) !== value) onCommit(fit(n));
   };
-  /** The label is a handle: dragged sideways it steps the number, a pixel a step. */
+  /** The label is a handle: dragged sideways it steps the number, `rate` steps a pixel; the keys held are read at every move. */
   const scrub = (e: React.PointerEvent) => {
     if (value === null) return;
     e.preventDefault();
-    const x0 = e.clientX;
+    let x = e.clientX;
+    let sum = 0;
     let last = value;
     const move = (ev: PointerEvent) => {
-      last = fit(value + Math.round(ev.clientX - x0) * step);
+      sum += scrubBy(ev.clientX - x, rate, { shift: ev.shiftKey, alt: ev.altKey });
+      x = ev.clientX;
+      // in whole steps, or tenths of one with Alt
+      const q = ev.altKey ? 0.1 : 1;
+      last = fit(value + Math.round(sum / q) * q * step);
       onLive?.(last);
     };
     const up = () => {
@@ -204,8 +220,6 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
   </Tip>
 );
 
-/** The shadow a press on + gives. */
-const SHADOW = { color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8 };
 const CORNERS = [["◜", "Top left corner"], ["◝", "Top right corner"], ["◞", "Bottom right corner"], ["◟", "Bottom left corner"]] as const;
 const BLEND_NAMES = { multiply: "Multiply", screen: "Screen", overlay: "Overlay", darken: "Darken", lighten: "Lighten", "soft-light": "Soft light" } as const;
 /** How a frame or the picked layers are saved as pictures: PNG or JPEG, at their size or twice it. */
@@ -283,7 +297,10 @@ function Slide({ label, value, min, max, onLive, onCommit }: { label: string; va
 const ZoomNumber = ({ view }: { view: ViewStore }) => <>{Math.round(useZoom(view) * 100)}%</>;
 
 /** The zoom's number and its menu (in, out, fit, selection, 50, 100, 200 %). */
+const AID_ITEMS = [["rulers", "Rulers", "⇧R"], ["grids", "Layout grids", typeof navigator !== "undefined" && /Mac/.test(navigator.platform) ? "⌃G" : "Ctrl+Shift+4"], ["pixels", "Pixel grid", "⇧'"]] as const;
+
 export function ZoomMenu({ view, onZoom }: { view: ViewStore; onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void }) {
+  const aids = useAidPrefs();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger aria-label="Zoom" className="flex h-6 items-center gap-0.5 rounded-[5px] px-1.5 hover:bg-zinc-500/15">
@@ -309,6 +326,14 @@ export function ZoomMenu({ view, onZoom }: { view: ViewStore; onZoom: (to: "in" 
           Zoom to 100%<DropdownMenuShortcut>⇧0</DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => onZoom(2)}>Zoom to 200%</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {AID_ITEMS.map(([k, name, keys]) => (
+          <DropdownMenuItem key={k} onSelect={() => setAidPref(k)} className="gap-2">
+            <Check className={cn("h-3.5 w-3.5", !aids[k] && "invisible")} />
+            {name}
+            <DropdownMenuShortcut>{keys}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -346,6 +371,11 @@ function PickOne<V extends string>({ label, value, options, onPick }: { label: s
   );
 }
 
+const PINS = {
+  x: [["left", "Left"], ["right", "Right"], ["both", "Both"], ["center", "Centre"], ["scale", "Scale"]],
+  y: [["top", "Top"], ["bottom", "Bottom"], ["both", "Both"], ["center", "Centre"], ["scale", "Scale"]],
+} as const;
+
 const ALIGNS: [Align, string, typeof AlignLeft][] = [
   ["left", "Align left", AlignStartVertical],
   ["center", "Align horizontal centres", AlignCenterVertical],
@@ -367,6 +397,7 @@ export function Inspector({
   onPagePreview,
   onAlign,
   onDistribute,
+  onTidy,
   view,
   onZoom,
   framesPicked,
@@ -380,6 +411,7 @@ export function Inspector({
   onUngroup,
   colours,
   onDropper,
+  onCopySize,
 }: {
   design: Design;
   page: DesignPage;
@@ -398,6 +430,8 @@ export function Inspector({
   onPagePreview: (page: DesignPage | null) => void;
   onAlign: (how: Align) => void;
   onDistribute: (axis: "x" | "y") => void;
+  /** the picked layers or frames tidied up (a row, a column or a grid evened out); none when they are not one */
+  onTidy?: () => void;
   /** the canvas's view: only the zoom's number reads it, and only that is drawn again when it moves */
   view: ViewStore;
   onZoom: (to: "in" | "out" | "fit" | "selection" | number) => void;
@@ -420,6 +454,8 @@ export function Inspector({
   colours: readonly string[];
   /** the next press on the canvas gives its colour to `take` */
   onDropper: (take: (hex: string) => void) => void;
+  /** a copy of the frame in another size, its layers placed by their pins */
+  onCopySize: (size: { w: number; h: number; name: string }) => void;
 }) {
   const [ratio, setRatio] = useState(false);
   /** Each corner's radius shown by itself. */
@@ -434,7 +470,7 @@ export function Inspector({
   };
   const every = (is: (l: Layer) => boolean) => picked.length > 0 && picked.every(is);
   /** A number field for the picked layers: `to` gives each layer with the number set. */
-  const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number } = {}) => (
+  const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number; rate?: number } = {}) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
   );
   /** A slider for the picked layers, like `num`. */
@@ -481,6 +517,27 @@ export function Inspector({
   const fnum = (label: string, title: string, value: number, set: (n: number) => Partial<DesignPage>, more: { min: number; max: number }) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPagePreview(n === null ? null : { ...page, ...set(n) })} onCommit={(n) => onPage({ ...page, ...set(n) })} />
   );
+  /** The align and space-out buttons, for `count` picked layers or frames. */
+  const lineUp = (count: number) => (
+    <div className="flex justify-between">
+      {ALIGNS.map(([how, label, Icon]) => (
+        <Tap key={how} label={label} onClick={() => onAlign(how)}>
+          <Icon className="h-3.5 w-3.5" />
+        </Tap>
+      ))}
+      <Tap label="Space out sideways" disabled={count < 3} onClick={() => onDistribute("x")}>
+        <AlignHorizontalSpaceAround className="h-3.5 w-3.5" />
+      </Tap>
+      <Tap label="Space out down the page" disabled={count < 3} onClick={() => onDistribute("y")}>
+        <AlignVerticalSpaceAround className="h-3.5 w-3.5" />
+      </Tap>
+    </div>
+  );
+  const tidyTap = (
+    <Tap label="Tidy up" disabled={!onTidy} onClick={() => onTidy?.()}>
+      <LayoutGrid className="h-3.5 w-3.5" />
+    </Tap>
+  );
   const far = { min: -DESIGN_LIMITS.canvas, max: DESIGN_LIMITS.canvas };
   const big = { min: DESIGN_LIMITS.frameMin, max: DESIGN_LIMITS.frameMax };
 
@@ -503,6 +560,13 @@ export function Inspector({
         </div>
       </div>
 
+      {/* several frames picked: lined up, spaced out and tidied like layers */}
+      {!box && framesPicked.length > 1 && (
+        <Section title="Position" action={tidyTap}>
+          {lineUp(framesPicked.length)}
+        </Section>
+      )}
+
       {/* several frames picked: what one frame is (its name, place, size and fill) is not shown for them all */}
       {!box && framesPicked.length < 2 && (
         <>
@@ -519,8 +583,8 @@ export function Inspector({
             <div className="grid grid-cols-2 gap-2">
               {fnum("X", "X", frame.x, (n) => ({ x: n, y: frame.y }), far)}
               {fnum("Y", "Y", frame.y, (n) => ({ x: frame.x, y: n }), far)}
-              {fnum("W", "Width", frame.w, (n) => ({ w: n, h: frame.h }), big)}
-              {fnum("H", "Height", frame.h, (n) => ({ w: frame.w, h: n }), big)}
+              {fnum("W", "Width", frame.w, (n) => resized(page, { w: n, h: frame.h }), big)}
+              {fnum("H", "Height", frame.h, (n) => resized(page, { w: frame.w, h: n }), big)}
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger aria-label="Frame size" className={cn(FIELD, "w-full justify-between outline-none")}>
@@ -529,7 +593,7 @@ export function Inspector({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
                 {DESIGN_FORMATS.map((f) => (
-                  <DropdownMenuItem key={f.id} onSelect={() => onPage({ ...page, w: f.w, h: f.h })} className="flex justify-between gap-4">
+                  <DropdownMenuItem key={f.id} onSelect={() => onPage(resized(page, { w: f.w, h: f.h }))} className="flex justify-between gap-4">
                     {f.name}
                     <span className={DIM}>
                       {f.w} × {f.h}
@@ -538,6 +602,22 @@ export function Inspector({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            {/* off: what lies past the frame's edges shows on the canvas too; the PNG is always the frame alone */}
+            <label className="flex items-center gap-2 text-xs">
+              <Checkbox checked={page.clip !== false} onCheckedChange={(on) => onPage({ ...page, clip: on === true ? undefined : false })} />
+              Clip content
+            </label>
+            {!page.loose && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex h-7 items-center justify-center gap-1 rounded-[5px] border border-[#e6e6e6] outline-none hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
+                  Copy in another size
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-60">
+                  <CopySizes Item={DropdownMenuItem} from={frame} onCopy={onCopySize} />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </Section>
           <FillList fills={fillsOf(page)} design={design} colours={colours} onDropper={onDropper} base="#ffffff" onSet={(f, merge) => onPage(withFills(page, f), merge)} onLive={(f) => onPagePreview(f ? withFills(page, f) : null)} />
           <StrokeList strokes={strokesOf(page)} colours={colours} onDropper={onDropper} max={200} box inside onSet={(st, merge) => onPage(withStrokes(page, st), merge)} onLive={(st) => onPagePreview(st ? withStrokes(page, st) : null)} />
@@ -545,25 +625,14 @@ export function Inspector({
             <Slide label="Grain" value={page.grain ?? 0} min={0} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, grain: n || undefined })} onCommit={(n) => onPage({ ...page, grain: n || undefined })} />
             <Slide label="Vignette" value={page.vignette ?? 0} min={-100} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, vignette: n || undefined })} onCommit={(n) => onPage({ ...page, vignette: n || undefined })} />
           </Section>
+          {!page.loose && <FrameAids page={page} onPage={onPage} colours={colours} onDropper={onDropper} />}
         </>
       )}
 
       {box && (
         <>
-          <Section title="Position">
-            <div className="flex justify-between">
-              {ALIGNS.map(([how, label, Icon]) => (
-                <Tap key={how} label={label} onClick={() => onAlign(how)}>
-                  <Icon className="h-3.5 w-3.5" />
-                </Tap>
-              ))}
-              <Tap label="Space out sideways" disabled={picked.length < 3} onClick={() => onDistribute("x")}>
-                <AlignHorizontalSpaceAround className="h-3.5 w-3.5" />
-              </Tap>
-              <Tap label="Space out down the page" disabled={picked.length < 3} onClick={() => onDistribute("y")}>
-                <AlignVerticalSpaceAround className="h-3.5 w-3.5" />
-              </Tap>
-            </div>
+          <Section title="Position" action={tidyTap}>
+            {lineUp(picked.length)}
             <div className="grid grid-cols-2 gap-2">
               {/* a loose picture's place is on the canvas: its own box only follows it */}
               {num("X", "X", box.x + (page.loose ? (page.x ?? 0) : 0), (n) => (l) => ({ ...l, x: round(l.x + n - box.x - (page.loose ? (page.x ?? 0) : 0)) }))}
@@ -580,6 +649,19 @@ export function Inspector({
               </Tap>
             </div>
           </Section>
+          {/* how the picked layers follow the frame's edges when it changes size; the pressed one again takes the pin off */}
+          {!page.loose && (
+            <Section title="Pin to the frame">
+              {(["x", "y"] as const).map((axis) => {
+                const now = same((l) => l.pin?.[axis]);
+                const set = (v: string) => (l: Layer): Layer => {
+                  const pin: Pin = { ...l.pin, [axis]: now === v ? undefined : v };
+                  return { ...l, pin: pin.x || pin.y ? pin : undefined };
+                };
+                return <Choice key={axis} label={axis === "x" ? "Pinned side to side" : "Pinned up and down"} value={now} options={PINS[axis]} onPick={(v) => onPatch(set(v))} />;
+              })}
+            </Section>
+          )}
           <Section title="Appearance">
             <div className="grid grid-cols-2 gap-2">
               {num(
@@ -590,7 +672,7 @@ export function Inspector({
                   return o === null ? null : Math.round(o * 100);
                 })(),
                 (n) => (l) => ({ ...l, opacity: n >= 100 ? undefined : n / 100 }),
-                { min: 0, max: 100 },
+                { min: 0, max: 100, rate: 0.4 },
               )}
               {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
                 num(
@@ -615,7 +697,6 @@ export function Inspector({
             )}
             {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
               slide("Corner smoothing", same((l) => (l.type === "image" || l.type === "shape" ? Math.round((l.smooth ?? 0) * 100) : undefined)), (n) => (l) => (l.type === "image" || l.type === "shape" ? { ...l, smooth: n ? n / 100 : undefined } : l), 0, 100)}
-            {every((l) => l.type !== "image") && slide("Blur", same((l) => (l.type !== "image" ? (l.blur ?? 0) : undefined)), (n) => (l) => (l.type !== "image" ? { ...l, blur: n || undefined } : l), 0, 100)}
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <PickOne
@@ -673,7 +754,7 @@ export function Inspector({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="max-h-96 w-56 overflow-y-auto">
                   {DESIGN_FONTS.map((f) => (
-                    <DropdownMenuItem key={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family } : l))} className="flex items-center justify-between gap-2">
+                    <DropdownMenuItem key={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
                       <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}"`, fontWeight: designWeight(f.family) }}>
                         {f.label}
                       </span>
@@ -682,7 +763,7 @@ export function Inspector({
                   ))}
                   <DropdownMenuSeparator />
                   {ownFonts.map((f) => (
-                    <DropdownMenuItem key={f.id} data-own-font={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family } : l))} className="flex items-center justify-between gap-2">
+                    <DropdownMenuItem key={f.id} data-own-font={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
                       <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}", "Inter"`, fontWeight: 400 }}>
                         {f.family}
                       </span>
@@ -741,6 +822,33 @@ export function Inspector({
                 }}
               />
               {fontSaid && <p className={cn("text-[11px] leading-4", DIM)}>{fontSaid}</p>}
+              {/* the weights the font's family has a face for, and the slant and lines over the letters */}
+              <div className="flex items-center gap-1">
+                <div className="min-w-0 flex-1">
+                  {(() => {
+                    const weight = same((l) => (l.type === "text" ? faceOf(l.font, l.weight, l.italic).weight : undefined));
+                    return (
+                      <PickOne
+                        label="Weight"
+                        value={weight === null ? "Mixed" : (WEIGHT_NAMES[weight] ?? String(weight))}
+                        options={(fontNow ? weightsOf(fontNow) : []).map((w) => [String(w), WEIGHT_NAMES[w] ?? String(w)] as const)}
+                        onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, weight: Number(v) } : l))}
+                      />
+                    );
+                  })()}
+                </div>
+                {(
+                  [
+                    ["italic", "Italic", Italic],
+                    ["underline", "Underline", Underline],
+                    ["strike", "Strikethrough", Strikethrough],
+                  ] as const
+                ).map(([k, label, Icon]) => (
+                  <Tap key={k} label={label} on={same((l) => (l.type === "text" ? !!l[k] : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? ({ ...l, [k]: l[k] ? undefined : true } as Layer) : l))}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </Tap>
+                ))}
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 {num("Aa", "Font size", same((l) => (l.type === "text" ? l.size : undefined)), (n) => (l) => (l.type === "text" ? { ...l, size: n } : l), { min: 8, max: 600 })}
                 {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}
@@ -778,10 +886,19 @@ export function Inspector({
                 <Tap label="Even out the lines" on={same((l) => (l.type === "text" ? !!l.balance : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, balance: l.balance ? undefined : true } : l))}>
                   <WrapText className="h-3.5 w-3.5" />
                 </Tap>
-                <Tap label="Capitals" on={same((l) => (l.type === "text" ? !!l.upper : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, upper: l.upper ? undefined : true } : l))}>
-                  <CaseUpper className="h-3.5 w-3.5" />
-                </Tap>
               </div>
+              {(() => {
+                const CASES = [["typed", "As typed"], ["upper", "Upper case"], ["lower", "Lower case"], ["title", "Title case"], ["small", "Small capitals"]] as const;
+                const now = same((l) => (l.type === "text" ? (caseOf(l) ?? "typed") : undefined));
+                return (
+                  <PickOne
+                    label="Case"
+                    value={CASES.find(([v]) => v === now)?.[1] ?? "Mixed"}
+                    options={CASES}
+                    onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, upper: undefined, case: v === "typed" ? undefined : v } : l))}
+                  />
+                );
+              })()}
             </Section>
           )}
           {text && (
@@ -821,27 +938,7 @@ export function Inspector({
               )}
             </Section>
           )}
-          <Section
-            title="Effects"
-            action={addOrRemove(picked.some((l) => l.shadow), "shadow", () => onPatch((l) => ({ ...l, shadow: SHADOW })), () => onPatch((l) => ({ ...l, shadow: undefined })))}
-          >
-            {picked.some((l) => l.shadow) && (
-              <>
-                <div className="grid grid-cols-[1fr_4.5rem] gap-2">
-                  {colour("Shadow", same((l) => l.shadow?.color), (c) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), color: c } }))}
-                  {num("%", "Shadow strength in percent", (() => {
-                    const o = same((l) => l.shadow?.opacity);
-                    return o === null ? null : Math.round(o * 100);
-                  })(), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), opacity: n / 100 } }), { min: 0, max: 100 })}
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {num("X", "Shadow X", same((l) => l.shadow?.x), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), x: n } }), { min: -1000, max: 1000 })}
-                  {num("Y", "Shadow Y", same((l) => l.shadow?.y), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), y: n } }), { min: -1000, max: 1000 })}
-                  {num("◌", "Shadow blur", same((l) => l.shadow?.blur), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), blur: n } }), { min: 0, max: 400 })}
-                </div>
-              </>
-            )}
-          </Section>
+          <Effects picked={picked} onPatch={onPatch} num={num} slide={slide} colour={colour} />
           {image && (
             <Section
               title="Picture"
@@ -1197,6 +1294,145 @@ function FillList({ fills, design, colours, onSet, onLive, onDropper, base }: { 
   );
 }
 
+const EFFECT_NAMES: Record<Effect["type"], string> = { shadow: "Drop shadow", "inner-shadow": "Inner shadow", blur: "Layer blur", "progressive-blur": "Progressive blur", "background-blur": "Background blur", noise: "Noise" };
+/** A new effect of a kind, as + gives it or a change of kind makes it of one there (a shadow stays the shadow it was, a blur keeps how much). */
+function effectNew(type: Effect["type"], was?: Effect): Effect {
+  const shadowy = (t: Effect["type"]) => t === "shadow" || t === "inner-shadow";
+  if (was && shadowy(was.type) && shadowy(type)) return { ...(was as Extract<Effect, { color: string }>), type: type as "shadow" | "inner-shadow" };
+  const blur = was && "blur" in was && !shadowy(was.type) ? was.blur : undefined;
+  if (type === "shadow" || type === "inner-shadow") return { type, color: "#000000", opacity: 0.25, blur: 16, x: 0, y: type === "shadow" ? 8 : 4 };
+  if (type === "progressive-blur") return { type, blur: blur ?? 40, from: 0.45, to: 1, angle: 90 };
+  if (type === "noise") return { type, amount: 15, size: 2 };
+  return { type, blur: blur ?? 24 };
+}
+
+/**
+ * The picked layers' effects, the top one first (as it is drawn: the last in the list): each one's kind, its numbers,
+ * a switch to hide it and a − to take it off; dragged by its handle to another place in the list. A few ready-made
+ * sets in Presets. Layers whose lists differ show none, and + gives each one more.
+ */
+function Effects({ picked, onPatch, num, slide, colour }: {
+  picked: Layer[];
+  onPatch: (fn: (l: Layer) => Layer, merge?: string) => void;
+  num: (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more?: { min?: number; max?: number; step?: number }) => ReactNode;
+  slide: (label: string, value: number | null, to: (n: number) => (l: Layer) => Layer, min: number, max: number) => ReactNode;
+  colour: (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => ReactNode;
+}) {
+  const rows = useRef<(HTMLDivElement | null)[]>([]);
+  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  const lists = picked.map(effectsOf);
+  const list = lists.every((x) => JSON.stringify(x) === JSON.stringify(lists[0])) ? (lists[0] ?? []) : null;
+  /** Each picked layer with its effect at `n` (in the list's own order) through `f`. */
+  const edit = (n: number, f: (e: Effect) => Effect) => (l: Layer) => withEffects(l, effectsOf(l).map((e, i) => (i === n ? f(e) : e)));
+  const set = (n: number, more: Partial<Record<string, number | string>>) => edit(n, (e) => ({ ...e, ...more }) as Effect);
+  /** The row under the pointer while one is dragged (the first or the last when it is past them). */
+  const rowAt = (y: number) => {
+    const at = rows.current.findIndex((el) => el && y < el.getBoundingClientRect().bottom);
+    return at < 0 ? (list?.length ?? 1) - 1 : at;
+  };
+  const shown = list ? [...list].reverse() : [];
+  return (
+    <Section
+      title="Effects"
+      action={
+        <div className="flex items-center gap-0.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger className={cn("h-6 rounded-[5px] px-1.5 outline-none hover:bg-zinc-500/15", DIM)}>Presets</DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {EFFECT_PRESETS.map((p) => (
+                <DropdownMenuItem key={p.name} onSelect={() => onPatch((l) => withEffects(l, p.effects))}>
+                  {p.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Tap label="Add an effect" disabled={lists.some((x) => x.length >= EFFECTS_MAX)} onClick={() => onPatch((l) => withEffects(l, [...effectsOf(l), effectNew("shadow")]))}>
+            <Plus className="h-3.5 w-3.5" />
+          </Tap>
+        </div>
+      }
+    >
+      {!list && <p className={DIM}>Each layer has its own</p>}
+      {shown.map((e, r) => {
+        const n = shown.length - 1 - r;
+        const pct = (v: number) => Math.round(v * 100);
+        return (
+          <div key={r} ref={(el) => void (rows.current[r] = el)} className={cn("flex flex-col gap-2 rounded-[5px]", drag && drag.to === r && drag.from !== r && "ring-1 ring-[#0d99ff]")}>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="Drag to reorder"
+                className={cn("flex h-6 w-4 shrink-0 cursor-grab touch-none items-center justify-center", DIM)}
+                onPointerDown={(ev) => {
+                  if (ev.button !== 0) return;
+                  ev.currentTarget.setPointerCapture(ev.pointerId);
+                  setDrag({ from: r, to: r });
+                }}
+                onPointerMove={(ev) => drag && setDrag({ ...drag, to: rowAt(ev.clientY) })}
+                onPointerUp={() => {
+                  setDrag(null);
+                  if (!drag || drag.to === drag.from) return;
+                  // the rows are the list upside down: row r is the list's (length - 1 - r)
+                  const from = shown.length - 1 - drag.from;
+                  const to = shown.length - 1 - drag.to;
+                  onPatch((l) => {
+                    const fx = [...effectsOf(l)];
+                    const [moved] = fx.splice(from, 1);
+                    fx.splice(to, 0, moved!);
+                    return withEffects(l, fx);
+                  });
+                }}
+                onPointerCancel={() => setDrag(null)}
+              >
+                <GripVertical className="h-3.5 w-3.5" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <PickOne label="Effect" value={EFFECT_NAMES[e.type]} options={DESIGN_EFFECTS.map((t) => [t, EFFECT_NAMES[t]] as const)} onPick={(t) => onPatch(edit(n, (was) => ({ ...effectNew(t, was), ...(was.hidden ? { hidden: true as const } : {}) })))} />
+              </div>
+              <Tap label={e.hidden ? "Show the effect" : "Hide the effect"} onClick={() => onPatch(edit(n, (x) => ({ ...x, hidden: x.hidden ? undefined : true })))}>
+                {e.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </Tap>
+              <Tap label="Remove the effect" onClick={() => onPatch((l) => withEffects(l, effectsOf(l).filter((_, i) => i !== n)))}>
+                <Minus className="h-3.5 w-3.5" />
+              </Tap>
+            </div>
+            <div className={cn("flex flex-col gap-2", e.hidden && "opacity-50")}>
+              {(e.type === "shadow" || e.type === "inner-shadow") && (
+                <>
+                  <div className="grid grid-cols-[1fr_4.5rem] gap-2">
+                    {colour(`${EFFECT_NAMES[e.type]} colour`, e.color, (c) => set(n, { color: c }))}
+                    {num("%", "Shadow strength in percent", pct(e.opacity), (v) => set(n, { opacity: v / 100 }), { min: 0, max: 100 })}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {num("X", "Shadow X", e.x, (v) => set(n, { x: v }), { min: -1000, max: 1000 })}
+                    {num("Y", "Shadow Y", e.y, (v) => set(n, { y: v }), { min: -1000, max: 1000 })}
+                    {num("◌", "Shadow blur", e.blur, (v) => set(n, { blur: v }), { min: 0, max: 400 })}
+                    {num("⤢", "Shadow spread", e.spread ?? 0, (v) => set(n, { spread: v }), { min: -200, max: 200 })}
+                  </div>
+                </>
+              )}
+              {(e.type === "blur" || e.type === "background-blur" || e.type === "progressive-blur") && slide("Blur", e.blur, (v) => set(n, { blur: v }), 0, 200)}
+              {e.type === "progressive-blur" && (
+                <div className="grid grid-cols-3 gap-2">
+                  {num("From", "Sharp up to, in percent of the layer", pct(e.from), (v) => set(n, { from: v / 100 }), { min: 0, max: 100 })}
+                  {num("To", "Fully blurred from, in percent of the layer", pct(e.to), (v) => set(n, { to: v / 100 }), { min: 0, max: 100 })}
+                  {num("∠", "Direction in degrees: 90 is top to bottom", e.angle, (v) => set(n, { angle: v }), { min: -360, max: 360 })}
+                </div>
+              )}
+              {e.type === "noise" && (
+                <>
+                  {slide("Amount", e.amount, (v) => set(n, { amount: Math.max(1, v) }), 1, 100)}
+                  <div className="grid grid-cols-2 gap-2">{num("◦", "Grain size in pixels", e.size ?? 1, (v) => set(n, { size: v }), { min: 1, max: 20 })}</div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </Section>
+  );
+}
+
 /** A strokes section: + adds a line on top, each row its colour, its width and its settings (side, dashes, ends, corners, a width a side, heads). */
 function StrokeList({ strokes, colours, onSet, onLive, onDropper, max, text, box, open, inside }: { strokes: Stroke[] | null; colours: readonly string[]; onSet: (strokes: Stroke[], merge?: string) => void; onLive: (strokes: Stroke[] | null) => void; onDropper?: (take: (hex: string) => void) => void; max: number; text?: boolean; box?: boolean; open?: boolean; inside?: boolean }) {
   const [more, setMore] = useState<Stroke | null>(null);
@@ -1283,3 +1519,5 @@ function StrokeMore({ s, box, open, max, set }: { s: Stroke; box?: boolean; open
     </div>
   );
 }
+
+export { Choice, Colour, Num, Section, Tap };

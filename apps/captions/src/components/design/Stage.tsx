@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
-import { boundsOf, boxPick, frameOf, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
+import { boundsOf, boxPick, dropTarget, frameOf, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { placeLayers } from "@/lib/design/resize";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
-import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
+import { framePlan, keptScale, useView, zoomStop, type KeptFrame, type ViewStore } from "@/lib/design/view";
+import { aidTargets } from "@/lib/design/aids";
+import { Aids } from "./Aids";
+import { edgePan, SNAP_PX, turnTo } from "@/lib/design/feel";
 import { cn } from "@/lib/utils";
+import { TypedText, type TypedHandle } from "./TypedText";
 
 /**
  * The canvas: every frame of the design where it lies, each drawn as it will be saved, and the hands on them.
@@ -34,7 +39,8 @@ import { cn } from "@/lib/utils";
  *               the layer's rotation; just outside a corner turns it (Shift: steps of 15°). Several layers resize
  *               together.
  *   The view    the wheel scrolls, ⌘ or Ctrl with the wheel (or a pinch) zooms about the pointer, Space or the hand
- *               tool or the middle button drags the canvas.
+ *               tool or the middle button drags the canvas; Z held, a click zooms in there (Alt: out). A drag that
+ *               moves, draws or boxes near the canvas's edge runs the view on (feel.ts edgeSpeed).
  *   Drawing     while the view or a layer moves, every frame that did not change is put on the canvas as the picture
  *               kept of it (lib/design/view.ts framePlan), so a step of the wheel costs a few pictures copied, not
  *               every layer of every frame drawn again; a moment after the last move the frames are exact again.
@@ -45,7 +51,7 @@ export type Tool = "move" | "hand" | "frame" | DesignShape | "text" | "pen";
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 const CURSOR: Record<Handle, string> = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
 /** How near (in screen pixels) a line catches what is moving. */
-const SNAP = 6;
+const SNAP = SNAP_PX;
 /** No layer is resized smaller than this, in design pixels. */
 const MIN = 8;
 const BLUE = "#0d99ff";
@@ -85,6 +91,7 @@ export function Stage({
   onMakeFrame,
   editing,
   onEdit,
+  onTextSelect,
   onMakePath,
   shaping,
   onShape,
@@ -127,6 +134,8 @@ export function Stage({
   /** the text layer being typed in */
   editing: string | null;
   onEdit: (id: string | null) => void;
+  /** the letters picked in the words being typed (none: only the caret is in them), for the style panel to style */
+  onTextSelect?: (sel: { start: number; end: number } | null) => void;
   /** a line drawn with the pen, in its frame's pixels: its box and its points in parts of that box */
   onMakePath: (at: number, path: { x: number; y: number; w: number; h: number; points: PathLayer["points"]; closed: boolean }) => void;
   /** the path layer whose points are shown, and the one of them that is picked */
@@ -144,13 +153,15 @@ export function Stage({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const typing = useRef<HTMLTextAreaElement>(null);
+  const typing = useRef<TypedHandle>(null);
   const [guides, setGuides] = useState<Guides | null>(null);
   const [band, setBand] = useState<Rect | null>(null);
   /** the box a making tool is drawing, in the canvas's pixels */
   const [drawn, setDrawn] = useState<Rect | null>(null);
   const [hover, setHover] = useState<{ k: number; id: string } | null>(null);
   const [space, setSpace] = useState(false);
+  /** Z held: a click zooms in where it is, with Alt out */
+  const [zooming, setZooming] = useState(false);
   /** The line the pen is drawing: its frame, its points in that frame's pixels, and where the pointer is on the canvas. */
   const [pen, setPen] = useState<{ k: number; points: Anchor[] } | null>(null);
   const [penAt, setPenAt] = useState<Point | null>(null);
@@ -200,7 +211,7 @@ export function Stage({
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
   const typed = page?.layers.find((l): l is TextLayer => l.id === editing && l.type === "text");
   // the words being typed are set at the size they are drawn at (their own, or the one they shrank to)
-  const typedAs = typed ? { ...typed, size: setText(typed, measurer(fontOf(typed))).size } : typed;
+  const typedAs = typed ? { ...typed, size: textSize(typed) } : typed;
   const cropped = page?.layers.find((l): l is ImageLayer => l.id === cropping && l.type === "image");
   const shaped = page?.layers.find((l): l is PathLayer => l.id === shaping?.id && l.type === "path");
   // the wheel or a pinch over a picture that is being moved in its box zooms the picture, not the canvas
@@ -218,13 +229,6 @@ export function Stage({
         : null;
   });
 
-  // the words to type get the keys without the canvas scrolling to them: a box partly off the canvas would otherwise
-  // drag everything on it sideways, and the pointer would then be off by that much (found in a real browser)
-  const typedId = typed?.id;
-  useEffect(() => {
-    typing.current?.focus({ preventScroll: true });
-    typing.current?.select();
-  }, [typedId]);
 
   // The frames, drawn. A frame that fits a kept picture at this zoom is put on the canvas as that picture, made again
   // only when its content changed; the others are copied. `sharp` moves a moment after the last drawing that left a
@@ -258,20 +262,23 @@ export function Stage({
       const f = frameOf(p, k, width, height);
       const left = view.x + f.x * view.z;
       const top = view.y + f.y * view.z;
-      if (left > room.w || left + f.w * view.z < 0 || top > room.h || top + f.h * view.z < 0) return;
+      // a frame that does not clip its layers shows them past its edges too
+      const area = shownArea(p, f.w, f.h);
+      if (left + area.x * view.z > room.w || left + (area.x + area.w) * view.z < 0 || top + area.y * view.z > room.h || top + (area.y + area.h) * view.z < 0) return;
       // the words being typed are in the box over the frame: the layer itself is not drawn under them
       const inWords = editing && k === at ? editing : "";
       const shown = inWords ? { ...p, layers: p.layers.filter((l) => l.id !== inWords) } : p;
       // on whole device pixels, so a kept picture copied there and the frame drawn there are the same picture
       const x = Math.round(left * dpr);
       const y = Math.round(top * dpr);
-      const content = [numberOf(p.layers), p.background, p.gradient ? JSON.stringify(p.gradient) : "", f.w, f.h, numberOf(loaded), version, inWords].join("|");
+      const content = [numberOf(p.layers), p.background, p.gradient ? JSON.stringify(p.gradient) : "", p.fills ? JSON.stringify(p.fills) : "", p.strokes ? JSON.stringify(p.strokes) : "", f.w, f.h, numberOf(loaded), version, inWords].join("|");
       const plan = framePlan({ want, finest: keptScale(f.w, f.h), content, had: kept.get(p.id)?.made, viewMoved, exact });
-      if (plan.how === "direct") {
+      // shortcut: a frame that does not clip is drawn whole at every drawing, never kept as a picture; keep one of its area if many such frames get slow
+      if (plan.how === "direct" || p.clip === false) {
         ctx.save();
         ctx.setTransform(want, 0, 0, want, x, y);
         ctx.beginPath();
-        ctx.rect(0, 0, f.w, f.h);
+        ctx.rect(area.x, area.y, area.w, area.h);
         ctx.clip();
         drawPage(ctx, shown, f.w, f.h, loaded);
         ctx.restore();
@@ -365,11 +372,22 @@ export function Stage({
       e.preventDefault();
       setSpace(true);
     };
-    const off = () => setSpace(false);
+    const off = () => (setSpace(false), setZooming(false));
+    const z = (e: KeyboardEvent) => {
+      if (e.code !== "KeyZ") return;
+      if (e.type === "keyup") return setZooming(false);
+      const a = document.activeElement;
+      if (e.metaKey || e.ctrlKey || (a && a !== document.body && a !== box.current)) return;
+      setZooming(true);
+    };
+    window.addEventListener("keydown", z);
+    window.addEventListener("keyup", z);
     window.addEventListener("keydown", key);
     window.addEventListener("keyup", key);
     window.addEventListener("blur", off);
     return () => {
+      window.removeEventListener("keydown", z);
+      window.removeEventListener("keyup", z);
       window.removeEventListener("keydown", key);
       window.removeEventListener("keyup", key);
       window.removeEventListener("blur", off);
@@ -382,29 +400,74 @@ export function Stage({
     const v = live.current;
     return { x: (e.clientX - r.left - v.x) / v.z, y: (e.clientY - r.top - v.y) / v.z };
   };
-  /** The frame under a point of the canvas: where two lie over each other, the later one. */
-  const frameUnder = (p: Point, framesOnly = false): number => {
-    for (let k = fr.length - 1; k >= 0; k--) if ((!framesOnly || !pages[k]!.loose) && p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
+  /** The frame under a point of the canvas (a loose piece is none): where two lie over each other, the later one. */
+  const frameUnder = (p: Point): number => {
+    for (let k = fr.length - 1; k >= 0; k--) if (!pages[k]!.loose && p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
     return -1;
   };
   const hitAt = (k: number, p: Point) => (k >= 0 ? layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null);
+  /**
+   * What a press at a point is on: the topmost layer drawn there and its frame, else the frame under it (-1: empty
+   * canvas). A frame that clips hides its layers past its edges, and its ground covers what lies under it.
+   */
+  const pickAt = (p: Point): { k: number; hit: Layer | null } => {
+    for (let k = fr.length - 1; k >= 0; k--) {
+      const f = fr[k]!;
+      const g = pages[k]!;
+      const inside = p.x >= f.x && p.x <= f.x + f.w && p.y >= f.y && p.y <= f.y + f.h;
+      if (!inside && !g.loose && g.clip !== false) continue;
+      const hit = hitAt(k, p);
+      if (hit || (inside && !g.loose)) return { k, hit };
+    }
+    return { k: -1, hit: null };
+  };
 
   // a drag under way when the canvas goes away ends there, with its listeners
   const dragging = useRef<(() => void) | null>(null);
   useEffect(() => () => dragging.current?.(), []);
 
-  /** Follows the pointer until it lifts. Nothing moves before the pointer has: a click is not a drag. */
-  const drag = (e: React.PointerEvent, move: (ev: PointerEvent) => void, up: (moved: boolean) => void = () => {}) => {
+  /**
+   * Follows the pointer until it lifts. Nothing moves before the pointer has: a click is not a drag. `edge`: held near
+   * the canvas's edge (or past it), the view runs on that way and what is dragged goes with the pointer.
+   */
+  const drag = (e: React.PointerEvent, move: (ev: PointerEvent) => void, up: (moved: boolean) => void = () => {}, edge = false) => {
     e.preventDefault();
     const x0 = e.clientX;
     const y0 = e.clientY;
     let moved = false;
+    let last: PointerEvent | null = null;
+    let tick = 0;
+    let then = 0;
+    const run = (at: number) => {
+      tick = 0;
+      const r = box.current?.getBoundingClientRect();
+      if (!last || !r) return;
+      const v = edgePan(last.clientX - r.left, last.clientY - r.top, r.width, r.height);
+      if (!v.x && !v.y) return;
+      // seconds since the last picture, at most a twentieth: a stalled tab does not jump the view when it wakes
+      const dt = then ? Math.min(0.05, (at - then) / 1000) : 0;
+      then = at;
+      if (dt) {
+        const now = live.current;
+        setView({ ...now, x: now.x + v.x * dt, y: now.y + v.y * dt });
+        move(last);
+      }
+      tick = requestAnimationFrame(run);
+    };
     const onMove = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
       moved = true;
+      last = ev;
       move(ev);
+      if (edge && !tick) {
+        then = 0;
+        tick = requestAnimationFrame(run);
+      }
     };
     const onUp = () => {
+      cancelAnimationFrame(tick);
+      tick = 0;
+      last = null;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -460,15 +523,13 @@ export function Stage({
       e,
       (ev) => {
         const m = moveOf(ev, from);
-        const mid = { x: f.x + b0.x + m.dx + b0.w / 2, y: f.y + b0.y + m.dy + b0.h / 2 };
-        // a loose picture is no frame to land in
-        const over = frameUnder(mid, true);
         // another frame takes them only when it has room for them; a copy stays in a frame that has room too
         const fits = (n: number) => pages[n]!.layers.length + moving.length <= DESIGN_LIMITS.layers;
-        const to = over >= 0 && over !== k && fits(over) ? over : k;
-        // pictures taken out of their frame onto empty canvas lie loose there, uncut
-        const out = over < 0 && !p.loose && !copy && moving.every((l) => l.type === "image");
-        if (to === k && copy && !fits(k)) return;
+        // layers taken wholly off their frame onto empty canvas lie loose there, uncut (hands.ts dropTarget)
+        const lands = dropTarget(pages.map((q, n) => ({ rect: fr[n]!, loose: q.loose, full: !fits(n) })), k, { ...b0, x: f.x + b0.x + m.dx, y: f.y + b0.y + m.dy });
+        const out = lands < 0;
+        const to = out ? k : lands;
+        if (!out && to === k && copy && !fits(k)) return;
         const host = pages[to]!;
         const g = fr[to]!;
         // in the host frame's own pixels
@@ -478,7 +539,8 @@ export function Stage({
         const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l]))];
         const near = SNAP / live.current.z;
         const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
-        const s = snapMove(at, targets, near);
+        // and on the host frame's guides, grids and safe parts (lib/design/aids.ts)
+        const s = snapMove(at, host.loose || out ? targets : [...targets, ...aidTargets(host, g.w, g.h)], near);
         // an axis that caught on no edge or middle catches on even spacing with the layers beside it (not the frame)
         const others = targets.slice(1);
         const evenX = m.lockX || s.x !== undefined ? null : snapSpacing({ ...at, y: at.y + (m.lockY ? 0 : s.dy) }, others, near, "x");
@@ -516,6 +578,7 @@ export function Stage({
           onPick(k, one ? groupOf(p.layers, one) : [hit]);
         }
       },
+      true,
     );
   };
 
@@ -555,13 +618,15 @@ export function Stage({
       },
       (moved) => {
         setBand(null);
-        // a press that drew no box: nothing is picked any more (with Shift, what was picked stays)
-        if (!moved && !add) onPick(home, []);
+        // a press that drew no box: nothing is picked any more (with Shift, what was picked stays); on the background
+        // of the frame whose layers are picked, that frame is
+        if (!moved && !add) onPick(home, [], k >= 0 && k === at && selected.length > 0 && !pages[k]!.loose);
       },
+      true,
     );
   };
 
-  /** A making tool's box: a layer's in frame `k`, or (k < 0) a new frame's on the canvas. */
+  /** A making tool's box: a layer's in frame `k` (k < 0: loose on the canvas, in its pixels), or the frame tool's new frame on the canvas. */
   const make = (e: React.PointerEvent, k: number) => {
     const from = world(e);
     const ox = k >= 0 ? fr[k]!.x : 0;
@@ -580,9 +645,10 @@ export function Stage({
       () => {
         setDrawn(null);
         const made = r ?? { x: from.x, y: from.y, w: 0, h: 0 };
-        if (k < 0) onMakeFrame(made, !!r);
+        if (tool === "frame") onMakeFrame(made, !!r);
         else onMake(k, { ...made, x: made.x - ox, y: made.y - oy }, !!r);
       },
+      true,
     );
   };
 
@@ -618,9 +684,7 @@ export function Stage({
     drag(
       e,
       (ev) => {
-        let r = (l.rotate ?? 0) + angle(world(ev)) - a0;
-        if (ev.shiftKey) r = Math.round(r / 15) * 15;
-        r = Math.round((((r % 360) + 540) % 360) - 180);
+        const r = turnTo(l.rotate ?? 0, angle(world(ev)) - a0, ev.shiftKey);
         last = withLayers(page, [{ ...l, rotate: r || undefined }]);
         onLive([last]);
       },
@@ -666,8 +730,9 @@ export function Stage({
 
   /** A press with the pen: a point of the line; on its first point, the line closed and done. Dragged on, the point's two handles. */
   const penDown = (e: React.PointerEvent, p: Point, under: number) => {
-    const k = pen?.k ?? (under >= 0 ? under : at);
-    const f = fr[k];
+    const k = pen?.k ?? under;
+    // k < 0: loose on the canvas, in its own pixels
+    const f = k < 0 ? { x: 0, y: 0 } : fr[k];
     // its frame is gone (taken out somewhere else): so is the line; and a line holds no more points than a path may
     if (!f) return void (setPen(null), setPenAt(null));
     if ((pen?.points.length ?? 0) >= DESIGN_LIMITS.points) return finishPen(false);
@@ -707,12 +772,15 @@ export function Stage({
     );
   };
 
-  /** A frame dragged by its name: it catches on the other frames' edges and middles. A press without a drag only picks it. */
-  const moveFrame = (e: React.PointerEvent, k: number) => {
+  /**
+   * A frame dragged by its name: it catches on the other frames' edges and middles. A press without a drag only picks
+   * it; one that started on its layer `child` (the frame was picked) picks that layer.
+   */
+  const moveFrame = (e: React.PointerEvent, k: number, child?: string[]) => {
     // the hand, the dropper, a making tool and the other buttons are the canvas's own press
     if (e.button !== 0 || space || tool !== "move" || dropper) return;
     e.stopPropagation();
-    if (typing.current) return typing.current.blur();
+    if (typing.current) return typing.current.end();
     box.current?.focus({ preventScroll: true });
     const id = pages[k]!.id;
     // Shift: this frame joins the picked ones, or leaves them; nothing is dragged
@@ -745,12 +813,14 @@ export function Stage({
         setGuides(null);
         onLive(null);
         if (last) onCommit(last);
+        else if (!moved && child) onPick(k, child);
         else if (!moved && many) onPick(k, [], true);
       },
+      true,
     );
   };
 
-  /** The picked frame resized by a handle. Its layers stay where they are on the canvas: pulled from its left or top, its corner moves under them. */
+  /** The picked frame resized by a handle. Its layers follow its edges as their pins say; an unpinned one stays where it is on the canvas: pulled from its left or top, its corner moves under it. */
   const resizeFrame = (e: React.PointerEvent, h: Handle) => {
     e.stopPropagation();
     if (e.button !== 0 || !page || !here) return;
@@ -762,7 +832,7 @@ export function Stage({
         const to = world(ev);
         const f = resizeBox(here, h, to.x - from.x, to.y - from.y, { keep: ev.shiftKey, center: ev.altKey, min: DESIGN_LIMITS.frameMin });
         if (f.w > DESIGN_LIMITS.frameMax || f.h > DESIGN_LIMITS.frameMax) return;
-        last = { ...page, x: f.x, y: f.y, w: f.w, h: f.h, layers: page.layers.map((l) => ({ ...l, x: l.x - (f.x - here.x), y: l.y - (f.y - here.y) })) };
+        last = { ...page, x: f.x, y: f.y, w: f.w, h: f.h, layers: placeLayers(page.layers, here, f, "stay") };
         onLive([last]);
       },
       () => {
@@ -774,7 +844,7 @@ export function Stage({
 
   const down = (e: React.PointerEvent) => {
     // a press beside the words being typed ends the typing and keeps them; it picks or moves nothing
-    if (typing.current) return typing.current.blur();
+    if (typing.current) return typing.current.end();
     box.current?.focus({ preventScroll: true });
     if (dropper) {
       // the colour as it is drawn, read off the canvas itself (a browser's own dropper is not in every browser); a
@@ -788,9 +858,14 @@ export function Stage({
       return;
     }
     if (e.button === 1 || (e.button === 0 && (space || tool === "hand"))) return pan(e);
+    if (zooming && e.button === 0) {
+      e.preventDefault();
+      const r = box.current!.getBoundingClientRect();
+      const v = held.aim();
+      return held.glide(zoomAt(v, zoomStop(v.z, !e.altKey), e.clientX - r.left, e.clientY - r.top));
+    }
     const p = world(e);
-    const k = frameUnder(p);
-    const hit = hitAt(k, p);
+    const { k, hit } = pickAt(p);
     if (e.button !== 0) return;
     // a picture being moved in its box: a press on it slides it, a press beside it is done with it
     if (cropped && here) {
@@ -806,20 +881,19 @@ export function Stage({
       onShape(null);
     }
     if (tool === "frame") return make(e, -1);
-    // a layer is drawn on the frame under the press, else the current one (a loose picture is no frame to draw on);
-    // a canvas with no frame yet has nothing to draw a layer on
+    // a layer is drawn on the frame under the press; on empty canvas (or over a loose piece) it lies loose there (-1)
     if (tool !== "move") {
-      const under = frameUnder(p, true);
-      const onto = under >= 0 ? under : pages[at] && !pages[at]!.loose ? at : pages.findIndex((x) => !x.loose);
-      if (onto < 0) return;
+      const onto = frameUnder(p);
       return tool === "pen" ? penDown(e, p, onto) : make(e, onto);
     }
-    // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it)
-    if (!hit && k >= 0 && (framedIds.includes(pages[k]!.id) || !pages[k]!.layers.some((l) => !l.hidden && !l.locked))) return moveFrame(e, k);
-    if (!hit) return marquee(e, k);
-    const mine = k === at ? selected : [];
     // a layer of a group picks the whole group; with ⌘ (or Ctrl) the one layer inside it
     const deep = e.metaKey || (e.ctrlKey && !ON_A_MAC);
+    // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it): a drag
+    // from one of its layers moves the frame, a click picks that layer
+    if (k >= 0 && framedIds.includes(pages[k]!.id) && (!hit || (!deep && !e.shiftKey))) return moveFrame(e, k, hit ? groupOf(pages[k]!.layers, hit) : undefined);
+    if (!hit && k >= 0 && !pages[k]!.layers.some((l) => !l.hidden && !l.locked)) return moveFrame(e, k);
+    if (!hit) return marquee(e, k);
+    const mine = k === at ? selected : [];
     const whole = deep ? [hit.id] : groupOf(pages[k]!.layers, hit);
     if (e.shiftKey) return onPick(k, mine.includes(hit.id) ? mine.filter((id) => !whole.includes(id)) : [...new Set([...mine, ...whole])]);
     const ids = mine.includes(hit.id) && !deep ? mine : whole;
@@ -829,9 +903,9 @@ export function Stage({
 
   const over = (e: React.PointerEvent) => {
     const p = world(e);
-    const k = frameUnder(p);
     if (pen) setPenAt(p);
-    const hit = !e.buttons && tool === "move" && !space ? hitAt(k, p) : null;
+    const { k, hit: under } = pickAt(p);
+    const hit = !e.buttons && tool === "move" && !space ? under : null;
     if ((hit?.id ?? null) !== (hover?.id ?? null) || (hit && k !== hover?.k)) setHover(hit ? { k, id: hit.id } : null);
   };
 
@@ -866,11 +940,12 @@ export function Stage({
       <ContextMenuTrigger asChild>
         <div
           ref={box}
+          data-wheel="snap"
           tabIndex={0}
           role="application"
           aria-label="Canvas"
           className="absolute inset-0 touch-none select-none overflow-hidden outline-none"
-          style={{ cursor: dropper ? "crosshair" : panning ? "grabbing" : space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
+          style={{ cursor: dropper ? "crosshair" : zooming ? "zoom-in" : panning ? "grabbing" : space || tool === "hand" ? "grab" : tool === "move" ? "default" : "crosshair" }}
           onPointerDown={down}
           onPointerMove={over}
           onPointerLeave={() => setHover(null)}
@@ -878,16 +953,14 @@ export function Stage({
           // event, since that is what opens it (a Ctrl-click on a Mac too)
           onContextMenu={(e) => {
             const p = world(e);
-            const k = frameUnder(p);
-            const hit = hitAt(k, p);
+            const { k, hit } = pickAt(p);
             if (hit && !(k === at && selected.includes(hit.id))) onPick(k, groupOf(pages[k]!.layers, hit));
           }}
           // nothing scrolls the canvas but its own view
           onScroll={(e) => e.currentTarget.scrollTo(0, 0)}
           onDoubleClick={(e) => {
             const p = world(e);
-            const k = frameUnder(p);
-            const hit = hitAt(k, p);
+            const { k, hit } = pickAt(p);
             if (tool === "pen") return finishPen(false);
             // on a point of the path being shaped: a corner made smooth, or smooth made a corner
             if (shaped && here && page) {
@@ -909,6 +982,7 @@ export function Stage({
           }}
         >
           <canvas ref={canvas} aria-label="The frames" className="pointer-events-none block h-full w-full" />
+          <Aids pages={pages} frames={fr} view={view} at={at} onCommit={onCommit} />
           {pages.map((p, k) => !p.loose && (
             <button
               key={p.id}
@@ -944,10 +1018,10 @@ export function Stage({
           {band && <div className="pointer-events-none absolute border border-[#0d99ff] bg-[#0d99ff]/10" style={onScreen(band)} />}
           {drawn && <div className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={onScreen(drawn)} />}
           {pen &&
-            fr[pen.k] &&
+            (pen.k < 0 || fr[pen.k]) &&
             (() => {
               // the line so far, its points, and a thin line on to the pointer
-              const f = fr[pen.k]!;
+              const f = pen.k < 0 ? { x: 0, y: 0 } : fr[pen.k]!;
               const at = (x: number, y: number): [number, number] => [view.x + (f.x + x) * view.z, view.y + (f.y + y) * view.z];
               const last = pen.points.at(-1)!;
               const from = at(last.x, last.y);
@@ -1025,25 +1099,22 @@ export function Stage({
             </div>
           )}
           {typed && typedAs && page && (
-            <textarea
+            <TypedText
+              key={typed.id}
               ref={typing}
-              aria-label="The words of this layer"
-              defaultValue={typed.text}
-              maxLength={DESIGN_LIMITS.text}
-              onPointerDown={(e) => e.stopPropagation()}
-              onDoubleClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") e.currentTarget.blur();
-                e.stopPropagation();
-              }}
-              onBlur={(e) => {
-                const text = e.currentTarget.value.replace(/\r\n/g, "\n").trim();
+              layer={typed}
+              scale={typedAs.size / typed.size}
+              z={view.z}
+              style={place(at, typed)}
+              onSelect={(sel) => onTextSelect?.(sel)}
+              // the words so far, while focus is in the style panel: saved, the typing still on
+              onSave={(l) => void (JSON.stringify(l) !== JSON.stringify(typed) && onCommit([withLayers(page, [l])]))}
+              onDone={(l) => {
                 onEdit(null);
+                onTextSelect?.(null);
                 // words taken out whole: the layer goes with them
-                if (text !== typed.text) onCommit([text ? withLayers(page, [{ ...typed, text }]) : { ...page, layers: page.layers.filter((l) => l.id !== typed.id) }]);
+                if (JSON.stringify(l) !== JSON.stringify(typed)) onCommit([l.text ? withLayers(page, [l]) : { ...page, layers: page.layers.filter((x) => x.id !== typed.id) }]);
               }}
-              className="absolute resize-none overflow-hidden border-0 bg-transparent p-0 outline outline-1 outline-[#0d99ff]"
-              style={{ ...place(at, typed), font: fontOf(typedAs, view.z), lineHeight: `${lineHeightOf(typedAs) * view.z}px`, letterSpacing: typed.spacing ? `${typed.spacing * view.z}px` : undefined, color: typed.color, textAlign: typed.align, textTransform: typed.upper ? "uppercase" : undefined }}
             />
           )}
         </div>

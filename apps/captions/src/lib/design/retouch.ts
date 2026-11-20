@@ -55,7 +55,7 @@ export function channelTables(a: NonNullable<Retouch["adjust"]>): [Uint8Array, U
 const rgbOf = (hex: string): [number, number, number] => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
 
 /** A whole number from two, well mixed (32-bit): the same grain at every size the picture is drawn at, in every browser. */
-function mixed(x: number, y: number): number {
+export function mixed(x: number, y: number): number {
   let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1);
   h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
   h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
