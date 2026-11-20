@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
+import { aiFor, completeWithFallback } from "./ai-complete";
+import { cleanTitle, TITLE_SYSTEM, titlePrompt, type TitleSource } from "./lib/chat-title";
 import { jobTurn, mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
 import { env } from "./lib/env";
@@ -2037,6 +2039,11 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   };
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   chat.messages.push(asked, reply);
+  // tests take the Mac's requests in order: a name's request is only made in one that asks for it
+  if (!old && chat.title === undefined && chat.id && (process.env.NODE_ENV !== "test" || process.env.CHAT_NAMES)) {
+    const attachments = [...files.map((f) => f.name), ...input.paths, ...input.local, ...input.images.map((im) => im.name)];
+    void nameChat(u, chat.id, { text: input.text, project: project?.name, page: input.context?.title, visible: input.context?.visible, quote: input.context?.selection, attachments }, chat.ai);
+  }
   // every turn goes through the queue: one with nothing ahead and its videos in starts in this call (Stop counts on that)
   (conv.held ??= {})[reply.id] = {
     ask: asked.id,
@@ -2056,6 +2063,23 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
 }
 
 assistantApp.post("/turn", (c) => sendTurn(c));
+
+/** What the usage tally counts a chat's name as. */
+const TITLE_LABEL = "Chat names";
+
+/** A new chat's name, written by its AI from its first message (lib/chat-title.ts). A name given by hand meanwhile wins; a failure keeps its first words. */
+async function nameChat(u: Pick<SessionUser, "username" | "role">, id: string, source: TitleSource, ai?: Selection): Promise<void> {
+  const route = aiFor(u, JOB, TITLE_LABEL, ai);
+  if (route.off) return;
+  // a name needs no long thinking, whatever effort the chat itself runs at
+  if (route.mac?.provider) route.mac.provider.effort = "low";
+  const title = await completeWithFallback(TITLE_SYSTEM, titlePrompt(source), undefined, cleanTitle, route).catch(() => "");
+  const chat = chatOf(load(u.username), id);
+  if (!title || !chat || chat.title !== undefined) return;
+  chat.title = title;
+  save(u.username);
+  tell(u.username);
+}
 
 // GET /action/:id → { action }: a card's Retry (D14). The server asks again (the computer it could not find, the setup,
 // the folder) and the message gets the card as it stands now, or none once its goal is reached; the change stream says so
