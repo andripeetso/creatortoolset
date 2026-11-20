@@ -34,7 +34,9 @@ if (webkitOnly) document.addEventListener("click", (e) => void (e.target instanc
 if (typeof document !== "undefined" && !document.getElementById("video-skin-css")) {
   const style = document.createElement("style");
   style.id = "video-skin-css";
-  style.textContent = skinCss;
+  // outside any @layer: the app's own `img { height: auto }` (Tailwind's base, unlayered) beats the skin's layered rule,
+  // which left the poster its own height, an upright one cropped and a wide one at the top (measured 11-19)
+  style.textContent = `${skinCss}\n.media-skin .media-poster-image { height: 100%; }\n`;
   document.head.append(style);
 }
 
