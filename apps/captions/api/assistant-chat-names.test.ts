@@ -73,7 +73,7 @@ describe("a new chat's name", () => {
     // that one fails too: opening the chat asks once more
     await app.request(`/api/devices/relay/${again.id}/fail`, { method: "POST", ...json({ error: "busy" }, macAuth) });
     await new Promise((r) => setTimeout(r, 20));
-    await app.request(`/api/assistant/chats/${id}`, { headers: { cookie } });
+    await app.request(`/api/assistant/chats/${id}/seen`, { method: "POST", headers: { cookie } });
     const opened = (await (await app.request("/api/devices/relay/wait", { method: "POST", ...json({}, macAuth) })).json()) as Job;
     expect(opened.user).toContain("The assistant's first answer:");
     await done(opened.id, "Floor time reel pauses");

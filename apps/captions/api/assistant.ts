@@ -2170,8 +2170,9 @@ async function nameChat(username: string, id: string, source: TitleSource, ai?: 
   nameAsks.set(id, asks + 1);
   naming.add(id);
   try {
-    // a name needs no long thinking, whatever effort the chat itself runs at
+    // a name needs no long thinking, whatever effort the chat itself runs at, and waits behind the person's own turns
     if (route.mac?.provider) route.mac.provider.effort = "low";
+    if (route.mac) route.mac.background = true;
     const title = await completeWithFallback(TITLE_SYSTEM, titlePrompt(source), undefined, cleanTitle, route).catch((e) => {
       console.warn(`[assistant] chat name failed (${id}): ${e instanceof Error ? e.message : String(e)}`);
       return "";
@@ -2251,7 +2252,6 @@ assistantApp.get("/chats/search", (c) => {
 assistantApp.get("/chats/:id", (c) => {
   const u = c.get("user");
   const chat = chatOf(load(u.username), c.req.param("id"));
-  nameIfUnnamed(u.username, chat);
   return chat ? c.json(view(u.username, u.role === "admin", chat)) : c.json({ error: "Chat not found" }, 404);
 });
 
@@ -2362,6 +2362,8 @@ assistantApp.post("/chats/:id/seen", (c) => {
   if (woke) chat.snooze = undefined;
   save(u.username);
   if (woke) tell(u.username);
+  // on screen on the desktop or the phone: one still under its first words (an older one too) is asked a name
+  nameIfUnnamed(u.username, chat);
   return c.json({ ok: true });
 });
 
@@ -2393,7 +2395,7 @@ assistantApp.post("/chats/:id/branch", async (c) => {
     if (m.images) m.images = m.images.map((im) => copyImage(u.username, im));
     return m;
   });
-  keepPast(u.username, conv, [{ id, messages, title: chat.title ?? titleOf(chat.messages), seen: Date.now(), workspace: chat.workspace, ai: chat.ai }, ...(conv.past ?? [])]);
+  keepPast(u.username, conv, [{ id, messages, title: chat.title, seen: Date.now(), workspace: chat.workspace, ai: chat.ai }, ...(conv.past ?? [])]);
   save(u.username);
   tell(u.username);
   return c.json({ id, chats: await chatsOf(u) });
