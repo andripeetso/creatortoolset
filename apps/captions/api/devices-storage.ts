@@ -376,6 +376,15 @@ storageApp.get("/", async (c) => {
 /** Use a folder you already have as a Media folder, or a folder as the workspace's Finals or Exports folder. */
 storageApp.post("/folders", async (c) => addFolder(c, (await c.req.json().catch(() => null)) as Record<string, unknown> | null));
 
+/** Why a Media folder may not go inside folder `f`: "That folder is inside <name>, which is <workspace>'s Exports folder: …". */
+async function insideLine(u: AuthVars["user"], f: StorageFolder, of: ((own?: string) => string) | null): Promise<string> {
+  const use = f.role === "footage" ? "Media" : f.role === "projects" ? "Projects" : "Exports";
+  const ids = of ? placesOf(f, of) : null;
+  const names = new Map([...(await ownedProjects(u.username)), ...(await sharedProjects(u.username))].map((p) => [p.id, p.name]));
+  const whose = !of ? "the" : !ids ? "every workspace's" : `${ids.map((id) => names.get(id) ?? "another workspace").join(" and ")}'s`;
+  return `That folder is inside ${f.name}, which is ${whose} ${use} folder: pick a folder outside it`;
+}
+
 /** POST /folders' work, for the request `c` (its account and workspace): Quick setup adds its rows through it too. */
 export async function addFolder(c: C, b: Record<string, unknown> | null): Promise<Response> {
   const u = c.get("user");
@@ -393,8 +402,12 @@ export async function addFolder(c: C, b: Record<string, unknown> | null): Promis
   const p = (local && (raw === "~" || raw.startsWith("~/")) ? path.join(os.homedir(), raw.slice(1)) : raw).replace(/(.)\/+$/, "$1");
   const [{ mine: here, workspace, named }, of] = await Promise.all([scopeOf(c), projectOf(u)]);
   // a folder inside one of this workspace's Media folders is in the Media Library already
-  const outer = role === "footage" && (await readStorage(user)).folders.find((f) => here(f) && f.role === "footage" && f.origin.host === host && !!inside(p, f.origin.path));
+  const all = (await readStorage(user)).folders;
+  const outer = role === "footage" && all.find((f) => here(f) && f.role === "footage" && f.origin.host === host && !!inside(p, f.origin.path));
   if (outer) return c.json({ error: `That folder is already in ${outer.name}` }, 400);
+  // never Media inside any Projects or Exports folder (the AI Editor's own output), nor inside another workspace's Media folder
+  const owner = role === "footage" && all.find((f) => f.origin.host === host && (f.role === "footage" ? !here(f) && !!inside(p, f.origin.path) : inside(p, f.origin.path) !== null));
+  if (owner) return c.json({ error: await insideLine(u, owner, of) }, 400);
   // setup's scratch default is made here, before its row is checked; only under ~/Movies/Creator Toolset on this computer
   if (role === "footage" && b?.make === true && local && !!inside(p, path.join(os.homedir(), "Movies", "Creator Toolset"))) {
     try {
