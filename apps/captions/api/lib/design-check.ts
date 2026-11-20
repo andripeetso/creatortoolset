@@ -1,4 +1,4 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
@@ -41,12 +41,91 @@ const corners = (v: unknown): { radius?: Radius } => {
   return r ? { radius: r } : {};
 };
 
-/** What a shape's line has beside its colour and width: dashes (with a gap, or they are none), round ends, a side. */
-const strokeMore = (v: unknown): Partial<Stroke> => {
+/** What a paint or a line of a list has beside itself: hidden, how see-through (absent when solid), how it mixes. */
+const paintLook = (v: Record<string, unknown>): PaintLook => ({
+  ...(v.hidden === true ? { hidden: true } : {}),
+  ...(typeof v.opacity === "number" && v.opacity < 1 ? { opacity: round(num(v.opacity, 0, 1, 1)) } : {}),
+  ...(DESIGN_BLENDS.includes(v.blend as never) ? { blend: v.blend as (typeof DESIGN_BLENDS)[number] } : {}),
+});
+
+/** What a shape's line has beside its colour and width: dashes (with a gap, or they are none), its ends and corners, a side, a width a side, heads, and how it looks in its list. */
+const strokeMore = (v: unknown, max = 200): Partial<Stroke> => {
   if (!obj(v)) return {};
   const dash = Array.isArray(v.dash) && v.dash.length === 2 ? ([round(num(v.dash[0], 0, 2000, 0)), round(num(v.dash[1], 0, 2000, 0))] as [number, number]) : null;
-  return { ...(dash && dash[1] > 0 ? { dash } : {}), ...(v.round === true ? { round: true } : {}), ...(v.side === "inside" || v.side === "outside" ? { side: v.side } : {}) };
+  const sides = Array.isArray(v.sides) && v.sides.length === 4 ? (v.sides.map((n) => round(num(n, 0, max, 0))) as [number, number, number, number]) : null;
+  return {
+    ...(dash && dash[1] > 0 ? { dash } : {}),
+    ...(v.round === true ? { round: true } : {}),
+    ...(v.side === "inside" || v.side === "outside" ? { side: v.side } : {}),
+    ...(sides?.some((n) => n > 0) ? { sides } : {}),
+    ...(v.cap === "butt" || v.cap === "round" || v.cap === "square" ? { cap: v.cap } : {}),
+    ...(v.join === "miter" || v.join === "round" || v.join === "bevel" ? { join: v.join } : {}),
+    ...(DESIGN_HEADS.includes(v.start as never) ? { start: v.start as Stroke["start"] } : {}),
+    ...(DESIGN_HEADS.includes(v.end as never) ? { end: v.end as Stroke["end"] } : {}),
+    ...paintLook(v),
+  };
 };
+
+/** A layer's or a frame's lines as they may be saved (`strokes`, bottom first): each with a width (or a width a side), at most the limit's count. Absent when none was given; an empty list stays: no line at all. */
+function strokeList(v: unknown, max: number): { strokes?: Stroke[] } {
+  if (!Array.isArray(v)) return {};
+  const strokes = v
+    .filter(obj)
+    .slice(0, DESIGN_LIMITS.paints)
+    .flatMap((s): Stroke[] => {
+      const more = strokeMore(s, max);
+      const width = round(num(s.width, 0, max, 0));
+      return width > 0 || more.sides ? [{ color: color(s.color, "#000000"), width, ...more }] : [];
+    });
+  return { strokes };
+}
+
+/**
+ * A layer's or a frame's fills as they may be saved (`fills`, bottom first): a colour, a gradient of two or more stops
+ * (any number up to the limit, each at 0 to 1), or a picture of the design's own, at most the limit's count. Absent
+ * when none was given; an empty list stays: no fill at all.
+ */
+function fillList(v: unknown, r: PageRules, say: (why: string) => void): { fills?: Paint[] } {
+  if (!Array.isArray(v)) return {};
+  const fills = v
+    .filter(obj)
+    .slice(0, DESIGN_LIMITS.paints)
+    .flatMap((p): Paint[] => {
+      const look = paintLook(p);
+      if (p.type === "gradient") {
+        const stops = (Array.isArray(p.stops) ? p.stops : [])
+          .filter(obj)
+          .slice(0, DESIGN_LIMITS.stops)
+          .map((x) => ({ at: round(num(x.at, 0, 1, 0)), color: color(x.color, "#000000") }))
+          .sort((a, b) => a.at - b.at);
+        if (stops.length < 2) {
+          say("a gradient fill with fewer than two colours: left out");
+          return [];
+        }
+        const kind = DESIGN_GRADIENTS.includes(p.kind as never) && p.kind !== "linear" ? { kind: p.kind as Exclude<(typeof DESIGN_GRADIENTS)[number], "linear"> } : {};
+        return [{ type: "gradient", ...kind, angle: round(num(p.angle, -360, 360, 90)), stops, ...look }];
+      }
+      if (p.type === "image") {
+        if (typeof p.picture !== "string" || !r.pictures.includes(p.picture)) {
+          say("a picture fill of a picture that is not in this design: left out");
+          return [];
+        }
+        const mode = oneOf(p.mode, DESIGN_PICTURE_MODES, "fill");
+        const c = obj(p.crop) ? p.crop : null;
+        // a crop is a part of the picture: at least a hundredth of it each way, and inside it
+        const cw = c ? round(num(c.w, 0.01, 1, 1)) : 1;
+        const ch = c ? round(num(c.h, 0.01, 1, 1)) : 1;
+        const crop = c && mode === "crop" ? { crop: { x: round(num(c.x, 0, 1 - cw, 0)), y: round(num(c.y, 0, 1 - ch, 0)), w: cw, h: ch } } : {};
+        const scale = mode === "tile" && typeof p.scale === "number" ? { scale: round(num(p.scale, 0.02, 4, 0.25)) } : {};
+        return [{ type: "image", picture: p.picture, mode, ...crop, ...scale, ...look }];
+      }
+      return typeof p.color === "string" ? [{ type: "solid", color: color(p.color, "#000000"), ...look }] : [];
+    });
+  return { fills };
+}
+
+/** Corners rounded smoothly into the sides, 0 to 1; nothing when it is none. */
+const smoothed = (v: unknown): { smooth?: number } => (round(num(v, 0, 1, 0)) ? { smooth: round(num(v, 0, 1, 0)) } : {});
 
 /** A text's highlighter strokes as they may be saved: a few, each a colour and (or not) the words it goes behind. */
 function marks(v: unknown): { marks?: { color: string; words?: string; low?: true }[] } {
@@ -246,6 +325,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...(typeof raw.lineHeight === "number" ? { lineHeight: round(num(raw.lineHeight, 0.8, 3, 1.15)) } : {}),
       ...(raw.upper === true ? { upper: true } : {}),
       ...(outline ? { outline } : {}),
+      ...fillList(raw.fills, r, say),
+      ...strokeList(raw.strokes, 60),
     };
   }
   if (raw.type === "image") {
@@ -264,6 +345,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       // the picture it was cut out of: one of this design's own, and not itself
       ...(typeof raw.uncut === "string" && raw.uncut !== raw.picture && r.pictures.includes(raw.uncut) ? { uncut: raw.uncut } : {}),
       ...corners(raw.radius),
+      ...smoothed(raw.smooth),
+      ...strokeList(raw.strokes, 200),
     };
   }
   if (raw.type === "shape") {
@@ -275,7 +358,10 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       fill: color(raw.fill, "#dddddd"),
       ...gradient(raw.gradient),
       ...corners(raw.radius),
+      ...smoothed(raw.smooth),
       ...(stroke ? { stroke: { ...stroke, ...strokeMore(raw.stroke) } } : {}),
+      ...fillList(raw.fills, r, say),
+      ...strokeList(raw.strokes, 200),
     };
   }
   if (raw.type === "path") {
@@ -295,6 +381,8 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     }
     const stroke = line(raw.stroke, 200);
     const fill = typeof raw.fill === "string" && COLOR.test(raw.fill.trim()) ? color(raw.fill, "#000000") : null;
+    const fills = fillList(raw.fills, r, say);
+    const strokes = strokeList(raw.strokes, 200);
     return {
       type: "path",
       ...box,
@@ -303,7 +391,9 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...(fill ? { fill } : {}),
       ...gradient(raw.gradient),
       // a path with neither a fill nor a line would be nothing to see: it gets a thin line
-      ...(stroke ? { stroke: { ...stroke, ...strokeMore(raw.stroke) } } : fill ? {} : { stroke: { color: "#111111", width: 4 } }),
+      ...(stroke ? { stroke: { ...stroke, ...strokeMore(raw.stroke) } } : fill || fills.fills?.length || strokes.strokes?.length ? {} : { stroke: { color: "#111111", width: 4 } }),
+      ...fills,
+      ...strokes,
     };
   }
   if (raw.type === "drawing") {
@@ -362,7 +452,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     }
     // a loose picture with nothing left on it is gone
     if (loose && !layers.length) continue;
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, (why) => notes.push(`Page ${k + 1}: ${why}`)), ...strokeList(p.strokes, 200), ...finish(p), layers });
   }
   // loose pictures after the frames: a frame's place in the list is its number
   return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };

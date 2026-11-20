@@ -371,3 +371,71 @@ describe("the pages a design starts with", () => {
     expect(pages.filter((p) => p.loose)).toHaveLength(1);
   });
 });
+
+describe("fills and lines as lists", () => {
+  it("keeps colours with a see-through part, gradients of any number of stops and kinds, and pictures of the design's own, each held to what can be drawn", () => {
+    const { pages, notes } = cleanPages(
+      [
+        {
+          background: "#000000",
+          fills: [{ type: "solid", color: "#FFFFFF80" }, { type: "image", picture: "ab12cd34.jpg", mode: "tile", scale: 9, opacity: 0.4, blend: "multiply" }],
+          strokes: [{ color: "#ff0000", width: 12, side: "inside", sides: [0, 0, 12, 0] }],
+          layers: [
+            {
+              type: "shape",
+              shape: "rect",
+              fill: "#dddddd",
+              x: 0,
+              y: 0,
+              w: 100,
+              h: 100,
+              smooth: 3,
+              fills: [
+                { type: "gradient", kind: "diamond", angle: 900, stops: [{ at: 1, color: "#000000" }, { at: -2, color: "#ffffff00" }, { at: 0.5, color: "nope" }], hidden: true },
+                { type: "gradient", kind: "spiral", stops: [{ at: 0, color: "#000000" }, { at: 1, color: "#ffffff" }] },
+                { type: "gradient", stops: [{ at: 0, color: "#000000" }] },
+                { type: "image", picture: "elsewhere.jpg", mode: "fill" },
+                { type: "image", picture: "ab12cd34.jpg", mode: "crop", crop: { x: 0.9, y: 0, w: 0.5, h: 2 } },
+                { type: "wobble" },
+              ],
+              strokes: [{ color: "#000000", width: 0 }, { color: "#ffffff", width: 30, opacity: 2, cap: "round", join: "bevel", dash: [4, 4], hidden: true }],
+            },
+            text({ strokes: [{ color: "#ffffff", width: 99 }, { color: "#000000", width: 8 }], fills: [{ type: "image", picture: "ab12cd34.jpg", mode: "fit" }] }),
+            { type: "path", x: 0, y: 0, w: 100, h: 100, points: [{ x: 0, y: 0 }, { x: 1, y: 1 }], strokes: [{ color: "#000000", width: 6, start: "circle", end: "arrow" }, { color: "#000000", width: 6, end: "spear" }] },
+            { type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, smooth: 0.6, strokes: [{ color: "#000000", width: 4 }] },
+          ],
+        },
+      ],
+      rules,
+    );
+    const [p] = pages;
+    expect(p!.fills).toEqual([{ type: "solid", color: "#ffffff80" }, { type: "image", picture: "ab12cd34.jpg", mode: "tile", scale: 4, opacity: 0.4, blend: "multiply" }]);
+    expect(p!.strokes).toEqual([{ color: "#ff0000", width: 12, side: "inside", sides: [0, 0, 12, 0] }]);
+    const [shape, words, path, picture] = p!.layers as Record<string, unknown>[];
+    expect(shape!.smooth).toBe(1);
+    expect(shape!.fills).toEqual([
+      { type: "gradient", kind: "diamond", angle: 360, stops: [{ at: 0, color: "#ffffff00" }, { at: 0.5, color: "#000000" }, { at: 1, color: "#000000" }], hidden: true },
+      { type: "gradient", angle: 90, stops: [{ at: 0, color: "#000000" }, { at: 1, color: "#ffffff" }] },
+      // a crop is a part of the picture: no more than all of it, and inside it
+      { type: "image", picture: "ab12cd34.jpg", mode: "crop", crop: { x: 0.5, y: 0, w: 0.5, h: 1 } },
+    ]);
+    expect(shape!.strokes).toEqual([{ color: "#ffffff", width: 30, cap: "round", join: "bevel", dash: [4, 4], hidden: true }]);
+    // a text's lines are held to an outline's widths
+    expect(words!.strokes).toEqual([{ color: "#ffffff", width: 60 }, { color: "#000000", width: 8 }]);
+    expect(words!.fills).toEqual([{ type: "image", picture: "ab12cd34.jpg", mode: "fit" }]);
+    // a path with lines of its own gets no thin line of the app's
+    expect(path!.stroke).toBeUndefined();
+    expect(path!.strokes).toEqual([{ color: "#000000", width: 6, start: "circle", end: "arrow" }, { color: "#000000", width: 6 }]);
+    expect([picture!.smooth, picture!.strokes]).toEqual([0.6, [{ color: "#000000", width: 4 }]]);
+    expect(notes).toEqual(["Page 1: a gradient fill with fewer than two colours: left out", "Page 1: a picture fill of a picture that is not in this design: left out"]);
+  });
+
+  it("keeps a design without lists as it was, and an empty list as no fill at all", () => {
+    const old = { background: "#ffffff", layers: [{ type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10, stroke: { color: "#000000", width: 2 } }] };
+    const { pages } = cleanPages([old], rules);
+    expect(pages[0]!.layers[0]).toEqual({ id: "l1", type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10, stroke: { color: "#000000", width: 2 } });
+    expect("fills" in pages[0]!).toBe(false);
+    const none = cleanPages([{ ...old, layers: [{ ...old.layers[0], fills: [] }] }], rules).pages[0]!.layers[0] as Record<string, unknown>;
+    expect(none.fills).toEqual([]);
+  });
+});

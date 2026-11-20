@@ -1,5 +1,7 @@
-import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, Radius, ShapeLayer, Stroke, TextLayer } from "@contracts/design";
+import type { DesignPage, DesignShape, ImageLayer, Layer, Radius, ShapeLayer, TextLayer } from "@contracts/design";
 import { designWeight } from "./fonts";
+import { fillsOf, strokesOf } from "./paint";
+import { eachStroke, fillWith, strokeWith } from "./paint-draw";
 import { onPath, tracePath } from "./path";
 import { blurPixels, retouch, retouches } from "./retouch";
 
@@ -47,9 +49,32 @@ export type Loaded = Map<string, CanvasImageSource & { width: number; height: nu
 export const cornersOf = (r: Radius | undefined, w: number, h: number): [number, number, number, number] =>
   (typeof r === "object" ? r : [r ?? 0, r ?? 0, r ?? 0, r ?? 0]).map((n) => Math.max(0, Math.min(n, w / 2, h / 2))) as [number, number, number, number];
 
-/** A box with rounded corners, added to the path under way (the caller begins it). */
-function roundedRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: Radius | undefined) {
+/**
+ * A box with rounded corners, added to the path under way (the caller begins it). `smooth` (0 to 1): each corner's
+ * curve starts further along the sides and bends in gently, so the corner runs into the side with no visible seam.
+ */
+function roundedRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: Radius | undefined, smooth = 0) {
   const [tl, tr, br, bl] = cornersOf(r, w, h);
+  if (smooth > 0) {
+    const s = Math.min(1, smooth);
+    // each corner: its point, the way the side runs into it, the way the next side runs out of it
+    const corners: [number, number, number, number, number, number, number][] = [
+      [x + w, y, 1, 0, 0, 1, tr],
+      [x + w, y + h, 0, 1, -1, 0, br],
+      [x, y + h, -1, 0, 0, -1, bl],
+      [x, y, 0, -1, 1, 0, tl],
+    ];
+    const reach = (n: number) => Math.min(n * (1 + s), w / 2, h / 2);
+    // 0.4477 puts the handles where a quarter circle has them; smoother corners draw them in towards the corner
+    const q = 0.4477 * (1 - 0.6 * s);
+    ctx.moveTo(x + reach(tl), y);
+    for (const [px, py, ix, iy, ox, oy, n] of corners) {
+      const e = reach(n);
+      ctx.lineTo(px - ix * e, py - iy * e);
+      ctx.bezierCurveTo(px - ix * e * q, py - iy * e * q, px + ox * e * q, py + oy * e * q, px + ox * e, py + oy * e);
+    }
+    return void ctx.closePath();
+  }
   ctx.moveTo(x + tl, y);
   ctx.arcTo(x + w, y, x + w, y + h, tr);
   ctx.arcTo(x + w, y + h, x, y + h, br);
@@ -65,24 +90,11 @@ function shapePath(ctx: Ctx, l: ShapeLayer) {
     ctx.moveTo(l.w, l.h / 2);
     ctx.ellipse(l.w / 2, l.h / 2, l.w / 2, l.h / 2, 0, 0, Math.PI * 2);
     ctx.closePath();
-  } else if (l.shape === "rect") roundedRect(ctx, 0, 0, l.w, l.h, l.radius);
+  } else if (l.shape === "rect") roundedRect(ctx, 0, 0, l.w, l.h, l.radius, l.smooth);
   else {
     shapePoints(l.shape, l.w, l.h).forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
     ctx.closePath();
   }
-}
-
-/** A fill for a w × h box: the colour, or its gradient across the box, as long as the box is along the gradient's angle. */
-function fillOf(ctx: Ctx, color: string, g: Gradient | undefined, w: number, h: number): string | CanvasGradient {
-  if (!g) return color;
-  const a = (g.angle * Math.PI) / 180;
-  const half = (Math.abs(Math.cos(a)) * w + Math.abs(Math.sin(a)) * h) / 2;
-  // radial: from the middle out to the corners
-  const grad = g.kind === "radial" ? ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.hypot(w, h) / 2) : ctx.createLinearGradient(w / 2 - Math.cos(a) * half, h / 2 - Math.sin(a) * half, w / 2 + Math.cos(a) * half, h / 2 + Math.sin(a) * half);
-  grad.addColorStop(0, color);
-  if (g.via) grad.addColorStop(0.5, g.via);
-  grad.addColorStop(1, g.to);
-  return grad;
 }
 
 /** The corners of a shape that is made of straight sides, in its w × h box: a triangle pointing up, a five-pointed star, an arrow pointing right. */
@@ -248,7 +260,7 @@ export function markBoxes(
   return out;
 }
 
-function drawText(ctx: Ctx, given: TextLayer, cast = false) {
+function drawText(ctx: Ctx, given: TextLayer, cast: boolean, loaded: Loaded) {
   ctx.font = fontOf(given);
   ctx.textBaseline = "alphabetic";
   const set = setTextOnce(given, (s) => ctx.measureText(s).width);
@@ -270,21 +282,24 @@ function drawText(ctx: Ctx, given: TextLayer, cast = false) {
     ctx.fillStyle = b.color;
     ctx.fill();
   }
-  const fill = fillOf(ctx, l.color, l.gradient, l.w, l.h);
-  if (l.outline) {
-    ctx.lineJoin = "round";
-    ctx.lineWidth = l.outline.width * 2;
-    ctx.strokeStyle = l.outline.color;
-  }
+  const fills = fillsOf(l);
+  const strokes = strokesOf(l);
+  // a line round the letters lies under their fill, all of it outside them: drawn twice as wide
+  const outline = (draw: () => void) =>
+    eachStroke(ctx, strokes, (s) => {
+      ctx.lineJoin = s.join ?? "round";
+      ctx.lineWidth = s.width * 2;
+      if (s.dash) ctx.setLineDash(s.dash);
+      draw();
+    });
   lines.forEach((line, k) => {
     // the letters sit in the middle of their line: the baseline is about 0.8 of the letter height under its top
     const y = top + k * lh + (lh - l.size) / 2 + l.size * 0.8;
     if (!l.spacing) {
       ctx.textAlign = l.align;
       const x = l.align === "center" ? l.w / 2 : l.align === "right" ? l.w : 0;
-      if (l.outline) ctx.strokeText(line, x, y);
-      ctx.fillStyle = fill;
-      return void ctx.fillText(line, x, y);
+      outline(() => ctx.strokeText(line, x, y));
+      return fillWith(ctx, fills, l.w, l.h, loaded, () => ctx.fillText(line, x, y));
     }
     // letter by letter from the line's left end: every outline first, so none lies over the letter before it
     // ponytail: a "letter" is a code point, so with spacing set an accent written as its own mark, a joined emoji and
@@ -299,9 +314,8 @@ function drawText(ctx: Ctx, given: TextLayer, cast = false) {
         x += measure(ch) + l.spacing!;
       }
     };
-    if (l.outline) each((ch, x) => ctx.strokeText(ch, x, y));
-    ctx.fillStyle = fill;
-    each((ch, x) => ctx.fillText(ch, x, y));
+    outline(() => each((ch, x) => ctx.strokeText(ch, x, y)));
+    fillWith(ctx, fills, l.w, l.h, loaded, () => each((ch, x) => ctx.fillText(ch, x, y)));
   });
 }
 
@@ -495,71 +509,39 @@ function finishFrame(ctx: Ctx, page: Pick<DesignPage, "grain" | "vignette">, w: 
   ctx.restore();
 }
 
-/**
- * A line along an outline (`trace` adds the outline to the path under way) in a w × h box: dashed and with round ends
- * when it says so, and on one side of the outline only when it has a side.
- */
-function strokeAlong(ctx: Ctx, s: Stroke | undefined, trace: () => void, w: number, h: number, join: CanvasLineJoin) {
-  if (!s) return;
-  ctx.lineJoin = join;
-  ctx.strokeStyle = s.color;
-  ctx.lineCap = s.round ? "round" : "butt";
-  if (s.dash) ctx.setLineDash(s.dash);
-  if (!s.side) {
-    ctx.lineWidth = s.width;
-    return void ctx.stroke();
-  }
-  // on one side of the edge: a line twice as wide along the edge, with the half on the other side cut away
-  // (inside: only what is in the shape is drawn; outside: only what is in a box round it and not in the shape)
-  ctx.save();
-  if (s.side === "outside") {
-    const far = 2 * s.width + 10;
-    ctx.beginPath();
-    ctx.rect(-far, -far, w + 2 * far, h + 2 * far);
-    trace();
-    ctx.clip("evenodd");
-  } else ctx.clip();
-  ctx.beginPath();
-  trace();
-  ctx.lineWidth = s.width * 2;
-  ctx.stroke();
-  ctx.restore();
-}
-
 /** A layer in its own box. `cast`: only what throws its shadow (a picture's whole box, not the picture cut to its corners). */
 function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
-  if (l.type === "text") drawText(ctx, l, cast);
+  if (l.type === "text") drawText(ctx, l, cast, loaded);
   else if (l.type === "shape") {
     ctx.beginPath();
     shapePath(ctx, l);
-    ctx.fillStyle = fillOf(ctx, l.fill, l.gradient, l.w, l.h);
-    ctx.fill();
+    fillWith(ctx, fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
     // a rectangle keeps its square corners; a star's or an arrow's points are rounded off, or a wide line would spike far out of them
-    strokeAlong(ctx, l.stroke, () => shapePath(ctx, l), l.w, l.h, l.shape === "rect" || l.shape === "ellipse" ? "miter" : "round");
+    strokeWith(ctx, strokesOf(l), () => shapePath(ctx, l), l.w, l.h, l.shape === "rect" || l.shape === "ellipse" ? "miter" : "round", { box: l.shape === "rect" });
   } else if (l.type === "path") {
     const trace = () => tracePath(ctx, l.points, !!l.closed, l.w, l.h);
     ctx.beginPath();
     trace();
-    if (l.fill) {
-      ctx.fillStyle = fillOf(ctx, l.fill, l.gradient, l.w, l.h);
-      ctx.fill();
-    }
-    strokeAlong(ctx, l.stroke, trace, l.w, l.h, "round");
+    fillWith(ctx, fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
+    strokeWith(ctx, strokesOf(l), trace, l.w, l.h, "round", { points: l.points, closed: !!l.closed });
   } else {
     const pic = loaded.get(sourceOf(l)!);
     if (pic && pic.width && pic.height) {
       if (l.type === "image") {
         ctx.beginPath();
-        roundedRect(ctx, 0, 0, l.w, l.h, l.radius);
+        roundedRect(ctx, 0, 0, l.w, l.h, l.radius, l.smooth);
         if (cast) {
           ctx.fillStyle = "#000000";
           return void ctx.fill();
         }
+        ctx.save();
         ctx.clip();
         if (retouches(l)) {
           const t = ctx.getTransform();
           ctx.drawImage(retouchedPicture(l, pic, loaded, Math.hypot(t.a, t.b), `${frame}/${l.id}`, exact), 0, 0, l.w, l.h);
         } else placePicture(ctx, l, pic);
+        ctx.restore();
+        strokeWith(ctx, strokesOf(l), () => roundedRect(ctx, 0, 0, l.w, l.h, l.radius, l.smooth), l.w, l.h, "miter", { box: true });
       } else ctx.drawImage(pic, 0, 0, l.w, l.h);
     } else {
       // not loaded (yet, or gone): its place is shown, so nothing is silently missing from the page
@@ -572,12 +554,12 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: st
 /** `exact`: for a file that is saved (or a picture an AI is shown): a retouched picture is worked at every pixel it is drawn at, where the canvas works at fewer when the picture is big. */
 export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loaded: Loaded, exact = false): void {
   // pictures lying loose on the canvas have no ground and no finish of a frame's
-  if (!page.loose) {
-    ctx.fillStyle = fillOf(ctx, page.background, page.gradient, w, h);
-    ctx.fillRect(0, 0, w, h);
-  }
+  if (!page.loose) fillWith(ctx, fillsOf(page), w, h, loaded, () => ctx.fillRect(0, 0, w, h));
   for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded, page.id, exact);
-  if (!page.loose) finishFrame(ctx, page, w, h);
+  if (!page.loose) {
+    strokeWith(ctx, strokesOf(page), () => ctx.rect(0, 0, w, h), w, h, "miter", { box: true });
+    finishFrame(ctx, page, w, h);
+  }
 }
 
 /** A point of the page in a layer's own box (its rotation taken out): inside when 0..w and 0..h. */

@@ -1,5 +1,6 @@
 import type { PictureSpec } from "@contracts/design";
 import { drawingUrl, drawPage, fontOf, lineHeightOf, setText, sourceOf, textWidth, type Loaded } from "./draw";
+import { paintPictures } from "./paint";
 
 /**
  * A page as a small JPEG, drawn by the same function as the designer's canvas and the saved PNG, and the words on it
@@ -26,6 +27,16 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
       const img = new Image();
       img.src = address;
       // one that cannot be read is drawn as its grey place, as on the canvas
+      await img.decode().then(() => loaded.set(src, img), () => {});
+    }),
+  );
+  // the pictures that fill shapes, words and the frame
+  await Promise.all(
+    paintPictures(spec.page).map(async (src) => {
+      const address = spec.pictures[src];
+      if (!address || loaded.has(src)) return;
+      const img = new Image();
+      img.src = address;
       await img.decode().then(() => loaded.set(src, img), () => {});
     }),
   );

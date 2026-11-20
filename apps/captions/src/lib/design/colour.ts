@@ -1,4 +1,5 @@
 import type { DesignPage } from "@contracts/design";
+import { fillsOf, strokesOf, takesFills, takesStrokes } from "./paint";
 
 /**
  * A colour as the picker works on it: a hue (0 to 360), how strong it is and how light (0 to 1 each), and back to
@@ -11,7 +12,8 @@ export interface Hsv {
 }
 
 export function toHsv(hex: string): Hsv {
-  const n = /^#[0-9a-f]{6}$/i.test(hex) ? parseInt(hex.slice(1), 16) : 0;
+  // a see-through part ("#rrggbbaa") is not the hue's: alphaOf reads it
+  const n = /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(hex) ? parseInt(hex.slice(1, 7), 16) : 0;
   const r = (n >> 16) / 255;
   const g = ((n >> 8) & 255) / 255;
   const b = (n & 255) / 255;
@@ -29,12 +31,21 @@ export function toHex({ h, s, v }: Hsv): string {
   return `#${[part(5), part(3), part(1)].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** A typed colour as "#rrggbb", or null: three or six hex digits, with or without the #. */
+/** A typed colour as "#rrggbb", or "#rrggbbaa" when it is not wholly solid, or null: three, four, six or eight hex digits, with or without the #. */
 export function typedHex(text: string): string | null {
-  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(text.trim());
+  const m = /^#?([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(text.trim());
   if (!m) return null;
-  return `#${(m[1]!.length === 3 ? m[1]!.replace(/./g, "$&$&") : m[1]!).toLowerCase()}`;
+  const hex = `#${(m[1]!.length < 6 ? m[1]!.replace(/./g, "$&$&") : m[1]!).toLowerCase()}`;
+  return hex.length === 9 && hex.endsWith("ff") ? hex.slice(0, 7) : hex;
 }
+
+/** How solid a colour is, 0 to 1 ("#rrggbb" is wholly solid). */
+export const alphaOf = (hex: string): number => (/^#[0-9a-f]{8}$/i.test(hex) ? parseInt(hex.slice(7), 16) / 255 : 1);
+/** "#rrggbb" with how solid it is: "#rrggbbaa", or the six digits alone when it is wholly solid. */
+export const withAlpha = (hex: string, a: number): string => {
+  const six = hex.slice(0, 7);
+  return a >= 1 ? six : `${six}${Math.round(Math.max(0, a) * 255).toString(16).padStart(2, "0")}`;
+};
 
 /** The colours a design already uses (its frames, fills, words, lines and shadows), the most used first. */
 export function coloursOn(pages: readonly DesignPage[], most = 16): string[] {
@@ -43,25 +54,14 @@ export function coloursOn(pages: readonly DesignPage[], most = 16): string[] {
     const hex = c && typedHex(c);
     if (hex) count.set(hex, (count.get(hex) ?? 0) + 1);
   };
-  for (const p of pages) {
-    add(p.background);
-    add(p.gradient?.to);
-    add(p.gradient?.via);
-    for (const l of p.layers) {
-      if (l.type === "text") {
-        add(l.color);
-        add(l.gradient?.to);
-        add(l.gradient?.via);
-        add(l.outline?.color);
+  for (const p of pages)
+    for (const o of [p, ...p.layers]) {
+      for (const f of takesFills(o) ? fillsOf(o) : []) {
+        if (f.type === "solid") add(f.color);
+        if (f.type === "gradient") f.stops.forEach((s) => add(s.color));
       }
-      if (l.type === "shape" || l.type === "path") {
-        add(l.fill);
-        add(l.gradient?.to);
-        add(l.gradient?.via);
-        add(l.stroke?.color);
-      }
-      add(l.shadow?.color);
+      for (const s of takesStrokes(o) ? strokesOf(o) : []) add(s.color);
+      if ("type" in o) add(o.shadow?.color);
     }
-  }
   return [...count].sort((a, b) => b[1] - a[1]).slice(0, most).map(([c]) => c);
 }

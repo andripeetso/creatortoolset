@@ -1,5 +1,6 @@
 import type { PathLayer, PathPoint } from "@contracts/design";
 import type { Rect } from "./hands";
+import { strokesOf } from "./paint";
 
 /**
  * A path layer's line, as plain functions: the curve between its anchors, the box that holds it, and what the pen
@@ -156,7 +157,7 @@ export function toggleSmooth(points: readonly Anchor[], n: number, closed: boole
  */
 export function onPath(l: PathLayer, x: number, y: number, near = 8): boolean {
   const [bx, by] = toBox(l, x, y);
-  const reach = Math.max(near, (l.stroke?.width ?? 0) / 2 + 2);
+  const reach = Math.max(near, Math.max(0, ...strokesOf(l).map((s) => s.width)) / 2 + 2);
   if (bx < -reach || by < -reach || bx > l.w + reach || by > l.h + reach) return false;
   // the line as short straight pieces: each stretch in sixteen
   const pts: Pair[] = [];

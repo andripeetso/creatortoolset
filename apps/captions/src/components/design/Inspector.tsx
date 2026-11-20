@@ -14,37 +14,41 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   AlignVerticalSpaceAround,
-  Ban,
   CaseUpper,
   Check,
   ChevronDown,
-  CircleDot,
   Crop,
+  Eye,
+  EyeOff,
   FlipHorizontal2,
   FlipVertical2,
+  GripVertical,
   Group,
   Link2,
   Minus,
   Plus,
   RotateCcw,
   Scan,
+  SlidersHorizontal,
   Ungroup,
   Unlink2,
   WrapText,
   X,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import type { Design, DesignPage, Gradient, Layer, Stroke } from "@contracts/design";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
+import type { Design, DesignPage, GradientStop, Layer, Paint, PaintLook, Stroke } from "@contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { typedHex } from "@/lib/design/colour";
+import { alphaOf, typedHex, withAlpha } from "@/lib/design/colour";
+import { colourAt, fillsOf, moved, strokesOf, takesFills, takesStrokes, withFills, withStrokes } from "@/lib/design/paint";
+import { pictureUrl } from "@/lib/designs";
 import { boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
 import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
-import { ColourPicker } from "./ColourPicker";
+import { CHECKS, ColourPicker } from "./ColourPicker";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
 
@@ -128,12 +132,12 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
  * A colour: the swatch opens the picker (ColourPicker), the field beside it takes a hex code. Every colour the picker
  * passes is set at once, and `merge` names the drag or press it belongs to, so each is one step to undo.
  */
-function Colour({ title, value, colours, onSet, onDropper }: { title: string; value: string | null; colours: readonly string[]; onSet: (c: string, merge?: string) => void; onDropper?: (take: (hex: string) => void) => void }) {
+function Colour({ title, value, colours, onSet, onDropper, alpha = false }: { title: string; value: string | null; colours: readonly string[]; onSet: (c: string, merge?: string) => void; onDropper?: (take: (hex: string) => void) => void; alpha?: boolean }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   // each opening is a picking of its own: its drags never join the last opening's
   const opened = useRef(0);
-  const hex = value && /^#[0-9a-f]{6}$/i.test(value) ? value : "#000000";
+  const hex = value && (alpha ? /^#[0-9a-f]{6}([0-9a-f]{2})?$/i : /^#[0-9a-f]{6}$/i).test(value) ? value : "#000000";
   return (
     <div className={cn(FIELD, "flex-1")}>
       <Popover open={open} onOpenChange={(now) => (now && opened.current++, setOpen(now))}>
@@ -142,11 +146,12 @@ function Colour({ title, value, colours, onSet, onDropper }: { title: string; va
             type="button"
             aria-label={title}
             className="h-4 w-4 shrink-0 rounded-sm border border-black/15 dark:border-white/20"
-            style={{ background: value === null ? "repeating-linear-gradient(45deg, #888 0 3px, #bbb 3px 6px)" : hex }}
+            style={{ background: value === null ? "repeating-linear-gradient(45deg, #888 0 3px, #bbb 3px 6px)" : `linear-gradient(${hex}, ${hex}), ${CHECKS}` }}
           />
         </PopoverTrigger>
         <PopoverContent side="left" align="start" sideOffset={14} className="w-auto border-[#e6e6e6] bg-white p-3 text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
           <ColourPicker
+            alpha={alpha}
             value={hex}
             colours={colours}
             onSet={(c, gesture) => onSet(c, `${title} ${opened.current}.${gesture}`)}
@@ -162,14 +167,16 @@ function Colour({ title, value, colours, onSet, onDropper }: { title: string; va
       </Popover>
       <input
         aria-label={`${title} as a hex code`}
-        value={draft ?? (value === null ? "" : value.slice(1).toUpperCase())}
+        value={draft ?? (value === null ? "" : value.slice(1, 7).toUpperCase())}
         placeholder={value === null ? "Mixed" : undefined}
-        maxLength={7}
+        maxLength={alpha ? 9 : 7}
         onChange={(e) => setDraft(e.target.value)}
         onFocus={(e) => e.currentTarget.select()}
         onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
         onBlur={(e) => {
-          const typed = typedHex(e.currentTarget.value);
+          const read = typedHex(e.currentTarget.value);
+          // six digits keep how solid the colour was; eight say it
+          const typed = read && (!alpha ? read.slice(0, 7) : read.length === 7 ? withAlpha(read, alphaOf(hex)) : read);
           if (draft !== null && typed && typed !== value) onSet(typed);
           setDraft(null);
         }}
@@ -199,9 +206,6 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
 
 /** The shadow a press on + gives. */
 const SHADOW = { color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8 };
-/** The gradient a press on + gives: down the box, to black. */
-const GRADIENT = { to: "#000000", angle: 90 };
-const GRADIENT_KINDS = [["linear", "Linear"], ["radial", "Radial"]] as const;
 const CORNERS = [["◜", "Top left corner"], ["◝", "Top right corner"], ["◞", "Bottom right corner"], ["◟", "Bottom left corner"]] as const;
 const BLEND_NAMES = { multiply: "Multiply", screen: "Screen", overlay: "Overlay", darken: "Darken", lighten: "Lighten", "soft-light": "Soft light" } as const;
 /** How a frame or the picked layers are saved as pictures: PNG or JPEG, at their size or twice it. */
@@ -448,15 +452,12 @@ export function Inspector({
   const fontFile = useRef<HTMLInputElement>(null);
   const [fontSaid, setFontSaid] = useState("");
   const shape = every((l) => l.type === "shape");
-  /** A shape or a path: what has a fill and a line of its own. */
-  const lined = every((l) => l.type === "shape" || l.type === "path");
   const image = every((l) => l.type === "image");
-  /** The gradient of a text or a shape (a picture and a drawing have none). */
-  const gradOf = (l: Layer) => (l.type === "shape" || l.type === "path" || l.type === "text" ? l.gradient : undefined);
-  /** A layer's gradient with these of its settings changed (the others stay); undefined takes the gradient off. */
-  const setGrad = (g: Partial<Gradient> | undefined) => (l: Layer): Layer =>
-    // (a gradient runs from the fill's colour: a path with no fill gets one with it)
-    l.type === "shape" || l.type === "path" || l.type === "text" ? { ...l, ...(g && l.type === "path" && !l.fill ? { fill: "#d9d9d9" } : {}), gradient: g && { ...GRADIENT, ...l.gradient, ...g } } : l;
+  /** The fills or lines every picked layer has, when they are the same list (null: they differ). */
+  const sameList = <T,>(of: (l: Layer) => T[]): T[] | null => {
+    const first = picked[0] ? JSON.stringify(of(picked[0])) : "";
+    return picked[0] && picked.every((l) => JSON.stringify(of(l)) === first) ? of(picked[0]) : null;
+  };
   /** A corner's radius of a picture or a rectangle (0: top left, then round the box), and that corner set. */
   const cornerOf = (l: Layer, n: number): number | undefined => (l.type === "image" || l.type === "shape" ? (typeof l.radius === "object" ? l.radius[n]! : (l.radius ?? 0)) : undefined);
   const setCorner = (n: number, v: number) => (l: Layer): Layer => {
@@ -464,7 +465,6 @@ export function Inspector({
     const r = [0, 1, 2, 3].map((k) => (k === n ? v : (cornerOf(l, k) ?? 0))) as [number, number, number, number];
     return { ...l, radius: r.every((x) => x === r[0]) ? r[0] || undefined : r };
   };
-  const hasGrad = picked.some(gradOf);
   /** A + or − beside a section's name, for the one thing the section can add. */
   const addOrRemove = (has: boolean, what: string, add: () => void, remove: () => void) =>
     has ? (
@@ -476,13 +476,6 @@ export function Inspector({
         <Plus className="h-3.5 w-3.5" />
       </Tap>
     );
-  const hasLine = picked.some((l) => ((l.type === "shape" || l.type === "path") && l.stroke) || (l.type === "text" && l.outline));
-  const setLine = (v: { color: string; width: number } | undefined) => (l: Layer): Layer => (l.type === "shape" || l.type === "path" ? { ...l, stroke: v && { ...l.stroke, ...v } } : l.type === "text" ? { ...l, outline: v } : l);
-  /** A shape's own line (its dashes, ends and side), and those set. */
-  const strokeOf = (l: Layer) => (l.type === "shape" || l.type === "path" ? l.stroke : undefined);
-  const setStroke = (more: Partial<Stroke>) => (l: Layer): Layer => ((l.type === "shape" || l.type === "path") && l.stroke ? { ...l, stroke: { ...l.stroke, ...more } } : l);
-  const setDash = (dash: number, gap: number) => setStroke({ dash: gap > 0 ? [dash, gap] : undefined });
-  const lineOf = (l: Layer) => (l.type === "shape" || l.type === "path" ? l.stroke : l.type === "text" ? l.outline : undefined);
   const frame = frameOf(page, at, design.width, design.height);
   /** A number field of the frame itself. */
   const fnum = (label: string, title: string, value: number, set: (n: number) => Partial<DesignPage>, more: { min: number; max: number }) => (
@@ -546,30 +539,8 @@ export function Inspector({
               </DropdownMenuContent>
             </DropdownMenu>
           </Section>
-          <Section title="Fill" action={addOrRemove(!!page.gradient, "gradient", () => onPage({ ...page, gradient: GRADIENT }), () => onPage({ ...page, gradient: undefined }))}>
-            <div className="flex">
-              <Colour title="The frame's colour" value={page.background} colours={colours} onDropper={onDropper} onSet={(background, merge) => onPage({ ...page, background }, merge)} />
-            </div>
-            {page.gradient && (
-              <div className="grid grid-cols-[1fr_4.5rem] gap-2">
-                <Colour title="Gradient to" value={page.gradient.to} colours={colours} onDropper={onDropper} onSet={(to, merge) => onPage({ ...page, gradient: { ...page.gradient!, to } }, merge)} />
-                <Num label="∠" title="Gradient angle in degrees" value={page.gradient.angle} min={-360} max={360} onLive={(n) => onPagePreview(n === null ? null : { ...page, gradient: { ...page.gradient!, angle: n } })} onCommit={(n) => onPage({ ...page, gradient: { ...page.gradient!, angle: n } })} />
-              </div>
-            )}
-            {page.gradient && (
-              <>
-                <Choice label="Gradient kind" value={page.gradient.kind ?? "linear"} options={GRADIENT_KINDS} onPick={(v) => onPage({ ...page, gradient: { ...page.gradient!, kind: v === "radial" ? "radial" : undefined } })} />
-                <div className="flex items-center gap-2">
-                  {page.gradient.via ? (
-                    <Colour title="Gradient through" value={page.gradient.via} colours={colours} onDropper={onDropper} onSet={(via, merge) => onPage({ ...page, gradient: { ...page.gradient!, via } }, merge)} />
-                  ) : (
-                    <span className={cn("flex-1", DIM)}>No middle colour</span>
-                  )}
-                  {addOrRemove(!!page.gradient.via, "middle colour", () => onPage({ ...page, gradient: { ...page.gradient!, via: "#888888" } }), () => onPage({ ...page, gradient: { ...page.gradient!, via: undefined } }))}
-                </div>
-              </>
-            )}
-          </Section>
+          <FillList fills={fillsOf(page)} design={design} colours={colours} onDropper={onDropper} base="#ffffff" onSet={(f, merge) => onPage(withFills(page, f), merge)} onLive={(f) => onPagePreview(f ? withFills(page, f) : null)} />
+          <StrokeList strokes={strokesOf(page)} colours={colours} onDropper={onDropper} max={200} box inside onSet={(st, merge) => onPage(withStrokes(page, st), merge)} onLive={(st) => onPagePreview(st ? withStrokes(page, st) : null)} />
           <Section title="Finish">
             <Slide label="Grain" value={page.grain ?? 0} min={0} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, grain: n || undefined })} onCommit={(n) => onPage({ ...page, grain: n || undefined })} />
             <Slide label="Vignette" value={page.vignette ?? 0} min={-100} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, vignette: n || undefined })} onCommit={(n) => onPage({ ...page, vignette: n || undefined })} />
@@ -642,6 +613,8 @@ export function Inspector({
                 </Tap>
               </div>
             )}
+            {every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect")) &&
+              slide("Corner smoothing", same((l) => (l.type === "image" || l.type === "shape" ? Math.round((l.smooth ?? 0) * 100) : undefined)), (n) => (l) => (l.type === "image" || l.type === "shape" ? { ...l, smooth: n ? n / 100 : undefined } : l), 0, 100)}
             {every((l) => l.type !== "image") && slide("Blur", same((l) => (l.type !== "image" ? (l.blur ?? 0) : undefined)), (n) => (l) => (l.type !== "image" ? { ...l, blur: n || undefined } : l), 0, 100)}
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
@@ -674,73 +647,21 @@ export function Inspector({
               />
             )}
           </Section>
-          {(lined || text) && (
-            <Section title="Fill" action={addOrRemove(hasGrad, "gradient", () => onPatch(setGrad(GRADIENT)), () => onPatch(setGrad(undefined)))}>
-              <div className="flex items-center gap-2">
-                {every((l) => l.type === "path" && !l.fill) ? (
-                  <>
-                    <span className={cn("flex-1", DIM)}>None</span>
-                    <Tap label="Add a fill" onClick={() => onPatch((l) => (l.type === "path" ? { ...l, fill: "#d9d9d9" } : l))}>
-                      <Plus className="h-3.5 w-3.5" />
-                    </Tap>
-                  </>
-                ) : (
-                  colour("Fill", same((l) => (l.type === "shape" || l.type === "path" ? l.fill : l.type === "text" ? l.color : undefined)), (c) => (l) => (l.type === "shape" || l.type === "path" ? { ...l, fill: c } : l.type === "text" ? { ...l, color: c } : l))
-                )}
-                {/* a path may be a line alone */}
-                {picked.some((l) => l.type === "path" && l.fill) && (
-                  <Tap label="No fill" onClick={() => onPatch((l) => (l.type === "path" ? { ...l, fill: undefined, gradient: undefined, stroke: l.stroke ?? { color: "#111111", width: 6 } } : l))}>
-                    <Ban className="h-3.5 w-3.5" />
-                  </Tap>
-                )}
-              </div>
-              {hasGrad && (
-                <div className="grid grid-cols-[1fr_4.5rem] gap-2">
-                  {colour("Gradient to", same((l) => gradOf(l)?.to), (c) => setGrad({ to: c }))}
-                  {num("∠", "Gradient angle in degrees", same((l) => gradOf(l)?.angle), (n) => setGrad({ angle: n }), { min: -360, max: 360 })}
-                </div>
-              )}
-              {hasGrad && (
-                <>
-                  <Choice label="Gradient kind" value={same((l) => (gradOf(l) ? (gradOf(l)!.kind ?? "linear") : undefined))} options={GRADIENT_KINDS} onPick={(v) => onPatch(setGrad({ kind: v === "radial" ? "radial" : undefined }))} />
-                  <div className="flex items-center gap-2">
-                    {picked.some((l) => gradOf(l)?.via) ? colour("Gradient through", same((l) => gradOf(l)?.via), (c) => setGrad({ via: c })) : <span className={cn("flex-1", DIM)}>No middle colour</span>}
-                    {addOrRemove(picked.some((l) => gradOf(l)?.via), "middle colour", () => onPatch(setGrad({ via: "#888888" })), () => onPatch(setGrad({ via: undefined })))}
-                  </div>
-                </>
-              )}
-            </Section>
+          {every(takesFills) && (
+            <FillList fills={sameList(fillsOf)} design={design} colours={colours} onDropper={onDropper} base="#d9d9d9" onSet={(f, merge) => onPatch((l) => withFills(l, f), merge)} onLive={(f) => onPreview(f ? (l) => withFills(l, f) : null)} />
           )}
-          {(lined || text) && (
-            <Section
-              title="Stroke"
-              action={addOrRemove(hasLine, "stroke", () => onPatch(setLine({ color: "#000000", width: 4 })), () => onPatch(setLine(undefined)))}
-            >
-              {hasLine && (
-                <div className="grid grid-cols-[1fr_4.5rem] gap-2">
-                  {colour("Stroke", same((l) => lineOf(l)?.color), (c) => (l) => setLine({ width: lineOf(l)?.width ?? 4, color: c })(l))}
-                  {num("≡", "Stroke width", same((l) => lineOf(l)?.width), (n) => (l) => setLine(n > 0 ? { color: lineOf(l)?.color ?? "#000000", width: n } : undefined)(l), { min: 0, max: lined ? 200 : 60 })}
-                </div>
-              )}
-              {lined && hasLine && (
-                <>
-                  <Choice
-                    label="Stroke side"
-                    value={same((l) => (strokeOf(l) ? (strokeOf(l)!.side ?? "center") : undefined))}
-                    options={[["center", "Centre"], ["inside", "Inside"], ["outside", "Outside"]] as const}
-                    onPick={(v) => onPatch(setStroke({ side: v === "center" ? undefined : v }))}
-                  />
-                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                    {/* a dash with no gap is no dash: a dash typed first gets a gap as long as itself */}
-                    {num("┄", "Dash length", same((l) => (strokeOf(l) ? (strokeOf(l)!.dash?.[0] ?? 0) : undefined)), (n) => (l) => setDash(n, strokeOf(l)?.dash?.[1] || n)(l), { min: 0, max: 2000 })}
-                    {num("⋯", "Gap between dashes", same((l) => (strokeOf(l) ? (strokeOf(l)!.dash?.[1] ?? 0) : undefined)), (n) => (l) => setDash(strokeOf(l)?.dash?.[0] ?? n, n)(l), { min: 0, max: 2000 })}
-                    <Tap label="Round ends" on={every((l) => !!strokeOf(l)?.round)} onClick={() => onPatch((l) => setStroke({ round: strokeOf(l)?.round ? undefined : true })(l))}>
-                      <CircleDot className="h-3.5 w-3.5" />
-                    </Tap>
-                  </div>
-                </>
-              )}
-            </Section>
+          {every(takesStrokes) && (
+            <StrokeList
+              strokes={sameList(strokesOf)}
+              colours={colours}
+              onDropper={onDropper}
+              max={text ? 60 : 200}
+              text={text}
+              box={every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect"))}
+              open={every((l) => l.type === "path" && !l.closed)}
+              onSet={(st, merge) => onPatch((l) => withStrokes(l, st), merge)}
+              onLive={(st) => onPreview(st ? (l) => withStrokes(l, st) : null)}
+            />
           )}
           {text && (
             <Section title="Typography">
@@ -1018,5 +939,343 @@ export function Inspector({
       </Section>
       )}
     </aside>
+  );
+}
+
+/** What a paint looks like on a swatch: its colour, its gradient, or its picture, over squares where it is see-through. */
+function swatchOf(p: Paint, designId: string): string {
+  if (p.type === "solid") return `linear-gradient(${p.color}, ${p.color}), ${CHECKS}`;
+  if (p.type === "image") return `center / cover no-repeat url("${pictureUrl(designId, p.picture)}"), ${CHECKS}`;
+  const stops = [...p.stops].sort((a, b) => a.at - b.at).map((s) => `${s.color} ${Math.round(s.at * 100)}%`).join(", ");
+  const css = p.kind === "radial" || p.kind === "diamond" ? `radial-gradient(${stops})` : p.kind === "angular" ? `conic-gradient(from ${p.angle + 90}deg, ${stops})` : `linear-gradient(${p.angle + 90}deg, ${stops})`;
+  return `${css}, ${CHECKS}`;
+}
+
+const GRADIENT_NAMES = { linear: "Linear", radial: "Radial", angular: "Angular", diamond: "Diamond" } as const;
+const MODE_NAMES = { fill: "Fill", fit: "Fit", crop: "Crop", tile: "Tile" } as const;
+const HEAD_NAMES = { none: "None", arrow: "Arrow", triangle: "Triangle", circle: "Circle", bar: "Bar" } as const;
+
+/**
+ * A list of fills or lines as rows, the top one first as it lies on the canvas: each row with a grip to drag it to
+ * another place (pointer events, not the browser's drag and drop), its own fields, an eye that hides it and a minus
+ * that takes it off. Lists that differ between the picked layers show as mixed until + gives them all one.
+ */
+function ListRows<T extends PaintLook>({ what, items, onSet, row }: { what: string; items: T[] | null; onSet: (items: T[], merge?: string) => void; row: (item: T, set: (item: T, merge?: string) => void) => ReactNode }) {
+  const [drag, setDrag] = useState<{ from: number; dy: number; step: number } | null>(null);
+  if (items === null) return <p className={DIM}>Mixed {what}s: + gives every picked layer one</p>;
+  // shown top first: row n is the list's item at len - 1 - n
+  const shown = [...items].reverse();
+  const at = (n: number) => items.length - 1 - n;
+  const grab = (e: React.PointerEvent<HTMLButtonElement>, n: number) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const row = e.currentTarget.closest<HTMLElement>("[data-row]");
+    const step = (row?.offsetHeight ?? 24) + 8;
+    const y0 = e.clientY;
+    let dy = 0;
+    setDrag({ from: n, dy, step });
+    const move = (ev: PointerEvent) => setDrag({ from: n, dy: (dy = ev.clientY - y0), step });
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      setDrag(null);
+      const to = Math.max(0, Math.min(items.length - 1, n + Math.round(dy / step)));
+      if (to !== n) onSet(moved(items, at(n), at(to)));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+  const to = drag && Math.max(0, Math.min(items.length - 1, drag.from + Math.round(drag.dy / drag.step)));
+  return (
+    <div className="flex flex-col gap-2">
+      {shown.map((item, n) => {
+        // the rows between where it was and where it goes make room for it
+        const shift = drag && to !== null && n !== drag.from ? (drag.from < n && n <= to ? -drag.step : to <= n && n < drag.from ? drag.step : 0) : 0;
+        return (
+          <div key={n} data-row className={cn("flex flex-col gap-2", drag?.from === n && "relative z-10")} style={{ transform: `translateY(${drag?.from === n ? drag.dy : shift}px)` }}>
+            <div className={cn("flex items-center gap-1", item.hidden && "opacity-50")}>
+              <button type="button" aria-label={`Drag the ${what} to another place`} onPointerDown={(e) => grab(e, n)} className={cn("flex h-6 w-3 shrink-0 cursor-grab touch-none items-center justify-center", DIM)}>
+                <GripVertical className="h-3 w-3" />
+              </button>
+              {row(item, (next, merge) => onSet(items.map((x, k) => (k === at(n) ? next : x)), merge))}
+              <Tap label={item.hidden ? `Show the ${what}` : `Hide the ${what}`} onClick={() => onSet(items.map((x, k) => (k === at(n) ? { ...x, hidden: x.hidden ? undefined : true } : x)))}>
+                {item.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </Tap>
+              <Tap label={`Remove the ${what}`} onClick={() => onSet(items.filter((_, k) => k !== at(n)))}>
+                <Minus className="h-3.5 w-3.5" />
+              </Tap>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A paint's opacity in percent, as a small number field. */
+function OpacityNum({ value, onLive, onCommit }: { value: number | undefined; onLive: (n: number | null) => void; onCommit: (n: number | undefined) => void }) {
+  return (
+    <div className="w-14 shrink-0">
+      <Num label="%" title="Opacity in percent" value={Math.round((value ?? 1) * 100)} min={0} max={100} onLive={onLive} onCommit={(n) => onCommit(n >= 100 ? undefined : n / 100)} />
+    </div>
+  );
+}
+
+/** A gradient's colours on a strip: each stop a handle to drag along it (or pick), a press between them adds one there. */
+function StopsBar({ stops, picked, onPick, onSet }: { stops: GradientStop[]; picked: number; onPick: (n: number) => void; onSet: (stops: GradientStop[], merge?: string) => void }) {
+  const bar = useRef<HTMLDivElement>(null);
+  const gestures = useRef(0);
+  const place = (x: number) => {
+    const r = bar.current!.getBoundingClientRect();
+    return Math.round(Math.min(1, Math.max(0, (x - r.left) / r.width)) * 100) / 100;
+  };
+  const slide = (e: React.PointerEvent, n: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onPick(n);
+    const merge = `stop ${++gestures.current}`;
+    const move = (ev: PointerEvent) => onSet(stops.map((s, k) => (k === n ? { ...s, at: place(ev.clientX) } : s)), merge);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const css = [...stops].sort((a, b) => a.at - b.at).map((s) => `${s.color} ${Math.round(s.at * 100)}%`).join(", ");
+  return (
+    <div
+      ref={bar}
+      role="group"
+      aria-label="Gradient colours"
+      onPointerDown={(e) => {
+        if (stops.length >= DESIGN_LIMITS.stops) return;
+        const at = place(e.clientX);
+        onSet([...stops, { at, color: colourAt(stops, at) }]);
+        onPick(stops.length);
+      }}
+      className="relative mx-1.5 h-4 cursor-copy rounded-sm border border-black/15 dark:border-white/20"
+      style={{ background: `linear-gradient(to right, ${css}), ${CHECKS}` }}
+    >
+      {stops.map((s, n) => (
+        <button
+          key={n}
+          type="button"
+          aria-label={`Colour at ${Math.round(s.at * 100)}%`}
+          aria-pressed={n === picked}
+          onPointerDown={(e) => slide(e, n)}
+          className={cn("absolute top-1/2 h-5 w-3 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[3px] border-2 shadow-[0_0_0_1px_rgba(0,0,0,0.4)]", n === picked ? "border-[#0d99ff]" : "border-white")}
+          style={{ left: `${s.at * 100}%`, background: `linear-gradient(${s.color}, ${s.color}), ${CHECKS}` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One fill's own settings, in the popover its swatch opens: what it is (a colour, a gradient, a picture) and how it looks. */
+function PaintEditor({ paint, design, colours, onSet, onDropper }: { paint: Paint; design: Design; colours: readonly string[]; onSet: (p: Paint, merge?: string) => void; onDropper?: (take: (hex: string) => void) => void }) {
+  const [stop, setStop] = useState(0);
+  const opened = useRef(Math.random());
+  const look = { ...(paint.hidden ? { hidden: true } : {}), ...(paint.opacity !== undefined ? { opacity: paint.opacity } : {}), ...(paint.blend ? { blend: paint.blend } : {}) };
+  const first = paint.type === "solid" ? paint.color : paint.type === "gradient" ? (paint.stops[0]?.color ?? "#000000") : "#d9d9d9";
+  const turn = (type: Paint["type"]) => {
+    if (type === paint.type) return;
+    if (type === "solid") onSet({ type, color: first, ...look });
+    else if (type === "gradient") onSet({ type, angle: 90, stops: [{ at: 0, color: first }, { at: 1, color: "#000000" }], ...look });
+    else if (design.pictures[0]) onSet({ type, picture: design.pictures[0], mode: "fill", ...look });
+  };
+  const s = paint.type === "gradient" ? Math.min(stop, paint.stops.length - 1) : 0;
+  return (
+    <div className="flex w-[208px] flex-col gap-2.5 text-[11px]">
+      <Choice label="Fill kind" value={paint.type} options={[["solid", "Colour"], ["gradient", "Gradient"], ...(design.pictures.length ? [["image", "Picture"] as const] : [])] as const} onPick={turn} />
+      {paint.type === "solid" && <ColourPicker alpha value={paint.color} colours={colours} onSet={(c, g) => onSet({ ...paint, color: c }, `paint ${opened.current}.${g}`)} onDropper={onDropper && (() => onDropper((c) => onSet({ ...paint, color: c })))} />}
+      {paint.type === "gradient" && (
+        <>
+          <PickOne label="Gradient kind" value={GRADIENT_NAMES[paint.kind ?? "linear"]} options={DESIGN_GRADIENTS.map((k) => [k, GRADIENT_NAMES[k]] as const)} onPick={(k) => onSet({ ...paint, kind: k === "linear" ? undefined : k })} />
+          {paint.kind !== "radial" && paint.kind !== "diamond" && <Num label="∠" title="Gradient angle in degrees" value={paint.angle} min={-360} max={360} onCommit={(n) => onSet({ ...paint, angle: n })} />}
+          <StopsBar stops={paint.stops} picked={s} onPick={setStop} onSet={(stops, merge) => onSet({ ...paint, stops }, merge)} />
+          <div className="flex items-center justify-between">
+            <span className={DIM}>Colour at {Math.round(paint.stops[s]!.at * 100)}%</span>
+            <Tap label="Remove this colour" disabled={paint.stops.length <= 2} onClick={() => (onSet({ ...paint, stops: paint.stops.filter((_, k) => k !== s) }), setStop(0))}>
+              <Minus className="h-3.5 w-3.5" />
+            </Tap>
+          </div>
+          <ColourPicker alpha value={paint.stops[s]!.color} colours={colours} onSet={(c, g) => onSet({ ...paint, stops: paint.stops.map((x, k) => (k === s ? { ...x, color: c } : x)) }, `paint ${opened.current}.${s}.${g}`)} />
+        </>
+      )}
+      {paint.type === "image" && (
+        <>
+          <div className="grid grid-cols-4 gap-1.5">
+            {design.pictures.map((id) => (
+              <button key={id} type="button" aria-label="Fill with this picture" aria-pressed={id === paint.picture} onClick={() => onSet({ ...paint, picture: id })} className={cn("aspect-square rounded-[4px] border border-black/15 bg-cover bg-center dark:border-white/20", id === paint.picture && "outline outline-2 outline-offset-1 outline-[#0d99ff]")} style={{ backgroundImage: `url("${pictureUrl(design.id, id)}")` }} />
+            ))}
+          </div>
+          <Choice label="How the picture lies" value={paint.mode} options={DESIGN_PICTURE_MODES.map((m) => [m, MODE_NAMES[m]] as const)} onPick={(mode) => onSet({ ...paint, mode, crop: mode === "crop" ? (paint.crop ?? { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }) : undefined, scale: mode === "tile" ? (paint.scale ?? 0.25) : undefined })} />
+          {paint.mode === "tile" && <Slide label="Tile size" value={Math.round((paint.scale ?? 0.25) * 100)} min={2} max={100} onLive={() => {}} onCommit={(n) => onSet({ ...paint, scale: n / 100 })} />}
+          {paint.mode === "crop" && (
+            <div className="grid grid-cols-2 gap-2">
+              {(["x", "y", "w", "h"] as const).map((k) => {
+                const c = paint.crop ?? { x: 0, y: 0, w: 1, h: 1 };
+                const size = k === "w" || k === "h";
+                // a crop stays inside the picture: its corner moves in when its size grows
+                const set = (n: number) => {
+                  const v = n / 100;
+                  const next = { ...c, [k]: v };
+                  next.x = Math.min(next.x, 1 - next.w);
+                  next.y = Math.min(next.y, 1 - next.h);
+                  onSet({ ...paint, crop: next });
+                };
+                return <Num key={k} label={k.toUpperCase()} title={{ x: "Crop from the left in percent", y: "Crop from the top in percent", w: "Crop width in percent", h: "Crop height in percent" }[k]} value={Math.round(c[k] * 100)} min={size ? 1 : 0} max={size ? 100 : 99} onCommit={set} />;
+              })}
+            </div>
+          )}
+        </>
+      )}
+      <PickOne label="Fill blend" value={paint.blend ? BLEND_NAMES[paint.blend] : "Normal"} options={[["normal", "Normal"] as const, ...DESIGN_BLENDS.map((b) => [b, BLEND_NAMES[b]] as const)]} onPick={(b) => onSet({ ...paint, blend: b === "normal" ? undefined : b })} />
+    </div>
+  );
+}
+
+/** A fills section: + adds a colour on top, each row a swatch that opens its settings, its colour or kind, its opacity. */
+function FillList({ fills, design, colours, onSet, onLive, onDropper, base }: { fills: Paint[] | null; design: Design; colours: readonly string[]; onSet: (fills: Paint[], merge?: string) => void; onLive: (fills: Paint[] | null) => void; onDropper?: (take: (hex: string) => void) => void; base: string }) {
+  return (
+    <Section
+      title="Fill"
+      action={
+        <Tap label="Add a fill" onClick={() => onSet([...(fills ?? []), { type: "solid", color: fills?.length ? "#000000" : base }])}>
+          <Plus className="h-3.5 w-3.5" />
+        </Tap>
+      }
+    >
+      <ListRows
+        what="fill"
+        items={fills}
+        onSet={onSet}
+        row={(p, set) => (
+          <>
+            <div className={cn(FIELD, "flex-1")}>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button type="button" aria-label="Fill settings" className="h-4 w-4 shrink-0 rounded-sm border border-black/15 dark:border-white/20" style={{ background: swatchOf(p, design.id) }} />
+                </PopoverTrigger>
+                <PopoverContent side="left" align="start" sideOffset={14} className="w-auto border-[#e6e6e6] bg-white p-3 text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
+                  <PaintEditor paint={p} design={design} colours={colours} onSet={set} onDropper={onDropper} />
+                </PopoverContent>
+              </Popover>
+              {p.type === "solid" ? (
+                <input
+                  key={p.color}
+                  aria-label="Fill as a hex code"
+                  defaultValue={p.color.slice(1, 7).toUpperCase()}
+                  maxLength={9}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
+                  onBlur={(e) => {
+                    const typed = typedHex(e.currentTarget.value);
+                    const hex = typed && (typed.length === 7 ? withAlpha(typed, alphaOf(p.color)) : typed);
+                    if (hex && hex !== p.color) set({ ...p, color: hex });
+                  }}
+                  className="w-full min-w-0 bg-transparent uppercase outline-none"
+                />
+              ) : (
+                <span className="truncate">{p.type === "gradient" ? GRADIENT_NAMES[p.kind ?? "linear"] : "Picture"}</span>
+              )}
+            </div>
+            <OpacityNum
+              value={p.type === "solid" ? alphaOf(p.color) * (p.opacity ?? 1) : p.opacity}
+              onLive={(n) => onLive(n === null || !fills ? null : fills.map((x) => (x === p ? { ...x, opacity: n / 100 } : x)))}
+              // a colour's own see-through part is its opacity: one number, as the hex code says it
+              onCommit={(o) => set(p.type === "solid" ? { ...p, color: withAlpha(p.color, o ?? 1), opacity: undefined } : { ...p, opacity: o })}
+            />
+          </>
+        )}
+      />
+    </Section>
+  );
+}
+
+/** A strokes section: + adds a line on top, each row its colour, its width and its settings (side, dashes, ends, corners, a width a side, heads). */
+function StrokeList({ strokes, colours, onSet, onLive, onDropper, max, text, box, open, inside }: { strokes: Stroke[] | null; colours: readonly string[]; onSet: (strokes: Stroke[], merge?: string) => void; onLive: (strokes: Stroke[] | null) => void; onDropper?: (take: (hex: string) => void) => void; max: number; text?: boolean; box?: boolean; open?: boolean; inside?: boolean }) {
+  const [more, setMore] = useState<Stroke | null>(null);
+  return (
+    <Section
+      title="Stroke"
+      action={
+        <Tap label="Add a stroke" onClick={() => onSet([...(strokes ?? []), { color: "#000000", width: 4, ...(inside ? { side: "inside" as const } : {}) }])}>
+          <Plus className="h-3.5 w-3.5" />
+        </Tap>
+      }
+    >
+      <ListRows
+        what="stroke"
+        items={strokes}
+        onSet={onSet}
+        row={(s, set) => (
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="flex items-center gap-1">
+              <Colour alpha title="Stroke" value={s.color} colours={colours} onDropper={onDropper} onSet={(color, merge) => set({ ...s, color }, merge)} />
+              <div className="w-14 shrink-0">
+                <Num label="≡" title="Stroke width" value={s.width} min={0} max={max} onLive={(n) => onLive(n === null || !strokes ? null : strokes.map((x) => (x === s ? { ...x, width: n } : x)))} onCommit={(width) => set({ ...s, width })} />
+              </div>
+              {!text && (
+                <Tap label="Stroke settings" on={more === s} onClick={() => setMore(more === s ? null : s)}>
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </Tap>
+              )}
+            </div>
+            {more === s && (
+              <StrokeMore
+                s={s}
+                box={box}
+                open={open}
+                max={max}
+                set={(next) => {
+                  setMore(next);
+                  set(next);
+                }}
+              />
+            )}
+          </div>
+        )}
+      />
+    </Section>
+  );
+}
+
+/** A line's own settings: its side, dashes, ends and corners; a width a side round a box; heads on an open path. */
+function StrokeMore({ s, box, open, max, set }: { s: Stroke; box?: boolean; open?: boolean; max: number; set: (s: Stroke) => void }) {
+  const sides = s.sides;
+  return (
+    <div className="flex flex-col gap-2">
+      {!open && <Choice label="Stroke side" value={s.side ?? "center"} options={[["center", "Centre"], ["inside", "Inside"], ["outside", "Outside"]] as const} onPick={(v) => set({ ...s, side: v === "center" ? undefined : v })} />}
+      <div className="grid grid-cols-2 gap-2">
+        {/* a dash with no gap is no dash: a dash typed first gets a gap as long as itself */}
+        <Num label="┄" title="Dash length" value={s.dash?.[0] ?? 0} min={0} max={2000} onCommit={(n) => set({ ...s, dash: (s.dash?.[1] || n) > 0 ? [n, s.dash?.[1] || n] : undefined })} />
+        <Num label="⋯" title="Gap between dashes" value={s.dash?.[1] ?? 0} min={0} max={2000} onCommit={(n) => set({ ...s, dash: n > 0 ? [s.dash?.[0] ?? n, n] : undefined })} />
+      </div>
+      <Choice label="Line ends" value={s.cap ?? (s.round ? "round" : "butt")} options={[["butt", "Flat"], ["round", "Round"], ["square", "Square"]] as const} onPick={(cap) => set({ ...s, cap: cap === "butt" ? undefined : cap, round: undefined })} />
+      <Choice label="Line corners" value={s.join ?? "miter"} options={[["miter", "Sharp"], ["round", "Round"], ["bevel", "Cut"]] as const} onPick={(join) => set({ ...s, join: join === "miter" ? undefined : join })} />
+      {box && (
+        <div className="flex items-center gap-2">
+          <div className="grid min-w-0 flex-1 grid-cols-4 gap-1">
+            {sides &&
+              (["Top", "Right", "Bottom", "Left"] as const).map((name, n) => (
+                <Num key={name} label={name[0]} title={`${name} width`} value={sides[n]!} min={0} max={max} onCommit={(v) => set({ ...s, sides: sides.map((x, k) => (k === n ? v : x)) as [number, number, number, number] })} />
+              ))}
+          </div>
+          <Tap label="A width for each side" on={!!sides} onClick={() => set({ ...s, sides: sides ? undefined : [s.width, s.width, s.width, s.width] })}>
+            <Scan className="h-3.5 w-3.5" />
+          </Tap>
+        </div>
+      )}
+      {open && (
+        <div className="grid grid-cols-2 gap-2">
+          <PickOne label="Start" value={`Start: ${HEAD_NAMES[s.start ?? "none"]}`} options={(["none", ...DESIGN_HEADS] as const).map((h) => [h, HEAD_NAMES[h]] as const)} onPick={(h) => set({ ...s, start: h === "none" ? undefined : h })} />
+          <PickOne label="End" value={`End: ${HEAD_NAMES[s.end ?? "none"]}`} options={(["none", ...DESIGN_HEADS] as const).map((h) => [h, HEAD_NAMES[h]] as const)} onPick={(h) => set({ ...s, end: h === "none" ? undefined : h })} />
+        </div>
+      )}
+    </div>
   );
 }

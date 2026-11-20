@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Design, DesignPage } from "../../contracts/design";
 import { startTask } from "../work/tasks";
+import { paintPictures } from "../../src/lib/design/paint";
 
 /**
  * A design's pages as small pictures, for the AI that designed them to look at (GET /api/designs/:id/look). They are
@@ -49,6 +50,8 @@ export async function pagePictures(d: Design, pages: DesignPage[], which: number
   const asked = which.flatMap((n) => (pages[n - 1] ? [{ n, page: pages[n - 1]! }] : []));
   const files: Record<string, string> = {};
   const families = new Set<string>();
+  for (const { page } of asked)
+    for (const pic of paintPictures(page)) files[`pic-${pic}`] = path.join(dir, pic);
   for (const { page } of asked)
     for (const l of page.layers) {
       if (l.type === "image" && !l.hidden) files[`pic-${l.picture}`] = path.join(dir, l.picture);

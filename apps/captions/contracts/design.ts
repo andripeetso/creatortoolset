@@ -41,7 +41,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 60, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 60, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -58,8 +58,45 @@ export interface Gradient {
   /** a colour it passes through half-way */
   via?: string;
 }
-/** A line round a shape. */
-export interface Stroke {
+/** How a gradient paint runs: along its angle, from the middle out (a circle reaching the corners), round the middle like a clock hand from its angle, or out from the middle in a diamond reaching the corners. */
+export const DESIGN_GRADIENTS = ["linear", "radial", "angular", "diamond"] as const;
+/** How a picture paint lies in its layer: filling it (cut at the edges), fitting in it whole, one part of it (`crop`) filling it, or repeated. */
+export const DESIGN_PICTURE_MODES = ["fill", "fit", "crop", "tile"] as const;
+/** What an open line can end in. */
+export const DESIGN_HEADS = ["arrow", "triangle", "circle", "bar"] as const;
+export type DesignHead = (typeof DESIGN_HEADS)[number];
+/** A colour of a gradient and where along it it lies, 0 (its start) to 1 (its end). */
+export interface GradientStop {
+  at: number;
+  color: string;
+}
+/** What every paint and every line of a list has: kept but not drawn, how see-through (0 to 1; absent = 1), how it mixes with what is under it. */
+export interface PaintLook {
+  hidden?: boolean;
+  opacity?: number;
+  blend?: DesignBlend;
+}
+/**
+ * One fill of a layer's or a frame's list (`fills`, bottom first): a colour ("#rrggbb" or "#rrggbbaa", the last two
+ * digits how solid it is), a gradient through any number of colours, or a picture of the design.
+ */
+export type Paint = PaintLook &
+  (
+    | { type: "solid"; color: string }
+    | { type: "gradient"; /** absent = linear */ kind?: Exclude<(typeof DESIGN_GRADIENTS)[number], "linear">; /** degrees: 0 is left to right, 90 top to bottom (angular: where it starts) */ angle: number; stops: GradientStop[] }
+    | {
+        type: "image";
+        picture: string;
+        mode: (typeof DESIGN_PICTURE_MODES)[number];
+        /** crop: the part of the picture shown, as fractions of its width and height */
+        crop?: { x: number; y: number; w: number; h: number };
+        /** tile: one tile's width as a part of the layer's width (absent = 0.25) */
+        scale?: number;
+      }
+  );
+/** A line round a shape (one of a list: `strokes`, bottom first). */
+export interface Stroke extends PaintLook {
+  /** "#rrggbb" or "#rrggbbaa" */
   color: string;
   width: number;
   /** dashes: how long each is and the gap after it, in pixels; absent = an unbroken line */
@@ -68,6 +105,14 @@ export interface Stroke {
   round?: boolean;
   /** the side of the shape's edge the line lies on; absent = half on each */
   side?: "inside" | "outside";
+  /** a width for each side of a box (a rectangle, a picture, a frame): top, right, bottom, left; 0 leaves a side bare */
+  sides?: [number, number, number, number];
+  /** its ends (absent: as `round` says) and its corners (absent: as the shape has them) */
+  cap?: "butt" | "round" | "square";
+  join?: "miter" | "round" | "bevel";
+  /** what an open path's line starts and ends in */
+  start?: DesignHead;
+  end?: DesignHead;
 }
 /** A corner radius in pixels: one for every corner, or one each for the top left, top right, bottom right and bottom left. */
 export type Radius = number | [number, number, number, number];
@@ -111,6 +156,10 @@ export interface TextLayer extends Box {
   /** "#rrggbb" */
   color: string;
   gradient?: Gradient;
+  /** its fills, bottom first, in place of `color` and `gradient` (a picture fill shows the picture through the letters) */
+  fills?: Paint[];
+  /** lines round its letters, bottom first, under their fills, in place of `outline` */
+  strokes?: Stroke[];
   /** pixels between the letters, beside the font's own; absent = 0 */
   spacing?: number;
   /** "shrink": `size` is the most, and the words are set at the largest size up to it at which they fit the box */
@@ -156,6 +205,9 @@ export interface ImageLayer extends Box {
   /** the picture this one was cut out of (its background taken away): kept, so the background can be put back */
   uncut?: string;
   radius?: Radius;
+  /** corners rounded smoothly into the sides, 0 to 1 (absent = plain round corners) */
+  smooth?: number;
+  strokes?: Stroke[];
 }
 
 export interface ShapeLayer extends Box {
@@ -164,7 +216,11 @@ export interface ShapeLayer extends Box {
   fill: string;
   gradient?: Gradient;
   radius?: Radius;
+  smooth?: number;
   stroke?: Stroke;
+  /** its fills and lines, bottom first, in place of `fill`, `gradient` and `stroke` */
+  fills?: Paint[];
+  strokes?: Stroke[];
 }
 
 /** A drawing the AI made: SVG markup with a viewBox and no text, no script, no link and nothing from outside it. */
@@ -191,6 +247,9 @@ export interface PathLayer extends Box {
   fill?: string;
   gradient?: Gradient;
   stroke?: Stroke;
+  /** its fills and lines, bottom first, in place of `fill`, `gradient` and `stroke` */
+  fills?: Paint[];
+  strokes?: Stroke[];
 }
 
 export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer;
@@ -219,6 +278,10 @@ export interface DesignPage {
   /** "#rrggbb" */
   background: string;
   gradient?: Gradient;
+  /** its fills, bottom first, in place of `background` and `gradient` */
+  fills?: Paint[];
+  /** lines round its edge, over everything on it */
+  strokes?: Stroke[];
   /** the frame's finish, over everything on it: a film grain, 1 to 100 (absent = none) */
   grain?: number;
   /** and its edges darkened (1 to 100) or lightened (-1 to -100), the middle left as it is */

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
+import { paintPictures } from "@/lib/design/paint";
 import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, hugLoose, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
@@ -206,6 +207,14 @@ function DesignPage({ id }: { id: string }) {
       img.onload = () => setVersion((v) => v + 1);
       img.onerror = () => setError("A picture on a frame could not be loaded");
       img.src = l.type === "image" ? pictureUrl(design.id, src) : drawingUrl(src);
+    }
+    // and the pictures that fill shapes, words and frames
+    for (const src of pages.flatMap(paintPictures)) {
+      if (loaded.has(src)) continue;
+      const img = new Image();
+      loaded.set(src, img);
+      img.onload = () => setVersion((v) => v + 1);
+      img.src = pictureUrl(design.id, src);
     }
   }, [pages, design, loaded]);
 
