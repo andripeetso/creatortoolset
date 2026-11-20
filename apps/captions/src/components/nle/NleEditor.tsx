@@ -894,7 +894,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               </>
             )}
             end={<span className="flex min-w-0 items-center gap-2 truncate">{status}</span>} />
-          <NleMeter clock={tln.clock} />
+          {full && <NleMeter clock={tln.clock} />}
           </div>
         )} />
 

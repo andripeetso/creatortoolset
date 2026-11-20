@@ -677,7 +677,7 @@ export const NleTracks = memo(function NleTracks({
         onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && scrubTo(e.clientX), className: "cursor-ew-resize",
         onContextMenu: (e) => { e.preventDefault(); onMenu({ x: e.clientX, y: e.clientY, on: "ruler" }, ""); },
       }}
-      rulerLabel={<span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead"><Timecode clock={clock} fps={fps} /></span>}
+      rulerLabel={compact ? null : <span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead"><Timecode clock={clock} fps={fps} /></span>}
       rulerChildren={
         <>
           {ticks.map((k) => (
