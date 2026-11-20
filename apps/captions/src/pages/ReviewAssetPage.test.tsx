@@ -103,3 +103,39 @@ describe("the Review page's player follows a plug-in's play plan", () => {
     expect(video!.currentTime).toBe(75 / 25);
   });
 });
+
+describe("a cut whose faces aren't blurred yet", () => {
+  const render = async (v: ReviewView) => {
+    useAuth.setState({ me: { username: "owner", role: "admin", cloud: false, off: [] } as Me });
+    h.view = v;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <MemoryRouter initialEntries={["/review/a1"]}>
+          <Routes>
+            <Route path="/review/:assetId" element={<ReviewAssetPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+    await act(async () => {});
+    return host.textContent ?? "";
+  };
+
+  it("shows the Not blurred yet chip on its version", async () => {
+    expect(await render({ ...view, asset: { ...view.asset, owner: "owner", versions: [{ ...version, notBlurred: true }] } })).toContain("Not blurred yet");
+  });
+
+  it("warns on a share link that is already on, and leaves it on", async () => {
+    const share = { token: "t1", enabled: true, download: true };
+    await render({ ...view, asset: { ...view.asset, owner: "owner", share, versions: [{ ...version, notBlurred: true }] } });
+    expect(host!.querySelector('[title="This link shows a cut whose faces aren\'t blurred yet"]')).not.toBeNull();
+  });
+
+  it("shows no chip and no warning on a blurred cut", async () => {
+    expect(await render({ ...view, asset: { ...view.asset, owner: "owner", share: { token: "t1", enabled: true, download: true } } })).not.toContain("Not blurred yet");
+    expect(host!.querySelector('[title="This link shows a cut whose faces aren\'t blurred yet"]')).toBeNull();
+  });
+});
