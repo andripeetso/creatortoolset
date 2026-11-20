@@ -3,7 +3,7 @@ import type { DesignPage, GroupLayer, Layer, TextLayer } from "@contracts/design
 import { detached, isInstance, syncInstances } from "./components";
 import { hits } from "./draw";
 import { mergeFrames } from "./hands";
-import { everyLayer, findLayer } from "./tree";
+import { everyLayer, findLayer, takeId } from "./tree";
 
 /** Second review of components: merges, nested overrides, keys, ids. */
 const text = (id: string, words: string, more: Partial<TextLayer> = {}): TextLayer => ({ id, type: "text", text: words, font: "Inter", size: 40, color: "#ffffff", align: "center", x: 10, y: 10, w: 200, h: 50, ...more });
@@ -204,7 +204,7 @@ describe("third review", () => {
 describe("third review: never lose the person's work", () => {
   const g = (id: string, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x: 100, y: 100, w: 300, h: 100, layers, ...more });
   const f = (layers: Layer[], more: Partial<DesignPage> = {}) => ({ ...page("p1", layers), ...more });
-  const merge1 = (mine: DesignPage, base: DesignPage, theirs: DesignPage, sent?: DesignPage) => mergeFrames([mine], [base], [theirs], sent ? [[sent]] : [])[0]!;
+  const merge1 = (mine: DesignPage, base: DesignPage, theirs: DesignPage, sent?: DesignPage) => mergeFrames([mine], [base], [theirs], sent ? [{ pages: [sent], base: [base] }] : [])[0]!;
   const find = (p: DesignPage, id: string) => findLayer(p.layers, id) as Layer & Record<string, unknown>;
   const parentOfId = (p: DesignPage, id: string): string | null => {
     const walk = (ls: Layer[], parent: string | null): string | null | undefined => {
@@ -302,7 +302,7 @@ describe("third review: keys", () => {
 describe("fourth review", () => {
   const g = (id: string, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x: 100, y: 100, w: 300, h: 100, layers, ...more });
   const f = (layers: Layer[]) => page("p1", layers);
-  const merge1 = (mine: DesignPage, base: DesignPage, theirs: DesignPage, sent?: DesignPage) => mergeFrames([mine], [base], [theirs], sent ? [[sent]] : [])[0]!;
+  const merge1 = (mine: DesignPage, base: DesignPage, theirs: DesignPage, sent?: DesignPage) => mergeFrames([mine], [base], [theirs], sent ? [{ pages: [sent], base: [base] }] : [])[0]!;
   const find = (p: DesignPage, id: string) => findLayer(p.layers, id) as Layer & Record<string, unknown>;
 
   it("keeps both groups and what they hold when each side moved one into the other", () => {
@@ -346,7 +346,7 @@ describe("saves on their way (sent)", () => {
     const sent = [f([shape("l1", "#111111", { x: 50 })])];
     // the server has the save (a reply that never came): l1 at 50, p2 gone; this window undid both
     const theirs = [f([shape("l1", "#111111", { x: 50 })])];
-    const out = mergeFrames(base, base, theirs, [sent]);
+    const out = mergeFrames(base, base, theirs, [{ pages: sent, base }]);
     expect(out.map((p) => [p.id, (p.layers[0] as { x: number }).x])).toEqual([["p1", 10], ["p2", 0]]);
   });
 
@@ -356,7 +356,42 @@ describe("saves on their way (sent)", () => {
     const mine = [f([shape("l1"), shape("l7", "#ff0000", { x: 90 })])];
     // save 2 (mine) was refused: only save 1 is still on its way
     const theirs = [f([shape("l1", "#00ff00"), shape("l7", "#ff0000", { x: 5 })])];
-    const out = mergeFrames(mine, base, theirs, [save1]);
+    const out = mergeFrames(mine, base, theirs, [{ pages: save1, base }]);
     expect(everyLayer(out[0]!.layers).map((l) => [l.id, (l as { fill: string }).fill, l.x])).toEqual([["l1", "#00ff00", 0], ["l7", "#ff0000", 90]]);
+  });
+});
+
+describe("saves on their way: what each one left (review)", () => {
+  const f = (layers: Layer[], more: Partial<DesignPage> = {}) => ({ ...page("p1", layers), ...more });
+  const xs = (pages: readonly DesignPage[]) => pages.map((p) => [p.id, ...everyLayer(p.layers).map((l) => `${l.id}@${l.x}:${(l as { fill?: string }).fill}`)]);
+
+  it("keeps an undo made while a save was on its way when the server also changed another layer of the frame, and a field undone too", () => {
+    const base = [f([shape("l1", "#111111", { x: 10 }), shape("l2", "#ff0000")], { background: "#ffffff" })];
+    const sent = [f([shape("l1", "#111111", { x: 50 }), shape("l2", "#ff0000")], { background: "#000000" })];
+    const theirs = [f([shape("l1", "#111111", { x: 50 }), shape("l2", "#0000ff")], { background: "#000000" })];
+    const out = mergeFrames(base, base, theirs, [{ pages: sent, base }]);
+    expect(xs(out)).toEqual([["p1", "l1@10:#111111", "l2@0:#0000ff"]]);
+    expect(out[0]!.background).toBe("#ffffff");
+  });
+
+  it("lets the AI's delete of a frame it added stand while an older save is on its way", () => {
+    const old = [f([shape("l1")])];
+    const mine = [f([shape("l1")]), page("p2", [shape("q")])];
+    const out = mergeFrames(mine, mine, [f([shape("l1")])], [{ pages: old, base: old }]);
+    expect(out.map((p) => p.id)).toEqual(["p1"]);
+  });
+
+  it("keeps the undo of a frame added and of a layer taken out while their save was on its way", () => {
+    const base = [f([shape("l1"), shape("l7", "#ff0000")])];
+    const sent = [f([shape("l1")]), page("p3", [shape("q")])];
+    // the server has the save: l7 gone, p3 there; this window undid both
+    const out = mergeFrames(base, base, [f([shape("l1")]), page("p3", [shape("q")])], [{ pages: sent, base }]);
+    expect(xs(out)).toEqual([["p1", "l1@0:#111111", "l7@0:#ff0000"]]);
+  });
+});
+
+describe("the person's window's ids", () => {
+  it("keeps a copied frame's l45 (its own), however far past a new frame's next", () => {
+    expect(takeId("l45", new Set(), () => true, undefined, 1, false, true)).toBe("l45");
   });
 });

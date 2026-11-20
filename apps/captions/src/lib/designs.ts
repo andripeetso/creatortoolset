@@ -12,15 +12,18 @@ export class DesignChanged extends Error {
 }
 
 /** An answer that is not ok: its words, and its `code` and the `device` it names when it has them (a Mac that is not reachable). */
-export type SendError = Error & { code?: string; device?: { id: string; name: string } };
+export type SendError = Error & { code?: string; device?: { id: string; name: string }; status?: number };
 
 /** `keepalive`: carried on by the browser after the page is gone (the window closing), when it is small enough (64 KB). */
 async function send<T>(url: string, method = "GET", body?: unknown, signal?: AbortSignal, keepalive = false): Promise<T> {
   const text = body === undefined ? undefined : JSON.stringify(body);
-  const r = await fetch(url, { method, signal, keepalive: keepalive && (text?.length ?? 0) < 60_000, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: text });
+  const init = { method, signal, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: text };
+  // the browser's limit is in bytes, shared with its other such requests: refused, it is sent the plain way
+  const small = keepalive && new Blob([text ?? ""]).size < 60_000;
+  const r = await (small ? fetch(url, { ...init, keepalive: true }).catch(() => fetch(url, init)) : fetch(url, init));
   const out = (await r.json().catch(() => ({}))) as T & { error?: string; design?: Design; code?: string; device?: { id: string; name: string } };
   if (r.status === 409 && out.design) throw new DesignChanged(out.design);
-  if (!r.ok) throw Object.assign(new Error(out.error ?? `Request failed (${r.status})`), { code: out.code, device: out.device }) as SendError;
+  if (!r.ok) throw Object.assign(new Error(out.error ?? `Request failed (${r.status})`), { code: out.code, device: out.device, status: r.status }) as SendError;
   return out;
 }
 

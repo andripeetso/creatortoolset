@@ -28,6 +28,7 @@ import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
+import type { SentSave } from "@/lib/design/hands";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture, type SendError } from "@/lib/designs";
 import { splitLayers } from "@/lib/design/split";
 import { onThisMac } from "@/lib/thisMac";
@@ -307,21 +308,25 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const server = useRef<{ pages: Page[]; at: number }>({ pages: [], at: 0 });
   /** The pages not sent yet. */
   const unsaved = useRef<Page[] | null>(null);
-  /** The pages of each save on its way: the server may have them before this window hears so (mergeFrames `sent`). Each goes when its own answer comes. */
-  const sent = useRef<Page[][]>([]);
+  /** Each save on its way, oldest first: the server may have it before this window hears so (mergeFrames `sent`). Each goes when its own answer comes. */
+  const sent = useRef<SentSave[]>([]);
   /** This window, as its saves name it (`by`), and how many it has sent (`n`). */
   const by = useRef(`w${Math.random().toString(36).slice(2, 14)}`);
   const sends = useRef(0);
   /** A save of these pages: on its way (sent) until its answer, which takes it off. */
-  const putSave = useCallback((pages: Page[], since: number, keepalive = false) => {
-    sent.current = [...sent.current, pages];
-    const done = () => void (sent.current = sent.current.filter((s) => s !== pages));
+  const putSave = useCallback((pages: Page[], since: number, keepalive = false, base: Page[] = server.current.pages) => {
+    const save: SentSave = { pages, base };
+    // shortcut: the newest five only (a long time offline), so a merge never weighs dozens; the older ones' layers are in the newer
+    sent.current = [...sent.current, save].slice(-5);
+    const done = () => void (sent.current = sent.current.filter((s) => s !== save));
     return saveDesign(id, { pages, since, by: by.current, n: ++sends.current }, keepalive).then(
       // taken: it and every save sent before it are settled
-      (d) => ((sent.current = sent.current.slice(Math.max(0, sent.current.indexOf(pages) + 1))), d),
+      (d) => ((sent.current = sent.current.slice(sent.current.lastIndexOf(save) + 1)), d),
       (e) => {
-        // refused (nothing written) or answered with an error: no longer on its way. Unanswered (the reply lost): it may be there
-        if (e instanceof DesignChanged || (e instanceof Error && "code" in e)) done();
+        // refused (nothing written), or an answer the server itself gave (not a gateway's after it may have written): no
+        // longer on its way. Unanswered (the reply lost): it may be there
+        const status = (e as { status?: number }).status;
+        if (e instanceof DesignChanged || (typeof status === "number" && status < 500)) done();
         throw e;
       },
     );
@@ -355,7 +360,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
             // the canvas changed with it (as any change is), at once when it did not
             if (e instanceof DesignChanged) return void (remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
             failed.current = true;
-            unsaved.current ??= pages;
+            // what is on the canvas now, never an older save (a newer one may be on its way already)
+            unsaved.current ??= latest.current;
             setSaved("unsaved");
             setError(message(e));
           },
@@ -387,8 +393,12 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // most); what the server kept less of, or never took, is said where it still shows, as a notice
     // `keepalive`: the window closing (the browser carries the save on after the page is gone)
     const leave = (pages: Page[], base: Page[], since: number, tries = 0, keepalive = false): Promise<void> =>
-      putSave(pages, since, keepalive).then(
-        (d) => told(d, true),
+      putSave(pages, since, keepalive, base).then(
+        (d) => {
+          // (the page may be brought back: what the server has now is what it sent)
+          server.current = { pages, at: d.updatedAt };
+          told(d, true);
+        },
         (e) => {
           if (e instanceof DesignChanged && tries < 3) return leave(onto(pages, base, e.design.pages), layoutPages(e.design.pages, measureWords), e.design.updatedAt, tries + 1, keepalive);
           toast(`Not saved: the last changes to this design (${message(e)})`, { id: "design-not-saved" });

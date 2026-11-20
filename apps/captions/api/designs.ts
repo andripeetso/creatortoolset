@@ -1154,8 +1154,12 @@ designsApp.post("/", (c) =>
 
 designsApp.get("/:id", (c) => answer(c, () => mine(c)));
 
+// one write to a design at a time (a window's save, an AI's): each reads what the one before it wrote, so a check
+// against `since` and the write after it are never split by another write
+const designTurn = (c: Context) => <T>(run: () => Promise<T>) => inTurn(`design:${c.req.param("id")}`, run);
+
 designsApp.put("/:id", (c) =>
-  answer(c, async () => {
+  answer(c, () => designTurn(c)(async () => {
     const d = await mine(c);
     const b = await body(c);
     const name = typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, DESIGN_LIMITS.name) : d.name;
@@ -1185,7 +1189,7 @@ designsApp.put("/:id", (c) =>
     // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
     // `changes`: what the save changed of what was sent that loses nothing (a second main given a key of its own)
     return { ...saved, ...(checked.notes.length ? { notes: checked.notes } : {}), ...(changed.length ? { changes: changed } : {}) };
-  }),
+  })),
 );
 
 designsApp.delete("/:id", (c) =>
@@ -1200,7 +1204,7 @@ designsApp.delete("/:id", (c) =>
 // an AI that designs: what it reads (?look=<a look's name> adds that look's pictures), and what it writes
 designsApp.get("/:id/pages", (c) => answer(c, async () => forAi(c.get("user"), await mine(c), c.req.query("look")?.trim() || undefined)));
 designsApp.post("/:id/pages", (c) =>
-  answer(c, async () => {
+  answer(c, () => designTurn(c)(async () => {
     const b = await body(c);
     if (b.sizes === undefined && b.fill === undefined) return writeForAi(c.get("user"), await mine(c), b);
     // copies: after the frames and changes of the same call, so a frame designed in it is copied as it now is
@@ -1212,7 +1216,7 @@ designsApp.post("/:id/pages", (c) =>
       throw e;
     });
     return { ...more, notes: [...first.notes, ...more.notes], touched: [...first.touched, ...more.touched], wrote: [...first.wrote, ...more.wrote], named: first.named };
-  }),
+  })),
 );
 // what it made, to look at: the frames named in ?frames=<id>,<id> (else the first ones) as small pictures, with the words that do not fit
 designsApp.get("/:id/look", (c) =>

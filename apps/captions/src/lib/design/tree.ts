@@ -324,7 +324,8 @@ export function takeId(asked: unknown, taken: ReadonlySet<string>, ok: (id: stri
     return !!before && ((added && before.ids.has(id)) || (n > 0 && n < before.next && !before.ids.has(id)));
   };
   // and never one far past what the frame counts to (an asked l999999 would use up its ids)
-  const far = (id: string) => !before?.ids.has(id) && idNumber(id) > Math.max(before?.next ?? 0, ...[...taken].map(idNumber)) + DESIGN_LIMITS.layers;
+  // (the person's window's own ids are its own: a copied frame keeps its layers' l45)
+  const far = (id: string) => !own && !before?.ids.has(id) && idNumber(id) > Math.max(before?.next ?? 0, ...[...taken].map(idNumber)) + DESIGN_LIMITS.layers;
   if (typeof asked === "string" && ok(asked) && !taken.has(asked) && !reused(asked) && !far(asked)) return asked;
   for (let n = Math.max(from, Math.min(before?.next ?? 0, 1_000_000)); ; n++) if (!taken.has(`l${n}`)) return `l${n}`;
 }
