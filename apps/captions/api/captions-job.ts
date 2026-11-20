@@ -13,6 +13,7 @@ import { LOCAL_USER, findUser, type SessionUser } from "./users";
 import { startTask, taskFor } from "./work/tasks";
 import type { Sound, SoundInput } from "./work/tasks/caption-studio";
 import { storedStyle } from "../src/lib/export-request";
+import { inRanges } from "../src/lib/nle/captions";
 import type { CaptionStyle, Cue, Word } from "../src/lib/types";
 
 /**
@@ -47,7 +48,9 @@ export function captionEngine(user: SessionUser): { engine: Engine } | { refused
 
 type Clip = {
   id: string; name: string; duration?: number; srcWidth?: number; srcHeight?: number; srcFps?: number;
-  style?: Partial<CaptionStyle>; words?: Word[]; cues?: Cue[]; posSegments?: unknown[]; texts?: unknown[]; done?: boolean;
+  style?: Partial<CaptionStyle>; words?: Word[]; originalWords?: Word[]; cues?: Cue[]; posSegments?: unknown[]; texts?: unknown[]; done?: boolean;
+  /** an Editor update's new material (api/editor/captions.ts), seconds: only the words heard there are added to its captions */
+  fill?: [number, number][];
 };
 type Project = { name: string; revision: number; fps: number | null; autoCadence: boolean | null; script: string; clips: Clip[] };
 type Laid = { words?: Word[]; cues: Cue[]; cadenceApplied?: boolean; cadenceFit?: unknown };
@@ -138,12 +141,18 @@ async function hear(user: SessionUser, input: SoundInput, sound: Sound, files: R
     const p = await ask<Project>(`/api/projects/${projectId}`);
     const clip = p.clips.find((c) => c.id === clipId);
     if (!clip) throw new Error("The clip is not in the project any more");
-    if (clip.words?.length || clip.cues?.length) return { lines: clip.cues?.length || clip.words!.length };
+    const fill = clip.fill?.length ? clip.fill : null;
+    if (!fill && (clip.words?.length || clip.cues?.length)) return { lines: clip.cues?.length || clip.words!.length };
     // the look a project opens with on the page
     const style = storedStyle(clip.style);
     const auto = p.autoCadence ?? true;
-    const frame = { words, style, width: clip.srcWidth || 1920, height: clip.srcHeight || 1080 };
-    const laid: Laid = !words.length ? { cues: [] } : await ask<Laid>(`/api/captions/${auto ? "auto" : "layout"}`, "POST", { ...frame, script: p.script });
+    // an Editor update: the new material's words, numbered after his, laid out on their own and added to his lines
+    const top = Math.max(0, ...(clip.words ?? []).map((w) => w.id));
+    const fresh = fill ? words.filter((w) => inRanges((w.start + w.end) / 2, fill)).map((w, i) => ({ ...w, id: top + i + 1 })) : words;
+    const frame = { words: fresh, style, width: clip.srcWidth || 1920, height: clip.srcHeight || 1080 };
+    const laid: Laid = !fresh.length ? { cues: [] } : await ask<Laid>(`/api/captions/${auto ? "auto" : "layout"}`, "POST", { ...frame, script: p.script });
+    const byStart = <T extends { start: number }>(a: T[], b: T[]) => [...a, ...b].sort((x, y) => x.start - y.start);
+    const cues = fill ? byStart(clip.cues ?? [], laid.cues).map((c, i) => ({ ...c, id: i + 1 })) : laid.cues;
     const seconds = clip.duration || sound.seconds;
     // the snapshot the page sends after a transcript lands (src/lib/persist.ts saveClip)
     const saved = await call(`/api/projects/${projectId}/sync`, "PUT", {
@@ -161,9 +170,9 @@ async function hear(user: SessionUser, input: SoundInput, sound: Sound, files: R
           name: clip.name,
           duration: seconds,
           style,
-          words: laid.words ?? words,
-          originalWords: words,
-          cues: laid.cues,
+          words: fill ? byStart(clip.words ?? [], laid.words ?? fresh) : laid.words ?? words,
+          originalWords: fill ? byStart(clip.originalWords ?? [], fresh) : words,
+          cues,
           posSegments: clip.posSegments ?? [],
           texts: clip.texts ?? [],
           cadenceApplied: laid.cadenceApplied ?? false,
@@ -174,7 +183,7 @@ async function hear(user: SessionUser, input: SoundInput, sound: Sound, files: R
         },
       },
     });
-    if (saved.ok) return { lines: laid.cues.length, note };
+    if (saved.ok) return { lines: cues.length, note };
     // the page saved in between: read it again once (their captions, if that is what they saved, stay)
     if (saved.body.code !== "REVISION_CONFLICT" || again) throw new Error(saved.body.error || "The captions could not be saved");
   }

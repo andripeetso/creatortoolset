@@ -14,7 +14,7 @@
 // every unlocked track by one amount (as far as every track can go, so they stay in sync); clips that share a `link`
 // move and trim together.
 
-import type { EdjMarker, EdjTrans, Key, KeyProp } from "@contracts/editor";
+import type { EdjCaptions, EdjMarker, EdjTrans, Key, KeyProp } from "@contracts/editor";
 
 export type Flip = "h" | "v" | "hv";
 
@@ -73,6 +73,8 @@ export interface NleTimeline {
   sources: Record<string, NleSource>;
   /** timeline markers (contracts/editor.ts EdjMarker): a ripple moves them with what is after the edit */
   markers?: { frame: number; [k: string]: unknown }[];
+  /** the Caption Studio clip its captions are (lib/nle/captions.ts) */
+  captions?: EdjCaptions;
   [k: string]: unknown;
 }
 
