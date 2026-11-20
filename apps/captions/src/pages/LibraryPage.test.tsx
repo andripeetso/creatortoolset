@@ -360,7 +360,7 @@ describe("Media Library page", () => {
     expect(more(host)?.getAttribute("aria-label")).toContain("not found");
   });
 
-  it("Library settings holds the owner sections in the §3.1 order (How should imported media behave, Folders, Organization, Proxy workflow, Hosted media, Analysis, Models)", async () => {
+  it("Library settings holds the owner sections in the §3.1 order (Folders, Organization, Proxy workflow, Hosted media, Analysis, Models)", async () => {
     const host = await mount();
     const open = async () => {
       await openMore(host);
@@ -369,9 +369,10 @@ describe("Media Library page", () => {
     };
     await open();
     const sheet = () => document.querySelector('[role="dialog"]')?.textContent ?? "";
-    const order = ["How should imported media behave?", "Folders", "Organization", "Proxy workflow", "Hosted media", "Analysis", "Models"].map((t) => sheet().indexOf(t));
+    const order = ["Folders", "Organization", "Proxy workflow", "Hosted media", "Analysis", "Models"].map((t) => sheet().indexOf(t));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(sheet()).not.toContain("How should imported media behave?"); // the import rule decides (BA PRD R1)
     expect(sheet()).not.toContain("OpenAI key");
     act(() => root?.unmount());
     document.body.innerHTML = "";

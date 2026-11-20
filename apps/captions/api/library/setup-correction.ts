@@ -29,8 +29,9 @@ export interface CorrectionRow {
   action: "clear" | string;
 }
 
-/** Keys only a setup's Done or the owner page write: one present means a person answered, so the setup stays. */
-const ANSWER_KEYS: readonly (keyof LibrarySettings)[] = ["importMode", "defaultFolders", "proxyQuality"];
+/** Keys only a setup's Done or the owner page write: one present means a person answered, so the setup stays
+ *  (importMode: an answer stored before 2026-11-19, when the import rule replaced the question). */
+const ANSWER_KEYS = ["importMode", "defaultFolders", "proxyQuality"] as const;
 
 export async function correctSetups(opts: { write?: boolean; keep?: readonly string[] } = {}): Promise<{ stamp: string | null; rows: CorrectionRow[] }> {
   const stamp = markedAt() ?? null;
@@ -41,7 +42,7 @@ export async function correctSetups(opts: { write?: boolean; keep?: readonly str
   const lists = new Map<string, Awaited<ReturnType<typeof listOf>>>();
   const rows: CorrectionRow[] = [];
   for (const l of libs) {
-    const s = JSON.parse(l.settings) as Partial<LibrarySettings> & { projectId?: string; watch?: unknown[] };
+    const s = JSON.parse(l.settings) as Partial<LibrarySettings> & { projectId?: string; watch?: unknown[]; importMode?: unknown };
     const account = accountOf(l.home) ?? l.home;
     if (!lists.has(account)) lists.set(account, await listOf(account));
     const ws = s.projectId ?? (await projectOf({ username: account } as SessionUser))?.(undefined) ?? null;

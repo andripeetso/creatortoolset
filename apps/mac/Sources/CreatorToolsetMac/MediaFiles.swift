@@ -42,6 +42,19 @@ enum MediaFiles {
         }
     }
 
+    /// What a person dropped on this app's window, exactly (a dropped file itself, never its folder), with the server and
+    /// workspace the page it was dropped on is in, and when (import:chosen, Import.swift): the only places outside the
+    /// Media folders the AI Editor's worker copies a source in from, and only for an edit of that server's workspace
+    /// within a week (apps/editor worker.py dropped_here). [{path, server, workspace, at}], the newest 500.
+    static let copyFromKey = "copyFrom"
+    static func chosen(_ paths: [String], server: String, workspace: String, now: Date = Date()) {
+        let same = { (e: [String: Any]) in paths.contains(e["path"] as? String ?? "") && e["server"] as? String == server && e["workspace"] as? String == workspace }
+        // an entry from before (a bare path, no workspace) is dropped: it never let anything be copied
+        let old = (defaults.array(forKey: copyFromKey) ?? []).compactMap { $0 as? [String: Any] }.filter { !same($0) }
+        let new: [[String: Any]] = paths.map { ["path": $0, "server": server, "workspace": workspace, "at": now.timeIntervalSince1970] }
+        defaults.set(Array((old + new).suffix(500)), forKey: copyFromKey)
+    }
+
     /// The granted folders, as chosen in the open panel.
     /// A pick in this app's open panel for the page (a file input: the Media Library's Add, an edit's footage): each
     /// picked folder, and each picked file by itself, never the folder it is in (that holds files nobody picked). A
@@ -112,6 +125,13 @@ enum MediaFiles {
         }
         encode(ok, allowedKey)
         return list
+    }
+
+    /// Each Settings → Folders Media folder of `server` this Mac may read, with "Imports" after it: where that server's
+    /// page copies a file from outside the Media folders (the import rule, contracts/storage.ts importTarget). Never
+    /// another server's: a page from one server never fills another's library.
+    static func importsFolders(server: String) -> [String] {
+        serverFolders(server).filter { $0.use == "media" && isAllowed($0.path, server: server) }.map { ($0.path as NSString).appendingPathComponent("Imports") }
     }
 
     /// "Allow on this Mac" (the page's folderGrant, a press): only a folder the server lists for this Mac.

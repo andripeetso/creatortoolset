@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { audioOf, checkUpload, getEstimate, uploadFile } from "@/lib/library";
 import { quickPrint, shapeOf } from "@/lib/onMac";
-import { importCancel, importCopy, importProgress, pathOnMac } from "@/lib/thisMac";
+import { importCancel, importCopy, importProgress, NOT_A_COPY_FOLDER, pathOnMac } from "@/lib/thisMac";
 import { going } from "@/pages/library/Placeholders";
 import { alreadyThere, type Upload } from "@/pages/library/Uploads";
 import { importGates, volumeOf } from "@/pages/library/import-pool";
@@ -163,6 +163,8 @@ async function copyFirst(u: QueueItem, from: string, signal: AbortSignal): Promi
   try {
     const r = await importCopy(id, [{ from, to: u.copyTo! }]);
     signal.throwIfAborted();
+    // shortcut: a Mac app that doesn't copy into Imports/ yet: indexed where it is, as an older app; gone once every Mac has the release
+    if (!r.copied[0] && r.failed[0]?.error === NOT_A_COPY_FOLDER) return from;
     if (!r.copied[0]) throw new Error(r.failed[0]?.error ?? "Could not copy the file");
     return r.copied[0].to;
   } finally {
