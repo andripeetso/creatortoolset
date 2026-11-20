@@ -215,12 +215,18 @@ describe("work the assistant started ends", () => {
       await t.end();
       workEnded("ana", `edit:${id}`, { status: "failed", detail: "Not in a footage folder" });
     }
-    const again = await turn(cookie, "Retry e30");
+    // a run that only waits (for a folder) also ends "done", and clears nothing
+    const waits = await turn(cookie, "Retry e30");
+    await tool(waits.token, "tiny_card", { id: "e30" });
+    await waits.end();
+    expect(workEnded("ana", "edit:e30", { status: "done", detail: "Waits for a Project files folder" })).toBe(true);
+    expect((await viewOf(cookie)).messages.flatMap((m: AssistantMessage) => m.work ?? []).filter((w) => w.id === "edit:e30:new")[0]).toMatchObject({ status: "failed" });
+    const again = await turn(cookie, "Retry e30 again");
     await tool(again.token, "tiny_card", { id: "e30" });
     await again.end();
-    expect(workEnded("ana", "edit:e30", { status: "done", detail: "Done" })).toBe(true);
+    expect(workEnded("ana", "edit:e30", { status: "done", detail: "Done", redone: true })).toBe(true);
     const cards = (await viewOf(cookie)).messages.flatMap((m: AssistantMessage) => m.work ?? []);
-    expect(cards.filter((w) => w.id === "edit:e30:new").map((w) => [w.status, w.detail])).toEqual([["done", "Done on a later try"], ["done", "Done"]]);
+    expect(cards.filter((w) => w.id === "edit:e30:new").map((w) => [w.status, w.detail])).toEqual([["done", "Done on a later try"], ["done", "Waits for a Project files folder"], ["done", "Done"]]);
     expect(cards.find((w) => w.id === "edit:e31:new")).toMatchObject({ status: "failed" });
   });
 
