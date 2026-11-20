@@ -1,4 +1,6 @@
 import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer } from "@contracts/design";
+import { effectsOf, reachOf } from "./effects";
+import { strokesOf } from "./paint";
 
 /**
  * What the hands on the canvas work out, as plain functions: where the frames lie, the view (pan and zoom), a layer's
@@ -217,11 +219,13 @@ export const groupOf = (layers: readonly Layer[], l: Layer): string[] => (l.grou
  * when it touches any there, else those of the first frame it touches any in (picked layers are always of one frame).
  * `deep` (⌘ held): never a frame, always the layers.
  */
-export function boxPick(frames: readonly { rect: Rect; layers: readonly Layer[] }[], box: Rect, o: { home: number; deep?: boolean }): { frames: number[] } | { at: number; layers: string[] } | null {
-  const touched = frames.map((_, k) => k).filter((k) => intersects(frames[k]!.rect, box));
+export function boxPick(frames: readonly { rect: Rect; layers: readonly Layer[]; reach?: Rect }[], box: Rect, o: { home: number; deep?: boolean }): { frames: number[] } | { at: number; layers: string[] } | null {
+  // `reach`: where a frame shows on the canvas (one that does not clip: its layers past its edges too); its layers are touched there
+  const touched = frames.map((_, k) => k).filter((k) => intersects(frames[k]!.reach ?? frames[k]!.rect, box));
+  const onFrame = (k: number) => intersects(frames[k]!.rect, box);
   const pickable = (l: Layer) => !l.hidden && !l.locked;
   const covered = (f: Rect) => f.x >= box.x && f.y >= box.y && f.x + f.w <= box.x + box.w && f.y + f.h <= box.y + box.h;
-  if (!o.deep && touched.some((k) => covered(frames[k]!.rect) || !frames[k]!.layers.some(pickable))) return { frames: touched };
+  if (!o.deep && touched.some((k) => onFrame(k) && (covered(frames[k]!.rect) || !frames[k]!.layers.some(pickable)))) return { frames: touched.filter(onFrame) };
   for (const k of [o.home, ...touched.filter((n) => n !== o.home)]) {
     const f = frames[k];
     if (!f) continue;
@@ -324,14 +328,42 @@ export function dropTarget(frames: readonly { rect: Rect; loose?: boolean; full?
 export const rehome = <L extends { x: number; y: number }>(layers: readonly L[], from: { x?: number; y?: number }, to: { x?: number; y?: number }): L[] =>
   layers.map((l) => ({ ...l, x: l.x + (from.x ?? 0) - (to.x ?? 0), y: l.y + (from.y ?? 0) - (to.y ?? 0) }));
 
-/** What of a frame shows on the canvas, in its own pixels: the frame, and when it does not clip its layers, all of them too. */
+/**
+ * Everything a layer paints, in its frame's pixels: its box (turned), and past it its lines (an outside or mitred one,
+ * a line's heads), its blurs and its shadows (each where it falls, as soft as its blur). Generous: a few pixels too
+ * many cost nothing, one too few cuts a shadow off in a square.
+ */
+export function paintedBox(l: Layer): Rect {
+  const b = boundsOf([l]);
+  const fx = effectsOf(l).filter((e) => !e.hidden);
+  const lines = Math.max(0, ...strokesOf(l).map((s) => Math.max(s.width, ...(s.sides ?? [])) * (s.join === "miter" ? 5 : 1) + (s.start || s.end ? Math.max(s.width, 2) * 5 : 0)));
+  // words may run a little past their box, and sticker letters by their outline
+  const grow = lines + reachOf(fx) + (l.type === "text" ? l.size * 0.3 : 0);
+  let x0 = b.x - grow;
+  let y0 = b.y - grow;
+  let x1 = b.x + b.w + grow;
+  let y1 = b.y + b.h + grow;
+  for (const e of fx) {
+    if (e.type !== "shadow") continue;
+    const r = grow + e.blur * 1.5 + Math.max(0, e.spread ?? 0);
+    x0 = Math.min(x0, b.x + e.x - r);
+    y0 = Math.min(y0, b.y + e.y - r);
+    x1 = Math.max(x1, b.x + b.w + e.x + r);
+    y1 = Math.max(y1, b.y + b.h + e.y + r);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * What of a frame shows on the canvas, in its own pixels, on whole pixels: the frame itself when it clips its layers;
+ * else (a frame with Clip content off, a loose piece) the frame and all its layers paint, shadows and lines too.
+ */
 export function shownArea(p: DesignPage, w: number, h: number): Rect {
-  const out = p.clip === false ? p.layers.filter((l) => !l.hidden) : [];
+  const out = p.loose || p.clip === false ? p.layers.filter((l) => !l.hidden).map(paintedBox) : [];
   if (!out.length) return { x: 0, y: 0, w, h };
-  const b = boundsOf(out);
-  const x = Math.floor(Math.min(0, b.x));
-  const y = Math.floor(Math.min(0, b.y));
-  return { x, y, w: Math.ceil(Math.max(w, b.x + b.w)) - x, h: Math.ceil(Math.max(h, b.y + b.h)) - y };
+  const x = Math.floor(Math.min(0, ...out.map((r) => r.x)));
+  const y = Math.floor(Math.min(0, ...out.map((r) => r.y)));
+  return { x, y, w: Math.ceil(Math.max(w, ...out.map((r) => r.x + r.w))) - x, h: Math.ceil(Math.max(h, ...out.map((r) => r.y + r.h))) - y };
 }
 
 /**

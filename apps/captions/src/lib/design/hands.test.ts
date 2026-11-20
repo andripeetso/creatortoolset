@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { dropTarget, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { dropTarget, paintedBox, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -267,6 +267,37 @@ describe("a group's own name", () => {
     expect(hugLoose([{ id: "p", loose: true, x: 100, y: 100, w: 16, h: 16, background: "#ffffff", layers: [words] }])[0]).toMatchObject({ x: 110, y: 110, w: 80, h: 30, layers: [{ x: 0, y: 0 }] });
     const base: DesignPage = { id: "f", x: 0, y: 0, w: 100, h: 100, background: "#ffffff", layers: [] };
     expect(mergeFrame({ ...base, clip: false }, base, { ...base, background: "#000000" })).toMatchObject({ clip: false, background: "#000000" });
+  });
+
+  it("counts everything a layer paints past its box: a shadow where it falls, an outside line, a blur", () => {
+    const star: Layer = { id: "s", type: "shape", shape: "star", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100 };
+    expect(paintedBox(star)).toEqual({ x: 0, y: 0, w: 100, h: 100 });
+    // a soft shadow 20 down, blur 40: 60 round it, moved down 20
+    expect(paintedBox({ ...star, effects: [{ type: "shadow", color: "#000000", opacity: 0.5, blur: 40, x: 0, y: 20 }] })).toEqual({ x: -60, y: -40, w: 220, h: 220 });
+    // the old shadow field counts the same; a hidden effect not at all
+    expect(paintedBox({ ...star, shadow: { color: "#000000", opacity: 0.5, blur: 40, x: 0, y: 20 } })).toEqual({ x: -60, y: -40, w: 220, h: 220 });
+    expect(paintedBox({ ...star, effects: [{ type: "shadow", color: "#000000", opacity: 0.5, blur: 40, x: 0, y: 20, hidden: true }] })).toEqual({ x: 0, y: 0, w: 100, h: 100 });
+    // a line outside, 10 wide, and a blur of 10 (three times its size each way)
+    expect(paintedBox({ ...star, strokes: [{ color: "#000000", width: 10, side: "outside" }] })).toEqual({ x: -10, y: -10, w: 120, h: 120 });
+    expect(paintedBox({ ...star, effects: [{ type: "blur", blur: 10 }] })).toEqual({ x: -30, y: -30, w: 160, h: 160 });
+  });
+
+  it("shows a loose piece and an unclipped frame whole, with their shadows; a frame that clips as itself", () => {
+    const shadowed: Layer = { id: "a", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 50, h: 50, effects: [{ type: "shadow", color: "#000000", opacity: 1, blur: 20, x: 0, y: 0 }] };
+    const piece: DesignPage = { id: "p", loose: true, x: 500, y: 500, w: 50, h: 50, background: "#ffffff", layers: [shadowed] };
+    expect(shownArea(piece, 50, 50)).toEqual({ x: -30, y: -30, w: 110, h: 110 });
+    const frame: DesignPage = { id: "f", x: 0, y: 0, w: 100, h: 100, background: "#ffffff", layers: [{ ...shadowed, x: 90 }] };
+    expect(shownArea(frame, 100, 100)).toEqual({ x: 0, y: 0, w: 100, h: 100 });
+    expect(shownArea({ ...frame, clip: false }, 100, 100)).toEqual({ x: 0, y: -30, w: 170, h: 130 });
+  });
+
+  it("a box drawn past an unclipped frame's edge picks its layers lying there, not the frame", () => {
+    const out: Layer = { id: "o", type: "shape", shape: "rect", fill: "#000000", x: 150, y: 10, w: 30, h: 30 };
+    const frame = { rect: { x: 0, y: 0, w: 100, h: 100 }, layers: [out] };
+    const box = { x: 140, y: 0, w: 60, h: 60 };
+    // (picked on another frame: this one is looked in only where the box touches it)
+    expect(boxPick([frame], box, { home: -1 })).toBeNull();
+    expect(boxPick([{ ...frame, reach: { x: 0, y: 0, w: 180, h: 100 } }], box, { home: -1 })).toEqual({ at: 0, layers: ["o"] });
   });
 });
 

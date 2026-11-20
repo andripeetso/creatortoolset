@@ -262,7 +262,7 @@ export function Stage({
       const f = frameOf(p, k, width, height);
       const left = view.x + f.x * view.z;
       const top = view.y + f.y * view.z;
-      // a frame that does not clip its layers shows them past its edges too
+      // what it paints: a frame that does not clip, and a loose piece, show their layers' shadows and lines past their box too
       const area = shownArea(p, f.w, f.h);
       if (left + area.x * view.z > room.w || left + (area.x + area.w) * view.z < 0 || top + area.y * view.z > room.h || top + (area.y + area.h) * view.z < 0) return;
       // the words being typed are in the box over the frame: the layer itself is not drawn under them
@@ -271,10 +271,9 @@ export function Stage({
       // on whole device pixels, so a kept picture copied there and the frame drawn there are the same picture
       const x = Math.round(left * dpr);
       const y = Math.round(top * dpr);
-      const content = [numberOf(p.layers), p.background, p.gradient ? JSON.stringify(p.gradient) : "", p.fills ? JSON.stringify(p.fills) : "", p.strokes ? JSON.stringify(p.strokes) : "", f.w, f.h, numberOf(loaded), version, inWords].join("|");
-      const plan = framePlan({ want, finest: keptScale(f.w, f.h), content, had: kept.get(p.id)?.made, viewMoved, exact });
-      // shortcut: a frame that does not clip is drawn whole at every drawing, never kept as a picture; keep one of its area if many such frames get slow
-      if (plan.how === "direct" || p.clip === false) {
+      const content = [numberOf(p.layers), p.background, p.gradient ? JSON.stringify(p.gradient) : "", p.fills ? JSON.stringify(p.fills) : "", p.strokes ? JSON.stringify(p.strokes) : "", f.w, f.h, p.clip, numberOf(loaded), version, inWords].join("|");
+      const plan = framePlan({ want, finest: keptScale(area.w, area.h), content, had: kept.get(p.id)?.made, viewMoved, exact });
+      if (plan.how === "direct") {
         ctx.save();
         ctx.setTransform(want, 0, 0, want, x, y);
         ctx.beginPath();
@@ -284,21 +283,25 @@ export function Stage({
         ctx.restore();
         return;
       }
-      const w = Math.ceil(f.w * plan.scale);
-      const h = Math.ceil(f.h * plan.scale);
+      // the kept picture is of the whole area; its top left corner on whole pixels of it, from the frame's own corner
+      const ax = Math.floor(area.x * plan.scale);
+      const ay = Math.floor(area.y * plan.scale);
+      const w = Math.ceil((area.x + area.w) * plan.scale) - ax;
+      const h = Math.ceil((area.y + area.h) * plan.scale) - ay;
       const picture = keptOr(kept, p.id, `${content}@${plan.scale}`, w * h, KEPT_PIXELS, (old) => {
         const canvas = old?.canvas ?? document.createElement("canvas");
         // setting the size empties it
         canvas.width = w;
         canvas.height = h;
         const g = canvas.getContext("2d")!;
-        g.setTransform(plan.scale, 0, 0, plan.scale, 0, 0);
+        g.setTransform(plan.scale, 0, 0, plan.scale, -ax, -ay);
         drawPage(g, shown, f.w, f.h, loaded);
         return { canvas, content, scale: plan.scale };
       });
-      if (plan.scale === want) return void ctx.drawImage(picture.canvas, x, y);
+      if (plan.scale === want) return void ctx.drawImage(picture.canvas, x + ax, y + ay);
       rough = true;
-      ctx.drawImage(picture.canvas, 0, 0, f.w * plan.scale, f.h * plan.scale, left * dpr, top * dpr, f.w * want, f.h * want);
+      const stretch = want / plan.scale;
+      ctx.drawImage(picture.canvas, 0, 0, w, h, left * dpr + ax * stretch, top * dpr + ay * stretch, w * stretch, h * stretch);
     });
     window.clearTimeout(was.timer);
     if (rough) was.timer = window.setTimeout(() => setSharp((n) => n + 1), SETTLE);
@@ -586,7 +589,8 @@ export function Stage({
   const marquee = (e: React.PointerEvent, k: number) => {
     const from = world(e);
     const home = k >= 0 ? k : at;
-    const all = pages.map((p, n) => ({ rect: fr[n]!, layers: p.layers }));
+    // a frame that does not clip reaches past its edges: its layers there are touched too
+    const all = pages.map((p, n) => ({ rect: fr[n]!, layers: p.layers, ...(p.clip === false ? { reach: (({ x, y, w, h }) => ({ x: x + fr[n]!.x, y: y + fr[n]!.y, w, h }))(shownArea(p, fr[n]!.w, fr[n]!.h)) } : {}) }));
     const add = e.shiftKey;
     let shown = "";
     const pickNow = (ev: PointerEvent, r: Rect) => {
