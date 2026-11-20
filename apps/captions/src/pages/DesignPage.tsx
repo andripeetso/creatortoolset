@@ -1212,7 +1212,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           <div className={cn("pointer-events-none absolute right-3 z-30 flex w-[min(24rem,calc(100%-1.5rem))] flex-col gap-2", aidPrefs.rulers ? "top-8" : "top-3")}>
             {error && (
               <div role="alert" className="pointer-events-auto flex items-start gap-2 rounded-md border border-red-500/40 bg-red-50 py-1 pl-3 pr-1 text-sm text-red-700 shadow-md dark:bg-[#3a2222] dark:text-red-300">
-                <p className="max-h-32 min-w-0 flex-1 overflow-y-auto break-words py-1">{error}</p>
+                <p className="max-h-32 min-w-0 flex-1 overflow-y-auto [overflow-wrap:anywhere] py-1">{error}</p>
                 <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" aria-label="Close" onClick={() => setError(null)}>
                   <X className="h-4 w-4" />
                 </Button>
@@ -1220,7 +1220,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
             )}
             {macNote && (
               <div role="status" className="pointer-events-auto flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-50 py-1 pl-3 pr-1 text-sm text-amber-800 shadow-md dark:bg-[#3a3122] dark:text-amber-200">
-                <span className="max-h-32 min-w-0 flex-1 overflow-y-auto break-words">{macNote.text}</span>
+                <span className="max-h-32 min-w-0 flex-1 overflow-y-auto [overflow-wrap:anywhere]">{macNote.text}</span>
                 {macNote.stop && (
                   <Button size="sm" variant="ghost" className="h-7" onClick={macNote.stop}>
                     Stop
