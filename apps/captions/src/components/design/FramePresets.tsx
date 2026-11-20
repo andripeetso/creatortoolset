@@ -1,6 +1,7 @@
 import { DESIGN_FORMATS } from "@contracts/design";
 import type { ViewStore } from "@/lib/design/view";
 import { ZoomMenu } from "./Inspector";
+import { StylesSection } from "./StylesSection";
 
 /**
  * The right panel while the frame tool is out, and on a canvas that has no frame yet: the picture sizes. A press on one
@@ -25,6 +26,7 @@ export function FramePresets({ view, onZoom, onAdd }: { view: ViewStore; onZoom:
           </li>
         ))}
       </ul>
+      <StylesSection />
     </aside>
   );
 }

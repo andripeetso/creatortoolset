@@ -68,6 +68,7 @@ import { FrameAids } from "./FrameAids";
 import { setAidPref, useAidPrefs } from "@/lib/design/aids";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
+import { colourStyleName, ColourStyles, EffectStyleRow, SelectionColours, StylesSection, TextStyleRow, useDesignStyles } from "./StylesSection";
 
 /**
  * The properties of what is picked: where it is, its size, how it looks, its fill and line, its type. No layer picked:
@@ -157,8 +158,9 @@ function Num({ label, title, value, onLive, onCommit, min = -Infinity, max = Inf
  * A colour: the swatch opens the picker (ColourPicker), the field beside it takes a hex code. Every colour the picker
  * passes is set at once, and `merge` names the drag or press it belongs to, so each is one step to undo.
  */
-function Colour({ title, value, colours, onSet, onDropper, alpha = false }: { title: string; value: string | null; colours: readonly string[]; onSet: (c: string, merge?: string) => void; onDropper?: (take: (hex: string) => void) => void; alpha?: boolean }) {
+function Colour({ title, value, colours, onSet, onDropper, alpha = false, styled }: { title: string; value: string | null; colours: readonly string[]; onSet: (c: string, merge?: string) => void; onDropper?: (take: (hex: string) => void) => void; alpha?: boolean; /** a place that can name a colour style: the style it names, and naming one (or none) */ styled?: { style?: string; onPick: (to: { color: string; style?: string }) => void } }) {
   const [open, setOpen] = useState(false);
+  const styleName = colourStyleName(useDesignStyles(), styled?.style);
   const [draft, setDraft] = useState<string | null>(null);
   // each opening is a picking of its own: its drags never join the last opening's
   const opened = useRef(0);
@@ -174,7 +176,8 @@ function Colour({ title, value, colours, onSet, onDropper, alpha = false }: { ti
             style={{ background: value === null ? "repeating-linear-gradient(45deg, #888 0 3px, #bbb 3px 6px)" : `linear-gradient(${hex}, ${hex}), ${CHECKS}` }}
           />
         </PopoverTrigger>
-        <PopoverContent side="left" align="start" sideOffset={14} className="w-auto border-[#e6e6e6] bg-white p-3 text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
+        <PopoverContent side="left" align="start" sideOffset={14} className="flex w-auto flex-col gap-3 border-[#e6e6e6] bg-white p-3 text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]">
+          {styled && <ColourStyles style={styled.style} color={hex} onPick={styled.onPick} />}
           <ColourPicker
             alpha={alpha}
             value={hex}
@@ -190,6 +193,9 @@ function Colour({ title, value, colours, onSet, onDropper, alpha = false }: { ti
           />
         </PopoverContent>
       </Popover>
+      {styleName ? (
+        <span className="min-w-0 flex-1 truncate">{styleName}</span>
+      ) : (
       <input
         aria-label={`${title} as a hex code`}
         value={draft ?? (value === null ? "" : value.slice(1, 7).toUpperCase())}
@@ -207,6 +213,7 @@ function Colour({ title, value, colours, onSet, onDropper, alpha = false }: { ti
         }}
         className="w-full min-w-0 bg-transparent uppercase outline-none placeholder:normal-case placeholder:text-zinc-400"
       />
+      )}
     </div>
   );
 }
@@ -528,7 +535,7 @@ function common(picked: readonly Layer[]) {
 }
 
 /** The picked layers' number fields, sliders and colours: `to` gives each layer with the value set, shown while dragged and one step when let go. */
-function fieldsFor(onPreview: (fn: ((l: Layer) => Layer) | null) => void, onPatch: (fn: (l: Layer) => Layer, merge?: string) => void, colours: readonly string[], onDropper?: (take: (hex: string) => void) => void) {
+export function fieldsFor(onPreview: (fn: ((l: Layer) => Layer) | null) => void, onPatch: (fn: (l: Layer) => Layer, merge?: string) => void, colours: readonly string[], onDropper?: (take: (hex: string) => void) => void) {
   const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number; rate?: number } = {}) => (
     <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
   );
@@ -571,6 +578,7 @@ function TextStyles({ picked, design, colours, onPatch, onPreview, onDropper }: 
       <StrokeList strokes={sameList(strokesOf)} colours={colours} onDropper={onDropper} max={60} text onSet={(st, merge) => onPatch((l) => withStrokes(l, st), merge)} onLive={(st) => onPreview(st ? (l) => withStrokes(l, st) : null)} />
 
       <Section title="Typography">
+        <TextStyleRow picked={picked} onPatch={onPatch} />
         <DropdownMenu>
           <DropdownMenuTrigger aria-label="Font" className={cn(FIELD, "w-full justify-between outline-none")}>
             {/* one of the person's own (or one they took away since) is shown by its own name */}
@@ -1028,6 +1036,7 @@ export function Inspector({
             <Slide label="Vignette" value={page.vignette ?? 0} min={-100} max={100} onLive={(n) => onPagePreview(n === null ? null : { ...page, vignette: n || undefined })} onCommit={(n) => onPage({ ...page, vignette: n || undefined })} />
           </Section>
           {!page.loose && <FrameAids page={page} onPage={onPage} colours={colours} onDropper={onDropper} />}
+          <StylesSection colours={colours} />
         </>
       )}
 
@@ -1186,6 +1195,7 @@ export function Inspector({
               <Effects picked={picked} onPatch={onPatch} num={num} slide={slide} colour={colour} />
             </>
           )}
+          {(picked.length > 1 || picked.some((l) => l.type === "group")) && <SelectionColours picked={picked} onPatch={onPatch} colours={colours} />}
           {image && (
             <Section
               title="Picture"
@@ -1429,6 +1439,12 @@ export function StopsBar({ stops, picked, onPick, onSet }: { stops: GradientStop
 }
 
 /** One fill's own settings, in the popover its swatch opens: what it is (a colour, a gradient, a picture) and how it looks. */
+/** A colour place (a solid fill, a line) with the colour, and the style naming it or none, that a style list gave. */
+const styledPaint = <P extends { color: string; colorStyle?: string }>(p: P, to: { color: string; style?: string }): P => {
+  const { colorStyle: _s, ...rest } = p;
+  return { ...rest, color: to.color, ...(to.style ? { colorStyle: to.style } : {}) } as P;
+};
+
 function PaintEditor({ paint, design, colours, onSet, onDropper }: { paint: Paint; design: Design; colours: readonly string[]; onSet: (p: Paint, merge?: string) => void; onDropper?: (take: (hex: string) => void) => void }) {
   const [stop, setStop] = useState(0);
   const opened = useRef(Math.random());
@@ -1444,6 +1460,7 @@ function PaintEditor({ paint, design, colours, onSet, onDropper }: { paint: Pain
   return (
     <div className="flex w-[208px] flex-col gap-2.5 text-[11px]">
       <Choice label="Fill kind" value={paint.type} options={[["solid", "Colour"], ["gradient", "Gradient"], ...(design.pictures.length ? [["image", "Picture"] as const] : [])] as const} onPick={turn} />
+      {paint.type === "solid" && <ColourStyles style={paint.colorStyle} color={paint.color} onPick={(to) => onSet(styledPaint(paint, to))} />}
       {paint.type === "solid" && <ColourPicker alpha value={paint.color} colours={colours} onSet={(c, g) => onSet({ ...paint, color: c }, `paint ${opened.current}.${g}`)} onDropper={onDropper && (() => onDropper((c) => onSet({ ...paint, color: c })))} />}
       {paint.type === "gradient" && (
         <>
@@ -1494,6 +1511,7 @@ function PaintEditor({ paint, design, colours, onSet, onDropper }: { paint: Pain
 
 /** A fills section: + adds a colour on top, each row a swatch that opens its settings, its colour or kind, its opacity. */
 function FillList({ fills, design, colours, onSet, onLive, onDropper, base }: { fills: Paint[] | null; design: Design; colours: readonly string[]; onSet: (fills: Paint[], merge?: string) => void; onLive: (fills: Paint[] | null) => void; onDropper?: (take: (hex: string) => void) => void; base: string }) {
+  const styles = useDesignStyles();
   return (
     <Section
       title="Fill"
@@ -1518,7 +1536,9 @@ function FillList({ fills, design, colours, onSet, onLive, onDropper, base }: { 
                   <PaintEditor paint={p} design={design} colours={colours} onSet={set} onDropper={onDropper} />
                 </PopoverContent>
               </Popover>
-              {p.type === "solid" ? (
+              {p.type === "solid" && colourStyleName(styles, p.colorStyle) ? (
+                <span className="min-w-0 flex-1 truncate">{colourStyleName(styles, p.colorStyle)}</span>
+              ) : p.type === "solid" ? (
                 <input
                   key={p.color}
                   aria-label="Fill as a hex code"
@@ -1567,7 +1587,7 @@ function effectNew(type: Effect["type"], was?: Effect): Effect {
  * a switch to hide it and a − to take it off; dragged by its handle to another place in the list. A few ready-made
  * sets in Presets. Layers whose lists differ show none, and + gives each one more.
  */
-function Effects({ picked, onPatch, num, slide, colour }: {
+export function Effects({ picked, onPatch, num, slide, colour }: {
   picked: Layer[];
   onPatch: (fn: (l: Layer) => Layer, merge?: string) => void;
   num: (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more?: { min?: number; max?: number; step?: number }) => ReactNode;
@@ -1608,6 +1628,7 @@ function Effects({ picked, onPatch, num, slide, colour }: {
         </div>
       }
     >
+      <EffectStyleRow picked={picked} onPatch={onPatch} />
       {!list && <p className={DIM}>Each layer has its own</p>}
       {shown.map((e, r) => {
         const n = shown.length - 1 - r;
@@ -1709,7 +1730,7 @@ function StrokeList({ strokes, colours, onSet, onLive, onDropper, max, text, box
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             {/* its colour on a line of its own: beside the width and the settings there is no room left for the hex code */}
             <div className="flex">
-              <Colour alpha title="Stroke" value={s.color} colours={colours} onDropper={onDropper} onSet={(color, merge) => set({ ...s, color }, merge)} />
+              <Colour alpha title="Stroke" value={s.color} colours={colours} onDropper={onDropper} onSet={(color, merge) => set({ ...s, color }, merge)} styled={{ style: s.colorStyle, onPick: (to) => set(styledPaint(s, to)) }} />
             </div>
             <div className="flex items-center gap-1">
               <div className="min-w-0 flex-1">

@@ -19,7 +19,8 @@ export const gradientPaint = (from: string, g: Gradient): Paint => ({
   angle: g.angle,
   stops: [{ at: 0, color: from }, ...(g.via ? [{ at: 0.5, color: g.via }] : []), { at: 1, color: g.to }],
 });
-const oldFill = (color: string, g: Gradient | undefined): Paint => (g ? gradientPaint(color, g) : { type: "solid", color });
+// (a colour naming a style: lib/design/styles.ts)
+const oldFill = (color: string, g: Gradient | undefined, colorStyle?: string): Paint => (g ? gradientPaint(color, g) : { type: "solid", color, ...(colorStyle ? { colorStyle } : {}) });
 
 /** What can have fills: a frame, a text, a shape, a path, a box and a boolean group. */
 export const takesFills = (o: Painted): boolean => isPage(o) || o.type === "text" || o.type === "shape" || o.type === "path" || (o.type === "group" && (!!o.box || !!o.boolean));
@@ -27,10 +28,10 @@ export const takesFills = (o: Painted): boolean => isPage(o) || o.type === "text
 export const takesStrokes = (o: Painted): boolean => takesFills(o) || (!isPage(o) && o.type === "image");
 
 export function fillsOf(o: Painted): Paint[] {
-  if (isPage(o)) return o.fills ?? [oldFill(o.background, o.gradient)];
-  if (o.type === "text") return o.fills ?? [oldFill(o.color, o.gradient)];
-  if (o.type === "shape") return o.fills ?? [oldFill(o.fill, o.gradient)];
-  if (o.type === "path") return o.fills ?? (o.fill ? [oldFill(o.fill, o.gradient)] : []);
+  if (isPage(o)) return o.fills ?? [oldFill(o.background, o.gradient, o.colorStyle)];
+  if (o.type === "text") return o.fills ?? [oldFill(o.color, o.gradient, o.colorStyle)];
+  if (o.type === "shape") return o.fills ?? [oldFill(o.fill, o.gradient, o.colorStyle)];
+  if (o.type === "path") return o.fills ?? (o.fill ? [oldFill(o.fill, o.gradient, o.colorStyle)] : []);
   if (o.type === "group" && (o.box || o.boolean)) return o.fills ?? [];
   return [];
 }
@@ -48,13 +49,16 @@ export function strokesOf(o: Painted): Stroke[] {
 
 const plain = (p: PaintLook) => !p.hidden && p.opacity === undefined && !p.blend;
 /** The first plain colour of a list, bottom first: what the old field keeps for whatever reads only it (the box words are typed in). */
-const firstColour = (fills: readonly Paint[]) => fills.find((p): p is Extract<Paint, { type: "solid" }> => p.type === "solid")?.color;
+const firstSolid = (fills: readonly Paint[]) => fills.find((p): p is Extract<Paint, { type: "solid" }> => p.type === "solid");
 
 /** `o` with these fills: one plain colour as the old field alone, anything else as `fills` (the old gradient goes). */
 export function withFills<T extends Painted>(o: T, fills: Paint[]): T {
   const one = fills.length === 1 && fills[0]!.type === "solid" && plain(fills[0]!) ? fills[0]!.color : null;
-  const { fills: _f, gradient: _g, ...rest } = o as Painted & { fills?: Paint[]; gradient?: Gradient };
-  const colour = one ?? firstColour(fills);
+  const { fills: _f, gradient: _g, colorStyle: _s, ...kept } = o as Painted & { fills?: Paint[]; gradient?: Gradient; colorStyle?: string };
+  const first = firstSolid(fills);
+  const colour = one ?? first?.color;
+  // the old field names the style its colour is (a group has none)
+  const rest = first?.colorStyle && (isPage(o) || o.type !== "group") ? { ...kept, colorStyle: first.colorStyle } : kept;
   const list = one ? {} : { fills };
   if (isPage(o)) return { ...rest, ...(colour ? { background: colour } : {}), ...list } as T;
   if (o.type === "text") return { ...rest, ...(colour ? { color: colour } : {}), ...list } as T;
@@ -80,7 +84,8 @@ export function withStrokes<T extends Painted>(o: T, strokes: Stroke[]): T {
   if (isPage(o) || o.type === "image" || o.type === "group") return { ...rest, ...list } as T;
   if (o.type === "text") {
     const { outline: _o, ...r } = rest as Omit<Extract<Layer, { type: "text" }>, "strokes">;
-    return { ...r, ...(one && !one.dash && !one.round && !one.side ? { outline: { color: one.color, width: one.width } } : list) } as T;
+    // (an outline names no style: a line that does stays a line of the list)
+    return { ...r, ...(one && !one.dash && !one.round && !one.side && !one.colorStyle ? { outline: { color: one.color, width: one.width } } : list) } as T;
   }
   if (o.type === "shape" || o.type === "path") {
     const { stroke: _o, ...r } = rest as Omit<Extract<Layer, { type: "shape" }>, "strokes">;

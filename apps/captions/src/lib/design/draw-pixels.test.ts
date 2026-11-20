@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { drawPage, type Loaded } from "./draw";
 import { syncInstances } from "./components";
+import { styled, unlinked, withStyle } from "./styles";
 
 /**
  * drawPage on a real canvas, read back pixel by pixel: what a layer's fills, lines and effects come out as. The
@@ -248,5 +249,20 @@ describe("a container drawn on a canvas", () => {
     // the box is the main's, the words are its own
     expect(other.at(12, 12)).toEqual(asMain.at(12, 12));
     expect(Buffer.from(other.data).equals(Buffer.from(asMain.data))).toBe(false);
+  });
+});
+
+describe("styles drawn", () => {
+  it("changing Accent recolours both slides that name it, and only what names it", () => {
+    const styles = { colors: { accent: { name: "Accent", color: "#ff0000" } } };
+    const pages = styled([{ id: "p1", background: "#ffffff", layers: [rect({ colorStyle: "accent" })] }, { id: "p2", background: "#ffffff", colorStyle: "accent", layers: [rect({ fill: "#00ff00" })] }] as DesignPage[], styles);
+    const shown = (ps: DesignPage[]) => ps.map((p) => {
+      const { layers, ...more } = p;
+      const d = draw(layers, more);
+      return [d.at(20, 20), d.at(70, 50)];
+    });
+    expect(shown(pages)).toEqual([[[255, 0, 0, 255], [255, 255, 255, 255]], [[0, 255, 0, 255], [255, 0, 0, 255]]]);
+    const next = withStyle(styles, "colors", "accent", { name: "Accent", color: "#0000ff" });
+    expect(shown(styled(unlinked(pages, pages, next), next))).toEqual([[[0, 0, 255, 255], [255, 255, 255, 255]], [[0, 255, 0, 255], [0, 0, 255, 255]]]);
   });
 });

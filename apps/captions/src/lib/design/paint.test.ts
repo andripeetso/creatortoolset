@@ -113,3 +113,15 @@ describe("the pictures a page draws", () => {
     expect(drawnPictures(page).sort()).toEqual(["deep.jpg", "fill.jpg", "photo.jpg", "top.jpg"]);
   });
 });
+
+describe("a colour naming a style, as a list", () => {
+  it("is a fill naming it, and written back names it on the old field; a text's line naming one stays a line", () => {
+    const t = { id: "t", type: "text", text: "Hi", font: "Inter", size: 40, color: "#ff5500", colorStyle: "accent", align: "left", x: 0, y: 0, w: 100, h: 50 } as Layer;
+    expect(fillsOf(t)).toEqual([{ type: "solid", color: "#ff5500", colorStyle: "accent" }]);
+    expect(withFills(t, [{ type: "solid", color: "#111111" }])).toMatchObject({ color: "#111111" });
+    expect((withFills(t, [{ type: "solid", color: "#111111" }]) as { colorStyle?: string }).colorStyle).toBeUndefined();
+    expect(withFills(t, [{ type: "solid", color: "#222222", colorStyle: "ink" }, { type: "solid", color: "#00000080" }])).toMatchObject({ color: "#222222", colorStyle: "ink" });
+    const lined = withStrokes(t, [{ color: "#000000", width: 4, colorStyle: "ink" }]);
+    expect([(lined as { outline?: unknown }).outline, (lined as { strokes?: unknown }).strokes]).toEqual([undefined, [{ color: "#000000", width: 4, colorStyle: "ink" }]]);
+  });
+});

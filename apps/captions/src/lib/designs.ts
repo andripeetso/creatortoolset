@@ -1,4 +1,4 @@
-import { DESIGN_GAP, DESIGN_LIMITS, type Design, type DesignListed, type DesignPage, type NewDesign, type SplitAnswer } from "@contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type Design, type DesignListed, type DesignPage, type DesignStyles, type NewDesign, type SplitAnswer } from "@contracts/design";
 
 /** The designer's calls to api/designs.ts. */
 
@@ -36,7 +36,7 @@ export const getDesign = (id: string) => send<Design>(base(id));
 /** `since`: the design's last change this window knows of (its updatedAt). Changed after it: DesignChanged, and nothing was saved. */
 /** `notes`: what the server's check left out of what was sent (past a limit), each said. */
 /** `by` and `n`: this window and its count of saves, so a later save of its own on top of its own (one sent as it closed) is never refused, and an earlier one never written over a later (contracts Design `writer`). */
-export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number; by?: string; n?: number }, keepalive = false) =>
+export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; styles?: DesignStyles; since?: number; by?: string; n?: number }, keepalive = false) =>
   send<Design & { notes?: string[]; changes?: string[] }>(base(id), "PUT", body, undefined, keepalive);
 export const deleteDesign = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures/${picture}`;

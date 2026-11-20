@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2, X } from "lucide-react";
-import { DESIGN_BOOLEANS, DESIGN_LIMITS, type Design, type DesignBoolean, type DesignPage as Page, type GroupLayer, type Layer, type TextLayer } from "@contracts/design";
+import { DESIGN_BOOLEANS, DESIGN_LIMITS, type Design, type DesignBoolean, type DesignStyles, type DesignPage as Page, type GroupLayer, type Layer, type TextLayer } from "@contracts/design";
 import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -43,6 +43,8 @@ import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { patchRange, viewRange } from "@/lib/design/runs";
 import { useOwnFonts } from "@/lib/design/own-fonts";
 import { cn } from "@/lib/utils";
+import { lookOf, mergeStyles, styled, unlinked, withLook, type Look } from "@/lib/design/styles";
+import { DesignStylesContext } from "@/components/design/StylesSection";
 
 /**
  * The designer (/design/:id): one canvas a design, with its frames lying where the person put them (a carousel's
@@ -98,6 +100,10 @@ const BAR = "border-[#e6e6e6] bg-white text-zinc-50 dark:border-[#444] dark:bg-[
 /** `from`: the design copied from (a main or an instance means nothing in another design). */
 let clip: { layers: Layer[]; text: string; wrote: boolean; from?: string } | null = null;
 
+/** What the designer edits, as one step to undo: the frames and the design's styles. */
+type Doc = { pages: Page[]; styles: DesignStyles };
+const NO_STYLES: DesignStyles = {};
+
 /** One designer a design: another design's address starts it afresh (what is picked, the view, the steps to undo). */
 export default function DesignRoute() {
   const { id = "" } = useParams();
@@ -126,7 +132,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const [design, setDesign] = useState<Design | null>(null);
   /** The name in the top bar while it is being typed (null: not being typed, the design's own name shows). */
   const [naming, setNaming] = useState<string | null>(null);
-  const [hist, setHist] = useState<Hist<Page[]> | null>(null);
+  /** the frames and the design's styles, as one step to undo (a style changed is a step too) */
+  const [hist, setHist] = useState<Hist<Doc> | null>(null);
   const [live, setLiveRaw] = useState<Page[] | null>(null);
   /** the rulers showing (⇧R): the messages over the canvas go below the top one */
   const aidPrefs = useAidPrefs();
@@ -175,9 +182,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         // the server's pages as this window lays them out (its widths of the words, not the server's guess): what the
         // window changes is told from what the server has by that, never by the measuring alone
         const pages = layoutPages(d.pages, measureWords);
-        server.current = { pages, at: d.updatedAt };
+        server.current = { pages, styles: d.styles ?? {}, at: d.updatedAt };
         setDesign(d);
-        setHist(freshHist(pages));
+        setHist(freshHist({ pages, styles: d.styles ?? {} }));
         // a canvas with no frame yet opens with the frame tool out: its sizes are in the panel, and a drag draws one
         if (!d.pages.length) setTool("frame");
       },
@@ -193,8 +200,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // what the server has, too: told apart from this window's changes as they both are laid out now (on load, below)
     server.current = { ...server.current, pages: layoutPages(server.current.pages, measureWords) };
     setHist((h) => {
-      const now = h && layoutPages(h.now, measureWords);
-      return !h || now === h.now ? h : { ...h, now: now! };
+      const now = h && layoutPages(h.now.pages, measureWords);
+      return !h || now === h.now.pages ? h : { ...h, now: { ...h.now, pages: now! } };
     });
   }, [version, ready]);
 
@@ -254,7 +261,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     };
   }, [view, id]);
 
-  const pages = useMemo(() => hist?.now ?? [], [hist]);
+  const pages = useMemo(() => hist?.now.pages ?? [], [hist]);
+  const styles = hist?.now.styles ?? NO_STYLES;
   const k = Math.max(0, Math.min(at, pages.length - 1));
   /** The frame the picked layers are on: as saved (what a change starts from), and as shown (mid-drag). */
   const top = pages[k];
@@ -305,7 +313,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
    * What the server has of this design, as far as this window knows: the frames as they were last read from it or
    * sent to it (what this window changed since is the difference to them), and when it was last changed there.
    */
-  const server = useRef<{ pages: Page[]; at: number }>({ pages: [], at: 0 });
+  const server = useRef<{ pages: Page[]; styles: DesignStyles; at: number }>({ pages: [], styles: {}, at: 0 });
   /** The pages not sent yet. */
   const unsaved = useRef<Page[] | null>(null);
   /** Each save on its way, oldest first: the server may have it before this window hears so (mergeFrames `sent`). Each goes when its own answer comes. */
@@ -320,7 +328,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     const done = () => void (sent.current = sent.current.filter((s) => s !== save));
     // offline as it goes: no answer then means it never left
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
-    return saveDesign(id, { pages, since, by: by.current, n: ++sends.current }, keepalive).then(
+    return saveDesign(id, { pages, styles: stylesNow.current, since, by: by.current, n: ++sends.current }, keepalive).then(
       // taken: it and every save sent before it are settled
       (d) => ((sent.current = sent.current.slice(sent.current.lastIndexOf(save) + 1)), d),
       (e) => {
@@ -348,7 +356,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       saving.current = saving.current.then(() => {
         return putSave(pages, server.current.at).then(
           (d) => {
-            server.current = { pages, at: d.updatedAt };
+            server.current = { pages, styles: d.styles ?? {}, at: d.updatedAt };
             setSaved(unsaved.current ? "unsaved" : "saved");
             // the server kept less than was sent, or changed what loses nothing: said, so nothing goes missing unseen
             told(d);
@@ -357,7 +365,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
             // changed somewhere else while this save was on its way (an AI's frames): nothing was written. This
             // window's changes are done again on the design as it is now, and that is saved: a moment later when
             // the canvas changed with it (as any change is), at once when it did not
-            if (e instanceof DesignChanged) return void (remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
+            if (e instanceof DesignChanged) return void (remote.current(e.design) || ((JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) || JSON.stringify(stylesNow.current) !== JSON.stringify(e.design.styles ?? {})) && send(latest.current)));
             failed.current = true;
             // what is on the canvas now, never an older save (a newer one may be on its way already)
             unsaved.current ??= latest.current;
@@ -374,9 +382,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   useEffect(() => {
     if (!design || !hist) return;
     if (first.current) return void (first.current = false);
-    unsaved.current = hist.now;
+    unsaved.current = hist.now.pages;
     setSaved("unsaved");
-    const t = setTimeout(() => send(hist.now), 700);
+    const t = setTimeout(() => send(hist.now.pages), 700);
     return () => clearTimeout(t);
     // the pages alone: the design's other fields change when it is saved, and saving must not save again
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -387,7 +395,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   // which it only does for a small one (64 KB); a bigger design is sent the plain way, and may not get there.
   useEffect(() => {
     /** This window's pages put onto the design as the server has it now (`theirs`), from what it had as `base`. */
-    const onto = (pages: Page[], base: Page[], theirs: Page[]) => syncInstances(mergeFrames(pages, base, layoutPages(theirs, measureWords), sent.current));
+    // (and this window's styles onto the server's: each style by its id, each field from the side that changed it)
+    const onto = (pages: Page[], base: Page[], theirs: Design) => {
+      stylesNow.current = mergeStyles(stylesNow.current, server.current.styles, theirs.styles);
+      return styled(syncInstances(mergeFrames(pages, base, layoutPages(theirs.pages, measureWords), sent.current)), stylesNow.current);
+    };
     // on the way out of the page: refused for a change made elsewhere, merged onto it and sent again (three times at
     // most); what the server kept less of, or never took, is said where it still shows, as a notice
     // `keepalive`: the window closing (the browser carries the save on after the page is gone)
@@ -395,11 +407,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       putSave(pages, since, keepalive, base).then(
         (d) => {
           // (the page may be brought back: what the server has now is what it sent)
-          server.current = { pages, at: d.updatedAt };
+          server.current = { pages, styles: d.styles ?? {}, at: d.updatedAt };
           told(d, true);
         },
         (e) => {
-          if (e instanceof DesignChanged && tries < 3) return leave(onto(pages, base, e.design.pages), layoutPages(e.design.pages, measureWords), e.design.updatedAt, tries + 1, keepalive);
+          if (e instanceof DesignChanged && tries < 3) return leave(onto(pages, base, e.design), layoutPages(e.design.pages, measureWords), e.design.updatedAt, tries + 1, keepalive);
           toast(`Not saved: the last changes to this design (${message(e)})`, { id: "design-not-saved" });
         },
       );
@@ -425,6 +437,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   // the pages as of the last drawing, for what finishes later (an upload)
   const latest = useRef(pages);
   useEffect(() => void (latest.current = pages), [pages]);
+  /** the styles as of the last drawing: what each save sends beside the frames */
+  const stylesNow = useRef(styles);
+  useEffect(() => void (stylesNow.current = styles), [styles]);
   /** Frames while a drag or a preview is under way, put back whole (a container's layers back into it). */
   const setLive = useCallback((next: Page[] | null) => setLiveRaw(next && layoutPages(syncInstances(unscope(next, latest.current), latest.current), measureWords)), []);
   /**
@@ -443,7 +458,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // and every auto layout laid out (lib/design/layout.ts), what it fixed said once the step is drawn
     // and every instance made again from its main, what was changed on one kept as its override (lib/design/components.ts)
     // and a frame that changed remembers how far its ids went (tree.ts nextOf): one taken out is never given again
-    const whole = (all: Page[]) => keepNext(hugLoose(layoutPages(syncInstances(unscope(fn(all), all), all), measureWords, (n) => queueMicrotask(() => toast(n, { id: n })))), all);
+    // and a value changed on a layer naming a style leaves the style, and every style's value put on what names it (lib/design/styles.ts)
+    const whole = ({ pages: all, styles: s }: Doc): Doc => ({ styles: s, pages: keepNext(hugLoose(layoutPages(styled(syncInstances(unlinked(unscope(fn(all), all), all, s), all), s), measureWords, (n) => queueMicrotask(() => toast(n, { id: n })))), all) });
     setHist((h) => (!h ? h : join ? { ...h, now: whole(h.now) } : histChange(h, whole)));
   }, [locked]);
   /** Frames changed in one step: each takes the place of the one with its id, and one with a new id is added (a picture dragged out of its frame). */
@@ -457,6 +473,24 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     [change],
   );
   const setPage = useCallback((next: Page, merge?: string) => setPages([next], merge), [setPages]);
+  /** The frames and the styles as they are now somewhere else (merged): one step to undo. */
+  const changeDoc = useCallback((doc: Doc) => {
+    merging.current = null;
+    setLive(null);
+    setHist((h) => (h ? histChange(h, () => doc) : h));
+  }, []);
+  /** The design's styles changed: every layer naming one takes its value, laid out again (a text style's size), one step to undo (`merge` as change's). */
+  const changeStyles = useCallback((fn: (s: DesignStyles) => DesignStyles, merge?: string) => {
+    if (locked) return;
+    const join = !!merge && merging.current === merge;
+    merging.current = merge ?? null;
+    setLive(null);
+    const restyle = (doc: Doc): Doc => {
+      const s = fn(doc.styles);
+      return { styles: s, pages: hugLoose(layoutPages(styled(doc.pages, s), measureWords)) };
+    };
+    setHist((h) => (!h ? h : join ? { ...h, now: restyle(h.now) } : histChange(h, restyle)));
+  }, [locked]);
   const pick = useCallback((to: number, ids: string[], frame = false, all: string[] = []) => {
     merging.current = null;
     setAt(to);
@@ -506,21 +540,25 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       const had = latest.current;
       // laid out as this window lays out (on load, above)
       const theirs = layoutPages(d.pages, measureWords);
-      // instances made again: a main changed on one side reaches the instances the other side changed
-      const merged = layoutPages(syncInstances(mergeFrames(had, server.current.pages, theirs, sent.current)), measureWords);
-      server.current = { pages: theirs, at: d.updatedAt };
+      // instances made again: a main changed on one side reaches the instances the other side changed; the styles merged
+      // style by style, and put on the frames again
+      const hadStyles = stylesNow.current;
+      const mergedStyles = mergeStyles(hadStyles, server.current.styles, d.styles);
+      const merged = layoutPages(styled(syncInstances(mergeFrames(had, server.current.pages, theirs, sent.current)), mergedStyles), measureWords);
+      server.current = { pages: theirs, styles: d.styles ?? {}, at: d.updatedAt };
       setDesign(d);
-      const text = JSON.stringify(merged);
+      const text = JSON.stringify([merged, mergedStyles]);
       // nothing of this window's is left to send: what is on the canvas is what the server has
-      if (text === JSON.stringify(theirs)) {
+      if (text === JSON.stringify([theirs, d.styles ?? {}])) {
         unsaved.current = null;
         setSaved("saved");
       }
-      if (text === JSON.stringify(had)) return false;
-      if (text === JSON.stringify(theirs)) first.current = true;
+      if (text === JSON.stringify([had, hadStyles])) return false;
+      if (text === JSON.stringify([theirs, d.styles ?? {}])) first.current = true;
       // at once for whatever is sent before the canvas is drawn again
       latest.current = merged;
-      change(() => merged);
+      stylesNow.current = mergedStyles;
+      changeDoc({ pages: merged, styles: mergedStyles });
       // frames arriving on a canvas that had none (the assistant designing it): shown whole, no closer than their own
       // pixels, and the frame tool (out on an empty canvas) put away
       if (!had.length && merged.length) {
@@ -530,7 +568,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       return true;
     };
     return onTopic("designs", () => void getDesign(id).then((d) => remote.current(d), () => {}));
-  }, [id, change, view]);
+  }, [id, changeDoc, view]);
 
   /** The saved page with every picked layer through `fn`. */
   const through = (fn: (l: Layer) => Layer): Page | null => (base ? { ...base, layers: base.layers.map((l) => (selected.includes(l.id) ? fn(l) : l)) } : null);
@@ -788,6 +826,10 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     const all = mine.every((l) => l[flag]);
     patch((l) => ({ ...l, [flag]: all ? undefined : true }) as Layer);
   };
+  /** A layer's look, copied (⌥⌘C) to put on others (⌥⌘V): its fills, lines, effects, type and the styles they name. */
+  const [copiedLook, setCopiedLook] = useState<Look | null>(null);
+  const copyLook = () => mine.length === 1 && (setCopiedLook(lookOf(mine[0]!)), toast("Style copied", { id: "design-style-copied" }));
+  const pasteLook = () => copiedLook && patch((l) => withLook(l, copiedLook));
   const copy = () => {
     if (!mine.length) return;
     const taken: NonNullable<typeof clip> = { layers: mine, text: mine.map(layerName).join("\n"), wrote: false, from: design?.id };
@@ -1098,6 +1140,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         else if (c === "KeyM" && has && (ON_A_MAC ? e.ctrlKey && e.metaKey : e.ctrlKey && e.altKey)) run(useAsMask);
         else if (c === "KeyG") run(() => (e.shiftKey ? ungroup() : group(e.altKey)));
         else if (c === "KeyA") run(() => pick(k, base.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id)));
+        else if (e.altKey && c === "KeyC" && mine.length === 1) run(copyLook);
+        else if (e.altKey && c === "KeyV" && has && copiedLook) run(pasteLook);
         else if (c === "KeyC") copy(); // not stopped: words picked in a panel are still the browser's to copy
         else if (c === "KeyX" && has) run(() => (copy(), remove()));
         else if (e.shiftKey && c === "KeyH" && has) run(() => toggle("hidden"));
@@ -1227,7 +1271,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // the change the blur made, and one merged in from a refused save, reach `unsaved` once the page has drawn them
     const drawn = () => new Promise((r) => setTimeout(r, 0));
     /** The canvas is what the server has: a change merged in from a refused save reaches `unsaved` only when its timer's effect runs. */
-    const sent = () => JSON.stringify(latest.current) === JSON.stringify(server.current.pages);
+    const sent = () => JSON.stringify(latest.current) === JSON.stringify(server.current.pages) && JSON.stringify(stylesNow.current) === JSON.stringify(server.current.styles);
     failed.current = false;
     try {
       await drawn();
@@ -1273,6 +1317,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     );
   }
 
+  const stylesCtx = { styles, set: changeStyles, locked };
   const piece = design.from && "session" in design.from ? `/workshop/sessions/${design.from.session}` : null;
   const item = (label: string, keys: string, onSelect: () => void, disabled = false) => (
     <ContextMenuItem key={label} disabled={disabled} onSelect={onSelect}>
@@ -1301,6 +1346,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   };
 
   return (
+    <DesignStylesContext.Provider value={stylesCtx}>
     <div
       className="flex h-screen flex-col"
       // a file held over the page is the page's to take: without this the window would open the file instead
@@ -1446,6 +1492,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
                 <ContextMenuContent className="w-56">
                   {item("Copy", "⌘C", copy, none)}
                   {item("Paste here", "⌘V", paste, !clip)}
+                  {item("Copy style", "⌥⌘C", copyLook, mine.length !== 1)}
+                  {item("Paste style", "⌥⌘V", pasteLook, none || !copiedLook)}
                   {item("Duplicate", "⌘D", duplicate, none && !framed)}
                   {item("Group selection", "⌘G", () => group(), none)}
                   {item("Frame selection", "⌥⌘G", () => group(true), none)}
@@ -1583,5 +1631,6 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         )}
       </div>
     </div>
+    </DesignStylesContext.Provider>
   );
 }
