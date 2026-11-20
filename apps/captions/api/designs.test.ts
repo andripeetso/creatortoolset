@@ -1217,6 +1217,23 @@ describe("designs: a picture split into layers", () => {
     }
     expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pictures).toHaveLength(4);
   }, 60_000);
+  it("makes what the Mac sent small enough before the design's turn, so a write meanwhile is not held by it", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
+    const first = (await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "slide", type: "image/png", data: png(108, 135).toString("base64") })).body.id;
+    const mac = pairDevice("jordan", "Jordan's heavy Mac").device;
+    setDeviceKinds(mac.id, [CUTOUT_KIND, SPLIT_KIND]);
+    touchDevice(mac.id);
+    const heavy = execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "nullsrc=s=4000x3000,geq=random(1)*255:128:128", "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "image2pipe", "-c:v", "png", "-"], { maxBuffer: 1 << 28 });
+    const order: string[] = [];
+    const asked = call<SplitAnswer>("POST", `/api/designs/${d.id}/pictures/${first}/split`, {}).then((r) => (order.push("split"), r));
+    let job = null as ReturnType<typeof claimCutout>;
+    for (let n = 0; n < 200 && !(job = claimCutout(mac, [CUTOUT_KIND, SPLIT_KIND])); n++) await new Promise((r) => setTimeout(r, 10));
+    void cutoutSent(mac.id, job!.id, { layout: JSON.stringify({ lines: [], pieces: [] }), background: heavy });
+    await call("POST", `/api/designs/${d.id}/pages`, { changes: [{ frame: d.pages[0]!.id, add: { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10 } }] });
+    order.push("write");
+    expect((await asked).status).toBe(200);
+    expect(order).toEqual(["write", "split"]);
+  }, 120_000);
 });
 
 describe("designs: blank frames, limits, and what does not get lost", () => {

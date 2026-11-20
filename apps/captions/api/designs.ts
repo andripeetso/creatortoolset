@@ -1351,17 +1351,22 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
     const tmp = path.join(picturesOf(d.owner, d.id), `.split-${randomBytes(6).toString("hex")}.png`);
     try {
       const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
+      // made small enough to keep outside the turn (ffmpeg takes a while): the biggest pieces there may be room for
+      const bySize = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, DESIGN_LIMITS.pictures - 1);
+      const behind = await keepable(made.background, tmp, "The picture behind");
+      const kept: Buffer[] = [];
+      for (const { n } of bySize) kept[n] = await keepable(made.pieces[n]!, tmp, "A piece");
       // onto the design as it is now, in its turn (the Mac's work stays outside it)
       return await designTurn(c)(async (): Promise<SplitAnswer> => {
         const now = await read(d.owner, d.id);
         // deleted while it was being split: it stays deleted
         if (!now) throw new DesignError("Not found", 404);
         if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
-        const background = await addPicture(now, await keepable(made.background, tmp, "The picture behind"), "png");
+        const background = await addPicture(now, behind, "png");
         const room = DESIGN_LIMITS.pictures - now.pictures.length;
-        const biggest = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, room).sort((a, b) => a.n - b.n);
+        const biggest = bySize.slice(0, room).sort((a, b) => a.n - b.n);
         const pieces: SplitAnswer["pieces"] = [];
-        for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, await keepable(made.pieces[n]!, tmp, "A piece"), "png") });
+        for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, kept[n]!, "png") });
         await save({ ...now, updatedAt: stamp(now) });
         return { background, pieces, lines: made.layout.lines };
       });
