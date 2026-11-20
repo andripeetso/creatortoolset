@@ -32,6 +32,9 @@ export function wantsProxy(p: ProbeSummary, opts: { cloud: boolean; on: boolean 
  * shortcut: the rate uses the whole file's bitrate, not the video stream's, and audio is always 128k, not the source's
  * audio rate; upgrade when the probe keeps both.
  * ponytail: one ffmpeg at a time is the caller's rule (the queue, S4+), not this function's.
+ * Colour stays as filmed (a camera's log curve too): the editor's viewer applies the log curve itself unless the file it
+ * plays says it is converted (NleFile.log). A proxy that ever converts colour (Rec.709) must say `log: false` wherever its
+ * url goes (urlOf, the drafts' proxies answer), or log footage is converted twice.
  */
 export async function makeProxy(src: string, out: string, soundOnly = false, quality: ProxyQuality = "standard", duration = 0): Promise<boolean> {
   const bytes = (await stat(src)).size;
