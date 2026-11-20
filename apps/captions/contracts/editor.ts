@@ -18,7 +18,8 @@
  *                                                 as that video's next version. With asset/n: edits made on that Review version; without: on the draft as it is
  *                                                 now (Draft.view); `edits` may be [] then, when the draft is not what Review has (clips put on it): it is rendered as it is
  *   POST   /api/editor/:id/drafts/:name/duplicate  (the creator) → 201 { name }: the draft as a new version (next free v1…v9), no AI; its preview is made
- *   POST   /api/editor/:id/drafts/:name/clips    AddClip (the creator) → 201 AddedClip: a Media Library clip put on the draft
+ *   PUT    /api/editor/:id/drafts/:name/timeline  { timeline } (the creator): the editor's whole timeline kept as the draft, judged first → Edit; rendered and filed in Review
+ *   GET    /api/editor/:id/clips/:clip           → { source, sound }: a Media Library clip as the editor lays it (its rate, length, size; whether it has sound)
  *   PATCH  /api/editor/:id/versions/:name        { label?, trashed? } (the creator) → Edit["marks"]: rename ("" clears) or delete (trashed: false = Undo) a version
  *   POST   /api/editor/empty                     { name?, projectId? } → 201 { id, draft }: an edit with no footage and one empty draft (v1)
  *   POST   /api/editor/:id/restore               out of the trash again (Undo of DELETE; the maker and the workspace owner)
@@ -248,19 +249,6 @@ export interface VersionMark {
   trashedAt?: number;
 }
 
-/** POST …/drafts/:name/clips: a Media Library clip (its version id) on `track` from frame `rec`, or the first free place after it on that track. */
-export interface AddClip {
-  clip: string;
-  track: TrackId;
-  rec: number;
-  /** a picture clip on V1 brings its sound on A1, linked; false: the picture only */
-  sound?: boolean;
-}
-export interface AddedClip {
-  /** the draft's timeline as it is now (Draft.view) and the key of the clip put on it */
-  view: TimelineView;
-  key: string;
-}
 
 /** One version's cards as the edit page shows them. */
 export interface EditCards {
@@ -326,6 +314,12 @@ export interface Item {
   path?: { t: number; x: number }[];
   /** what a hand in Review set the path to (edit-timeline.ts ItemEdit.crop): held at x, or following Speaker n; absent = who talks */
   crop?: WindowCrop;
+  /* Set in the editor (src/lib/nle), in its names; what this server's renders draw of them is Renders. */
+  /** timeline frames of fade from black / silence at the start, and to it at the end */
+  fade_in?: number;
+  fade_out?: number;
+  /** false: switched off, as if not there */
+  enabled?: boolean;
 }
 
 /**
@@ -358,7 +352,7 @@ export interface Timeline {
   height: number;
   sources: Record<string, TimelineSource>;
   /** V1 speaker, V2 B-roll (cutaways over the speaker, which keeps running under them), A1 voice, A2 music, A3 sound effects */
-  tracks: Record<TrackId, { name: string; items: Item[] }>;
+  tracks: Record<TrackId, { name: string; items: Item[]; /** a picture track switched off, a sound track muted (the editor's) */ hidden?: boolean; mute?: boolean }>;
   /** one per script line, at the line's first frame; colour is an OTIO marker colour (RED, BLUE, …) */
   markers: { rec: number; name: string; color: string; note: string }[];
   /**
@@ -484,6 +478,18 @@ export interface Draft {
   view?: TimelineView;
   /** GET only: the Review version whose cut is exactly this draft; null when the draft changed since (or was never filed) */
   filed?: ReviewPreview | null;
+  /** GET only: what this server's renders draw of this draft (the editor greys the rest) */
+  renders?: Renders;
+}
+
+/**
+ * What a server's renders draw of a timeline: the highest `edj_version`, and per track the clip and track fields of the
+ * editor's (src/lib/nle/model.ts names: zoom, gain_db, fade_in, enabled, hidden, mute…). A track not listed isn't drawn.
+ * The editor greys a control whose field isn't listed for its clips' track, and the save refuses a timeline that adds one.
+ */
+export interface Renders {
+  edj_version: number;
+  tracks: Record<string, string[]>;
 }
 
 /** The editors a draft's timeline file is written for. */

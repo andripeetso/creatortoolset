@@ -185,6 +185,40 @@ final class ImportTests: XCTestCase {
         XCTAssertEqual((reply["copied"] as? [[String: String]])?.map { $0["to"] }, [mine + "/Imports/x/B.mov"])
     }
 
+    /// A Blur faces workspace's footage never reaches another server's page by a drag or a pick: refused with one line.
+    /// Its own server's page is its own gate's; a normal workspace's folder, and a server with no sign-in, block nothing.
+    func testBlurredFootageNeverGoesToAnotherServer() throws {
+        let suite = "import-tests-\(UUID().uuidString)"
+        let was = MediaFiles.defaults
+        MediaFiles.defaults = UserDefaults(suiteName: suite)!
+        defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
+        let footage = at("Tiny/FOOTAGE"), vlogs = at("Tiny/Vlogs"), old = at("Old/Media"), gone = at("Gone/Media")
+        let clip = try write("Tiny/FOOTAGE/Shoot/clip.mov"), vlog = try write("Tiny/Vlogs/v.mov"), oldClip = try write("Old/Media/o.mov"), goneClip = try write("Gone/Media/g.mov")
+        try FileManager.default.createSymbolicLink(atPath: at("alias"), withDestinationPath: footage)
+        MediaFiles.setServerFolders([.init(id: "f1", path: footage, workspaces: ["ws_classes"], use: "media", guarded: ["Tiny Classes"]),
+                                     .init(id: "f2", path: vlogs, workspaces: ["ws_vlogs"], use: "media", guarded: []),
+                                     .init(id: "f3", path: at("Tiny/EXPORTS"), workspaces: ["ws_classes"], use: "exports")], server: "studio.tiny.test")
+        MediaFiles.setServerFolders([.init(id: "f4", path: old, workspaces: ["*"], use: "media")], server: "old.tiny.test")   // says nothing
+        MediaFiles.setServerFolders([.init(id: "f5", path: gone, workspaces: ["*"], use: "media", guarded: ["Gone"])], server: "gone.tiny.test")
+        let signedIn = { (host: String) in host != "gone.tiny.test" }
+        let check = { (paths: [String], page: String) in MediaFiles.blurredElsewhere(paths, server: page, signedIn: signedIn) }
+        // onto another server's page: refused, by a link too, and a dropped folder holding it
+        XCTAssertEqual(check([clip], "ct.tiny.test"), "\(clip) is in Tiny Classes's Media folder on studio.tiny.test: blurred footage only leaves through Tiny Classes")
+        XCTAssertEqual(check([at("alias/Shoot/clip.mov")], "ct.tiny.test"), "\(at("alias/Shoot/clip.mov")) is in Tiny Classes's Media folder on studio.tiny.test: blurred footage only leaves through Tiny Classes")
+        XCTAssertEqual(check([at("Tiny")], "ct.tiny.test"), "\(at("Tiny")) holds Tiny Classes's Media folder on studio.tiny.test: blurred footage only leaves through Tiny Classes")
+        // onto its own server's page (the P2 gate's), a normal workspace's footage, an Exports folder: nothing refused
+        XCTAssertNil(check([clip], "studio.tiny.test"))
+        XCTAssertNil(check([clip], "STUDIO.tiny.test"))
+        XCTAssertNil(check([vlog, at("Tiny/EXPORTS/final.mp4")], "ct.tiny.test"))
+        // a server that doesn't say which workspaces blur: fails closed; one this Mac left: nothing
+        XCTAssertEqual(check([oldClip], "ct.tiny.test"), "\(oldClip) is in a Media folder on old.tiny.test that hasn't said whether it must be blurred: add it from that server's own page")
+        XCTAssertNil(check([goneClip], "ct.tiny.test"))
+        // the whole disk dropped holds it too
+        XCTAssertTrue(check(["/"], "ct.tiny.test")?.hasPrefix("/ holds ") == true)   // whichever guarded folder it finds first
+        // a NAS that doesn't answer is compared by name, never waited on
+        XCTAssertNotNil(MediaFiles.blurredElsewhere([clip], server: "ct.tiny.test", signedIn: signedIn, reachable: { _ in false }))
+    }
+
     func testScanFindsMediaOnlyInGrantedFolders() throws {
         try write("Footage/A001.MOV")
         try write("Footage/Day 2/song.mp3")

@@ -1235,6 +1235,11 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let done: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             // remembered first: the page asks where they are ("files") as soon as it has them; and granted, so what the
             // library indexes from them is read here later (MediaFiles.grantPicked)
+            // a pick of another server's Blur faces footage never reaches this page (as a drop, AppWebView.performDragOperation)
+            if response == .OK, let self, let refused = MediaFiles.blurredElsewhere(panel.urls.map(\.path), server: MediaFiles.serverKey(self.base)) {
+                (webView as? AppWebView)?.refuse(refused)
+                return completionHandler(nil)
+            }
             if response == .OK, let self {
                 self.pickedFiles = rememberPicks(panel.urls, in: self.pickedFiles)
                 MediaFiles.grantPicked(panel.urls)

@@ -255,6 +255,64 @@ describe("markers, transitions, lift and extract on the page", () => {
   });
 });
 
+// renders at version 1 that draw V1's zoom, tilt and fades and A1's level, and nothing else
+const V1_ONLY = { edj_version: 1, tracks: { V1: ["zoom", "tilt", "fade_in", "fade_out"], A1: ["gain_db"] } };
+
+describe("a server whose renders take timeline version 1", () => {
+  it("greys the version-2 controls with the line, makes no version-2 edit from a key or the chat, and the rest still works", async () => {
+    const p = await mount(two, { renders: V1_ONLY });
+    // ⌘T would add a transition: nothing changes
+    await key("t", { code: "KeyT", metaKey: true });
+    expect(p.changes.at(-1)?.tracks.V1.items[1].trans).toBeUndefined();
+    // the clip menu's Add Transition rows and Normalize are greyed with the line
+    const later = p.host.querySelectorAll('[data-clip][aria-label^="V1"]')[1]!;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, right: 1000, width: 1000, top: 0, bottom: 40, height: 40, x: 0, y: 0, toJSON: () => ({}) });
+    await rightClick(later, 1);
+    rect.mockRestore();
+    for (const row of ["Cross Dissolve", "Normalize Audio Levels…"]) {
+      expect(menuItem(row).disabled).toBe(true);
+      expect(menuItem(row).title).toBe("Not in this server's renders yet");
+    }
+    await key("Escape", { code: "Escape" });
+    // picked clips: the Inspector's keyframe buttons are greyed with it
+    await key("a", { code: "KeyA", metaKey: true });
+    const diamonds = [...p.host.querySelectorAll<HTMLButtonElement>('button[aria-pressed][aria-label$=" keyframe"]')];
+    expect(diamonds.length).toBeGreaterThan(0);
+    expect(diamonds.every((b) => b.disabled && b.title === "Not in this server's renders yet")).toBe(true);
+    // the chat: a keyframe is refused with why, a length change runs
+    await p.deliver(ask({ id: "k1", commands: [{ id: "key", params: { prop: "zoom" } }] }));
+    expect(bridge.replies.at(-1)).toEqual({ id: "k1", error: expect.stringContaining("Not in this server's renders yet") });
+    await p.deliver(ask({ id: "t1", commands: [{ id: "newText", params: { words: "Tiny" } }] }));
+    expect(bridge.replies.at(-1)).toEqual({ id: "t1", error: expect.stringContaining("Not in this server's renders yet") });
+    expect(p.changes.some((t) => Object.values(t.tracks).some((x) => x.items.some((i) => i.keys)) || Object.values(t.sources).some((x) => x.kind === "design"))).toBe(false);
+    await p.deliver(ask({ id: "l1", commands: [{ id: "setLength", params: { seconds: 8 } }] }));
+    expect(bridge.replies.at(-1)).toEqual({ id: "l1", result: expect.objectContaining({ length: 8 }) });
+    expect(p.length()).toBe(200);
+    p.done();
+  });
+
+  it("greys each control whose field the renders don't draw on its clips' track, and refuses that edit from the chat", async () => {
+    const p = await mount(two, { renders: V1_ONLY });
+    await key("a", { code: "KeyA", metaKey: true });
+    const greyed = (label: string) => !!p.host.querySelector(`fieldset[disabled][title="Not in this server's renders yet"] [title="${label}"]`);
+    expect(greyed("Rotation Angle")).toBe(true);
+    expect(greyed("Position")).toBe(true);
+    expect(greyed("Opacity")).toBe(true);
+    expect(greyed("Zoom")).toBe(false);
+    expect(greyed("Fade in")).toBe(false);
+    await p.deliver(ask({ id: "e1", commands: [{ id: "enable", params: {} }] }));
+    expect(bridge.replies.at(-1)).toEqual({ id: "e1", error: "Not in this server's renders yet: V1 enabled, A1 enabled" });
+    p.done();
+  });
+
+  it("where nothing is said of the renders nothing is greyed", async () => {
+    const p = await mount(two);
+    await key("t", { code: "KeyT", metaKey: true });
+    expect(p.now().tracks.V1.items[1].trans).toBeTruthy();
+    p.done();
+  });
+});
+
 describe("autosaves", () => {
   const disk = new Map<string, Ring>();
   const puts: Ring[] = [];

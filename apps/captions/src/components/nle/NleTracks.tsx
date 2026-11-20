@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, useContext, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
@@ -16,7 +16,7 @@ import { drawWave, idleLevels, levels, type Levels } from "@/lib/waveform";
 import type { NleClock } from "@/lib/nle/audio";
 import { thumbAt } from "@/lib/nle/thumbs";
 import type { NleFile } from "./NlePlayer";
-import { Panel } from "./NleLayout";
+import { NleGate, Panel } from "./NleLayout";
 import { Timecode } from "./NleViewer";
 
 // The editor's timeline: track headers (name, lock, hide or mute, take off), the clips on their lanes, the ruler and the
@@ -157,7 +157,7 @@ type Drag = {
 
 export const NleTracks = memo(function NleTracks({
   tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onLowerUnderVoice, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
-  trans = null, onTrans, onMarker,
+  trans = null, onTrans, onMarker, lane, cached,
 }: {
   tl: NleTimeline;
   /** the playhead at rest (a pause, a seek): a new one draws the timeline again */
@@ -197,7 +197,12 @@ export const NleTracks = memo(function NleTracks({
   onTrans?: (key: string) => void;
   /** a double click on a marker (its frame): open it */
   onMarker?: (frame: number) => void;
+  /** a lane under the video tracks: its head, and what is on it at `pps` pixels a second */
+  lane?: { head: ReactNode; body: (pps: number) => ReactNode };
+  /** the render bar: the V1 ranges [rec, len] a render takes from the render cache (lib/nle/cache.ts), green under the ruler */
+  cached?: readonly (readonly [number, number])[];
 }) {
+  const gate = useContext(NleGate);
   const fps = tl.timeline.fps;
   const content = lengthOf(tl) / fps;
   const drag = useRef<Drag | null>(null);
@@ -679,6 +684,9 @@ export const NleTracks = memo(function NleTracks({
           {marks[0] !== null && marks[1] !== null && (
             <div className="pointer-events-none absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
           )}
+          {cached?.map(([r, l]) => (
+            <div key={r} data-cached={r} className="pointer-events-none absolute bottom-0 h-0.5 bg-emerald-500" style={{ left: (r / fps) * pps, width: (l / fps) * pps }} />
+          ))}
           {markersOf(tl).map((m) => (
             <div key={m.frame} data-marker={m.frame} role="button" aria-label={`Marker ${m.name}`} title={[m.name, m.note].filter(Boolean).join("\n")}
               className="absolute bottom-0 z-[11] h-3 cursor-pointer" style={{ left: (m.frame / fps) * pps - 5, width: Math.max(10, ((m.dur ?? 1) / fps) * pps + 5) }}
@@ -710,14 +718,15 @@ export const NleTracks = memo(function NleTracks({
       }}>
       {/* Resolve's: room above the video tracks and under the sound tracks, both for a box to start in */}
       <div className="flex flex-1"><div data-head className={headCol} style={{ width: LABEL_W }} onContextMenu={(e) => openTrackMenu(e, null)} /></div>
-      {order.map((id) => {
+      {order.map((id, i) => {
         const t = tl.tracks[id];
         const v = isVideo(id);
         const off = v ? t.hidden : t.mute;
         const h = laneH(id);
         const n = t.items.length;
         return (
-          <div key={id} className="flex border-b border-black/50" style={{ height: h }}>
+          <Fragment key={id}>
+          <div className="flex border-b border-black/50" style={{ height: h }}>
             {/* Resolve's header: the track's badge, lock and eye (or sound) on top, its name and clip count under */}
             <div data-head className="group/h sticky left-0 z-20 flex shrink-0 flex-col justify-center gap-0.5 overflow-hidden border-r border-black/60 bg-[#1f1f23] py-0.5 pr-1.5 pl-2.5 text-[11px]" style={{ width: LABEL_W }}
               onContextMenu={(e) => openTrackMenu(e, id)}>
@@ -735,9 +744,10 @@ export const NleTracks = memo(function NleTracks({
                   {t.locked ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
                 </button>
                 <button type="button" aria-pressed={!!off} aria-label={v ? (off ? `Show ${id}` : `Hide ${id}`) : off ? `Unmute ${id}` : `Mute ${id}`}
-                  title={v ? (off ? "Hidden" : "Shown") : off ? "Muted" : "Heard"}
+                  disabled={!off && !!gate.field([id], v ? "hidden" : "mute")}
+                  title={(!off && gate.field([id], v ? "hidden" : "mute")) || (v ? (off ? "Hidden" : "Shown") : off ? "Muted" : "Heard")}
                   onClick={() => onTrack(id, v ? { hidden: off ? undefined : true } : { mute: off ? undefined : true })}
-                  className={cn("rounded p-0.5 hover:bg-zinc-800", off ? "text-amber-400" : "text-zinc-500")}>
+                  className={cn("rounded p-0.5 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent", off ? "text-amber-400" : "text-zinc-500")}>
                   {v ? (off ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />) : off ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
                 </button>
               </div>
@@ -849,6 +859,16 @@ export const NleTracks = memo(function NleTracks({
               })}
             </div>
           </div>
+          {/* a lane of the page's under the video tracks (the Captions lane): its own head and what is on it */}
+          {lane && v && !isVideo(order[i + 1] ?? "A") && (
+            <div className="flex border-b border-black/50" style={{ height: 30 }}>
+              <div data-head className="sticky left-0 z-20 flex shrink-0 items-center gap-1 overflow-hidden border-r border-black/60 bg-[#1f1f23] pr-1.5 pl-2.5 text-[11px]" style={{ width: LABEL_W }}>
+                {lane.head}
+              </div>
+              <div className="relative flex-1" onPointerDown={(e) => e.stopPropagation()}>{lane.body(pps)}</div>
+            </div>
+          )}
+          </Fragment>
         );
       })}
       <div className="flex flex-1"><div data-head className={headCol} style={{ width: LABEL_W }} onContextMenu={(e) => openTrackMenu(e, null)} /></div>
@@ -886,6 +906,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
   onLowerUnderVoice?: (track: string) => void;
 }) {
   const t = id ? tl.tracks[id] : null;
+  const gate = useContext(NleGate);
   // a track keeps its number (the AI Editor reads tracks by number): a new one goes on top / at the bottom, or right
   // above / below this one when that number is free
   const n = id ? trackNo(id) : 0;
@@ -893,13 +914,18 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
     const got = id?.[0] === k ? addTrackAt(tl, k, no) : null;
     return got ? () => onCommit(got.tl) : null;
   };
-  const adds: [string, (() => void) | null][] = [
-    ["Video Track", () => onCommit(addTrack(tl, "V").tl)],
-    ["Audio Track", () => onCommit(addTrack(tl, "A").tl)],
-    ["Video Track Above", at("V", n + 1)],
-    ["Video Track Below", at("V", n - 1)],
-    ["Audio Track Above", at("A", n - 1)],
-    ["Audio Track Below", at("A", n + 1)],
+  // a track this server's renders don't draw: greyed (its clips would vanish from the render)
+  const row = (l: string, fn: (() => void) | null, newId: string): [string, (() => void) | null, string?] => {
+    const why = gate.field([newId], "");
+    return [l, why ? null : fn, why ?? undefined];
+  };
+  const adds = [
+    row("Video Track", () => onCommit(addTrack(tl, "V").tl), addTrack(tl, "V").id),
+    row("Audio Track", () => onCommit(addTrack(tl, "A").tl), addTrack(tl, "A").id),
+    row("Video Track Above", at("V", n + 1), `V${n + 1}`),
+    row("Video Track Below", at("V", n - 1), `V${n - 1}`),
+    row("Audio Track Above", at("A", n - 1), `A${n - 1}`),
+    row("Audio Track Below", at("A", n + 1), `A${n + 1}`),
   ];
   const moveRow = (label: string, up: boolean): [string, (() => void) | null] => {
     const other = id ? moveTarget(tl, id, up) : null;
@@ -907,7 +933,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
   };
   const empties = deleteEmptyTracks(tl);
   const v = !!id && isVideo(id);
-  const rows: ([string, (() => void) | null] | null)[] = [
+  const rows: ([string, (() => void) | null, string?] | null)[] = [
     null,
     moveRow("Move Track Up", true),
     moveRow("Move Track Down", false),
@@ -916,9 +942,9 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
     ["Delete Empty Tracks", empties !== tl ? () => onCommit(empties) : null],
     null,
     [t?.locked ? "Unlock Track" : "Lock Track", id ? () => onTrack(id, { locked: t!.locked ? undefined : true }) : null],
-    v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", () => onTrack(id!, { hidden: t!.hidden ? undefined : true })]
-      : [t?.mute ? "Unmute Track" : "Mute Track", id ? () => onTrack(id, { mute: t!.mute ? undefined : true }) : null],
-    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", () => onLowerUnderVoice(id)] as [string, () => void]] : []),
+    v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", !t!.hidden && gate.field([id!], "hidden") ? null : () => onTrack(id!, { hidden: t!.hidden ? undefined : true }), (!t!.hidden && gate.field([id!], "hidden")) || undefined]
+      : [t?.mute ? "Unmute Track" : "Mute Track", !id || (!t!.mute && gate.field([id], "mute")) ? null : () => onTrack(id, { mute: t!.mute ? undefined : true }), (id && !t!.mute && gate.field([id], "mute")) || undefined],
+    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", gate.v2 ? null : () => onLowerUnderVoice(id), gate.v2 ?? undefined] as [string, (() => void) | null, string?]] : []),
   ];
   const run = (fn: () => void) => () => {
     onClose();
@@ -930,11 +956,11 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUn
         <div className="group/sub relative">
           <button type="button" role="menuitem" aria-haspopup="menu" className={MENU_ROW}><span>Add Track</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
           <div role="menu" aria-label="Add Track" className={cn("absolute -top-1 left-full hidden w-48 group-focus-within/sub:block group-hover/sub:block", MENU)}>
-            {adds.map(([l, fn]) => <button key={l} type="button" role="menuitem" disabled={!fn} className={MENU_ROW} onClick={fn ? run(fn) : undefined}>{l}</button>)}
+            {adds.map(([l, fn, why]) => <button key={l} type="button" role="menuitem" disabled={!fn} title={why} className={MENU_ROW} onClick={fn ? run(fn) : undefined}>{l}</button>)}
           </div>
         </div>
         {rows.map((r, i) => (r ? (
-          <button key={r[0]} type="button" role="menuitem" disabled={!r[1]} className={MENU_ROW} onClick={r[1] ? run(r[1]) : undefined}>{r[0]}</button>
+          <button key={r[0]} type="button" role="menuitem" disabled={!r[1]} title={r[2]} className={MENU_ROW} onClick={r[1] ? run(r[1]) : undefined}>{r[0]}</button>
         ) : <div key={i} role="separator" className="my-1 h-px bg-zinc-800" />))}
       </div>
     </div>

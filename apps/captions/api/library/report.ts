@@ -6,10 +6,11 @@ import type { SessionUser } from "../users";
 import { storageOf, updateFolder } from "../devices-storage";
 import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
-import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
+import { ownedProjects, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
 import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { blursFaces, libraryDb } from "./db";
+import { pluginKeepsBlurred, pluginUploadsTo } from "../lib/plugin";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
@@ -44,13 +45,42 @@ async function workspacesOf(owner: string, f: StorageFolder): Promise<string[] |
   return [...new Set((f.workspaces ?? [f.workspace]).map((w) => (w ? w : of(undefined))))];
 }
 
-/** The folders computer `d` holds itself (it added them in Settings → Folders), with their workspaces. */
+/** The folders computer `d` holds itself (it added them in Settings → Folders), with their workspaces; a Media folder
+ *  also with those whose footage leaves only blurred (RelayFolder.guarded). */
 export async function relayFolders(d: Device): Promise<RelayFolder[]> {
   if (d.owner === "workspace") return [];
   const st = await storageOf(d.owner);
   const mine = st.folders.filter((f) => f.origin.host === d.id);
+  const owned = await ownedProjects(d.owner);
+  const shared = await sharedProjects(d.owner);
+  const name = new Map([...owned, ...shared].map((p) => [p.id, p.name]));
+  // a workspace is judged as its owner's: a member's folder in the team owner's workspace by the owner's library and catalog
+  const ownerOf = new Map(shared.map((p) => [p.id, p.owner]));
+  const blurs = new Map<string, Promise<boolean>>();
+  const guarded = (id: string) => {
+    const owner = ownerOf.get(id) ?? d.owner;
+    const ws = id || undefined;   // "": an account with no workspace, all of its media in one
+    // Blur faces on, a plug-in serving its media now, or one keeping it blurred whatever is open (its catalog). Asked
+    // without the helpers' own catches (workspaceLibrary, servedByPlugin answer no on a failure): a failure here is guarded
+    const blurred = async () =>
+      (await librariesHere(owner, ws)).some((l) => blursFaces(l.id)) ||
+      // uploadsTo answers for a named workspace only (keepsBlurred covers an account with none)
+      !!(ws && (await workspaceScope.run({ id: ws }, () => pluginUploadsTo(owner)))) ||
+      (await pluginKeepsBlurred(owner, id));
+    if (!blurs.has(id)) blurs.set(id, blurred().catch(() => true));
+    return blurs.get(id)!;
+  };
   return Promise.all(
-    mine.map(async (f) => ({ id: f.id, path: f.origin.path, hostPath: f.origin.path, mountPath: f.mountPath ?? f.origin.path, workspaces: await workspacesOf(d.owner, f), use: useOf(f) })),
+    mine.map(async (f) => {
+      const workspaces = await workspacesOf(d.owner, f);
+      const out: RelayFolder = { id: f.id, path: f.origin.path, hostPath: f.origin.path, mountPath: f.mountPath ?? f.origin.path, workspaces, use: useOf(f) };
+      if (out.use !== "media") return out;
+      // every workspace it reads into (devices-storage.ts readersOf): its own and those it was given; none at all: the one
+      const all = [...owned, ...shared].map((p) => p.id);
+      const ids = workspaces === "*" ? (all.length ? all : [""]) : workspaces;
+      const kept = await Promise.all(ids.map(async (id) => ((await guarded(id)) ? (name.get(id) ?? (id || d.owner)) : null)));
+      return { ...out, guarded: kept.filter((n): n is string => !!n) };
+    }),
   );
 }
 

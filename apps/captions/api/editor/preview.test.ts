@@ -124,6 +124,40 @@ describe("AI Editor preview", () => {
     expect(frame(out, 25).every((b) => b > 20)).toBe(true);
   }, 60_000);
 
+  it("fades a shot from and to black as the editor's player does (to 9/255), and a gap on V1 stays black for its length", async () => {
+    const white = path.join(dir, "Tiny Acrobatics white.mp4");
+    execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=360x640:r=30:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", white]);
+    const t: Timeline = { name: "Fades", fps: 30, width: 360, height: 640, sources: { ver_w: { versionId: "ver_w", name: "White", fps: 30, tc: 0, dur: 90, w: 360, h: 640 } }, tracks: emptyTracks(), markers: [] };
+    t.tracks.V1.items = [{ src: "ver_w", in: 0, len: 20, rec: 0, fade_in: 10, fade_out: 4 }, { src: "ver_w", in: 0, len: 10, rec: 30 }];
+    const out = path.join(dir, "fades.mp4");
+    await renderPreview(t, { ver_w: white }, out);
+    expect(Number(ffprobe(out, "-count_frames", "-select_streams", "v", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"))).toBe(40);
+    const mean = (n: number) => { const b = frame(out, n); return b.reduce((x, y) => x + y, 0) / b.length; };
+    const black = mean(0);
+    const full = mean(15);
+    expect(full - black).toBeGreaterThan(150);
+    // the player's opacity at clip frame k: k / fade_in, then (len - k) / fade_out (src/lib/nle/picture.ts)
+    for (const [n, alpha] of [[5, 0.5], [8, 0.8], [17, 0.75], [19, 0.25]] as const) expect(Math.abs(mean(n) - (black + (full - black) * alpha))).toBeLessThanOrEqual(9);
+    expect(Math.abs(mean(25) - black)).toBeLessThanOrEqual(9); // the gap
+    expect(Math.abs(mean(35) - full)).toBeLessThanOrEqual(9);
+  }, 60_000);
+
+  it("mixes the music on A2 with the sound effects, at their levels and fades; a muted track and a clip switched off are not heard", async () => {
+    const { sfxMix } = await import("./plan-render");
+    const t = timeline();
+    t.tracks.A2.items = [{ src: "ver_a", in: 0, len: 30, rec: 0, gainDb: -12, fade_in: 15 }];
+    t.tracks.A3.items = [{ src: "ver_a", in: 0, len: 10, rec: 5, enabled: false }];
+    const files = { ver_a: fixture };
+    const m = sfxMix(t, files, 1, "[0:a]", ["A2", "A3"])!;
+    expect(m.inputs.filter((x) => x === "-i")).toHaveLength(1);
+    expect(m.filter).toContain("volume=-12dB,afade=t=in:st=0:d=0.500000,adelay=0");
+    t.tracks.A2.mute = true;
+    expect(sfxMix(t, files, 1, "[0:a]", ["A2", "A3"])).toBeNull();
+    // a planned edit mixes A3 alone (its song on A2 is its own)
+    t.tracks.A2.mute = false;
+    expect(sfxMix(t, files, 1, "[0:a]")).toBeNull();
+  });
+
   it("splits a shot where a cutaway lies over it, and trims a cutaway to the shot", () => {
     const shot = { src: "A", in: 0, len: 30, rec: 0 };
     expect(piecesOf(shot, [])).toEqual([{ at: 0, frames: 30 }]);

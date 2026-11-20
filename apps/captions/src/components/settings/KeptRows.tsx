@@ -247,3 +247,44 @@ function MacComputer() {
     </Section>
   );
 }
+
+/** The editor's render cache (a server whose editor keeps one answers RENDER_CACHE_API): the shots already rendered, in
+ *  each edit's own project folder on the computers. */
+export const RENDER_CACHE_API = "/api/editor/render-cache";
+export type RenderCacheView = { bytes: number; limit: number; folders: number; clearedAt?: number };
+
+/** Storage › Render cache: its size and Clear (asks first); nothing on a server whose editor keeps none. */
+export function RenderCacheSection() {
+  const rc = useCachedLoad<RenderCacheView>(RENDER_CACHE_API, () => call<RenderCacheView>(RENDER_CACHE_API), { own: true });
+  const [busy, setBusy] = useState(false);
+  if (!rc.data) return null;
+  const { bytes, limit } = rc.data;
+  const clear = async () => {
+    const ok = await confirmDialog({ title: "Clear the render cache?", body: "The next render of each edit renders every shot again.", ok: `Delete ${bytesLabel(bytes)}`, danger: true });
+    if (!ok) return;
+    setBusy(true);
+    await call<RenderCacheView>(`${RENDER_CACHE_API}/clear`, "POST").catch((e: unknown) => saveFailed(e instanceof Error ? e.message : "Could not clear"));
+    await rc.refresh().catch(() => {});
+    setBusy(false);
+  };
+  return (
+    <Section title="Editor">
+      <Card>
+        <Row
+          title="Render cache"
+          tip={`Shots the editor already rendered, kept in each edit's project folder, so a change renders only the shots it touches. Past ${capLabel(limit)} in a Projects folder, the shots used longest ago are removed.`}
+          control={
+            <>
+              <span className="text-sm text-muted-foreground">{bytesLabel(bytes)}</span>
+              {bytes > 0 && (
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => void clear()}>
+                  {busy ? "Clearing…" : "Clear"}
+                </Button>
+              )}
+            </>
+          }
+        />
+      </Card>
+    </Section>
+  );
+}

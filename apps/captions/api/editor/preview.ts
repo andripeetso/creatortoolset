@@ -1,7 +1,7 @@
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Critique } from "../../contracts/edit-plan";
-import type { Item, Timeline } from "../../contracts/editor";
+import type { Item, Renders, Timeline } from "../../contracts/editor";
 import { addVersion, fileTimelineView, readMeta, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
@@ -33,6 +33,40 @@ import type { StepContext } from "./worker";
  * sound brought to -14 LUFS. The `file` step then marks the Review video's library version as made from the footage
  * (derived_from).
  */
+
+/**
+ * The highest timeline version (contracts/editor.ts edj_version) these renders take. Version 2's keys, transitions,
+ * camera conversions, design clips, captions and norm_db are not drawn here yet, so the editor greys them and the save
+ * refuses them. Raise it only once every version-2 field renders.
+ */
+export const RENDERS_EDJ = 1;
+
+const SOUND = ["gain_db", "fade_in", "fade_out", "enabled", "mute"];
+/**
+ * What renderPreview (or, for a planned edit, plan-render.ts) draws of a draft, per track (contracts/editor.ts Renders):
+ * the draft's GET hands it to the editor, which greys the rest, and the save refuses a timeline that adds the rest.
+ * Change it with the render: a field listed here and not drawn would vanish from the render without a word.
+ */
+export function rendersOf(tl: Timeline): Renders {
+  return {
+    edj_version: RENDERS_EDJ,
+    tracks: tl.plan
+      ? { V1: ["zoom", "speed"], A1: ["gain_db"], A2: ["gain_db"], A3: SOUND }
+      : { V1: ["zoom", "tilt", "fade_in", "fade_out", "enabled"], V2: ["zoom", "tilt", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND },
+  };
+}
+
+/** A clip's fade as an ffmpeg filter over one piece of it: the piece starts `k` frames into the clip and is `frames` long. */
+export function fadeFilter(it: Pick<Item, "len" | "fade_in" | "fade_out">, k: number, frames: number, fps: number, sound = false): string[] {
+  const out: string[] = [];
+  const fi = it.fade_in ?? 0;
+  const fo = it.fade_out ?? 0;
+  // shortcut: a piece that starts inside a fade (a cutaway ended there) fades from its own start; split pieces at fades if that shows
+  if (fi > k) out.push(sound ? `afade=t=in:st=0:d=${((fi - k) / fps).toFixed(6)}` : `fade=t=in:s=0:n=${fi - k}`);
+  const s = it.len - fo - k;
+  if (fo && s < frames) out.push(sound ? `afade=t=out:st=${(Math.max(0, s) / fps).toFixed(6)}:d=${((fo + Math.min(0, s)) / fps).toFixed(6)}` : `fade=t=out:s=${Math.max(0, s)}:n=${fo + Math.min(0, s)}`);
+  return out;
+}
 
 /** The longest side of a preview: 1080x1920 from a 4K vertical timeline. */
 const MAX_SIDE = 1920;
@@ -140,12 +174,22 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
   await mkdir(parts, { recursive: true });
   try {
     const list: string[] = [];
-    // ponytail: shots are joined end to end, a gap on V1 is closed up; a draft has none (QA notes one), black fill when edits make them
-    const shots = [...tl.tracks.V1.items].sort((a, b) => a.rec - b.rec);
-    const cutaways = [...tl.tracks.V2.items].sort((a, b) => a.rec - b.rec);
+    // a clip switched off is not there; a hidden B-roll track and a muted voice track neither
+    const on = (it: Item) => it.enabled !== false;
+    const shots = tl.tracks.V1.items.filter(on).sort((a, b) => a.rec - b.rec);
+    const cutaways = tl.tracks.V2.hidden ? [] : tl.tracks.V2.items.filter(on).sort((a, b) => a.rec - b.rec);
+    // a gap on V1 (a clip taken out or switched off) is black under silence, with any cutaway over it, as the editor plays it
+    const spans: Item[] = [];
     for (const v of shots) {
-      const a = tl.tracks.A1.items.find((x) => v.link && x.link === v.link);
-      const vs = tl.sources[v.src]!;
+      const at = spans.length ? spans.at(-1)!.rec + spans.at(-1)!.len : 0;
+      if (v.rec > at) spans.push({ src: "", in: 0, len: v.rec - at, rec: at });
+      spans.push(v);
+    }
+    let heard = false;
+    for (const v of spans) {
+      const a = v.src && !tl.tracks.A1.mute ? tl.tracks.A1.items.find((x) => on(x) && v.link && x.link === v.link) : undefined;
+      const vs = v.src ? tl.sources[v.src]! : { fps: tl.fps, w: 0 };
+      heard ||= !!a;
       for (const p of piecesOf(v, cutaways)) {
         if (signal?.aborted) throw new Error("Stopped");
         const seg = path.join(parts, `${String(list.length).padStart(4, "0")}.mov`);
@@ -155,19 +199,20 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
           ? ["-ss", (a.in / tl.sources[a.src]!.fps + off).toFixed(6), "-i", files[a.src]!]
           : ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"];
         const c = p.cut;
-        // a cutaway's picture: its own clip from its in point, framed at zoom 1 and ungraded
+        // a cutaway's picture: its own clip from its in point, at its own zoom and tilt, ungraded
         const pic = c
-          ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, { ...c, zoom: 1, tilt: 0 }) }
-          : { file: files[v.src]!, at: v.in / vs.fps + off, filter: shotFilter(tl, v, grade, undefined, off) };
+          ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, c) }
+          : vs.w > 0 ? { file: files[v.src]!, at: v.in / vs.fps + off, filter: [shotFilter(tl, v, grade, undefined, off), ...fadeFilter(v, p.at - v.rec, p.frames, tl.fps)].join(",") } : null;
+        const voiceAf = a ? [...(a.gainDb ? [`volume=${a.gainDb}dB`] : []), ...fadeFilter(a, p.at - a.rec, p.frames, tl.fps, true)] : [];
         // a take with no picture (a voice recording) under no cutaway: black, as a gap in the picture is
-        const picture = c || vs.w > 0 ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];
+        const picture = pic ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];
         // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one
         await ffmpeg([
           ...picture,
           ...voice,
           "-map", "0:v:0", "-map", "1:a:0",
-          "-vf", c || vs.w > 0 ? pic.filter : "format=yuv420p",
-          "-af", "aresample=48000,aformat=channel_layouts=stereo",
+          "-vf", pic ? pic.filter : "format=yuv420p",
+          "-af", [...voiceAf, "aresample=48000", "aformat=channel_layouts=stereo"].join(","),
           "-frames:v", String(p.frames), "-t", secs(p.frames),
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
           "-c:a", "pcm_s16le",
@@ -179,14 +224,16 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
     if (!list.length) throw new Error("The draft has no speaker shots");
     const listFile = path.join(parts, "list.txt");
     await writeFile(listFile, list.join("\n"));
-    // the sound effects on A3 mix under the speaker's sound (sfxMix); with none the sound is levelled as before
-    const sfx = sfxMix(tl, files, 1, "[0:a]");
+    // the music on A2 and the sound effects on A3 mix under the speaker's sound (sfxMix); with none the sound is levelled as before
+    const sfx = sfxMix(tl, files, 1, "[0:a]", ["A2", "A3"]);
+    // nothing heard at all: silence stays silence, as levelling it divides by zero (plan-render.ts does the same)
+    const norm = heard || sfx ? "loudnorm=I=-14:TP=-1:LRA=11" : "anull";
     await ffmpegTo(out, [
       "-f", "concat", "-safe", "0", "-i", listFile,
       ...(sfx?.inputs ?? []),
       ...(sfx
-        ? ["-filter_complex", `${sfx.filter};[sfxm]loudnorm=I=-14:TP=-1:LRA=11[a]`, "-map", "0:v", "-map", "[a]"]
-        : ["-af", "loudnorm=I=-14:TP=-1:LRA=11"]),
+        ? ["-filter_complex", `${sfx.filter};[sfxm]${norm}[a]`, "-map", "0:v", "-map", "[a]"]
+        : ["-af", norm]),
       "-c:v", "copy", "-ar", "48000",
       "-c:a", "aac", "-b:a", "192k",
       "-movflags", "+faststart",

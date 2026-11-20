@@ -105,6 +105,10 @@ export interface ServerPlugin {
   // plug-in that answers wins, and the library's own upload without a library id refuses that workspace. { error } refuses
   // this asker there (403 with that line); the workspace still counts as the plug-in's.
   uploadsTo?: (username: string) => UploadsTo | Promise<UploadsTo>;
+  // Whether `workspace`'s media may leave only blurred because the plug-in keeps it (its footage catalog), whichever
+  // workspace is open now: the Mac app then refuses a drag of a file in its Media folders onto another server's page
+  // (api/library/report.ts relayFolders, RelayFolder.guarded). A throw counts as yes.
+  keepsBlurred?: (username: string, workspace: string) => boolean | Promise<boolean>;
   // Takes a file the person dropped in the chat into the store its uploadsTo names in the workspace the request works in,
   // as that person: the store's own checks (its login, its upload permission, its duplicate check) decide. Answers where
   // it went (`where`, said to the person: "Tiny Acrobatics' footage store"), or the store's own refusal line.
@@ -447,6 +451,19 @@ async function servingPlugin(username: string): Promise<{ plugin: ServerPlugin; 
     if (to) return { plugin, to };
   }
   return null;
+}
+
+/** Whether a loaded plug-in keeps `workspace`'s media blurred (ServerPlugin.keepsBlurred); one that fails to answer: yes. */
+export async function pluginKeepsBlurred(username: string, workspace: string): Promise<boolean> {
+  for (const plugin of loaded) {
+    if (!plugin.keepsBlurred) continue;
+    try {
+      if (await plugin.keepsBlurred(username, workspace)) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** The store a loaded plug-in files this request's uploads in (ServerPlugin.uploadsTo): the first answer, else null. */
