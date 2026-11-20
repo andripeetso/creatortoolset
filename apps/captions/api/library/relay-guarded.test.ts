@@ -48,8 +48,8 @@ describe("the computer's folder list names the Blur faces workspaces of each Med
       st.folders.push(row("m_blur", "/Volumes/Tiny/FOOTAGE", "ws_blur"), row("m_plain", "/Volumes/Tiny/Vlogs", "ws_plain"), row("m_all", "/Volumes/Tiny/Shared", "*"),
         row("x_blur", "/Volumes/Tiny/EXPORTS", "ws_blur", "library"), row("m_catalog", "/Volumes/Tiny/Catalog", "ws_catalog"), row("m_broken", "/Volumes/Tiny/Broken", "ws_broken"));
     });
-    const got = Object.fromEntries((await relayFolders({ id: "mac_1", owner: OWNER } as never)).map((f) => [f.id, f.guarded]));
-    expect(got).toEqual({ m_blur: ["Tiny Classes"], m_plain: [], m_all: ["Tiny Classes", "Tiny Catalog", "Tiny Broken"], x_blur: undefined, m_catalog: ["Tiny Catalog"], m_broken: ["Tiny Broken"] });
+    const got = Object.fromEntries((await relayFolders({ id: "mac_1", owner: OWNER } as never)).map((f) => [f.id, f.guarded && [...f.guarded].sort()]));
+    expect(got).toEqual({ m_blur: ["Tiny Classes"], m_plain: [], m_all: ["Tiny Broken", "Tiny Catalog", "Tiny Classes"], x_blur: undefined, m_catalog: ["Tiny Catalog"], m_broken: ["Tiny Broken"] });
   });
 
   it("a member's folder in the owner's Blur faces workspace is judged by the owner's library", async () => {
