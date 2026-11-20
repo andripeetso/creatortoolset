@@ -133,7 +133,7 @@ func macNote(_ fresh: [ReviewNote]) -> MacNote? {
     let more = names.count > 3 ? " and \(names.count - 3) more" : ""
     return MacNote(title: cuts ? "\(fresh.count) videos wait for your review" : "\(fresh.count) new notifications",
                    body: names.prefix(3).joined(separator: ", ") + more,
-                   href: Set(fresh.map(\.href)).count == 1 ? first.href : "/review", ids: fresh.map(\.id))
+                   href: Set(fresh.map(\.href)).count == 1 ? first.href : cuts ? "/review" : "/", ids: fresh.map(\.id))
 }
 
 /// The ids to remember next time: this inbox first, then what was remembered, capped.

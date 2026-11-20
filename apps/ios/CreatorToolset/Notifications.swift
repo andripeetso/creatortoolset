@@ -57,7 +57,10 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
             case .failed: body = "Failed: \(row.detail)"
             default: body = sentences(row.detail)
             }
-            return Note(key: (row.keys.isEmpty ? [row.id] : row.keys).joined(separator: " "), title: row.title, body: body, path: row.id)
+            // the name says what happened too: the same job that waited and later failed is news twice
+            let what = row.status == .review ? "review" : row.status == .failed ? "failed" : "go"
+            return Note(key: (row.keys.isEmpty ? [row.id] : row.keys).map { "\($0)#\(what)" }.joined(separator: " "),
+                        title: row.title, body: body, path: row.id)
         }
     }
 
@@ -67,10 +70,13 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// What to tell now: the rows with something he has not been shown, and `shown` with their names added (capped,
-    /// oldest out). Each thing is told once: a name, a Review version or a job's wait, is never told again.
+    /// oldest out). Each thing is told once: a Review version, or a job's wait or failure, is never told again.
+    /// shortcut: the same job waiting twice (a second look sheet) is told once; key a wait by its time if that matters.
     nonisolated static func fresh(_ rows: [ChatRow], shown: [String]) -> (notes: [Note], shown: [String]) {
         let told = Set(shown)
-        let new = notes(rows).filter { !told.isSuperset(of: $0.key.components(separatedBy: " ")) }
+        // a name from before names said what happened (no "#") still counts as told
+        let seen = { (name: String) in told.contains(name) || told.contains(String(name.prefix { $0 != "#" })) }
+        let new = notes(rows).filter { !$0.key.components(separatedBy: " ").allSatisfy(seen) }
         var added: [String] = []
         for name in new.flatMap({ $0.key.components(separatedBy: " ") }) where !told.contains(name) && !added.contains(name) { added.append(name) }
         return (new, Array((shown + added).suffix(shownCap)))

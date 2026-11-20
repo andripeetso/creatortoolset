@@ -269,9 +269,16 @@ final class NativeToolsTests: XCTestCase {
         XCTAssertTrue(then.notes.isEmpty)
         // the same wait seen again later is told once only, whatever loads came between
         XCTAssertTrue(AppNotifications.fresh(rows, shown: then.shown).notes.isEmpty)
+        // the same job failing after it waited is news
+        let failed = rows.map { row -> ChatRow in
+            var row = row
+            if row.title == "Tummy time: 3 mistakes" { row.status = .failed }
+            return row
+        }
+        XCTAssertEqual(AppNotifications.fresh(failed, shown: then.shown).notes.map(\.title), ["Tummy time: 3 mistakes"])
         // a video in Review with no edit behind it
         let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1}]}"#.utf8))
-        XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1", title: "Teaser", body: "Needs your review", path: "/review/r1")])
+        XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1#review", title: "Teaser", body: "Needs your review", path: "/review/r1")])
     }
 
     func testAnEditsThreadInOrder() throws {

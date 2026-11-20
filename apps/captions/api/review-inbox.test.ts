@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 import type { AuthVars } from "./auth";
 
 // The Review bell shows the workspace the person is in (owner, 2026-11-16: "It should be the current workspace"), its
@@ -66,23 +66,29 @@ it("tells the same filed cut and the same unread failure once, across a restart"
   const count = async (assetId: string) => ((await (await app.request("/notifications", { headers: { "x-ct-workspace": A } })).json()) as { items: { assetId: string }[] }).items
     .filter((x) => x.assetId === assetId).length;
   const { notifyReady } = await import("./review");
-  await notifyReady(CUT, "AI Editor", "Reel: a new cut to review");
-  await notifyReady(CUT, "AI Editor", "Reel: a new cut to review");
+  await notifyReady(CUT, "AI Editor", "Draft 1 is ready to watch", { name: "Reel", key: "Reel_A_D1" });
+  await notifyReady(CUT, "AI Editor", "Draft 1 is ready to watch", { name: "Reel", key: "Reel_A_D1" });
   const fail = { kind: "failed", by: "Editor", name: "Reel", text: "draft: no footage", href: "/editor/p1", ref: "p1", workspace: A } as const;
   await notifyWorkshopOwner("alex", fail);
   await notifyWorkshopOwner("alex", fail);
   // a restart: the module again, memory empty; the inbox on disk still knows
-  const { vi } = await import("vitest");
   vi.resetModules();
   (await import("./lib/events")).onEvent("waiting", () => void pushes++);
   const again = await import("./review");
-  await again.notifyReady(CUT, "AI Editor", "Reel: a new cut to review");
+  await again.notifyReady(CUT, "AI Editor", "Draft 1 is ready to watch", { name: "Reel", key: "Reel_A_D1" });
   await again.notifyWorkshopOwner("alex", fail);
   expect([await count(CUT), await count("p1"), pushes]).toEqual([1, 1, 1]);
 
   // read, then the same failure again: news again; the cut read and filed again is not
   await app.request("/notifications/read", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": A }, body: "{}" });
   await notifyWorkshopOwner("alex", fail);
-  await notifyReady(CUT, "AI Editor", "Reel: a new cut to review");
+  await notifyReady(CUT, "AI Editor", "Draft 1 is ready to watch", { name: "Reel", key: "Reel_A_D1" });
   expect([await count(CUT), await count("p1")]).toEqual([1, 2]);
+
+  // the next draft is news; the same failure unread but a day old is too
+  await notifyReady(CUT, "AI Editor", "Draft 2 is ready to watch", { name: "Reel", key: "Reel_A_D2" });
+  vi.useFakeTimers({ now: Date.now() + 25 * 3600_000, toFake: ["Date"] });
+  await notifyWorkshopOwner("alex", fail);
+  vi.useRealTimers();
+  expect([await count(CUT), await count("p1")]).toEqual([2, 3]);
 });
