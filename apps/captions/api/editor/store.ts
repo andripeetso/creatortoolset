@@ -579,6 +579,13 @@ async function uploadsWorkspace(username: string, uploadIds: string[]): Promise<
 // ponytail: one chain for every waiting edit (edit.json is read, changed and written); per-edit chains if phones ever queue many at once
 let waiting = Promise.resolve();
 
+/** Runs `fn` on that chain: a read, change and write of edit.json there never crosses an upload finishing (PATCH). */
+export function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const run = waiting.then(fn);
+  waiting = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 /**
  * An upload finished as `versionId`: the edit waiting on it notes that, and once its last clip is in, its clips become
  * its sources and it starts (the phone that picked them need not be open). Edits are found by a scan of all of them.
