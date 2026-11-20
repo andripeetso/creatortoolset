@@ -263,6 +263,9 @@ export interface Machine {
    * this reporter doesn't know it (the editor worker's report), so the last one is kept.
    */
   cacheFolder?: string;
+  /** whether the person picked `cacheFolder` in Settings; false: the automatic default, which moves by itself as disks come
+   *  and go (the editor worker follows only a pick). Sent with `cacheFolder`, kept with it. */
+  cacheFolderPicked?: boolean;
 }
 
 /**
@@ -319,6 +322,8 @@ export function parseMachine(v: unknown): Machine | undefined {
   if (disks.length) m.disks = disks;
   const cache = o.cacheFolder;
   if (cache === "" || (typeof cache === "string" && cache.startsWith("/") && cache.length <= 300 && !cache.split("/").includes(".."))) m.cacheFolder = cache;
+  // only with the folder it describes: never a flag kept beside another report's folder
+  if (m.cacheFolder !== undefined && typeof o.cacheFolderPicked === "boolean") m.cacheFolderPicked = o.cacheFolderPicked;
   return m;
 }
 

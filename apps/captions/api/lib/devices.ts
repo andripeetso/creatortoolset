@@ -324,7 +324,8 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   if (r.machine && kept && !r.machine.disks) r.machine = { ...r.machine, disks: kept };
   // only the Mac app knows its Cache folder: the editor worker's report keeps it
   const cache = d.report?.machine?.cacheFolder;
-  if (r.machine && cache !== undefined && r.machine.cacheFolder === undefined) r.machine = { ...r.machine, cacheFolder: cache };
+  const picked = d.report?.machine?.cacheFolderPicked;
+  if (r.machine && cache !== undefined && r.machine.cacheFolder === undefined) r.machine = { ...r.machine, cacheFolder: cache, cacheFolderPicked: picked };
   // a CLI installed, signed in or on another plan is a change setup shows, and so is the app's new version; the machine's
   // load in each report is not
   const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
@@ -363,7 +364,7 @@ export function noteMachine(id: string, m: Machine): void {
 export function forViewer(viewer: string, d: Device): Device {
   const r = d.report;
   if (d.owner === viewer || d.owner === "workspace" || !r?.machine || (!r.machine.disks && r.machine.cacheFolder === undefined)) return d;
-  return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined, cacheFolder: undefined } } };
+  return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined, cacheFolder: undefined, cacheFolderPicked: undefined } } };
 }
 
 const shortHost = (h: string) => h.toLowerCase().replace(/\.local$/, "");

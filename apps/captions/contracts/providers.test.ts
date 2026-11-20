@@ -14,6 +14,10 @@ describe("parseMachine", () => {
     const cache = (cacheFolder: unknown) => parseMachine({ cpus: 8, memGb: 16, cacheFolder })?.cacheFolder;
     expect(cache("/Volumes/SSD/Creator Toolset Cache")).toBe("/Volumes/SSD/Creator Toolset Cache");
     expect(cache("")).toBe(""); // none: the server forgets the last one
+    const picked = (cacheFolderPicked: unknown) => parseMachine({ cpus: 8, memGb: 16, cacheFolder: "/Volumes/SSD/c", cacheFolderPicked })?.cacheFolderPicked;
+    expect([picked(true), picked(false), picked("yes"), picked(undefined)]).toEqual([true, false, undefined, undefined]);
+    // a folder refused: its flag goes with it
+    expect(parseMachine({ cpus: 8, memGb: 16, cacheFolder: "/Volumes/SSD/../etc", cacheFolderPicked: true })?.cacheFolderPicked).toBeUndefined();
     for (const bad of ["relative/cache", "/Volumes/SSD/../../etc", `/${"x".repeat(300)}`, 7, null]) expect(cache(bad)).toBeUndefined();
   });
   it("keeps good disks, drops bad ones, and keeps a network share's server", () => {

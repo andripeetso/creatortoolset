@@ -113,6 +113,12 @@ enum CacheFolder {
         chosen(defaults) ?? path(defaults, volumes: volumes, used: used, mounted: []) ?? ""
     }
 
+    /// The device report's fields: the folder (reported) and whether the person picked it in Settings. The editor worker
+    /// follows only a pick: the automatic default moves by itself as disks come and go.
+    static func reportFields(_ defaults: UserDefaults = .standard, volumes: () -> [Volume] = volumes, used: [String] = MediaFiles.usedFolders) -> [String: Any] {
+        ["cacheFolder": reported(defaults, volumes: volumes, used: used), "cacheFolderPicked": chosen(defaults) != nil]
+    }
+
     /// The largest external disk holding one of `used` (folders this app already reads).
     static func largest(_ volumes: [Volume], used: [String]) -> Volume? {
         volumes.filter { v in v.external && used.contains { $0 == v.path || $0.hasPrefix(v.path + "/") } }.max { $0.bytes < $1.bytes }

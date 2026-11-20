@@ -73,6 +73,20 @@ final class DownloadLocationTests: XCTestCase {
         XCTAssertEqual(CacheFolder.reported(d, volumes: { [] }, used: []), "/Volumes/SSD/cache")
     }
 
+    // The report says whether the folder is the person's pick (the worker follows only that) or the automatic default.
+    func testTheReportSaysWhetherTheCacheFolderWasPicked() {
+        let d = suite()
+        let ssd = CacheFolder.Volume(path: "/Volumes/SSD", bytes: 9_000)
+        let auto = CacheFolder.reportFields(d, volumes: { [ssd] }, used: ["/Volumes/SSD/Footage"])
+        XCTAssertEqual(auto["cacheFolder"] as? String, "/Volumes/SSD/Creator Toolset Cache")
+        XCTAssertEqual(auto["cacheFolderPicked"] as? Bool, false)
+        XCTAssertEqual(CacheFolder.reportFields(d, volumes: { [] }, used: [])["cacheFolderPicked"] as? Bool, false)
+        d.set("/Volumes/SSD/mine", forKey: CacheFolder.key)
+        let picked = CacheFolder.reportFields(d, volumes: { [] }, used: [])   // its disk away: still the pick
+        XCTAssertEqual(picked["cacheFolder"] as? String, "/Volumes/SSD/mine")
+        XCTAssertEqual(picked["cacheFolderPicked"] as? Bool, true)
+    }
+
     // The caches go to the Download location: its default once every cache fits, and anything left in a default folder
     // (a move that failed, downloads while its disk was away) the next time.
     func testTheCachesSettleInTheDownloadLocation() throws {
