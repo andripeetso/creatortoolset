@@ -187,21 +187,27 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
 
     /// A tap on a notification opens what it is about, in its workspace: one about another workspace moves the app
     /// there first and says so.
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    /// Completion-handler form on purpose: Swift's async form calls iOS back off the main thread, and UIKit stops the app
+    /// there ("Call must be made on main thread").
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
-        guard let path = Self.path(in: info) else { return }
-        await MainActor.run {
-            // a push through the account names the computer by its id: the saved one may be on its LAN address
-            let server = Workspaces.serverKey(serverId: info["serverId"] as? String, server: info["server"] as? String,
-                                              in: Connections.shared.servers)
-            Workspaces.shared.go(server: server, workspace: info["workspace"] as? String)
-            AppNavigator.shared.open(href: path)
+        Task { @MainActor in
+            if let path = Self.path(in: info) {
+                // a push through the account names the computer by its id: the saved one may be on its LAN address
+                let server = Workspaces.serverKey(serverId: info["serverId"] as? String, server: info["server"] as? String,
+                                                  in: Connections.shared.servers)
+                Workspaces.shared.go(server: server, workspace: info["workspace"] as? String)
+                AppNavigator.shared.open(href: path)
+            }
+            completionHandler()
         }
     }
 
     /// With the app in front the list shows it: no banner, only the number on the icon.
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.badge]
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.badge])
     }
 }
 
