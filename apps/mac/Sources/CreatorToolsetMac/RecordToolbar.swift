@@ -15,6 +15,10 @@ import SwiftUI
     /// changes 20 times a second, and what follows the choices here (the camera bubble) reopened the camera on every
     /// one of those, asking macOS for the camera each time: the camera never showed and the app hung.
     let level = MicLevelValue()
+    /// The person's workspaces on the window's server and the one this recording goes to (the window's at first): asked
+    /// on the toolbar, shown again on the panel after Stop. Not kept between toolbars: each starts from the window's.
+    @Published var workspaces: [RecordWorkspace] = []
+    @Published var workspace: String?
 
     /// Called when the microphone choice changes, so the meter can follow it.
     var onMicChange: (() -> Void)?
@@ -191,7 +195,7 @@ private final class ToolbarPanel: NSPanel {
     }
 }
 
-private struct ToolbarView: View {
+struct ToolbarView: View {
     @ObservedObject var setup: RecordSetup
     let pick: (SourceKind) -> Void
     let device: (String) -> Void
@@ -211,6 +215,7 @@ private struct ToolbarView: View {
             divider
             ForEach(SourceKind.allCases, id: \.self) { sourceButton($0) }   // Device opens a menu, the others the picker
             divider
+            if setup.workspaces.count > 1 { workspaceMenu }
             cameraMenu
             micMenu
             soundButton
@@ -242,6 +247,27 @@ private struct ToolbarView: View {
         }
         .buttonStyle(.plain)
         .help(title(kind))
+    }
+
+    /// Which workspace the recording goes to when it is shared (opened from the menu bar, no window says which).
+    private var workspaceMenu: some View {
+        Menu {
+            ForEach(setup.workspaces) { w in
+                Button { setup.workspace = w.id } label: {
+                    if w.id == setup.workspace { Label(w.name, systemImage: "checkmark") } else { Text(w.name) }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "square.stack")
+                Text(setup.workspaces.first { $0.id == setup.workspace }?.name ?? "Workspace").lineLimit(1)
+            }
+            .frame(maxWidth: 160, alignment: .leading)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("The workspace this recording goes to")
     }
 
     private var cameraMenu: some View {

@@ -588,6 +588,12 @@ final class Recorder: ObservableObject {
                            onFolder: { [weak self] in self?.pickFolder() },
                            onShowFolder: { [weak self] in self?.showFolder() })
         cameraPreview(on: screen)
+        setup.workspace = nil
+        Task { [weak self] in
+            guard let got = await self?.workspaces?(), let self, self.phase == .toolbar else { return }
+            self.setup.workspaces = got.list
+            if self.setup.workspace == nil { self.setup.workspace = got.list.contains { $0.id == got.current } ? got.current : got.list.first?.id }
+        }
         // the bubble follows the camera choice only: any other change of the toolbar leaves the open camera alone
         cameraWatch = setup.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
@@ -967,6 +973,8 @@ final class Recorder: ObservableObject {
             share: { [weak self] destination, workspace in Task { await self?.share(project, to: destination, in: workspace) } },
             reveal: { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) },
             discard: { [weak self] in self?.delete(project) }))
+        // the toolbar's pick, shown again; asked afresh only when the toolbar never got the list
+        if !setup.workspaces.isEmpty { return RecordingPreview.setWorkspaces(setup.workspaces, chosen: setup.workspace, for: project.id) }
         Task { [weak self] in
             guard let got = await self?.workspaces?() else { return }
             RecordingPreview.setWorkspaces(got.list, chosen: got.current, for: project.id)
