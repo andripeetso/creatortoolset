@@ -427,9 +427,11 @@ export async function addFolder(c: C, b: Record<string, unknown> | null): Promis
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
-    // one Projects folder per workspace: the one it had is replaced (its files stay)
-    if (role === "projects") st.folders = st.folders.filter((f) => !(here(f) && f.role === "projects"));
-    // the workspace's Exports comes off the folder that had it; with no workspaces there is one Exports folder
+    // one Projects folder per workspace on each computer: the one this computer had is replaced (its files stay); another
+    // computer's is never touched (a helper's folder card once took the Mac's own, 2026-11-20)
+    if (role === "projects") st.folders = st.folders.filter((f) => !(here(f) && f.role === "projects" && f.origin.host === host));
+    // the workspace's Exports comes off the folder that had it; with no workspaces there is one Exports folder. One per
+    // workspace across computers: Finals and the chat read the workspace's one (exportsOf)
     if (role === "library") {
       // one folder is one Exports record (one marker): another workspace's folder picked here gets this workspace too
       const had = workspace && of && st.folders.find((f) => f.role === "library" && f.origin.host === host && f.origin.path === p);
