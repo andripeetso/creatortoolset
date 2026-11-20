@@ -363,7 +363,11 @@ export function AssistantDock() {
     if (!leaving) return followWorkspace(openWs);
     landing.current.on = true;
     void startOver().then((r) => {
-      if (r.ok) return land(r.data, null, null);
+      if (r.ok) {
+        // what was typed meanwhile is the new chat's (the box below), not the left chat's
+        handBox.current = true;
+        return land(r.data, null, null);
+      }
       // no new chat: the open one shows as itself again, so nothing is written into it thinking it is new
       landing.current.on = false;
       elsewhere.current = null;
@@ -418,13 +422,16 @@ export function AssistantDock() {
   // long as the window is open). `openId` is the chat on screen now, for replies that come back after a switch.
   const openId = useRef<string | undefined>(undefined);
   const drafts = useRef(new Map<string, Draft>());
+  const handBox = useRef(false);
   useEffect(() => {
     const id = view?.id;
     if (!id || openId.current === id) return;
     const was = openId.current;
     openId.current = id;
-    // the first chat loaded keeps whatever was typed while it loaded
+    // the first chat loaded keeps whatever was typed while it loaded; so does a new chat started in place of one left
+    // for another workspace (leavesChat)
     if (was === undefined) return;
+    if (handBox.current) return void (handBox.current = false);
     // a Send waiting on its uploads stays with its box: it goes when Send is pressed there again
     sendWhenUp.current = false;
     drafts.current.set(was, draftRef.current);
@@ -622,6 +629,8 @@ export function AssistantDock() {
       ...(quote ? { quote } : {}),
       ...(view?.id && view.id in picks ? { ai: picks[view.id] } : {}),
     };
+    // the chat on screen is still the other workspace's one being left (leavesChat): the message waits in the box
+    if (leaving) return putBack(it);
     setQuote(null);
     // the first thing sent ends the welcome and any notice a tool left
     set({ notice: null });
@@ -875,8 +884,8 @@ export function AssistantDock() {
           {dropping === "clips" ? "Drop clips to add them to the message" : "Drop pictures, videos or a folder"}
         </div>
       )}
-      {chatMode && layout.list && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} layout={layout} />}
-      {chatMode && !layout.list && listOpen && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length} reload={reloadChats} onClose={() => setListOpen(false)} />}
+      {chatMode && layout.list && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length && !leaving} reload={reloadChats} layout={layout} />}
+      {chatMode && !layout.list && listOpen && <ChatsAside chats={chats} onOpen={openChat} onNew={newChat} canNew={!!view?.messages.length && !leaving} reload={reloadChats} onClose={() => setListOpen(false)} />}
       <div className={cn("flex min-w-0 flex-1 flex-col", !chatMode && "contents")}>
       {chatMode ? (
         <ChatHeader
@@ -889,7 +898,7 @@ export function AssistantDock() {
             </span>
           )}
           onNew={() => void newChat()}
-          canNew={!!view?.messages.length}
+          canNew={!!view?.messages.length && !leaving}
           onList={() => setListOpen(true)}
         >
           <NoToolsNote view={view} />
@@ -1125,7 +1134,7 @@ export function AssistantDock() {
       {centred && (
         <div className="min-h-0 flex-1 overflow-y-auto px-[max(1.5rem,calc((100%-46rem)/2))] pb-4">
           {/* not while the welcome writes; then a different three for each new chat, side by side (owner, 11-14) */}
-          {welcome.stage !== "typing" && <StartSuggestions seed={view.id} disabled={busy} onPick={(text) => submit({ ...EMPTY_DRAFT, text })} />}
+          {welcome.stage !== "typing" && <StartSuggestions seed={view.id} disabled={busy || leaving} onPick={(text) => submit({ ...EMPTY_DRAFT, text })} />}
         </div>
       )}
       </div>
