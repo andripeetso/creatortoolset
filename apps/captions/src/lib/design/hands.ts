@@ -366,6 +366,9 @@ export function shownArea(p: DesignPage, w: number, h: number): Rect {
   return { x, y, w: Math.ceil(Math.max(w, ...out.map((r) => r.x + r.w))) - x, h: Math.ceil(Math.max(h, ...out.map((r) => r.y + r.h))) - y };
 }
 
+/** Whether the pointer moving over the canvas looks for a layer to hover: never mid-drag (a button down), with another tool or Space held, so a drag does no hit test on every move. */
+export const hovers = (buttons: number, tool: string, space: boolean) => !buttons && tool === "move" && !space;
+
 /**
  * A frame as the server has it now (`theirs`) and as this window changed it meanwhile (`mine`, from `base`): what was
  * changed here stays, everything else is the server's. So a frame dragged aside while its layers were designed

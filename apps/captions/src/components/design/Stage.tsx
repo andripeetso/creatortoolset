@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
-import { boundsOf, boxPick, dropTarget, frameOf, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { boundsOf, boxPick, dropTarget, frameOf, hovers, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, zoomStop, type KeptFrame, type ViewStore } from "@/lib/design/view";
@@ -525,7 +525,7 @@ export function Stage({
     const b0 = boundsOf(moving);
     const looseId = `p${Date.now().toString(36)}`;
     let last: { pages: DesignPage[]; to: number; ids: string[] } | null = null;
-    // the canvas holds no more loose pieces: layers taken off their frame stay in it (and it says why when let go)
+    // the canvas holds no more loose pieces: layers let go off their frame go back where they were, and it says why
     const canvasFull = pages.filter((q) => q.loose).length >= DESIGN_LIMITS.loose;
     let keptIn = false;
     drag(
@@ -577,12 +577,13 @@ export function Stage({
       (moved) => {
         setGuides(null);
         onLive(null);
+        // let go where they could not lie (past the frame's edge, its clip hiding them): as if the drag never happened
+        if (keptIn) return void onError?.(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
         if (last) {
           onCommit(last.pages);
           // a loose picture whose last picture went into a frame is gone, and the frames after it move up one
           const gone = p.loose && !copy && last.to !== k && !last.pages[0]!.layers.length;
           if (last.to !== k || copy) onPick(gone && last.to > k ? last.to - 1 : last.to, last.ids);
-          if (keptIn) onError?.(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
         } else if (!moved && ids.length > 1) {
           // a click on one of several picked: that one alone (with its group)
           const one = p.layers.find((l) => l.id === hit);
@@ -916,8 +917,7 @@ export function Stage({
   const over = (e: React.PointerEvent) => {
     const p = world(e);
     if (pen) setPenAt(p);
-    // mid-drag (a button down), with another tool or Space held, nothing is hovered: no hit test on every move
-    const { k, hit } = !e.buttons && tool === "move" && !space ? pickAt(p) : { k: -1, hit: null };
+    const { k, hit } = hovers(e.buttons, tool, space) ? pickAt(p) : { k: -1, hit: null };
     if ((hit?.id ?? null) !== (hover?.id ?? null) || (hit && k !== hover?.k)) setHover(hit ? { k, id: hit.id } : null);
   };
 
