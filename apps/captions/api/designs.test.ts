@@ -390,6 +390,21 @@ describe("designs: an AI that designs", () => {
     expect([off.vignette, off.layers.length]).toEqual([40, 1]);
   });
 
+  it("an AI gives a layer a list of effects with a change, is told how, and the old shadow stands for one until then", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    await write(d.id, { frames: [{ id: "p1", background: "#1a0b2e", layers: [{ id: "card", type: "shape", shape: "rect", fill: "#ffffff", opacity: 0.3, x: 100, y: 600, w: 880, h: 300, shadow: { color: "#000000", opacity: 0.4, blur: 20, x: 0, y: 10 } }] }] });
+    const fx = [{ type: "background-blur", blur: 30 }, { type: "shadow", color: "#000000", opacity: 0.2, blur: 6, x: 0, y: 3, spread: -2 }, { type: "noise", amount: 8, size: 2, hidden: true }];
+    const out = (await write(d.id, { changes: [{ frame: "p1", layer: "card", set: { effects: fx } }] })).body;
+    const card = out.design.pages[0]!.layers[0]!;
+    expect(card.effects).toEqual(fx);
+    expect(card).not.toHaveProperty("shadow");
+    // a list is replaced whole by the next change
+    const one = (await write(d.id, { changes: [{ frame: "p1", layer: "card", set: { effects: [{ type: "blur", blur: 12 }] } }] })).body.design.pages[0]!.layers[0]!;
+    expect(one.effects).toEqual([{ type: "blur", blur: 12 }]);
+    const got = await read(d.id);
+    expect(got.how).toContain('{"type":"background-blur","blur":30} blurs what lies under it');
+  });
+
   it("an AI lays a highlighter stroke behind words of a text, is told how, and takes it off again", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
     const line = { id: "line", type: "text", text: "They need the floor.", font: "Inter", size: 80, color: "#14181c", align: "left", x: 80, y: 80, w: 900, h: 300 };

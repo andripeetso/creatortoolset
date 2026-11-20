@@ -1,4 +1,4 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, type DesignPage, type Pin, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, type DesignPage, type Effect, type Pin, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
@@ -105,6 +105,29 @@ function pin(v: unknown): { pin?: Pin } {
   const x = DESIGN_PINS_X.find((p) => p === v.x);
   const y = DESIGN_PINS_Y.find((p) => p === v.y);
   return x || y ? { pin: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
+}
+
+/** A layer's effects as they may be saved: a few known ones, each with its numbers in range; none when the list is empty. */
+function effectList(v: unknown[]): { effects?: Effect[] } {
+  const list = v
+    .filter(obj)
+    .filter((e) => DESIGN_EFFECTS.includes(e.type as never))
+    .slice(0, EFFECTS_MAX)
+    .map((e): Effect => {
+      const hidden = e.hidden === true ? { hidden: true as const } : {};
+      const blur = round(num(e.blur, 0, 200, 24));
+      if (e.type === "shadow" || e.type === "inner-shadow") {
+        const spread = round(num(e.spread, -200, 200, 0));
+        return { type: e.type as "shadow" | "inner-shadow", color: sixDigits(color(e.color, "#000000")), opacity: round(num(e.opacity, 0, 1, 0.35)), blur: round(num(e.blur, 0, 400, 24)), x: round(num(e.x, -1000, 1000, 0)), y: round(num(e.y, -1000, 1000, 8)), ...(spread ? { spread } : {}), ...hidden };
+      }
+      if (e.type === "progressive-blur") return { type: "progressive-blur", blur, from: round(num(e.from, 0, 1, 0.5)), to: round(num(e.to, 0, 1, 1)), angle: round(num(e.angle, -360, 360, 90)), ...hidden };
+      if (e.type === "noise") {
+        const size = round(num(e.size, 1, 20, 1));
+        return { type: "noise", amount: Math.round(num(e.amount, 1, 100, 12)), ...(size !== 1 ? { size } : {}), ...hidden };
+      }
+      return { type: e.type as "blur" | "background-blur", blur, ...hidden };
+    });
+  return list.length ? { effects: list } : {};
 }
 
 /** A frame's finish as it may be saved: a whole number each in its range, and none when it is 0. */
@@ -243,12 +266,17 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     h: round(num(raw.h, 1, 2 * r.h, r.h / 4)),
     ...(typeof raw.rotate === "number" && raw.rotate ? { rotate: round(num(raw.rotate, -360, 360, 0)) } : {}),
     ...(typeof raw.opacity === "number" && raw.opacity < 1 ? { opacity: round(num(raw.opacity, 0, 1, 1)) } : {}),
-    ...(obj(raw.shadow)
-      ? { shadow: { color: sixDigits(color(raw.shadow.color, "#000000")), opacity: round(num(raw.shadow.opacity, 0, 1, 0.35)), blur: round(num(raw.shadow.blur, 0, 400, 24)), x: round(num(raw.shadow.x, -1000, 1000, 0)), y: round(num(raw.shadow.y, -1000, 1000, 8)) } }
-      : {}),
+    // a list of effects stands for the one shadow and blur a layer had before (they are left out beside one)
+    ...(Array.isArray(raw.effects)
+      ? effectList(raw.effects)
+      : {
+          ...(obj(raw.shadow)
+            ? { shadow: { color: sixDigits(color(raw.shadow.color, "#000000")), opacity: round(num(raw.shadow.opacity, 0, 1, 0.35)), blur: round(num(raw.shadow.blur, 0, 400, 24)), x: round(num(raw.shadow.x, -1000, 1000, 0)), y: round(num(raw.shadow.y, -1000, 1000, 8)) } }
+            : {}),
+          // a picture's blur is one of its adjustments (retouched, below); any other layer's is its own
+          ...(raw.type !== "image" && Math.round(num(raw.blur, 0, 200, 0)) ? { blur: Math.round(num(raw.blur, 0, 200, 0)) } : {}),
+        }),
     ...(DESIGN_BLENDS.includes(raw.blend as never) ? { blend: raw.blend as (typeof DESIGN_BLENDS)[number] } : {}),
-    // a picture's blur is one of its adjustments (retouched, below); any other layer's is its own
-    ...(raw.type !== "image" && Math.round(num(raw.blur, 0, 200, 0)) ? { blur: Math.round(num(raw.blur, 0, 200, 0)) } : {}),
     ...(raw.flipX === true ? { flipX: true } : {}),
     ...(raw.flipY === true ? { flipY: true } : {}),
     ...(groupId(raw.group) ? { group: groupId(raw.group) } : {}),

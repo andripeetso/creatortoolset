@@ -83,6 +83,29 @@ export interface Pin {
   x?: (typeof DESIGN_PINS_X)[number];
   y?: (typeof DESIGN_PINS_Y)[number];
 }
+/**
+ * One of a layer's effects. A shadow falls under it (`spread` grows it, a negative one shrinks it; blur 0 with a spread
+ * and an offset is a hard sticker shadow); an inner shadow lies inside its edges. A blur draws the layer soft (edges
+ * too); a progressive blur is sharp up to `from` and fully blurred from `to` (parts of the box along `angle`: 90 is top to
+ * bottom), its edges kept; a background blur blurs what lies under the layer, inside its shape (frosted glass). Noise is
+ * a grain on the layer itself, `amount` 1 to 100, grains `size` pixels across. `hidden`: kept, not drawn.
+ */
+export type Effect =
+  | { type: "shadow" | "inner-shadow"; color: string; opacity: number; blur: number; x: number; y: number; spread?: number; hidden?: true }
+  | { type: "blur" | "background-blur"; blur: number; hidden?: true }
+  | { type: "progressive-blur"; blur: number; from: number; to: number; angle: number; hidden?: true }
+  | { type: "noise"; amount: number; size?: number; hidden?: true };
+export const DESIGN_EFFECTS = ["shadow", "inner-shadow", "blur", "progressive-blur", "background-blur", "noise"] as const satisfies readonly Effect["type"][];
+export const EFFECTS_MAX = 8;
+/** Ready-made sets of effects, each put on a layer in place of its own. */
+export const EFFECT_PRESETS: readonly { name: string; effects: Effect[] }[] = [
+  { name: "Soft lift", effects: [{ type: "shadow", color: "#000000", opacity: 0.14, blur: 60, x: 0, y: 28, spread: -8 }, { type: "shadow", color: "#000000", opacity: 0.2, blur: 6, x: 0, y: 3 }] },
+  { name: "Sticker", effects: [{ type: "shadow", color: "#000000", opacity: 1, blur: 0, x: 10, y: 12, spread: 2 }] },
+  { name: "Pressed", effects: [{ type: "inner-shadow", color: "#000000", opacity: 0.35, blur: 14, x: 0, y: 6 }] },
+  { name: "Frosted glass", effects: [{ type: "background-blur", blur: 30 }, { type: "noise", amount: 8, size: 2 }] },
+  { name: "Fade to blur", effects: [{ type: "progressive-blur", blur: 40, from: 0.45, to: 1, angle: 90 }] },
+  { name: "Grain", effects: [{ type: "noise", amount: 25, size: 2 }] },
+];
 
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
@@ -94,7 +117,9 @@ interface Box {
   rotate?: number;
   /** 0 to 1; absent = 1 */
   opacity?: number;
-  /** a soft shadow under the layer: its colour ("#rrggbb"), how strong (0 to 1), its blur and how far it falls, in pixels */
+  /** its effects, bottom first (each drawn where its kind is: shadows under it, the rest on it); given, `shadow` and (but a picture's) `blur` are not read */
+  effects?: Effect[];
+  /** a soft shadow under the layer: its colour ("#rrggbb"), how strong (0 to 1), its blur and how far it falls, in pixels (read as one shadow effect) */
   shadow?: { color: string; opacity: number; blur: number; x: number; y: number };
   /** how it mixes with what is under it; absent = it lies over it */
   blend?: DesignBlend;
