@@ -113,7 +113,7 @@ export const designTools: ToolModule = {
       const picture = a.picture ? (await ctx.json<{ id: string }>(`${at}/pictures`, "POST", a.picture)).id : "";
       const added = picture ? { picture_added: picture } : {};
       if (picture && !a.frames && !a.changes) return { id: a.id, ...added };
-      if (named && !a.frames && !a.changes) return about(ctx.origin, named, named.pages.length);
+      if (named && !a.frames && !a.changes) return about(ctx.origin, named, named.pages.filter((p) => !p.loose).length);
       // a change that asks for a cut-out: the picture is cut first (a new picture of the design), and the change becomes
       // a plain one that shows it and remembers the picture it was cut from
       const changes = Array.isArray(a.changes) ? (a.changes as Args[]) : undefined;
@@ -134,11 +134,12 @@ export const designTools: ToolModule = {
         }
       }
       const { design, notes, touched, wrote } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes });
-      const frames = design.pages.map((p, k) => ({ id: p.id, n: k + 1 }));
+      // the layers lying loose on the canvas are no frame
+      const frames = design.pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1 }]));
       const drawn = await seen(ctx, at, frames, touched);
       // each frame written, with the layers this call wrote in it (a frame given whole: all of them)
       const changed = wrote.map((w) => ({ frame: w.frame, n: frames.find((f) => f.id === w.frame)?.n, ...(w.isNew ? { new: true } : {}), layers: w.layers }));
-      return { ...about(ctx.origin, design, design.pages.length), ...added, changed, ...(notes.length ? { left_out: notes } : {}), ...unnamed(design), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
+      return { ...about(ctx.origin, design, frames.length), ...added, changed, ...(notes.length ? { left_out: notes } : {}), ...unnamed(design), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
     },
   },
   steps: { design_get: "Looking at the design", design_make: "Starting the design", design_update: "Designing" },

@@ -370,4 +370,12 @@ describe("the pages a design starts with", () => {
     expect(pages.at(-1)).toMatchObject({ id: "pa", loose: true, x: -400, w: 100, h: 80 });
     expect(pages.filter((p) => p.loose)).toHaveLength(1);
   });
+
+  it("keeps any kind of layer loose, and a frame's clip only when it is off and only on a frame", () => {
+    const shape = { type: "shape", shape: "star", fill: "#ff0000", x: 0, y: 0, w: 60, h: 60 };
+    const words = { type: "text", text: "Aside", font: "Inter", size: 40, color: "#111111", align: "left", x: 0, y: 70, w: 200, h: 50 };
+    const { pages } = cleanPages([{ id: "f1", w: 500, h: 500, clip: false, layers: [] }, { id: "f2", w: 500, h: 500, clip: "no", layers: [] }, { id: "pa", loose: true, clip: false, x: 900, y: 0, w: 200, h: 120, layers: [shape, words] }], rules);
+    expect(pages.map((p) => p.clip)).toEqual([false, undefined, undefined]);
+    expect(pages[2]!.layers.map((l) => l.type)).toEqual(["shape", "text"]);
+  });
 });

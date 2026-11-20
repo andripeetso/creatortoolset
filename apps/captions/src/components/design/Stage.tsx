@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
-import { boundsOf, boxPick, frameOf, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { boundsOf, boxPick, dropTarget, frameOf, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
 import { cn } from "@/lib/utils";
@@ -258,7 +258,9 @@ export function Stage({
       const f = frameOf(p, k, width, height);
       const left = view.x + f.x * view.z;
       const top = view.y + f.y * view.z;
-      if (left > room.w || left + f.w * view.z < 0 || top > room.h || top + f.h * view.z < 0) return;
+      // a frame that does not clip its layers shows them past its edges too
+      const area = shownArea(p, f.w, f.h);
+      if (left + area.x * view.z > room.w || left + (area.x + area.w) * view.z < 0 || top + area.y * view.z > room.h || top + (area.y + area.h) * view.z < 0) return;
       // the words being typed are in the box over the frame: the layer itself is not drawn under them
       const inWords = editing && k === at ? editing : "";
       const shown = inWords ? { ...p, layers: p.layers.filter((l) => l.id !== inWords) } : p;
@@ -267,11 +269,12 @@ export function Stage({
       const y = Math.round(top * dpr);
       const content = [numberOf(p.layers), p.background, p.gradient ? JSON.stringify(p.gradient) : "", f.w, f.h, numberOf(loaded), version, inWords].join("|");
       const plan = framePlan({ want, finest: keptScale(f.w, f.h), content, had: kept.get(p.id)?.made, viewMoved, exact });
-      if (plan.how === "direct") {
+      // shortcut: a frame that does not clip is drawn whole at every drawing, never kept as a picture; keep one of its area if many such frames get slow
+      if (plan.how === "direct" || p.clip === false) {
         ctx.save();
         ctx.setTransform(want, 0, 0, want, x, y);
         ctx.beginPath();
-        ctx.rect(0, 0, f.w, f.h);
+        ctx.rect(area.x, area.y, area.w, area.h);
         ctx.clip();
         drawPage(ctx, shown, f.w, f.h, loaded);
         ctx.restore();
@@ -382,12 +385,27 @@ export function Stage({
     const v = live.current;
     return { x: (e.clientX - r.left - v.x) / v.z, y: (e.clientY - r.top - v.y) / v.z };
   };
-  /** The frame under a point of the canvas: where two lie over each other, the later one. */
-  const frameUnder = (p: Point, framesOnly = false): number => {
-    for (let k = fr.length - 1; k >= 0; k--) if ((!framesOnly || !pages[k]!.loose) && p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
+  /** The frame under a point of the canvas (a loose piece is none): where two lie over each other, the later one. */
+  const frameUnder = (p: Point): number => {
+    for (let k = fr.length - 1; k >= 0; k--) if (!pages[k]!.loose && p.x >= fr[k]!.x && p.x <= fr[k]!.x + fr[k]!.w && p.y >= fr[k]!.y && p.y <= fr[k]!.y + fr[k]!.h) return k;
     return -1;
   };
   const hitAt = (k: number, p: Point) => (k >= 0 ? layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null);
+  /**
+   * What a press at a point is on: the topmost layer drawn there and its frame, else the frame under it (-1: empty
+   * canvas). A frame that clips hides its layers past its edges, and its ground covers what lies under it.
+   */
+  const pickAt = (p: Point): { k: number; hit: Layer | null } => {
+    for (let k = fr.length - 1; k >= 0; k--) {
+      const f = fr[k]!;
+      const g = pages[k]!;
+      const inside = p.x >= f.x && p.x <= f.x + f.w && p.y >= f.y && p.y <= f.y + f.h;
+      if (!inside && !g.loose && g.clip !== false) continue;
+      const hit = hitAt(k, p);
+      if (hit || (inside && !g.loose)) return { k, hit };
+    }
+    return { k: -1, hit: null };
+  };
 
   // a drag under way when the canvas goes away ends there, with its listeners
   const dragging = useRef<(() => void) | null>(null);
@@ -460,15 +478,13 @@ export function Stage({
       e,
       (ev) => {
         const m = moveOf(ev, from);
-        const mid = { x: f.x + b0.x + m.dx + b0.w / 2, y: f.y + b0.y + m.dy + b0.h / 2 };
-        // a loose picture is no frame to land in
-        const over = frameUnder(mid, true);
         // another frame takes them only when it has room for them; a copy stays in a frame that has room too
         const fits = (n: number) => pages[n]!.layers.length + moving.length <= DESIGN_LIMITS.layers;
-        const to = over >= 0 && over !== k && fits(over) ? over : k;
-        // pictures taken out of their frame onto empty canvas lie loose there, uncut
-        const out = over < 0 && !p.loose && !copy && moving.every((l) => l.type === "image");
-        if (to === k && copy && !fits(k)) return;
+        // layers taken wholly off their frame onto empty canvas lie loose there, uncut (hands.ts dropTarget)
+        const lands = dropTarget(pages.map((q, n) => ({ rect: fr[n]!, loose: q.loose, full: !fits(n) })), k, { ...b0, x: f.x + b0.x + m.dx, y: f.y + b0.y + m.dy });
+        const out = lands < 0;
+        const to = out ? k : lands;
+        if (!out && to === k && copy && !fits(k)) return;
         const host = pages[to]!;
         const g = fr[to]!;
         // in the host frame's own pixels
@@ -561,7 +577,7 @@ export function Stage({
     );
   };
 
-  /** A making tool's box: a layer's in frame `k`, or (k < 0) a new frame's on the canvas. */
+  /** A making tool's box: a layer's in frame `k` (k < 0: loose on the canvas, in its pixels), or the frame tool's new frame on the canvas. */
   const make = (e: React.PointerEvent, k: number) => {
     const from = world(e);
     const ox = k >= 0 ? fr[k]!.x : 0;
@@ -580,7 +596,7 @@ export function Stage({
       () => {
         setDrawn(null);
         const made = r ?? { x: from.x, y: from.y, w: 0, h: 0 };
-        if (k < 0) onMakeFrame(made, !!r);
+        if (tool === "frame") onMakeFrame(made, !!r);
         else onMake(k, { ...made, x: made.x - ox, y: made.y - oy }, !!r);
       },
     );
@@ -666,8 +682,9 @@ export function Stage({
 
   /** A press with the pen: a point of the line; on its first point, the line closed and done. Dragged on, the point's two handles. */
   const penDown = (e: React.PointerEvent, p: Point, under: number) => {
-    const k = pen?.k ?? (under >= 0 ? under : at);
-    const f = fr[k];
+    const k = pen?.k ?? under;
+    // k < 0: loose on the canvas, in its own pixels
+    const f = k < 0 ? { x: 0, y: 0 } : fr[k];
     // its frame is gone (taken out somewhere else): so is the line; and a line holds no more points than a path may
     if (!f) return void (setPen(null), setPenAt(null));
     if ((pen?.points.length ?? 0) >= DESIGN_LIMITS.points) return finishPen(false);
@@ -789,8 +806,7 @@ export function Stage({
     }
     if (e.button === 1 || (e.button === 0 && (space || tool === "hand"))) return pan(e);
     const p = world(e);
-    const k = frameUnder(p);
-    const hit = hitAt(k, p);
+    const { k, hit } = pickAt(p);
     if (e.button !== 0) return;
     // a picture being moved in its box: a press on it slides it, a press beside it is done with it
     if (cropped && here) {
@@ -806,12 +822,9 @@ export function Stage({
       onShape(null);
     }
     if (tool === "frame") return make(e, -1);
-    // a layer is drawn on the frame under the press, else the current one (a loose picture is no frame to draw on);
-    // a canvas with no frame yet has nothing to draw a layer on
+    // a layer is drawn on the frame under the press; on empty canvas (or over a loose piece) it lies loose there (-1)
     if (tool !== "move") {
-      const under = frameUnder(p, true);
-      const onto = under >= 0 ? under : pages[at] && !pages[at]!.loose ? at : pages.findIndex((x) => !x.loose);
-      if (onto < 0) return;
+      const onto = frameUnder(p);
       return tool === "pen" ? penDown(e, p, onto) : make(e, onto);
     }
     // an empty frame is taken by its own area, and so is a frame that is picked (its name always takes it)
@@ -829,9 +842,9 @@ export function Stage({
 
   const over = (e: React.PointerEvent) => {
     const p = world(e);
-    const k = frameUnder(p);
     if (pen) setPenAt(p);
-    const hit = !e.buttons && tool === "move" && !space ? hitAt(k, p) : null;
+    const { k, hit: under } = pickAt(p);
+    const hit = !e.buttons && tool === "move" && !space ? under : null;
     if ((hit?.id ?? null) !== (hover?.id ?? null) || (hit && k !== hover?.k)) setHover(hit ? { k, id: hit.id } : null);
   };
 
@@ -878,16 +891,14 @@ export function Stage({
           // event, since that is what opens it (a Ctrl-click on a Mac too)
           onContextMenu={(e) => {
             const p = world(e);
-            const k = frameUnder(p);
-            const hit = hitAt(k, p);
+            const { k, hit } = pickAt(p);
             if (hit && !(k === at && selected.includes(hit.id))) onPick(k, groupOf(pages[k]!.layers, hit));
           }}
           // nothing scrolls the canvas but its own view
           onScroll={(e) => e.currentTarget.scrollTo(0, 0)}
           onDoubleClick={(e) => {
             const p = world(e);
-            const k = frameUnder(p);
-            const hit = hitAt(k, p);
+            const { k, hit } = pickAt(p);
             if (tool === "pen") return finishPen(false);
             // on a point of the path being shaped: a corner made smooth, or smooth made a corner
             if (shaped && here && page) {
@@ -944,10 +955,10 @@ export function Stage({
           {band && <div className="pointer-events-none absolute border border-[#0d99ff] bg-[#0d99ff]/10" style={onScreen(band)} />}
           {drawn && <div className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={onScreen(drawn)} />}
           {pen &&
-            fr[pen.k] &&
+            (pen.k < 0 || fr[pen.k]) &&
             (() => {
               // the line so far, its points, and a thin line on to the pointer
-              const f = fr[pen.k]!;
+              const f = pen.k < 0 ? { x: 0, y: 0 } : fr[pen.k]!;
               const at = (x: number, y: number): [number, number] => [view.x + (f.x + x) * view.z, view.y + (f.y + y) * view.z];
               const last = pen.points.at(-1)!;
               const from = at(last.x, last.y);

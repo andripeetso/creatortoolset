@@ -194,8 +194,8 @@ describe("designs: frames on a canvas", () => {
 
 describe("designs: an AI that designs", () => {
   type Frame = { id: string; n: number; name?: string; w: number; h: number; words?: string; background: string; layers: Array<{ id: string; type: string; text?: string; x: number; size?: number }> };
-  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; kind: string; brief?: string; pictures: number }>; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[] };
-  type Wrote = DesignAnswer & { touched: string[] };
+  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; kind: string; brief?: string; pictures: number }>; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[]; canvas?: Array<Record<string, unknown>> };
+  type Wrote = DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] };
   const text = { type: "text", font: "Anton", size: 90, color: "#ffffff", align: "center", x: 90, y: 400, w: 900, h: 300 };
   const read = async (id: string, more = "") => (await call<Read>("GET", `/api/designs/${id}/pages${more}`)).body;
   const write = (id: string, body: unknown) => call<Wrote>("POST", `/api/designs/${id}/pages`, body);
@@ -263,7 +263,7 @@ describe("designs: an AI that designs", () => {
     })).body;
     expect(out.design.pages[0]!.layers.map((l) => l.id)).toEqual(["moon", "title", "sun"]);
     expect(out.design.pages[0]!.layers[1]).toMatchObject({ type: "text", text: "Hello there", size: 600, x: 10, font: "Anton" });
-    expect(out.notes).toEqual(["Frame 1 has no layer ghost", "A change names no frame of this design (p9): its frames are p1"]);
+    expect(out.notes).toEqual(["Frame 1 has no layer ghost", 'A change names no frame of this design (p9): its frames are p1, and "canvas" holds what lies outside them']);
     const gone = (await write(d.id, { changes: [{ frame: "p1", layer: "moon", remove: true }] })).body;
     expect(gone.design.pages[0]!.layers.map((l) => l.id)).toEqual(["title", "sun"]);
     // a field that is a set of fields takes the ones given and keeps the rest; null takes it off whole
@@ -276,6 +276,38 @@ describe("designs: an AI that designs", () => {
     const held = (await write(piece.id, { changes: [{ frame: "p3", layer: "l1", set: { text: "Buy now" } }, { frame: "p3", add: { ...text, text: "Try it today" } }] })).body;
     expect(held.design.pages[2]!.layers.map((l) => l.type === "text" && l.text)).toEqual(["Try it today"]);
     expect(held.notes).toEqual(["Frame 3: “Buy now” is not in its own words: left out"]);
+  });
+
+  it("layers lying on the canvas outside every frame: seen, added, changed, moved into a frame and out, removed, each checked", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const box = { type: "shape", shape: "rect", fill: "#ff5500", w: 100, h: 50 };
+    // a person's loose piece (one dragged out of a frame), and a frame that shows what lies past its edges
+    await call("PUT", `/api/designs/${d.id}`, { pages: [{ id: "p1", x: 0, y: 0, w: 1080, h: 1080, clip: false, background: "#ffffff", layers: [] }, { id: "pa", loose: true, x: -500, y: 100, w: 100, h: 50, background: "#ffffff", layers: [{ ...box, id: "l1", x: 0, y: 0 }] }] });
+    const seen = await read(d.id);
+    expect(seen.frames).toEqual([expect.objectContaining({ id: "p1", x: 0, y: 0, clip: false })]);
+    expect(seen.canvas).toEqual([expect.objectContaining({ id: "l1", type: "shape", x: -500, y: 100 })]);
+    expect(seen.how).toContain('"frame":"canvas"');
+    // added on the canvas, in its pixels; a value out of range is held like a frame's; a bad "to" and a missing layer are named
+    const added = (await write(d.id, { changes: [{ frame: "canvas", add: { ...box, id: "note", x: 2000, y: -300, fill: "nope", opacity: 7 } }, { frame: "canvas", layer: "l1", to: "p9" }, { frame: "canvas", layer: "ghost", remove: true }] })).body;
+    expect(added.notes).toEqual(['"to" names no frame of this design (p9): give a frame\'s id or "canvas"', "The canvas has no layer ghost"]);
+    const note = added.design.pages.find((p) => p.loose && p.layers.some((l) => l.id === "note"))!;
+    expect(note).toMatchObject({ loose: true, x: 2000, y: -300, w: 100, h: 50, layers: [{ id: "note", x: 0, y: 0, fill: "#dddddd" }] });
+    expect(note.layers[0]).not.toHaveProperty("opacity");
+    expect(added.wrote).toEqual([{ frame: "canvas", isNew: false, layers: ["note"] }]);
+    // moved into the frame: where it was on the canvas, now in the frame's pixels, then placed by the same change's set
+    const moved = (await write(d.id, { changes: [{ frame: "canvas", layer: "l1", to: "p1", set: { y: 40 } }] })).body;
+    expect(moved.design.pages.find((p) => p.id === "p1")!.layers).toEqual([expect.objectContaining({ id: "l1", x: -500, y: 40 })]);
+    // the piece it lay in is gone with it; the other one stays as it was
+    expect(moved.design.pages.filter((p) => p.loose).map((p) => p.id)).toEqual([note.id]);
+    // and out again onto the canvas, from the frame's pixels to the canvas's
+    const out = (await write(d.id, { changes: [{ frame: "p1", layer: "l1", to: "canvas" }, { frame: "canvas", layer: "note", set: { fill: "#00ff00" } }] })).body;
+    const back = (await read(d.id)).canvas as { id: string; x: number; y: number; fill: string }[];
+    expect(back.map((l) => [l.id, l.x, l.y, l.fill])).toEqual([["note", 2000, -300, "#00ff00"], ["l1", -500, 40, "#ff5500"]]);
+    expect(out.design.pages.find((p) => p.id === "p1")!.layers).toEqual([]);
+    // removed: its piece is gone; the frame's clip is the AI's to set too
+    const gone = (await write(d.id, { changes: [{ frame: "canvas", layer: "note", remove: true }, { frame: "canvas", layer: "l1", remove: true }], frames: [{ id: "p1", clip: true }] })).body;
+    expect(gone.design.pages).toEqual([expect.not.objectContaining({ clip: false })]);
+    expect((await read(d.id)).canvas).toBeUndefined();
   });
 
   it("an empty canvas: started with no frame, emptied by deleting the last one, and given its first frame by hand or by an AI", async () => {

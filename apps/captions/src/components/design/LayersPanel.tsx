@@ -123,7 +123,7 @@ export function LayersPanel({
       </div>
       <div role="tree" className="min-h-0 flex-1 select-none overflow-y-auto py-1">
         {pages.map((p, k) => {
-          // a picture lying loose on the canvas has no frame row: its layers stand on their own
+          // layers lying loose on the canvas have no frame row: they stand on their own
           const open = p.loose || !shut.includes(p.id);
           const pageKey = `p:${p.id}`;
           const layerKey = `l:${p.id}:`;

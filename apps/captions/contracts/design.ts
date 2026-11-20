@@ -41,7 +41,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 60, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -211,11 +211,13 @@ export interface DesignPage {
   /** the Workshop carousel slide (its block's id) this frame draws: its words are that slide's, as the piece has them now */
   block?: string;
   /**
-   * not a frame: pictures lying on the canvas outside every frame (one dropped on empty canvas, or dragged out of a
-   * frame). Its box is always the box round its layers, it has no background, no name and no export, and it is gone
-   * once it has no layer left
+   * not a frame: layers lying on the canvas outside every frame (drawn or dropped on empty canvas, or dragged wholly
+   * out of a frame), any kind of layer. Its box is always the box round its layers, it has no background, no name and
+   * no export, and it is gone once it has no layer left
    */
   loose?: true;
+  /** false: the parts of its layers outside the frame show on the canvas (never in its PNG); absent = they are hidden */
+  clip?: false;
   /** "#rrggbb" */
   background: string;
   gradient?: Gradient;

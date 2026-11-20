@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, hugLoose, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
+import { alignLayers, besideFrames, boundsOf, rehome, distribute, fitView, frameOf, freshGroup, freshIds, hugLoose, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
@@ -65,7 +65,6 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
   ["text", "Text", "T", Type],
 ];
 /** The tools that work on a canvas with no frame yet: the others draw a layer, and a layer lies on a frame. */
-const NEED_NO_FRAME: readonly Tool[] = ["move", "hand", "frame"];
 const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text", KeyP: "pen" };
 const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -366,8 +365,18 @@ function DesignPage({ id }: { id: string }) {
   };
   const arrange = (next: Layer[]) => base && setPage({ ...base, layers: base.layers.map((l) => next.find((n) => n.id === l.id) ?? l) });
 
-  /** New layers on a frame, picked; null (and it says why) when the frame is full. */
+  /** New layers on a frame (to < 0: lying loose on the canvas, in its pixels, a piece of their own), picked; null (and it says why) when there is no room. */
   const put = (to: number, count: number, make: (ids: string[]) => Layer[]): string[] | null => {
+    if (to < 0) {
+      if (!count) return null;
+      const all = latest.current;
+      if (all.filter((p) => p.loose).length >= DESIGN_LIMITS.loose) return setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`), null;
+      const ids = Array.from({ length: count }, (_, n) => `l${n + 1}`);
+      // its box is drawn round its layers (hugLoose); after every frame and every other loose piece
+      change((now) => [...now, { id: `p${Date.now().toString(36)}`, loose: true, x: 0, y: 0, w: DESIGN_LIMITS.frameMin, h: DESIGN_LIMITS.frameMin, background: "#ffffff", layers: make(ids) }]);
+      pick(all.length, ids);
+      return ids;
+    }
     const target = latest.current[to];
     if (!target || !count) return null;
     if (target.layers.length + count > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers`), null;
@@ -384,11 +393,10 @@ function DesignPage({ id }: { id: string }) {
    * A new frame, picked. `like`: a copy of that frame. `rect`: where the frame tool drew it. `size`: one of the picture
    * sizes, picked from the panel. Without a `rect` it goes beside the rightmost frame (on a canvas with no frame yet,
    * in the middle of what is in view), the size given or that of the frame it was made from, and the canvas moves to
-   * show it: a size picked from the panel fills the view, no closer than its own pixels. `layers`: what the new frame
-   * starts with (a picture or words that arrived on a canvas with no frame). Answers the frame, or nothing when the
-   * canvas is full.
+   * show it: a size picked from the panel fills the view, no closer than its own pixels. Answers the frame, or nothing
+   * when the canvas is full.
    */
-  const addFrame = (like?: Page, rect?: Rect, size?: { w: number; h: number }, layers?: (f: { w: number; h: number }) => Layer[]): Page | undefined => {
+  const addFrame = (like?: Page, rect?: Rect, size?: { w: number; h: number }): Page | undefined => {
     if (!design) return undefined;
     if (frameCount >= DESIGN_LIMITS.pages) return void setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
     // a loose picture's size is no frame's
@@ -397,12 +405,12 @@ function DesignPage({ id }: { id: string }) {
     // beside the frames, level with the current one (loose pictures are not frames to line up with)
     const r = rect ?? (frameCount ? besideFrames(frames.filter((_, n) => !pages[n]!.loose), base?.loose ? undefined : here, dims) : { x: Math.round(((room?.w ?? 0) / 2 - v.x) / v.z - dims.w / 2), y: Math.round(((room?.h ?? 0) / 2 - v.y) / v.z - dims.h / 2), w: dims.w, h: dims.h });
     // a copy is a frame of its own: the carousel slide its original draws stays the original's
-    const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base?.background ?? "#ffffff", layers: layers?.(r) ?? [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
+    const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base?.background ?? "#ffffff", layers: [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
     change((all) => [...all, fresh]);
     // a canvas's first frame is there: the frame tool (out on an empty canvas) is put away
     if (!frameCount) setTool("move");
     // after the frames, before the loose pictures (hugLoose)
-    pick(frameCount, fresh.layers.length && layers ? fresh.layers.map((l) => l.id) : [], !layers);
+    pick(frameCount, [], true);
     // a size picked from the panel, and a canvas's first frame: it fills the view; else the canvas moves to show it
     if ((size || !frameCount) && !rect && room) view.glide(fitView(r, room, 56, 1));
     else if (!rect && room) view.glide({ ...v, x: room.w / 2 - (r.x + r.w / 2) * v.z, y: room.h / 2 - (r.y + r.h / 2) * v.z });
@@ -485,11 +493,21 @@ function DesignPage({ id }: { id: string }) {
       // no clipboard here: the layers are kept all the same
     }
   };
+  /** The middle of what is in view, on the canvas. */
+  const middle = () => {
+    const v = view.aim();
+    return { x: ((room?.w ?? 0) / 2 - v.x) / v.z, y: ((room?.h ?? 0) / 2 - v.y) / v.z };
+  };
   /** The copied layers onto this frame, where they were on theirs. A picture this design does not have stays behind. */
   const paste = () => {
     const layers = (clip?.layers ?? []).filter((l) => l.type !== "image" || design?.pictures.includes(l.picture));
-    // a canvas with no frame yet: its first frame, with the layers on it
-    if (!here) return void (layers.length && addFrame(undefined, undefined, undefined, () => layers.map((l, n) => ({ ...l, id: `l${n + 1}` }))));
+    // a canvas with no frame yet: they lie loose in the middle of the view
+    if (!here) {
+      if (!layers.length) return;
+      const b = boundsOf(layers);
+      const m = middle();
+      return void put(-1, layers.length, (ids) => rehome(layers, { x: Math.round(m.x - b.w / 2), y: Math.round(m.y - b.h / 2) }, b).map((l, n) => ({ ...l, id: ids[n]! })));
+    }
     put(k, layers.length, (ids) => layers.map((l, n) => ({ ...l, id: ids[n]! })));
   };
 
@@ -531,7 +549,7 @@ function DesignPage({ id }: { id: string }) {
     const f = frames[over];
     setError(null);
     const space = alone ? DESIGN_LIMITS.loose - latest.current.filter((p) => p.loose).length : files.length;
-    if (space < files.length) setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pictures outside its frames`);
+    if (space < files.length) setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
     const got: { picture: string; w: number; h: number }[] = [];
     for (const file of files.slice(0, Math.max(0, space))) {
       const url = URL.createObjectURL(file);
@@ -689,7 +707,8 @@ function DesignPage({ id }: { id: string }) {
 
   /** A box drawn with a making tool: a click makes the usual size, a drag the size drawn. */
   const make = (to: number, r: Rect, dragged: boolean) => {
-    const f = frames[to];
+    // loose on the canvas (to < 0): sized as on a frame of the design's own size
+    const f = to < 0 && design ? { w: design.width, h: design.height } : frames[to];
     if (!f || tool === "move" || tool === "hand" || tool === "frame" || tool === "pen") return;
     const words = tool === "text";
     const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(dragged ? r.w : words ? f.w / 2 : 100)), h: Math.max(1, Math.round(dragged ? r.h : words ? f.w * 0.08 : 100)) };
@@ -711,7 +730,7 @@ function DesignPage({ id }: { id: string }) {
         else if (!e.altKey && (e.key === "+" || e.key === "=")) run(() => zoom("in"));
         else if (!e.altKey && e.key === "-") run(() => zoom("out"));
         else if (!e.altKey && (mod || e.shiftKey) && c === "Digit0") run(() => zoom(1));
-        else if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[c] && NEED_NO_FRAME.includes(TOOL_KEYS[c]!)) run(() => setTool(TOOL_KEYS[c]!));
+        else if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[c]) run(() => setTool(TOOL_KEYS[c]!));
         else if (e.key === "Escape") run(() => setTool("move"));
         return;
       }
@@ -766,9 +785,10 @@ function DesignPage({ id }: { id: string }) {
       // words copied somewhere else become a text layer in the middle of the frame
       else if (text.trim()) {
         const words = (id: string, f: { w: number; h: number }) => [textLayer(id, text.trim().slice(0, DESIGN_LIMITS.text), { x: Math.round(f.w / 4), y: Math.round(f.h * 0.4), w: Math.round(f.w / 2), h: Math.round(f.h * 0.2) }, f.w)];
-        // on a canvas with no frame yet: its first frame, with the words on it
+        // on a canvas with no frame yet: loose in the middle of the view
+        const m = middle();
         if (here) put(k, 1, ([id]) => words(id!, here));
-        else addFrame(undefined, undefined, undefined, (f) => words("l1", f));
+        else put(-1, 1, ([id]) => rehome(words(id!, { w: design.width, h: design.height }), { x: Math.round(m.x - design.width / 2), y: Math.round(m.y - design.height / 2) }, {}));
       }
       else return;
       e.preventDefault();
@@ -972,7 +992,7 @@ function DesignPage({ id }: { id: string }) {
         <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
           <h3 data-picked className="sr-only">
-            Picked: {page?.loose ? "a picture lying loose on the canvas, outside every frame (not a frame to design)" : framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
+            Picked: {page?.loose ? "layers lying loose on the canvas, outside every frame (design_get's canvas)" : framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
             {picked.length > 0 &&
               `, ${picked.length === 1 ? "layer" : "layers"} ${picked
                 .slice(0, 8)
@@ -1058,7 +1078,7 @@ function DesignPage({ id }: { id: string }) {
             {TOOLS.filter(([t]) => !locked || t === "hand").map(([t, label, keys, Icon]) => (
               // the button lets the keys go again, so Space still drags the canvas after a click here
               <Tip key={t} label={label} keys={keys}>
-              <button type="button" aria-label={label} aria-pressed={tool === t} disabled={!frameCount && !NEED_NO_FRAME.includes(t)} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
+              <button type="button" aria-label={label} aria-pressed={tool === t} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
                 <Icon className="h-4 w-4" />
               </button>
               </Tip>

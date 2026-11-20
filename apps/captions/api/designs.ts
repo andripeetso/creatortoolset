@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type SplitAnswer } from "../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type Layer, type SplitAnswer } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
 import type { AuthVars } from "./auth";
 import type { AnimationStyle } from "../contracts/editor-styles";
@@ -58,6 +58,8 @@ interface KeptFont extends DesignFont {
   at: number;
 }
 const FONT_ID = /^[0-9a-f]{16}$/;
+/** A layer's id as design-check keeps it. */
+const LAYER_ID = /^[a-z0-9-]{1,24}$/;
 const fontsDir = (owner: string) => path.join(dirOf(owner), ".fonts");
 const fontFile = (owner: string, f: Pick<KeptFont, "id" | "ext">) => path.join(fontsDir(owner), `${f.id}.${f.ext}`);
 
@@ -235,7 +237,25 @@ async function slidesOf(user: AuthVars["user"], session: string, doc: string): P
  * The frames with each slide's frame naming its slide. A design made before frames knew their slides is matched by
  * order, once: the save that follows keeps it, and from then on a frame is its slide's wherever it is moved to.
  */
-const matched = (pages: DesignPage[], slides: readonly Slide[]): DesignPage[] => (pages.some((p) => p.block) ? pages : pages.map((p, k) => (slides[k] ? { ...p, block: slides[k]!.id } : p)));
+const matched = (pages: DesignPage[], slides: readonly Slide[]): DesignPage[] => (pages.some((p) => p.block) ? pages : pages.map((p, k) => (slides[k] && !p.loose ? { ...p, block: slides[k]!.id } : p)));
+
+/**
+ * The layers lying on the canvas outside every frame, as an AI sees them: one list, in the canvas's own pixels, each
+ * with an id of its own among them (the same at every read). `home`: the loose piece it lies in, `real`: its id there.
+ */
+export function canvasLayers(pages: readonly DesignPage[]): { home: string; real: string; layer: Layer }[] {
+  const taken = new Set<string>();
+  return pages
+    .filter((p) => p.loose)
+    .flatMap((p) =>
+      p.layers.map((l) => {
+        let id = l.id;
+        for (let n = 1; taken.has(id); n++) id = `c${n}`;
+        taken.add(id);
+        return { home: p.id, real: l.id, layer: { ...l, id, x: l.x + (p.x ?? 0), y: l.y + (p.y ?? 0) } };
+      }),
+    );
+}
 
 const pieceOf = (d: Design): { session: string; doc: string } | null => (d.from && "session" in d.from ? d.from : null);
 const frameLabel = (p: DesignPage, k: number) => `Frame ${k + 1}${p.name ? ` (${p.name})` : ""}`;
@@ -261,6 +281,7 @@ A frame that has "words" draws a slide of the user's carousel: those words are t
 To change a design, give either or both of:
 - "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
 - "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off.
+- "canvas" (in this answer when there is any): layers lying on the canvas outside every frame, where the user keeps things aside. Their "x" and "y" are in the canvas's own pixels, as each frame's "x" and "y" are; they are in no PNG and in no picture of a frame you are shown. A change with "frame":"canvas" sets, adds (give "x", "y", "w" and "h"), removes or reorders one of them as on a frame. {"frame":"<a frame's id or canvas>","layer":"<layer id>","to":"<another frame's id or canvas>"} moves that layer there, staying where it is on the canvas (it leaves its group); a "set" in the same change places it, in the pixels of where it went. A frame with "clip":false shows the parts of its layers past its edges on the canvas (never in its PNG); without it they are hidden.
 - A change {"frame":"<id>","layer":"<a picture layer's id>","cutout":true} takes the picture's background away (the user's own Mac cuts it out, which takes some seconds; the answer says so when no Mac of theirs is on). {"set":{"picture":"<its 'uncut' id>","uncut":null}} puts the background back.
 - "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
@@ -283,7 +304,8 @@ async function framesForAi(user: AuthVars["user"], d: Design): Promise<{ pages: 
   // a slide written since goes beside the rightmost frame, under an id that is its slide's (the same at every read, so
   // the frame an AI read is the frame it then writes)
   const more = plainPages(fresh.map((s) => s.words), d.width, d.height, fresh.map((s) => s.id)).map((p, k) => ({ ...p, x: undefined, y: undefined, id: `s-${fresh[k]!.id}`.slice(0, 24) }));
-  const pages = withFrames([...mine, ...more], d.width, d.height).slice(0, DESIGN_LIMITS.pages);
+  // the layers lying loose beside the frames come after them, and are never cut off by the frames' limit
+  const pages = [...withFrames([...mine.filter((p) => !p.loose), ...more], d.width, d.height).slice(0, DESIGN_LIMITS.pages), ...mine.filter((p) => p.loose)];
   const bySlide = new Map(slides.map((s) => [s.id, s.words]));
   return { pages, words: pages.map((p) => (p.block ? bySlide.get(p.block) : undefined)) };
 }
@@ -373,8 +395,9 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
     ...(!lookNamed && carousels.length > 1 ? { look: `Pick the carousel style this design is in (${carousels.slice(0, 12).map((l) => `"${l.name}"`).join(", ")}; ask the user when it is not clear) and read its pictures before you design: design_get with "look": its name.` } : {}),
     ...(!lookNamed && !carousels.length ? { look: `The user has no carousel style yet. ${toAnalyzer(animated.map((l) => l.name))}` } : {}),
     ...(style && shown ? { look: { name: style.name, ...(style.brief.trim() ? { brief: style.brief.trim().slice(0, LOOK_BRIEF) } : {}), pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })), ...(shown.length ? {} : { more: `It has no pictures yet. ${toAnalyzer([])}` }) } } : {}),
-    // pictures lying loose beside the frames are the person's, not frames to design
-    frames: pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), w: p.w, h: p.h, ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), layers: p.layers }])),
+    // layers lying loose beside the frames are no frame: they are the canvas's, in its own pixels
+    frames: pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), x: p.x, y: p.y, w: p.w, h: p.h, ...(p.clip === false ? { clip: false } : {}), ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), layers: p.layers }])),
+    ...(pages.some((p) => p.loose) ? { canvas: canvasLayers(pages).map((c) => c.layer) } : {}),
     how: HOW,
   };
 }
@@ -429,37 +452,106 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     t.more = { ...t.more, ...f };
   }
 
+  // the layers lying on the canvas outside every frame, in its pixels (canvasLayers); each goes back into its loose
+  // piece, and a piece none of whose layers changed (`dirty`) stays as it is
+  const canvas: { home: string; real?: string; layer: Raw; set?: true }[] = canvasLayers(next).map((c) => ({ ...c, layer: c.layer as unknown as Raw }));
+  const dirty = new Set<string>();
+  let homes = 0;
+  const newHome = () => `c${Date.now().toString(36)}${homes++}`;
+  const room = () => new Set(canvas.map((x) => x.home)).size < DESIGN_LIMITS.loose;
+  const full = `The canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  /** A layer from one place on the canvas to another (a frame's top left corner, or the canvas's 0, 0), where it stays on the canvas; it leaves its group. */
+  const rehomed = (l: Raw, from: DesignPage | null, to: DesignPage | null): Raw => ({ ...l, x: num(l.x) + (from?.x ?? 0) - (to?.x ?? 0), y: num(l.y) + (from?.y ?? 0) - (to?.y ?? 0), group: undefined });
+  // a field that is itself a set of fields ("adjust", "shadow", "gradient") takes the ones given and keeps the rest; null takes it off whole
+  const setOn = (was: Raw, set: unknown): Raw => (raw(set) ? { ...was, ...Object.fromEntries(Object.entries(set as Raw).map(([k, v]) => [k, raw(v) && raw(was[k]) ? { ...raw(was[k]), ...raw(v) } : v])), id: was.id } : was);
+  /** An id no layer in `list` has: the one asked for, else l1, l2… */
+  const freeId = (list: readonly unknown[], asked: unknown) => {
+    const ids = new Set(list.map((l) => String(raw(l)?.id)));
+    let id = typeof asked === "string" && !ids.has(asked) ? asked : "";
+    for (let n = list.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
+    return id;
+  };
+  /** A layer into a frame, on top (or at the back), under an id of its own there. */
+  const into = (page: DesignPage, layer: Raw, back: boolean) => {
+    const t = open(page);
+    const id = freeId(t.layers, layer.id);
+    t.layers = back ? [{ ...layer, id }, ...t.layers] : [...t.layers, { ...layer, id }];
+    t.set.push(id);
+  };
+  /** A layer onto the canvas, a loose piece of its own, on top (or at the back). */
+  const ontoCanvas = (layer: Raw, back: boolean) => {
+    const entry = { home: newHome(), layer: { ...layer, id: freeId(canvas.map((x) => x.layer), layer.id) }, set: true as const };
+    if (back) canvas.unshift(entry);
+    else canvas.push(entry);
+    dirty.add(entry.home);
+  };
+
   for (const c of changes.slice(0, 200)) {
-    const page = c && next.find((p) => p.id === c.frame && !p.loose);
-    if (!c || !page) {
-      notes.push(`A change names no frame of this design (${String(c?.frame)}): its frames are ${frameIds().join(", ")}`);
+    const onCanvas = c?.frame === "canvas";
+    const page = c && !onCanvas ? next.find((p) => p.id === c.frame && !p.loose) : undefined;
+    if (!c || (!onCanvas && !page)) {
+      notes.push(`A change names no frame of this design (${String(c?.frame)}): its frames are ${frameIds().join(", ")}, and "canvas" holds what lies outside them`);
       continue;
     }
-    const t = open(page);
+    // "to": the layer moves to another frame or onto the canvas
+    const dest = c.to === undefined || c.to === null ? null : c.to === "canvas" ? ("canvas" as const) : next.find((p) => p.id === c.to && !p.loose);
+    if (dest === undefined) {
+      notes.push(`"to" names no frame of this design (${String(c.to)}): give a frame's id or "canvas"`);
+      continue;
+    }
+    const where = page ? frameLabel(page, next.indexOf(page)) : "The canvas";
+    const back = c.at === "back" || c.order === "back";
     const add = raw(c.add);
     if (add) {
-      // an id of its own before the frame is checked, so the layers that were there keep theirs
-      const ids = new Set(t.layers.map((l) => String(raw(l)?.id)));
-      let id = typeof add.id === "string" && !ids.has(add.id) ? add.id : "";
-      for (let n = t.layers.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
-      t.layers = c.at === "back" ? [{ ...add, id }, ...t.layers] : [...t.layers, { ...add, id }];
-      t.set.push(id);
+      if (!onCanvas) into(page!, add, c.at === "back");
+      else if (room()) ontoCanvas(add, c.at === "back");
+      else notes.push(`${full}: a layer was not added`);
       continue;
     }
-    const at = t.layers.findIndex((l) => raw(l)?.id === c.layer);
+    const list = page ? open(page).layers : canvas.map((x) => x.layer);
+    const at = list.findIndex((l) => raw(l)?.id === c.layer);
     if (at < 0) {
-      notes.push(`${frameLabel(page, next.indexOf(page))} has no layer ${String(c.layer)}`);
+      notes.push(`${where} has no layer ${String(c.layer)}`);
       continue;
     }
-    const [layer] = t.layers.splice(at, 1);
+    const goes = dest && dest !== page && !(dest === "canvas" && onCanvas) ? dest : null;
+    if (goes === "canvas" && !room()) {
+      notes.push(`${full}: ${String(c.layer)} stays where it is`);
+      continue;
+    }
+    if (goes && goes !== "canvas" && open(goes).layers.length >= DESIGN_LIMITS.layers) {
+      notes.push(`A frame holds at most ${DESIGN_LIMITS.layers} layers: ${String(c.layer)} stays where it is`);
+      continue;
+    }
+    let layer: Raw;
+    let was: (typeof canvas)[number] | undefined;
+    if (page) layer = open(page).layers.splice(at, 1)[0] as Raw;
+    else {
+      was = canvas.splice(at, 1)[0]!;
+      dirty.add(was.home);
+      layer = was.layer;
+    }
     if (c.remove === true) continue;
-    t.set.push(String(c.layer));
-    // a field that is itself a set of fields ("adjust", "shadow", "gradient") takes the ones given and keeps the rest; null takes it off whole
-    const was = layer as Raw;
-    const changed = raw(c.set) ? { ...was, ...Object.fromEntries(Object.entries(c.set as Raw).map(([k, v]) => [k, raw(v) && raw(was[k]) ? { ...raw(was[k]), ...raw(v) } : v])), id: was.id } : layer;
-    if (c.order === "front") t.layers.push(changed);
-    else if (c.order === "back") t.layers.unshift(changed);
-    else t.layers.splice(at, 0, changed);
+    // moved: its place on the canvas kept, and "set" then in its new home's pixels
+    if (goes) {
+      const moved = setOn(rehomed(layer, page ?? null, goes === "canvas" ? null : goes), c.set);
+      if (goes === "canvas") ontoCanvas(moved, back);
+      else into(goes, moved, back);
+      continue;
+    }
+    const changed = setOn(layer, c.set);
+    if (page) {
+      const t = open(page);
+      t.set.push(String(c.layer));
+      if (c.order === "front") t.layers.push(changed);
+      else if (c.order === "back") t.layers.unshift(changed);
+      else t.layers.splice(at, 0, changed);
+      continue;
+    }
+    // on the canvas, to the front or the back is a piece of its own there
+    if (c.order === "front" || c.order === "back") ontoCanvas(changed, back);
+    else canvas.splice(at, 0, { ...was!, layer: changed, set: true });
   }
 
   const touched: string[] = [];
@@ -469,7 +561,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const k = next.findIndex((p) => p.id === id);
     const was = next[k]!;
     const label = frameLabel(was, k);
-    const made = cleanPages([{ id, layers: t.layers, w: typeof t.more.w === "number" ? t.more.w : was.w, h: typeof t.more.h === "number" ? t.more.h : was.h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, name: t.more.name ?? was.name }], {
+    const made = cleanPages([{ id, layers: t.layers, w: typeof t.more.w === "number" ? t.more.w : was.w, h: typeof t.more.h === "number" ? t.more.h : was.h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, clip: "clip" in t.more ? t.more.clip : was.clip, name: t.more.name ?? was.name }], {
       w: d.width,
       h: d.height,
       pictures: d.pictures,
@@ -490,14 +582,52 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const had = new Set(was.layers.map((l) => l.id));
     wrote.push({ frame: id, isNew: t.isNew, layers: page.layers.filter((l) => t.whole || t.isNew || t.set.includes(l.id) || !had.has(l.id)).map((l) => l.id) });
   }
-  if (!touched.length) throw new DesignError(`Nothing was changed${notes.length ? `: ${notes.slice(0, 4).join("; ")}` : ""}`);
+  // the canvas: each loose piece that changed written again round its layers and checked like a frame; one left empty is gone
+  if (dirty.size) {
+    const pieces: DesignPage[] = [];
+    for (const home of new Set(canvas.map((x) => x.home))) {
+      const entries = canvas.filter((x) => x.home === home);
+      const kept = next.find((p) => p.id === home);
+      if (!dirty.has(home) && kept) {
+        pieces.push(kept);
+        continue;
+      }
+      // a size left out is what a layer gets anyway (design-check), so the piece is drawn round it
+      const sized = entries.map((e) => ({ ...e.layer, x: num(e.layer.x), y: num(e.layer.y), w: num(e.layer.w) || Math.round(d.width / 2), h: num(e.layer.h) || Math.round(d.height / 4) }));
+      const x0 = Math.floor(Math.min(...sized.map((l) => l.x)));
+      const y0 = Math.floor(Math.min(...sized.map((l) => l.y)));
+      const x1 = Math.ceil(Math.max(...sized.map((l) => l.x + l.w)));
+      const y1 = Math.ceil(Math.max(...sized.map((l) => l.y + l.h)));
+      // each layer back under its id in its piece (a new one: an id of its own there)
+      const used = new Set<string>();
+      const layers = sized.map((l, n) => {
+        const want = entries[n]!.real ?? String(entries[n]!.layer.id);
+        let id = LAYER_ID.test(want) && !used.has(want) ? want : "";
+        for (let k = 1; !id || used.has(id); k++) id = `l${k}`;
+        used.add(id);
+        entries[n]!.real = id;
+        return { ...l, id, x: l.x - x0, y: l.y - y0 };
+      });
+      const made = cleanPages([{ id: home, loose: true, x: x0, y: y0, w: x1 - x0, h: y1 - y0, background: "#ffffff", layers }], { w: d.width, h: d.height, pictures: d.pictures, fonts, words: [undefined] });
+      notes.push(...made.notes.map((note) => note.replace(/^Page 1:/, "The canvas:")));
+      if (made.pages[0]) pieces.push(made.pages[0]);
+      for (const e of entries) if (!made.pages[0]?.layers.some((l) => l.id === e.real)) e.real = undefined;
+    }
+    next.splice(0, next.length, ...next.filter((p) => !p.loose), ...pieces);
+    // the layers this wrote, by the ids the canvas gives them now
+    const now = canvasLayers(next);
+    const set = canvas.filter((e) => e.set && e.real).map((e) => now.find((x) => x.home === e.home && x.real === e.real)?.layer.id);
+    wrote.push({ frame: "canvas", isNew: false, layers: set.filter((id): id is string => !!id) });
+  }
+  if (!touched.length && !dirty.size) throw new DesignError(`Nothing was changed${notes.length ? `: ${notes.slice(0, 4).join("; ")}` : ""}`);
   // onto the design as it is now on disk: a frame this did not touch is as the person has it, and one they moved
   // meanwhile keeps the place they gave it
   const now = (await read(d.owner, d.id)) ?? d;
   const pages = withFrames(
     next.map((p) => {
       const there = now.pages.find((x) => x.id === p.id);
-      if (!there) return p;
+      // a loose piece this wrote is where this put it
+      if (!there || (p.loose && dirty.has(p.id))) return p;
       return touched.includes(p.id) ? { ...p, x: there.x, y: there.y } : there;
     }),
     d.width,

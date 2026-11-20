@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -545,6 +546,11 @@ export function Inspector({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            {/* off: what lies past the frame's edges shows on the canvas too; the PNG is always the frame alone */}
+            <label className="flex items-center gap-2 text-xs">
+              <Checkbox checked={page.clip !== false} onCheckedChange={(on) => onPage({ ...page, clip: on === true ? undefined : false })} />
+              Clip content
+            </label>
           </Section>
           <Section title="Fill" action={addOrRemove(!!page.gradient, "gradient", () => onPage({ ...page, gradient: GRADIENT }), () => onPage({ ...page, gradient: undefined }))}>
             <div className="flex">
