@@ -24,6 +24,22 @@ final class ProxyCacheTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
+    /// A picked Download location: the page plays from where the worker downloads to, its folder for that server (it
+    /// looked in the default folder, so nothing downloaded there played).
+    func testAPickedDownloadLocationPlaysFromWhereTheWorkerDownloads() throws {
+        let location = root.appendingPathComponent("picked", isDirectory: true)
+        UserDefaults.standard.set(location.path, forKey: DownloadLocation.key)
+        defer { UserDefaults.standard.removeObject(forKey: DownloadLocation.key) }
+        let server = URL(string: "https://studio.example.com")!
+        let file = try proxy(server, "tinyacrobatics", "v1")
+        let worker = try XCTUnwrap(ProxyCache.workerDir(server: server))
+        XCTAssertEqual(file, "\(worker)/tinyacrobatics/v1.mp4")
+        XCTAssertTrue(file.hasPrefix(location.path + "/"))
+        XCTAssertNotNil(ProxyCache.url("v1", in: try XCTUnwrap(ProxyCache.folder(server: server, account: "tinyacrobatics"))))
+        // another server's worker gets its own folder: two accounts of one name never share one
+        XCTAssertNotEqual(ProxyCache.workerDir(server: URL(string: "http://10.0.0.5:3000")!), worker)
+    }
+
     /// A proxy in an account's cache for a server, as the worker leaves it.
     @discardableResult
     private func proxy(_ server: URL, _ account: String, _ version: String) throws -> String {
@@ -180,5 +196,40 @@ final class ProxyCacheTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: new.appendingPathComponent("tinyacrobatics/vk.mp4").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: new.appendingPathComponent("tinyacrobatics/kept.json").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: old.appendingPathComponent("vk.mp4").path))
+    }
+
+    /// Moving into a folder that has its own cache (its disk came back): the worker's lists are joined, never one dropped
+    /// (kept.json protects proxies made here from the size limit), a version already there wins and its copy goes, a
+    /// download still being written stays, and a folder inside the one it moves from is refused.
+    func testAMoveIntoAFolderWithItsOwnCacheJoinsTheLists() throws {
+        let base = ProcessInfo.processInfo.environment["CT_SCRATCH_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
+        let work = base.appendingPathComponent("proxy-move-tests/\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let fm = FileManager.default
+        let from = work.appendingPathComponent("default/tiny", isDirectory: true), to = work.appendingPathComponent("ssd/tiny", isDirectory: true)
+        for d in [from, to] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        try Data(#"["v_new"]"#.utf8).write(to: from.appendingPathComponent("kept.json"))
+        try Data(#"["v_old"]"#.utf8).write(to: to.appendingPathComponent("kept.json"))
+        try Data(#"{"a":{"w":1,"h":1},"b":{"skip":true}}"#.utf8).write(to: from.appendingPathComponent("made.json"))
+        try Data(#"{"a":{"w":2,"h":2}}"#.utf8).write(to: to.appendingPathComponent("made.json"))
+        try Data("new".utf8).write(to: from.appendingPathComponent("v_new.mp4"))
+        try Data("dup".utf8).write(to: from.appendingPathComponent("v_old.mp4"))
+        try Data("old".utf8).write(to: to.appendingPathComponent("v_old.mp4"))
+        try Data("going".utf8).write(to: from.appendingPathComponent("v_live.mp4.part"))
+
+        try ProxyCacheMove.move(from: from.deletingLastPathComponent(), to: to.deletingLastPathComponent(), free: { _ in 1 << 30 },
+                                busy: { $0.lastPathComponent == "v_live.mp4.part" })
+        let json = { (name: String) in try JSONSerialization.jsonObject(with: Data(contentsOf: to.appendingPathComponent(name))) }
+        XCTAssertEqual(try json("kept.json") as? [String], ["v_old", "v_new"])
+        let made = try XCTUnwrap(try json("made.json") as? [String: [String: Any]])
+        XCTAssertEqual(made["a"]?["w"] as? Int, 2)   // the target's entry wins
+        XCTAssertEqual(made["b"]?["skip"] as? Bool, true)
+        XCTAssertEqual(try String(contentsOf: to.appendingPathComponent("v_old.mp4"), encoding: .utf8), "old")
+        XCTAssertEqual(try String(contentsOf: to.appendingPathComponent("v_new.mp4"), encoding: .utf8), "new")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: from.path), ["v_live.mp4.part"])
+
+        XCTAssertThrowsError(try ProxyCacheMove.move(from: work, to: work.appendingPathComponent("ssd/deeper"))) { error in
+            XCTAssertEqual(error as? ProxyCacheMoveError, .inside)
+        }
     }
 }

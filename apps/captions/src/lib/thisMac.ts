@@ -121,14 +121,6 @@ export async function pickFolderOnMac(): Promise<PickedFolder | null | undefined
   }
 }
 
-/**
- * Settings → Storage › This computer, Download location › Change…: this Mac's own folder panel for the download cache
- * (ThisMacBridge.swift chooseDownloadFolder). The same answer shape as chooseFolderOnMac.
- */
-export async function chooseDownloadFolderOnMac(): Promise<string | null | undefined> {
-  return pathAskOnMac("download-folder");
-}
-
 async function pathAskOnMac(what: string): Promise<string | null | undefined> {
   const bridge = thisMacBridge();
   if (!bridge) return undefined;
@@ -567,5 +559,9 @@ async function thisMacCall<T>(ask: string): Promise<T | null> {
   return bridge ? ((await bridge.postMessage(ask).catch(() => null)) as unknown as T | null) : null;
 }
 export const downloadLocation = () => thisMacCall<{ path: string }>("download:location");
-export const chooseDownloadLocation = () => thisMacCall<{ path?: string }>("download:choose");
+export const chooseDownloadLocation = () => thisMacCall<{ path?: string | null; error?: string }>("download:choose");
 export const showDownloadLocation = () => thisMacCall<unknown>("download:show");
+/** The Cache folder (path null: the internal disk's own defaults); Change… moves nothing. */
+export const cacheFolder = () => thisMacCall<{ path: string | null }>("cache:location");
+export const chooseCacheFolder = () => thisMacCall<{ path?: string | null }>("cache:choose");
+export const showCacheFolder = () => thisMacCall<unknown>("cache:show");

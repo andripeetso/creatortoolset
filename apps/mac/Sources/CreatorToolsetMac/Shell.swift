@@ -40,6 +40,8 @@ final class Shell: NSObject, ObservableObject {
     @Published private(set) var runsHere = false
     /// One runner and one worker per server this Mac takes work from, whatever the window shows (Runners.swift).
     let runners = Runners()
+    /// The Download location workers were last started with (nil: not read yet this launch; .some(nil): the default).
+    private var lastLocation: String?? = nil
     /// "Take work from this server", per server; a change starts or stops that server's runner.
     private var switches: HostSwitches {
         didSet {
@@ -266,6 +268,7 @@ final class Shell: NSObject, ObservableObject {
                     done(reply)
                 }
             }
+            if let reply = self.storageAsk(ask) { return done(reply) }
             switch ask {
             case "state": done(self.thisMacState())
             case "ai-install-progress": done(AiInstall.shared.progress)
@@ -277,7 +280,6 @@ final class Shell: NSObject, ObservableObject {
             case "connect.link": Task { done(self.thisMacState(problem: await self.setReach(true))) }
             case "connect.unlink": Task { done(self.thisMacState(problem: await self.setReach(false))) }
             case "folder": done(self.chooseFolder())
-            case "download-folder": done(self.chooseDownloadFolder())
             // Settings → Folders' "This Mac" on a server it isn't on yet (a press): paired, the AI left as it is
             case "pair": Task { if !self.pairedHere { try? await self.pairThisMac() }; self.syncRunners(); done(self.thisMacState()) }
             case "files": done(pickedFilesReply(self.pickedFiles, here: self.runsHere && self.server != nil))
@@ -334,6 +336,12 @@ final class Shell: NSObject, ObservableObject {
         Places.shared.onChange = { [weak self] in
             MainActor.assumeIsolated {
                 self?.runners.forEach { $0.reportNow() }
+                // the Download location's disk went or came back: each idle worker starts again with the folder playback
+                // uses, and what was downloaded meanwhile on the internal disk joins it
+                if let self, let last = self.lastLocation, last != DownloadLocation.path() {
+                    self.locationMoved()
+                    DownloadLocation.settleInBackground { [weak self] in self?.locationMoved() }
+                }
                 self?.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-places', {detail: {at: Date.now()}}))")
             }
         }
@@ -884,6 +892,12 @@ final class Shell: NSObject, ObservableObject {
         LocationAgents.shared.poke()
     }
 
+    /// Idle workers start again with the Download location as it is now.
+    func locationMoved() {
+        lastLocation = .some(DownloadLocation.path())
+        runners.restartIdleWorkers()
+    }
+
     /// The servers whose runner should run now, and those runners started or stopped to match (Runners.swift).
     /// `localRunning`: whether This Mac's own server runs (passed while its state is changing).
     func syncRunners(localRunning: Bool? = nil) {
@@ -892,6 +906,11 @@ final class Shell: NSObject, ObservableObject {
                                 localHost: server?.url.host, localRunning: localRunning ?? (server?.state == .running))
         var wanted: [String: URL] = [:]
         for url in urls { if let host = url.host, hosts.contains(host), wanted[host] == nil { wanted[host] = url } }
+        // once a launch, before any worker starts: the caches go to the Download location (its default the first time)
+        if lastLocation == nil {
+            lastLocation = .some(DownloadLocation.path())
+            DownloadLocation.settleInBackground { [weak self] in self?.locationMoved() }
+        }
         runners.sync(wanted, token: { DeviceVault.token(for: $0) })
     }
 

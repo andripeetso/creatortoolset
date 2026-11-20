@@ -346,6 +346,15 @@ func cField<T>(_ field: T) -> String {
     withUnsafeBytes(of: field) { raw in String(cString: raw.bindMemory(to: CChar.self).baseAddress!) }
 }
 
+/// Whether a mounted volume's device is inside this Mac (Disk Arbitration, as volumeUUID: never asking the volume); nil
+/// when it can't say.
+func volumeIsInternal(at mountPoint: String) -> Bool? {
+    guard let session = diskSession,
+          let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, URL(fileURLWithPath: mountPoint, isDirectory: true) as CFURL),
+          let info = DADiskCopyDescription(disk) as? [CFString: Any] else { return nil }
+    return info[kDADiskDescriptionDeviceInternalKey] as? Bool
+}
+
 /// Every mounted file system as the kernel has it, without asking any of them (MNT_NOWAIT: a dead share's numbers are
 /// its last ones, and the call never waits for its server).
 func mountedFileSystems() -> [statfs] {
@@ -473,5 +482,6 @@ func machineReport() -> [String: Any] {
     var load = [Double](repeating: 0, count: 3)
     if getloadavg(&load, 3) > 0 { out["load"] = min(1, (load[0] / Double(max(1, info.processorCount)) * 1000).rounded() / 1000) }
     out["disks"] = DiskCache.shared.current()
+    out["cacheFolder"] = CacheFolder.path() ?? ""   // "" (none): the server forgets one whose disk went
     return out
 }

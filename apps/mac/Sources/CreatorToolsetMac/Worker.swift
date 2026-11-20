@@ -121,7 +121,7 @@ final class Worker: ObservableObject {
     @discardableResult
     func start(server: URL, token: String, data: URL, thisMac: Bool,
                plugins: [String: String] = pluginEnvironment(approved: PluginRecord.live.load(), paused: UserDefaults.standard.bool(forKey: pluginsPausedKey))) -> Bool {
-        guard !thisMac, !needsUpdate, let folder, let program else { return isRunning }
+        guard !thisMac, !needsUpdate, !DownloadLocation.isMoving, let folder, let program else { return isRunning }
         if let old = process {
             guard isSilent, replacing == nil else { return true }
             AppLog.write("worker: pid \(old.processIdentifier) said nothing for \(Int(silentAfter)) s, replacing it")
@@ -140,7 +140,7 @@ final class Worker: ObservableObject {
         p.currentDirectoryURL = folder
         p.environment = workerEnvironment(server: server, token: token, data: data, folder: folder,
                                           inherited: ProcessInfo.processInfo.environment, plugins: plugins,
-                                          release: releaseEnv(Bundle.main.infoDictionary), proxyDir: DownloadLocation.path())
+                                          release: releaseEnv(Bundle.main.infoDictionary), proxyDir: ProxyCache.workerDir(server: server))
         // stdin stays open while the app runs (CT_EXIT_WITH_PARENT); stdout carries the status lines
         let stdin = Pipe(), output = Pipe()
         p.standardInput = stdin

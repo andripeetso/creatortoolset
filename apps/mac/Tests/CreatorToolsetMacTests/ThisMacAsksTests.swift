@@ -17,6 +17,17 @@ final class ThisMacAsksTests: XCTestCase {
         XCTAssertFalse(thisMacAsks.contains("ai:on"))
     }
 
+    /// Every Settings → Storage ask the page sends (thisMac.ts thisMacCall) is one this app takes: one missing is answered
+    /// as off, and its row never shows (the Download location's did not, from 11-18 to 11-20).
+    func testEveryStorageAskOfThePageIsTaken() throws {
+        let page = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../captions/src/lib/thisMac.ts")
+        let text = try String(contentsOf: page, encoding: .utf8)
+        let asks = try NSRegularExpression(pattern: #"thisMacCall<[^\n]*?>\("([^"]+)"\)"#)
+            .matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { Range($0.range(at: 1), in: text).map { String(text[$0]) } }
+        XCTAssertEqual(Set(asks), ["download:location", "download:choose", "download:show", "cache:location", "cache:choose", "cache:show"])
+        for ask in asks { XCTAssertTrue(thisMacAsks.contains(ask), ask) }
+    }
+
     func testThePageMayAskToInstallOnlyTheFourAIsAndReadsTheInstallersAnswer() {
         XCTAssertEqual(aiInstallAsk("ai-install:gemini"), "gemini")
         XCTAssertEqual(aiInstallAsk("ai-install:antigravity"), "antigravity")

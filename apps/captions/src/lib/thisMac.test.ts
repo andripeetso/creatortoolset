@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setCurrentWorkspace } from "./current-workspace";
-import { allowOtherDevices, chooseDownloadFolderOnMac, droppedOnMac, installInMacAi, onThisMac, pathOnMac } from "./thisMac";
+import { allowOtherDevices, cacheFolder, chooseCacheFolder, droppedOnMac, installInMacAi, onThisMac, pathOnMac } from "./thisMac";
 
 const bridgeWith = (postMessage: (m: string) => Promise<unknown>) => vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage } } } });
 
@@ -130,15 +130,15 @@ describe("a call that needs a Mac of the person's own", () => {
   });
 });
 
-it("asks this Mac for the download folder and answers its path, or null when cancelled", async () => {
+it("asks this Mac for its Cache folder and answers its path, none, or nothing in a browser", async () => {
   const asked: string[] = [];
-  bridgeWith(async (m) => (asked.push(m), { path: "/Volumes/WinningFriends/Downloads" }));
-  expect(await chooseDownloadFolderOnMac()).toBe("/Volumes/WinningFriends/Downloads");
-  expect(asked).toEqual(["download-folder"]);
-  bridgeWith(async () => ({ path: null }));
-  expect(await chooseDownloadFolderOnMac()).toBeNull();
+  bridgeWith(async (m) => (asked.push(m), { path: "/Volumes/SSD/Creator Toolset Cache" }));
+  expect(await cacheFolder()).toEqual({ path: "/Volumes/SSD/Creator Toolset Cache" });
+  bridgeWith(async (m) => (asked.push(m), { path: null }));
+  expect(await chooseCacheFolder()).toEqual({ path: null });
+  expect(asked).toEqual(["cache:location", "cache:choose"]);
   vi.stubGlobal("window", {});
-  expect(await chooseDownloadFolderOnMac()).toBeUndefined();
+  expect(await cacheFolder()).toBeNull();
 });
 
 it("a chat's drop tells the Mac app the workspace it was made in, so the AI Editor copies it in only for that workspace", async () => {

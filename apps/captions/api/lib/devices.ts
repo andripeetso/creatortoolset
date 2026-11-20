@@ -322,6 +322,9 @@ export function saveReport(id: string, r: MacReport, version?: string): void {
   // ponytail: an empty list from the only reporter keeps the old disks; add an explicit clear when a Mac really loses them all.
   const kept = d.report?.machine?.disks;
   if (r.machine && kept && !r.machine.disks) r.machine = { ...r.machine, disks: kept };
+  // only the Mac app knows its Cache folder: the editor worker's report keeps it
+  const cache = d.report?.machine?.cacheFolder;
+  if (r.machine && cache !== undefined && r.machine.cacheFolder === undefined) r.machine = { ...r.machine, cacheFolder: cache };
   // a CLI installed, signed in or on another plan is a change setup shows, and so is the app's new version; the machine's
   // load in each report is not
   const drivers = (x: MacReport | undefined) => JSON.stringify(x?.drivers ?? []);
@@ -354,13 +357,13 @@ export function noteMachine(id: string, m: Machine): void {
 }
 
 /**
- * The device as `viewer` may see it: a Mac it does not own shows no disks. The team's AI worker (owner "workspace") keeps
+ * The device as `viewer` may see it: a Mac it does not own shows no disks and no Cache folder. The team's AI worker (owner "workspace") keeps
  * its disks: only admins are sent it (devices.ts, providers.ts), and Storage and Network storage need them.
  */
 export function forViewer(viewer: string, d: Device): Device {
   const r = d.report;
-  if (d.owner === viewer || d.owner === "workspace" || !r?.machine?.disks) return d;
-  return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined } } };
+  if (d.owner === viewer || d.owner === "workspace" || !r?.machine || (!r.machine.disks && r.machine.cacheFolder === undefined)) return d;
+  return { ...d, report: { ...r, machine: { ...r.machine, disks: undefined, cacheFolder: undefined } } };
 }
 
 const shortHost = (h: string) => h.toLowerCase().replace(/\.local$/, "");
