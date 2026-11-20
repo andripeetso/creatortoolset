@@ -60,7 +60,9 @@ const MAX_TITLE = 120;
 
 /** The model's answer as a title: its first line, without quotes or a closing full stop; "" when there is none. */
 export function cleanTitle(raw: string): string {
-  const line = (raw.trim().split(/\r?\n/)[0] ?? "")
+  // a lead-in line ("Here's a title:") is passed over for the line after it
+  const lines = raw.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const line = ((lines.length > 1 && lines[0]!.endsWith(":") ? lines[1] : lines[0]) ?? "")
     .replace(/^title:\s*/i, "")
     .replace(/^["'`“”‘’*]+|["'`“”‘’*.]+$/g, "")
     .replace(/\s+/g, " ")

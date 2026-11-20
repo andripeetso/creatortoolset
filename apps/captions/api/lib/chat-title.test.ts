@@ -5,6 +5,7 @@ describe("chat titles", () => {
   it("keeps the first line without quotes, labels or a full stop", () => {
     expect(cleanTitle('"Edit the apology video."\nBecause the project is open')).toBe("Edit the apology video");
     expect(cleanTitle("Title: Floor time reel")).toBe("Floor time reel");
+    expect(cleanTitle("Here's a title:\n\nFloor time reel")).toBe("Floor time reel");
     expect(cleanTitle("  New chat ")).toBe("");
     expect(cleanTitle("")).toBe("");
     expect(cleanTitle("x".repeat(200))).toHaveLength(120);

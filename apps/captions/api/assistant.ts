@@ -2040,7 +2040,7 @@ async function sendTurn(c: Context<{ Variables: AuthVars }>, chatId?: string) {
   const reply: AssistantMessage = { id: randomUUID(), role: "assistant", text: "", at: now + 1, status: "thinking" };
   chat.messages.push(asked, reply);
   // tests take the Mac's requests in order: a name's request is only made in one that asks for it
-  if (!old && chat.title === undefined && chat.id && (process.env.NODE_ENV !== "test" || process.env.CHAT_NAMES)) {
+  if (chat.messages.length === 2 && chat.title === undefined && chat.id && (process.env.NODE_ENV !== "test" || process.env.CHAT_NAMES)) {
     const attachments = [...files.map((f) => f.name), ...input.paths, ...input.local, ...input.images.map((im) => im.name)];
     void nameChat(u, chat.id, { text: input.text, project: project?.name, page: input.context?.title, visible: input.context?.visible, quote: input.context?.selection, attachments }, chat.ai);
   }
