@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 const KEY = "ct-nle-layout";
 type Sizes = { media: number; inspector: number; top: number };
-const START: Sizes = { media: 260, inspector: 300, top: 0.5 };
+const START: Sizes = { media: 260, inspector: 340, top: 0.5 };
 const LIMIT = { media: [180, 520], inspector: [240, 520], top: [0.22, 0.8] } as const;
 const clamp = (k: keyof Sizes, v: number) => Math.min(LIMIT[k][1], Math.max(LIMIT[k][0], v));
 

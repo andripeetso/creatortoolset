@@ -7,6 +7,7 @@ import {
   EMPTY_PENDING,
   freshHist,
   histChange,
+  histGo,
   histRedo,
   histUndo,
   layOn,
@@ -166,5 +167,17 @@ describe("the panel's gate", () => {
     const base = { version: { n: 2, timeline: true }, composer: null } as unknown as ReviewSlotContext;
     expect(ReviewEdits({ ...base, version: { n: 2, timeline: true } } as unknown as ReviewSlotContext)).not.toBeNull();
     expect(ReviewEdits({ ...base, version: { n: 2, timeline: false, edit: { project: "p", draft: "d" } } } as unknown as ReviewSlotContext)).toBeNull();
+  });
+});
+
+describe("histGo", () => {
+  it("goes back or on to a place in the list, the later steps kept as redo", () => {
+    let h = freshHist(0);
+    for (const n of [1, 2, 3]) h = histChange(h, () => n, `to ${n}`);
+    const back = histGo(h, 1);
+    expect([back.past, back.now, back.future, back.labels]).toEqual([[0], 1, [2, 3], [undefined, "to 1", "to 2", "to 3"]]);
+    expect(histGo(back, 3).now).toBe(3);
+    expect(histGo(back, 9).now).toBe(3);
+    expect(histGo(back, 1)).toBe(back);
   });
 });

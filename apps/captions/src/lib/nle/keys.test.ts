@@ -55,4 +55,11 @@ describe("source viewer and loop keys", () => {
     expect(keyAction(k("/", "Slash", { meta: true }))).toBe("loop");
     expect(keyAction(k("/", "Slash"))).toBeNull();
   });
+
+  it("M marker, ⇧↑ ⇧↓ previous and next marker, ⌘T cross dissolve", () => {
+    expect(keyAction(k("m", "KeyM"))).toBe("addMarker");
+    expect(keyAction(k("ArrowUp", "ArrowUp", { shift: true }))).toBe("prevMarker");
+    expect(keyAction(k("ArrowDown", "ArrowDown", { shift: true }))).toBe("nextMarker");
+    expect(keyAction(k("t", "KeyT", { meta: true }))).toBe("addDissolve");
+  });
 });

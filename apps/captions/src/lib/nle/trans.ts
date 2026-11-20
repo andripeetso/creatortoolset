@@ -2,11 +2,14 @@
 // starting at the cut, ending at it, or centred on it (an odd one has its extra frame after the cut). The earlier clip
 // plays past the cut on its tail and the later one before it on its head, so each needs those frames in its source.
 // The maths is the golden's (contracts/edj-golden.json `about`), which the studio engine computes the same way.
-import type { EdjTrans } from "@contracts/editor";
+import type { EdjTrans, TransType } from "@contracts/editor";
 import { find, fixTrans, handlesAt, isVideo, maxLen, setItems, withLinked, type NleItem, type NleTimeline } from "./model";
 
 // the room at a cut and the clamp live in model.ts, which every edit runs through
 export { fixTrans, handlesAt, maxLen };
+
+/** Resolve's names */
+export const TRANS_NAMES: Record<TransType, string> = { dissolve: "Cross Dissolve", dip_black: "Dip to Black", dip_white: "Dip to White", crossfade: "Cross Fade" };
 
 /** frames of the transition before / after the cut */
 export const transSpan = (t: Pick<EdjTrans, "len" | "at">) => {
