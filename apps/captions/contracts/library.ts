@@ -28,6 +28,10 @@ export interface AssetCard {
   description?: { text: string; source: "user" | "ai" };
   state: VersionState;
   capturedAt?: number;
+  /** when it came into the library (the list's Date added) */
+  addedAt?: number;
+  /** the current version's file size (the list's Size) */
+  bytes?: number;
   trashedAt?: number;
   /** a Review video (same id): Review owns its versions and its trash, so the library opens it there */
   review?: true;
@@ -57,6 +61,9 @@ export interface AssetCard {
 
 /** Frames in a clip's strip (`spriteUrl`), side by side; frame i shows the middle of the clip's i-th share (api/library/media/sprite.ts). */
 export const SPRITE_FRAMES = 20;
+/** A strip frame's longer side in pixels: each frame keeps the clip's own shape (an upright clip's frames stand upright). Strips made
+ *  before 2026-11-19 are 160 × 90 cuts; a card reads the frame shape from the picture itself (ClipCards.tsx useStrip). */
+export const SPRITE_SIDE = 256;
 
 export interface AssetDetail extends AssetCard {
   versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState }[];
@@ -122,7 +129,7 @@ export interface SearchQuery {
   limit?: number; // limit ≤ 200
 }
 
-export type LibrarySort = "new" | "old" | "name" | "name-za" | "longest" | "shortest" | "filmed" | "filmed-old";
+export type LibrarySort = "new" | "old" | "name" | "name-za" | "longest" | "shortest" | "filmed" | "filmed-old" | "biggest" | "smallest" | "kind" | "kind-za";
 
 /** GET /api/library/:id/tags */
 export interface TagCount {
@@ -805,12 +812,12 @@ export const LIBRARY_WORDS = {
   analysisStep: "Analysis and organization",
   folderInMacApp: "Folders are added in the Mac app.",
   downloadMacApp: "Download the Mac app",
-  smartFoldersStatus: "Clips filed into folders by what they show.",
+  smartFoldersStatus: "Clips filed into a folder for each shoot.",
   organizeYourselfStatus: "Every clip in one list, newest first.",
   defaultFolders: { label: "Use default folders", tip: "Source media, Project files and Final exports are made in ~/Movies/Creator Toolset/<workspace>." },
   notSet: "Not set",
   organizationTitle: "Organization",
-  smartFolders: { label: "Smart folders", tip: "Clips are filed into folders by what they show, and new clips are filed as they come in. Files on disk never move." },
+  smartFolders: { label: "Smart folders", tip: "Clips and photos are filed into a folder for each shoot, by the day and place they were filmed, as they come in. What they show becomes tags. Files on disk never move." },
   organizeYourself: { label: "Organize yourself", tip: "Every clip goes into one library. You make and fill the folders yourself." },
   proxyTitle: "Proxy workflow",
   generateProxies: { label: "Generate proxies for imported media", tip: "Creates smaller copies of your media files for faster uploads, playback and editing, and easier AI processing." },
@@ -844,8 +851,6 @@ export const LIBRARY_WORDS = {
   dropMedia: "Drop media here",
   chooseFiles: "Choose files",
   noClipsYet: "No clips yet",
-  analysisOff: "Analysis is Off",
-  smartFoldersOff: "Smart folders sort clips by their descriptions, so Analysis has to be on.",
   proxiesHostedOn: "On while proxies are hosted",
   recommended: "Recommended",
   budget: {
@@ -880,7 +885,7 @@ export const LIBRARY_WORDS = {
   downloading: "Downloading",
   downloadsTitle: "Downloads",
   setupCard: (workspace: string) => `Set up the Media Library for ${workspace} first`,
-  setupCardMember: "This Media Library isn't set up yet.",
+  setupCardMember: "This Media Library isn't set up yet: the workspace's owner sets it up.",
   setupButton: "Set up",
   downloadsCard: "This edit needs the files on your computer, and Automatic downloads is off. Turn it on?",
   downloadsButton: "Turn on",
@@ -909,7 +914,7 @@ export const LIBRARY_WORDS = {
  */
 export type ActionAsk =
   // an AI Editor job waits for the workspace's Project files (or Final exports) folder on `device` (api/devices-storage.ts
-  // ensureUseFolder); `path` is the default offered (libraryBase/<folder> on that computer). null: no computer of the
+  // ensureUseFolder; never made by itself, only by the person's tap); `path` is the default offered (libraryBase/<folder> on that computer). null: no computer of the
   // account's matched (`deviceName` is what it was called), and the card says so
   | { kind: "projects" | "exports"; workspace: string; workspaceName: string; device: string | null; deviceName?: string; path: string }
   | { kind: "downloads"; libraryId: string; workspace: string }
@@ -925,7 +930,9 @@ export type CardAction = {
   open?: string;
 };
 export type ActionNeeded = ActionAsk & { title: string; line: string; missing?: "computer"; actions: CardAction[] };
-export type FolderAsk = Extract<ActionNeeded, { kind: "projects" | "exports" }>;
+/** What an AI Editor job waits on for its Project files or Final exports folder: that folder's card, or the setup card
+ *  while the workspace's Media Library is not set up (ensureUseFolder). */
+export type FolderAsk = Extract<ActionNeeded, { kind: "projects" | "exports" | "setup" }>;
 /** The setup card's defaults (Quick setup), as the card shows them; POST /api/library/:id/setup/quick stores them. */
 export type QuickSetup = { base: string; importMode: "copy"; proxy: true; proxyQuality: "720p"; effort: "high"; organize: "smart"; hosted: HostedMix };
 export const quickSetup = (base: string): QuickSetup => ({ base, importMode: "copy", proxy: true, proxyQuality: "720p", effort: "high", organize: "smart", hosted: HOSTED_DEFAULT });

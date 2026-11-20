@@ -19,8 +19,8 @@ import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, 
 import { claimCutout, cutoutFailed, cutoutSent, cutoutWaits, heldCutout } from "./lib/cutouts";
 import { relayRoutes } from "./lib/mac-claude";
 import { aliasDevice } from "./library/whereis";
-import { indexForDevice, relayFolders } from "./library/report";
-import { parseOnMac } from "./library/on-mac";
+import { filmedForDevice, indexForDevice, relayFolders } from "./library/report";
+import { parseFilmed, parseOnMac } from "./library/on-mac";
 import { deviceOf, deviceForToken, forViewer, isOnline, listDevices, mintPairCode, moveProviders, pairDevice, pairWithCode, renameDevice, revokeDevice, setDeviceKinds, setDeviceWork, touchDevice } from "./lib/devices";
 import { clearTries, waitFor, wrongTry } from "./lib/sign-in-code";
 import { findUser } from "./users";
@@ -111,6 +111,19 @@ devicesApp.post("/relay/index", async (c) => {
   if (typeof x === "string" || typeof b?.folder !== "string") return c.json({ error: typeof x === "string" ? x : "folder" }, 400);
   const r = await indexForDevice(d, b.folder, x);
   return typeof r === "string" ? c.json({ error: r }, 400) : c.json(r);
+});
+
+/** POST /api/devices/relay/filmed {folder, path, size, capturedAt?, tz?, location?, camera, alpha?}: when and where a
+ *  known file of this computer's folder was filmed (library/report.ts filmedForDevice). */
+devicesApp.post("/relay/filmed", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const size = Number(b?.size);
+  if (typeof b?.folder !== "string" || typeof b.path !== "string" || !b.path.startsWith("/") || b.path.length > 2048 || !Number.isSafeInteger(size) || size <= 0)
+    return c.json({ error: "folder, path and size" }, 400);
+  const r = await filmedForDevice(d, b.folder, { ...parseFilmed(b), path: b.path, size });
+  return typeof r === "string" ? c.json({ error: r }, 400) : c.json({ versions: r });
 });
 
 devicesApp.post("/relay/editor/claim", async (c) => {

@@ -2,7 +2,13 @@ import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { SearchHit } from "@contracts/library";
 import { cn } from "@/lib/utils";
-import { clock, frameAt, frameStyle } from "./ClipCards";
+import { clock, frameAt, frameStyle, useStrip } from "./ClipCards";
+
+/** Frame `i` of a clip's strip in a 16:9 box, once the strip is here. */
+function HitFrame({ url, i }: { url: string; i: number }) {
+  const cell = useStrip(url);
+  return cell ? <span className="absolute inset-0" style={frameStyle(url, i, cell, 16 / 9)} /> : null;
+}
 
 const MAX_WORDS = 7;
 
@@ -46,7 +52,7 @@ export function FoundInClips({ hits, words, onOpen }: { hits: SearchHit[]; words
               >
                 <span className="relative aspect-video w-24 shrink-0 overflow-hidden rounded bg-zinc-500/15">
                   {sprite ? (
-                    <span className="absolute inset-0" style={frameStyle(sprite, frameAt((h.seconds ?? 0) / a.durationS!))} />
+                    <HitFrame url={sprite} i={frameAt((h.seconds ?? 0) / a.durationS!)} />
                   ) : (
                     a.thumbUrl && <img src={a.thumbUrl} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
                   )}

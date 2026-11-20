@@ -17,7 +17,11 @@ export interface ProbeSummary {
   vcodec: string;
   pixFmt: string;
   acodec: string;
-  capturedAt?: number; // ms, from the container's creation_time
+  capturedAt?: number; // ms, from the container's creation_time (a photo's EXIF DateTimeOriginal)
+  /** minutes east of UTC where it was filmed, when the file says (an iPhone's creation date, a photo's EXIF offset) */
+  tz?: number;
+  /** a photo's EXIF names the camera that made it (make or model): footage, never a graphic (shoots.ts isGraphic). Set by every probe of a file's own header */
+  camera?: boolean;
   timecode?: string; // start timecode "HH:MM:SS:FF" (";" before FF for drop frame), when the file carries one
   cover?: true; // the only picture is a cover (a song's album art): a still for the thumbnail, not video to describe
   song?: true; // sound only or under a cover, tagged with an artist or an album: a released track, not someone talking
@@ -50,6 +54,8 @@ export function parseProbe(json: { format?: Json; streams?: Json[]; stream_group
   const matrix = v?.side_data_list?.find((d: Json) => d.rotation !== undefined)?.rotation;
   const turn = matrix !== undefined ? -Number(matrix) : Number(v?.tags?.rotate ?? 0);
   const capturedAt = Date.parse(json.format?.tags?.creation_time ?? "");
+  // an iPhone's local creation date ("2026-11-12T14:03:22-0600"): only its offset is kept
+  const tz = offsetOf(/[+-]\d\d:?\d\d$/.exec(String(json.format?.tags?.["com.apple.quicktime.creationdate"] ?? ""))?.[0]);
   // only a string in the strict timecode shape is kept, never the tag object
   const timecode = [v?.tags?.timecode, json.format?.tags?.timecode, ...(json.streams ?? []).map((s) => s.tags?.timecode)].find(
     (t) => typeof t === "string" && TIMECODE.test(t),
@@ -65,6 +71,7 @@ export function parseProbe(json: { format?: Json; streams?: Json[]; stream_group
     pixFmt: String(v?.pix_fmt ?? ""),
     acodec: String(a?.codec_name ?? ""),
     ...(Number.isFinite(capturedAt) ? { capturedAt } : {}),
+    ...(tz !== undefined ? { tz } : {}),
     ...(timecode ? { timecode } : {}),
     ...(v && isCover(v) ? { cover: true as const } : {}),
     ...(a && (!v || isCover(v)) && Object.keys(json.format?.tags ?? {}).some((k) => /^(artist|album)$/i.test(k)) ? { song: true as const } : {}),
@@ -81,7 +88,21 @@ export const looksLikeSong = (title: string, p: ProbeSummary) => !!p.song || SON
 export async function probe(file: string): Promise<ProbeSummary> {
   // stream groups (a HEIC's tile grid) need ffprobe 7.1; an older one on PATH refuses the option and is asked without it
   const json = await ffprobe(file, ["-show_format", "-show_streams", "-show_stream_groups"]).catch(() => ffprobe(file, ["-show_format", "-show_streams"]));
-  return { ...parseProbe(json), country: (await countryOf(json)) || (await photoCountry(file)) };
+  const p = parseProbe(json);
+  const exif = await photoExif(file);
+  return {
+    ...p,
+    ...(p.capturedAt === undefined && exif.takenAt !== undefined ? { capturedAt: exif.takenAt, ...(exif.tz !== undefined ? { tz: exif.tz } : {}) } : {}),
+    camera: exif.camera,
+    country: (await countryOf(json)) || exif.country,
+  };
+}
+
+/** Minutes east of UTC from "+HH:MM", "-HHMM"; undefined when it is not one. */
+export function offsetOf(s: string | undefined): number | undefined {
+  const m = /^([+-])(\d\d):?(\d\d)$/.exec(s?.trim() ?? "");
+  const min = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : NaN;
+  return Math.abs(min) <= 14 * 60 ? min : undefined;
 }
 
 /** Whether `file` has a sound track; true when ffprobe can't say, so the file is treated as it was before the check. */
@@ -134,50 +155,79 @@ export async function countryOf(json: { format?: Json }): Promise<string> {
 /** How much of a photo's start is read for its EXIF: a JPEG's is at the top, an iPhone HEIC's ~95 KB in (after its thumbnail). */
 const EXIF_HEAD = 512 * 1024;
 
+/** What a photo's EXIF says (JPEG, HEIC): the country it was taken in ("" when it has no GPS), whether a camera made it, when. */
+export interface PhotoExif {
+  country: string;
+  camera: boolean;
+  takenAt?: number;
+  tz?: number;
+}
+
 /**
- * The country a photo was taken in, from its EXIF GPS (JPEG, HEIC); "" when it has none. ffprobe shows no EXIF.
+ * A photo's EXIF; nothing found when it has none. ffprobe shows no EXIF. The coordinates stay in here.
  * ponytail: looks for the TIFF block in the file's first 512 KB instead of following HEIC's item locations; walk `iloc` if a camera puts it further in
  */
-export async function photoCountry(file: string): Promise<string> {
+export async function photoExif(file: string): Promise<PhotoExif> {
+  const none: PhotoExif = { country: "", camera: false };
   const f = await open(file, "r").catch(() => null);
-  if (!f) return "";
+  if (!f) return none;
   const head = Buffer.alloc(EXIF_HEAD);
   const { bytesRead } = await f.read(head, 0, EXIF_HEAD, 0).finally(() => f.close());
   const b = head.subarray(0, bytesRead);
   for (const sig of [Buffer.from("MM\0*"), Buffer.from("II*\0")]) {
     for (let at = b.indexOf(sig); at >= 0; at = b.indexOf(sig, at + 1)) {
-      const at2 = exifGps(b, at);
-      if (at2) return countryAt(at2[0], at2[1]);
+      const x = exifOf(b, at);
+      if (x && (x.gps || x.camera || x.takenAt !== undefined))
+        return { country: x.gps ? await countryAt(x.gps[0], x.gps[1]) : "", camera: x.camera, ...(x.takenAt !== undefined ? { takenAt: x.takenAt } : {}), ...(x.tz !== undefined ? { tz: x.tz } : {}) };
     }
   }
-  return "";
+  return none;
 }
 
-/** Latitude and longitude from the TIFF block at `t`, or null when it is not one or has no GPS. */
-export function exifGps(b: Buffer, t: number): [number, number] | null {
+/** The TIFF block at `t`: its GPS, whether it names a camera (make or model), when it was taken (DateTimeOriginal); null when it is not one. */
+function exifOf(b: Buffer, t: number): { gps: [number, number] | null; camera: boolean; takenAt?: number; tz?: number } | null {
   const le = b[t] === 0x49;
   const u16 = (o: number) => (le ? b.readUInt16LE(t + o) : b.readUInt16BE(t + o));
   const u32 = (o: number) => (le ? b.readUInt32LE(t + o) : b.readUInt32BE(t + o));
   const fits = (o: number, n: number) => o >= 0 && t + o + n <= b.length;
   const entries = (ifd: number) => {
     if (!fits(ifd, 2)) return [];
-    return Array.from({ length: u16(ifd) }, (_, i) => ifd + 2 + i * 12).filter((e) => fits(e, 12)).map((e) => ({ tag: u16(e), value: e + 8 }));
+    return Array.from({ length: u16(ifd) }, (_, i) => ifd + 2 + i * 12).filter((e) => fits(e, 12)).map((e) => ({ tag: u16(e), count: u32(e + 4), value: e + 8 }));
+  };
+  // an ASCII value: in the entry when it fits in 4 bytes, else at its offset
+  const ascii = (e: { count: number; value: number } | undefined) => {
+    if (!e || e.count > 64) return "";
+    const o = e.count <= 4 ? e.value : u32(e.value);
+    return fits(o, e.count) ? b.subarray(t + o, t + o + e.count).toString("latin1").replace(/\0.*$/s, "").trim() : "";
   };
   if (!fits(0, 8)) return null;
-  const gps = entries(u32(4)).find((e) => e.tag === 0x8825);
-  if (!gps) return null;
-  const tags = new Map(entries(u32(gps.value)).map((e) => [e.tag, e.value]));
-  const angle = (tag: number) => {
-    const at = tags.get(tag);
-    const o = at === undefined ? -1 : u32(at);
-    if (!fits(o, 24)) return NaN;
-    const [d, m, s] = [0, 1, 2].map((i) => u32(o + i * 8) / u32(o + i * 8 + 4));
-    return d! + m! / 60 + s! / 3600;
+  const top = entries(u32(4));
+  const camera = top.some((e) => (e.tag === 0x010f || e.tag === 0x0110) && ascii(e) !== "");
+  const exif = top.find((e) => e.tag === 0x8769);
+  const sub = exif ? entries(u32(exif.value)) : [];
+  // "2026:11:12 14:03:22", the camera's own clock; with OffsetTimeOriginal ("-06:00") it is a moment, else this server's time zone reads it
+  const when = /^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/.exec(ascii(sub.find((e) => e.tag === 0x9003)));
+  const tz = offsetOf(ascii(sub.find((e) => e.tag === 0x9011)));
+  const [y, mo, d, h, mi, s] = when ? when.slice(1).map(Number) : [];
+  const local = when ? Date.UTC(y!, mo! - 1, d!, h!, mi!, s!) : NaN;
+  const takenAt = !Number.isFinite(local) || y! < 1990 ? undefined : tz !== undefined ? local - tz * 60_000 : new Date(y!, mo! - 1, d!, h!, mi!, s!).getTime();
+  const gps = (): [number, number] | null => {
+    const at = top.find((e) => e.tag === 0x8825);
+    if (!at) return null;
+    const tags = new Map(entries(u32(at.value)).map((e) => [e.tag, e.value]));
+    const angle = (tag: number) => {
+      const v = tags.get(tag);
+      const o = v === undefined ? -1 : u32(v);
+      if (!fits(o, 24)) return NaN;
+      const [dd, m, ss] = [0, 1, 2].map((i) => u32(o + i * 8) / u32(o + i * 8 + 4));
+      return dd! + m! / 60 + ss! / 3600;
+    };
+    const ref = (tag: number) => (tags.has(tag) ? String.fromCharCode(b[t + tags.get(tag)!]!) : "");
+    const lat = angle(2) * (ref(1) === "S" ? -1 : 1);
+    const lon = angle(4) * (ref(3) === "W" ? -1 : 1);
+    return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
   };
-  const ref = (tag: number) => (tags.has(tag) ? String.fromCharCode(b[t + tags.get(tag)!]!) : "");
-  const lat = angle(2) * (ref(1) === "S" ? -1 : 1);
-  const lon = angle(4) * (ref(3) === "W" ? -1 : 1);
-  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
+  return { gps: gps(), camera, ...(takenAt !== undefined ? { takenAt, ...(tz !== undefined ? { tz } : {}) } : {}) };
 }
 
 type Country = [code: string, box: [west: number, south: number, east: number, north: number], polygons: number[][][]];
@@ -240,7 +290,7 @@ export async function placeUnplaced(db = libraryDb()): Promise<number> {
         const file = await blobs.localCopy(r.source_key).catch(() => null);
         const json = file && (await ffprobe(file, ["-show_entries", `format_tags=${LOCATION_TAGS.join(",")}`]).catch(() => null));
         if (!json) continue;
-        db.prepare("UPDATE asset_versions SET probe = json_set(probe, '$.country', ?) WHERE id = ?").run((await countryOf(json)) || (await photoCountry(file)), r.id);
+        db.prepare("UPDATE asset_versions SET probe = json_set(probe, '$.country', ?) WHERE id = ?").run((await countryOf(json)) || (await photoExif(file)).country, r.id);
         touched.add(r.library_id);
         n++;
       }

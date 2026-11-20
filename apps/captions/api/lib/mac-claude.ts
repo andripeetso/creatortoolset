@@ -699,7 +699,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     noteMachineId(device, b.machineId);
     const d = deviceRecord(device);
     const { applyReport, parseReportFolders } = await import("../library/report");
-    return c.json(d ? await applyReport(d, parseReportFolders(b.folders)) : { ok: true, index: [] });
+    return c.json(d ? await applyReport(d, parseReportFolders(b.folders), Date.now(), b.filmed === true) : { ok: true, index: [] });
   });
 
   return app;

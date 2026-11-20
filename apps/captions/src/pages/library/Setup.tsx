@@ -354,8 +354,7 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
       doing = "Saving the setup";
       const settings: Partial<LibrarySettings> = {
         importMode: a.copy ? "copy" : "in-place",
-        // Smart folders need Analysis: with it off the answer is Organize yourself, kept as chosen while the pick is off
-        organize: a.effort === "off" ? "own" : a.organize,
+        organize: a.organize,
         proxy: a.proxy || proxiesHosted(a),
         proxyQuality: a.proxyQuality,
         ...flagsOf(a.effort),
@@ -581,10 +580,9 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
             <div role="radiogroup" aria-label={LIBRARY_WORDS.organizationTitle} className="space-y-2">
               <Pick
                 on={a.organize === "ai"}
-                disabled={a.effort === "off"}
                 label={LIBRARY_WORDS.smartFolders.label}
                 tip={LIBRARY_WORDS.smartFolders.tip}
-                status={a.effort === "off" ? LIBRARY_WORDS.analysisOff : LIBRARY_WORDS.smartFoldersStatus}
+                status={LIBRARY_WORDS.smartFoldersStatus}
                 art={<OrganizeArt smart />}
                 onPick={() => set({ organize: "ai" })}
               />

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Camera, FileText, Film, Folder, Loader2, Paperclip, Quote, X } from "lucide-react";
+import { Camera, Clapperboard, FileText, Film, Folder, Loader2, Paperclip, Quote, X } from "lucide-react";
 import { ICON_BTN, MicButton, SendButton, VoiceDone, VoiceError, VoiceStatus, boxClass, useChatVoice } from "@/components/chat/MessageBox";
 import { attachScreen } from "@/lib/assistant";
 import { canSnapshot } from "@/lib/page-context";
@@ -118,8 +118,29 @@ export function Composer({
         </div>
       )}
 
-      {(draft.images.length > 0 || draft.pasted.length > 0 || draft.files.length > 0 || draft.folders.length > 0) && (
+      {(draft.images.length > 0 || draft.pasted.length > 0 || draft.files.length > 0 || draft.folders.length > 0 || draft.clips.length > 0) && (
         <div className="flex flex-wrap gap-2 px-1 pt-1.5">
+          {/* a clip dragged in from the Media Library: it goes by its id, nothing uploads */}
+          {draft.clips.map((k) => (
+            <div key={k.versionId} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={k.title}>
+              <div className="flex h-14 max-w-52 items-center gap-2 rounded-lg border bg-muted pl-1 pr-2.5 text-[11px]">
+                {k.thumbUrl ? (
+                  <img src={k.thumbUrl} alt="" className="size-12 shrink-0 rounded-md object-cover" />
+                ) : (
+                  <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-background">
+                    <Clapperboard className="size-4 text-[var(--tint)]" aria-hidden />
+                  </span>
+                )}
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{k.title}</span>
+                  <span className="block text-muted-foreground">Media Library</span>
+                </span>
+              </div>
+              <button type="button" onClick={() => setDraft((d) => ({ ...d, clips: d.clips.filter((x) => x.versionId !== k.versionId) }))} className={chipX} aria-label={`Remove ${k.title}`}>
+                <X className="size-3" />
+              </button>
+            </div>
+          ))}
           {/* a folder dropped in the Mac app: its path goes with the message */}
           {draft.folders.map((p) => (
             <div key={p} className="group/chip relative motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95" title={p}>

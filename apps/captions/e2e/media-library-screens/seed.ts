@@ -2,7 +2,7 @@
 // member, one library with no setupAt (the setup dialog opens itself), and one set up with a few synthetic clips.
 // Run by run.mjs with SEED_DATA_DIR set: `npx vite-node e2e/media-library-screens/seed.ts`. Never touches real footage.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -55,12 +55,14 @@ if (!d.prepare("SELECT 1 FROM assets WHERE id = 'ast_clip1'").get()) {
   execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=4:size=360x640:rate=30", "-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", fixture]);
   for (const n of [1, 2, 3]) {
     const key = `libraries/lib_ready/v/ver_clip${n}/source`;
-    const p = await probe(fixture);
+    // the list's columns read these (11-19): added n days ago, filmed (takes 1 and 2) a week before that, the file's size
+    const added = now - n * 86_400_000;
+    const p = { ...(await probe(fixture)), ...(n < 3 ? { capturedAt: added - 7 * 86_400_000 } : {}) };
     const put = path.join(data, `put${n}.mp4`);
     copyFileSync(fixture, put);
     await blobs.put(key, put);
-    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_ready', 'video', ?, ?, ?, 0)").run(`ast_clip${n}`, `Tiny Acrobatics take ${n}`, `ver_clip${n}`, OWNER.username);
-    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at) VALUES (?, ?, 1, ?, 1, ?, 'video/mp4', ?, 'ready', ?, 0)").run(`ver_clip${n}`, `ast_clip${n}`, key, `sha-clip-${n}`, JSON.stringify(p), OWNER.username);
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_ready', 'video', ?, ?, ?, ?)").run(`ast_clip${n}`, `Tiny Acrobatics take ${n}`, `ver_clip${n}`, OWNER.username, added);
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, mime, probe, state, created_by, created_at) VALUES (?, ?, 1, ?, ?, ?, 'video/mp4', ?, 'ready', ?, ?)").run(`ver_clip${n}`, `ast_clip${n}`, key, statSync(fixture).size * 40, `sha-clip-${n}`, JSON.stringify(p), OWNER.username, added);
     indexAsset(d, `ast_clip${n}`);
   }
 }

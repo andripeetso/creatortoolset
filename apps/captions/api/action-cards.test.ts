@@ -71,10 +71,16 @@ function workspace(owner: string, id: string, name: string) {
   writeFileSync(path.join(process.env.DATA_DIR!, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner, name, audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt: 1 }));
 }
 
+/** A workspace whose Media Library is set up (its setupAt): a folder card, not the setup card, is what an edit waits on. */
+function setUp(owner: string, id: string) {
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'Library', 'local', ?, 0)").run(`lib_${id.replace(/-/g, "_")}`, owner, JSON.stringify({ projectId: id, setupAt: "2026-11-19T08:00:00.000Z" }));
+}
+
 describe("the Project files card", () => {
   it("use_default makes the row on its computer, the card goes on the change stream, and the job's claim finds the folder", async () => {
     const p = await person("ana");
     workspace("ana", "ws-ana", "Tiny Acrobatics");
+    setUp("ana", "ws-ana");
     const r = await ensureUseFolder("ana", "ws-ana", "projects", p.mac);
     if (!("wait" in r)) throw new Error("expected a card");
     expect(r.wait).toMatchObject({ title: "Project files folder for Tiny Acrobatics", device: p.mac });
@@ -95,6 +101,8 @@ describe("the Project files card", () => {
     const p = await person("bea");
     workspace("bea", "ws-bea", "Bea Studio");
     workspace("bea", "ws-bea2", "Second");
+    setUp("bea", "ws-bea");
+    setUp("bea", "ws-bea2");
     const one = await ensureUseFolder("bea", "ws-bea", "projects", p.mac);
     const two = await ensureUseFolder("bea", "ws-bea2", "projects", p.mac);
     const a = await p.asked("edit one", (one as { wait: Card }).wait);
@@ -113,6 +121,7 @@ describe("the Project files card", () => {
   it("a computer nothing matches says so, offers only Retry, and Retry finds it once it is paired", async () => {
     const p = await person("cal");
     workspace("cal", "ws-cal", "Cal");
+    setUp("cal", "ws-cal");
     const r = await ensureUseFolder("cal", "ws-cal", "projects", "Studio-Mini.local");
     if (!("wait" in r)) throw new Error("expected a card");
     expect(r.wait).toMatchObject({ missing: "computer", device: null, line: cantFind("Studio-Mini.local") });

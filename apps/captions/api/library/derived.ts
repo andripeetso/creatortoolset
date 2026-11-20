@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { libraryChanged } from "./access";
 import { blobs, keepsOnlyOriginals, libraryDb } from "./db";
 import { hostsOriginals, hostsProxies } from "../../contracts/library";
 import { uploadFor } from "./upload-gate";
 import { enqueueJob } from "./jobs";
 import { countryOf, type ProbeSummary } from "./media/probe";
+import { noteStrip } from "./media/sprite";
 import { kindOf, recordVersion } from "./routes";
 import { afterProbe, dropOriginal, markReady } from "./worker";
 
@@ -61,8 +63,10 @@ export async function recordDerived(versionId: string, x: Derived, actor: string
       continue;
     }
     const key = `${base}/${NAMES[name]}`;
+    const strip = name === "sprite" ? await readFile(file) : null; // read before the put, which may move the file
     const { bytes } = await blobs.put(key, file);
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, name, key, bytes);
+    if (strip) noteStrip(db, v.id, strip);
   }
   // only the proxy came: it is all this server keeps of the file (as once dropOriginal let an uploaded original go)
   if (v.source_key.startsWith("mac:") && x.files.proxy && !noProxy) {

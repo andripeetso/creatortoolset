@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AuthVars } from "../auth";
-import type { LibraryViewer } from "../../contracts/library-source";
+import type { LibrarySource, LibraryViewer } from "../../contracts/library-source";
 import { derivedMove, joinRoot, PLACES_MAX, rootKey, type GoneVersion, type PathMove, type PlaceMove, type PlaceOn, type PlacesAnswer, type PlacesReportAnswer, type RootLabel, type VersionPlaces } from "../../contracts/places";
 import type { Device } from "../../contracts/providers";
 import type { Disk, StorageFolder } from "../../contracts/storage";
@@ -10,7 +10,8 @@ import { libraryChanged } from "./access";
 import { libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { readerOf } from "./reader";
-import { assetRef, canSee } from "./sources";
+import { externalCanSee, externalRefById } from "./refs";
+import { assetRef, canSee, sourceById } from "./sources";
 
 /**
  * Here or away (contracts/places.ts): where each computer reads a version's original. The version keeps its root and root
@@ -304,8 +305,34 @@ placesApp.get("/:id/places", async (c) => {
     };
     out.versions[v.id] = answer;
   }
+  Object.assign(out.versions, await sourcePlaces(a.libraryId, a.viewer, c.req.raw, ids));
   return c.json(out);
 });
+
+/**
+ * The ids among `ids` that are a source's items (ext_ refs the viewer may see): the paths to try come from the source
+ * itself (LibrarySource.places), checked as the routes check a computer's paths. Nothing is kept here: a computer's
+ * report on one of them is refused (versionsOf finds no version).
+ */
+async function sourcePlaces(libraryId: string, viewer: LibraryViewer, req: Request, ids: string[]): Promise<Record<string, VersionPlaces>> {
+  const asked = new Map<LibrarySource, Map<string, string>>();
+  for (const id of ids) {
+    const ref = id.startsWith("ext_") ? externalRefById(id) : null;
+    const source = ref ? sourceById(ref.source) : undefined;
+    if (!ref || !source?.places || !(await externalCanSee(viewer, ref, libraryId))) continue;
+    asked.set(source, (asked.get(source) ?? new Map<string, string>()).set(ref.externalId, ref.id));
+  }
+  const out: Record<string, VersionPlaces> = {};
+  for (const [source, refs] of asked) {
+    const got = await source.places!(viewer, req, [...refs.keys()]).catch(() => ({}));
+    for (const [ext, p] of Object.entries(got)) {
+      const id = refs.get(ext);
+      if (id && Array.isArray(p?.tries) && p.tries.every(isPath) && Number.isSafeInteger(p.bytes) && p.bytes > 0)
+        out[id] = { tries: p.tries, bytes: p.bytes, quick: null, proxy: null };
+    }
+  }
+  return out;
+}
 
 /** POST /api/library/:id/places PlacesReport → PlacesReportAnswer (confirmPlaces). At most PLACES_MAX of each list. */
 placesApp.post("/:id/places", async (c) => {

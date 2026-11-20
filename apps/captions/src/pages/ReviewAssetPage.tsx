@@ -659,9 +659,13 @@ function Review({
     if (needName()) return;
     if (guest) setReviewerName(name.trim());
     const was = asset.approval.status;
+    // a cut with unblurred faces: its owner says so first (the server refuses anyone else)
+    const top = asset.versions.at(-1);
+    const asFilmed = status === "approved" && !!top?.notBlurred && !top.approvedAsFilmed && view.user === asset.owner;
+    if (asFilmed && !(await confirmDialog({ title: "The faces in this cut aren't blurred. Approve it as filmed?", ok: "Approve as filmed" }))) return;
     const put = async (to: Approval) => {
-      const a = await api.approve(to, guest ? name.trim() : undefined);
-      setView((v) => (v ? { ...v, asset: { ...v.asset, approval: a.approval } } : v));
+      const a = await api.approve(to, guest ? name.trim() : undefined, asFilmed && to === "approved");
+      setView((v) => (v ? { ...v, asset: { ...v.asset, approval: a.approval, versions: a.versions } } : v));
     };
     await put(status);
     // a reviewer on a share link may only approve or ask for changes, so there is no way back for them to take
@@ -1415,6 +1419,7 @@ function Header({
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{v.name}</span>
               {v.captioned && <CC />}
               {v.removed && <span className="text-[10px] text-zinc-500" title="Video deleted to save space">No file</span>}
+              {v.notBlurred && <span className="text-[10px] text-amber-300">Not blurred yet</span>}
               <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
                 <MessageSquare className="h-3 w-3" />
                 {comments.filter((c) => c.version === v.n && !c.parentId).length}
@@ -1430,6 +1435,16 @@ function Header({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {version.notBlurred && (
+        <span
+          title={version.approvedAsFilmed
+            ? `Approved as filmed by ${version.approvedAsFilmed.by}, ${new Date(version.approvedAsFilmed.at).toLocaleString()}`
+            : "This cut uses clips that aren't blurred yet: the faces show as filmed"}
+          className="rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-300"
+        >
+          Not blurred yet{version.approvedAsFilmed ? " · approved as filmed" : ""}
+        </span>
+      )}
       {asset.versions.filter((v) => v.status === "ready" && !v.removed).length > 1 && (
         <button
           onClick={onCompare}
@@ -1493,7 +1508,7 @@ function Header({
       {error && <span className="text-xs text-red-400">{error}</span>}
 
       <div className="ml-auto flex items-center gap-2">
-        <ApprovalControl asset={asset} manage={manage} locked={locked} approve={approve} />
+        <ApprovalControl asset={asset} manage={manage} locked={locked} approve={(s) => approve(s).catch((e) => setError((e as Error).message))} />
         {version.local && MAC_PATH.test(version.local) && canReveal() && version.status !== "error" ? (
           // made on a computer: its own file, shown in Finder when it is on this Mac (else Review's copy downloads)
           <button
@@ -1520,6 +1535,13 @@ function Header({
             <Download className="h-4 w-4" />
           </a>
         )}
+        {manage && version.status !== "error" && !version.removed && (version.edit || version.draft) && (
+          // a version an AI Editor cut: its timeline, to edit by hand (the chat sees what is changed there)
+          <Button asChild size="sm" variant="outline" className="h-7 border-zinc-800 bg-transparent text-xs" title="Open this version's timeline in the Editor">
+            <Link to={version.edit ? `/editor/${encodeURIComponent(version.edit.project)}/${encodeURIComponent(version.edit.draft)}`
+              : `/editor/${encodeURIComponent(version.draft!.edit)}/${encodeURIComponent(version.draft!.name)}`}>Open in Editor</Link>
+          </Button>
+        )}
         {manage && version.status !== "error" && !version.removed &&
           (version.captioned ? (
             <CaptionedPair asset={asset} n={n} />
@@ -1531,6 +1553,7 @@ function Header({
             share={asset.share}
             url={asset.share ? shareUrl(asset.share.token) : ""}
             what="every version"
+            warning={asset.share?.enabled && asset.versions.some((v) => v.notBlurred && !v.removed) ? "This link shows a cut whose faces aren't blurred yet" : undefined}
             update={async (share) => setAsset(await patchReviewAsset(asset.id, { share }))}
           />
         )}

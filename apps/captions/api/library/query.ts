@@ -35,6 +35,10 @@ export const SORTS: Record<LibrarySort, { key: string; desc: boolean; text?: tru
   shortest: { key: `COALESCE(NULLIF(${LENGTH}, 0), 1e15)`, desc: false },
   filmed: { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: true },
   "filmed-old": { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: false },
+  biggest: { key: "v.bytes", desc: true },
+  smallest: { key: "v.bytes", desc: false },
+  kind: { key: "a.kind", desc: false, text: true },
+  "kind-za": { key: "a.kind", desc: true, text: true },
 };
 
 /** FTS5 query: each word quoted as a prefix match, words ANDed. Null when there are no words. */
@@ -111,10 +115,11 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
   };
 }
 
-export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at,
+export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at, v.bytes AS bytes,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
+  (SELECT d.cell_w || 'x' || d.cell_h FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS sprite_cell,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
   ${SHOWN("v.id")} AS description, CASE WHEN ${FINISHED} THEN NULL ELSE a.roll END AS roll, ${FINISHED} AS finished, COALESCE(v.source_path, v.mac_path, v.from_path) IS NOT NULL AS in_place, v.mac_path AS mac_path, v.mac_device AS mac_device,
@@ -129,6 +134,7 @@ export interface CardRow {
   kind: AssetKind;
   title: string;
   created_at: number;
+  bytes?: number | null;
   trashed_at: number | null;
   version_id: string;
   version_n: number;
@@ -136,6 +142,8 @@ export interface CardRow {
   probe: string | null;
   has_thumb: number;
   has_sprite?: number;
+  /** the strip's frame size as "WxH" (media/sprite.ts noteStrip), null for an old strip */
+  sprite_cell?: string | null;
   tags: string | null;
   ai_tags: string | null;
   description: string | null;
@@ -267,6 +275,11 @@ export function macPlace(macPath: string, device: string | null): string {
   return (device && deviceOf(device)?.name) || "Mac";
 }
 
+const query = (q: Record<string, string | number | undefined>) => {
+  const s = Object.entries(q).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}=${v}`).join("&");
+  return s ? `?${s}` : "";
+};
+
 /** A row as the browser sees it. The probe is read field by field: GPS and other tags never leave the server. */
 export function toCard(r: CardRow): AssetCard {
   const p = (r.probe ? JSON.parse(r.probe) : {}) as Partial<ProbeSummary>;
@@ -287,12 +300,15 @@ export function toCard(r: CardRow): AssetCard {
     ...(turn ? { turn } : {}),
     // a turned clip's pictures were made again: a new address, so no window shows the one it kept
     ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${turn ? `?t=${turn}` : ""}` } : {}),
-    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${turn ? `?t=${turn}` : ""}` } : {}),
+    // a strip made again in the clip's shape has a new address too (its frame size), so no window keeps the old one
+    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined })}` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),
     state: r.state,
     ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
+    ...(r.created_at ? { addedAt: r.created_at } : {}),
+    ...(r.bytes ? { bytes: r.bytes } : {}),
     ...(p.country ? { place: p.country } : {}),
     ...(r.trashed_at ? { trashedAt: r.trashed_at } : {}),
     ...(r.roll && !review ? { roll: r.roll } : {}),

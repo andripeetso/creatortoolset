@@ -45,6 +45,7 @@ interface Row {
   created_by: string;
   position?: number | null;
   rule?: string | null;
+  shoot?: string | null;
 }
 
 const db = () => libraryDb();
@@ -382,12 +383,12 @@ async function changeItems(c: Ctx, add: boolean) {
   }
   if (!add) {
     const del = d.prepare("DELETE FROM collection_items WHERE collection_id = ? AND asset_id = ?");
-    // taken out of a smart folder by hand: never filed there again (smart.ts)
+    // taken out of a smart folder or a shoot's folder by hand: never filed there again (smart.ts, shoots.ts)
     const out = d.prepare("INSERT OR IGNORE INTO folder_out (collection_id, asset_id) VALUES (?, ?)");
     let removed = 0;
     for (const id of ids) {
       const n = del.run(row.id, id).changes as number;
-      if (n && row.rule) out.run(row.id, id);
+      if (n && (row.rule || row.shoot)) out.run(row.id, id);
       removed += n;
     }
     return c.json({ removed });

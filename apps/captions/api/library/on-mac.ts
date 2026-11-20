@@ -6,7 +6,8 @@ import { blobs, libraryDb, libraryUpload, librarySetting } from "./db";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
 import { wantsProxy } from "./media/proxy";
-import { looksLikeSong, type ProbeSummary } from "./media/probe";
+import { countryOf, looksLikeSong, type ProbeSummary } from "./media/probe";
+import { readHere } from "./shoots";
 import { organizeOnProbe } from "./organize";
 import { tagSoundType } from "./sfx-type";
 import { settleSoundKind } from "./sound-kind";
@@ -14,6 +15,7 @@ import { kindOf, mimeOf, recordVersion } from "./routes";
 import { deviceOf } from "../lib/devices";
 import { rootAt } from "../lib/storage";
 import { confirmPlaces, OWN } from "./places";
+import { noteStrip, strayStrip, watchedAspect, OLD_CELL } from "./media/sprite";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
 import { hostsNone } from "../../contracts/library";
@@ -43,6 +45,14 @@ export interface OnMacIndex {
   collectionId?: string;
   /** the Settings → Folders folder it was found in (a location agent's scan, POST /api/devices/relay/index); none: a drop */
   folder?: string;
+  /** when it was filmed (ms), and the minutes east of UTC it was filmed in, when the file says (Mac app 11-19 on) */
+  capturedAt?: number;
+  tz?: number;
+  /** where it was filmed, as the file has it (ISO 6709): only its country is kept */
+  location?: string;
+  /** a picture: whether its EXIF names a camera, and whether it has an alpha channel (shoots.ts isGraphic) */
+  camera?: boolean;
+  alpha?: boolean;
 }
 
 const MB = 1024 * 1024;
@@ -67,6 +77,7 @@ export function parseOnMac(body: unknown): OnMacIndex | string {
   const frames = Array.isArray(b.frames) ? b.frames.slice(0, FRAMES) : [];
   if (frames.some((f) => !jpeg(f, MB))) return "A still is not a JPEG under 1 MB";
   return {
+    ...parseFilmed(b),
     name,
     path: at,
     size,
@@ -79,6 +90,37 @@ export function parseOnMac(body: unknown): OnMacIndex | string {
     frames: frames as string[],
     ...(typeof b.collectionId === "string" && b.collectionId ? { collectionId: b.collectionId } : {}),
   };
+}
+
+/** When, where and by what a file was filmed, as a computer read it from the file (the index, POST /relay/filmed). */
+export type Filmed = Pick<OnMacIndex, "capturedAt" | "tz" | "location" | "camera" | "alpha">;
+
+export function parseFilmed(b: Record<string, unknown>): Filmed {
+  return {
+    ...(num(b.capturedAt, 1e14) ? { capturedAt: Math.round(b.capturedAt as number) } : {}),
+    ...(Number.isInteger(b.tz) && Math.abs(b.tz as number) <= 14 * 60 ? { tz: b.tz as number } : {}),
+    ...(typeof b.location === "string" && b.location.length <= 64 ? { location: b.location } : {}),
+    ...(typeof b.camera === "boolean" ? { camera: b.camera } : {}),
+    ...(typeof b.alpha === "boolean" ? { alpha: b.alpha } : {}),
+  };
+}
+
+/**
+ * What a computer read later of when, where and by what a known version was filmed, into its probe: only what the probe
+ * lacks (a date it has stays), and `camera` always, so it is never asked again. True when its date or place is new.
+ */
+export async function patchFilmed(d: ReturnType<typeof libraryDb>, versionId: string, f: Filmed): Promise<boolean> {
+  const row = d.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined;
+  if (!row) return false;
+  const p = JSON.parse(row.probe ?? "{}") as Partial<ProbeSummary>;
+  // `camera` marks it read: what the server read itself stays
+  const add: Record<string, unknown> = p.camera === undefined ? { camera: f.camera ?? false } : {};
+  if (!((p.capturedAt ?? 0) > 631152000000) && f.capturedAt) Object.assign(add, { capturedAt: f.capturedAt }, f.tz !== undefined ? { tz: f.tz } : {});
+  const country = !p.country && f.location ? await countryOf({ format: { tags: { location: f.location } } }) : "";
+  if (country) add.country = country;
+  if (f.alpha && !p.pixFmt) add.pixFmt = "rgba";
+  d.prepare("UPDATE asset_versions SET probe = json_patch(COALESCE(probe, '{}'), ?) WHERE id = ?").run(JSON.stringify(add), versionId);
+  return "capturedAt" in add || "country" in add;
 }
 
 /** Where the describe stills wait for the describe job (deleted once it has run). */
@@ -122,7 +164,14 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   const at = mine && rootAt(x.path, mine.report?.machine?.disks);
   const versionId = randomUUID();
   const kind = kindOf(x.name);
-  const probe = { duration: x.duration ?? 0, width: x.width ?? 0, height: x.height ?? 0, fps: 0, rotation: 0, format: "", vcodec: kind === "audio" ? "" : "mac", pixFmt: "", acodec: "" };
+  // when and where it was filmed, as the Mac read it (an older Mac sends none: read here below when the file is on this machine)
+  const country = x.location ? await countryOf({ format: { tags: { location: x.location } } }) : "";
+  const probe = {
+    duration: x.duration ?? 0, width: x.width ?? 0, height: x.height ?? 0, fps: 0, rotation: 0, format: "", vcodec: kind === "audio" ? "" : "mac", pixFmt: x.alpha ? "rgba" : "", acodec: "",
+    ...(x.capturedAt ? { capturedAt: x.capturedAt, ...(x.tz !== undefined ? { tz: x.tz } : {}) } : {}),
+    ...(country ? { country } : {}),
+    ...(x.camera !== undefined ? { camera: x.camera } : {}),
+  };
   let assetId = "";
   d.exec("BEGIN IMMEDIATE");
   try {
@@ -151,12 +200,15 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     await writeFile(file, Buffer.from(b64, "base64"));
     const { bytes } = await blobs.put(`${base}/${k}.jpg`, file);
     d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, k, `${base}/${k}.jpg`, bytes);
+    if (k === "sprite") noteStrip(d, versionId, Buffer.from(b64, "base64"));
   }
   d.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(versionId);
   // a sound's kind from its name, folders and length (sound-kind.ts: no listen, the file is not here); a library the AI
   // organizes files a sound or a picture now
   const sound = await settleSoundKind(d, versionId, { song: kind === "audio" && looksLikeSong(x.name, probe as ProbeSummary), seconds: probe.duration });
   if (kind === "audio") tagSoundType(d, versionId, x.name, probe.duration);
+  // the Mac said nothing of when it was filmed and the file is on this very machine (the Mac app's own server): read here
+  if (!x.capturedAt && x.camera === undefined && kind !== "audio") await readHere(d, versionId, x.path, kind);
   organizeOnProbe(d, versionId, sound);
   // its transcript is made on that Mac from the file where it is (worker.ts): never uploaded for it
   // shortcut: videos only (the Mac sends no sound codec, so songs and sound effects can't be told apart); hear audio once it does
@@ -204,12 +256,53 @@ export async function putThumb(libraryId: string, versionId: string, b64: unknow
   const named = own.mac_path ?? own.source_path;
   const mime = named ? mimeOf(path.basename(named)) : null;
   if (mime && mime !== "application/octet-stream" && mime !== own.mime) d.prepare("UPDATE asset_versions SET mime = ? WHERE id = ?").run(mime, versionId);
+  await keepJpeg(libraryId, versionId, "thumb", b64 as string);
+  return true;
+}
+
+/** A JPEG made on a computer kept as a version's `kind` derivative (a replace: the one before is served until this lands). */
+async function keepJpeg(libraryId: string, versionId: string, kind: "thumb" | "sprite", b64: string): Promise<void> {
   const base = `libraries/${libraryId}/v/${versionId}`;
   const scratch = path.join(env.dataDir, "library", "staging");
   await mkdir(scratch, { recursive: true });
-  const file = path.join(scratch, `${versionId}-thumb.jpg`);
-  await writeFile(file, Buffer.from(b64 as string, "base64"));
-  const { bytes } = await blobs.put(`${base}/thumb.jpg`, file);
-  d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, "thumb", `${base}/thumb.jpg`, bytes);
+  const file = path.join(scratch, `${versionId}-${kind}.jpg`);
+  await writeFile(file, Buffer.from(b64, "base64"));
+  const { bytes } = await blobs.put(`${base}/${kind}.jpg`, file);
+  const d = libraryDb();
+  d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(versionId, kind, `${base}/${kind}.jpg`, bytes);
+  if (kind === "sprite") noteStrip(d, versionId, Buffer.from(b64, "base64"));
+}
+
+/**
+ * This library's videos with an old strip (16:9 cuts, no frame size noted) that isn't their shape, whose file `device`
+ * has: the computer makes each strip again from the file (repairStrips) and PUTs it. An old strip that is the clip's
+ * shape is noted as it is, so it is never looked at again.
+ * shortcut: looks at the newest 500 old strips a pass; a library with more settles them over later passes
+ */
+export function strayStrips(libraryId: string, device: string, limit = 50): { versionId: string; path: string }[] {
+  const d = libraryDb();
+  const rows = d
+    .prepare(
+      `SELECT v.id AS versionId, v.probe, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
+         FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+         JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
+        WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL
+        ORDER BY a.created_at DESC LIMIT 500`,
+    )
+    .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null }[];
+  const out: { versionId: string; path: string }[] = [];
+  for (const r of rows) {
+    if (!strayStrip(watchedAspect(r.probe))) d.prepare("UPDATE derivatives SET cell_w = ?, cell_h = ? WHERE version_id = ? AND kind = 'sprite'").run(OLD_CELL.w, OLD_CELL.h, r.versionId);
+    else if (r.path && out.length < limit) out.push({ versionId: r.versionId, path: r.path });
+  }
+  return out;
+}
+
+/** A video's strip made on the computer that has it (a JPEG under 2 MB), for a version of `libraryId`: false when it isn't one. */
+export async function putSprite(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
+  if (!jpeg(b64, 2 * MB)) return false;
+  const own = libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.kind = 'video'").get(versionId, libraryId);
+  if (!own) return false;
+  await keepJpeg(libraryId, versionId, "sprite", b64 as string);
   return true;
 }

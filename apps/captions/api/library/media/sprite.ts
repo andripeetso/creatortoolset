@@ -1,14 +1,44 @@
 import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
+import type { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
-import { SPRITE_FRAMES } from "../../../contracts/library";
-import { turned } from "../turn";
+import { SPRITE_FRAMES, SPRITE_SIDE } from "../../../contracts/library";
+import type { ProbeSummary } from "./probe";
+import { jpegSize } from "../pictures";
+import { asTurn, turned } from "../turn";
 import { ffmpegTo } from "./run";
 
-/** One frame of the strip, cut to the card's own shape (a card shows its picture 16:9, cover). */
-export const SPRITE_W = 160;
-export const SPRITE_H = 90;
-const CELL = `scale=${SPRITE_W}:${SPRITE_H}:force_original_aspect_ratio=increase,crop=${SPRITE_W}:${SPRITE_H},setsar=1`;
+/** One frame of the strip, in the clip's own shape at most SPRITE_SIDE on its longer side: each card cuts it to its own box. */
+const CELL = `scale=${SPRITE_SIDE}:${SPRITE_SIDE}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1`;
+/** A strip with no frame size noted (cell_w NULL) is from before 2026-11-19, or a Mac app's own index: 160 × 90 cuts. */
+export const OLD_CELL = { w: 160, h: 90 } as const;
+
+/** A version's strip as the card's scrub and the player's thumbnails read it: one frame's size and the count. Null: none. */
+export function stripOf(db: DatabaseSync, versionId: string): { w: number; h: number; frames: number } | null {
+  const r = db.prepare("SELECT cell_w, cell_h FROM derivatives WHERE version_id = ? AND kind = 'sprite'").get(versionId) as { cell_w: number | null; cell_h: number | null } | undefined;
+  return r ? { w: r.cell_w ?? OLD_CELL.w, h: r.cell_h ?? OLD_CELL.h, frames: SPRITE_FRAMES } : null;
+}
+
+/**
+ * After a strip is kept for `versionId` (a replace clears it): its frame size, read from the JPEG itself. A 160 × 90 one
+ * (the Mac app's own index still cuts them so) is left unnoted, as an old strip: made again when it isn't the clip's shape.
+ */
+export function noteStrip(db: DatabaseSync, versionId: string, jpeg: Buffer): void {
+  const s = jpegSize(jpeg);
+  if (s && !(s.w === OLD_CELL.w * SPRITE_FRAMES && s.h === OLD_CELL.h)) db.prepare("UPDATE derivatives SET cell_w = ?, cell_h = ? WHERE version_id = ? AND kind = 'sprite'").run(Math.round(s.w / SPRITE_FRAMES), s.h, versionId);
+}
+
+/** A clip's width / height as it is watched (its rotation tag, then its turn), as the card shows it (query.ts toCard). Null: unknown. */
+export function watchedAspect(probe: string | null): number | null {
+  const p = JSON.parse(probe ?? "null") as Partial<ProbeSummary> | null;
+  if (!p?.width || !p.height) return null;
+  const side = (((p.rotation ?? 0) + asTurn(p.turn)) / 90) % 2 === 1;
+  return side ? p.height / p.width : p.width / p.height;
+}
+
+/** An old strip (no frame size noted) whose 16:9 cuts are not the clip's shape: an upright or square clip's, made again once. */
+export const strayStrip = (aspect: number | null) => aspect !== null && Math.abs(Math.log(aspect / (OLD_CELL.w / OLD_CELL.h))) > Math.log(1.15);
+
 /** Seeks per ffmpeg run. */
 const BATCH = 5;
 
@@ -30,7 +60,7 @@ async function lastFrame(src: string, duration: number): Promise<number> {
 }
 
 /**
- * A strip of SPRITE_FRAMES frames across the clip, side by side in one JPEG (SPRITE_W × SPRITE_H each): the card's
+ * A strip of SPRITE_FRAMES frames across the clip, side by side in one JPEG (CELL each): the card's
  * hover scrub and the clip window's filmstrip. Each frame is one seek; nothing decodes the whole clip.
  * Measured on a 2-minute 3840×2160 10-bit H.264 clip (a busy Linux box): decoding all of it took 10 to 12 s and
  * grows with the clip's length; 20 seeks in one run took 1.4 s at 1.5 GB (5.4 to 12.8 GB with ffmpeg's own threads),
@@ -38,7 +68,7 @@ async function lastFrame(src: string, duration: number): Promise<number> {
  * of 4K (about 20 s in all), still bounded by the gap, not the clip's length. From a 720p lighter copy it is quick.
  */
 export async function makeSprite(src: string, out: string, duration: number, turn = 0): Promise<void> {
-  const cell = turned(turn, CELL); // upright first, then cut to the card's shape
+  const cell = turned(turn, CELL); // upright first, then made small
   if (!(duration > 0)) throw new Error("No length to take frames from");
   const last = await lastFrame(src, duration);
   const parts: string[] = [];

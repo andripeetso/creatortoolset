@@ -630,7 +630,8 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     expect(by.getAttribute("aria-label")).toBe("Sort by Date filmed");
     expect(host.querySelector('button[aria-label="Newest first"]')).not.toBeNull();
     await act(async () => by.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false })));
-    expect([...document.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent?.trim())).toEqual(["Date filmed", "Date added", "Name", "Length"]);
+    // replaced (CEO 11-19 list columns: the list's Size and Kind headers sort, so Sort by has them too)
+    expect([...document.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent?.trim())).toEqual(["Date filmed", "Date added", "Name", "Length", "Size", "Kind"]);
     await act(async () => moreItem("Name")!.click());
     await settle();
     expect(server.asked.at(-1)).toMatchObject({ sort: "name" });
@@ -746,6 +747,14 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(server.asked.at(-1)).toMatchObject({ kind: ["image"] });
     await act(async () => tab(host, "a")!.click());
     expect(where()).toBe("?f=col_a");
+  });
+
+  it("a top folder called Photos is the only Photos tab", async () => {
+    localStorage.setItem("library:view", "gallery");
+    server.folders = [...folders, { id: "col_p", name: "Photos", parentId: null, kind: "manual", count: 1, createdBy: "admin" }];
+    server.items = [clip("pic", { kind: "image" })];
+    const host = await mount();
+    expect([...host.querySelectorAll('nav[aria-label="Library tabs"] button')].map((b) => b.textContent)).toEqual(["All", "A-roll0", "B-roll0", "Music0", "Photos1"]);
   });
 
   it("a clip moved onto a folder's tab stays in the Gallery's All; Undo takes it back out, then asks the server", async () => {

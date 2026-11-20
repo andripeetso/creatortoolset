@@ -109,17 +109,17 @@ describe("library asset query, sorted by the server", () => {
   function sorted(): DatabaseSync {
     const db = openLibraryDb(":memory:");
     db.exec("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_s', 'ws_s', 'S', 'local', 0)");
-    const add = (id: string, kind: string, title: string, at: number, probe: object | null) => {
+    const add = (id: string, kind: string, title: string, at: number, probe: object | null, bytes = 1) => {
       db.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, 'lib_s', ?, ?, ?, 'owner', ?)").run(id, kind, title, `v_${id}`, at);
       db.prepare(
-        "INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, probe, created_by, created_at) VALUES (?, ?, 1, 'k', 1, 'h', 'ready', ?, 'owner', ?)",
-      ).run(`v_${id}`, id, probe ? JSON.stringify(probe) : null, at);
+        "INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, probe, created_by, created_at) VALUES (?, ?, 1, 'k', ?, 'h', 'ready', ?, 'owner', ?)",
+      ).run(`v_${id}`, id, bytes, probe ? JSON.stringify(probe) : null, at);
     };
-    add("c1", "video", "beach: morning", 1000, { duration: 30, capturedAt: 500 });
-    add("c2", "video", "Apple orchard", 2000, { duration: 10 });
-    add("c3", "video", "cliff walk", 2000, { duration: 30, capturedAt: 9000 });
-    add("c4", "image", "Dune", 3000, { duration: 0 });
-    add("c5", "video", "attic", 4000, null);
+    add("c1", "video", "beach: morning", 1000, { duration: 30, capturedAt: 500 }, 300);
+    add("c2", "video", "Apple orchard", 2000, { duration: 10 }, 100);
+    add("c3", "video", "cliff walk", 2000, { duration: 30, capturedAt: 9000 }, 300);
+    add("c4", "image", "Dune", 3000, { duration: 0 }, 50);
+    add("c5", "video", "attic", 4000, null, 200);
     return db;
   }
   /** every page at one clip a page, walked by cursor */
@@ -142,9 +142,19 @@ describe("library asset query, sorted by the server", () => {
     ["longest", ["c3", "c1", "c2", "c5", "c4"]],
     ["shortest", ["c2", "c1", "c3", "c4", "c5"]],
     ["filmed", ["c3", "c5", "c4", "c2", "c1"]],
+    // the list's Size and Kind columns (11-19)
+    ["biggest", ["c3", "c1", "c5", "c2", "c4"]],
+    ["smallest", ["c4", "c2", "c5", "c1", "c3"]],
+    ["kind", ["c4", "c1", "c2", "c3", "c5"]],
+    ["kind-za", ["c5", "c3", "c2", "c1", "c4"]],
   ])("%s: one page at a time gives the same order as one big page, nothing skipped or repeated", (sort, order) => {
     expect(ids(page(sorted(), "lib_s", { sort }))).toEqual(order);
     expect(walk(sort)).toEqual(order);
+  });
+
+  it("a card carries when it was added and its file's size, for the list's columns", () => {
+    const c1 = page(sorted(), "lib_s", { sort: "old" }).items[0]!;
+    expect({ id: c1.id, addedAt: c1.addedAt, bytes: c1.bytes }).toEqual({ id: "c1", addedAt: 1000, bytes: 300 });
   });
 
   it("an unknown order is newest first", () => {

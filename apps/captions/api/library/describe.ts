@@ -20,8 +20,8 @@ import { stretchesOf } from "./stretches";
 import { NeedsKey, segmentsOf } from "./transcribe";
 import { isAdminActor } from "../my-keys";
 import type { Roll } from "./roll";
-import { fileInto, MAX_AI_FOLDERS, plainFolders, toFile, topCount } from "./organize";
 import { fileSmart } from "./smart";
+import { nameShoot, placeOf } from "./shoots";
 import { asTurn, turned, turnVersion } from "./turn";
 
 /**
@@ -64,10 +64,6 @@ export interface DescribeInput {
   frames: number;
   /** the workspace the clip is in (its instructions: what the brand, product or game is), so the AI can name what it sees */
   workspace?: string;
-  /** the library's plain folders, when the AI organizes it (organize.ts): the answer names the one the clip fits */
-  folders?: string[];
-  /** with folders: the answer may name a new folder (the library has fewer than MAX_AI_FOLDERS) */
-  newFolder?: boolean;
   /** the library's tags (tagsOf) so the answer reuses its words */
   tags?: { clips: number; list: { tag: string; count: number }[] };
   /** in place of pictures: the clip's shot descriptions, in order (a file kept on a Mac described again, describeFromLines) */
@@ -130,8 +126,8 @@ export interface Described {
   tags: string[];
   /** "a": someone talks to the camera through most of it; "b": anything else. Absent when the answer had none */
   roll?: Roll;
-  /** the folder it fits, of the ones it was given (or none) */
-  folder?: string;
+  /** the town, area or venue it was filmed at, when the clip shows or says its name (shoots.ts names its shoot by it) */
+  place?: string;
   /** what the footage is, in one to three plain words ("gameplay", "screen recording", "talking head") */
   kind?: string;
   /** clockwise degrees the frames need to stand upright (a phone filmed sideways, a screen recorded on its side); absent = upright */
@@ -167,22 +163,21 @@ export function describePrompt(input: DescribeInput): { system: string; user: st
         : [
             'turn is how many degrees clockwise the pictures must be turned to stand upright: 0 when they already are; 90, 180 or 270 only when clearly sideways or upside down (writing, a game\'s or an app\'s screen, the horizon, people standing or sitting all read on their side).',
             'roll is "a" when a person talks to the camera (or to someone just beside it) through most of the clip, a take a video could be built on; else "b" (scenery, action, details, people not talking to the camera).',
+            PLACE_RULE,
           ]),
-      ...(input.folders
-        ? [
-            input.newFolder
-              ? `folder is where this clip is filed in the library, judged by what the footage is (gameplay, an interview, a product, a place…). ${input.folders.length ? `Use one of these folders when it fits: ${JSON.stringify(input.folders)}. Otherwise name` : "Name"} a new folder: one to three words, by what the footage is (for example "Gameplay", "Interviews", "Product shots", "Travel"), never a vague name like "Misc", "Other", "Clips" or "B-roll".`
-              : `folder is the one of these folders the clip fits best: ${JSON.stringify(input.folders)}`,
-          ]
-        : []),
       TAG_RULE,
       ...(input.tags?.list.length
         ? [`Tags already in this library of ${input.tags.clips} clips (tag: clips it is on): ${input.tags.list.map((t) => `${t.tag}: ${t.count}`).join(", ")}`]
         : []),
-      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], ${words ? "" : '"roll": "a" or "b", "turn": 0, '}${KIND_ANSWER}${input.folders ? ', "folder": "a folder name"' : ""}}`,
+      `Answer as {"description": "two or three plain sentences", "tags": ["up to ${MAX_TAGS} tags"], ${words ? "" : '"roll": "a" or "b", "turn": 0, "place": "a place name or empty", '}${KIND_ANSWER}}`,
     ].join("\n\n"),
   };
 }
+
+/** Where it was filmed, by name only: the shoot's folder is named by it (shoots.ts), never by a room or a thing in it. */
+const PLACE_RULE =
+  "place is the town, city, island, beach, park or venue this was filmed at, only when the frames, the workspace or what is said show its name (a sign, a landmark, a name spoken); " +
+  'a proper name, one to four words. Never a room, a vehicle or a kind of place ("kitchen", "car", "beach", "supermarket"): when no name shows, leave it empty.';
 
 const KIND_ANSWER = '"kind": "what the footage is, in one to three plain lowercase words, for example gameplay, screen recording, talking head, product close-ups, drone footage"';
 
@@ -201,10 +196,10 @@ export function parseDescribe(text: string): Described {
   const tags = Array.isArray(o.tags)
     ? [...new Set(o.tags.filter((t): t is string => typeof t === "string").map((t) => t.trim().toLowerCase().slice(0, 40)).filter(Boolean))].slice(0, MAX_TAGS)
     : [];
-  const folder = typeof o.folder === "string" ? o.folder.trim() : "";
+  const place = placeOf(o.place);
   const kind = kindOf(o.kind);
   const turn = typeof o.turn === "number" ? asTurn(o.turn) : 0;
-  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(folder ? { folder } : {}), ...(turn ? { turn } : {}), ...(kind ? { kind } : {}) };
+  return { description, tags, ...(o.roll === "a" || o.roll === "b" ? { roll: o.roll } : {}), ...(place ? { place } : {}), ...(turn ? { turn } : {}), ...(kind ? { kind } : {}) };
 }
 
 /** Most of the workspace's context a description carries: it rides every clip's call. */
@@ -275,7 +270,7 @@ export async function describeFromLines(db: DatabaseSync, versionId: string, act
     ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
     tags: tagsOf(db, versionId),
   });
-  const { turn: _, roll: __, folder: ___, ...value } = await completeWithFallback(system, user, undefined, parseDescribe, onMac ? { ...route, mac: { ...route.mac, background: true } } : route);
+  const { turn: _, roll: __, ...value } = await completeWithFallback(system, user, undefined, parseDescribe, onMac ? { ...route, mac: { ...route.mac, background: true } } : route);
   saveDescribed(db, versionId, { ...value, ...(was?.roll ? { roll: was.roll } : {}) }, route.mac?.provider?.instance ?? (onMac ? "mac" : "anthropic"), stampOf(workspace, DESCRIBE_VERSION));
   // its words changed: the library's smart folders judge it again, as after a description from frames
   await fileSmart(db, versionId, whoFor(actor), workspace).catch(() => 0);
@@ -396,11 +391,6 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
     if (made) files.push(...made);
     else await cutStills(src, duration, base, scratch, files);
     const images = await Promise.all(files.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
-    // a library the AI organizes: the clip, in no folder yet, goes in the one its answer names (only one of these)
-    const filing = toFile(db, versionId);
-    const folders = filing ? plainFolders(db, filing.library_id) : undefined;
-    // the cap counts smart folders too (fileInto's count): one the AI made with a rule is still a folder it made
-    const newFolder = !!filing && topCount(db, filing.library_id) < MAX_AI_FOLDERS;
     const workspace = await workspaceOf(db, versionId);
     const { system, user } = describePrompt({
       title,
@@ -408,18 +398,15 @@ export async function describeVersion(db: DatabaseSync, versionId: string, src: 
       ...personTags(db, versionId),
       frames: images.length,
       ...(segments.length ? { transcript: transcriptExcerpt(segments) } : {}),
-      ...(folders ? { folders, newFolder } : {}),
       tags: tagsOf(db, versionId),
     });
     const { value, provider } = await completeVisionWithFallback(system, user, images, undefined, parseDescribe, who, { label: DESCRIBE_LABEL, background: true, preferKey: true, job: "library" });
     // the stamp of the text this call sent: the workspace may have changed while the AI answered
     saveDescribed(db, versionId, value, provider, stampOf(workspace, DESCRIBE_VERSION));
     if (value.turn) await turnVersion(db, versionId, base + value.turn);
-    // the library's smart folders judge it first (smart.ts); one it went in is where it is filed
-    const smart = (await fileSmart(db, versionId, who, workspace).catch(() => 0)) ?? 0;
-    // a new name only while the library may get one; fileInto makes the folder with its first file, with its name as its rule
-    const known = folders?.find((f) => f.toLowerCase() === value.folder?.toLowerCase());
-    if (!smart && filing && value.folder && (known || newFolder)) fileInto(db, filing, known ?? value.folder, !known);
+    // the library's smart folders judge it (smart.ts); its shoot (filed at its probe, shoots.ts) takes the place it names
+    await fileSmart(db, versionId, who, workspace).catch(() => 0);
+    if (value.place) nameShoot(db, versionId, value.place);
   } finally {
     if (!made) await Promise.all(files.map((f) => rm(f, { force: true })));
   }

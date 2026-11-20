@@ -23,6 +23,7 @@ import { homeOf } from "../library/access";
 import { statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
 import { animationApp } from "./animation-styles";
@@ -449,6 +450,7 @@ editorApp.post("/:id/drafts/:name/review", async (c) => {
 
 /** Notes this route writes start with this, so the next hand cut replaces them. */
 const HAND_NOTE = "Cut by hand";
+const AI_NOTE = "Cut by the AI";
 
 /** The Review version whose cut is exactly the draft as it is now; null when the draft changed since, or was never filed. */
 function filedAs(id: string, name: string, tl: Timeline) {
@@ -503,8 +505,13 @@ editorApp.post("/:id/drafts/:name/cut", async (c) => {
       throw e;
     }
     const count = `${edits.length} timeline edit${edits.length === 1 ? "" : "s"}`;
-    const note = `${HAND_NOTE} ${inReview ? "in Review" : "on the timeline"}: ${count}${on}`;
-    await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !n.startsWith(HAND_NOTE)), note] });
+    // what was changed, so a later chat turn knows (an AI key's cut, a chat's editor_cut, is not the person's own)
+    const by = c.req.header("authorization") && !c.req.header("cookie") ? AI_NOTE : HAND_NOTE;
+    const note = `${by} ${inReview ? "in Review" : "on the timeline"}: ${count}${on} (${describeEdits(edits, base.fps)})`;
+    // the earlier cuts stay with it, the last five in all, so the chat knows every change, not only the newest
+    const isCut = (n: string) => n.startsWith(HAND_NOTE) || n.startsWith(AI_NOTE);
+    let older = d.notes.filter(isCut).length - 4;
+    await saveDraft(r.e.id, name, { timeline, notes: [...d.notes.filter((n) => !isCut(n) || --older < 0), note] });
   }
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
   return c.json(viewFor(r));

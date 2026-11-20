@@ -26,6 +26,30 @@ describe("library schema", () => {
     again.close();
   });
 
+  it("a database already at the shoot folders' step (batch 4) gets the strip size columns on the next boot, its rows kept", () => {
+    const file = path.join(dir, "at-shoots.db");
+    const shoots = MIGRATIONS.findIndex((m) => m.includes("ADD COLUMN shoot"));
+    const strips = MIGRATIONS.findIndex((m) => m.includes("ADD COLUMN cell_w"));
+    // the strip sizes come after the shoot folders, never before them (a server that ran batch 4 must still run them)
+    expect(shoots).toBeGreaterThan(0);
+    expect(strips).toBeGreaterThan(shoots);
+    // a database as batch 4 left it: every step up to and including the shoot folders, none after
+    const old = new DatabaseSync(file);
+    old.exec("PRAGMA foreign_keys = OFF;");
+    for (let i = 0; i <= shoots; i++) old.exec(MIGRATIONS[i]!);
+    old.exec(`PRAGMA user_version = ${shoots + 1}`);
+    old.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, ?, ?)").run("lib_b4", "ws_1", "Library", "local", 1);
+    const columns = (db: DatabaseSync) => (db.prepare("PRAGMA table_info(derivatives)").all() as { name: string }[]).map((c) => c.name);
+    expect(columns(old)).not.toContain("cell_w");
+    old.close();
+
+    const db = openLibraryDb(file);
+    expect(version(db)).toBe(MIGRATIONS.length);
+    expect(columns(db)).toEqual(expect.arrayContaining(["cell_w", "cell_h"]));
+    expect(db.prepare("SELECT COUNT(*) AS n FROM libraries").get()).toEqual({ n: 1 });
+    db.close();
+  });
+
   it("migration 5 allows bunny storage, and still refuses unknown kinds", () => {
     const db = openLibraryDb(path.join(dir, "bunny.db"));
     const insert = db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, ?, ?)");

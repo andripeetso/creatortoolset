@@ -4,11 +4,27 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SPRITE_FRAMES, type AssetCard } from "@contracts/library";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AssetRow, AssetTile, fileLine, frameAt, intoColumns } from "./ClipCards";
+import { AssetRow, AssetTile, fileLine, frameAt, frameStyle, intoColumns } from "./ClipCards";
+import { GalleryTile } from "./Gallery";
 
 // A mouse across a video card's picture shows the clip there from its strip of frames; leaving shows the picture again.
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// a strip "loads" at once in its frame shape: 16:9, 9:16 for a URL with "tall", never for one with "slow"
+class FakeImage {
+  onload: (() => void) | null = null;
+  naturalWidth = 0;
+  naturalHeight = 0;
+  set src(url: string) {
+    if (url.includes("slow")) return;
+    const [w, h] = url.includes("tall") ? [9, 16] : [16, 9];
+    [this.naturalWidth, this.naturalHeight] = [w * 10 * SPRITE_FRAMES, h * 10];
+    this.onload?.();
+  }
+}
+Object.assign(globalThis, { Image: FakeImage, IntersectionObserver: undefined });
+const x = (el: HTMLElement) => parseFloat(el.style.backgroundPosition);
 
 const card: AssetCard = {
   id: "a1", libraryId: "lib", kind: "video", title: "Beach run", versionId: "v1", versionN: 1, durationS: 40,
@@ -45,9 +61,10 @@ describe("a card's hover scrub", () => {
     expect(scrub()).toBeNull();
     point("pointermove", 250); // three quarters across
     expect(scrub()!.style.backgroundImage).toContain("/api/library/media/v1/sprite");
-    expect(scrub()!.style.backgroundPosition).toBe(`${(15 / (SPRITE_FRAMES - 1)) * 100}% 0px`);
+    expect(x(scrub()!)).toBeCloseTo((15 / (SPRITE_FRAMES - 1)) * 100);
+    expect(scrub()!.style.backgroundSize).toBe("auto 100%");
     point("pointermove", 100);
-    expect(scrub()!.style.backgroundPosition).toBe("0% 0px");
+    expect(x(scrub()!)).toBeCloseTo(0);
     point("pointerout", 400);
     expect(scrub()).toBeNull();
     expect(host.querySelector("img")!.getAttribute("src")).toBe(card.thumbUrl);
@@ -62,6 +79,33 @@ describe("a card's hover scrub", () => {
       point("pointermove", 250);
       expect(scrub()).toBeNull();
     }
+  });
+
+  it("the picture stays until the strip is here", () => {
+    show({ ...card, spriteUrl: "/api/library/media/v1/sprite?slow" });
+    point("pointermove", 250);
+    expect(scrub()).toBeNull();
+  });
+
+  it("never stretches a frame: it fills the box the way the picture does", () => {
+    // an upright frame in a 16:9 card: as wide as the card, its middle in view
+    expect(frameStyle("s", 5, 9 / 16, 16 / 9)).toMatchObject({ backgroundSize: `${SPRITE_FRAMES * 100}% auto`, backgroundPosition: `${(5 / (SPRITE_FRAMES - 1)) * 100}% 50%` });
+    // a 16:9 frame (a strip made before frames kept their shape) in an upright 3:4 tile: as tall as the tile, frame i's middle
+    // at the tile's middle, so the image's left edge sits (i + 0.5) frames left of the middle
+    const s = frameStyle("s", 7, 16 / 9, 3 / 4);
+    expect(s.backgroundSize).toBe("auto 100%");
+    const p = parseFloat(String(s.backgroundPosition)) / 100;
+    expect((3 / 4 - SPRITE_FRAMES * (16 / 9)) * p).toBeCloseTo(3 / 8 - 7.5 * (16 / 9));
+  });
+
+  it("an upright clip's strip in a Gallery tile, with no hover text over its frames", () => {
+    const tall = { ...card, width: 1080, height: 1920, spriteUrl: "/api/library/media/v1/sprite?tall" };
+    act(() => root.render(<GalleryTile asset={tall} onOpen={() => {}} ownShape={false} />));
+    const tile = host.querySelector("button")!;
+    expect(tile.hasAttribute("title")).toBe(false);
+    tile.getBoundingClientRect = () => ({ left: 0, width: 150, top: 0, height: 200, right: 150, bottom: 200, x: 0, y: 0, toJSON() {} });
+    act(() => void tile.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 0, pointerType: "mouse" })));
+    expect(scrub()!.style.backgroundSize).toBe(`${SPRITE_FRAMES * 100}% auto`);
   });
 
   it("maps the pointer to a frame, the right edge to the last", () => {

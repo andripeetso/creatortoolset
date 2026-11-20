@@ -12,26 +12,78 @@ export interface Levels {
 
 const cache = new Map<string, Promise<Levels>>();
 
+/** A file's levels: fetched and decoded. `maxBytes`: a file bigger than this (or of no known size) isn't read whole. */
+async function read(url: string, maxBytes: number | undefined, stop: AbortController, low = false): Promise<Levels> {
+  // the Mac app's local files answer any page (Access-Control-Allow-Origin *), which WebKit refuses with credentials
+  const res = await fetch(url, { credentials: url.startsWith("ctlocal:") ? "omit" : "include", signal: stop.signal, ...(low ? { priority: "low" as const } : {}) });
+  if (!res.ok) throw new Error(`${res.status}`);
+  if (maxBytes && !(Number(res.headers.get("content-length")) <= maxBytes)) {
+    stop.abort();
+    throw new Error("too big");
+  }
+  const audio = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(await res.arrayBuffer());
+  return levelsOf(Array.from({ length: audio.numberOfChannels }, (_, c) => audio.getChannelData(c)), audio.sampleRate);
+}
+
+const kept = (url: string, p: Promise<Levels>) => {
+  cache.set(url, p);
+  p.catch(() => cache.delete(url));
+  return p;
+};
+
 /** `maxBytes`: a file bigger than this (or of no known size) is not fetched whole for its sound (a long camera file). */
 export function levels(url: string, maxBytes?: number): Promise<Levels> {
-  let p = cache.get(url);
-  if (!p) {
-    p = (async () => {
-      const stop = new AbortController();
-      // the Mac app's local files answer any page (Access-Control-Allow-Origin *), which WebKit refuses with credentials
-      const res = await fetch(url, { credentials: url.startsWith("ctlocal:") ? "omit" : "include", signal: stop.signal });
-      if (!res.ok) throw new Error(`${res.status}`);
-      if (maxBytes && !(Number(res.headers.get("content-length")) <= maxBytes)) {
-        stop.abort();
-        throw new Error("too big");
-      }
-      const audio = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(await res.arrayBuffer());
-      return levelsOf(Array.from({ length: audio.numberOfChannels }, (_, c) => audio.getChannelData(c)), audio.sampleRate);
-    })();
-    cache.set(url, p);
-    p.catch(() => cache.delete(url));
-  }
-  return p;
+  return cache.get(url) ?? kept(url, read(url, maxBytes, new AbortController()));
+}
+
+// A video file's levels are read only while nothing plays: one file at a time, at low priority, stopped when playback
+// starts and read again after. Shared with levels() by URL, so a proxy URL from urlOf is simply what gets read.
+type Job = { url: string; maxBytes?: number; done: (l: Levels) => void; fail: (e: unknown) => void };
+const queue: Job[] = [];
+let holds = 0;
+let reading: AbortController | null = null;
+const later = (f: () => void) => (typeof requestIdleCallback === "function" ? requestIdleCallback(f, { timeout: 2000 }) : setTimeout(f, 200));
+
+function pump() {
+  if (holds || reading || !queue.length) return;
+  const stop = (reading = new AbortController());
+  later(() => {
+    const job = queue.shift();
+    if (holds || !job || stop.signal.aborted) {
+      if (job) queue.unshift(job);
+      if (reading === stop) reading = null;
+      return;
+    }
+    read(job.url, job.maxBytes, stop, true).then(job.done, (e) => {
+      // stopped for playback: back to the front, read again once it stops
+      if (stop.signal.aborted && holds) queue.unshift(job);
+      else job.fail(e);
+    }).finally(() => {
+      if (reading === stop) reading = null;
+      pump();
+    });
+  });
+}
+
+/** A video file's levels, read when nothing plays (see above). */
+export function idleLevels(url: string, maxBytes?: number): Promise<Levels> {
+  return cache.get(url) ?? kept(url, new Promise<Levels>((done, fail) => {
+    queue.push({ url, maxBytes, done, fail });
+    pump();
+  }));
+}
+
+/** Playback running: the waveform reads stop until the returned function is called. */
+export function holdWaves(): () => void {
+  holds++;
+  reading?.abort();
+  let once = false;
+  return () => {
+    if (once) return;
+    once = true;
+    holds--;
+    pump();
+  };
 }
 
 /** The peaks alone (Review's waveforms). */

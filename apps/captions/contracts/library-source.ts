@@ -52,6 +52,12 @@ export interface LibrarySource {
   list?(viewer: LibraryViewer, req: Request): Promise<AssetCard[]>;
   /** One item's bytes for a ref of this source: `thumb`, `play` or `source`. Null when there is nothing to serve. */
   stream?(viewer: LibraryViewer, req: Request, externalId: string, kind: "thumb" | "play" | "source"): Promise<Response | null>;
+  /**
+   * Where the caller's own computer may find items' files (the places check, GET /api/library/:lib/places): for each
+   * external id it answers, the paths to try and the file's exact size. Asked only for refs the viewer may see; an id
+   * left out has no file here, so the page plays the source's own copy. Nothing from the answer is stored.
+   */
+  places?(viewer: LibraryViewer, req: Request, externalIds: string[]): Promise<Record<string, { tries: string[]; bytes: number }>>;
 }
 
 /**

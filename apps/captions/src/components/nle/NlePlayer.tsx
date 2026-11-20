@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useRef } from "react";
 import { readSound } from "@/lib/synced-sound";
-import { fadePoints, nleAudio, runningAudio } from "@/lib/nle/audio";
+import { fadePoints, isSoundFile, nleAudio, runningAudio, type NleClock } from "@/lib/nle/audio";
 import { fadeAt, lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
-import { drawScale, picturesAt, picturesSoon, placement, soundPieces, sourceTime, steer, type SoundPiece } from "@/lib/nle/picture";
+import { chains, drawScale, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, steer, type SoundPiece } from "@/lib/nle/picture";
 import { localFileState, pathLine } from "@/lib/local-files";
 import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type ShotOp } from "@/lib/nle/shot";
 
 // The editor's viewer: the timeline played live from its source files. Every picture at the playhead is drawn on a
 // canvas the timeline's shape (in timeline units, at the size it is shown), V1 at the bottom, each with its transform,
 // crop and opacity, and a shot-list edit's V1 shots with their frame size, blurred fill, split rows and smooth zoom, as the renderer draws them (lib/nle/shot.ts);
-// the sound tracks play through Web Audio with each clip's gain. One <video> per picture on screen (and the ones about to
-// start, so they are ready), kept on the timeline's clock: seeked when paused, played at the clip's speed and put back
-// when they drift; a card made as numbered pictures shows its picture for the frame. A clip's fades ramp its picture's
-// opacity (black under V1) and its sound's gain. A clip whose file can't play here is a red Media Offline frame with its
-// name and why, never an older render. A picture not ready yet (a file opening, a move landing) keeps the frame drawn
-// last on screen, never black.
+// the sound tracks play through Web Audio with each clip's gain. Everything follows one clock (lib/nle/audio.ts NleClock):
+// the sound engine's time while sound plays. Play waits for the pictures at the playhead (at most half a second) before
+// the clock starts. Each file has at most two <video> elements, one playing and one waiting on the next clip's first
+// frame, and a clip that plays on from the one before it in the same file keeps its element across the cut (no seek);
+// at most MAX_VIDEOS are open at once. A video is played at the clip's speed and its speed bent when it drifts; the canvas
+// is drawn only when a picture changed (requestVideoFrameCallback) or the playhead moved. A card made as numbered
+// pictures shows its picture for the frame. A clip's fades ramp its picture's opacity (black under V1) and its sound's
+// gain. A clip whose file can't play here is a red Media Offline frame with its name and why, never an older render. A
+// picture not ready yet (a file opening, a move landing) keeps the frame drawn last on screen, never black.
 
 type Media = {
   el: HTMLVideoElement | HTMLImageElement;
@@ -22,6 +25,12 @@ type Media = {
   lead: number;
   bad: boolean;
   used: number;
+  /** the run of clips (picture.ts chains) this element plays now */
+  owner: string;
+  /** frames the element has shown (requestVideoFrameCallback), and whether it tells them at all */
+  frames: number;
+  vfc: boolean;
+  gone?: boolean;
   /** why it doesn't play, once the Mac app said (a drive away, a folder not allowed) */
   why?: string;
   /** a numbered picture sequence: its pictures by number, loaded ahead of the playhead */
@@ -39,15 +48,29 @@ export async function whyNot(url: string): Promise<string | undefined> {
 }
 
 const SEQ_AHEAD = 8;
+/** 4K decoders open at once at most (a run of short clips used to open a dozen) */
+const MAX_VIDEOS = 6;
+/** elements per file: the one playing and the one waiting on the next clip's first frame */
+const PER_FILE = 2;
 const isImage = (url: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url);
 type Drawable = { el: CanvasImageSource; w: number; h: number };
+type Vfc = HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
 const canFilter = typeof CanvasRenderingContext2D !== "undefined" && "filter" in CanvasRenderingContext2D.prototype;
+const chainsOf = new WeakMap<NleTimeline, Map<string, string>>();
+const chainOf = (tl: NleTimeline) => {
+  let c = chainsOf.get(tl);
+  if (!c) chainsOf.set(tl, (c = chains(tl)));
+  return c;
+};
 
-export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, loop }: {
+/** Whether a picture at the playhead is ready for the clock to start (a <video> with its frame there and more coming). */
+const readyToPlay = (m: Media | null, d: Drawable | null) =>
+  !m || m.bad || (m.el instanceof HTMLVideoElement ? m.el.readyState >= 3 && !m.el.seeking : !!d);
+
+export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
   tl: NleTimeline;
-  /** seconds on the timeline */
-  time: number;
-  playing: boolean;
+  /** the playhead (seconds on the timeline) and whether it runs */
+  clock: NleClock;
   /** the J / K / L speed: < 0 plays backwards (picture only) */
   rate: number;
   /** a source's file as the browser plays it; null when it has none here */
@@ -58,16 +81,40 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
   loop?: [number, number] | null;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const host = useRef<HTMLDivElement>(null);
   const pool = useRef(new Map<string, Media>());
-  const now = useRef({ tl, time, playing, rate, urlOf, nameOf, loop });
-  now.current = { tl, time, playing, rate, urlOf, nameOf, loop };
+  const now = useRef({ tl, clock, rate, urlOf, nameOf, loop });
+  now.current = { tl, clock, rate, urlOf, nameOf, loop };
   const W = tl.timeline.width || 1080;
   const H = tl.timeline.height || 1920;
 
   useEffect(() => {
     let raf = 0;
     let tick = 0;
+    let made = 0;
     let painted = false;
+    // what was drawn last: the canvas is drawn again only when this changes (a new frame, the playhead, an edit)
+    let drawn = "";
+    let drawnTl: NleTimeline | null = null;
+    // the <video> shown as it is over the canvas (one plain picture), if any
+    let shown: HTMLVideoElement | null = null;
+    const show = (el: HTMLVideoElement, fit: "cover" | "contain") => {
+      if (el.parentElement !== host.current) {
+        Object.assign(el.style, { position: "absolute", inset: "0", width: "100%", height: "100%", background: "#000" });
+        host.current?.appendChild(el);
+      }
+      el.style.objectFit = fit;
+      el.style.visibility = "visible";
+      if (shown && shown !== el) shown.style.visibility = "hidden";
+      shown = el;
+    };
+    const unshow = () => {
+      // hidden, not taken out: a <video> taken out of the page pauses, and it may play on under the canvas
+      if (shown) shown.style.visibility = "hidden";
+      shown = null;
+    };
+    // the elements a picture wants on this frame (none of them is handed to another)
+    const claimed = new Set<Media>();
     // drawn at the size shown (CSS px × the screen's), never the timeline's 8 MP when it is shown small
     let px = 1;
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(([e]) => void (px = drawScale(e.contentRect.width, devicePixelRatio, W)));
@@ -75,37 +122,70 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
     // a shot is composed here first, then its zoom drawn onto the viewer; a blurred fill is made small here
     const layer = document.createElement("canvas");
     const small = document.createElement("canvas");
-    const media = (k: string, src: string): Media | null => {
-      const file = now.current.urlOf(src);
-      if (!file?.url) return null;
-      const u = file.url;
-      let m = pool.current.get(k);
-      if (m && m.url !== u) {
-        drop(k);
-        m = undefined;
+    const videos = () => [...pool.current.values()].filter((m) => m.el instanceof HTMLVideoElement);
+    const make = (u: string, file: NleFile, el: Media["el"], owner: string): Media => {
+      const m: Media = { el, url: u, lead: file.lead ?? 0, bad: false, used: tick, owner, frames: 0, vfc: false, ...(file.frame ? { seq: { frame: file.frame, got: new Map() } } : {}) };
+      el.addEventListener("error", () => {
+        m.bad = true;
+        void whyNot(u).then((why) => void (m.why = why));
+      });
+      const v = el as Vfc;
+      if (v instanceof HTMLVideoElement && v.requestVideoFrameCallback) {
+        const seen = () => {
+          m.frames++;
+          m.vfc = true;
+          if (!m.gone) v.requestVideoFrameCallback!(seen);
+        };
+        v.requestVideoFrameCallback(seen);
       }
-      if (!m) {
-        const el = file.frame || isImage(u) ? new Image() : Object.assign(document.createElement("video"), { muted: true, playsInline: true, preload: "auto" });
-        const made: Media = { el, url: u, lead: file.lead ?? 0, bad: false, used: tick, ...(file.frame ? { seq: { frame: file.frame, got: new Map() } } : {}) };
-        el.addEventListener("error", () => {
-          made.bad = true;
-          void whyNot(u).then((why) => void (made.why = why));
-        });
-        el.src = file.frame ? file.frame(0) : u;
-        pool.current.set(k, (m = made));
-      }
-      m.used = tick;
+      el.src = file.frame ? file.frame(0) : u;
       return m;
     };
     const drop = (k: string) => {
       const m = pool.current.get(k);
       if (!m) return;
+      m.gone = true;
       if (m.el instanceof HTMLVideoElement) {
+        if (m.el === shown) shown = null;
+        m.el.remove();
         m.el.pause();
         m.el.removeAttribute("src");
         m.el.load();
       }
       pool.current.delete(k);
+    };
+    /** the idle elements let go, longest unused first, until fewer than `max` videos are open; false when none could go */
+    const trim = (max: number) => {
+      const idle = [...pool.current].filter(([, m]) => m.el instanceof HTMLVideoElement && !claimed.has(m) && m.el !== shown).sort((a, b) => a[1].used - b[1].used);
+      while (videos().length >= max && idle.length) drop(idle.shift()![0]);
+      return videos().length < max;
+    };
+    /** The element a run of clips (`owner`) shows `src` from. `urgent`: on screen now (always one); else (a clip about to
+     *  start) only when its file has a free one and the cap allows. */
+    const media = (owner: string, src: string, urgent: boolean): Media | null => {
+      const file = now.current.urlOf(src);
+      if (!file?.url) return null;
+      const u = file.url;
+      let m: Media | undefined;
+      if (file.frame || isImage(u)) {
+        m = pool.current.get(u);
+        if (!m) pool.current.set(u, (m = make(u, file, new Image(), owner)));
+      } else {
+        const mine = videos().filter((x) => x.url === u);
+        // the <video> held on screen while the next one opens is never moved for another clip
+        const i = pickSlot(mine.map((x) => ({ owner: x.owner, used: x.used, busy: claimed.has(x) || x.el === shown })), owner, PER_FILE);
+        if (i !== null && i >= 0) m = mine[i];
+        else if (i === -1 || urgent) {
+          if (!trim(MAX_VIDEOS) && !urgent) return null;
+          const el = Object.assign(document.createElement("video"), { muted: true, playsInline: true, preload: "auto" });
+          pool.current.set(`${u}#${++made}`, (m = make(u, file, el, owner)));
+        } else return null;
+        m.owner = owner;
+        m.lead = file.lead ?? 0;
+      }
+      m.used = tick;
+      claimed.add(m);
+      return m;
     };
     const keep = (el: HTMLVideoElement, want: number, run: boolean, speed: number, fps = 25) => {
       if (el.readyState < 1) return;
@@ -144,6 +224,9 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
       }
       return el.complete && el.naturalWidth ? { el, w: el.naturalWidth, h: el.naturalHeight } : null;
     };
+    /** what a picture shows now, for knowing whether to draw again: its frame count, else its time or image */
+    const stamp = (m: Media | null, d: Drawable | null) =>
+      !m ? "x" : m.bad ? `bad${m.why ?? ""}` : !d ? "-" : m.el instanceof HTMLVideoElement ? `${m.vfc ? `f${m.frames}` : `t${m.el.currentTime}`}${m.el.seeking ? "s" : ""}${m.el.readyState}` : (d.el as HTMLImageElement).src;
     // a picture with no file here: Resolve's red Media Offline frame where the picture would be (as if it were the
     // frame's size), with the clip's name and why
     const missing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string) => {
@@ -189,14 +272,17 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
     const frame = () => {
       raf = requestAnimationFrame(frame);
       tick++;
+      claimed.clear();
       const ctx = canvas.current?.getContext("2d");
       if (!ctx) return;
-      const { tl: t, time: s, playing: run, rate: r, nameOf: name } = now.current;
+      const { tl: t, clock: c, rate: r, nameOf: name } = now.current;
+      const s = c.now();
+      const run = c.state === "running";
       const fps = t.timeline.fps;
       const srcFps = (src: string) => t.sources[src]?.fps || fps;
       const f = Math.floor(s * fps + 1e-6);
+      const chain = chainOf(t);
       const on = picturesAt(t, f);
-      const live = new Set<string>();
       const forward = run && r > 0;
       const cv = canvas.current!;
       const [cw, ch] = [Math.max(1, Math.round(W * px)), Math.max(1, Math.round(H * px))];
@@ -207,35 +293,50 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
       }
       // what is on screen now: each picture's file and frame (a shot's other pictures too), before anything is drawn
       const pics = on.map(({ item, track }) => {
-        const key = item._k ?? `${item.src}:${item.rec}`;
+        const key = keyOf(item);
         const k = f - item.rec;
         if (item.fx === "flash") return { item, track, key, k, m: null, d: null, got: null };
         const v1 = track === "V1";
         // V1 plays a freeze held and a reversed shot backwards (seeked frame by frame); the other tracks as they are
         const still = v1 && (!!item.freeze || !!item.rev);
         const own = v1 ? shotTime(item, "main", k, fps, srcFps) : sourceTime(t, item, s);
-        const m = media(key, item.src);
-        live.add(key);
+        const m = media(chain.get(key) ?? key, item.src, true);
         const d = m && !m.bad ? pictureOf(m, own, srcFps(item.src), forward && !still, (item.speed || 1) * r) : null;
         // the shot's other pictures: the shot before under an inset, the split rows; each plays on from its own frame
         const got: Partial<Record<Pic, Drawable>> = d ? { main: d } : {};
+        let more = "";
         if (d && drawnAsShot(item, track, W, H)) {
           for (const pic of ["under", 1, 2] as const) {
             const src = shotSource(item, pic);
             if (!src) continue;
-            const pk = `${key}:${pic}`;
-            const pm = media(pk, src);
-            live.add(pk);
+            const pm = media(`${key}:${pic}`, src, true);
             const pd = pm && !pm.bad ? pictureOf(pm, shotTime(item, pic, k, fps, srcFps), srcFps(src), forward, r) : null;
             if (pd) got[pic] = pd;
+            more += stamp(pm, pd);
           }
         }
-        return { item, track, key, k, m, d, got };
+        return { item, track, key, k, m, d, got, more };
       });
-      // one not ready (a file opening, a move landing): the last frame stays on screen until it is, never black (a file
-      // that can't play errors, and is drawn as Media Offline)
-      if (!painted || !pics.some((p) => p.m && !p.m.bad && !p.d)) {
+      // Play waits until the pictures at the playhead can play on (or the clock's half second is up)
+      if (c.state === "waiting" && pics.every((p) => p.item.fx === "flash" || readyToPlay(p.m, p.d))) c.ready();
+      // drawn again only for a new frame of a picture (or, with no playing video telling its frames, a new playhead
+      // frame), an edit, a resize; a picture not ready (a file opening, a move landing) keeps the last frame on screen,
+      // never black (a file that can't play errors, and is drawn as Media Offline)
+      const told = run && pics.some((p) => p.d && p.m?.vfc);
+      const sig = `${cw}x${ch}|${told ? "" : f}|${pics.map((p) => `${p.key}:${stamp(p.m, p.d)}${p.more ?? ""}`).join("|")}`;
+      // one plain picture (picture.ts plainVideo) with its frame: its hardware-decoded <video> shown as it is, the canvas
+      // not drawn; back to the canvas only once it has drawn the new picture, so a cut between the two never shows black
+      const fit = plainVideo(on);
+      const one = pics[0];
+      const direct = fit && one?.d && one.m && !one.m.seq && one.m.el instanceof HTMLVideoElement && !one.m.el.seeking ? one.m.el : null;
+      if (direct) {
+        show(direct, fit!);
         painted = true;
+        drawn = "";
+      } else if (!painted || ((t !== drawnTl || sig !== drawn) && !pics.some((p) => p.m && !p.m.bad && !p.d))) {
+        painted = true;
+        drawn = sig;
+        drawnTl = t;
         const flashes: number[] = [];
         ctx.setTransform(px, 0, 0, px, 0, 0);
         ctx.globalAlpha = 1;
@@ -298,14 +399,15 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
           ctx.fillStyle = `rgba(255,255,255,${Math.min(1, Math.max(0, a))})`;
           ctx.fillRect(0, 0, W, H);
         }
+        unshow();
       }
-      // the clips about to start: their files open and waiting on their first frame
+      // the next clip on each track: its file open in a free element of its file, waiting on its first frame (a clip
+      // that plays on from this one needs none: its element plays across the cut)
       if (forward || !run) {
-        for (const { item, track } of picturesSoon(t, f, 2 * fps)) {
+        for (const { item, track } of picturesSoon(t, f, 2 * fps, chain)) {
           if (item.fx === "flash") continue;
-          const key = item._k ?? `${item.src}:${item.rec}`;
-          const m = media(key, item.src);
-          live.add(key);
+          const key = keyOf(item);
+          const m = media(chain.get(key) ?? key, item.src, false);
           const at = track === "V1" ? shotTime(item, "main", 0, fps, srcFps) : sourceTime(t, item, item.rec / fps);
           if (m && !m.seq && m.el instanceof HTMLVideoElement) keep(m.el, at + m.lead, false, 1);
         }
@@ -317,20 +419,20 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
         const to = r > 0 ? lp[0] : lp[1] - 1 / fps;
         const tf = Math.max(0, Math.floor(to * fps + 1e-6));
         for (const { item, track } of picturesAt(t, tf)) {
-          const key = item._k ?? `${item.src}:${item.rec}`;
-          if (item.fx === "flash" || live.has(key)) continue;
-          const m = media(key, item.src);
-          live.add(key);
+          const owner = chain.get(keyOf(item)) ?? keyOf(item);
+          if (item.fx === "flash" || pics.some((p) => (chain.get(p.key) ?? p.key) === owner)) continue;
+          const m = media(owner, item.src, false);
           const at = track === "V1" ? shotTime(item, "main", tf - item.rec, fps, srcFps) : sourceTime(t, item, to);
           if (m && !m.seq && m.el instanceof HTMLVideoElement) keep(m.el, at + m.lead, false, 1);
         }
       }
       for (const [k, m] of pool.current) {
-        if (live.has(k)) continue;
+        if (claimed.has(m)) continue;
         if (m.el instanceof HTMLVideoElement && !m.el.paused) m.el.pause();
-        // ponytail: keeps the last dozen files open for scrubbing back; an LRU by memory if long timelines need it
-        if (tick - m.used > 600 || pool.current.size > 12) drop(k);
+        // shortcut: idle files stay open for scrubbing back within MAX_VIDEOS; an LRU by memory if long timelines need it
+        if (tick - m.used > 600 && m.el !== shown) drop(k);
       }
+      trim(MAX_VIDEOS + 1);
     };
     raf = requestAnimationFrame(frame);
     const all = pool.current;
@@ -341,117 +443,190 @@ export function NlePlayer({ tl, time, playing, rate, urlOf, nameOf, className, l
     };
   }, [W, H]);
 
-  useNleSound(tl, time, playing, rate, urlOf);
+  useNleSound(tl, clock, urlOf);
 
-  return <canvas ref={canvas} className={className} style={{ aspectRatio: `${W} / ${H}` }} />;
+  return (
+    <>
+      <canvas ref={canvas} className={className} style={{ aspectRatio: `${W} / ${H}` }} />
+      {/* over the canvas, in the frame: the one plain picture's <video> when it shows as it is */}
+      <div ref={host} aria-hidden className="pointer-events-none absolute inset-0" />
+    </>
+  );
 }
 
 const buffers = new Map<string, Promise<{ buf: AudioBuffer; from: number }>>();
+export type Piece = SoundPiece & { url: string; owner: string };
+type Voice = { el: HTMLAudioElement; url: string; owner: string; used: number; gain: GainNode; piece: string; laid: number };
 
-/** The sound tracks on the timeline's clock: laid from the playhead on play, again after a seek, a change or a drift. */
-function useNleSound(tl: NleTimeline, time: number, playing: boolean, rate: number, urlOf: (src: string) => NleFile | null) {
-  const pieces = useMemo(() => soundPieces(tl).flatMap((p): (SoundPiece & { url: string })[] => {
-    const f = urlOf(p.src);
-    return f?.url ? [{ ...p, url: f.url, offset: p.offset + (f.lead ?? 0) }] : [];
-  }), [tl, urlOf]);
+/** The pieces heard at `t` and, on each track, the next one about to start (within `ahead` s) that isn't the same run. */
+function piecesNear(pieces: Piece[], t: number, ahead = 2): { p: Piece; now: boolean }[] {
+  const out: { p: Piece; now: boolean }[] = [];
+  const tracks = new Map<string, Piece[]>();
+  for (const p of pieces) tracks.set(p.track ?? "", [...(tracks.get(p.track ?? "") ?? []), p]);
+  for (const list of tracks.values()) {
+    const on = list.find((p) => p.at <= t && t < p.at + p.dur);
+    if (on) out.push({ p: on, now: true });
+    const next = list.filter((p) => p.at > t && p.at <= t + ahead && p.owner !== on?.owner).sort((a, b) => a.at - b.at)[0];
+    if (next) out.push({ p: next, now: false });
+  }
+  return out.sort((a, b) => Number(b.now) - Number(a.now));
+}
+
+/**
+ * The sound tracks on the clock. A sound file's clips are laid from its decoded samples on the engine's clock, at each
+ * start or seek (never again for drift: the clock is the engine's). A video file's sound is never read whole: it plays
+ * from the file's own <audio> element (at most two per file, the next clip's waiting), routed through the engine with
+ * the clip's gain and fades, kept on the clock as the pictures are.
+ */
+function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => NleFile | null) {
+  const pieces = useMemo(() => {
+    const chain = chains(tl);
+    return soundPieces(tl).flatMap((p): Piece[] => {
+      const f = urlOf(p.src);
+      return f?.url ? [{ ...p, url: f.url, offset: p.offset + (f.lead ?? 0), owner: chain.get(p.key) ?? p.key }] : [];
+    });
+  }, [tl, urlOf]);
+  const live = useRef(pieces);
+  live.current = pieces;
+  const fps = tl.timeline.fps;
+  const relay = useRef<() => void>(() => {});
   const key = JSON.stringify(pieces);
-  const state = useRef<{ nodes: { stop(): void; disconnect(): void }[]; anchor: { t: number; at: number } | null; gen: number }>({ nodes: [], anchor: null, gen: 0 });
-  const timeRef = useRef(time);
-  timeRef.current = time;
+  // an edit while it plays: the sound files' clips laid again where the clock is
+  useEffect(() => relay.current(), [key]);
 
-  const stop = () => {
-    for (const n of state.current.nodes) {
-      try {
-        n.stop();
-      } catch {
-        // never started
-      }
-      n.disconnect();
-    }
-    state.current.nodes = [];
-    state.current.anchor = null;
-  };
-
-  const start = () => {
-    stop();
-    const ctx = nleAudio();
-    if (!ctx) return;
-    const gen = ++state.current.gen;
-    const t = timeRef.current;
-    const at = ctx.currentTime + 0.05;
-    state.current.anchor = { t, at };
-    for (const p of pieces) {
-      if (p.at + p.dur <= t) continue;
-      if (p.speed !== 1) {
-        stretched(ctx, p, gen);
-        continue;
-      }
-      let got = buffers.get(p.url);
-      if (!got) {
-        got = readSound(ctx, p.url);
-        got.catch(() => buffers.delete(p.url));
-        buffers.set(p.url, got);
-      }
-      void got.then(({ buf, from }) => {
-        if (state.current.gen !== gen) return;
-        // laid at the clock's time now (a file that took a while to read comes in where the timeline is)
-        const a = state.current.anchor!;
-        const tNow = a.t + Math.max(0, ctx.currentTime - a.at) * rate;
-        const late = Math.max(0, tNow - p.at);
-        const offset = p.offset + late * p.speed - from;
-        const dur = (p.dur - late) * p.speed;
-        if (dur <= 0 || offset < 0 || offset >= buf.duration) return;
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        src.playbackRate.value = p.speed * rate;
-        const g = ctx.createGain();
-        ramp(g, p, a, late);
-        src.connect(g).connect(ctx.destination);
-        src.start(Math.max(ctx.currentTime, a.at + Math.max(0, p.at - a.t) / rate), offset, Math.min(dur, buf.duration - offset));
-        state.current.nodes.push(src);
-      }, () => {});
-    }
-  };
-
-  // the clip's gain, up from silence over its fade in and down over its fade out, on the engine's clock
-  const ramp = (g: GainNode, p: SoundPiece, a: { t: number; at: number }, late: number) => {
-    const [first, ...rest] = fadePoints(p, a.at + (p.at - a.t) / rate, late, rate);
-    g.gain.setValueAtTime(first[1], first[0]);
-    for (const [t, v] of rest) g.gain.linearRampToValueAtTime(v, t);
-  };
-
-  // a clip at another speed keeps its pitch, as the render's (a media element stretches its sound; a buffer can't)
-  const stretched = (ctx: AudioContext, p: SoundPiece & { url: string }, gen: number) => {
-    const a = state.current.anchor!;
-    const el = Object.assign(new Audio(), { crossOrigin: "anonymous", preload: "auto", preservesPitch: true, src: p.url });
-    const g = ctx.createGain();
-    const late = Math.max(0, a.t - p.at);
-    ramp(g, p, a, late);
-    ctx.createMediaElementSource(el).connect(g).connect(ctx.destination);
-    el.currentTime = p.offset + late * p.speed;
-    el.playbackRate = p.speed * rate;
-    const wait = (a.at + Math.max(0, p.at - a.t) / rate - ctx.currentTime) * 1000;
-    const timers = [
-      window.setTimeout(() => state.current.gen === gen && void el.play().catch(() => {}), Math.max(0, wait)),
-      window.setTimeout(() => el.pause(), Math.max(0, wait) + ((p.dur - late) / rate) * 1000),
-    ];
-    // stopped with the rest: a node that pauses its element and lets go of its file
-    const node = { stop: () => { timers.forEach(clearTimeout); el.pause(); el.removeAttribute("src"); el.load(); }, disconnect: () => g.disconnect() };
-    state.current.nodes.push(node);
-  };
-
-  const run = playing && rate > 0;
   useEffect(() => {
-    if (run) start();
-    else stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- laid again when what plays changes
-  }, [run, rate, key]);
-  useEffect(() => () => stop(), []);
-  // a seek while playing, or the two clocks drifting apart: laid again from where the timeline is
+    clock.sound = pieces.length > 0;
+  }, [clock, pieces]);
+
   useEffect(() => {
-    const a = state.current.anchor;
-    const ctx = runningAudio();
-    if (!run || !a || !ctx) return;
-    if (Math.abs(a.t + Math.max(0, ctx.currentTime - a.at) * rate - time) > 0.15) start();
-  });
+    let gen = 0;
+    let anchors = 0;
+    let tick = 0;
+    const nodes: { stop(): void; disconnect(): void }[] = [];
+    const voices: Voice[] = [];
+    const fromSamples = (p: Piece) => isSoundFile(p.url) && p.speed === 1;
+    const stopNodes = () => {
+      for (const n of nodes.splice(0)) {
+        try {
+          n.stop();
+        } catch {
+          // never started
+        }
+        n.disconnect();
+      }
+    };
+    // the clip's gain, up from silence over its fade in and down over its fade out, on the engine's clock (`t0`: when
+    // its first frame plays there)
+    const ramp = (g: GainNode, p: Piece, t0: number, late: number) => {
+      const [first, ...rest] = fadePoints(p, t0, late, clock.rate);
+      g.gain.cancelScheduledValues(0);
+      g.gain.setValueAtTime(first[1], first[0]);
+      for (const [t, v] of rest) g.gain.linearRampToValueAtTime(v, t);
+    };
+    // the sound files' clips, laid where the clock is
+    const lay = () => {
+      stopNodes();
+      const ctx = clock.leader;
+      if (!ctx || clock.state !== "running" || clock.rate <= 0) return;
+      const g0 = ++gen;
+      const t = clock.now();
+      for (const p of live.current) {
+        if (!fromSamples(p) || p.at + p.dur <= t) continue;
+        let got = buffers.get(p.url);
+        if (!got) {
+          got = readSound(ctx, p.url);
+          got.catch(() => buffers.delete(p.url));
+          buffers.set(p.url, got);
+        }
+        void got.then(({ buf, from }) => {
+          if (gen !== g0 || clock.leader !== ctx) return;
+          // laid at the clock's time now (a file that took a while to read comes in where the timeline is)
+          const late = Math.max(0, clock.now() - p.at);
+          const offset = p.offset + late * p.speed - from;
+          const dur = (p.dur - late) * p.speed;
+          if (dur <= 0 || offset < 0 || offset >= buf.duration) return;
+          const src = ctx.createBufferSource();
+          src.buffer = buf;
+          src.playbackRate.value = p.speed * clock.rate;
+          const g = ctx.createGain();
+          ramp(g, p, clock.engineTimeOf(p.at), late);
+          src.connect(g).connect(ctx.destination);
+          src.start(Math.max(ctx.currentTime, clock.engineTimeOf(p.at + late)), offset, Math.min(dur, buf.duration - offset));
+          nodes.push({ stop: () => src.stop(), disconnect: () => (src.disconnect(), g.disconnect()) });
+        }, () => {});
+      }
+    };
+    const dropVoice = (v: Voice) => {
+      v.el.pause();
+      v.el.removeAttribute("src");
+      v.el.load();
+      v.gain.disconnect();
+      voices.splice(voices.indexOf(v), 1);
+    };
+    const voice = (p: Piece, urgent: boolean, busy: Set<Voice>): Voice | null => {
+      const mine = voices.filter((v) => v.url === p.url);
+      const i = pickSlot(mine.map((v) => ({ owner: v.owner, used: v.used, busy: busy.has(v) })), p.owner, PER_FILE);
+      let v: Voice | undefined;
+      if (i !== null && i >= 0) v = mine[i];
+      else if (i === -1 || urgent) {
+        const ctx = nleAudio();
+        if (!ctx) return null;
+        // routed through the engine: a file from another origin is heard only with CORS (the Mac app's files answer it)
+        const el = Object.assign(new Audio(), { crossOrigin: "anonymous", preload: "auto", preservesPitch: true });
+        el.src = p.url;
+        const gain = ctx.createGain();
+        ctx.createMediaElementSource(el).connect(gain).connect(ctx.destination);
+        voices.push((v = { el, url: p.url, owner: p.owner, used: tick, gain, piece: "", laid: -1 }));
+      } else return null;
+      if (v.owner !== p.owner) Object.assign(v, { owner: p.owner, piece: "" });
+      v.used = tick;
+      busy.add(v);
+      return v;
+    };
+    // the video files' sound: each element on the clock, like a picture
+    const follow = (t: number) => {
+      tick++;
+      const run = clock.state === "running" && clock.rate > 0;
+      const busy = new Set<Voice>();
+      for (const { p, now } of piecesNear(live.current.filter((x) => !fromSamples(x)), t)) {
+        const v = voice(p, now, busy);
+        if (!v || v.el.readyState < 1) continue;
+        const pos = p.offset + Math.max(0, t - p.at) * p.speed;
+        if (now && run) {
+          if (v.piece !== p.key || v.laid !== anchors) {
+            const ctx = runningAudio()!;
+            const t0 = clock.leader ? clock.engineTimeOf(p.at) : ctx.currentTime + (p.at - t) / clock.rate;
+            ramp(v.gain, p, t0, Math.max(0, t - p.at));
+            Object.assign(v, { piece: p.key, laid: anchors });
+          }
+          const go = steer(v.el.currentTime - pos, p.speed * clock.rate, fps);
+          if (Math.abs(v.el.playbackRate - go.rate) > 0.005) v.el.playbackRate = go.rate;
+          if (v.el.paused) void v.el.play().catch(() => {});
+          if (go.seek && !v.el.seeking) v.el.currentTime = pos;
+        } else {
+          if (!v.el.paused) v.el.pause();
+          if (Math.abs(v.el.currentTime - pos) > 0.01 && !v.el.seeking) v.el.currentTime = pos;
+        }
+      }
+      for (const v of [...voices]) {
+        if (busy.has(v)) continue;
+        if (!v.el.paused) v.el.pause();
+        if (tick - v.used > 600 || !live.current.some((p) => p.url === v.url)) dropVoice(v);
+      }
+    };
+    relay.current = lay;
+    const offTick = clock.subscribe(follow);
+    const offAnchor = clock.onAnchor(() => {
+      anchors++;
+      lay();
+      follow(clock.now());
+    });
+    return () => {
+      offTick();
+      offAnchor();
+      gen++;
+      stopNodes();
+      for (const v of [...voices]) dropVoice(v);
+    };
+  }, [clock, fps]);
 }

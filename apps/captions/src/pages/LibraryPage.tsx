@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Activity, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
-import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
+import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySort, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -48,7 +48,7 @@ import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
 import { ClipPanel } from "./library/ClipPanel";
-import { AssetRow, AssetTile, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
+import { AssetRow, AssetTile, LIST_CONTAINER, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
 import { ImportSummary, PlaceholderTile, commonAspect, going, placeholderShown, placeholderWide, summaryLine } from "./library/Placeholders";
 import { addImports, cancelImports, onImported, retryImport, useImportQueue } from "@/lib/import-queue";
 import { ClipView } from "./library/ClipView";
@@ -63,7 +63,7 @@ import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { EmptyDrop } from "./library/EmptyDrop";
 import { FoldersToAllow, lookForNew, lookedLine, useImportQuestion } from "./library/Import";
-import { repairPictures } from "@/lib/onMac";
+import { repairPictures, repairStrips } from "@/lib/onMac";
 import { SourceMediaItems } from "./library/SourceMediaItems";
 import { useOrganize } from "./library/Organize";
 import { anyFilter, savable, withSaved } from "./library/Filters";
@@ -72,8 +72,9 @@ import type { LibraryFilters } from "@/lib/library";
 import { restoreFolder, tabCounts, type TabCounts } from "./library/api";
 import { GalleryGrid, GalleryTile } from "./library/Gallery";
 import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll } from "./library/moves";
+import { CLIP_CARDS, type DraggedClip } from "@/lib/chat-clips";
 import { LibrarySidebar, SidebarSheet, sidebarPicked } from "./library/Sidebar";
-import { SORT_IDS, SortControls } from "./library/SortControls";
+import { ListHeader, SORT_IDS, SortControls } from "./library/SortControls";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
 import { LibraryTabs, type Tab } from "./library/Tabs";
 import { ReorganizeDialog, SmartFolderDialog } from "./library/SmartFolders";
@@ -100,7 +101,7 @@ const SORT_KEY = "library:sort";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The libraries whose photos with no picture this window has asked this Mac for, once a session (repairPictures). */
+/** The libraries whose photos with no picture and stray strips this window has asked this Mac for, once a session (repairPictures, repairStrips). */
 const picturesRepaired = new Set<string>();
 
 export default function LibraryPage() {
@@ -128,6 +129,11 @@ export default function LibraryPage() {
   const [found, setFound] = useState<{ hits: SearchHit[]; meaningGettingReady: boolean } | null>(null); // a search's answer
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState(() => storedSort(SORT_KEY, SORT_IDS));
+  // the one sort: Sort by, its order button and the list's headers all write it
+  const pickSort = (v: LibrarySort) => {
+    setSort(v);
+    persistSort(SORT_KEY, v);
+  };
   const [view, setView] = useLibraryView();
   const [cardSize, setCardSize] = useCardSize();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -679,7 +685,8 @@ export default function LibraryPage() {
                 ]
               : [];
           }),
-          ...((counts.data?.image ?? 0) > 0
+          // a top-level folder already called Photos is the photos tab (owner, 2026-11-19: two Photos tabs, one undeletable)
+          ...((counts.data?.image ?? 0) > 0 && !collections.some((c) => c.parentId === null && holdsClips(c) && c.name.trim().toLowerCase() === "photos")
             ? [{ id: "photos", label: "Photos", count: counts.data?.image, active: !open && kind === "image" && !roll, onOpen: () => go(null, "image") }]
             : []),
           ...collections
@@ -715,7 +722,10 @@ export default function LibraryPage() {
           draggable: true,
           onDragStart: (e: React.DragEvent) => {
             e.dataTransfer.setData(DRAG, carried(a).map((x) => x.id).join(","));
-            e.dataTransfer.effectAllowed = "move";
+            // the same clips for the chat: a drop there makes a chip each (lib/chat-clips.ts)
+            const cards: DraggedClip[] = carried(a).flatMap((x) => (x.versionId ? [{ id: x.id, versionId: x.versionId, title: x.title, ...(x.thumbUrl ? { thumbUrl: x.thumbUrl } : {}) }] : []));
+            if (cards.length) e.dataTransfer.setData(CLIP_CARDS, JSON.stringify(cards));
+            e.dataTransfer.effectAllowed = "copyMove";
           },
         };
 
@@ -842,11 +852,16 @@ export default function LibraryPage() {
     lookDone.current = window.setTimeout(() => setLookLine(null), 8000);
   };
 
-  // once per library a session, in the Mac app with the server elsewhere: photos with no picture get theirs from this Mac
+  // once per library a session, in the Mac app with the server elsewhere: photos with no picture get theirs from this Mac,
+  // then videos whose old strip isn't their shape get a new one (repairStrips), one after the other, never in the view's way
   useEffect(() => {
     if (!library || !watch || !macRemote || picturesRepaired.has(library.id)) return;
     picturesRepaired.add(library.id);
-    void repairPictures(library.id).then((n) => n && reload(), () => {});
+    const id = library.id;
+    void repairPictures(id)
+      .catch(() => 0)
+      .then(async (pictures) => pictures + (await repairStrips(id).catch(() => 0)))
+      .then((n) => n && reload(), () => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once a library, when the owner's view and the Mac are known
   }, [library?.id, !!watch, macRemote]);
 
@@ -971,13 +986,7 @@ export default function LibraryPage() {
                     )}
                     {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
                     <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} />
-                    <SortControls
-                      sort={sort}
-                      onSort={(v) => {
-                        setSort(v);
-                        persistSort(SORT_KEY, v);
-                      }}
-                    />
+                    <SortControls sort={sort} onSort={pickSort} />
                     {(watch || (changing && !firstScreen)) && (
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
@@ -1097,11 +1106,14 @@ export default function LibraryPage() {
                   view === "list" ? <RowFrame /> : <TileFrame columns={columns} />
                 ) : shown.length > 0 || shownFolders.length > 0 || placeholders.length > 0 ? (
                   view === "list" ? (
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-1.5" style={LIST_CONTAINER}>
                       {shownFolders.map((c) => (
                         <FolderRow key={c.id} {...folderProps(c)} />
                       ))}
                       {placeholders.length > 0 && <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2">{placeholders}</div>}
+                      {shown.length > 0 && (
+                        <ListHeader sort={sort} onSort={pickSort} />
+                      )}
                       {shown.map((a) => (
                         <ClipPick key={a.id} row picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
                           <AssetRow asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />

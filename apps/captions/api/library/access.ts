@@ -5,7 +5,7 @@ import { env } from "../lib/env";
 import { pluginMainSource, pluginUploadsTo } from "../lib/plugin";
 import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
-import { sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
+import { ownedProject, sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb, newLibrarySettings } from "./db";
@@ -181,6 +181,27 @@ export async function versionSource(username: string, versionId: string): Promis
 }
 
 /**
+ * Library clips a chat message names (dragged in from the Media Library), by version id: each one's asset, version and
+ * title, while it is in one of the libraries of the workspace this request works in (librariesHere), out of the trash and
+ * one the account may see. Null when any is not: a clip from another workspace never reaches the chat's tools.
+ */
+export async function clipsHere(username: string, versionIds: string[]): Promise<Array<{ id: string; versionId: string; title: string }> | null> {
+  const here = new Set((await librariesHere(username)).map((l) => l.id));
+  const out: Array<{ id: string; versionId: string; title: string }> = [];
+  for (const versionId of versionIds) {
+    const v = libraryDb()
+      .prepare("SELECT a.id, a.title, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
+      .get(versionId) as { id: string; title: string; library_id: string } | undefined;
+    if (!v || !here.has(v.library_id)) return null;
+    const role = libraryRole(username, v.library_id);
+    const viewer = role ? { username, role } : { username, role: "member" as const, given: true as const };
+    if (!(await canSee(viewer, assetRef(v.library_id, v.id, versionId)))) return null;
+    out.push({ id: v.id, versionId, title: v.title });
+  }
+  return out;
+}
+
+/**
  * Whether a workspace's Media Library is set up (setupAt, on the library its owner keeps, found by the workspace's
  * projectId: never the asker's home). No projectId: the asker's own first library. `owner`: the asker sets it up; a
  * member is told it isn't set up, with no button.
@@ -194,7 +215,8 @@ export async function mediaReady(username: string, projectId?: string): Promise<
     return settled(row, true, username, undefined);
   }
   const ws = workspaceById(projectId);
-  const owner = !!ws?.members.some((m) => m.username === username && m.role === "owner");
+  // the owner: of the team, or of the workspace itself (a person's own workspace is in no team)
+  const owner = !!ws?.members.some((m) => m.username === username && m.role === "owner") || !!(await ownedProject(projectId, { username } as SessionUser));
   const row =
     (d.prepare(`${cols} json_extract(settings, '$.projectId') = ? ORDER BY created_at, id LIMIT 1`).get(projectId) as Row | undefined) ??
     // a library from before workspaces kept their own: the first brand's, as librariesIn reads it
