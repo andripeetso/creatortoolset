@@ -1,6 +1,7 @@
-import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, Radius, ShapeLayer, Stroke, TextLayer } from "@contracts/design";
+import type { DesignPage, DesignShape, Effect, Gradient, ImageLayer, Layer, Radius, ShapeLayer, Stroke, TextLayer } from "@contracts/design";
 import { designWeight } from "./fonts";
 import { onPath, tracePath } from "./path";
+import { addNoise, effectsOf, fullAlpha, innerShadow, progressiveBlur, reachOf, spreadAlpha, worksPixels } from "./effects";
 import { blurPixels, retouch, retouches } from "./retouch";
 
 /**
@@ -370,76 +371,178 @@ function placePicture(ctx: Ctx, l: Pick<ImageLayer, "w" | "h" | "fit" | "zoom" |
 /** How far off the canvas a layer is drawn to throw its shadow alone back onto it, in canvas pixels. */
 const FAR = 30_000;
 
-function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean) {
+/** A box in the canvas's own pixels: the frame's, where a background blur may read what is under it. */
+type Area = { x: number; y: number; w: number; h: number };
+/** The box round a w × h box drawn with this transform, in the canvas's own pixels. */
+function areaOf(t: DOMMatrix, w: number, h: number): Area {
+  const xs = [t.e, t.a * w + t.e, t.c * h + t.e, t.a * w + t.c * h + t.e];
+  const ys = [t.f, t.b * w + t.f, t.d * h + t.f, t.b * w + t.d * h + t.f];
+  const x = Math.floor(Math.min(...xs));
+  const y = Math.floor(Math.min(...ys));
+  return { x, y, w: Math.ceil(Math.max(...xs)) - x, h: Math.ceil(Math.max(...ys)) - y };
+}
+
+function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean, area: Area) {
   ctx.save();
   ctx.translate(l.x + l.w / 2, l.y + l.h / 2);
   if (l.rotate) ctx.rotate((l.rotate * Math.PI) / 180);
   if (l.flipX || l.flipY) ctx.scale(l.flipX ? -1 : 1, l.flipY ? -1 : 1);
   ctx.translate(-l.w / 2, -l.h / 2);
   ctx.globalAlpha = l.opacity ?? 1;
-  if (l.shadow) {
-    // The shadow alone, first: the layer is drawn far off the canvas with its shadow thrown back to where it falls,
-    // so the shadow never shows through the layer's own see-through parts. A canvas's shadow is in the canvas's own
-    // pixels whatever the drawing is scaled or turned by, so its blur and offset are scaled here by hand.
-    const t = ctx.getTransform();
-    const k = Math.hypot(t.a, t.b);
-    const c = l.shadow.color;
-    ctx.save();
-    ctx.setTransform(t.a, t.b, t.c, t.d, t.e - FAR, t.f);
-    ctx.shadowColor = `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${l.shadow.opacity})`;
-    ctx.shadowBlur = l.shadow.blur * k;
-    ctx.shadowOffsetX = l.shadow.x * k + FAR;
-    ctx.shadowOffsetY = l.shadow.y * k;
-    paintLayer(ctx, l, loaded, true, frame, exact);
-    ctx.restore();
+  const fx = effectsOf(l).filter((e) => !e.hidden);
+  const own = worksPixels(fx) || fx.some((e) => e.type === "shadow" && e.spread) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
+  const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
+  const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
+  for (const e of fx) {
+    if (e.type !== "shadow") continue;
+    const grown = e.spread ? own?.spread(e.spread) : null;
+    castShadow(ctx, e, (g) => (grown ? lay(g, grown) : paint(g, true)));
   }
+  const glass = fx.find((e): e is Effect & { blur: number } => e.type === "background-blur");
+  if (glass) backdrop(ctx, l, glass.blur, (g) => paint(g, true), area);
   if (l.blend) ctx.globalCompositeOperation = l.blend;
-  if (l.blur && l.type !== "image" && !softLayer(ctx, l, loaded, frame, exact)) paintLayer(ctx, l, loaded, false, frame, exact);
-  else if (!l.blur || l.type === "image") paintLayer(ctx, l, loaded, false, frame, exact);
+  paint(ctx, false);
   ctx.restore();
 }
 
-/** The pixels a blurred layer is worked at (a blur has nothing fine in it, so a big one is worked smaller), and the blurred layers kept. */
-const SOFT_PIXELS = 1_500_000;
-const soft = new WeakMap<Layer, { key: string; canvas: Canvas; margin: number }>();
+/**
+ * A shadow alone: the layer is drawn far off the canvas with its shadow thrown back to where it falls, so the shadow
+ * never shows through the layer's own see-through parts. A canvas's shadow is in the canvas's own pixels whatever the
+ * drawing is scaled or turned by, so its blur and offset are scaled here by hand (and it falls the same way however
+ * the layer is turned).
+ */
+function castShadow(ctx: Ctx, s: { color: string; opacity: number; blur: number; x: number; y: number }, paint: (g: Ctx) => void) {
+  const t = ctx.getTransform();
+  const k = Math.hypot(t.a, t.b);
+  const c = s.color;
+  ctx.save();
+  ctx.setTransform(t.a, t.b, t.c, t.d, t.e - FAR, t.f);
+  ctx.shadowColor = `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${s.opacity})`;
+  ctx.shadowBlur = s.blur * k;
+  ctx.shadowOffsetX = s.x * k + FAR;
+  ctx.shadowOffsetY = s.y * k;
+  paint(ctx);
+  ctx.restore();
+}
+
+/** The pixels a layer is worked at for its effects on the canvas (a blur has nothing fine in it) and in a saved file, and the worked layers kept. */
+const WORK_PIXELS = 3_000_000;
+const EXACT_WORK_PIXELS = 24_000_000;
+const KEPT_WORK = 16_000_000;
 const newCanvas = (w: number, h: number): Canvas | null =>
   typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(w, h) : typeof document !== "undefined" ? Object.assign(document.createElement("canvas"), { width: w, height: h }) : null;
 
+/** A layer worked in a box of its own: its canvas, the room round its box (`m`, design pixels) and the box's size with that room. */
+type Piece = { canvas: Canvas; m: number; bw: number; bh: number };
+type Worked = { body: Piece | null; spread: (n: number) => Piece | null };
+const workedKept = new WeakMap<Loaded, Map<string, { key: string; size: number; made: Worked }>>();
+
+/** A w × h box (with `m` design pixels of room round it) drawn at `scale` by `draw`, its pixels then changed by `work`. Null when no canvas can be made. */
+function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) => void, work: (px: Uint8ClampedArray, w: number, h: number) => void): Piece | null {
+  const bw = w + 2 * m;
+  const bh = h + 2 * m;
+  const pw = Math.max(1, Math.ceil(bw * scale));
+  const ph = Math.max(1, Math.ceil(bh * scale));
+  const canvas = newCanvas(pw, ph);
+  const g = canvas?.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
+  if (!canvas || !g) return null;
+  g.setTransform(scale, 0, 0, scale, m * scale, m * scale);
+  draw(g);
+  const pixels = g.getImageData(0, 0, pw, ph);
+  work(pixels.data, pw, ph);
+  g.putImageData(pixels, 0, 0);
+  return { canvas, m, bw, bh };
+}
+
 /**
- * A layer that is not a picture, drawn blurred (its `blur`): painted into a box of its own with room around it for
- * what the blur spreads, blurred there (retouch.ts blurPixels: the same in every browser, where a canvas's own blur is
- * not), and laid in place. Kept while the layer is the same one, drawn at the same scale: a layer is a new object
- * whenever anything of it changes. False when no canvas can be made (the layer is then drawn sharp).
+ * A layer with the effects that change its own pixels (lib/design/effects.ts): painted into a box of its own with
+ * room round it for what its blur spreads, then its inner shadows, its noise and its blurs in that order; and its
+ * outline grown by a shadow's spread, made when a shadow asks. Kept one a layer of a frame while it is the same but
+ * for its place, drawn at the same scale: dragging it about works nothing again.
  */
-function softLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boolean): boolean {
-  const blur = Math.min(200, l.blur ?? 0);
+function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: string, exact: boolean): Worked {
   const t = ctx.getTransform();
-  // what the blur spreads past the box, in design pixels
-  const m = Math.ceil(blur * 3);
-  const bw = l.w + 2 * m;
-  const bh = l.h + 2 * m;
+  const reach = reachOf(fx);
+  const grow = Math.max(0, ...fx.map((e) => (e.type === "shadow" ? (e.spread ?? 0) : 0)));
+  const bw = l.w + 2 * (reach + grow);
+  const bh = l.h + 2 * (reach + grow);
+  const room = exact ? EXACT_WORK_PIXELS : WORK_PIXELS;
   let scale = Math.hypot(t.a, t.b);
-  if (bw * bh * scale * scale > SOFT_PIXELS) scale = Math.sqrt(SOFT_PIXELS / (bw * bh));
-  // a drawing that has not loaded yet is a grey box: it is blurred again once it is there
+  if (bw * bh * scale * scale > room) scale = Math.sqrt(room / (bw * bh));
+  // a picture or a drawing that has not loaded yet is a grey box: it is worked again once it is there
   const src = sourceOf(l);
-  const key = `${scale}|${src ? !!loaded.get(src)?.width : ""}`;
-  let kept = soft.get(l);
-  if (kept?.key !== key) {
-    const w = Math.max(1, Math.ceil(bw * scale));
-    const h = Math.max(1, Math.ceil(bh * scale));
-    const canvas = newCanvas(w, h);
-    const g = canvas?.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
-    if (!canvas || !g) return false;
-    g.setTransform(scale, 0, 0, scale, m * scale, m * scale);
-    paintLayer(g, l, loaded, false, frame, exact);
-    const pixels = g.getImageData(0, 0, w, h);
-    blurPixels(pixels.data, w, h, blur * scale);
-    g.putImageData(pixels, 0, 0);
-    kept = { key, canvas, margin: m };
-    soft.set(l, kept);
-  }
-  ctx.drawImage(kept.canvas as CanvasImageSource, -m, -m, bw, bh);
-  return true;
+  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : ""]);
+  let mine = workedKept.get(loaded);
+  if (!mine) workedKept.set(loaded, (mine = new Map()));
+  return keptOr(mine, `${frame}/${l.id}`, key, Math.ceil(bw * bh * scale * scale), KEPT_WORK, () => {
+    // an inner shadow falls the way a shadow does on the page, however the layer is turned or mirrored
+    const a = (-(l.rotate ?? 0) * Math.PI) / 180;
+    const inLayer = (x: number, y: number) => [(x * Math.cos(a) - y * Math.sin(a)) * (l.flipX ? -1 : 1), (x * Math.sin(a) + y * Math.cos(a)) * (l.flipY ? -1 : 1)] as const;
+    const body = worksPixels(fx)
+      ? pieceOf(l.w, l.h, reach, scale, (g) => paintLayer(g, l, loaded, false, frame, exact), (px, w, h) => {
+          // its pixels a design pixel
+          const k = w / (l.w + 2 * reach);
+          for (const e of fx) {
+            if (e.type !== "inner-shadow") continue;
+            const [dx, dy] = inLayer(e.x, e.y);
+            innerShadow(px, w, h, { ...e, blur: e.blur * k, spread: (e.spread ?? 0) * k }, dx * k, dy * k);
+          }
+          for (const e of fx) if (e.type === "noise") addNoise(px, w, h, e.amount, (e.size ?? 1) * k, reach * k, reach * k);
+          for (const e of fx) {
+            if (e.type === "blur") blurPixels(px, w, h, Math.min(200, e.blur) * k);
+            else if (e.type === "progressive-blur") progressiveBlur(px, w, h, { ...e, blur: Math.min(200, e.blur) * k }, { x: reach * k, y: reach * k, w: l.w * k, h: l.h * k });
+          }
+        })
+      : null;
+    const spreads = new Map<number, Piece | null>();
+    const spread = (n: number) => {
+      if (!spreads.has(n))
+        spreads.set(n, pieceOf(l.w, l.h, reach + Math.max(0, n), scale, (g) => (body ? g.drawImage(body.canvas as CanvasImageSource, -body.m, -body.m, body.bw, body.bh) : paintLayer(g, l, loaded, true, frame, exact)), (px, w, h) => spreadAlpha(px, w, h, (n * w) / (l.w + 2 * (reach + Math.max(0, n))))));
+      return spreads.get(n)!;
+    };
+    return { body, spread };
+  });
+}
+
+/** The pixels a background blur reads and works at (what it shows has nothing fine in it). */
+const GLASS_PIXELS = 400_000;
+
+/**
+ * A background blur: what the canvas has under the layer so far (inside the frame's `area`) read small, blurred
+ * (retouch.ts blurPixels: a canvas's own blur is missing in some browsers), and laid back only where the layer is.
+ * `mask` paints the layer's shape; a see-through fill still blurs all that is under it. Worked at every drawing,
+ * since what is under the layer changes with everything under it.
+ */
+function backdrop(ctx: Ctx, l: Layer, blur: number, mask: (g: Ctx) => void, area: Area) {
+  const t = ctx.getTransform();
+  const own = areaOf(t, l.w, l.h);
+  const x0 = Math.max(own.x, area.x, 0);
+  const y0 = Math.max(own.y, area.y, 0);
+  const x1 = Math.min(own.x + own.w, area.x + area.w, ctx.canvas.width);
+  const y1 = Math.min(own.y + own.h, area.y + area.h, ctx.canvas.height);
+  if (x1 <= x0 || y1 <= y0) return;
+  const r = Math.min(200, blur) * Math.hypot(t.a, t.b);
+  const s = Math.min(1, 8 / Math.max(r, 1), Math.sqrt(GLASS_PIXELS / ((x1 - x0) * (y1 - y0))));
+  const w = Math.max(1, Math.ceil((x1 - x0) * s));
+  const h = Math.max(1, Math.ceil((y1 - y0) * s));
+  const under = newCanvas(w, h);
+  const shape = newCanvas(w, h);
+  const g = under?.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
+  const sg = shape?.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
+  if (!under || !g || !sg) return;
+  g.drawImage(ctx.canvas as CanvasImageSource, x0, y0, x1 - x0, y1 - y0, 0, 0, w, h);
+  const pixels = g.getImageData(0, 0, w, h);
+  blurPixels(pixels.data, w, h, r * s);
+  sg.setTransform(t.a * s, t.b * s, t.c * s, t.d * s, (t.e - x0) * s, (t.f - y0) * s);
+  mask(sg);
+  const cut = sg.getImageData(0, 0, w, h).data;
+  fullAlpha(cut);
+  for (let i = 3; i < cut.length; i += 4) pixels.data[i] = (pixels.data[i]! * cut[i]!) / 255;
+  g.putImageData(pixels, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(under as CanvasImageSource, x0, y0, x1 - x0, y1 - y0);
+  ctx.restore();
 }
 
 /** A square of film grain, the same on every machine and at every drawing: one grey value a grain. */
@@ -576,7 +679,10 @@ export function drawPage(ctx: Ctx, page: DesignPage, w: number, h: number, loade
     ctx.fillStyle = fillOf(ctx, page.background, page.gradient, w, h);
     ctx.fillRect(0, 0, w, h);
   }
-  for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded, page.id, exact);
+  // the frame's box on the canvas: a background blur reads only what is inside it (on the editor's canvas, what is
+  // outside is other frames and the canvas itself)
+  const area = page.loose ? { x: 0, y: 0, w: Infinity, h: Infinity } : areaOf(ctx.getTransform(), w, h);
+  for (const l of page.layers) if (!l.hidden) drawLayer(ctx, l, loaded, page.id, exact, area);
   if (!page.loose) finishFrame(ctx, page, w, h);
 }
 

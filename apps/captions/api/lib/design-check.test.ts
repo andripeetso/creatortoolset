@@ -122,6 +122,35 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(pages[0]!.layers[2]).not.toHaveProperty("shadow");
   });
 
+  it("keeps a list of effects, each held to what can be drawn, and leaves the old shadow and blur out beside one", () => {
+    const fx = [
+      { type: "shadow", color: "#ABC", opacity: 3, blur: -1, x: 5, y: 99999, spread: 500 },
+      { type: "inner-shadow", color: "red", hidden: true },
+      { type: "glow", blur: 9 },
+      "soft",
+      { type: "progressive-blur", blur: 900, from: -1, to: 2, angle: 45 },
+      { type: "background-blur" },
+      { type: "noise", amount: 0, size: 1 },
+    ];
+    const [a, b, c, pic] = cleanPages([{ layers: [text({ effects: fx, shadow: { color: "#000000" }, blur: 30 }), text({ effects: [] , blur: 30 }), text({ blur: 30 }), { type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 10, h: 10, blur: 20, effects: Array(12).fill({ type: "blur", blur: 5 }) }] }], rules).pages[0]!.layers;
+    expect(a!.effects).toEqual([
+      { type: "shadow", color: "#aabbcc", opacity: 1, blur: 0, x: 5, y: 1000, spread: 200 },
+      { type: "inner-shadow", color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8, hidden: true },
+      { type: "progressive-blur", blur: 200, from: 0, to: 1, angle: 45 },
+      { type: "background-blur", blur: 24 },
+      { type: "noise", amount: 1 },
+    ]);
+    expect(a).not.toHaveProperty("shadow");
+    expect(a).not.toHaveProperty("blur");
+    // an empty list is none, and stands for none
+    expect(b).not.toHaveProperty("effects");
+    expect(b).not.toHaveProperty("blur");
+    expect(c).toMatchObject({ blur: 30 });
+    // a picture's own blur is one of its colour changes, beside its effects
+    expect(pic).toMatchObject({ blur: 20 });
+    expect(pic!.effects).toHaveLength(8);
+  });
+
   it("keeps a gradient, letter spacing, a blend, a flip, a shape's kind and a picture's zoom and focus, each held to what can be drawn", () => {
     const shape = (more: object) => ({ type: "shape", x: 0, y: 0, w: 100, h: 100, fill: "#ff0000", ...more });
     const picture = (more: object) => ({ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, ...more });

@@ -20,8 +20,11 @@ import {
   ChevronDown,
   CircleDot,
   Crop,
+  Eye,
+  EyeOff,
   FlipHorizontal2,
   FlipVertical2,
+  GripVertical,
   Group,
   Link2,
   Minus,
@@ -34,8 +37,9 @@ import {
   X,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import type { Design, DesignPage, Gradient, Layer, Stroke } from "@contracts/design";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
+import type { Design, DesignPage, Effect, Gradient, Layer, Stroke } from "@contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, EFFECT_PRESETS, EFFECTS_MAX } from "@contracts/design";
+import { effectsOf, withEffects } from "@/lib/design/effects";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { typedHex } from "@/lib/design/colour";
@@ -197,8 +201,6 @@ const Tap = ({ label, on, disabled, onClick, children }: { label: string; on?: b
   </Tip>
 );
 
-/** The shadow a press on + gives. */
-const SHADOW = { color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8 };
 /** The gradient a press on + gives: down the box, to black. */
 const GRADIENT = { to: "#000000", angle: 90 };
 const GRADIENT_KINDS = [["linear", "Linear"], ["radial", "Radial"]] as const;
@@ -642,7 +644,6 @@ export function Inspector({
                 </Tap>
               </div>
             )}
-            {every((l) => l.type !== "image") && slide("Blur", same((l) => (l.type !== "image" ? (l.blur ?? 0) : undefined)), (n) => (l) => (l.type !== "image" ? { ...l, blur: n || undefined } : l), 0, 100)}
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <PickOne
@@ -900,27 +901,7 @@ export function Inspector({
               )}
             </Section>
           )}
-          <Section
-            title="Effects"
-            action={addOrRemove(picked.some((l) => l.shadow), "shadow", () => onPatch((l) => ({ ...l, shadow: SHADOW })), () => onPatch((l) => ({ ...l, shadow: undefined })))}
-          >
-            {picked.some((l) => l.shadow) && (
-              <>
-                <div className="grid grid-cols-[1fr_4.5rem] gap-2">
-                  {colour("Shadow", same((l) => l.shadow?.color), (c) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), color: c } }))}
-                  {num("%", "Shadow strength in percent", (() => {
-                    const o = same((l) => l.shadow?.opacity);
-                    return o === null ? null : Math.round(o * 100);
-                  })(), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), opacity: n / 100 } }), { min: 0, max: 100 })}
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {num("X", "Shadow X", same((l) => l.shadow?.x), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), x: n } }), { min: -1000, max: 1000 })}
-                  {num("Y", "Shadow Y", same((l) => l.shadow?.y), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), y: n } }), { min: -1000, max: 1000 })}
-                  {num("◌", "Shadow blur", same((l) => l.shadow?.blur), (n) => (l) => ({ ...l, shadow: { ...(l.shadow ?? SHADOW), blur: n } }), { min: 0, max: 400 })}
-                </div>
-              </>
-            )}
-          </Section>
+          <Effects picked={picked} onPatch={onPatch} num={num} slide={slide} colour={colour} />
           {image && (
             <Section
               title="Picture"
@@ -1018,5 +999,144 @@ export function Inspector({
       </Section>
       )}
     </aside>
+  );
+}
+
+const EFFECT_NAMES: Record<Effect["type"], string> = { shadow: "Drop shadow", "inner-shadow": "Inner shadow", blur: "Layer blur", "progressive-blur": "Progressive blur", "background-blur": "Background blur", noise: "Noise" };
+/** A new effect of a kind, as + gives it or a change of kind makes it of one there (a shadow stays the shadow it was, a blur keeps how much). */
+function effectNew(type: Effect["type"], was?: Effect): Effect {
+  const shadowy = (t: Effect["type"]) => t === "shadow" || t === "inner-shadow";
+  if (was && shadowy(was.type) && shadowy(type)) return { ...(was as Extract<Effect, { color: string }>), type: type as "shadow" | "inner-shadow" };
+  const blur = was && "blur" in was && !shadowy(was.type) ? was.blur : undefined;
+  if (type === "shadow" || type === "inner-shadow") return { type, color: "#000000", opacity: 0.25, blur: 16, x: 0, y: type === "shadow" ? 8 : 4 };
+  if (type === "progressive-blur") return { type, blur: blur ?? 40, from: 0.45, to: 1, angle: 90 };
+  if (type === "noise") return { type, amount: 15, size: 2 };
+  return { type, blur: blur ?? 24 };
+}
+
+/**
+ * The picked layers' effects, the top one first (as it is drawn: the last in the list): each one's kind, its numbers,
+ * a switch to hide it and a − to take it off; dragged by its handle to another place in the list. A few ready-made
+ * sets in Presets. Layers whose lists differ show none, and + gives each one more.
+ */
+function Effects({ picked, onPatch, num, slide, colour }: {
+  picked: Layer[];
+  onPatch: (fn: (l: Layer) => Layer, merge?: string) => void;
+  num: (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more?: { min?: number; max?: number; step?: number }) => ReactNode;
+  slide: (label: string, value: number | null, to: (n: number) => (l: Layer) => Layer, min: number, max: number) => ReactNode;
+  colour: (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => ReactNode;
+}) {
+  const rows = useRef<(HTMLDivElement | null)[]>([]);
+  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  const lists = picked.map(effectsOf);
+  const list = lists.every((x) => JSON.stringify(x) === JSON.stringify(lists[0])) ? (lists[0] ?? []) : null;
+  /** Each picked layer with its effect at `n` (in the list's own order) through `f`. */
+  const edit = (n: number, f: (e: Effect) => Effect) => (l: Layer) => withEffects(l, effectsOf(l).map((e, i) => (i === n ? f(e) : e)));
+  const set = (n: number, more: Partial<Record<string, number | string>>) => edit(n, (e) => ({ ...e, ...more }) as Effect);
+  /** The row under the pointer while one is dragged (the first or the last when it is past them). */
+  const rowAt = (y: number) => {
+    const at = rows.current.findIndex((el) => el && y < el.getBoundingClientRect().bottom);
+    return at < 0 ? (list?.length ?? 1) - 1 : at;
+  };
+  const shown = list ? [...list].reverse() : [];
+  return (
+    <Section
+      title="Effects"
+      action={
+        <div className="flex items-center gap-0.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger className={cn("h-6 rounded-[5px] px-1.5 outline-none hover:bg-zinc-500/15", DIM)}>Presets</DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {EFFECT_PRESETS.map((p) => (
+                <DropdownMenuItem key={p.name} onSelect={() => onPatch((l) => withEffects(l, p.effects))}>
+                  {p.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Tap label="Add an effect" disabled={lists.some((x) => x.length >= EFFECTS_MAX)} onClick={() => onPatch((l) => withEffects(l, [...effectsOf(l), effectNew("shadow")]))}>
+            <Plus className="h-3.5 w-3.5" />
+          </Tap>
+        </div>
+      }
+    >
+      {!list && <p className={DIM}>Each layer has its own</p>}
+      {shown.map((e, r) => {
+        const n = shown.length - 1 - r;
+        const pct = (v: number) => Math.round(v * 100);
+        return (
+          <div key={r} ref={(el) => void (rows.current[r] = el)} className={cn("flex flex-col gap-2 rounded-[5px]", drag && drag.to === r && drag.from !== r && "ring-1 ring-[#0d99ff]")}>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="Drag to reorder"
+                className={cn("flex h-6 w-4 shrink-0 cursor-grab touch-none items-center justify-center", DIM)}
+                onPointerDown={(ev) => {
+                  if (ev.button !== 0) return;
+                  ev.currentTarget.setPointerCapture(ev.pointerId);
+                  setDrag({ from: r, to: r });
+                }}
+                onPointerMove={(ev) => drag && setDrag({ ...drag, to: rowAt(ev.clientY) })}
+                onPointerUp={() => {
+                  setDrag(null);
+                  if (!drag || drag.to === drag.from) return;
+                  // the rows are the list upside down: row r is the list's (length - 1 - r)
+                  const from = shown.length - 1 - drag.from;
+                  const to = shown.length - 1 - drag.to;
+                  onPatch((l) => {
+                    const fx = [...effectsOf(l)];
+                    const [moved] = fx.splice(from, 1);
+                    fx.splice(to, 0, moved!);
+                    return withEffects(l, fx);
+                  });
+                }}
+                onPointerCancel={() => setDrag(null)}
+              >
+                <GripVertical className="h-3.5 w-3.5" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <PickOne label="Effect" value={EFFECT_NAMES[e.type]} options={DESIGN_EFFECTS.map((t) => [t, EFFECT_NAMES[t]] as const)} onPick={(t) => onPatch(edit(n, (was) => ({ ...effectNew(t, was), ...(was.hidden ? { hidden: true as const } : {}) })))} />
+              </div>
+              <Tap label={e.hidden ? "Show the effect" : "Hide the effect"} onClick={() => onPatch(edit(n, (x) => ({ ...x, hidden: x.hidden ? undefined : true })))}>
+                {e.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </Tap>
+              <Tap label="Remove the effect" onClick={() => onPatch((l) => withEffects(l, effectsOf(l).filter((_, i) => i !== n)))}>
+                <Minus className="h-3.5 w-3.5" />
+              </Tap>
+            </div>
+            <div className={cn("flex flex-col gap-2", e.hidden && "opacity-50")}>
+              {(e.type === "shadow" || e.type === "inner-shadow") && (
+                <>
+                  <div className="grid grid-cols-[1fr_4.5rem] gap-2">
+                    {colour(`${EFFECT_NAMES[e.type]} colour`, e.color, (c) => set(n, { color: c }))}
+                    {num("%", "Shadow strength in percent", pct(e.opacity), (v) => set(n, { opacity: v / 100 }), { min: 0, max: 100 })}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {num("X", "Shadow X", e.x, (v) => set(n, { x: v }), { min: -1000, max: 1000 })}
+                    {num("Y", "Shadow Y", e.y, (v) => set(n, { y: v }), { min: -1000, max: 1000 })}
+                    {num("◌", "Shadow blur", e.blur, (v) => set(n, { blur: v }), { min: 0, max: 400 })}
+                    {num("⤢", "Shadow spread", e.spread ?? 0, (v) => set(n, { spread: v }), { min: -200, max: 200 })}
+                  </div>
+                </>
+              )}
+              {(e.type === "blur" || e.type === "background-blur" || e.type === "progressive-blur") && slide("Blur", e.blur, (v) => set(n, { blur: v }), 0, 200)}
+              {e.type === "progressive-blur" && (
+                <div className="grid grid-cols-3 gap-2">
+                  {num("From", "Sharp up to, in percent of the layer", pct(e.from), (v) => set(n, { from: v / 100 }), { min: 0, max: 100 })}
+                  {num("To", "Fully blurred from, in percent of the layer", pct(e.to), (v) => set(n, { to: v / 100 }), { min: 0, max: 100 })}
+                  {num("∠", "Direction in degrees: 90 is top to bottom", e.angle, (v) => set(n, { angle: v }), { min: -360, max: 360 })}
+                </div>
+              )}
+              {e.type === "noise" && (
+                <>
+                  {slide("Amount", e.amount, (v) => set(n, { amount: Math.max(1, v) }), 1, 100)}
+                  <div className="grid grid-cols-2 gap-2">{num("◦", "Grain size in pixels", e.size ?? 1, (v) => set(n, { size: v }), { min: 1, max: 20 })}</div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </Section>
   );
 }
