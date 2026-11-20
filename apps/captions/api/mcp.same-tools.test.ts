@@ -110,9 +110,10 @@ describe.skipIf(serverPlugins.length > 0)("an account with no editing style", ()
     // find_sound_effects adds 635 (its tool text, with the type list)
     // design_update's sizes and fill add 132 (frames copied into other sizes, a frame copied once per row of words: 81 bytes of
     // description and the two fields); its components line adds 172 (a part repeated on several frames made one main
-    // component placed as instances, with properties)
-    expect(bytes(dock) - bytes(main(dock))).toBe(9877);
+    // component placed as instances, with properties); its styles add 144 (the design's colour, text and effect styles:
+    // 117 bytes of description and the field)
+    expect(bytes(dock) - bytes(main(dock))).toBe(10021);
     // an outside key gets those and use_file (1465, as the dock lists it, with its sound for a song or a sound effect): a file its AI sent with upload_file goes on from there
-    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(9813);
+    expect(bytes(outside) - bytes(mainOutside(outside))).toBe(9957);
   });
 });

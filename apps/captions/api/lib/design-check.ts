@@ -1,4 +1,4 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_BOOLEANS, DESIGN_EFFECTS, DESIGN_MASKS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, INSTANCE_FIXED, INSTANCE_FROM_MAIN, DESIGN_FLOW_ALIGNS, DESIGN_SIZINGS, type AutoLayout, type DesignPage, type Sizing, type Effect, type Pin, type Gradient, type GroupLayer, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_BOOLEANS, DESIGN_EFFECTS, DESIGN_MASKS, DESIGN_GAP, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, INSTANCE_FIXED, INSTANCE_FROM_MAIN, DESIGN_FLOW_ALIGNS, DESIGN_SIZINGS, type AutoLayout, type DesignPage, type Sizing, type Effect, type Pin, type Gradient, type GroupLayer, type ImageLayer, type Layer, type Paint, type PaintLook, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle, type DesignStyles, type DesignTextStyle, TEXT_STYLE_FIELDS } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
@@ -8,6 +8,7 @@ import { everyLayer, nextOf, takeId, type IdsBefore } from "../../src/lib/design
 import { fillsOf, strokesOf } from "../../src/lib/design/paint";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
 import { cleanAids } from "./design-aids";
+import { STYLE_ID, STYLE_KINDS, styled, unlinked } from "../../src/lib/design/styles";
 
 /**
  * A design's pages, checked. Whatever sends them (the person's own changes, or their AI's answer), every value is
@@ -35,6 +36,8 @@ const sixDigits = (c: string): string => (c.length === 4 ? `#${c[1]}${c[1]}${c[2
 const oneOf = <T extends string>(v: unknown, all: readonly T[], or: T): T => (all.includes(v as T) ? (v as T) : or);
 const round = (n: number) => Math.round(n * 100) / 100;
 /** A name as one line of at most the limit's letters, or "" when there is none. */
+/** A style a colour, a text or a layer names, as it may be saved (whether the design has it is styled's to say). */
+const ref = (k: string, v: unknown): Record<string, string> => (typeof v === "string" && STYLE_ID.test(v) ? { [k]: v } : {});
 const named = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, DESIGN_LIMITS.layerName) : "");
 
 /** A gradient as it may be saved (its colour "#rrggbb", its angle in a full turn), or nothing when it is none. */
@@ -74,6 +77,7 @@ const strokeMore = (v: unknown, max = 200): Partial<Stroke> => {
     ...(v.join === "miter" || v.join === "round" || v.join === "bevel" ? { join: v.join } : {}),
     ...(DESIGN_HEADS.includes(v.start as never) ? { start: v.start as Stroke["start"] } : {}),
     ...(DESIGN_HEADS.includes(v.end as never) ? { end: v.end as Stroke["end"] } : {}),
+    ...ref("colorStyle", v.colorStyle),
     ...paintLook(v),
   };
 };
@@ -131,7 +135,7 @@ function fillList(v: unknown, r: PageRules, say: (why: string) => void): { fills
         const scale = mode === "tile" && typeof p.scale === "number" ? { scale: round(num(p.scale, 0.02, 4, 0.25)) } : {};
         return [{ type: "image", picture: p.picture, mode, ...crop, ...scale, ...look }];
       }
-      return typeof p.color === "string" ? [{ type: "solid", color: color(p.color, "#000000"), ...look }] : [];
+      return typeof p.color === "string" || typeof p.colorStyle === "string" ? [{ type: "solid", color: color(p.color, "#000000"), ...ref("colorStyle", p.colorStyle), ...look }] : [];
     });
   return { fills };
 }
@@ -152,6 +156,7 @@ function textStyle(v: Record<string, unknown>, fonts: readonly string[], run: bo
   if (typeof v.size === "number") out.size = round(num(v.size, 8, 600, 48));
   if (typeof v.color === "string" && COLOR.test(v.color.trim())) out.color = sixDigits(color(v.color, "#111111"));
   if (typeof v.spacing === "number") out.spacing = round(num(v.spacing, -20, 200, 0));
+  Object.assign(out, ref("colorStyle", v.colorStyle), ref("textStyle", v.textStyle));
   return out;
 }
 
@@ -382,6 +387,13 @@ export function safeSvg(svg: unknown): string | null {
 }
 
 export interface PageRules {
+  /**
+   * the design's styles (src/lib/design/styles.ts): a colour, a text or a layer naming one has its value; one naming a
+   * style the design has not keeps its own value and names none, said
+   */
+  styles?: DesignStyles;
+  /** each frame as it was before this write, by its id: a value the write changed on a layer naming a style leaves that style (styles.ts unlinked) */
+  was?: (frame: string) => DesignPage | undefined;
   /** what each frame (by its id) had before this write: no layer gets an id another one had (tree.ts takeId) */
   before?: (frame: string) => IdsBefore | undefined;
   /** the person's window's frames: an id it sends is its layer's (it never gives one twice), only a new one goes past `next` */
@@ -504,6 +516,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...sizes(raw, r),
     ...(DESIGN_MASKS.includes(raw.mask as never) ? { mask: raw.mask as (typeof DESIGN_MASKS)[number] } : {}),
     ...bindOf(raw.bind),
+    ...ref("effectStyle", raw.effectStyle),
   };
   if (raw.mask !== undefined && raw.mask !== null && raw.mask !== false && !box.mask) say(`a mask is "alpha", "vector" or "luminance": ${JSON.stringify(raw.mask).slice(0, 30)} left out`);
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
@@ -537,6 +550,9 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       font: oneOf(raw.font, fonts, DEFAULT_FONT),
       size: round(num(raw.size, 8, 600, 48)),
       color: color(raw.color, "#111111"),
+      ...ref("colorStyle", raw.colorStyle),
+      ...ref("textStyle", raw.textStyle),
+      ...(typeof raw.textStyle === "string" && Array.isArray(raw.styleOwn) && raw.styleOwn.some((f) => TEXT_STYLE_FIELDS.includes(f as never)) ? { styleOwn: TEXT_STYLE_FIELDS.filter((f) => (raw.styleOwn as unknown[]).includes(f)) } : {}),
       ...gradient(raw.gradient),
       ...(typeof raw.spacing === "number" && num(raw.spacing, -20, 200, 0) ? { spacing: round(num(raw.spacing, -20, 200, 0)) } : {}),
       ...(raw.fit === "shrink" ? { fit: "shrink" as const } : {}),
@@ -601,6 +617,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...box,
       shape: oneOf(raw.shape, DESIGN_SHAPES, "rect"),
       fill: color(raw.fill, "#dddddd"),
+      ...ref("colorStyle", raw.colorStyle),
       ...gradient(raw.gradient),
       ...corners(raw.radius),
       ...smoothed(raw.smooth),
@@ -625,7 +642,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       return null;
     }
     const stroke = line(raw.stroke, 200);
-    const fill = typeof raw.fill === "string" && COLOR.test(raw.fill.trim()) ? color(raw.fill, "#000000") : null;
+    const fill = (typeof raw.fill === "string" && COLOR.test(raw.fill.trim())) || ref("colorStyle", raw.colorStyle).colorStyle ? color(raw.fill, "#000000") : null;
     const fills = fillList(raw.fills, r, say);
     const strokes = strokeList(raw.strokes, 200);
     return {
@@ -633,7 +650,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...box,
       points,
       ...(raw.closed === true ? { closed: true } : {}),
-      ...(fill ? { fill } : {}),
+      ...(fill ? { fill, ...ref("colorStyle", raw.colorStyle) } : {}),
       ...gradient(raw.gradient),
       // a path with neither a fill nor a line would be nothing to see: it gets a thin line
       ...(stroke ? { stroke: { ...stroke, ...strokeMore(raw.stroke) } } : fill || fills.fills?.length || strokes.strokes?.length ? {} : { stroke: { color: "#111111", width: 4 } }),
@@ -743,7 +760,12 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     };
     // a plain group's box is the box round its layers, whatever it was given, and every auto layout laid out
     const pid = typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`;
-    const layers = layoutLayers(take(p.layers, 0), r.measure === undefined ? guessWidth : r.measure, sayPage, r.settled && (r.settled.get(pid) ?? new Map()));
+    // the styles' values put on what names them (a text style's size first: the auto layouts are laid out with it)
+    const plain: DesignPage = { id: pid, background: color(p.background, "#ffffff"), ...ref("colorStyle", p.colorStyle), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, sayPage), ...strokeList(p.strokes, 200), layers: take(p.layers, 0) };
+    const was = r.was?.(pid);
+    const [look] = styled(was ? unlinked([plain], [was], r.styles) : [plain], r.styles, sayPage);
+    const { layers: taken, id: _id, ...paint } = look!;
+    const layers = layoutLayers(taken, r.measure === undefined ? guessWidth : r.measure, sayPage, r.settled && (r.settled.get(pid) ?? new Map()));
     // an AI's page says all of its words: any it left off are named, so it can put them back (a page with nothing
     // on it is said so by whoever asked for it)
     if (r.words?.[k] !== undefined && layers.length) {
@@ -759,7 +781,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     if (loose && !layers.length) continue;
     // `next` kept only where it remembers more than the layers show (an id taken out), so an untouched frame stays as it was
     const remembers = next > nextOf({ layers });
-    pages.push({ id: pid, ...(remembers ? { next } : {}), ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, sayPage), ...strokeList(p.strokes, 200), ...finish(p), ...cleanAids(p), layers });
+    pages.push({ id: pid, ...(remembers ? { next } : {}), ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, ...paint, ...finish(p), ...cleanAids(p), layers });
   }
   // loose layers after the frames: a frame's place in the list is its number
   return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };
@@ -814,4 +836,68 @@ export function coverPage(picture: string, title: string, w: number, h: number):
     layers.push({ id: "l2", type: "text", text, font: "Anton", size: Math.round(Math.min(w, h) * 0.13), color: "#ffffff", align: "center", fit: "shrink", valign: "middle", upper: true, lineHeight: 1.05, outline: { color: "#000000", width: Math.round(Math.min(w, h) * 0.012) }, x: Math.round(w * 0.07), y: Math.round(h * 0.58), w: Math.round(w * 0.86), h: Math.round(h * 0.3) });
   }
   return { id: "p1", x: 0, y: 0, w, h, background: "#000000", layers };
+}
+
+/**
+ * A design's styles as they may be saved (contracts/design.ts DesignStyles): each by an id of its own, named, at most
+ * DESIGN_LIMITS.styles of a kind; a colour a colour, a text style's font one there is (else the app's own) and its
+ * numbers in range, an effect style's effects as a layer's are. What cannot be kept is left out and said.
+ */
+export function cleanStyles(raw: unknown, fonts: readonly string[] = []): { styles: DesignStyles; notes: string[] } {
+  const notes: string[] = [];
+  const out: DesignStyles = {};
+  if (raw === undefined || raw === null) return { styles: out, notes };
+  if (!obj(raw)) return { styles: out, notes: ["styles is an object of colors, text and effects, each by a style's id: left out"] };
+  const families = fonts.length ? [...FONTS, ...fonts] : FONTS;
+  for (const kind of STYLE_KINDS) {
+    const given = raw[kind];
+    if (given === undefined) continue;
+    if (!obj(given)) {
+      notes.push(`styles.${kind} is an object of styles by their ids: left out`);
+      continue;
+    }
+    const kept: Record<string, unknown> = {};
+    for (const [id, v] of Object.entries(given)) {
+      const at = `styles.${kind}.${id.slice(0, 30)}`;
+      if (Object.keys(kept).length >= DESIGN_LIMITS.styles) {
+        notes.push(`a design has at most ${DESIGN_LIMITS.styles} ${kind === "colors" ? "colour" : kind === "text" ? "text" : "effect"} styles: the rest left out`);
+        break;
+      }
+      if (!STYLE_ID.test(id)) {
+        notes.push(`${at}: a style's id is up to 24 small letters, digits and dashes: left out`);
+        continue;
+      }
+      if (!obj(v) || !named(v.name)) {
+        notes.push(`${at}: a style needs a "name": left out`);
+        continue;
+      }
+      const name = named(v.name).slice(0, 40);
+      if (kind === "colors") {
+        if (typeof v.color !== "string" || !COLOR.test(v.color.trim())) {
+          notes.push(`${at}: a colour style's "color" is "#rrggbb" or "#rrggbbaa": left out`);
+          continue;
+        }
+        const c = color(v.color, "#000000");
+        kept[id] = { name, color: c.length === 4 ? sixDigits(c) : c };
+      } else if (kind === "text") {
+        if (typeof v.font === "string" && !families.includes(v.font)) notes.push(`${at}: no font "${v.font.slice(0, 40)}" here: set in ${DEFAULT_FONT}`);
+        const t: DesignTextStyle = { name, font: oneOf(v.font, families, DEFAULT_FONT), size: round(num(v.size, 8, 600, 48)) };
+        if (typeof v.weight === "number" && Number.isFinite(v.weight)) t.weight = Math.round(num(v.weight, 100, 900, 400) / 100) * 100;
+        if (v.italic === true) t.italic = true;
+        if (typeof v.lineHeight === "number") t.lineHeight = round(num(v.lineHeight, 0.8, 3, 1.15));
+        if (typeof v.spacing === "number" && num(v.spacing, -20, 200, 0)) t.spacing = round(num(v.spacing, -20, 200, 0));
+        if (v.case === "upper" || v.case === "lower" || v.case === "title" || v.case === "small") t.case = v.case;
+        kept[id] = t;
+      } else {
+        const effects = effectList(Array.isArray(v.effects) ? v.effects : []).effects ?? [];
+        if (!effects.length) {
+          notes.push(`${at}: an effect style needs "effects" (a list, as a layer's): left out`);
+          continue;
+        }
+        kept[id] = { name, effects };
+      }
+    }
+    if (Object.keys(kept).length) (out as Record<string, unknown>)[kind] = kept;
+  }
+  return { styles: out, notes };
 }

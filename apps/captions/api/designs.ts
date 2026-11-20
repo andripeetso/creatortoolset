@@ -16,7 +16,8 @@ import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { frameAt, pictureInto } from "./lib/clip-frame";
 import { cutOut, NoMac, splitPicture } from "./lib/cutouts";
-import { cleanPages, coverPage, inWords, plainPages, slideWords, withFrames } from "./lib/design-check";
+import { cleanPages, cleanStyles, coverPage, inWords, plainPages, slideWords, withFrames } from "./lib/design-check";
+import { STYLE_KINDS, styled } from "../src/lib/design/styles";
 import { pagePictures } from "./lib/design-picture";
 import { smallJpeg } from "./lib/small-jpeg";
 import { FontError, fontFaces } from "./lib/font-file";
@@ -147,18 +148,60 @@ async function save(given: Design, by?: { by: string; n?: number }): Promise<Des
  * `ai`: an AI's write, its words laid out by their guessed widths (a window's are laid out by the browser).
  */
 async function settle(d: Design, was: readonly DesignPage[], notes?: string[], ai = false, renamed = notes): Promise<Design> {
-  if (!usesComponents(d.pages)) return d;
-  const checked = componentCheck(d.pages, DESIGN_LIMITS.components);
-  notes?.push(...checked.notes);
-  // a second main of a key given one of its own: nothing is lost, so said apart from what was left out (`renamed`)
-  const synced = syncInstances(checked.pages, was, (n) => renamed?.push(n));
+  // every frame with its styles' values: a style this write changed reaches the frames it did not touch (and a style
+  // taken away leaves its values on them)
+  const restyled = styled(d.pages, d.styles);
+  if (!usesComponents(restyled) && restyled === d.pages) return d;
+  let synced = restyled;
+  if (usesComponents(restyled)) {
+    const checked = componentCheck(restyled, DESIGN_LIMITS.components);
+    notes?.push(...checked.notes);
+    // a second main of a key given one of its own: nothing is lost, so said apart from what was left out (`renamed`)
+    synced = syncInstances(checked.pages, was, (n) => renamed?.push(n));
+  }
   const changed = synced.filter((p, i) => p !== d.pages[i]);
   if (!changed.length) return d;
-  const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), before: beforeIn(was), ...(ai ? {} : { measure: null, own: true }) });
+  // (checked again: an AI's words laid out again with a text style's size)
+  const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), styles: d.styles, before: beforeIn(was), ...(ai ? {} : { measure: null, own: true }) });
   notes?.push(...again.notes);
   const kept = new Map(overridesAsKept(again.pages).map((p) => [p.id, p]));
   // a frame the check took away (a loose piece left empty) is gone, never kept unchecked
   return { ...d, pages: synced.flatMap((p) => (!changed.includes(p) ? [p] : kept.has(p.id) ? [kept.get(p.id)!] : [])) };
+}
+
+/** A design with these styles (none: the field goes). */
+const withStyles = (d: Design, styles: Design["styles"]): Design => {
+  const { styles: _s, ...rest } = d;
+  return styles && STYLE_KINDS.some((k) => styles[k]) ? { ...rest, styles } : rest;
+};
+
+/**
+ * An AI's change of a design's styles (`styles` of POST /pages): of each kind, each style by its id given whole or in
+ * part (the fields it gives over the ones it has), or null to take it away (what names it keeps its values). Checked
+ * as a window's are (cleanStyles).
+ */
+function stylesFor(had: Design["styles"], given: unknown, fonts: readonly string[]): { styles: Design["styles"]; notes: string[]; changed: boolean } {
+  const g = raw(given);
+  if (!g) return { styles: had, notes: ['"styles" is an object of colors, text and effects, each by a style\'s id: left out'], changed: false };
+  const next: Record<string, Record<string, unknown>> = {};
+  for (const kind of STYLE_KINDS) {
+    const list: Record<string, unknown> = { ...(had?.[kind] ?? {}) };
+    for (const [id, v] of Object.entries(raw(g[kind]) ?? {})) {
+      if (v === null) delete list[id];
+      else list[id] = raw(v) && raw(list[id]) ? { ...raw(list[id]), ...raw(v) } : v;
+    }
+    next[kind] = list;
+  }
+  const out = cleanStyles(next, fonts);
+  const styles = STYLE_KINDS.some((k) => out.styles[k]) ? out.styles : undefined;
+  return { styles, notes: out.notes, changed: JSON.stringify(styles ?? {}) !== JSON.stringify(had ?? {}) };
+}
+
+/** The styles a new design of a brand project starts with: the project's design (of this account) changed last that has any. */
+async function projectStyles(owner: string, project: string): Promise<Design["styles"]> {
+  const names = (await readdir(dirOf(owner)).catch(() => [] as string[])).filter((n) => n.endsWith(".json"));
+  const all = (await Promise.all(names.map((n) => read(owner, n.slice(0, -5))))).filter((x): x is Design => !!x && x.project === project && !!x.styles);
+  return all.sort((a, b) => b.updatedAt - a.updatedAt)[0]?.styles;
 }
 
 /** What each frame of a design had (tree.ts IdsBefore), by its id: what a write may not give again. */
@@ -323,6 +366,8 @@ ${DESIGN_LAYERS}
 
 A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
+STYLES: "styles" are this design's brand colours, type and effects, each by its id: {"colors":{"accent":{"name":"Accent","color":"#ff5500"}},"text":{"headline":{"name":"Headline","font":"Anton","size":120,"weight":700,"lineHeight":1,"spacing":0,"case":"upper"}},"effects":{"card":{"name":"Card shadow","effects":[…effects…]}}}. Use them for every brand colour and every heading, body and caption text: a layer names a colour style where it gives a colour ("colorStyle":"accent" beside "color" on a text, "fill" on a shape or path, "background" on a frame, or inside a solid fill or a stroke: {"type":"solid","color":"#ff5500","colorStyle":"accent"}), a text or a part of one names a text style ("textStyle":"headline": its ${["font", "size", "weight", "italic", "lineHeight", "spacing", "case"].join(", ")} are the style's), and any layer an effect style ("effectStyle":"card"). The style's value is put on the layer, so the colour or font you give beside it does not count; give the layer a value of its own by leaving the style out. A field you set on a styled text stays its own on top of its style ("styleOwn" lists them). Make or change styles with "styles" in a change (each style by its id, given whole or in part; null takes it away and its layers keep its value), in the same call as the layers that name it: {"styles":{"colors":{"accent":{"name":"Accent","color":"#ff5500"},"ink":{"name":"Ink","color":"#111111"}},"text":{"body":{"name":"Body","font":"Inter","size":40}}},"changes":[{"frame":"p1","layer":"l2","set":{"textStyle":"body","colorStyle":"ink"}}]}. To recolour the whole design, change the style once: {"styles":{"colors":{"accent":{"color":"#2255ff"}}}}. Without styles yet, make them first from the brand (its colours and type), then design with them.
+
 To change a design, give either or both of:
 - "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id; give it "as":"<a name of yours>" and the changes in the same call use that name as its "frame".
 - A frame's aids, set like its background (shown to the user on the canvas, never in the PNG): "guides":[{"axis":"x|y","at":<pixels from the frame's left (x: an up-and-down line) or top (y)>}], "grids":[{"kind":"columns|rows","count":4,"gutter":24,"margin":80,"color":"#ff0000"} or {"kind":"grid","size":8,"color":"#ff0000"}] (layout grids) and "safe":[${DESIGN_SAFE.map((z) => `"${z.id}"`).join(",")}] (where Instagram cuts or covers the frame: ${DESIGN_SAFE.map((z) => `${z.id} = ${z.name.toLowerCase()}`).join(", ")}). Layers the user moves catch on guides and grids. Keep words and faces out of a frame's covered parts; [] takes a list off.
@@ -442,6 +487,8 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
       const weights = Object.fromEntries(fonts.flatMap((f) => (weightsOf(f, fonts).length > 1 ? [[f, weightsOf(f, fonts)]] : [])));
       return { fonts, weights };
     })()),
+    // the brand's colours, type and effects, named once: a layer naming one has its value
+    styles: d.styles ?? {},
     pictures: d.pictures.map((id) => ({ id, what: d.from && "version" in d.from && id === d.pictures[0] ? "the video's own frame" : "a picture added to this design" })),
     // a look is its pictures first: its name and brief are what words carry, and its pictures come when it is asked for
     looks: looks.slice(0, 12).map((s) => ({ name: s.name, kind: s.kind, ...(s.brief.trim() ? { brief: s.brief.trim().slice(0, LOOK_LISTED) } : {}), pictures: s.pictures })),
@@ -450,7 +497,7 @@ async function forAi(user: AuthVars["user"], d: Design, lookNamed: string | unde
     ...(!lookNamed && !carousels.length ? { look: `The user has no carousel style yet. ${toAnalyzer(animated.map((l) => l.name))}` } : {}),
     ...(style && shown ? { look: { name: style.name, ...(style.brief.trim() ? { brief: style.brief.trim().slice(0, LOOK_BRIEF) } : {}), pictures: shown.map((i) => ({ what: i.made ? "a picture the user made and liked in this look" : "an inspiration for this look", jpeg: i.jpeg })), ...(shown.length ? {} : { more: `It has no pictures yet. ${toAnalyzer([])}` }) } } : {}),
     // layers lying loose beside the frames are no frame: they are the canvas's, in its own pixels
-    frames: pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), x: p.x, y: p.y, w: p.w, h: p.h, ...(p.clip === false ? { clip: false } : {}), ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.fills ? { fills: p.fills } : {}), ...(p.strokes ? { strokes: p.strokes } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), ...(p.guides ? { guides: p.guides } : {}), ...(p.grids ? { grids: p.grids } : {}), ...(p.safe ? { safe: p.safe } : {}), layers: p.layers }])),
+    frames: pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1, ...(p.name ? { name: p.name } : {}), x: p.x, y: p.y, w: p.w, h: p.h, ...(p.clip === false ? { clip: false } : {}), ...(words[k] !== undefined ? { words: words[k] } : {}), background: p.background, ...(p.colorStyle ? { colorStyle: p.colorStyle } : {}), ...(p.gradient ? { gradient: p.gradient } : {}), ...(p.fills ? { fills: p.fills } : {}), ...(p.strokes ? { strokes: p.strokes } : {}), ...(p.grain ? { grain: p.grain } : {}), ...(p.vignette ? { vignette: p.vignette } : {}), ...(p.guides ? { guides: p.guides } : {}), ...(p.grids ? { grids: p.grids } : {}), ...(p.safe ? { safe: p.safe } : {}), layers: p.layers }])),
     ...(pages.some((p) => p.loose) ? { canvas: canvasLayers(pages).map((c) => c.layer) } : {}),
     how: HOW,
   };
@@ -469,7 +516,10 @@ const raw = (v: unknown): Raw | null => (v && typeof v === "object" && !Array.is
 async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[]; named: Record<string, string> }> {
   const frames = Array.isArray(body.frames) ? body.frames.map(raw) : [];
   const changes = Array.isArray(body.changes) ? body.changes.map(raw) : [];
-  if (!frames.length && !changes.length) throw new DesignError('Give "frames" (whole frames) or "changes" (single layers): design_get says how each is written');
+  if (!frames.length && !changes.length && body.styles === undefined) throw new DesignError('Give "frames" (whole frames), "changes" (single layers) or "styles": design_get says how each is written');
+  // its styles first, so its layers may name a style it makes in the same call
+  const restyle = body.styles === undefined ? null : stylesFor(d.styles, body.styles, await fontsFor(d));
+  if (restyle) d = { ...d, styles: restyle.styles };
   const start = await framesForAi(user, d);
   // the auto layout boxes as saved, each at the size it was laid out at (layout.ts settledBoxes)
   const settled = settledBoxes(d.pages);
@@ -477,7 +527,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   const pastIds = beforeIn(d.pages);
   const next = [...start.pages];
   const words = [...start.words];
-  const notes: string[] = [];
+  const notes: string[] = [...(restyle?.notes ?? [])];
   /** each touched frame as it will be checked: its raw layers, and what else of it was given */
   const todo = new Map<string, { layers: unknown[]; more: Raw; isNew: boolean; gave: boolean; whole: boolean; set: string[] }>();
   // a copy of its own, containers too: a layer inside one is changed in place
@@ -802,7 +852,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     // left out is kept under the rest. Otherwise it would show in every picture made of the frame, or the backdrop be gone
     const refs = t.whole && !t.isNew ? was.layers.filter((l) => l.reference) : [];
     if (refs.length) t.layers = [...refs.filter((r) => !t.layers.some((l) => raw(l)?.id === r.id)), ...t.layers.map((l) => (refs.some((r) => r.id === raw(l)?.id) ? { ...raw(l), reference: true } : l))];
-    const made = cleanPages([{ id, layers: t.layers, w, h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, fills: "fills" in t.more ? t.more.fills : was.fills, strokes: "strokes" in t.more ? t.more.strokes : was.strokes, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, clip: "clip" in t.more ? t.more.clip : was.clip, ...Object.fromEntries((["guides", "grids", "safe"] as const).map((f) => [f, f in t.more ? t.more[f] : was[f]])), name: t.more.name ?? was.name }], {
+    const made = cleanPages([{ id, layers: t.layers, w, h, background: t.more.background ?? was.background, colorStyle: "colorStyle" in t.more ? t.more.colorStyle : "background" in t.more ? undefined : was.colorStyle, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, fills: "fills" in t.more ? t.more.fills : was.fills, strokes: "strokes" in t.more ? t.more.strokes : was.strokes, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, clip: "clip" in t.more ? t.more.clip : was.clip, ...Object.fromEntries((["guides", "grids", "safe"] as const).map((f) => [f, f in t.more ? t.more[f] : was[f]])), name: t.more.name ?? was.name }], {
       w: d.width,
       h: d.height,
       pictures: d.pictures,
@@ -810,6 +860,9 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       words: [words[k]],
       say,
       before: pastIds,
+      styles: d.styles,
+      // a colour it set on a layer naming a style leaves the style
+      was: (f) => d.pages.find((p) => p.id === f),
       // a box it gives that was not laid out at that size before is new: its layers out of the flow keep their place
       settled,
     });
@@ -854,7 +907,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         return out;
       });
       const say = (_: number, why: string, layer?: unknown) => notes.push(`${[givenAt.get(layer), "the canvas"].filter(Boolean).join(", ")}: ${why}`);
-      const made = cleanPages([{ id: home, loose: true, x: x0, y: y0, w: x1 - x0, h: y1 - y0, background: "#ffffff", layers }], { w: d.width, h: d.height, pictures: d.pictures, fonts, words: [undefined], say, settled, before: pastIds });
+      const made = cleanPages([{ id: home, loose: true, x: x0, y: y0, w: x1 - x0, h: y1 - y0, background: "#ffffff", layers }], { w: d.width, h: d.height, pictures: d.pictures, fonts, words: [undefined], say, settled, before: pastIds, styles: d.styles, was: (f) => d.pages.find((p) => p.id === f) });
       if (made.pages[0]) pieces.push(made.pages[0]);
       for (const e of entries) if (!made.pages[0]?.layers.some((l) => l.id === e.real)) e.real = undefined;
     }
@@ -864,7 +917,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const set = canvas.filter((e) => e.set && e.real).map((e) => now.find((x) => x.home === e.home && x.real === e.real)?.layer.id);
     wrote.push({ frame: "canvas", isNew: false, layers: set.filter((id): id is string => !!id) });
   }
-  if (!touched.length && !dirty.size) throw new DesignError(`Nothing was changed${notes.length ? `: ${notes.slice(0, 4).join("; ")}` : ""}`);
+  if (!touched.length && !dirty.size && !restyle?.changed) throw new DesignError(`Nothing was changed${notes.length ? `: ${notes.slice(0, 4).join("; ")}` : ""}`);
   // onto the design as it is now on disk: a frame this did not touch is as the person has it, and one they moved
   // meanwhile keeps the place they gave it
   const now = (await read(d.owner, d.id)) ?? d;
@@ -880,7 +933,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   );
   // the names that became another id: a new frame's, and a layer's that was taken or could not be an id
   const renamed = Object.fromEntries([...named].map(([name, id]) => [name.slice(name.indexOf("\0") + 1), id] as const).filter(([name, id]) => name !== id));
-  return { design: await save(await settle({ ...now, pages, updatedAt: stamp(now) }, now.pages, notes, true)), notes, touched, wrote, named: renamed };
+  return { design: await save(await settle({ ...now, ...(d.styles ? { styles: d.styles } : {}), pages, updatedAt: stamp(now) }, now.pages, notes, true)), notes, touched, wrote, named: renamed };
 }
 
 /** The sizes an AI asks copies in: a format's id ("cover") or {name?, w, h}; anything else is named in a note. */
@@ -994,7 +1047,7 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw, named: 
   const fonts = await fontsFor(d);
   const kept: DesignPage[] = [];
   for (const c of made) {
-    const out = cleanPages([c], { w: d.width, h: d.height, pictures: d.pictures, fonts });
+    const out = cleanPages([c], { w: d.width, h: d.height, pictures: d.pictures, fonts, styles: d.styles });
     notes.push(...out.notes.map((note) => note.replace(/^Page 1:/, `${madeAt.get(c.id)}, frame ${c.id} (${c.name}):`)));
     if (out.pages[0]) kept.push({ ...out.pages[0], id: c.id });
   }
@@ -1153,7 +1206,9 @@ designsApp.post("/", (c) =>
       const project = await resolveProjectId(user, typeof b.project === "string" ? b.project : null).catch(() => undefined);
       if (project) d.project = project;
     }
-    return save(d);
+    // the brand's styles: those of the project's design changed last
+    const brand = d.project ? await projectStyles(user.username, d.project) : undefined;
+    return save(brand ? { ...d, pages: styled(d.pages, brand), styles: brand } : d);
   }),
 );
 
@@ -1186,13 +1241,17 @@ designsApp.put("/:id", (c) =>
       // a design made before frames knew their slides: each frame is its slide's by the order the design was in
       const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
       // laid out by the browser with the real widths of its words: a text keeps the size it was saved at
-      const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), measure: null, before: beforeIn(d.pages), own: true });
+      // the styles as the window has them (its own merged onto the server's: mergeStyles), checked; none sent, as they are
+      const sentStyles = b.styles === undefined ? null : cleanStyles(b.styles, await fontsFor(d));
+      const styles = sentStyles ? sentStyles.styles : d.styles;
+      const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), styles, was: (f) => d.pages.find((p) => p.id === f), measure: null, before: beforeIn(d.pages), own: true });
+      checked.notes.unshift(...(sentStyles?.notes ?? []));
       const pages = withFrames(checked.pages, d.width, d.height, was);
       // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
       // could be kept is not, and nothing is saved over what is there
       if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
       const changed: string[] = [];
-      const saved = await save(await settle({ ...d, name, pages, updatedAt: stamp(d), writerFrom: by && d.writer === by ? d.writerFrom : d.updatedAt }, d.pages, checked.notes, false, changed), by ? { by, n } : undefined);
+      const saved = await save(await settle({ ...withStyles(d, styles), name, pages, updatedAt: stamp(d), writerFrom: by && d.writer === by ? d.writerFrom : d.updatedAt }, d.pages, checked.notes, false, changed), by ? { by, n } : undefined);
       // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
       // `changes`: what the save changed of what was sent that loses nothing (a second main given a key of its own)
       return { ...saved, ...(checked.notes.length ? { notes: checked.notes } : {}), ...(changed.length ? { changes: changed } : {}) };

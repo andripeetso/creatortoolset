@@ -9,7 +9,7 @@
  *   GET    /api/designs?session=&doc=   → DesignSummary[] (mine; narrowed to one Workshop piece when both are given)
  *   POST   /api/designs                 NewDesign → Design (a piece's slides, a video's frame, or blank pages)
  *   GET    /api/designs/:id             → Design
- *   PUT    /api/designs/:id             { name?, pages?, since? } → Design (what the person changed by hand). `since`: the updatedAt this window last knew; the design changed after it → 409 { error, design } and nothing is written
+ *   PUT    /api/designs/:id             { name?, pages?, styles?, since? } → Design (what the person changed by hand; `styles`: the design's styles as the window has them, checked, and put on its layers). `since`: the updatedAt this window last knew; the design changed after it → 409 { error, design } and nothing is written
  *   DELETE /api/designs/:id
  *   GET    /api/designs/:id/pages       ?look=<name> → what an AI designs from: the fonts, pictures, looks' briefs (one look's pictures when named), each frame with its id, size, words and layers, and how frames and changes are written
  *   POST   /api/designs/:id/pages       { frames?: [{ id? | as?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? + as? }] } → DesignAnswer & { touched: frame ids, wrote, named: { name: id } } (an AI's work: whole frames replaced or added, or single layers changed; checked as above; each note led by where it was given, "changes[2]"; a later change names a new frame or layer by its "as")
@@ -41,7 +41,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, depth: 4, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16, components: 60, props: 12, overrideBytes: 60_000 } as const;
+export const DESIGN_LIMITS = { styles: 60, designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, depth: 4, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16, components: 60, props: 12, overrideBytes: 60_000 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -82,7 +82,7 @@ export interface PaintLook {
  */
 export type Paint = PaintLook &
   (
-    | { type: "solid"; color: string }
+    | { type: "solid"; color: string; /** a colour style of the design (DesignStyles `colors`): its colour is the style's */ colorStyle?: string }
     | { type: "gradient"; /** absent = linear */ kind?: Exclude<(typeof DESIGN_GRADIENTS)[number], "linear">; /** degrees: 0 is left to right, 90 top to bottom (angular: where it starts) */ angle: number; stops: GradientStop[] }
     | {
         type: "image";
@@ -98,6 +98,8 @@ export type Paint = PaintLook &
 export interface Stroke extends PaintLook {
   /** "#rrggbb" or "#rrggbbaa" */
   color: string;
+  /** a colour style of the design: its colour is the style's */
+  colorStyle?: string;
   width: number;
   /** dashes: how long each is and the gap after it, in pixels; absent = an unbroken line */
   dash?: [number, number];
@@ -209,6 +211,8 @@ interface Box {
    * An instance's `props` set them; one it leaves out is as the main has it
    */
   bind?: { text?: string; visible?: string; swap?: string };
+  /** an effect style of the design (DesignStyles `effects`): its effects are the style's */
+  effectStyle?: string;
 }
 /** What a mask cuts by (Box `mask`). */
 export const DESIGN_MASKS = ["alpha", "vector", "luminance"] as const;
@@ -253,6 +257,10 @@ export interface TextStyle {
   /** a line through the letters ("was €49") */
   strike?: boolean;
   spacing?: number;
+  /** a colour style of the design: `color` is the style's */
+  colorStyle?: string;
+  /** a text style of the design (DesignStyles `text`): its font, weight, slant, size and spacing are the style's */
+  textStyle?: string;
 }
 /** A part of a text set its own way: from letter `start` up to (not with) letter `end` of `text`, counted in UTF-16 units as a JavaScript string is. */
 export interface TextRun extends TextStyle {
@@ -297,6 +305,11 @@ export interface TextLayer extends Box {
   strike?: boolean;
   /** parts of the text set apart (a word in another colour, size, font or weight), in order, none overlapping */
   runs?: TextRun[];
+  /** a colour style of the design: `color` is the style's */
+  colorStyle?: string;
+  /** a text style of the design: its fields (TEXT_STYLE_FIELDS) are the style's, but those in `styleOwn` (set on this text on top of it) */
+  textStyle?: string;
+  styleOwn?: TextStyleField[];
   /** a line round each letter (sticker letters): its colour and its width in pixels */
   outline?: { color: string; width: number };
   /**
@@ -339,6 +352,8 @@ export interface ShapeLayer extends Box {
   type: "shape";
   shape: DesignShape;
   fill: string;
+  /** a colour style of the design: `fill` is the style's */
+  colorStyle?: string;
   gradient?: Gradient;
   radius?: Radius;
   smooth?: number;
@@ -370,6 +385,8 @@ export interface PathLayer extends Box {
   closed?: boolean;
   /** "#rrggbb"; absent = not filled */
   fill?: string;
+  /** a colour style of the design: `fill` is the style's */
+  colorStyle?: string;
   gradient?: Gradient;
   stroke?: Stroke;
   /** its fills and lines, bottom first, in place of `fill`, `gradient` and `stroke` */
@@ -436,9 +453,46 @@ export interface DesignInstance {
 /** What a layer inside an instance never changes on its own: its place, its size, and what it is made of. */
 export const INSTANCE_FIXED: readonly string[] = ["id", "type", "x", "y", "w", "h", "rotate", "flipX", "flipY", "pin", "sizing", "min", "max", "absolute", "layers", "mask", "boolean", "box", "clip", "points", "closed", "layout", "component", "set", "variant", "bind", "group", "locked", "reference"];
 /** What an instance takes from its main's own box (beside its layers); the rest of its box (where it lies, its fade) is its own. */
-export const INSTANCE_FROM_MAIN: readonly string[] = ["name", "box", "boolean", "fills", "strokes", "radius", "smooth", "clip", "layout", "effects", "shadow", "blur", "w", "h", "sizing", "min", "max"];
+export const INSTANCE_FROM_MAIN: readonly string[] = ["name", "box", "boolean", "fills", "strokes", "radius", "smooth", "clip", "layout", "effects", "effectStyle", "shadow", "blur", "w", "h", "sizing", "min", "max"];
 
 export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer | GroupLayer;
+
+/**
+ * A design's styles (src/lib/design/styles.ts): named colours, text looks and effects, each by an id of its own
+ * ("accent"), named for the person ("Accent"). A colour, a text or a run, or a layer's effects may name one
+ * (`colorStyle`, `textStyle`, `effectStyle`): its value is then the style's, kept on the layer too, so whatever draws a
+ * layer needs nothing of its own, and every change of the design puts the styles' values on the layers that name them.
+ * A value changed on such a layer by hand or by an AI leaves the style (a text's own fields stay its own, `styleOwn`);
+ * a style deleted leaves its values on the layers that named it.
+ */
+export interface DesignStyles {
+  colors?: Record<string, DesignColorStyle>;
+  text?: Record<string, DesignTextStyle>;
+  effects?: Record<string, DesignEffectStyle>;
+}
+export interface DesignColorStyle {
+  name: string;
+  /** "#rrggbb" or "#rrggbbaa" (a run, a mark and a shadow take its first six digits) */
+  color: string;
+}
+/** The fields a text style sets on a text; one it leaves out is the text's default (no weight: the font's own face). */
+export const TEXT_STYLE_FIELDS = ["font", "size", "weight", "italic", "lineHeight", "spacing", "case"] as const;
+export type TextStyleField = (typeof TEXT_STYLE_FIELDS)[number];
+export interface DesignTextStyle {
+  name: string;
+  font: string;
+  size: number;
+  weight?: number;
+  italic?: boolean;
+  lineHeight?: number;
+  spacing?: number;
+  case?: TextLayer["case"];
+}
+export interface DesignEffectStyle {
+  name: string;
+  effects: Effect[];
+}
+export type DesignStyleKind = keyof DesignStyles;
 
 /**
  * A ruler guide of a frame: a line across it, `at` pixels from its left edge (axis "x": an up-and-down line) or from
@@ -505,6 +559,8 @@ export interface DesignPage {
   clip?: false;
   /** "#rrggbb" */
   background: string;
+  /** a colour style of the design: `background` is the style's */
+  colorStyle?: string;
   gradient?: Gradient;
   /** its fills, bottom first, in place of `background` and `gradient`. None (`[]`): the frame is see-through, a checkerboard while designing, see-through in a PNG and white in a JPG */
   fills?: Paint[];
@@ -555,6 +611,8 @@ export interface DesignListed extends DesignSummary {
 export interface Design extends Omit<DesignSummary, "pages"> {
   owner: string;
   pages: DesignPage[];
+  /** its colour, text and effect styles (src/lib/design/styles.ts); absent = none */
+  styles?: DesignStyles;
   /** the ids of the pictures in its folder */
   pictures: string[];
   /** the animation style whose brief and pictures the AI last designed it from (contracts/editor-styles.ts) */

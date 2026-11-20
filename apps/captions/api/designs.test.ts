@@ -1343,3 +1343,105 @@ describe("designs: what each is connected to", () => {
     expect(res.body.find((d) => d.name === "In the second")).not.toHaveProperty("projectName");
   });
 });
+
+describe("designs: styles", () => {
+  type Wrote = DesignAnswer & { touched: string[] };
+  const write = (id: string, body: unknown) => call<Wrote>("POST", `/api/designs/${id}/pages`, body);
+  const layer = (d: Design, frame: number, id: string) => everyLayer(d.pages[frame]!.layers).find((l) => l.id === id) as Layer & Record<string, unknown>;
+  const rect = (id: string, more: object = {}) => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 10, y: 10, w: 100, h: 100, ...more });
+
+  it("an AI makes Accent and Ink, designs two slides with them, and changes Accent once: both slides change", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, pages: 2 })).body;
+    const made = await write(d.id, {
+      styles: { colors: { accent: { name: "Accent", color: "#FF5500" }, ink: { name: "Ink", color: "#111111" } }, text: { headline: { name: "Headline", font: "Anton", size: 120, case: "upper" } } },
+      frames: [
+        { id: "p1", colorStyle: "ink", layers: [rect("a", { colorStyle: "accent" }), { id: "t", type: "text", text: "Big news", font: "Inter", size: 20, color: "#000000", textStyle: "headline", colorStyle: "accent", align: "left", x: 0, y: 200, w: 900, h: 200 }] },
+        { id: "p2", layers: [rect("b", { fills: [{ type: "solid", color: "#000000", colorStyle: "accent" }] })] },
+      ],
+    });
+    expect(made.status).toBe(200);
+    expect(made.body.notes).toEqual([]);
+    let now = made.body.design;
+    expect(now.styles!.colors!.accent).toEqual({ name: "Accent", color: "#ff5500" });
+    expect([now.pages[0]!.background, layer(now, 0, "a").fill, layer(now, 1, "b").fills]).toEqual(["#111111", "#ff5500", [{ type: "solid", color: "#ff5500", colorStyle: "accent" }]]);
+    expect(layer(now, 0, "t")).toMatchObject({ font: "Anton", size: 120, case: "upper", color: "#ff5500" });
+    // the style changed alone: every slide naming it
+    const recolour = await write(d.id, { styles: { colors: { accent: { color: "#2255ff" } } } });
+    expect(recolour.status).toBe(200);
+    now = recolour.body.design;
+    expect(now.styles!.colors!.accent).toEqual({ name: "Accent", color: "#2255ff" });
+    expect([layer(now, 0, "a").fill, layer(now, 0, "t").color, (layer(now, 1, "b").fills as { color: string }[])[0]!.color]).toEqual(["#2255ff", "#2255ff", "#2255ff"]);
+    // a colour of its own set on one layer: that layer leaves the style, the others follow it
+    now = (await write(d.id, { changes: [{ frame: "p1", layer: "a", set: { fill: "#00ff00" } }], styles: { colors: { accent: { color: "#777777" } } } })).body.design;
+    expect([layer(now, 0, "a").fill, layer(now, 0, "a").colorStyle, layer(now, 1, "b").fills]).toEqual(["#00ff00", undefined, [{ type: "solid", color: "#777777", colorStyle: "accent" }]]);
+    // a style taken away: its layers keep its colour
+    now = (await write(d.id, { styles: { colors: { accent: null } } })).body.design;
+    expect(now.styles!.colors).toEqual({ ink: { name: "Ink", color: "#111111" } });
+    expect(layer(now, 1, "b").fills).toEqual([{ type: "solid", color: "#777777" }]);
+    expect(layer(now, 0, "t")).toMatchObject({ color: "#777777" });
+    expect(layer(now, 0, "t").colorStyle).toBeUndefined();
+    // the AI reads them, and how to use them
+    const got = (await call<{ styles: unknown; how: string }>("GET", `/api/designs/${d.id}/pages`)).body;
+    expect(got.styles).toEqual(now.styles);
+    expect(got.how).toContain('"colorStyle":"accent"');
+  });
+
+  it("checks what an AI sends: a style it cannot be is said and left out, a layer naming none there keeps its own value", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const out = await write(d.id, {
+      styles: { colors: { "Bad Id": { name: "X", color: "#fff" }, red: { name: "Red", color: "crimson" }, ok: { color: "#ffffff" } }, text: { h: { name: "H", font: "Comic Nope", size: 9000 } }, effects: { e: { name: "E", effects: [] } } },
+      frames: [{ id: "p1", layers: [rect("a", { fill: "#123456", colorStyle: "nope" }), rect("b", { effectStyle: "<script>" })] }],
+    });
+    expect(out.status).toBe(200);
+    // (beside what it started with from its brand project)
+    expect(out.body.design.styles!.text!.h).toEqual({ name: "H", font: "Inter", size: 600 });
+    expect(Object.keys(out.body.design.styles!.colors ?? {}).filter((k) => ["Bad Id", "red", "ok"].includes(k))).toEqual([]);
+    expect(out.body.design.styles!.effects).toBeUndefined();
+    expect(out.body.notes).toEqual([
+      "styles.colors.Bad Id: a style's id is up to 24 small letters, digits and dashes: left out",
+      'styles.colors.red: a colour style\'s "color" is "#rrggbb" or "#rrggbbaa": left out',
+      'styles.colors.ok: a style needs a "name": left out',
+      'styles.text.h: no font "Comic Nope" here: set in Inter',
+      'styles.effects.e: an effect style needs "effects" (a list, as a layer\'s): left out',
+      'frames[0], frame p1 (Frame 1): layer a names no colour style "nope": its own colour kept',
+    ]);
+    expect(layer(out.body.design, 0, "a")).toMatchObject({ fill: "#123456" });
+    expect(layer(out.body.design, 0, "a").colorStyle).toBeUndefined();
+    expect(layer(out.body.design, 0, "b").effectStyle).toBeUndefined();
+    // more than a design may have of a kind
+    const many = Object.fromEntries(Array.from({ length: 70 }, (_, n) => [`c${n}`, { name: `C${n}`, color: "#000000" }]));
+    const full = await write(d.id, { styles: { colors: many } });
+    expect(Object.keys(full.body.design.styles!.colors!)).toHaveLength(60);
+    expect(full.body.notes).toContain("a design has at most 60 colour styles: the rest left out");
+  });
+
+  it("a headline's text style made bigger grows the auto layout pill it is in", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const pill = { id: "pill", type: "group", box: true, x: 40, y: 40, w: 100, h: 40, sizing: { w: "hug", h: "hug" }, layout: { dir: "row", pad: 20 }, fills: [{ type: "solid", color: "#ff5500" }], layers: [{ id: "w", type: "text", text: "Tiny", font: "Inter", size: 40, color: "#000000", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" }, textStyle: "headline" }] };
+    const first = (await write(d.id, { styles: { text: { headline: { name: "Headline", font: "Inter", size: 40 } } }, frames: [{ id: "p1", layers: [pill] }] })).body.design;
+    const was = layer(first, 0, "pill");
+    const after = (await write(d.id, { styles: { text: { headline: { size: 120 } } } })).body.design;
+    expect(layer(after, 0, "w").size).toBe(120);
+    expect(layer(after, 0, "pill").w).toBeGreaterThan((was.w as number) * 2);
+    expect(layer(after, 0, "pill").h).toBeGreaterThan(was.h as number);
+  });
+
+  it("a window saves its styles with its frames, checked; a new design in a brand project starts with the project's styles", async () => {
+    const PROJECT = "eeeeeeee-0000-4000-8000-0000000000c1";
+    mkdirSync(ws("projects"), { recursive: true });
+    writeFileSync(ws("projects", `${PROJECT}.json`), JSON.stringify({ id: PROJECT, owner: "jordan", name: "Tiny Acrobatics", audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt: 0 }));
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, project: PROJECT })).body;
+    expect(d.project).toBe(PROJECT);
+    expect(d.styles).toBeUndefined();
+    const styles = { colors: { accent: { name: "Accent", color: "#ff5500" } }, effects: { card: { name: "Card shadow", effects: [{ type: "shadow", color: "#000000", opacity: 0.2, blur: 30, x: 0, y: 12 }] } } };
+    const saved = await call<Design & { notes?: string[] }>("PUT", `/api/designs/${d.id}`, { pages: [{ ...d.pages[0], layers: [rect("a", { colorStyle: "accent", effectStyle: "card" })] }], styles, since: d.updatedAt });
+    expect(saved.status).toBe(200);
+    expect(saved.body.styles).toEqual(styles);
+    expect(layer(saved.body, 0, "a")).toMatchObject({ fill: "#ff5500", effects: styles.effects.card.effects });
+    // a save that says nothing of styles keeps them
+    const kept = (await call<Design>("PUT", `/api/designs/${d.id}`, { pages: saved.body.pages, since: saved.body.updatedAt })).body;
+    expect(kept.styles).toEqual(styles);
+    const next = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true, project: PROJECT })).body;
+    expect(next.styles).toEqual(styles);
+  });
+});

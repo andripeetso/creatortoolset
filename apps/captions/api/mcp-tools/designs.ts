@@ -68,8 +68,8 @@ export const designTools: ToolModule = {
     },
     {
       name: "design_update",
-      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers (as names a new frame or layer for the changes after it), sizes copies frames into other sizes, fill copies a frame once per row of words, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). A part that repeats on several frames (a handle, a slide number, a badge) is one main component placed as instances, with properties for what differs: design_get says how. The answer shows the changed frames as pictures and names each change left out (changes[2]) and why.",
-      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, sizes: { type: "object" }, fill: { type: "object" }, picture: { type: "object" }, name: str }, required: ["id"] },
+      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers (as names a new frame or layer for the changes after it), sizes copies frames into other sizes, fill copies a frame once per row of words, picture copies a library video's moment in, styles makes or changes the design's colour, text and effect styles (its brand colours and type, which layers name), name renames it (one still Untitled gets a name in the call that designs it). A part that repeats on several frames (a handle, a slide number, a badge) is one main component placed as instances, with properties for what differs: design_get says how. The answer shows the changed frames as pictures and names each change left out (changes[2]) and why.",
+      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, sizes: { type: "object" }, fill: { type: "object" }, picture: { type: "object" }, styles: { type: "object" }, name: str }, required: ["id"] },
     },
     {
       name: "carousel_style_save",
@@ -91,7 +91,7 @@ export const designTools: ToolModule = {
       const look = typeof read.look === "object" ? read.look : null;
       const asked = Array.isArray(a.frames) ? a.frames.map(String) : [];
       if (a.outline === true)
-        return { id: read.id, name: read.name, link: `${ctx.origin}/design/${read.id}`, frames: read.frames.filter((f) => !asked.length || asked.includes(f.id)).map(outlined), more: "A frame's layers in full, and its picture: design_get with this id and frames: [its id]. How layers are written comes with a read without outline." };
+        return { id: read.id, name: read.name, link: `${ctx.origin}/design/${read.id}`, styles: read.styles, frames: read.frames.filter((f) => !asked.length || asked.includes(f.id)).map(outlined), more: "A frame's layers in full, and its picture: design_get with this id and frames: [its id]. How layers are written comes with a read without outline." };
       const drawn = await seen(ctx, at, read.frames, asked);
       // asked for some frames: those alone, as they are and as they are drawn (the rest was read before)
       if (asked.length) return { id: read.id, name: read.name, frames: read.frames.filter((f) => asked.includes(f.id)), ...drawn.said, _images: drawn.images };
@@ -128,8 +128,8 @@ export const designTools: ToolModule = {
       const picture = a.picture ? (await ctx.json<{ id: string }>(`${at}/pictures`, "POST", a.picture)).id : "";
       const added = picture ? { picture_added: picture } : {};
       const copies = !!a.sizes || !!a.fill;
-      if (picture && !a.frames && !a.changes && !copies) return { id: a.id, ...added };
-      if (named && !a.frames && !a.changes && !copies) return about(ctx.origin, named, named.pages.filter((p) => !p.loose).length);
+      if (picture && !a.frames && !a.changes && !copies && !a.styles) return { id: a.id, ...added };
+      if (named && !a.frames && !a.changes && !copies && !a.styles) return about(ctx.origin, named, named.pages.filter((p) => !p.loose).length);
       // a change that asks for a cut-out: the picture is cut first (a new picture of the design), and the change becomes
       // a plain one that shows it and remembers the picture it was cut from
       const changes = Array.isArray(a.changes) ? (a.changes as Args[]) : undefined;
@@ -149,13 +149,13 @@ export const designTools: ToolModule = {
           delete c.cutout;
         }
       }
-      const { design, notes, touched, wrote, named: renamed } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[]; named?: Record<string, string> }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes, sizes: a.sizes, fill: a.fill });
+      const { design, notes, touched, wrote, named: renamed } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[]; named?: Record<string, string> }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes, sizes: a.sizes, fill: a.fill, styles: a.styles });
       // the layers lying loose on the canvas are no frame
       const frames = design.pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1 }]));
       const drawn = await seen(ctx, at, frames, touched);
       // each frame written, with the layers this call wrote in it (a frame given whole: all of them)
       const changed = wrote.map((w) => ({ frame: w.frame, n: frames.find((f) => f.id === w.frame)?.n, ...(w.isNew ? { new: true } : {}), layers: w.layers }));
-      return { ...about(ctx.origin, design, frames.length), ...added, changed, ...(renamed && Object.keys(renamed).length ? { named: renamed } : {}), ...(notes.length ? { notes } : {}), ...unnamed(design), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
+      return { ...about(ctx.origin, design, frames.length), ...added, ...(a.styles ? { styles: design.styles ?? {} } : {}), changed, ...(renamed && Object.keys(renamed).length ? { named: renamed } : {}), ...(notes.length ? { notes } : {}), ...unnamed(design), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
     },
   },
   steps: { design_get: "Looking at the design", design_make: "Starting the design", design_update: "Designing" },

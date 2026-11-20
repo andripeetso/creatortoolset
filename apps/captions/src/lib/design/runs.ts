@@ -10,7 +10,8 @@ import { faceOf } from "./fonts";
  * up again, so a run is never left overlapping, empty, or saying what the layer says already.
  */
 
-export const STYLE_KEYS = ["font", "weight", "italic", "size", "color", "underline", "strike", "spacing"] as const satisfies readonly (keyof TextStyle)[];
+// (and the styles a part names: lib/design/styles.ts puts their values on it)
+export const STYLE_KEYS = ["font", "weight", "italic", "size", "color", "underline", "strike", "spacing", "colorStyle", "textStyle"] as const satisfies readonly (keyof TextStyle)[];
 type Key = (typeof STYLE_KEYS)[number];
 /** The most runs a text keeps. */
 export const RUNS_MAX = 200;
