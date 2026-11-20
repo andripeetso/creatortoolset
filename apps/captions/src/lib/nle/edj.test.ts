@@ -1,6 +1,6 @@
 // The EDJ v2 contract (contracts/editor.ts): the shared fixture, the version rule, the marker mapper, and the golden
-// vectors the player, the model and the studio engine all test against. The golden is made by the reference maths
-// below; `WRITE_GOLDEN=1 npx vitest run src/lib/nle/edj.test.ts` writes it again after a deliberate change.
+// vectors the player, the model and the studio engine all test against. The golden is made by the editor's own maths
+// (keyframes.ts, trans.ts); `WRITE_GOLDEN=1 npx vitest run src/lib/nle/edj.test.ts` writes it again after a deliberate change.
 import { readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,43 +8,17 @@ import {
   type Edj, type EdjItem, type EdjTrans, type KeyProp,
 } from "@contracts/editor";
 import { toSaved, withKeys, type NleTimeline } from "./model";
-import { ease } from "./shot";
+import { valueAt } from "./keyframes";
+import { transSpan, transWeights } from "./trans";
 
 const FIXTURE = new URL("../../../contracts/edj.fixture.json", import.meta.url);
 const GOLDEN = new URL("../../../contracts/edj-golden.json", import.meta.url);
 const fixture = (): Edj => JSON.parse(readFileSync(FIXTURE, "utf8"));
 
-// ---- reference maths (the formulas of PRD §5, written once) ----
+// ---- the maths is the editor's own (keyframes.ts, trans.ts) ----
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6 + 0; // + 0: no -0 in JSON comparisons
-const STATIC: Record<KeyProp, number> = { zoom: 1, pan: 0, tilt: 0, rot: 0, opacity: 1, gain_db: 0 };
-
-/** timeline frame f (the player's floor(t·fps)) → the clip's source frame, fractional under speed or sfps ≠ fps */
-const srcFrame = (it: EdjItem, f: number, fps: number, sfps: number) => it.in + ((f - it.rec) * (it.speed ?? 1) * sfps) / fps;
-
-function valueAt(it: EdjItem, prop: KeyProp, f: number, fps: number, sfps: number): number {
-  const keys = it.keys?.[prop];
-  if (!keys?.length) return it[prop] ?? STATIC[prop];
-  const s = srcFrame(it, f, fps, sfps);
-  if (s <= keys[0]![0]) return keys[0]![1];
-  const last = keys[keys.length - 1]!;
-  if (s >= last[0]) return last[1];
-  const i = keys.findIndex((k) => k[0] > s) - 1;
-  const [f0, v0, how] = keys[i]!, [f1, v1] = keys[i + 1]!;
-  const u = (s - f0) / (f1 - f0);
-  return v0 + (v1 - v0) * (how === "hold" ? 0 : how === "linear" ? u : ease(u));
-}
-
-/** frames of the transition before / after the cut (an odd centred one has the extra frame after) */
-const split = (t: EdjTrans) => {
-  const pre = t.at === "start" ? 0 : t.at === "end" ? t.len : Math.floor(t.len / 2);
-  return { pre, post: t.len - pre };
-};
-
-function weights(t: EdjTrans, u: number): Record<string, number> {
-  if (t.type === "dissolve") return { alpha: u };
-  if (t.type === "crossfade") return { a: Math.cos((u * Math.PI) / 2), b: Math.sin((u * Math.PI) / 2) };
-  return u < 0.5 ? { a: 1 - 2 * u, color: 2 * u, b: 0 } : { a: 0, color: 2 - 2 * u, b: 2 * u - 1 };
-}
+const split = transSpan;
+const weights = (t: EdjTrans, u: number) => transWeights(t, u) as Record<string, number>;
 
 // ---- the golden's inputs ----
 type KeyCase = { name: string; fps: number; sfps: number; prop: KeyProp; item: EdjItem; frames: number[] };
@@ -99,7 +73,7 @@ function golden() {
       return { ...c, start, frames, ...Object.fromEntries(Object.keys(ws[0]!).map((k) => [k, col(k)])) };
     }),
     handles: HANDLE_CASES.map((c) => {
-      const { pre, post } = split({ type: "dissolve", len: c.len, at: c.at });
+      const { pre, post } = split(c);
       return { ...c, pre, post, tail: r6((post * c.earlier.speed * c.earlier.sfps) / c.fps), head: r6((pre * c.later.speed * c.later.sfps) / c.fps) };
     }),
   };

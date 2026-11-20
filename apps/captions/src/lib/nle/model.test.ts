@@ -3,7 +3,9 @@ import {
   addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, deleteTrack, roll,
   fadeAt, setFade, setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
   NO_MARKS, clipOfPart, editTracks, loopNext, loopPart, markedPart, setMark, sourceTimeline, type Marks,
+  closeGap, extract, lift, rateStretch, slide, type NleItem,
 } from "./model";
+import { valueAt } from "./keyframes";
 
 // A reel: two talking shots on V1 with their voice on A1 (linked), a B-roll clip on V2 and a song on A2.
 const reel = (): NleTimeline =>
@@ -373,5 +375,158 @@ describe("source viewer: marks, the marked part, laying it, looping", () => {
     // play pressed far past the Out: straight to the In
     expect(loopNext(7, 1, [1, 2])).toBe(1);
     expect(loopNext(0, -1, [5, 6])).toBeCloseTo(6);
+  });
+});
+
+// Three Tiny Acrobatics shots on V1 with their voice on A1 (each pair linked), a music bed on A2, and markers. The
+// middle shot keys its opacity; the middle and last shots each have a dissolve at the cut before them, their voices a
+// crossfade.
+const three = (): NleTimeline => {
+  const shots: NleItem[] = [
+    { src: "cam", rec: 0, len: 50, in: 100, link: 1 },
+    { src: "cam", rec: 50, len: 50, in: 300, link: 2, trans: { type: "dissolve", len: 10, at: "center" } },
+    { src: "cam", rec: 100, len: 50, in: 500, link: 3, trans: { type: "dissolve", len: 10, at: "center" } },
+  ];
+  return withKeys({
+    timeline: { fps: 25 },
+    sources: { cam: { fps: 25, dur: 1000 }, song: { fps: 25 } },
+    tracks: {
+      V1: { items: shots.map((s, n) => (n === 1 ? { ...s, keys: { opacity: [[300, 0, "linear"], [320, 1, "linear"]] } } : s)) },
+      A1: { items: shots.map((s) => ({ ...s, trans: s.trans && { ...s.trans, type: "crossfade" } })) },
+      A2: { items: [{ src: "song", rec: 0, len: 150, in: 0 }] },
+    },
+    markers: [{ frame: 0, name: "L01" }, { frame: 45, name: "in the range", color: "Blue" }, { frame: 70, name: "L02" }, { frame: 140, name: "CTA" }],
+  });
+};
+const at = (tl: NleTimeline, track: string, n: number) => tl.tracks[track].items[n]!;
+const marks = (tl: NleTimeline) => (tl.markers ?? []).map((m) => m.frame);
+const opacityKeys = [[300, 0, "linear"], [320, 1, "linear"]];
+
+describe("nle model: keys, transitions and markers through every edit", () => {
+  it("blade: both parts keep the keys, the transition stays on the left part; split-all skips locked tracks", () => {
+    const tl = setTrack(three(), "A2", { locked: true });
+    const out = blade(tl, 60);
+    expect(spans(out, "V1")).toEqual([[0, 50, 100], [50, 10, 300], [60, 40, 310], [100, 50, 500]]);
+    expect(spans(out, "A1")).toEqual(spans(out, "V1"));
+    expect(out.tracks.V1.items.slice(1, 3).map((i) => i.keys?.opacity)).toEqual([opacityKeys, opacityKeys]);
+    expect(out.tracks.V1.items.map((i) => i.trans?.len)).toEqual([undefined, 10, undefined, 10]);
+    expect(out.tracks.A2).toEqual(tl.tracks.A2);
+  });
+
+  it("ripple trim: markers after the edit move, the ones on the frames taken out go to the edit point", () => {
+    const tl = three();
+    // the first shot (and its voice) loses its last 10 frames
+    const tail = trim(tl, at(tl, "V1", 0)._k!, "tail", -10, true);
+    expect(spans(tail, "V1")).toEqual([[0, 40, 100], [40, 50, 300], [90, 50, 500]]);
+    expect(marks(tail)).toEqual([0, 40, 60, 130]);
+    expect(at(tail, "V1", 1).trans).toEqual({ type: "dissolve", len: 10, at: "center" });
+    expect(at(tail, "V1", 1).keys?.opacity).toEqual(opacityKeys);
+    // the middle shot loses its first 10 (the shot before it ending there is not in the way): frames 50-59 go, the
+    // marker on them stays at 50
+    const t2 = three();
+    t2.markers = [{ frame: 55, name: "x" }, { frame: 70, name: "y" }];
+    const head = trim(t2, at(t2, "V1", 1)._k!, "head", 10, true);
+    expect(spans(head, "V1")).toEqual([[0, 50, 100], [50, 40, 310], [90, 50, 500]]);
+    expect(marks(head)).toEqual([50, 60]);
+    expect(at(head, "V1", 1).keys?.opacity).toEqual(opacityKeys);
+    // a locked track does not move
+    const t3 = setTrack(three(), "A2", { locked: true });
+    const locked = trim(t3, at(t3, "V1", 0)._k!, "tail", -10, true);
+    expect(spans(locked, "A2")).toEqual([[0, 150, 0]]);
+  });
+
+  it("ripple delete: markers inside the removed clip go to the edit point, never deleted; a transition with no cut goes", () => {
+    const tl = three();
+    const out = remove(tl, [at(tl, "V1", 0)._k!], true);
+    expect(spans(out, "V1")).toEqual([[0, 50, 300], [50, 50, 500]]);
+    expect(marks(out)).toEqual([0, 0, 20, 90]);
+    expect(out.markers).toHaveLength(4);
+    expect(at(out, "V1", 0).trans).toBeUndefined();
+    expect(at(out, "A1", 0).trans).toBeUndefined();
+    expect(at(out, "V1", 1).trans?.len).toBe(10);
+  });
+
+  it("move, slip, roll, setSpeed, fades and close gap keep keys; transitions follow their cut", () => {
+    const tl = three();
+    const mid = at(tl, "V1", 1)._k!;
+    // moved off its cut: its own transition and the next shot's go
+    const moved = move(tl, [mid], 0, { from: "V1", to: "V1" });
+    expect(moved).toBe(tl);
+    const off = move(tl, [at(tl, "V1", 2)._k!], 5);
+    expect(at(off, "V1", 2).trans).toBeUndefined();
+    expect(at(off, "A1", 2).trans).toBeUndefined();
+    expect(at(off, "V1", 1).trans?.len).toBe(10);
+    // slipped to 4 frames from its source's start: its centred dissolve keeps to 2·4 + 1
+    const slipped = slip(tl, mid, -296);
+    expect(at(slipped, "V1", 1).in).toBe(4);
+    expect(at(slipped, "V1", 1).trans?.len).toBe(9);
+    expect(at(slipped, "V1", 1).keys?.opacity).toEqual(opacityKeys);
+    const rolled = roll(tl, at(tl, "V1", 0)._k!, 5);
+    expect(at(rolled, "V1", 1)).toMatchObject({ rec: 55, in: 305, trans: { len: 10 }, keys: { opacity: opacityKeys } });
+    const fast = setSpeed(tl, [mid], 2);
+    expect(at(fast, "V1", 1).keys?.opacity).toEqual(opacityKeys);
+    expect(at(setFades(tl, [mid], "in", 5), "V1", 1).trans?.len).toBe(10);
+    const gap = closeGap(off, { track: "V1", from: 100, to: 105 });
+    expect(at(gap, "V1", 2).rec).toBe(100);
+  });
+
+  it("paste and insert: a pasted clip keeps its keys, its transition only where it lands on a cut", () => {
+    const tl = three();
+    const clip = copyOf(tl, [at(tl, "V1", 1)._k!]);
+    const loose = paste(tl, clip, 300).tl;
+    expect(loose.tracks.V1.items.at(-1)).toMatchObject({ rec: 300, keys: { opacity: opacityKeys } });
+    expect(loose.tracks.V1.items.at(-1)!.trans).toBeUndefined();
+    const onCut = paste(tl, clip, 150).tl;
+    expect(onCut.tracks.V1.items.at(-1)).toMatchObject({ rec: 150, trans: { len: 10 } });
+    // insert pushes the markers after it
+    expect(marks(place(tl, [{ track: "V1", item: { src: "cam", rec: 60, len: 20, in: 0 } }], "insert").tl)).toEqual([0, 45, 90, 160]);
+  });
+
+  it("slide: the clip and its voice move between their neighbours, which trim; same frames shown", () => {
+    const tl = three();
+    const mid = at(tl, "V1", 1)._k!;
+    const out = slide(tl, mid, 10);
+    expect(spans(out, "V1")).toEqual([[0, 60, 100], [60, 50, 300], [110, 40, 510]]);
+    expect(spans(out, "A1")).toEqual(spans(out, "V1"));
+    expect(out.tracks.V1.items.map((i) => i.trans?.len)).toEqual([undefined, 10, 10]);
+    expect(at(out, "V1", 1).keys?.opacity).toEqual(opacityKeys);
+    // stops a frame short of using up the clip before it
+    expect(spans(slide(tl, mid, -100), "V1")[0]).toEqual([0, 1, 100]);
+    expect(slide(setTrack(tl, "A1", { locked: true }), mid, 10).tracks.V1).toEqual(tl.tracks.V1);
+    expect(marks(out)).toEqual(marks(tl));
+  });
+
+  it("rate stretch: an end pulled, the same source frames at a new speed; keys stay on what they key", () => {
+    const tl = three();
+    const mid = at(tl, "V1", 1)._k!;
+    const out = rateStretch(tl, mid, "tail", -25);
+    expect(at(out, "V1", 1)).toMatchObject({ rec: 50, len: 25, in: 300, speed: 2 });
+    expect(at(out, "A1", 1)).toMatchObject({ rec: 50, len: 25, in: 300, speed: 2 });
+    // opacity half-way (source frame 310) is now 5 frames in, not 10
+    expect(valueAt(at(out, "V1", 1), "opacity", 55, 25, 25)).toBe(0.5);
+    expect(valueAt(at(tl, "V1", 1), "opacity", 60, 25, 25)).toBe(0.5);
+    // the next shot's cut is gone, so its transition
+    expect(at(out, "V1", 2).trans).toBeUndefined();
+    // the next clip is in the way; back to its length, the speed is 1 again
+    expect(rateStretch(tl, mid, "tail", 10)).toBe(tl);
+    expect(at(rateStretch(out, mid, "tail", 25), "V1", 1).speed).toBeUndefined();
+    expect(rateStretch(setTrack(tl, "A1", { locked: true }), mid, "tail", -25).tracks.V1).toEqual(tl.tracks.V1);
+  });
+
+  it("lift and extract an In/Out range across the unlocked tracks", () => {
+    const tl = setTrack(three(), "A2", { locked: true });
+    const lifted = lift(tl, 40, 60);
+    expect(spans(lifted, "V1")).toEqual([[0, 40, 100], [60, 40, 310], [100, 50, 500]]);
+    expect(spans(lifted, "A1")).toEqual(spans(lifted, "V1"));
+    expect(spans(lifted, "A2")).toEqual([[0, 150, 0]]);
+    expect(at(lifted, "V1", 1).trans).toBeUndefined();
+    expect(at(lifted, "V1", 1).keys?.opacity).toEqual(opacityKeys);
+    expect(marks(lifted)).toEqual(marks(tl));
+    const ex = extract(tl, 40, 60);
+    expect(spans(ex, "V1")).toEqual([[0, 40, 100], [40, 40, 310], [80, 50, 500]]);
+    expect(spans(ex, "A2")).toEqual([[0, 150, 0]]);
+    expect(marks(ex)).toEqual([0, 40, 50, 120]);
+    expect(at(ex, "V1", 2).trans?.len).toBe(10);
+    expect(lift(tl, 200, 210)).toBe(tl);
   });
 });

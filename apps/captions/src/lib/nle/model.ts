@@ -14,6 +14,8 @@
 // every unlocked track by one amount (as far as every track can go, so they stay in sync); clips that share a `link`
 // move and trim together.
 
+import type { EdjTrans, Key, KeyProp } from "@contracts/editor";
+
 export type Flip = "h" | "v" | "hv";
 
 export interface NleSource {
@@ -46,6 +48,10 @@ export interface NleItem {
   /** timeline frames of fade at the start / end: a picture from / to black (an opacity ramp), a sound from / to silence */
   fade_in?: number;
   fade_out?: number;
+  /** keyframes in SOURCE frames (keyframes.ts): no edit here moves them */
+  keys?: Partial<Record<KeyProp, Key[]>>;
+  /** the transition at the cut before it (trans.ts), kept right after every edit */
+  trans?: EdjTrans;
   /** this editor's own handle on the clip while it is open (stripped on save) */
   _k?: string;
   [k: string]: unknown;
@@ -65,6 +71,8 @@ export interface NleTimeline {
   timeline: { fps: number; width?: number; height?: number; duration?: number; name?: string; [k: string]: unknown };
   tracks: Record<string, NleTrack>;
   sources: Record<string, NleSource>;
+  /** timeline markers (contracts/editor.ts EdjMarker): a ripple moves them with what is after the edit */
+  markers?: { frame: number; [k: string]: unknown }[];
   [k: string]: unknown;
 }
 
@@ -160,8 +168,9 @@ const lockedAny = (tl: NleTimeline, keys: string[]) => keys.some((k) => tl.track
 /** A clip cut in two at timeline frame `f` (inside it): the left part keeps its handle. */
 function cutAt(tl: NleTimeline, it: NleItem, f: number): [NleItem, NleItem] {
   const d = f - it.rec;
-  const right = { ...clone(it), _k: newKey(), rec: f, len: it.len - d, in: r3(it.in + d * rateOf(tl, it)), fade_in: undefined };
-  // the fade in stays on the left part, the fade out on the right one
+  const { trans: _, ...rest } = clone(it);
+  const right = { ...rest, _k: newKey(), rec: f, len: it.len - d, in: r3(it.in + d * rateOf(tl, it)), fade_in: undefined };
+  // the fade in and the transition stay on the left part, the fade out on the right one
   return [{ ...it, len: d, fade_out: undefined }, right];
 }
 
@@ -188,19 +197,24 @@ const sortAll = (tl: NleTimeline) => {
 /**
  * Everything on the unlocked tracks that starts at or after `at` moves by `d` (all the same amount). Going back, it
  * stops where any track has something in the way, so no clip runs into another and every track stays in sync.
- * Returns the amount it moved.
+ * The timeline markers move with it; going back, the ones on the frames taken out (`d` frames before `at`, or after
+ * it for a `head` ripple trim) go to the edit point. Returns the amount it moved.
  */
-function ripple(tl: NleTimeline, at: number, d: number, skip: Set<string>): number {
+function ripple(tl: NleTimeline, at: number, d: number, skip: Set<string>, head = false): number {
   const tracks = Object.values(tl.tracks).filter((t) => !t.locked);
   if (d < 0) {
     for (const t of tracks) {
       const before = t.items.filter((i) => !skip.has(i._k!) && i.rec < at).map(endOf);
-      const later = t.items.some((i) => !skip.has(i._k!) && i.rec >= at);
-      if (later) d = Math.max(d, Math.max(0, ...before) - at);
-      d = Math.max(d, -Math.min(at, ...t.items.filter((i) => !skip.has(i._k!) && i.rec >= at).map((i) => i.rec)));
+      const later = t.items.filter((i) => !skip.has(i._k!) && i.rec >= at).map((i) => i.rec);
+      // a head ripple trim takes frames after `at` (the clip before ending there is not in the way): what moves stops
+      // at what stays; else the frames before `at` it moves over must be free
+      if (later.length) d = Math.max(d, Math.max(0, ...before) - (head ? Math.min(...later) : at));
+      d = Math.max(d, -Math.min(at, ...later));
     }
   }
   if (d) for (const t of tracks) for (const i of t.items) if (!skip.has(i._k!) && i.rec >= at) i.rec += d;
+  const cut = head && d < 0 ? at : at + Math.min(d, 0);
+  if (d) for (const m of tl.markers ?? []) if (m.frame >= cut) m.frame = Math.max(cut, m.frame + d);
   return d;
 }
 
@@ -227,7 +241,7 @@ export function move(tl: NleTimeline, keys: string[], d: number, lane?: { from: 
   }
   for (const [track, it] of landed) clear(out, track, it.rec, endOf(it), moved);
   for (const [track, it] of landed) out.tracks[track].items.push(it);
-  return sortAll(out);
+  return fixTrans(sortAll(out));
 }
 
 /**
@@ -265,7 +279,7 @@ export function trim(tl: NleTimeline, key: string, edge: Edge, d: number, ripple
   if (!d) return tl;
   const out = clone(tl);
   // a ripple head trim: the clip loses `d` at its start, and what comes after moves back by `d`
-  const shift = ripple_ ? ripple(out, at, edge === "tail" ? d : -d, skip) : 0;
+  const shift = ripple_ ? ripple(out, at, edge === "tail" ? d : -d, skip, edge === "head") : 0;
   if (ripple_ && shift !== (edge === "tail" ? d : -d)) {
     if (!shift) return tl;
     d = edge === "tail" ? shift : -shift;
@@ -279,7 +293,7 @@ export function trim(tl: NleTimeline, key: string, edge: Edge, d: number, ripple
       if (!ripple_) i.rec += d;
     }
   }
-  return sortAll(out);
+  return fixTrans(sortAll(out));
 }
 
 /** The cut between a clip and the one right after it on its track moved by `d`: one gets longer, the other shorter. */
@@ -308,7 +322,7 @@ export function roll(tl: NleTimeline, key: string, d: number): NleTimeline {
     b.len -= d;
     b.in = r3(b.in + d * rateOf(out, b));
   }
-  return out;
+  return fixTrans(out);
 }
 
 /** What the clip shows moved by `d` timeline frames into its source (the linked clips with it); its place stays. */
@@ -326,7 +340,7 @@ export function slip(tl: NleTimeline, key: string, d: number): NleTimeline {
     const i = find(out, k)!.item;
     i.in = r3(i.in + d * rateOf(out, i));
   }
-  return out;
+  return fixTrans(out);
 }
 
 /** Clips cut in two at frame `f`: the ones given, or every clip under it on the unlocked tracks. */
@@ -342,7 +356,7 @@ export function blade(tl: NleTimeline, f: number, keys?: string[]): NleTimeline 
       return cutAt(out, i, f);
     });
   }
-  return any ? out : tl;
+  return any ? fixTrans(out) : tl;
 }
 
 /** Clips taken out (with their linked clips). Ripple: what came after moves up to close the gap, every track together. */
@@ -358,7 +372,7 @@ export function remove(tl: NleTimeline, keys: string[], ripple_ = false): NleTim
     const b = Math.max(...items.map(endOf));
     ripple(out, b, a - b, new Set());
   }
-  return out;
+  return fixTrans(out);
 }
 
 /** Clips laid on the timeline: each on its own track from its `rec`. Overwrite takes out what is under them; insert
@@ -375,7 +389,7 @@ export function place(tl: NleTimeline, clips: { track: string; item: NleItem }[]
     ripple(out, a, b - a, new Set());
   } else for (const c of fresh) clear(out, c.track, c.item.rec, endOf(c.item), new Set());
   for (const c of fresh) out.tracks[c.track].items.push(c.item);
-  return { tl: sortAll(out), keys: fresh.map((c) => c.item._k!) };
+  return { tl: fixTrans(sortAll(out)), keys: fresh.map((c) => c.item._k!) };
 }
 
 /** The picked clips as a clipboard: each with its track and its start counted from the first one's. */
@@ -412,7 +426,7 @@ export function setItems(tl: NleTimeline, keys: string[], patch: Partial<NleItem
     if (!i) continue;
     for (const [f, v] of Object.entries(patch)) if (v === undefined) delete i[f]; else i[f] = v;
   }
-  return out;
+  return fixTrans(out);
 }
 
 /** A new speed for clips: each keeps its length unless its source runs out sooner, then it ends there. */
@@ -424,7 +438,7 @@ export function setSpeed(tl: NleTimeline, keys: string[], speed: number): NleTim
     const dur = i && out.sources[i.src]?.dur;
     if (i && typeof dur === "number") i.len = Math.max(1, Math.min(i.len, Math.floor((dur - i.in) / rateOf(out, i) + 1e-6)));
   }
-  return out;
+  return fixTrans(out);
 }
 
 export const unlink =(tl: NleTimeline, keys: string[]) => setItems(tl, withLinked(tl, keys), { link: undefined });
@@ -773,5 +787,130 @@ export function gapAt(tl: NleTimeline, track: string, f: number): Gap | null {
 export function closeGap(tl: NleTimeline, g: Gap): NleTimeline {
   if (!tl.tracks[g.track] || g.to <= g.from) return tl;
   const out = clone(tl);
-  return ripple(out, g.to, g.from - g.to, new Set()) ? out : tl;
+  return ripple(out, g.to, g.from - g.to, new Set()) ? fixTrans(out) : tl;
+}
+
+/**
+ * Slide: the clip (with its linked clips) moved `d` frames between its neighbours, showing the same frames: the clip
+ * right before it on its track gets longer or shorter at its end, the one right after it at its start. Where none is
+ * right there, it moves into the gap as far as the gap goes.
+ */
+export function slide(tl: NleTimeline, key: string, d: number): NleTimeline {
+  const group = withLinked(tl, [key]);
+  if (!d || !group.length || lockedAny(tl, group)) return tl;
+  const skip = new Set(group);
+  const sides = group.map((k) => {
+    const { track, item } = find(tl, k)!;
+    const near = tl.tracks[track].items.filter((x) => !skip.has(x._k!));
+    return { item, near, prev: near.find((x) => endOf(x) === item.rec), next: near.find((x) => x.rec === endOf(item)) };
+  });
+  // every bound is ≤ 0 or ≥ 0, so the order they are applied in does not matter
+  for (const { item, near, prev, next } of sides) {
+    if (prev) d = Math.min(Math.max(d, 1 - prev.len), roomOf(tl, prev).after);
+    else d = Math.max(d, Math.max(0, ...near.filter((x) => endOf(x) <= item.rec).map(endOf)) - item.rec);
+    if (next) d = Math.max(Math.min(d, next.len - 1), -roomOf(tl, next).before);
+    else d = Math.min(d, Math.min(Infinity, ...near.filter((x) => x.rec >= endOf(item)).map((x) => x.rec)) - endOf(item));
+  }
+  if (!d) return tl;
+  const out = clone(tl);
+  for (const { item, prev, next } of sides) {
+    find(out, item._k!)!.item.rec += d;
+    if (prev) find(out, prev._k!)!.item.len += d;
+    if (!next) continue;
+    const n = find(out, next._k!)!.item;
+    n.rec += d;
+    n.len -= d;
+    n.in = r3(n.in + d * rateOf(out, n));
+  }
+  return fixTrans(sortAll(out));
+}
+
+/**
+ * Rate stretch: one end of the clip (with the linked clips whose same end is at that frame) pulled `d` frames; it shows
+ * the same part of its source faster or slower, so its keys stay on what they key. Stops at its neighbour and at 1 frame.
+ */
+export function rateStretch(tl: NleTimeline, key: string, edge: Edge, d: number): NleTimeline {
+  const hit = find(tl, key);
+  if (!hit || !d) return tl;
+  const at = edge === "head" ? hit.item.rec : endOf(hit.item);
+  const group = withLinked(tl, [key]).filter((k) => {
+    const i = find(tl, k)!.item;
+    return (edge === "head" ? i.rec : endOf(i)) === at;
+  });
+  if (lockedAny(tl, group)) return tl;
+  const skip = new Set(group);
+  for (const k of group) {
+    const { track, item: i } = find(tl, k)!;
+    const near = tl.tracks[track].items.filter((x) => !skip.has(x._k!));
+    if (edge === "tail") d = Math.min(Math.max(d, 1 - i.len), Math.min(Infinity, ...near.filter((x) => x.rec >= endOf(i)).map((x) => x.rec)) - endOf(i));
+    else d = Math.max(Math.min(d, i.len - 1), -i.rec, Math.max(-Infinity, ...near.filter((x) => endOf(x) <= i.rec).map(endOf)) - i.rec);
+  }
+  if (!d) return tl;
+  const out = clone(tl);
+  for (const k of group) {
+    const i = find(out, k)!.item;
+    const len = edge === "tail" ? i.len + d : i.len - d;
+    const speed = ((i.speed || 1) * i.len) / len;
+    if (edge === "head") i.rec += d;
+    i.len = len;
+    if (Math.abs(speed - 1) < 1e-9) delete i.speed;
+    else i.speed = speed;
+  }
+  return fixTrans(sortAll(out));
+}
+
+/** Lift (Delete with In/Out marked and nothing picked): what lies from frame `a` up to `b` (the frame after the Out)
+ *  taken off every unlocked track, clips cut at the marks; a gap is left. */
+export function lift(tl: NleTimeline, a: number, b: number): NleTimeline {
+  const hit = Object.values(tl.tracks).some((t) => !t.locked && t.items.some((i) => i.rec < b && endOf(i) > a));
+  if (b <= a || !hit) return tl;
+  const out = clone(tl);
+  for (const [id, t] of Object.entries(out.tracks)) if (!t.locked) clear(out, id, a, b, new Set());
+  return fixTrans(out);
+}
+
+/** Extract (ripple delete with In/Out marked): lifted, and everything after moves back to close it on every unlocked
+ *  track together; the markers on it go to `a`. */
+export function extract(tl: NleTimeline, a: number, b: number): NleTimeline {
+  if (b <= a) return tl;
+  const lifted = lift(tl, a, b);
+  const out = lifted === tl ? clone(tl) : lifted;
+  return ripple(out, b, a - b, new Set()) || lifted !== tl ? fixTrans(out) : tl;
+}
+
+// Transitions (trans.ts): the room at a cut, and every edit keeping them right after it.
+
+/** the room at the cut before clip `it` on its track's `items` (handlesAt) */
+function roomAt(tl: NleTimeline, items: NleItem[], it: NleItem): { pre: number; post: number } | null {
+  const prev = items.find((x) => x !== it && x.enabled !== false && endOf(x) === it.rec);
+  return prev ? { pre: Math.min(roomOf(tl, it).before, prev.len), post: Math.min(roomOf(tl, prev).after, it.len) } : null;
+}
+
+/**
+ * The room at the cut before clip `key`: `pre` / `post` the most timeline frames a transition can run before / after
+ * it (the later clip's head in its source and the earlier clip's length; the earlier clip's tail and the later one's
+ * length). A retouched or censored source is a copy with its own `dur`, the frames it was made with either side, so
+ * its room ends there. Null when no clip ends where this one starts.
+ */
+export function handlesAt(tl: NleTimeline, key: string): { pre: number; post: number } | null {
+  const hit = find(tl, key);
+  return hit ? roomAt(tl, tl.tracks[hit.track].items, hit.item) : null;
+}
+
+/** The longest a transition at `at` can be with that room. */
+export const maxLen = (h: { pre: number; post: number }, at: EdjTrans["at"]) =>
+  at === "start" ? h.post : at === "end" ? h.pre : Math.min(2 * h.pre + 1, 2 * h.post);
+
+/** Every transition with no clip ending at its cut taken off, and each kept to what its handles hold (none when 0). In place. */
+export function fixTrans(tl: NleTimeline): NleTimeline {
+  for (const t of Object.values(tl.tracks)) {
+    for (const it of t.items) {
+      if (!it.trans) continue;
+      const h = roomAt(tl, t.items, it);
+      const len = h ? Math.min(it.trans.len, maxLen(h, it.trans.at)) : 0;
+      if (len < 1) delete it.trans;
+      else if (len !== it.trans.len) it.trans = { ...it.trans, len };
+    }
+  }
+  return tl;
 }
