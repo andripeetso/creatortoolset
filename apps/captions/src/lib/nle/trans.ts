@@ -17,12 +17,18 @@ export const transSpan = (t: Pick<EdjTrans, "len" | "at">) => {
   return { pre, post: t.len - pre };
 };
 
+/** The most colour a dip shows, at its middle: Resolve 21.2's Dip To Color Dissolve rendered about this (fitted to
+ *  its frames within 0.04), so about a fifth of the picture still shows. */
+export const DIP_PEAK = 0.82;
+
 /** How each side shows `u` (0–1) through it: dissolve the later clip's alpha over the earlier at full; a dip the earlier
- *  clip, the colour and the later clip; a sound crossfade equal-power gains. */
-export function transWeights(t: Pick<EdjTrans, "type">, u: number): { alpha: number } | { a: number; color: number; b: number } | { a: number; b: number } {
+ *  clip, the colour and the later clip, read at the frame's middle as Resolve does; a sound crossfade equal-power gains. */
+export function transWeights(t: Pick<EdjTrans, "type" | "len">, u: number): { alpha: number } | { a: number; color: number; b: number } | { a: number; b: number } {
   if (t.type === "dissolve") return { alpha: u };
   if (t.type === "crossfade") return { a: Math.cos((u * Math.PI) / 2), b: Math.sin((u * Math.PI) / 2) };
-  return u < 0.5 ? { a: 1 - 2 * u, color: 2 * u, b: 0 } : { a: 0, color: 2 - 2 * u, b: 2 * u - 1 };
+  const w = u + 0.5 / t.len;
+  const color = DIP_PEAK * (1 - Math.abs(2 * w - 1));
+  return w < 0.5 - 1e-9 ? { a: 1 - color, color, b: 0 } : { a: 0, color, b: 1 - color }; // 1e-9: an odd dip's middle frame is the later clip's
 }
 
 /** The timeline with its transitions made right (fixTrans), the same timeline when nothing changed. */

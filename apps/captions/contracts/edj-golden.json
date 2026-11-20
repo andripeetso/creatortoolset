@@ -3,7 +3,7 @@
     "Made by src/lib/nle/edj.test.ts from the formulas below; compare values within 1e-6.",
     "Keys: source frame s = in + (f - rec) * speed * sfps / fps for timeline frame f = floor(t * fps). No keys: the item's own value, else zoom 1, pan 0, tilt 0, rot 0, opacity 1, gain_db 0. s at or before the first key: its value; at or after the last: its value. Between keys k and k+1: u = (s - s_k) / (s_k+1 - s_k); key k's ease decides: hold = v_k, linear = lerp(u), ease = lerp(E(u)), E(u) = 16u^5 below 0.5, else 1 - (2 - 2u)^5 / 2.",
     "Transitions sit on the later clip at cut = its rec. Frames before the cut: start 0, end len, center floor(len / 2). start = cut - that; u = (f - start) / len for f in [start, start + len).",
-    "dissolve: the later clip at alpha u over the earlier one at full opacity. dip: weights of earlier clip a, colour, later clip b: u < 0.5: a = 1 - 2u, color = 2u, b = 0; else a = 0, color = 2 - 2u, b = 2u - 1. crossfade: gains a = cos(u * pi / 2), b = sin(u * pi / 2).",
+    "dissolve: the later clip at alpha u over the earlier one at full opacity. dip: weights of earlier clip a, colour, later clip b, read at the frame's middle w = u + 0.5 / len: color = 0.82 * (1 - |2w - 1|); w < 0.5: a = 1 - color, b = 0; else a = 0, b = 1 - color (Resolve 21.2's Dip To Color Dissolve, measured). crossfade: gains a = cos(u * pi / 2), b = sin(u * pi / 2).",
     "Handles in source frames: tail of the earlier clip past its last frame = post * speed * sfps / fps; head of the later clip before its in = pre * speed * sfps / fps (pre / post = timeline frames before / after the cut)."
   ],
   "keys": [
@@ -235,9 +235,9 @@
       "cut": 90,
       "start": 90,
       "frames": [90, 91, 92, 93, 94, 95, 96, 97, 98, 99],
-      "a": [1, 0.8, 0.6, 0.4, 0.2, 0, 0, 0, 0, 0],
-      "color": [0, 0.2, 0.4, 0.6, 0.8, 1, 0.8, 0.6, 0.4, 0.2],
-      "b": [0, 0, 0, 0, 0, 0, 0.2, 0.4, 0.6, 0.8]
+      "a": [0.918, 0.754, 0.59, 0.426, 0.262, 0, 0, 0, 0, 0],
+      "color": [0.082, 0.246, 0.41, 0.574, 0.738, 0.738, 0.574, 0.41, 0.246, 0.082],
+      "b": [0, 0, 0, 0, 0, 0.262, 0.426, 0.59, 0.754, 0.918]
     },
     {
       "name": "dip to white, ending at the cut",
@@ -247,9 +247,9 @@
       "cut": 120,
       "start": 112,
       "frames": [112, 113, 114, 115, 116, 117, 118, 119],
-      "a": [1, 0.75, 0.5, 0.25, 0, 0, 0, 0],
-      "color": [0, 0.25, 0.5, 0.75, 1, 0.75, 0.5, 0.25],
-      "b": [0, 0, 0, 0, 0, 0.25, 0.5, 0.75]
+      "a": [0.8975, 0.6925, 0.4875, 0.2825, 0, 0, 0, 0],
+      "color": [0.1025, 0.3075, 0.5125, 0.7175, 0.7175, 0.5125, 0.3075, 0.1025],
+      "b": [0, 0, 0, 0, 0.2825, 0.4875, 0.6925, 0.8975]
     },
     {
       "name": "dip to black, centred, odd length",
@@ -259,9 +259,9 @@
       "cut": 30,
       "start": 27,
       "frames": [27, 28, 29, 30, 31, 32, 33],
-      "a": [1, 0.714286, 0.428571, 0.142857, 0, 0, 0],
-      "color": [0, 0.285714, 0.571429, 0.857143, 0.857143, 0.571429, 0.285714],
-      "b": [0, 0, 0, 0, 0.142857, 0.428571, 0.714286]
+      "a": [0.882857, 0.648571, 0.414286, 0, 0, 0, 0],
+      "color": [0.117143, 0.351429, 0.585714, 0.82, 0.585714, 0.351429, 0.117143],
+      "b": [0, 0, 0, 0.18, 0.414286, 0.648571, 0.882857]
     },
     {
       "name": "sound crossfade, centred",

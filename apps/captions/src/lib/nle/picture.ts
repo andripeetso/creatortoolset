@@ -97,7 +97,7 @@ export function seenAt(tl: NleTimeline, it: NleItem, f: number, sound: boolean):
   let under: "black" | "white" | undefined;
   const share = (t: Cut, side: "a" | "b") => {
     const u = Math.max(0, Math.min(1, (f - t.start) / t.len));
-    const w = transWeights({ type: sound ? "crossfade" : t.type === "crossfade" ? "dissolve" : t.type }, u) as Record<string, number>;
+    const w = transWeights({ type: sound ? "crossfade" : t.type === "crossfade" ? "dissolve" : t.type, len: t.len }, u) as Record<string, number>;
     return "alpha" in w ? (side === "a" ? 1 : w.alpha) : w[side];
   };
   if (c?.into && f < c.into.start + c.into.len) seen *= share(c.into, "b");
