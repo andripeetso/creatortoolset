@@ -126,7 +126,8 @@ function folderMade(user: string, role: string, workspace: string | undefined, h
  * The workspace's Projects or Exports folder for work on computer `device` (AI Editor working files; finished videos):
  * the one it has, also under another registration of the same machine. No record is ever made here: a folder row is made
  * only when the person picks or confirms one (setup, Settings → Folders, a card's tap; owner, 2026-11-19). Projects on a
- * computer that only helps (the workspace's Project files are on another one) is a folder of its own under its home,
+ * computer that only helps (`helping`: a helper computer of the studio's editor, and the workspace's Project files are on
+ * another one) is a folder of its own under its home; never the person's own computer,
  * with no card (owner, 2026-11-20).
  * Otherwise a named workspace's job pauses (`wait`) on a card: the
  * setup card while its Media Library is not set up, else the folder card (the workspace's default
@@ -134,7 +135,7 @@ function folderMade(user: string, role: string, workspace: string | undefined, h
  * that is no known computer (a worker's host name nothing matched) is a card that says so (`missing: "computer"`), unless
  * the workspace has Project files elsewhere (then it is a helper's own folder).
  */
-export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string } | { wait: FolderAsk }> {
+export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string, helping = false): Promise<StorageFolder | { error: string } | { wait: FolderAsk }> {
   // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
   // folders that have no workspace are its own: a workspace's folder is another client's, never picked
   const owned = await ownedProjects(user);
@@ -153,7 +154,7 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
   if (!ws) return { error: `Choose a ${label} folder in Settings → Media Library.` };
   const computer = deviceOf(device);
   const name = owned.find((x) => x.id === ws)?.name || workspaceById(ws)?.name || ws;
-  if (role === "projects") {
+  if (role === "projects" && helping) {
     // the workspace's Project files are on another computer: this one is helping (load balancing), so it keeps its
     // working files in a folder of its own, never asked for and never written as a record (owner, 2026-11-20)
     if (mine.length) return { id: `helper:${device}`, role, name: label, origin: { host: device, path: `${libraryBase(name)}/${label}` }, make: true, createdAt: Date.now(), reach: {}, workspace: ws };

@@ -90,14 +90,16 @@ it("load balancing: another registration of the same Mac uses its folder; a help
   const before = await rows();
   const helper = pairDevice("ana", "helper-box").device.id;
   machine(helper, "helper-box");
-  expect(await ensureUseFolder("ana", "ws-tiny", "projects", helper)).toMatchObject({ role: "projects", make: true, origin: { host: helper, path: projects } });
+  expect(await ensureUseFolder("ana", "ws-tiny", "projects", helper, true)).toMatchObject({ role: "projects", make: true, origin: { host: helper, path: projects } });
+  // a computer that is not helping (his own) never gets a folder he did not choose: its card
+  expect(await ensureUseFolder("ana", "ws-tiny", "projects", helper)).toMatchObject({ wait: { kind: "projects", device: helper } });
   expect(await rows()).toBe(before);
   // Exports never goes to a helper's own folder: its card stays
-  expect(await ensureUseFolder("ana", "ws-second", "library", helper)).toHaveProperty("wait");
+  expect(await ensureUseFolder("ana", "ws-second", "library", helper, true)).toHaveProperty("wait");
   await changeStorage("ana", (st) => {
     for (const f of st.folders) if (f.role === "projects" && f.workspace === "ws-tiny") f.reach[helper] = { path: "/mnt/nas/Project files", at: 1 };
   });
-  expect(await ensureUseFolder("ana", "ws-tiny", "projects", helper)).toMatchObject({ origin: { host: helper, path: "/mnt/nas/Project files" } });
+  expect(await ensureUseFolder("ana", "ws-tiny", "projects", helper, true)).toMatchObject({ origin: { host: helper, path: "/mnt/nas/Project files" } });
 });
 
 it("with no workspace named and two of the account's, no folder is picked: the answer says what to choose", async () => {
