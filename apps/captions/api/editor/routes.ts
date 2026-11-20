@@ -40,7 +40,7 @@ import { readComments, readMeta } from "../review";
 import { inProjectOf, projectOf } from "../lib/project-of";
 import { sharedHere } from "../lib/workshop/workspace";
 import { currentWorkspaceId, listWorkspaceId } from "../lib/workspace-scope";
-import type { SessionUser } from "../users";
+import { findUser, mayChange, mayUse, type SessionUser } from "../users";
 import { getWorkspace, resolveProjectId } from "../lib/workshop/workspace";
 
 /**
@@ -109,7 +109,9 @@ onEvent("review.approved", async ({ asset, owner, by, n }) => {
     const filed = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset);
     if (!filed) continue;
     const [variant, p] = filed;
-    if (p.n !== n || !by || !(await editRole(by, e))) return;
+    // as Carry on: the AI Editor on and not read-only for them (boot.ts gates), and the edit theirs to work on (load)
+    const u = by ? findUser(by) : null;
+    if (p.n !== n || !u || !mayUse(u, "editor") || !mayChange(u, "editor") || !(await editRole(by, e)) || !(await seesEdit(by, e))) return;
     const next = (await readMeta(asset))?.versions.find((v) => v.n === n)?.next;
     await approvePass(e, variant, next, by);
     return;

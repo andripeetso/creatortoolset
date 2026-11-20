@@ -20,6 +20,7 @@ const { saveTranscript } = await import("../library/transcribe");
 const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
 const { readStep, saveStep } = await import("./store");
 const { addVersion } = await import("../review");
+const { emitEvent } = await import("../lib/events");
 const { writeFile } = await import("node:fs/promises");
 const { STEPS, tick } = await import("./worker");
 
@@ -122,7 +123,8 @@ describe.skipIf(rootReplaced)("AI Editor: edit in passes", () => {
   });
 
   it("Approve on a pass's cut in Review is the go for its next pass: queued once, never by a second press or an older cut", async () => {
-    const style = await json<{ id: string }>(call("maker", "POST", "/api/editor/styles", { name: "Tiny approve", passes: true, brollCollectionId: "col_a" }));
+    const anim = await json<{ id: string }>(call("maker", "POST", "/api/editor/animation-styles", { name: "Tiny approve cards" }));
+    const style = await json<{ id: string }>(call("maker", "POST", "/api/editor/styles", { name: "Tiny approve", passes: true, brollCollectionId: "col_a", animation: anim.id }));
     const { id } = await json<{ id: string }>(call("maker", "POST", "/api/editor", { sources: ["ver_a"], style: style.id }));
     await saveStep(id, "analysis", { sentences, notes: [] });
     await saveStep(id, "plan", { lines, plans: plans.slice(0, 1), notes: [] });
@@ -153,6 +155,19 @@ describe.skipIf(rootReplaced)("AI Editor: edit in passes", () => {
     await settle();
     expect(readStep(id, "passes")).toEqual({ v1: ["broll"] });
     expect(brolls()).toEqual([{ state: "done" }]);
+
+    // the B-roll cut is filed as version 2 and names the cards: an approval of the first cut, a guest's on a share link
+    // or someone's who can't work on the edit starts nothing; the maker's own of version 2 starts the cards
+    const second = (await addVersion(cut.meta.id, { owner: "maker", name: "Tiny approve v1.mp4", mime: "video/mp4", bytes: 1, next: "cards" }, (dest) => writeFile(dest, "x")))!;
+    await saveStep(id, "review", { v1: { assetId: cut.meta.id, n: second.n } });
+    const cards = () => libraryDb().prepare("SELECT state FROM edit_jobs WHERE version_id = ? AND kind = 'cards'").all(`${id}:v1`);
+    for (const who of [{ by: "maker", n: 1 }, { by: "", n: 2 }, { by: "other", n: 2 }]) emitEvent("review.approved", { asset: cut.meta.id, owner: "maker", ...who });
+    await settle();
+    expect(cards()).toEqual([]);
+    emitEvent("review.approved", { asset: cut.meta.id, owner: "maker", by: "maker", n: 2 });
+    await settle();
+    expect(cards()).toEqual([{ state: "queued" }]);
+    expect(readStep(id, "passes")).toEqual({ v1: ["broll", "cards"] });
   });
 
   it("an edit not in passes has no Carry on: 409, and no passes in its view", async () => {

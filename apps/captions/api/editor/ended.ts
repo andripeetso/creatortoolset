@@ -33,7 +33,9 @@ export function cutMedia(edit: EditMeta, variant: string): AssistantMedia | null
     cut: { asset: p.assetId, n: p.n, ...(pass ? { next: PASS_WORD[pass] } : {}) },
   };
 }
-const cutsOf = (edit: EditMeta, variants: string[]) => variants.flatMap((v) => cutMedia(edit, v) ?? []);
+/** The cuts a line plays (workEnded keeps this many). */
+const MAX_CUTS = 4;
+const cutsOf = (edit: EditMeta, variants: string[]) => variants.slice(0, MAX_CUTS).flatMap((v) => cutMedia(edit, v) ?? []);
 
 type Row = Pick<JobRow, "id" | "kind" | "state" | "error"> & { version_id: string };
 const bad = (r: Row) => r.state === "failed" || r.state === "needs_key";
@@ -82,7 +84,7 @@ export function runEnded(job: JobRow): void {
         end = {
           status: "done",
           detail: n === all ? "Done" : `${n} of ${all} versions done`,
-          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `The first draft of ${name} is ready.` : `${n} versions of ${name} are ready.`) + (left ? ` ${left}` : ""),
+          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `The first draft of ${name} is ready.` : `${n} versions of ${name} are ready.`) + (left ? ` ${left}` : "") + (n > MAX_CUTS ? ` The chat plays ${MAX_CUTS}; the other ${n - MAX_CUTS} are in Review.` : ""),
           media: cutsOf(edit, ready),
         };
     }

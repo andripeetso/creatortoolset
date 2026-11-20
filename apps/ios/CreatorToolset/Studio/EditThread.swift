@@ -188,13 +188,16 @@ enum EditFeed {
         }
         let newestAt = cuts.last?.0 ?? -1
         page.newest = cuts.last?.1
-        // each older cut, newest first, with the first note said after it and before the next cut
+        // each older cut, newest first, with the first note said after it and before the next cut of its own variant
+        // (a cut of another variant is another version, not the answer to its note)
         for (k, (index, draft)) in cuts.dropLast().enumerated().reversed() {
-            let next = cuts[k + 1].0
-            let note = all[(index + 1)..<next].compactMap { item -> String? in
-                if case .said(_, let text) = item { return text }
-                return nil
-            }.first
+            let next = cuts[(k + 1)...].first { $0.1.variant == draft.variant }?.0
+            let note = next.flatMap { next in
+                all[(index + 1)..<next].compactMap { item -> String? in
+                    if case .said(_, let text) = item { return text }
+                    return nil
+                }.first
+            }
             page.earlier.append((draft, note))
         }
         for (index, item) in all.enumerated() {
@@ -360,6 +363,7 @@ final class EditThreadModel: ObservableObject {
 
     /// Approve on the newest cut's Review video (that version only). Nil when it went, else the server's question
     /// before its owner approves a cut whose faces aren't blurred.
+    @discardableResult
     func approve(_ ref: EditorProject.Draft.ReviewRef, asFilmed: Bool = false) async -> String? {
         guard let api else { return nil }
         var asked: String?
@@ -417,7 +421,8 @@ struct EditThreadView: View {
     @StateObject private var model: EditThreadModel
     @State private var text = ""
     @State private var askResolve = false
-    @State private var asFilmedAsk: String?
+    /// The server's question before approving a cut with unblurred faces, and the cut it asked about.
+    @State private var asFilmedAsk: (line: String, ref: EditorProject.Draft.ReviewRef)?
     @State private var earlierOpen = false
     @State private var historyOpen = false
     /// Request changes: the box takes the keyboard.
@@ -457,9 +462,9 @@ struct EditThreadView: View {
             .confirmationDialog("Open \(model.edit?.drafts.last?.name ?? "the cut") in Resolve on the Mac?", isPresented: $askResolve, titleVisibility: .visible) {
                 Button("Open in Resolve") { Task { await model.openInResolve() } }
             }
-            .alert(asFilmedAsk ?? "", isPresented: Binding(get: { asFilmedAsk != nil }, set: { if !$0 { asFilmedAsk = nil } })) {
+            .alert(asFilmedAsk?.line ?? "", isPresented: Binding(get: { asFilmedAsk != nil }, set: { if !$0 { asFilmedAsk = nil } })) {
                 Button("Approve as filmed") {
-                    if let ref = model.edit?.drafts.last?.review { Task { asFilmedAsk = await model.approve(ref, asFilmed: true) } }
+                    if let ref = asFilmedAsk?.ref { Task { await model.approve(ref, asFilmed: true) } }
                 }
                 Button("Cancel", role: .cancel) {}
             }
@@ -618,7 +623,7 @@ struct EditThreadView: View {
             if let ref = draft.review, status != .approved, model.running == nil, model.queued.isEmpty {
                 HStack(spacing: 10) {
                     WideButton(title: ReviewAsset.approveTitle(model.review?.latest?.next), systemImage: "checkmark") {
-                        Task { asFilmedAsk = await model.approve(ref) }
+                        Task { asFilmedAsk = await model.approve(ref).map { ($0, ref) } }
                     }
                     WideButton(title: "Request changes", kind: .plain) { focus += 1 }
                 }

@@ -1722,6 +1722,8 @@ function ApprovalControl({
   approve: (s: Approval) => Promise<void>;
 }) {
   const cur = asset.approval;
+  // what approving the newest cut starts (an AI Editor edit in passes)
+  const next = asset.versions.at(-1)?.next;
   const badge = (
     <span className="flex items-center gap-1.5 rounded-md border border-zinc-800 px-2 py-1 text-xs">
       <span className={cn("h-2 w-2 rounded-full", APPROVAL[cur.status].dot)} />
@@ -1750,14 +1752,15 @@ function ApprovalControl({
   return (
     <div className="flex items-center gap-1.5">
       {cur.status !== "none" && badge}
+      {/* Approve left, Request changes right, as in the chat and on the phone */}
+      {cur.status !== "approved" && (
+        <Button size="sm" className="h-7 bg-emerald-600 text-xs text-white hover:bg-emerald-500" onClick={() => void approve("approved")}>
+          <Check /> {next ? `Approve · add ${next}` : "Approve"}
+        </Button>
+      )}
       {cur.status !== "changes" && (
         <Button size="sm" variant="outline" className="h-7 border-zinc-800 bg-transparent text-xs" onClick={() => void approve("changes")}>
           Request changes
-        </Button>
-      )}
-      {cur.status !== "approved" && (
-        <Button size="sm" className="h-7 bg-emerald-600 text-xs text-white hover:bg-emerald-500" onClick={() => void approve("approved")}>
-          <Check /> Approve
         </Button>
       )}
     </div>

@@ -327,6 +327,8 @@ final class AssistantDraft: ObservableObject {
     @Published var text = "" { didSet { keep() } }
     /// Request changes under a ready cut: the box's question ("What should change in v2?") until the next message goes.
     @Published var ask: String?
+    /// Which cut that is, sent with the message (as a quote: the turn's context), since a line can carry several.
+    var about: String?
     @Published private(set) var pictures: [QueuedMessage.Picture] = [] { didSet { keep() } }
     /// Picked videos, on their way up; one Photos is still handing over is `pending`.
     @Published private(set) var videos: [QueuedMessage.Video] = [] { didSet { keep() } }
@@ -455,13 +457,14 @@ final class AssistantDraft: ObservableObject {
         guard !isEmpty, !reading else { return nil }
         let message = QueuedMessage(
             text: text.trimmingCharacters(in: .whitespacesAndNewlines), images: pictures, files: files,
-            videos: videos.isEmpty ? nil : videos)
+            videos: videos.isEmpty ? nil : videos, quote: about)
         text = ""
         pictures = []
         videos = []
         files = []
         notice = nil
         ask = nil
+        about = nil
         return message
     }
 

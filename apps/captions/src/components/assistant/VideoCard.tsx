@@ -4,8 +4,8 @@ import { ArrowUpRight, Check, ChevronRight } from "lucide-react";
 import type { AssistantMedia } from "@contracts/assistant";
 import { confirmDialog } from "@/lib/dialogs";
 
-/** Request changes under a ready cut: the chat box takes the cursor, asking this (the dock provides it). */
-export const AskChanges = createContext<((ask: string) => void) | null>(null);
+/** Request changes under a ready cut: the chat box takes the cursor and asks what should change in it (the dock provides it). */
+export const AskChanges = createContext<((cut: AssistantMedia) => void) | null>(null);
 
 type Cut = NonNullable<AssistantMedia["cut"]>;
 
@@ -28,7 +28,7 @@ async function approveCut(cut: Cut): Promise<void> {
 }
 
 /** A ready cut's own buttons, Approve left and Request changes right, as on the Review page. */
-function CutButtons({ cut }: { cut: Cut }) {
+function CutButtons({ media, cut }: { media: AssistantMedia; cut: Cut }) {
   const ask = useContext(AskChanges);
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
   const [error, setError] = useState("");
@@ -51,7 +51,7 @@ function CutButtons({ cut }: { cut: Cut }) {
           <Check className="size-3.5" aria-hidden />
           {state === "done" ? "Approved" : cut.next ? `Approve · add ${cut.next}` : "Approve"}
         </button>
-        <button type="button" disabled={!ask} onClick={() => ask?.(`What should change in v${cut.n}?`)} className={`${btn} border hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]`}>
+        <button type="button" disabled={!ask} onClick={() => ask?.(media)} className={`${btn} border hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]`}>
           Request changes
         </button>
       </div>
@@ -111,7 +111,7 @@ export function VideoCards({ media }: { media?: AssistantMedia[] }) {
               )}
             </a>
           </div>
-          {v.cut && <CutButtons cut={v.cut} />}
+          {v.cut && <CutButtons media={v} cut={v.cut} />}
         </li>
       ))}
     </ul>

@@ -56,7 +56,8 @@ struct ReviewAssetView: View {
     private var shown: ReviewAsset.Version? { asset?.versions.first { $0.n == version } }
     /// Where the player is, in seconds.
     private var now: Double {
-        if let pinned { return pinned }
+        // the moment a spoken note was started at, while that note is being made (a dictation that came to nothing lets go)
+        if let pinned, voice.phase != .idle || !draft.isEmpty { return pinned }
         let seconds = player?.currentTime().seconds ?? 0
         return seconds.isFinite ? seconds : 0
     }
@@ -560,6 +561,9 @@ struct ReviewAssetView: View {
         draft = ""
         replyTo = nil
         pinned = nil
+        let changes = asking
+        asking = false
+        defer { if changes { Task { await requestChanges() } } }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         // the server answers with the comment: it is shown at once
         guard let made = try? JSONDecoder().decode(ReviewComment.self, from: data) else {
@@ -568,10 +572,6 @@ struct ReviewAssetView: View {
         }
         if !comments.contains(where: { $0.id == made.id }) { comments.append(made) }
         scrollTarget = made.id
-        if asking {
-            asking = false
-            await requestChanges()
-        }
     }
 
     /// Request changes with the open notes: the video is marked, and what made it makes the next cut from them.

@@ -55,7 +55,7 @@ describe("a ready cut in the chat", () => {
     vi.stubGlobal("fetch", vi.fn());
     show([cut], ask);
     await press(1);
-    expect(ask).toHaveBeenCalledWith("What should change in v2?");
+    expect(ask).toHaveBeenCalledWith(cut);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

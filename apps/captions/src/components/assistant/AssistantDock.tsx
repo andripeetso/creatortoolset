@@ -1012,7 +1012,13 @@ export function AssistantDock() {
         )}
 
         {chatting && !empty && (
-          <AskChanges.Provider value={(text) => setAsk({ text })}>
+          <AskChanges.Provider
+            value={(m) => {
+              // the message says which cut it is about: a line can carry several (lib/assistant quote → the turn's context)
+              setAsk({ text: `What should change in v${m.cut!.n}?` });
+              setQuote(`Request changes on “${m.title}” (Review ${m.href})`);
+            }}
+          >
           <div className="flex flex-col gap-3">
             {view.messages.map((m, i, all) => {
               const asked = all[i - 1];
