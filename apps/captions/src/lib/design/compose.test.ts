@@ -204,13 +204,14 @@ describe("the layers list", () => {
 });
 
 /** OffscreenCanvas counted while `fn` runs; `broken`: none gives a 2D context (a browser out of canvas memory). */
-function counting<T>(fn: () => T, broken = false): { made: number; out: T } {
+function counting<T>(fn: () => T, broken: boolean | number = false): { made: number; out: T } {
   let made = 0;
   vi.stubGlobal("OffscreenCanvas", class extends Canvas {
     constructor(w: number, h: number) {
       super(w, h);
       made++;
-      if (broken) Object.defineProperty(this, "getContext", { value: () => null });
+      // a number: the canvases after that many have no context
+      if (broken === true || (typeof broken === "number" && made > broken)) Object.defineProperty(this, "getContext", { value: () => null });
     }
   });
   try {
@@ -289,5 +290,82 @@ describe("combined shapes and masks kept, and never lost", () => {
 
   it("steps round a ring close enough to stay round at any size", () => {
     for (const k of [1, 3, 10, 64, 100, 256, 500, 1000, 4000]) expect(k * (1 - Math.cos(Math.PI / ringSteps(k))), `k ${k}`).toBeLessThanOrEqual(0.5);
+  });
+});
+
+describe("held review: outlines, kept pieces off the frame's corner, stale pictures", () => {
+  // the how-to's ring: a 400 disc less a 200 disc in its middle
+  const ring = { id: "g", type: "group", boolean: "subtract", x: 0, y: 0, w: 400, h: 400, fills: [red], layers: [circle("a", 0, 0, 400), circle("b", 100, 100, 200)] } as Layer;
+
+  it("a combined shape's parts are hit by their outline: the ring at (110, 110), in the inner disc's box but not in it", () => {
+    expect(layerAt({ layers: [ring] }, 110, 110)?.id).toBe("g");
+    expect(layerAt({ layers: [ring] }, 200, 200)).toBeNull();
+    // two discs overlapping: inside both boxes, outside the right disc's outline: not in their intersection
+    const both = combined("intersect", [circle("l", 0, 0, 40), circle("r", 20, 0, 40)]);
+    expect([layerAt({ layers: [both] }, 22, 2), layerAt({ layers: [both] }, 30, 20)?.id]).toEqual([null, "g"]);
+    // a triangle pointing up: its box's top left corner is not in it
+    const tri = combined("union", [{ id: "t", type: "shape", shape: "triangle", fill: "#000000", x: 0, y: 0, w: 40, h: 40 } as Layer]);
+    expect([layerAt({ layers: [tri] }, 3, 3), layerAt({ layers: [tri] }, 20, 30)?.id]).toEqual([null, "g"]);
+  });
+
+  it("a mask among an open combined shape's layers does not cut the others", () => {
+    const strip = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 10, h: 60, mask: "alpha" } as Layer;
+    const other = { id: "o", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 80, h: 60 } as Layer;
+    expect(layerAt({ layers: [strip, other], boolean: "union" }, 50, 30)?.id).toBe("o");
+    expect(layerAt({ layers: [strip, other] }, 50, 30)).toBeNull();
+  });
+
+  it("a background blur among masked layers blurs on the canvas as in a saved picture, the frame away from the canvas's corner", () => {
+    const OFF = 100;
+    const drawAt = (exact: boolean) => {
+      const canvas = new Canvas(OFF + W, H);
+      const ctx = canvas.getContext("2d");
+      ctx.translate(OFF, 0);
+      loaded ??= new Map([["pic", photo()]]) as unknown as Loaded;
+      const layers = [
+        { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: W, h: H, mask: "alpha" },
+        { id: "dark", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 40, h: H },
+        { id: "glass", type: "shape", shape: "rect", fill: "#ffffff00", x: 20, y: 10, w: 40, h: 40, effects: [{ type: "background-blur", blur: 8 }] },
+      ] as Layer[];
+      drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "off", background: "#ffffff", layers } as DesignPage, W, H, loaded, exact);
+      return (x: number, y: number) => Array.from(ctx.getImageData(OFF + x, y, 1, 1).data);
+    };
+    for (const exact of [true, false]) {
+      const at = drawAt(exact);
+      // just right of the dark half's edge, under the glass: the dark blurred into it, grey, not the page's white;
+      // right of the glass the page is white
+      expect(at(42, 30)[0], `exact ${exact}`).toBeLessThan(230);
+      expect(at(70, 30)[0], `exact ${exact}`).toBe(255);
+    }
+  });
+
+  it("a combined shape whose line cannot be made draws its parts once, not over its fill", () => {
+    const half = combined("subtract", [circle("a", 10, 10, 40, { opacity: 0.5 }), circle("b", 20, 20, 20, { opacity: 0.5 })], { strokes: [{ color: "#0000ff", width: 4 }] });
+    // its three sheets are made, its line's are not
+    const { out } = counting(() => draw([half]), 3);
+    // half a green over the white page, with no red under it
+    const px = out.at(14, 30);
+    expect(px[0]).toBeGreaterThan(110);
+    expect(px[1]).toBe(255);
+  });
+
+  it("a picture put in the place of another under the same id is drawn again, not the kept piece of the old one", () => {
+    const strip = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 40, h: H, mask: "alpha" } as Layer;
+    const pic = { id: "ph", type: "image", picture: "swap", fit: "cover", x: 0, y: 0, w: W, h: H } as Layer;
+    const swapLoaded = new Map<string, Canvas>();
+    const paint = (colour: string, size: number) => {
+      const c = new Canvas(size, size);
+      const g = c.getContext("2d");
+      g.fillStyle = colour;
+      g.fillRect(0, 0, size, size);
+      swapLoaded.set("swap", c);
+      const canvas = new Canvas(W, H);
+      const ctx = canvas.getContext("2d");
+      drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "swap", background: "#ffffff", layers: [strip, pic] } as DesignPage, W, H, swapLoaded as unknown as Loaded, false);
+      return Array.from(ctx.getImageData(20, 30, 1, 1).data);
+    };
+    expect(paint("#ff0000", 20)).toEqual(RED);
+    // a sharper picture in its place (another size), green
+    expect(paint("#00ff00", 80)).toEqual([0, 255, 0, 255]);
   });
 });

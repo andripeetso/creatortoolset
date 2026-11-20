@@ -606,6 +606,8 @@ describe("combined shapes and masks, checked", () => {
     const { notes } = take([{ type: "group", box: true, layout: { dir: "row" }, layers: [disc({ mask: "alpha" }), disc()] }]);
     expect(notes.join(" ")).toContain("put the mask and what it cuts in a plain group");
     expect(take([{ type: "group", box: true, layout: { dir: "row" }, layers: [{ type: "group", layers: [disc({ mask: "alpha" }), disc()] }] }]).notes).toEqual([]);
+    // out of the flow (absolute) it takes no place in it: no note
+    expect(take([{ type: "group", box: true, layout: { dir: "row" }, layers: [disc({ mask: "alpha", absolute: true }), disc()] }]).notes).toEqual([]);
   });
 
   it("drops a way of combining or masking it does not know, saying so; a plain group keeps no fills", () => {

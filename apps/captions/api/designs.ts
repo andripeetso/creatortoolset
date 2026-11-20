@@ -727,8 +727,10 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       // the size of its layers back, and they go back with it); and so do those of a box in it it resized
       const home = page?.id ?? was!.home;
       const mine = settled.get(home) ?? settled.set(home, new Map()).get(home)!;
-      carrySettled(mine, [before], [changed]);
-      if (flows(changed as unknown as Layer)) settleAt(mine, changed as unknown as Layer);
+      // on the canvas it goes back under its own id in its piece (canvasLayers may have named it apart from another's)
+      const own = (x: Raw): Raw => (page || !was?.real ? x : { ...x, id: was.real });
+      carrySettled(mine, [own(before)], [own(changed)]);
+      if (flows(changed as unknown as Layer)) settleAt(mine, own(changed) as unknown as Layer);
     }
     givenAt.set(changed, at);
     if (page) {

@@ -137,3 +137,26 @@ it("combines and masks layers picked inside a group in a group, where they are",
     design.pages = was;
   }
 });
+
+it("Use as mask under a mask in an auto layout box makes the layer a mask in its place", async () => {
+  const sq = (id: string, more: object = {}) => ({ id, type: "shape" as const, shape: "rect" as const, fill: "#ff0000", x: 0, y: 0, w: 100, h: 100, ...more });
+  const was = design.pages;
+  design.pages = [{ ...was[0]!, layers: [{ id: "row", type: "group", box: true, layout: { dir: "row" }, x: 100, y: 100, w: 200, h: 100, layers: [sq("a"), sq("b", { x: 100, mask: "alpha" })] }] }];
+  try {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><DesignEditor id="d1" onDone={() => {}} /></MemoryRouter>));
+    await settle();
+    act(() => document.querySelector<HTMLElement>('[data-row="l:p1:a"]')!.click());
+    await settle();
+    act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyM", key: "m", ctrlKey: true, altKey: true, metaKey: true })));
+    await settle();
+    await act(async () => button("Done")!.click());
+    await settle();
+    const row = saveDesign.mock.calls.at(-1)?.[1].pages![0]!.layers[0] as GroupLayer | undefined;
+    expect(row?.layers.map((l) => [l.id, l.mask])).toEqual([["a", "alpha"], ["b", "alpha"]]);
+  } finally {
+    design.pages = was;
+  }
+});
