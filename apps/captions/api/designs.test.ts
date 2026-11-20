@@ -250,6 +250,25 @@ describe("designs: an AI that designs", () => {
     const grew = at(second, "badge").w - at(first, "badge").w;
     expect(grew).toBeGreaterThan(100);
     expect(at(second, "dot").x).toBeCloseTo(100 + grew, 1);
+    // the whole frame given again, the badge at the size it was saved at: a longer word moves the dot by its pin
+    const savedBadge = at(second, "badge");
+    const longer = { ...savedBadge, layers: savedBadge.layers.map((l) => (l.id === "w" ? { ...l, text: "LIMITED OFFER TODAY" } : l)) };
+    const third = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [longer] }] })).body;
+    expect(at(third, "dot").x).toBeCloseTo(at(second, "dot").x + at(third, "badge").w - savedBadge.w, 1);
+    // given at another size (a start again): the dot stays where it is given
+    const fourth = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [{ ...badge, layers: [{ ...word, text: "SALE" }, { ...dot, x: 50 }] }] }] })).body;
+    expect(at(fourth, "dot").x).toBe(50);
+  });
+
+  it("a hugging box an AI gives a height to takes its own back, its layer pinned to its bottom with it", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const word = { type: "text", id: "w", font: "Inter", size: 40, color: "#ffffff", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" }, text: "NEW" };
+    const tag = { type: "shape", shape: "rect", id: "tag", fill: "#ff0000", x: 0, y: 40, w: 20, h: 6, absolute: true, pin: { y: "bottom" } };
+    const badge = { type: "group", box: true, id: "badge", x: 80, y: 80, w: 10, h: 10, layout: { dir: "row", pad: 10 }, sizing: { w: "hug", h: "hug" }, layers: [word, tag] };
+    const at = (b: Design, id: string) => everyLayer(b.pages[0]!.layers).find((l) => l.id === id)! as GroupLayer;
+    const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [badge] }] })).body.design;
+    const second = (await write(d.id, { changes: [{ frame: d.pages[0]!.id, layer: "badge", set: { h: 200 } }] })).body.design;
+    expect([at(second, "badge").h, at(second, "tag").y]).toEqual([at(first, "badge").h, at(first, "tag").y]);
   });
 
   it("reads every frame with its id, size, words and layers, and how a design is changed", async () => {

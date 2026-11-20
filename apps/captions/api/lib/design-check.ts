@@ -396,8 +396,8 @@ export interface PageRules {
    * absent, a guess (an AI's work); null, every text keeps the size it has (a save by hand, laid out by the browser).
    */
   measure?: Measure | null;
-  /** An AI's write: the auto layout boxes as saved before it (layout.ts settledBoxes); a box not among them is new */
-  settled?: ReadonlySet<string>;
+  /** An AI's write: each frame's auto layout boxes as saved before it, by the frame's id (layout.ts settledBoxes); a box not among its frame's is new */
+  settled?: ReadonlyMap<string, ReadonlySet<string>>;
   /**
    * Where a note goes instead of the notes list: the page's place in the list, the note, and the layer as it was given
    * (for a note about one layer), so a caller can say which of the things it sent the note is about.
@@ -661,7 +661,8 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       return out;
     };
     // a plain group's box is the box round its layers, whatever it was given, and every auto layout laid out
-    const layers = layoutLayers(take(p.layers, 0), r.measure === undefined ? guessWidth : r.measure, sayPage, r.settled);
+    const pid = typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`;
+    const layers = layoutLayers(take(p.layers, 0), r.measure === undefined ? guessWidth : r.measure, sayPage, r.settled && (r.settled.get(pid) ?? new Set()));
     // an AI's page says all of its words: any it left off are named, so it can put them back (a page with nothing
     // on it is said so by whoever asked for it)
     if (r.words?.[k] !== undefined && layers.length) {
@@ -675,7 +676,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     }
     // a loose piece with nothing left on it is gone
     if (loose && !layers.length) continue;
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, sayPage), ...strokeList(p.strokes, 200), ...finish(p), ...cleanAids(p), layers });
+    pages.push({ id: pid, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...fillList(p.fills, { ...r, ...size }, sayPage), ...strokeList(p.strokes, 200), ...finish(p), ...cleanAids(p), layers });
   }
   // loose layers after the frames: a frame's place in the list is its number
   return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };

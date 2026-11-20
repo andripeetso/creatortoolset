@@ -19,8 +19,25 @@ const coverOf = (d: Design | null) => d?.pages.find((p) => !p.loose) ?? d?.pages
  * an edge); a canvas with no frame yet shows nothing.
  * ponytail: each card reads its whole design; a saved picture of the first frame when lists get long.
  */
+/**
+ * A font fetched once for every card: when it arrives the words measured without it are forgotten, once (layout.ts),
+ * and each card waiting on it draws again.
+ */
+const fontLoads = new Map<string, Promise<void>>();
+export const fontLoad = (f: string): Promise<void> => {
+  let p = fontLoads.get(f);
+  if (!p) fontLoads.set(f, (p = document.fonts.load(f).then(() => forgetWords())));
+  return p;
+};
+
 export function DesignThumb({ id, stamp, width, height, tile }: { id: string; stamp: number; width: number; height: number; tile?: number }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  // nothing is drawn again once the card is gone
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => void (alive.current = false);
+  }, []);
   const [design, setDesign] = useState<Design | null>(null);
   const [drawn, setDrawn] = useState(0);
   const [loaded] = useState<Loaded>(() => new Map());
@@ -36,7 +53,7 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
   useEffect(() => {
     const page = coverOf(design);
     if (!design || !page) return;
-    const again = () => setDrawn((n) => n + 1);
+    const again = () => void (alive.current && setDrawn((n) => n + 1));
     for (const l of everyLayer(page.layers)) {
       const src = sourceOf(l);
       if (src && !loaded.has(src)) {
@@ -45,8 +62,8 @@ export function DesignThumb({ id, stamp, width, height, tile }: { id: string; st
         img.onload = again;
         img.src = l.type === "image" ? pictureUrl(design.id, src) : drawingUrl(src);
       }
-      // a font that arrives sets its words at other widths: measured again (layout.ts)
-      if (l.type === "text") for (const f of fontsOfText(l)) void document.fonts.load(f).then(() => (forgetWords(), again()), () => {});
+      // a font that arrives sets its words at other widths: measured again (layout.ts), once for each that arrives
+      if (l.type === "text") for (const f of fontsOfText(l)) if (!document.fonts.check(f)) void fontLoad(f).then(again, () => {});
     }
     for (const src of paintPictures(page)) {
       if (loaded.has(src)) continue;

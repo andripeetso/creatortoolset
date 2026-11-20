@@ -5,7 +5,7 @@ import { Hono, type Context } from "hono";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_HEADS, DESIGN_FORMATS, DESIGN_GAP, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_LIMITS, DESIGN_SAFE, DESIGN_SHAPES, formatOf, PICTURE_SIDE_MAX, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type Layer, type SplitAnswer, type TextLayer } from "../contracts/design";
 import { DESIGN_FONTS, weightsOf } from "../src/lib/design/fonts";
 import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
-import { settledBoxes } from "../src/lib/design/layout";
+import { flows, settledBoxes, sizeKey } from "../src/lib/design/layout";
 import { retext } from "../src/lib/design/runs";
 import { everyLayer, layerIn, layerOut, unwrap } from "../src/lib/design/tree";
 import type { AuthVars } from "./auth";
@@ -720,7 +720,12 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       }
     }
     // a group given a new size (its layers not given whole): they follow it, as when it is resized by hand
-    if (changed.type === "group" && Array.isArray(changed.layers) && !raw(c.set)?.layers) changed = fitContents(placed(layer), placed(changed)) as unknown as Raw;
+    if (changed.type === "group" && Array.isArray(changed.layers) && !raw(c.set)?.layers) {
+      changed = fitContents(placed(layer), placed(changed)) as unknown as Raw;
+      // its layers out of the flow now lie for that size: from it they follow its edges again (a box that hugs takes
+      // the size of its layers back, and they go back with it)
+      if (page && flows(changed as unknown as Layer)) (settled.get(page.id) ?? settled.set(page.id, new Set()).get(page.id)!).add(sizeKey(changed as unknown as Layer));
+    }
     givenAt.set(changed, at);
     if (page) {
       open(page).set.push(String(lid));

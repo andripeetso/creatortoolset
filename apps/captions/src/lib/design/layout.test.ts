@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { GroupLayer, Layer, ShapeLayer, TextLayer } from "../../../contracts/design";
-import { addAutoLayout, dropSlot, fixedBy, forgetWords, flowInsert, flowSlot, guessWidth, layoutLayers, layoutPages, withSizing, withoutLayout, wordsSize } from "./layout";
+import { addAutoLayout, dropSlot, fixedBy, settledBoxes, forgetWords, flowInsert, flowSlot, guessWidth, layoutLayers, layoutPages, withSizing, withoutLayout, wordsSize } from "./layout";
 import { mergeFrames } from "./hands";
 import { fitContents } from "./resize";
 import { sizedCopy } from "./resize";
+import { everyLayer } from "./tree";
 
 // every letter half its size wide: "Hi" at 20px is 20 wide; a line is 20 × 1.15 = 23 high
 const measure = (font: string, s: string) => Number(/([\d.]+)px/.exec(font)![1]) * 0.5 * Array.from(s).length;
@@ -246,6 +247,45 @@ describe("auto layout", () => {
     const mine = layoutPages(v1, measure);
     expect(JSON.stringify(mergeFrames(mine, v1, v2))).toBe(JSON.stringify(mine));
     expect(mergeFrames(mine, layoutPages(v1, measure), layoutPages(v2, measure))[0]!.layers).toEqual(layoutPages(v2, measure)[0]!.layers);
+  });
+
+  describe("an AI's write: boxes laid out before at their size (settled) and new ones", () => {
+    // a card hugging a title, its footer filling its width round wrapping words, a tag pinned to the footer's bottom
+    const card = (title: string) =>
+      box(
+        [
+          text("title", title),
+          box([text("words", "bbbbbbbbbbbbbbbbb ccccccccccccccccc", { w: 300, h: 46, sizing: { w: "fill", h: "hug" } }), rect("tag", 10, 10, { x: 0, y: 36, absolute: true, pin: { y: "bottom" } })], { dir: "column" }, { id: "footer", w: 300, h: 46, sizing: { w: "fill", h: "hug" } }),
+        ],
+        { dir: "column" },
+        { id: "card", w: 300, h: 69, sizing: { w: "hug", h: "hug" } },
+      );
+    const inside = (g: Layer, id: string): Layer => everyLayer([g]).find((l) => l.id === id)!;
+
+    it("a saved box stretched by its parent and hugging less keeps its tag on its bottom", () => {
+      const saved = layoutLayers([card("a".repeat(30))], measure);
+      const footer = inside(saved[0]!, "footer");
+      expect([footer.w, footer.h, inside(saved[0]!, "tag").y]).toEqual([300, 46, 36]);
+      const settled = settledBoxes([{ id: "p", background: "#ffffff", layers: saved }]).get("p")!;
+      // a longer title: the card 400 wide, the footer with it, its words on one line, 23 high
+      const longer = layoutLayers([{ ...(saved[0] as GroupLayer), layers: (saved[0] as GroupLayer).layers.map((l) => (l.id === "title" ? { ...l, text: "a".repeat(40) } : l)) as Layer[] }], measure, undefined, settled);
+      expect([inside(longer[0]!, "footer").w, inside(longer[0]!, "footer").h, inside(longer[0]!, "tag").y]).toEqual([400, 23, 13]);
+    });
+
+    it("a new box stretched by its parent keeps its layer out of the flow where it was given", () => {
+      const footer = box([rect("dot", 10, 10, { x: 570, y: 0, absolute: true, pin: { x: "right" } })], { dir: "row" }, { id: "f", w: 10, h: 30, sizing: { w: "fill" } });
+      const laid = layoutLayers([box([footer], { dir: "column" }, { id: "par", w: 590, h: 100 })], measure, undefined, new Set())[0]!;
+      expect([inside(laid, "f").w, inside(laid, "dot").x]).toEqual([590, 570]);
+    });
+
+    it("a size given rounded to whole pixels is the size it was laid out at; a frame's boxes are its own", () => {
+      const b = box([text("t", "a".repeat(20)), rect("dot", 4, 4, { x: 183.44, absolute: true, pin: { x: "right" } })], { dir: "row" }, { id: "b", w: 187.44, h: 23, sizing: { w: "hug" } });
+      // the box hugs 200: the dot keeps its distance to the right edge
+      expect(inside(layoutLayers([b], measure, undefined, new Set(["b 187 23"]))[0]!, "dot").x).toBe(196);
+      expect(inside(layoutLayers([b], measure, undefined, new Set(["b 300 23"]))[0]!, "dot").x).toBe(183.44);
+      const two = settledBoxes([{ id: "p1", background: "#ffffff", layers: [b] }, { id: "p2", background: "#ffffff", layers: [] }]);
+      expect([[...two.get("p1")!], [...two.get("p2")!]]).toEqual([["b 187 23"], []]);
+    });
   });
 
   it("guesses words wider for wide letters and capitals", () => {
