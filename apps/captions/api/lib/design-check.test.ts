@@ -128,6 +128,35 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(pages[0]!.layers[2]).not.toHaveProperty("shadow");
   });
 
+  it("keeps a list of effects, each held to what can be drawn, and leaves the old shadow and blur out beside one", () => {
+    const fx = [
+      { type: "shadow", color: "#ABC", opacity: 3, blur: -1, x: 5, y: 99999, spread: 500 },
+      { type: "inner-shadow", color: "red", hidden: true },
+      { type: "glow", blur: 9 },
+      "soft",
+      { type: "progressive-blur", blur: 900, from: -1, to: 2, angle: 45 },
+      { type: "background-blur" },
+      { type: "noise", amount: 0, size: 1 },
+    ];
+    const [a, b, c, pic] = cleanPages([{ layers: [text({ effects: fx, shadow: { color: "#000000" }, blur: 30 }), text({ effects: [] , blur: 30 }), text({ blur: 30 }), { type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 10, h: 10, blur: 20, effects: Array(12).fill({ type: "blur", blur: 5 }) }] }], rules).pages[0]!.layers;
+    expect(a!.effects).toEqual([
+      { type: "shadow", color: "#aabbcc", opacity: 1, blur: 0, x: 5, y: 1000, spread: 200 },
+      { type: "inner-shadow", color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8, hidden: true },
+      { type: "progressive-blur", blur: 200, from: 0, to: 1, angle: 45 },
+      { type: "background-blur", blur: 24 },
+      { type: "noise", amount: 1 },
+    ]);
+    expect(a).not.toHaveProperty("shadow");
+    expect(a).not.toHaveProperty("blur");
+    // an empty list is none, and stands for none
+    expect(b).not.toHaveProperty("effects");
+    expect(b).not.toHaveProperty("blur");
+    expect(c).toMatchObject({ blur: 30 });
+    // a picture's own blur is one of its colour changes, beside its effects
+    expect(pic).toMatchObject({ blur: 20 });
+    expect(pic!.effects).toHaveLength(8);
+  });
+
   it("keeps a gradient, letter spacing, a blend, a flip, a shape's kind and a picture's zoom and focus, each held to what can be drawn", () => {
     const shape = (more: object) => ({ type: "shape", x: 0, y: 0, w: 100, h: 100, fill: "#ff0000", ...more });
     const picture = (more: object) => ({ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, ...more });
@@ -326,6 +355,39 @@ describe("a text's highlighter strokes", () => {
   });
 });
 
+describe("a text's runs, weight, slant, lines and case", () => {
+  it("keeps parts of a text set apart, by letters or by a phrase, in order and inside the text; a style it cannot draw is left out", () => {
+    const [l, plain] = cleanPages(
+      [
+        {
+          layers: [
+            text({
+              text: "Was €49, now €29. Now!",
+              weight: 450,
+              italic: true,
+              underline: "yes",
+              case: "small",
+              runs: [{ words: "now", color: "#F00" }, { start: 4, end: 7, strike: true, font: "Comic Sans", size: 9000 }, { start: 30, end: 2, weight: 800 }, { words: "€49", underline: false }, { start: 0, end: 3 }, "bold"],
+            }),
+            text({ case: "sideways", runs: [] }),
+          ],
+        },
+      ],
+      rules,
+    ).pages[0]!.layers;
+    expect(l).toMatchObject({ weight: 500, italic: true, case: "small" });
+    expect(l).not.toHaveProperty("underline");
+    // "€49" struck through and its size held to what can be drawn (the font it cannot draw left out); "now" red in both places, whatever its case
+    expect((l as { runs: unknown[] }).runs).toEqual([
+      { start: 4, end: 7, strike: true, size: 600 },
+      { start: 9, end: 12, color: "#ff0000" },
+      { start: 18, end: 21, color: "#ff0000" },
+    ]);
+    expect(plain).not.toHaveProperty("case");
+    expect(plain).not.toHaveProperty("runs");
+  });
+});
+
 describe("frames on a canvas", () => {
   const frame = (id: string, more: object = {}) => ({ id, background: "#ffffff", layers: [], ...more });
   it("gives every frame a place and a size: none placed yet, in a row; a new one beside the rightmost; one sent without its place where it was", () => {
@@ -375,5 +437,13 @@ describe("the pages a design starts with", () => {
     expect(pages).toHaveLength(DESIGN_LIMITS.pages + 1);
     expect(pages.at(-1)).toMatchObject({ id: "pa", loose: true, x: -400, w: 100, h: 80 });
     expect(pages.filter((p) => p.loose)).toHaveLength(1);
+  });
+
+  it("keeps any kind of layer loose, and a frame's clip only when it is off and only on a frame", () => {
+    const shape = { type: "shape", shape: "star", fill: "#ff0000", x: 0, y: 0, w: 60, h: 60 };
+    const words = { type: "text", text: "Aside", font: "Inter", size: 40, color: "#111111", align: "left", x: 0, y: 70, w: 200, h: 50 };
+    const { pages } = cleanPages([{ id: "f1", w: 500, h: 500, clip: false, layers: [] }, { id: "f2", w: 500, h: 500, clip: "no", layers: [] }, { id: "pa", loose: true, clip: false, x: 900, y: 0, w: 200, h: 120, layers: [shape, words] }], rules);
+    expect(pages.map((p) => p.clip)).toEqual([false, undefined, undefined]);
+    expect(pages[2]!.layers.map((l) => l.type)).toEqual(["shape", "text"]);
   });
 });

@@ -194,8 +194,8 @@ describe("designs: frames on a canvas", () => {
 
 describe("designs: an AI that designs", () => {
   type Frame = { id: string; n: number; name?: string; w: number; h: number; words?: string; background: string; layers: Array<{ id: string; type: string; text?: string; x: number; size?: number }> };
-  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; kind: string; brief?: string; pictures: number }>; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[] };
-  type Wrote = DesignAnswer & { touched: string[] };
+  type Read = { id: string; fonts: string[]; how: string; looks: Array<{ name: string; kind: string; brief?: string; pictures: number }>; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }> } | string; pictures: Array<{ id: string; what: string }>; frames: Frame[]; canvas?: Array<Record<string, unknown>> };
+  type Wrote = DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] };
   const text = { type: "text", font: "Anton", size: 90, color: "#ffffff", align: "center", x: 90, y: 400, w: 900, h: 300 };
   const read = async (id: string, more = "") => (await call<Read>("GET", `/api/designs/${id}/pages${more}`)).body;
   const write = (id: string, body: unknown) => call<Wrote>("POST", `/api/designs/${id}/pages`, body);
@@ -212,6 +212,49 @@ describe("designs: an AI that designs", () => {
     expect(got.fonts).toContain("DM Serif Display");
     for (const part of ['{"type":"text"', "never add, drop or change one", '"frames": [{"id"', '"changes"', "Without an \"id\" it is a new frame"]) expect(got.how).toContain(part);
     expect((await call("GET", `/api/designs/${d.id}/pages`, undefined, "robin")).status).toBe(404);
+  });
+
+  it("resizes a frame with its pinned layers, copies frames into other sizes and fills a frame with rows of words", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true, pages: 2, name: "Sizes" })).body;
+    const layers = [
+      { type: "shape", shape: "rect", fill: "#222222", x: 0, y: 0, w: 1080, h: 1350, name: "Ground" },
+      { ...text, text: "First", name: "Headline", fit: "shrink" },
+      { type: "shape", shape: "ellipse", fill: "#ff6600", x: 900, y: 1170, w: 120, h: 120, name: "Badge", pin: { x: "right", y: "bottom", z: "no" } },
+    ];
+    expect((await write(d.id, { frames: [{ id: "p1", layers }] })).status).toBe(200);
+    // wider by 200 and taller by 100: the pinned badge goes with the bottom right corner, the rest stays
+    const wide = (await write(d.id, { frames: [{ id: "p1", w: 1280, h: 1450 }] })).body.design.pages[0]!;
+    expect(wide.layers.map((l) => [l.x, l.y, l.w])).toEqual([[0, 0, 1080], [90, 400, 900], [1100, 1270, 120]]);
+    expect(wide.layers[2]!.pin).toEqual({ x: "right", y: "bottom" });
+    await write(d.id, { frames: [{ id: "p1", w: 1080, h: 1350 }] });
+
+    // every frame in two sizes: a row a size under the frames, each copy under its frame, named for its size
+    const sized = await write(d.id, { sizes: { to: ["cover", { name: "Wide", w: 1600, h: 900 }, "huge"] } });
+    expect(sized.status).toBe(200);
+    expect(sized.body.notes[0]).toContain('A size that is neither a format');
+    const copies = sized.body.design.pages.filter((p) => sized.body.touched.includes(p.id));
+    expect(copies.map((p) => [p.name, p.x, p.y, p.w, p.h])).toEqual([
+      ["Frame 1 Vertical cover 9:16", 0, 1590, 1080, 1920],
+      ["Frame 2 Vertical cover 9:16", 1200, 1590, 1080, 1920],
+      ["Frame 1 Wide", 0, 3750, 1600, 900],
+      ["Frame 2 Wide", 1200, 3750, 1600, 900],
+    ]);
+    // the ground stretches over the cover, the badge keeps its corner, the words their size
+    expect(copies[0]!.layers.map((l) => [l.x, l.y, l.w, l.h])).toEqual([[0, 0, 1080, 1920], [90, (550 * 1920) / 1350 - 150, 900, 300], [900, 1740, 120, 120]].map((r) => r.map((n) => Math.round(n * 100) / 100)));
+
+    // one frame a row of words, in its own size, to the right of every frame
+    const filled = await write(d.id, { fill: { frame: "p1", rows: [{ name: "02 Proof", Headline: "Second" }, { headline: "Third", Badge: { visible: false }, Price: "9" }] } });
+    const rows = filled.body.design.pages.filter((p) => filled.body.touched.includes(p.id));
+    expect(rows.map((p) => [p.name, p.x, p.y, p.w, (p.layers[1] as { text: string }).text, !!p.layers[2]!.hidden])).toEqual([
+      ["02 Proof", 2920, 0, 1080, "Second", false],
+      ["Frame 1 2", 4120, 0, 1080, "Third", true],
+    ]);
+    expect(filled.body.notes).toEqual(['Frame 1 has no layer named "Price": give the layers to fill a "name"']);
+    // the design is full: the copies that fit are made, the rest named
+    const full = await write(d.id, { sizes: { frames: ["p1"], to: ["square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover"] } });
+    expect(full.body.touched).toHaveLength(12);
+    expect(full.body.notes.at(-1)).toContain("at most 20 frames");
+    expect((await write(d.id, { fill: { frame: "nope", rows: [{}] } })).status).toBe(400);
   });
 
   it("replaces the frames it names, by id: a slide's words stay the slide's, the rest is as it was", async () => {
@@ -263,7 +306,7 @@ describe("designs: an AI that designs", () => {
     })).body;
     expect(out.design.pages[0]!.layers.map((l) => l.id)).toEqual(["moon", "title", "sun"]);
     expect(out.design.pages[0]!.layers[1]).toMatchObject({ type: "text", text: "Hello there", size: 600, x: 10, font: "Anton" });
-    expect(out.notes).toEqual(["changes[3], frame p1 (Frame 1): there is no layer ghost: its layers are moon, title, sun", "changes[4]: names no frame of this design (p9): its frames are p1"]);
+    expect(out.notes).toEqual(["changes[3], frame p1 (Frame 1): there is no layer ghost: its layers are moon, title, sun", 'changes[4]: names no frame of this design (p9): its frames are p1, and "canvas" holds what lies outside them']);
     const gone = (await write(d.id, { changes: [{ frame: "p1", layer: "moon", remove: true }] })).body;
     expect(gone.design.pages[0]!.layers.map((l) => l.id)).toEqual(["title", "sun"]);
     // a field that is a set of fields takes the ones given and keeps the rest; null takes it off whole
@@ -303,6 +346,38 @@ describe("designs: an AI that designs", () => {
     expect(out.notes).toEqual([`changes[3], frame ${two} (Frame 2): a layer of no type that can be drawn ("rect"): left out; the types are text, shape, path, image and drawing`]);
   });
 
+  it("layers lying on the canvas outside every frame: seen, added, changed, moved into a frame and out, removed, each checked", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const box = { type: "shape", shape: "rect", fill: "#ff5500", w: 100, h: 50 };
+    // a person's loose piece (one dragged out of a frame), and a frame that shows what lies past its edges
+    await call("PUT", `/api/designs/${d.id}`, { pages: [{ id: "p1", x: 0, y: 0, w: 1080, h: 1080, clip: false, background: "#ffffff", layers: [] }, { id: "pa", loose: true, x: -500, y: 100, w: 100, h: 50, background: "#ffffff", layers: [{ ...box, id: "l1", x: 0, y: 0 }] }] });
+    const seen = await read(d.id);
+    expect(seen.frames).toEqual([expect.objectContaining({ id: "p1", x: 0, y: 0, clip: false })]);
+    expect(seen.canvas).toEqual([expect.objectContaining({ id: "l1", type: "shape", x: -500, y: 100 })]);
+    expect(seen.how).toContain('"frame":"canvas"');
+    // added on the canvas, in its pixels; a value out of range is held like a frame's; a bad "to" and a missing layer are named
+    const added = (await write(d.id, { changes: [{ frame: "canvas", add: { ...box, id: "note", x: 2000, y: -300, fill: "nope", opacity: 7 } }, { frame: "canvas", layer: "l1", to: "p9" }, { frame: "canvas", layer: "ghost", remove: true }] })).body;
+    expect(added.notes).toEqual(['"to" names no frame of this design (p9): give a frame\'s id or "canvas"', "The canvas has no layer ghost"]);
+    const note = added.design.pages.find((p) => p.loose && p.layers.some((l) => l.id === "note"))!;
+    expect(note).toMatchObject({ loose: true, x: 2000, y: -300, w: 100, h: 50, layers: [{ id: "note", x: 0, y: 0, fill: "#dddddd" }] });
+    expect(note.layers[0]).not.toHaveProperty("opacity");
+    expect(added.wrote).toEqual([{ frame: "canvas", isNew: false, layers: ["note"] }]);
+    // moved into the frame: where it was on the canvas, now in the frame's pixels, then placed by the same change's set
+    const moved = (await write(d.id, { changes: [{ frame: "canvas", layer: "l1", to: "p1", set: { y: 40 } }] })).body;
+    expect(moved.design.pages.find((p) => p.id === "p1")!.layers).toEqual([expect.objectContaining({ id: "l1", x: -500, y: 40 })]);
+    // the piece it lay in is gone with it; the other one stays as it was
+    expect(moved.design.pages.filter((p) => p.loose).map((p) => p.id)).toEqual([note.id]);
+    // and out again onto the canvas, from the frame's pixels to the canvas's
+    const out = (await write(d.id, { changes: [{ frame: "p1", layer: "l1", to: "canvas" }, { frame: "canvas", layer: "note", set: { fill: "#00ff00" } }] })).body;
+    const back = (await read(d.id)).canvas as { id: string; x: number; y: number; fill: string }[];
+    expect(back.map((l) => [l.id, l.x, l.y, l.fill])).toEqual([["note", 2000, -300, "#00ff00"], ["l1", -500, 40, "#ff5500"]]);
+    expect(out.design.pages.find((p) => p.id === "p1")!.layers).toEqual([]);
+    // removed: its piece is gone; the frame's clip is the AI's to set too
+    const gone = (await write(d.id, { changes: [{ frame: "canvas", layer: "note", remove: true }, { frame: "canvas", layer: "l1", remove: true }], frames: [{ id: "p1", clip: true }] })).body;
+    expect(gone.design.pages).toEqual([expect.not.objectContaining({ clip: false })]);
+    expect((await read(d.id)).canvas).toBeUndefined();
+  });
+
   it("an empty canvas: started with no frame, emptied by deleting the last one, and given its first frame by hand or by an AI", async () => {
     const { status, body: d } = await call<Design>("POST", "/api/designs", { format: "portrait", blank: true, pages: 0, name: "Untitled canvas" });
     expect(status).toBe(200);
@@ -338,6 +413,21 @@ describe("designs: an AI that designs", () => {
     const off = (await write(d.id, { frames: [{ id: "p1", grain: 0 }] })).body.design.pages[0]!;
     expect(off).not.toHaveProperty("grain");
     expect([off.vignette, off.layers.length]).toEqual([40, 1]);
+  });
+
+  it("an AI gives a layer a list of effects with a change, is told how, and the old shadow stands for one until then", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    await write(d.id, { frames: [{ id: "p1", background: "#1a0b2e", layers: [{ id: "card", type: "shape", shape: "rect", fill: "#ffffff", opacity: 0.3, x: 100, y: 600, w: 880, h: 300, shadow: { color: "#000000", opacity: 0.4, blur: 20, x: 0, y: 10 } }] }] });
+    const fx = [{ type: "background-blur", blur: 30 }, { type: "shadow", color: "#000000", opacity: 0.2, blur: 6, x: 0, y: 3, spread: -2 }, { type: "noise", amount: 8, size: 2, hidden: true }];
+    const out = (await write(d.id, { changes: [{ frame: "p1", layer: "card", set: { effects: fx } }] })).body;
+    const card = out.design.pages[0]!.layers[0]!;
+    expect(card.effects).toEqual(fx);
+    expect(card).not.toHaveProperty("shadow");
+    // a list is replaced whole by the next change
+    const one = (await write(d.id, { changes: [{ frame: "p1", layer: "card", set: { effects: [{ type: "blur", blur: 12 }] } }] })).body.design.pages[0]!.layers[0]!;
+    expect(one.effects).toEqual([{ type: "blur", blur: 12 }]);
+    const got = await read(d.id);
+    expect(got.how).toContain('{"type":"background-blur","blur":30} blurs what lies under it');
   });
 
   it("an AI lays a highlighter stroke behind words of a text, is told how, and takes it off again", async () => {

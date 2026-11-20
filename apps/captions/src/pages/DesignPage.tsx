@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { ArrowRight, Circle, Download, Frame, Hand, ImagePlus, MousePointer2, PenTool, Redo2, Square, Star, Triangle, Type, Undo2, X } from "lucide-react";
-import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer } from "@contracts/design";
+import { DESIGN_LIMITS, type Design, type DesignPage as Page, type Layer, type TextLayer } from "@contracts/design";
 import { STYLE_NAME_MAX, type AnimationStyle, type AnimationStylesView } from "@contracts/editor-styles";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
@@ -16,7 +16,10 @@ import { Button } from "@/components/ui/button";
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
-import { alignLayers, besideFrames, boundsOf, distribute, fitView, frameOf, freshGroup, freshIds, hugLoose, layerName, mergeFrames, pageName, regroup, zoomAt, type Align, type Rect } from "@/lib/design/hands";
+import { alignLayers, besideFrames, boundsOf, rehome, distribute, fitView, frameOf, freshGroup, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
+import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
+import { resized } from "@/lib/design/resize";
+import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
@@ -30,6 +33,7 @@ import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit
 import { onTopic } from "@/lib/sync";
 import { zipStored } from "@/lib/story-split";
 import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { patchRange, viewRange } from "@/lib/design/runs";
 import { useOwnFonts } from "@/lib/design/own-fonts";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +49,8 @@ import { cn } from "@/lib/utils";
  * Keys: V move, H hand, F frame, R rectangle, O ellipse, T text, P pen (a triangle, a star and an arrow are on the toolbar) · ⌘A all, Esc none · ⌘C ⌘X ⌘V ⌘D · Delete · the arrows (Shift:
  * ten) · ] to the front, [ to the back · ⇧⌘H hide, ⇧⌘L lock · Enter types in the picked words · Alt with A D W S H V
  * (in a picture: moves it inside its box) · lines up left, right, top, bottom, centres · 1 to 9 and 0 set the opacity · + − zoom, ⇧1 fit, ⇧2 the picked, ⇧0 100%.
+ * Nothing picked, the arrows pan the view (Shift: further). ⌘D again right after a copy was moved or turned repeats that
+ * step. The canvas opens where this browser left it.
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -65,10 +71,11 @@ const TOOLS: [Tool, string, string, typeof Hand][] = [
   ["text", "Text", "T", Type],
 ];
 /** The tools that work on a canvas with no frame yet: the others draw a layer, and a layer lies on a frame. */
-const NEED_NO_FRAME: readonly Tool[] = ["move", "hand", "frame"];
 const TOOL_KEYS: Record<string, Tool> = { KeyV: "move", KeyH: "hand", KeyF: "frame", KeyR: "rect", KeyO: "ellipse", KeyT: "text", KeyP: "pen" };
 const ALIGN_KEYS: Record<string, Align> = { KeyA: "left", KeyD: "right", KeyW: "top", KeyS: "bottom", KeyH: "center", KeyV: "middle" };
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+/** Where the canvas was left in this browser, by design. */
+const VIEW_KEY = "ct-design-view:";
 // the panels' colours. The app's zinc greys mirror in the light theme (tailwind.config.js), so zinc-50 is the ink in both
 const BAR = "border-[#e6e6e6] bg-white text-zinc-50 dark:border-[#444] dark:bg-[#2c2c2c]";
 
@@ -101,6 +108,10 @@ function DesignPage({ id }: { id: string }) {
   /** The other frames picked with the one at `at`, by id (a box drawn round several, or Shift on a name). */
   const [others, setOthers] = useState<string[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
+  /** the letters picked in the words being typed: what the style panel styles while they are */
+  const [textSel, setTextSel] = useState<{ start: number; end: number } | null>(null);
+  /** A change of the style panel's, made only to the picked letters when some are (their style; the rest of it to the layer). */
+  const toLetters = (fn: (l: Layer) => Layer) => (l: Layer): Layer => (textSel && l.id === editing && l.type === "text" ? patchRange(l, fn as (l: TextLayer) => TextLayer, textSel.start, textSel.end) : fn(l));
   /** The picture layer being moved inside its box, and whether a picture's background is being cut away. */
   const [cropping, setCropping] = useState<string | null>(null);
   const [cutting, setCutting] = useState(false);
@@ -171,9 +182,33 @@ function DesignPage({ id }: { id: string }) {
     placed.current = true;
     // a canvas with no frame yet stays where it is: its first frame is put in the middle of it
     if (!design.pages[0]) return;
+    // where this browser left it, if it was here before
+    try {
+      const was = JSON.parse(localStorage.getItem(`${VIEW_KEY}${id}`) ?? "null") as { x: number; y: number; z: number } | null;
+      if (was && Number.isFinite(was.x) && Number.isFinite(was.y) && Number.isFinite(was.z) && was.z > 0) return view.set({ x: was.x, y: was.y, z: Math.min(ZOOM.max, Math.max(ZOOM.min, was.z)) });
+    } catch {
+      // no storage here: fitted as for a first visit
+    }
     // no closer than its own pixels: a small frame is not blown up to fill the window
     view.set(fitView(frameOf(design.pages[0], 0, design.width, design.height), room, 56, 1));
-  }, [design, room, view]);
+  }, [design, room, view, id]);
+  // the view kept for the next visit, a moment after it stops moving (and at once when the page goes)
+  useEffect(() => {
+    let due = 0;
+    const keep = () => {
+      due = 0;
+      try {
+        localStorage.setItem(`${VIEW_KEY}${id}`, JSON.stringify(view.get()));
+      } catch {
+        // no storage here: the next visit fits the canvas again
+      }
+    };
+    const off = view.subscribe(() => (window.clearTimeout(due), (due = window.setTimeout(keep, 300))));
+    return () => {
+      off();
+      if (due) (window.clearTimeout(due), keep());
+    };
+  }, [view, id]);
 
   const pages = useMemo(() => hist?.now ?? [], [hist]);
   const k = Math.max(0, Math.min(at, pages.length - 1));
@@ -189,6 +224,8 @@ function DesignPage({ id }: { id: string }) {
   const mine = base ? base.layers.filter((l) => selected.includes(l.id)) : [];
   const colours = useMemo(() => coloursOn(pages), [pages]);
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
+  // the text being typed in, as the style panel shows it: in the style of its picked letters
+  const pickedShown = textSel ? picked.map((l) => (l.id === editing && l.type === "text" ? viewRange(l, textSel.start, textSel.end) : l)) : picked;
   /** Every frame that is picked, by id: the one at `at` first. A frame that is gone (deleted somewhere else) is not among them. */
   const framedIds = useMemo(() => (framed && base ? [base.id, ...others.filter((id) => id !== base.id && pages.some((p) => p.id === id))] : []), [framed, base, others, pages]);
   const framedAt = framedIds.map((id) => pages.findIndex((p) => p.id === id));
@@ -366,14 +403,27 @@ function DesignPage({ id }: { id: string }) {
   };
   const arrange = (next: Layer[]) => base && setPage({ ...base, layers: base.layers.map((l) => next.find((n) => n.id === l.id) ?? l) });
 
-  /** New layers on a frame, picked; null (and it says why) when the frame is full. */
-  const put = (to: number, count: number, make: (ids: string[]) => Layer[]): string[] | null => {
+  /** New layers on a frame (to < 0: lying loose on the canvas, in its pixels, a piece of their own), picked; null (and it says why) when there is no room. */
+  const put = (to: number, count: number, make: (ids: string[]) => Layer[], above?: string): string[] | null => {
+    if (to < 0) {
+      if (!count) return null;
+      const all = latest.current;
+      if (all.filter((p) => p.loose).length >= DESIGN_LIMITS.loose) return setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`), null;
+      const ids = Array.from({ length: count }, (_, n) => `l${n + 1}`);
+      // its box is drawn round its layers (hugLoose); after every frame and every other loose piece
+      change((now) => [...now, { id: `p${Date.now().toString(36)}`, loose: true, x: 0, y: 0, w: DESIGN_LIMITS.frameMin, h: DESIGN_LIMITS.frameMin, background: "#ffffff", layers: make(ids) }]);
+      pick(all.length, ids);
+      return ids;
+    }
     const target = latest.current[to];
     if (!target || !count) return null;
     if (target.layers.length + count > DESIGN_LIMITS.layers) return setError(`A frame holds at most ${DESIGN_LIMITS.layers} layers`), null;
     const ids = freshIds(target, count);
     // a group among the new layers stays a group among themselves (copies do not join the group they were copied from)
-    setPage({ ...target, layers: [...target.layers, ...regroup(make(ids), target.layers)] });
+    const made = regroup(make(ids), target.layers);
+    // just above the layer `above`, else in front of them all
+    const n = above ? target.layers.findIndex((l) => l.id === above) + 1 : 0;
+    setPage({ ...target, layers: n > 0 ? [...target.layers.slice(0, n), ...made, ...target.layers.slice(n)] : [...target.layers, ...made] });
     pick(to, ids);
     return ids;
   };
@@ -384,11 +434,10 @@ function DesignPage({ id }: { id: string }) {
    * A new frame, picked. `like`: a copy of that frame. `rect`: where the frame tool drew it. `size`: one of the picture
    * sizes, picked from the panel. Without a `rect` it goes beside the rightmost frame (on a canvas with no frame yet,
    * in the middle of what is in view), the size given or that of the frame it was made from, and the canvas moves to
-   * show it: a size picked from the panel fills the view, no closer than its own pixels. `layers`: what the new frame
-   * starts with (a picture or words that arrived on a canvas with no frame). Answers the frame, or nothing when the
-   * canvas is full.
+   * show it: a size picked from the panel fills the view, no closer than its own pixels. Answers the frame, or nothing
+   * when the canvas is full.
    */
-  const addFrame = (like?: Page, rect?: Rect, size?: { w: number; h: number }, layers?: (f: { w: number; h: number }) => Layer[]): Page | undefined => {
+  const addFrame = (like?: Page, rect?: Rect, size?: { w: number; h: number }): Page | undefined => {
     if (!design) return undefined;
     if (frameCount >= DESIGN_LIMITS.pages) return void setError(`A design holds at most ${DESIGN_LIMITS.pages} frames`);
     // a loose picture's size is no frame's
@@ -397,17 +446,19 @@ function DesignPage({ id }: { id: string }) {
     // beside the frames, level with the current one (loose pictures are not frames to line up with)
     const r = rect ?? (frameCount ? besideFrames(frames.filter((_, n) => !pages[n]!.loose), base?.loose ? undefined : here, dims) : { x: Math.round(((room?.w ?? 0) / 2 - v.x) / v.z - dims.w / 2), y: Math.round(((room?.h ?? 0) / 2 - v.y) / v.z - dims.h / 2), w: dims.w, h: dims.h });
     // a copy is a frame of its own: the carousel slide its original draws stays the original's
-    const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base?.background ?? "#ffffff", layers: layers?.(r) ?? [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
+    const fresh: Page = { ...(like ? { ...like, block: undefined } : { background: base?.background ?? "#ffffff", layers: [] }), id: `p${Date.now().toString(36)}`, x: r.x, y: r.y, w: r.w, h: r.h };
     change((all) => [...all, fresh]);
     // a canvas's first frame is there: the frame tool (out on an empty canvas) is put away
     if (!frameCount) setTool("move");
     // after the frames, before the loose pictures (hugLoose)
-    pick(frameCount, fresh.layers.length && layers ? fresh.layers.map((l) => l.id) : [], !layers);
+    pick(frameCount, [], true);
     // a size picked from the panel, and a canvas's first frame: it fills the view; else the canvas moves to show it
     if ((size || !frameCount) && !rect && room) view.glide(fitView(r, room, 56, 1));
     else if (!rect && room) view.glide({ ...v, x: room.w / 2 - (r.x + r.w / 2) * v.z, y: room.h / 2 - (r.y + r.h / 2) * v.z });
     return fresh;
   };
+  /** A copy of the current frame in another size beside the frames, its layers placed by their pins and their share of it. */
+  const copySize = (size: { w: number; h: number; name: string }) => base && !base.loose && addFrame({ ...resized(base, size, "share"), name: `${pageName(base, k)} ${size.name}`.slice(0, 60) }, undefined, size);
   /** A box drawn with the frame tool: a click makes a frame the size of the current one (the first frame of a canvas: the design's own size), a drag the size drawn. */
   const makeFrame = (r: Rect, dragged: boolean) => {
     setTool("move");
@@ -450,8 +501,24 @@ function DesignPage({ id }: { id: string }) {
     change((all) => [...all, ...fresh]);
     pick(frameCount, [], true, fresh.map((p) => p.id));
   };
-  // a copy lies on what it copies, picked: the next drag takes it away
-  const duplicate = () => (mine.length ? void put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]! }))) : framedIds.length > 1 ? copyFrames() : framed && base ? addFrame(base) : undefined);
+  /** The last layers duplicated: what they copied and the copies' ids, while the copies are what is picked. */
+  const dup = useRef<{ k: number; from: Layer[]; ids: string[] } | null>(null);
+  useEffect(() => {
+    const d = dup.current;
+    if (d && (selected.length !== d.ids.length || selected.some((id) => !d.ids.includes(id)))) dup.current = null;
+  }, [selected]);
+  // a copy lies on what it copies, just above it, picked: the next drag takes it away. Duplicated again while the
+  // copies are still picked, the new copies take the same step (move and turn) from them as they took from theirs
+  const duplicate = () => {
+    if (!mine.length) return framedIds.length > 1 ? copyFrames() : framed && base ? addFrame(base) : undefined;
+    const d = dup.current;
+    const copies = d && d.k === k ? d.ids.map((id) => mine.find((l) => l.id === id)) : [];
+    const s = d && copies.every(Boolean) && copies.length === mine.length ? dupStep(d.from, copies as Layer[]) : { dx: 0, dy: 0, turn: 0 };
+    const from = [...mine];
+    // shortcut: each copy turns about its own middle; several turned about their shared middle would need their places turned too
+    const ids = put(k, mine.length, (ids) => mine.map((l, n) => ({ ...l, id: ids[n]!, x: Math.round(l.x + s.dx), y: Math.round(l.y + s.dy), rotate: s.turn ? turnTo(l.rotate ?? 0, s.turn, false) || undefined : l.rotate })), mine.at(-1)!.id);
+    if (ids) dup.current = { k, from, ids };
+  };
   const order = (front: boolean) => {
     if (!base || !mine.length) return;
     const rest = base.layers.filter((l) => !selected.includes(l.id));
@@ -485,12 +552,31 @@ function DesignPage({ id }: { id: string }) {
       // no clipboard here: the layers are kept all the same
     }
   };
+  /** The middle of what is in view, on the canvas. */
+  const middle = () => {
+    const v = view.aim();
+    return { x: ((room?.w ?? 0) / 2 - v.x) / v.z, y: ((room?.h ?? 0) / 2 - v.y) / v.z };
+  };
   /** The copied layers onto this frame, where they were on theirs. A picture this design does not have stays behind. */
   const paste = () => {
     const layers = (clip?.layers ?? []).filter((l) => l.type !== "image" || design?.pictures.includes(l.picture));
-    // a canvas with no frame yet: its first frame, with the layers on it
-    if (!here) return void (layers.length && addFrame(undefined, undefined, undefined, () => layers.map((l, n) => ({ ...l, id: `l${n + 1}` }))));
-    put(k, layers.length, (ids) => layers.map((l, n) => ({ ...l, id: ids[n]! })));
+    // a canvas with no frame yet: they lie loose in the middle of the view
+    if (!here) {
+      if (!layers.length) return;
+      const b = boundsOf(layers);
+      const m = middle();
+      return void put(-1, layers.length, (ids) => rehome(layers, { x: Math.round(m.x - b.w / 2), y: Math.round(m.y - b.h / 2) }, b).map((l, n) => ({ ...l, id: ids[n]! })));
+    }
+    if (!layers.length) return;
+    // where they were, unless that is out of sight: then in the middle of the view; a frame picked by itself takes them in its middle
+    const b = boundsOf(layers);
+    const v = view.get();
+    const seen = room ? { x: -v.x / v.z - here.x, y: -v.y / v.z - here.y, w: room.w / v.z, h: room.h / v.z } : null;
+    const mid = framed ? { x: here.w / 2, y: here.h / 2 } : seen && !intersects(b, seen) ? { x: seen.x + seen.w / 2, y: seen.y + seen.h / 2 } : null;
+    const dx = mid ? Math.round(mid.x - b.x - b.w / 2) : 0;
+    const dy = mid ? Math.round(mid.y - b.y - b.h / 2) : 0;
+    // a layer picked: just above it
+    put(k, layers.length, (ids) => layers.map((l, n) => ({ ...l, id: ids[n]!, x: l.x + dx, y: l.y + dy })), mine.at(-1)?.id);
   };
 
   const zoom = (to: "in" | "out" | "fit" | "selection" | number) => {
@@ -499,15 +585,34 @@ function DesignPage({ id }: { id: string }) {
       // a canvas with no frame has nothing to fit
       if (!here) return;
       // fit: every frame of the canvas
-      if (to === "fit") return view.glide(fitView(boundsOf(frames), room));
+      if (to === "fit") return view.glide(fitView(boundsOf(frames), room, FIT_PAD));
       const b = mine.length ? boundsOf(mine) : null;
-      return view.glide(fitView(b ? { ...b, x: b.x + here.x, y: b.y + here.y } : here, room));
+      const all = framedAt.length > 1 ? boundsOf(framedAt.map((n) => frames[n]!)) : here;
+      return view.glide(fitView(b ? { ...b, x: b.x + here.x, y: b.y + here.y } : all, room, FIT_PAD));
     }
     // in and out: to the next stop, about the middle of the canvas, from where a glide under way is headed (two
     // presses in a row are two stops)
     const v = view.aim();
     view.glide(zoomAt(v, to === "in" ? zoomStop(v.z, true) : to === "out" ? zoomStop(v.z, false) : to, room.w / 2, room.h / 2));
   };
+
+  /** The view on frame `to`, or on its layer `id`, as close as fits (a double click on its icon in the layers list). */
+  const zoomTo = (to: number, id?: string) => {
+    const f = frames[to];
+    if (!f || !room) return;
+    const l = id ? pages[to]?.layers.find((x) => x.id === id) : undefined;
+    const b = l ? boundsOf([l]) : null;
+    view.glide(fitView(b ? { ...b, x: b.x + f.x, y: b.y + f.y } : f, room, FIT_PAD));
+  };
+  /** Several frames picked, by their boxes on the canvas, and those boxes put back as the frames' new places. */
+  const framesBoxes = () => framedAt.map((n) => ({ ...frames[n]!, id: pages[n]!.id }));
+  const placeFrames = (boxes: readonly (Rect & { id: string })[]) => setPages(boxes.map((r) => ({ ...pages.find((p) => p.id === r.id)!, x: Math.round(r.x), y: Math.round(r.y) })));
+  const manyFrames = !mine.length && framedIds.length > 1;
+  const align = (how: Align) => (manyFrames ? placeFrames(alignLayers(framesBoxes(), how, here ?? { w: 0, h: 0 })) : here && arrange(alignLayers(mine, how, here)));
+  const spread = (axis: "x" | "y") => (manyFrames ? placeFrames(distribute(framesBoxes(), axis)) : arrange(distribute(mine, axis)));
+  /** Tidy up (feel.ts tidy): null when what is picked is not a row, a column or a grid. */
+  const tidied = manyFrames ? tidy(framesBoxes()) : tidy(mine);
+  const tidyUp = () => tidied && (manyFrames ? placeFrames(tidied as (Rect & { id: string })[]) : arrange(tidied as Layer[]));
 
   /**
    * Pictures from this computer (the Picture button, a paste, a drop). `drop`: where on the canvas they were let go.
@@ -531,7 +636,7 @@ function DesignPage({ id }: { id: string }) {
     const f = frames[over];
     setError(null);
     const space = alone ? DESIGN_LIMITS.loose - latest.current.filter((p) => p.loose).length : files.length;
-    if (space < files.length) setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pictures outside its frames`);
+    if (space < files.length) setError(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
     const got: { picture: string; w: number; h: number }[] = [];
     for (const file of files.slice(0, Math.max(0, space))) {
       const url = URL.createObjectURL(file);
@@ -689,7 +794,8 @@ function DesignPage({ id }: { id: string }) {
 
   /** A box drawn with a making tool: a click makes the usual size, a drag the size drawn. */
   const make = (to: number, r: Rect, dragged: boolean) => {
-    const f = frames[to];
+    // loose on the canvas (to < 0): sized as on a frame of the design's own size
+    const f = to < 0 && design ? { w: design.width, h: design.height } : frames[to];
     if (!f || tool === "move" || tool === "hand" || tool === "frame" || tool === "pen") return;
     const words = tool === "text";
     const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.max(1, Math.round(dragged ? r.w : words ? f.w / 2 : 100)), h: Math.max(1, Math.round(dragged ? r.h : words ? f.w * 0.08 : 100)) };
@@ -705,13 +811,21 @@ function DesignPage({ id }: { id: string }) {
       const c = e.code;
       const has = mine.length > 0;
       const run = (fn: () => unknown) => (e.preventDefault(), void fn());
+      // nothing picked: the arrows pan the view
+      const pan = ARROWS[e.key];
+      if (pan && !mod && !e.altKey && !has && !framed && !shaping && !cropping)
+        return run(() => {
+          const v = view.aim();
+          const d = e.shiftKey ? PAN_STEP.far : PAN_STEP.near;
+          view.glide({ ...v, x: v.x - pan[0] * d, y: v.y - pan[1] * d }, 100);
+        });
       // a canvas with no frame yet: the zoom, the tools and undo, nothing else
       if (!base || !here) {
         if (mod && c === "KeyZ") run(() => step(!e.shiftKey));
         else if (!e.altKey && (e.key === "+" || e.key === "=")) run(() => zoom("in"));
         else if (!e.altKey && e.key === "-") run(() => zoom("out"));
         else if (!e.altKey && (mod || e.shiftKey) && c === "Digit0") run(() => zoom(1));
-        else if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[c] && NEED_NO_FRAME.includes(TOOL_KEYS[c]!)) run(() => setTool(TOOL_KEYS[c]!));
+        else if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[c]) run(() => setTool(TOOL_KEYS[c]!));
         else if (e.key === "Escape") run(() => setTool("move"));
         return;
       }
@@ -721,6 +835,7 @@ function DesignPage({ id }: { id: string }) {
         else if (e.key === "-") run(() => zoom("out"));
         else if (c === "Digit0") run(() => zoom(1));
         else if (c === "KeyD") run(duplicate);
+        else if (e.altKey && c === "KeyT") run(tidyUp);
         else if (c === "KeyG") run(e.shiftKey ? ungroup : group);
         else if (c === "KeyA") run(() => pick(k, base.layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id)));
         else if (c === "KeyC") copy(); // not stopped: words picked in a panel are still the browser's to copy
@@ -729,7 +844,7 @@ function DesignPage({ id }: { id: string }) {
         else if (e.shiftKey && c === "KeyL" && has) run(() => toggle("locked"));
         return; // ⌘V is the page's paste event (below); everything else is the browser's
       }
-      if (e.altKey) return void (has && ALIGN_KEYS[c] && run(() => arrange(alignLayers(mine, ALIGN_KEYS[c]!, here))));
+      if (e.altKey) return void ((has || manyFrames) && ALIGN_KEYS[c] && run(() => align(ALIGN_KEYS[c]!)));
       if (e.shiftKey && c === "Digit1") return run(() => zoom("fit"));
       if (e.shiftKey && c === "Digit2") return run(() => zoom("selection"));
       if (e.shiftKey && c === "Digit0") return run(() => zoom(1));
@@ -748,7 +863,8 @@ function DesignPage({ id }: { id: string }) {
       // the frame itself is picked: the arrows move it
       if (by && !has && framed) return run(() => setPages(framedAt.map((n) => ({ ...pages[n]!, x: frames[n]!.x + by[0] * far, y: frames[n]!.y + by[1] * far }))));
       if (!has) return;
-      if (by) run(() => patch((l) => ({ ...l, x: l.x + by[0] * far, y: l.y + by[1] * far })));
+      // a locked layer is not nudged
+      if (by) run(() => patch((l) => (l.locked ? l : { ...l, x: l.x + by[0] * far, y: l.y + by[1] * far })));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "text") run(() => setEditing(mine[0]!.id));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "image") run(() => setCropping(mine[0]!.id));
       else if (e.key === "Enter" && mine.length === 1 && mine[0]!.type === "path") run(() => setShaping({ id: mine[0]!.id, anchor: null }));
@@ -766,9 +882,10 @@ function DesignPage({ id }: { id: string }) {
       // words copied somewhere else become a text layer in the middle of the frame
       else if (text.trim()) {
         const words = (id: string, f: { w: number; h: number }) => [textLayer(id, text.trim().slice(0, DESIGN_LIMITS.text), { x: Math.round(f.w / 4), y: Math.round(f.h * 0.4), w: Math.round(f.w / 2), h: Math.round(f.h * 0.2) }, f.w)];
-        // on a canvas with no frame yet: its first frame, with the words on it
+        // on a canvas with no frame yet: loose in the middle of the view
+        const m = middle();
         if (here) put(k, 1, ([id]) => words(id!, here));
-        else addFrame(undefined, undefined, undefined, (f) => words("l1", f));
+        else put(-1, 1, ([id]) => rehome(words(id!, { w: design.width, h: design.height }), { x: Math.round(m.x - design.width / 2), y: Math.round(m.y - design.height / 2) }, {}));
       }
       else return;
       e.preventDefault();
@@ -967,12 +1084,12 @@ function DesignPage({ id }: { id: string }) {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} />
+        <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} onZoomTo={zoomTo} />
 
         <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
           {/* for the assistant beside the page, which reads the headings on screen (lib/page-context.ts): what is picked, by id. Here, where nothing scrolls it out of sight */}
           <h3 data-picked className="sr-only">
-            Picked: {page?.loose ? "a picture lying loose on the canvas, outside every frame (not a frame to design)" : framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
+            Picked: {page?.loose ? "layers lying loose on the canvas, outside every frame (design_get's canvas)" : framedIds.length > 1 ? `frames ${framedAt.map((n) => `${pageName(pages[n]!, n)} (id ${pages[n]!.id})`).join(", ")}` : page ? `frame ${pageName(page, k)} (id ${page.id})` : "nothing: the canvas has no frame yet"}
             {picked.length > 0 &&
               `, ${picked.length === 1 ? "layer" : "layers"} ${picked
                 .slice(0, 8)
@@ -1000,6 +1117,7 @@ function DesignPage({ id }: { id: string }) {
               onMakeFrame={makeFrame}
               editing={editing}
               onEdit={setEditing}
+              onTextSelect={setTextSel}
               onMakePath={makePath}
               shaping={shaping}
               onShape={setShaping}
@@ -1038,6 +1156,10 @@ function DesignPage({ id }: { id: string }) {
                   )}
                   <ContextMenuSeparator />
                   <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={!base || !!base.loose || !here} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Copy in another size</ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-60">{here && <CopySizes Item={ContextMenuItem} from={here} onCopy={copySize} />}</ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
                     <ContextMenuSubTrigger disabled={!base} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Add to a carousel style</ContextMenuSubTrigger>
                     <ContextMenuSubContent className="w-56">
                       {(carouselStyles.data?.styles ?? []).map((s) => (
@@ -1058,7 +1180,7 @@ function DesignPage({ id }: { id: string }) {
             {TOOLS.filter(([t]) => !locked || t === "hand").map(([t, label, keys, Icon]) => (
               // the button lets the keys go again, so Space still drags the canvas after a click here
               <Tip key={t} label={label} keys={keys}>
-              <button type="button" aria-label={label} aria-pressed={tool === t} disabled={!frameCount && !NEED_NO_FRAME.includes(t)} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
+              <button type="button" aria-label={label} aria-pressed={tool === t} onClick={(e) => (setTool(t), e.currentTarget.blur())} className={cn("flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-35", tool === t ? "bg-[#0d99ff] text-white" : "enabled:hover:bg-zinc-500/15")}>
                 <Icon className="h-4 w-4" />
               </button>
               </Tip>
@@ -1090,16 +1212,17 @@ function DesignPage({ id }: { id: string }) {
           page={page}
           at={k}
           count={frameCount}
-          picked={picked}
+          picked={pickedShown}
           onPreview={(fn) => {
-            const next = fn && through(fn);
+            const next = fn && through(toLetters(fn));
             setLive(next ? [next] : null);
           }}
-          onPatch={patch}
+          onPatch={(fn, merge) => patch(toLetters(fn), merge)}
           onPage={setPage}
           onPagePreview={(next) => setLive(next ? [next] : null)}
-          onAlign={(how) => arrange(alignLayers(mine, how, here))}
-          onDistribute={(axis) => arrange(distribute(mine, axis))}
+          onAlign={align}
+          onDistribute={spread}
+          onTidy={tidied ? tidyUp : undefined}
           view={view}
           onZoom={zoom}
           framesPicked={framedAt}
@@ -1113,6 +1236,7 @@ function DesignPage({ id }: { id: string }) {
           cutting={cutting}
           colours={colours}
           onDropper={(take) => setDropper({ take })}
+          onCopySize={copySize}
         />
         )}
       </div>

@@ -16,7 +16,10 @@ import { ShareThemeProvider } from "@/components/ShareTheme";
 import { loadFolderPlugins, reloadForFolderPlugins } from "@/lib/folder-plugins";
 import { takePairingToken } from "@/lib/pairing";
 import { PairingLanding } from "@/pages/PairingLanding";
+import { watchWheelPlaces } from "@/lib/mac-wheel";
 import App from "./App.tsx";
+
+watchWheelPlaces();
 
 // ⌘S / Ctrl+S never opens the browser's "Save page" dialog: everything autosaves,
 // and pages that keep pending edits (Content Workshop) flush them on the same keys.

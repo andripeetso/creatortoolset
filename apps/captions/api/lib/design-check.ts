@@ -1,7 +1,9 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, EFFECTS_MAX, type DesignPage, type Effect, type Pin, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke, type TextLayer, type TextRun, type TextStyle } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
+import { normalRuns, RUNS_MAX } from "../../src/lib/design/runs";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
+import { cleanAids } from "./design-aids";
 
 /**
  * A design's pages, checked. Whatever sends them (the person's own changes, or their AI's answer), every value is
@@ -48,6 +50,43 @@ const strokeMore = (v: unknown): Partial<Stroke> => {
   return { ...(dash && dash[1] > 0 ? { dash } : {}), ...(v.round === true ? { round: true } : {}), ...(v.side === "inside" || v.side === "outside" ? { side: v.side } : {}) };
 };
 
+/**
+ * A text's style beside its font, size and colour as it may be saved: a weight in hundreds, switches, a size and
+ * spacing in range. `run`: a run's, which may also set a font, size and colour, and a switch off (the layer's is on).
+ */
+function textStyle(v: Record<string, unknown>, fonts: readonly string[], run: boolean): TextStyle {
+  const out: TextStyle = {};
+  if (typeof v.weight === "number" && Number.isFinite(v.weight)) out.weight = Math.round(num(v.weight, 100, 900, 400) / 100) * 100;
+  for (const k of ["italic", "underline", "strike"] as const) if (v[k] === true || (run && v[k] === false)) out[k] = v[k] as boolean;
+  if (!run) return out;
+  if (typeof v.font === "string" && fonts.includes(v.font)) out.font = v.font;
+  if (typeof v.size === "number") out.size = round(num(v.size, 8, 600, 48));
+  if (typeof v.color === "string" && COLOR.test(v.color.trim())) out.color = sixDigits(color(v.color, "#111111"));
+  if (typeof v.spacing === "number") out.spacing = round(num(v.spacing, -20, 200, 0));
+  return out;
+}
+
+/**
+ * A text's runs as they may be saved: each from a letter to a letter of the text (`start`, `end`), or every place a
+ * phrase of it is in (`words`, as a highlighter's), with a style that says something. Put in order and joined up after.
+ */
+function textRuns(v: unknown, text: string, fonts: readonly string[]): { runs?: TextRun[] } {
+  const out: TextRun[] = [];
+  const lower = text.toLowerCase();
+  for (const r of (Array.isArray(v) ? v : []).filter(obj).slice(0, RUNS_MAX)) {
+    const style = textStyle(r, fonts, true);
+    if (!Object.keys(style).length) continue;
+    const words = typeof r.words === "string" ? r.words.toLowerCase() : "";
+    if (words) for (let at = lower.indexOf(words); at >= 0; at = lower.indexOf(words, at + words.length)) out.push({ start: at, end: at + words.length, ...style });
+    else if (typeof r.start === "number" && typeof r.end === "number") {
+      const start = Math.round(num(r.start, 0, text.length, 0));
+      const end = Math.round(num(r.end, 0, text.length, 0));
+      if (end > start) out.push({ start, end, ...style });
+    }
+  }
+  return out.length ? { runs: out } : {};
+}
+
 /** A text's highlighter strokes as they may be saved: a few, each a colour and (or not) the words it goes behind. */
 function marks(v: unknown): { marks?: { color: string; words?: string; low?: true }[] } {
   const list = (Array.isArray(v) ? v : [])
@@ -58,6 +97,37 @@ function marks(v: unknown): { marks?: { color: string; words?: string; low?: tru
       return { color: sixDigits(color(m.color, "#f2b63c")), ...(words ? { words } : {}), ...(m.low === true ? { low: true as const } : {}) };
     });
   return list.length ? { marks: list } : {};
+}
+
+/** A layer's pin as it may be saved: each side one of its own words, and none when neither is. */
+function pin(v: unknown): { pin?: Pin } {
+  if (!obj(v)) return {};
+  const x = DESIGN_PINS_X.find((p) => p === v.x);
+  const y = DESIGN_PINS_Y.find((p) => p === v.y);
+  return x || y ? { pin: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
+}
+
+/** A layer's effects as they may be saved: a few known ones, each with its numbers in range; none when the list is empty. */
+function effectList(v: unknown[]): { effects?: Effect[] } {
+  const list = v
+    .filter(obj)
+    .filter((e) => DESIGN_EFFECTS.includes(e.type as never))
+    .slice(0, EFFECTS_MAX)
+    .map((e): Effect => {
+      const hidden = e.hidden === true ? { hidden: true as const } : {};
+      const blur = round(num(e.blur, 0, 200, 24));
+      if (e.type === "shadow" || e.type === "inner-shadow") {
+        const spread = round(num(e.spread, -200, 200, 0));
+        return { type: e.type as "shadow" | "inner-shadow", color: sixDigits(color(e.color, "#000000")), opacity: round(num(e.opacity, 0, 1, 0.35)), blur: round(num(e.blur, 0, 400, 24)), x: round(num(e.x, -1000, 1000, 0)), y: round(num(e.y, -1000, 1000, 8)), ...(spread ? { spread } : {}), ...hidden };
+      }
+      if (e.type === "progressive-blur") return { type: "progressive-blur", blur, from: round(num(e.from, 0, 1, 0.5)), to: round(num(e.to, 0, 1, 1)), angle: round(num(e.angle, -360, 360, 90)), ...hidden };
+      if (e.type === "noise") {
+        const size = round(num(e.size, 1, 20, 1));
+        return { type: "noise", amount: Math.round(num(e.amount, 1, 100, 12)), ...(size !== 1 ? { size } : {}), ...hidden };
+      }
+      return { type: e.type as "blur" | "background-blur", blur, ...hidden };
+    });
+  return list.length ? { effects: list } : {};
 }
 
 /** A frame's finish as it may be saved: a whole number each in its range, and none when it is 0. */
@@ -204,18 +274,24 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     h: round(num(raw.h, 1, 2 * r.h, r.h / 4)),
     ...(typeof raw.rotate === "number" && raw.rotate ? { rotate: round(num(raw.rotate, -360, 360, 0)) } : {}),
     ...(typeof raw.opacity === "number" && raw.opacity < 1 ? { opacity: round(num(raw.opacity, 0, 1, 1)) } : {}),
-    ...(obj(raw.shadow)
-      ? { shadow: { color: sixDigits(color(raw.shadow.color, "#000000")), opacity: round(num(raw.shadow.opacity, 0, 1, 0.35)), blur: round(num(raw.shadow.blur, 0, 400, 24)), x: round(num(raw.shadow.x, -1000, 1000, 0)), y: round(num(raw.shadow.y, -1000, 1000, 8)) } }
-      : {}),
+    // a list of effects stands for the one shadow and blur a layer had before (they are left out beside one)
+    ...(Array.isArray(raw.effects)
+      ? effectList(raw.effects)
+      : {
+          ...(obj(raw.shadow)
+            ? { shadow: { color: sixDigits(color(raw.shadow.color, "#000000")), opacity: round(num(raw.shadow.opacity, 0, 1, 0.35)), blur: round(num(raw.shadow.blur, 0, 400, 24)), x: round(num(raw.shadow.x, -1000, 1000, 0)), y: round(num(raw.shadow.y, -1000, 1000, 8)) } }
+            : {}),
+          // a picture's blur is one of its adjustments (retouched, below); any other layer's is its own
+          ...(raw.type !== "image" && Math.round(num(raw.blur, 0, 200, 0)) ? { blur: Math.round(num(raw.blur, 0, 200, 0)) } : {}),
+        }),
     ...(DESIGN_BLENDS.includes(raw.blend as never) ? { blend: raw.blend as (typeof DESIGN_BLENDS)[number] } : {}),
-    // a picture's blur is one of its adjustments (retouched, below); any other layer's is its own
-    ...(raw.type !== "image" && Math.round(num(raw.blur, 0, 200, 0)) ? { blur: Math.round(num(raw.blur, 0, 200, 0)) } : {}),
     ...(raw.flipX === true ? { flipX: true } : {}),
     ...(raw.flipY === true ? { flipY: true } : {}),
     ...(groupId(raw.group) ? { group: groupId(raw.group) } : {}),
     ...(named(raw.name) ? { name: named(raw.name) } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),
     ...(raw.locked === true ? { locked: true } : {}),
+    ...pin(raw.pin),
   };
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
   if (raw.type === "text") {
@@ -240,11 +316,12 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       if (x !== box.x || y !== box.y || w !== box.w || h !== box.h) say("words that stuck out of the page were moved onto it");
       place = { ...box, x, y, w, h };
     }
-    return {
-      type: "text",
+    const fonts = r.fonts?.length ? [...FONTS, ...r.fonts] : FONTS;
+    return normalRuns<Omit<TextLayer, "id">>({
+      type: "text" as const,
       ...place,
       text,
-      font: oneOf(raw.font, r.fonts?.length ? [...FONTS, ...r.fonts] : FONTS, DEFAULT_FONT),
+      font: oneOf(raw.font, fonts, DEFAULT_FONT),
       size: round(num(raw.size, 8, 600, 48)),
       color: color(raw.color, "#111111"),
       ...gradient(raw.gradient),
@@ -257,8 +334,11 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...(raw.valign === "middle" || raw.valign === "bottom" ? { valign: raw.valign } : {}),
       ...(typeof raw.lineHeight === "number" ? { lineHeight: round(num(raw.lineHeight, 0.8, 3, 1.15)) } : {}),
       ...(raw.upper === true ? { upper: true } : {}),
+      ...(raw.case === "upper" || raw.case === "lower" || raw.case === "title" || raw.case === "small" ? { case: raw.case as "upper" | "lower" | "title" | "small" } : {}),
+      ...textStyle(raw, fonts, false),
+      ...textRuns(raw.runs, text, fonts),
       ...(outline ? { outline } : {}),
-    };
+    });
   }
   if (raw.type === "image") {
     if (typeof raw.picture !== "string" || !r.pictures.includes(raw.picture)) {
@@ -334,7 +414,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
 export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; notes: string[] } {
   const notes: string[] = [];
   const pages: DesignPage[] = [];
-  // frames and loose pictures are counted apart: pictures lying beside the frames take no frame's place
+  // frames and loose layers are counted apart: layers lying beside the frames take no frame's place
   const count = { frames: 0, loose: 0 };
   for (const [k, p] of (Array.isArray(raw) ? raw : []).slice(0, DESIGN_LIMITS.pages + DESIGN_LIMITS.loose).entries()) {
     const loose = obj(p) && p.loose === true;
@@ -374,11 +454,11 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       const why = `these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`;
       if (left.length) (r.say ? r.say(k, why) : notes.push(`Page ${k + 1}: ${why}`));
     }
-    // a loose picture with nothing left on it is gone
+    // a loose piece with nothing left on it is gone
     if (loose && !layers.length) continue;
-    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), layers });
+    pages.push({ id: typeof p.id === "string" && ID.test(p.id) && !pages.some((x) => x.id === p.id) ? p.id : `p${k + 1}`, ...(named(p.name) ? { name: named(p.name) } : {}), ...(loose ? { loose: true as const } : p.clip === false ? { clip: false as const } : {}), ...place, background: color(p.background, "#ffffff"), ...gradient(p.gradient), ...finish(p), ...cleanAids(p), layers });
   }
-  // loose pictures after the frames: a frame's place in the list is its number
+  // loose layers after the frames: a frame's place in the list is its number
   return { pages: [...pages.filter((p) => !p.loose), ...pages.filter((p) => p.loose)], notes };
 }
 

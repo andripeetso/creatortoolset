@@ -72,7 +72,7 @@ export function RecropBox({ box, framing: f, w, h, onChange, onApply, onCancel }
   return (
     <div ref={frame} className="absolute inset-0 z-10 touch-none">
       {/* anywhere on the stage moves the footage (the stage clips this) */}
-      <div ref={hit} className="absolute -inset-[200vmax] cursor-move"
+      <div ref={hit} data-wheel="snap" className="absolute -inset-[200vmax] cursor-move"
         onPointerDown={(e) => {
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);

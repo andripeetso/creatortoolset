@@ -66,6 +66,46 @@ final class WheelGlideTests: XCTestCase {
         XCTAssertNil(WheelGlide.event(from: nil, x: 0, y: 1))
     }
 
+    func testOnlyAPlainWheelStepOverAPlainPlaceGlides() {
+        let step = wheelStep(lines: -3)
+        XCTAssertTrue(WheelGlide.glides(step, snap: false, reduceMotion: false))
+        XCTAssertFalse(WheelGlide.glides(step, snap: true, reduceMotion: false))     // a canvas, timeline or viewer
+        XCTAssertFalse(WheelGlide.glides(step, snap: false, reduceMotion: true))
+        let precise = WheelGlide.event(from: step.cgEvent, x: 0, y: -17)!            // a trackpad's, or our own frame
+        XCTAssertFalse(WheelGlide.glides(precise, snap: false, reduceMotion: false))
+    }
+
+    /// The page's "wheel" message: over a place it marks "snap" a wheel step reaches the page at once, with no glide.
+    @MainActor func testAWheelStepOverASnapPlaceLandsAtOnce() async throws {
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        let web = AppWebView()
+        window.contentView = web
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        window.orderFrontRegardless()
+        defer { window.close() }
+        web.loadHTMLString("<body style='margin:0'><div style='height:6000px'></div>", baseURL: nil)
+        for _ in 0..<100 where (try? await web.evaluateJavaScript("document.body.scrollHeight") as? Double) ?? 0 < 6000 {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        func tell(_ kind: String) async throws {
+            _ = try await web.evaluateJavaScript("webkit.messageHandlers.wheel.postMessage('\(kind)'); 0")
+            for _ in 0..<50 where web.wheelSnaps != (kind == "snap") { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        try await tell("snap")
+        XCTAssertTrue(web.wheelSnaps)
+        web.scrollWheel(with: wheelStep(lines: -3, in: window))
+        var y = 0
+        for _ in 0..<50 where y == 0 {   // no glideFrame: the step itself moves the page
+            try await Task.sleep(for: .milliseconds(10))
+            y = Int((try await web.evaluateJavaScript("Math.round(scrollY)") as? Double) ?? -1)
+        }
+        guard y > 0 else { throw XCTSkip("the web view did not take scroll events here (no display to show a window on)") }
+        try await tell("glide")
+        XCTAssertFalse(web.wheelSnaps)
+    }
+
     /// The whole path in a real web view: one wheel step moves the page by the same distance as before, over several
     /// frames instead of one.
     @MainActor func testAWheelStepGlidesAPageInTheWebView() async throws {
