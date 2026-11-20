@@ -151,15 +151,16 @@ final class ImportTests: XCTestCase {
         for d in [mine, waiting] { try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true) }
         let clip = try write("Movies/Creator Toolset/Other/Media/clip.mov")
         try FileManager.default.createSymbolicLink(atPath: at("Movies/alias"), withDestinationPath: other)
-        MediaFiles.setServerFolders([.init(id: "f1", path: mine, workspaces: ["a"], use: "media"), .init(id: "f3", path: waiting, workspaces: ["a"], use: "media")], server: "s")
-        MediaFiles.setServerFolders([.init(id: "f2", path: other, workspaces: ["b"], use: "media")], server: "t")
+        MediaFiles.setServerFolders([.init(id: "f1", path: mine, workspaces: ["a"], use: "media"), .init(id: "f2", path: other, workspaces: ["b"], use: "media"),
+                                     .init(id: "f3", path: waiting, workspaces: ["a"], use: "media")], server: "s")
+        MediaFiles.setServerFolders([.init(id: "f9", path: at("Downloads"), workspaces: ["*"], use: "media")], server: "gone")   // a server no longer used
         MediaFiles.allow(mine, server: "s")
-        XCTAssertEqual(Set(MediaFiles.allMediaFolders), [mine, other, waiting])
+        XCTAssertEqual(Set(MediaFiles.mediaFolders(server: "s")), [mine, other, waiting])
         let a = try write("Downloads/A001.mov")
         let pairs = [ImportPair(from: clip, to: mine + "/Imports/x/clip.mov"), ImportPair(from: at("Movies/alias/clip.mov"), to: mine + "/Imports/x/clip 2.mov"),
                      ImportPair(from: a, to: waiting + "/Imports/x/A001.mov")]
         let reply = Imports().copy(id: "g1", pairs, sources: [at("Movies"), at("Downloads")], destinations: Imports.copyDestinations(server: "s"),
-                                   waiting: MediaFiles.importsFolders(server: "s", allowed: false), media: MediaFiles.allMediaFolders) { _ in }
+                                   waiting: MediaFiles.importsFolders(server: "s", allowed: false), media: MediaFiles.mediaFolders(server: "s")) { _ in }
         XCTAssertEqual((reply["copied"] as? [[String: String]])?.count, 0)
         XCTAssertEqual((reply["failed"] as? [[String: String]])?.map { $0["error"] ?? "" }, [
             "\(clip) is in the Media folder \(other): drop the folder with the footage itself",
