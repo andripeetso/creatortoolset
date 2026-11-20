@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -1238,6 +1238,31 @@ describe("designs: a picture split into layers", () => {
     const made = await asked;
     expect(made.status).toBe(200);
     expect(made.body.pieces).toHaveLength(3);
+  }, 120_000);
+
+  it("leaves no picture in the folder when a piece made small in its turn fails", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
+    const small = png(8, 8);
+    const first = (await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "slide", type: "image/png", data: small.toString("base64") })).body.id;
+    for (let n = 1; n < 58; n++) await call("POST", `/api/designs/${d.id}/pictures`, { name: "p", type: "image/png", data: small.toString("base64") });
+    const mac = pairDevice("jordan", "Jordan's failing Mac").device;
+    setDeviceKinds(mac.id, [CUTOUT_KIND, SPLIT_KIND]);
+    touchDevice(mac.id);
+    const asked = call<{ error: string }>("POST", `/api/designs/${d.id}/pictures/${first}/split`, {});
+    let job = null as ReturnType<typeof claimCutout>;
+    for (let n = 0; n < 200 && !(job = claimCutout(mac, [CUTOUT_KIND, SPLIT_KIND])); n++) await new Promise((r) => setTimeout(r, 10));
+    const file = path.join(dataDir, "designs", "jordan", `${d.id}.json`);
+    const was = JSON.parse(readFileSync(file, "utf8")) as Design;
+    writeFileSync(file, JSON.stringify({ ...was, pictures: was.pictures.slice(0, 48) }));
+    // the biggest piece is made small before the turn; the second, only there is room for it now, is too heavy and no picture
+    const broken = Buffer.concat([small.subarray(0, 8), Buffer.alloc(9_000_000, 7)]);
+    void cutoutSent(mac.id, job!.id, { layout: JSON.stringify({ lines: [], pieces: [{ x: 0, y: 0, w: 0.5, h: 0.5 }, { x: 0.6, y: 0.6, w: 0.1, h: 0.1 }] }), background: small, piece0: small, piece1: broken });
+    const out = await asked;
+    expect([out.status, out.body.error]).toEqual([400, "A piece could not be made smaller"]);
+    const now = JSON.parse(readFileSync(file, "utf8")) as Design;
+    const onDisk = readdirSync(path.join(dataDir, "designs", "jordan", d.id)).filter((f) => /^[a-z0-9]{8}\.(jpg|png|webp)$/.test(f));
+    expect(now.pictures).toHaveLength(48);
+    expect(onDisk.filter((f) => !now.pictures.includes(f)).length).toBe(10);
   }, 120_000);
 
   it("makes what the Mac sent small enough before the design's turn, so a write meanwhile is not held by it", async () => {

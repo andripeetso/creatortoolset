@@ -712,14 +712,15 @@ export function mergeFrames(mine: readonly DesignPage[], base0: readonly DesignP
 
 /**
  * A design as this window has it (`mine`, changed from `base`) put onto the server's (`theirs`): the styles style by
- * style (mergeStyles), the frames layer by layer (mergeFrames), every style's value put on again. The frames are told
- * apart from a base with this window's own styles on it: a value one of its styles put on a layer is no change of its
- * own, so a colour or size the other side gave that layer (taking it off the style, or as its own) stays.
+ * style (mergeStyles), the frames layer by layer (mergeFrames), every style's value put on again. The three sides are
+ * compared with the merged styles on each: a value a style put on a layer is no side's change of it, so a colour or size
+ * the other side gave that layer (taking it off the style, or as its own) stays, and a layer one side deleted stays deleted.
  * `lay`: the base laid out as this window lays out (its widths of the words).
  */
 export function mergeDesign<P extends DesignPage>(mine: { pages: readonly P[]; styles: DesignStyles }, base: { pages: readonly P[]; styles: DesignStyles }, theirs: { pages: readonly P[]; styles?: DesignStyles }, sent: readonly SentSave[] = [], lay: (pages: P[]) => P[] = (p) => p): { pages: P[]; styles: DesignStyles } {
   const styles = mergeStyles(mine.styles, base.styles, theirs.styles);
-  const ownBase = lay(styled(base.pages, mine.styles));
-  return { pages: styled(syncInstances(mergeFrames(mine.pages, ownBase, theirs.pages, sent) as P[]), styles), styles };
+  // the merged styles on all three sides: a value a style put on a layer is no one's change of it, whichever side changed the style
+  const on = (pages: readonly P[]) => lay(styled(pages, styles));
+  return { pages: styled(syncInstances(mergeFrames(on(mine.pages), on(base.pages), on(theirs.pages), sent) as P[]), styles), styles };
 }
 

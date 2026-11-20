@@ -1442,14 +1442,21 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
         // deleted while it was being split: it stays deleted
         if (!now) throw new DesignError("Not found", 404);
         if (now.pictures.length >= DESIGN_LIMITS.pictures) throw new DesignError(`A design holds up to ${DESIGN_LIMITS.pictures} pictures: remove one first`);
-        const background = await addPicture(now, behind, "png");
-        const room = DESIGN_LIMITS.pictures - now.pictures.length;
-        const biggest = bySize.slice(0, room).sort((a, b) => a.n - b.n);
-        const pieces: SplitAnswer["pieces"] = [];
-        // (room made meanwhile: those pieces are made small enough here, in the turn; rare)
-        for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, (kept[n] ??= await keepable(made.pieces[n]!, tmp, "A piece")), "png") });
-        await save({ ...now, updatedAt: stamp(now) });
-        return { background, pieces, lines: made.layout.lines };
+        const had = now.pictures.length;
+        try {
+          const background = await addPicture(now, behind, "png");
+          const room = DESIGN_LIMITS.pictures - now.pictures.length;
+          const biggest = bySize.slice(0, room).sort((a, b) => a.n - b.n);
+          const pieces: SplitAnswer["pieces"] = [];
+          // (room made meanwhile: those pieces are made small enough here, in the turn; rare)
+          for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, (kept[n] ??= await keepable(made.pieces[n]!, tmp, "A piece")), "png") });
+          await save({ ...now, updatedAt: stamp(now) });
+          return { background, pieces, lines: made.layout.lines };
+        } catch (e) {
+          // nothing saved: the pictures this added go again, so none lies in the folder without the design naming it
+          await Promise.all(now.pictures.slice(had).map((id) => rm(path.join(picturesOf(now.owner, now.id), id), { force: true })));
+          throw e;
+        }
       });
     } finally {
       await rm(tmp, { force: true });

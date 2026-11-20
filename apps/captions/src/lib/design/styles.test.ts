@@ -221,3 +221,24 @@ describe("a style changed here while the other side changed a layer naming it", 
     expect([at(out.pages, "p1", "t").size, at(out.pages, "p1", "t").styleOwn, at(out.pages, "p1", "u").size]).toEqual([60, ["size"], 80]);
   });
 });
+
+describe("a layer deleted here while a style changed on either side", () => {
+  const red = { colors: { accent: { name: "Accent", color: "#ff0000" } } };
+  const blue = withStyle(red, "colors", "accent", { name: "Accent", color: "#0000ff" });
+  const base = styled([page("p1", [rect("l1", { colorStyle: "accent" }), rect("l2", { colorStyle: "accent" }), rect("l3", { x: 10 })])], red);
+  const without = (pages: DesignPage[], id: string) => pages.map((p) => ({ ...p, layers: p.layers.filter((l) => l.id !== id) }));
+  const ids = (pages: readonly DesignPage[]) => pages[0]!.layers.map((l) => `${l.id}:${(l as ShapeLayer).fill}@${l.x}`);
+
+  it("stays deleted when this window changed the style too, and the other side only moved another layer", async () => {
+    const { mergeDesign } = await import("./hands");
+    const mine = without(styled(base, blue), "l2");
+    const theirs = base.map((p) => ({ ...p, layers: p.layers.map((l) => (l.id === "l3" ? { ...l, x: 500 } : l)) }));
+    expect(ids(mergeDesign({ pages: mine, styles: blue }, { pages: base, styles: red }, { pages: theirs, styles: red }).pages)).toEqual(["l1:#0000ff@0", "l3:#dddddd@500"]);
+  });
+
+  it("stays deleted when the other side changed the style", async () => {
+    const { mergeDesign } = await import("./hands");
+    const mine = without(base, "l2");
+    expect(ids(mergeDesign({ pages: mine, styles: red }, { pages: base, styles: red }, { pages: styled(base, blue), styles: blue }).pages)).toEqual(["l1:#0000ff@0", "l3:#dddddd@10"]);
+  });
+});
