@@ -622,7 +622,10 @@ onActionDone((username, done, goOn) => {
       if (!m.action || !done(m.action)) return;
       delete m.action;
       changed = true;
-      const ask = list[i - 1]?.role === "user" ? list[i - 1]!.text : "";
+      // the person's last own ask, however far back (an AI Editor's wait card sits on the line its work posted, after the
+      // reply); never one the app sent (wake): the woken reply has had its one turn
+      const asked = list.slice(0, i).reverse().find((x) => x.role === "user");
+      const ask = asked && !asked.woke ? asked.text : "";
       // shortcut: a card whose reply is still being written is only cleared, its ask is not carried on; carry it from `later` if that bites
       if (!goOn || !ask || i !== list.length - 1 || m.status === "thinking") return;
       carryOn(conv, list, { text: goOn.say(ask) }, { url: goOn.url, admin: goOn.admin, ...(chat.ai ? { ai: chat.ai } : {}) });
