@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, FOLDER_LABELS, libraryBase, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, FOLDER_LABELS, LEAVE_OUT_MAX, libraryBase, parseLeaveOut, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { actionCard, type FolderAsk } from "../contracts/library";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
@@ -31,6 +31,7 @@ import { actionDone } from "./lib/action-done";
  *                                          place of the one it had), or as its Exports folder (role "library": exactly that
  *                                          folder, made when missing). Finals reads Exports; "finals" is refused.
  *   PATCH  /folders/:id {workspaces} → the workspaces a Media or Exports folder is in; null = every workspace
+ *   PUT    /folders/:id/leave-out {leaveOut} → folder names a Media folder leaves out of the Media Library, at any depth
  *   DELETE /folders/:id             → forget a folder (its marker files stay where they are)
  *   /kept                           → what this account keeps in the server's data folder, and Empty (api/kept.ts)
  * Each account has its own list in $DATA_DIR/storage/<user>.json, and each workspace its own folders in it (a folder's
@@ -483,6 +484,35 @@ storageApp.patch("/folders/:id", async (c) => {
   });
   if (!out) return c.json({ error: "Not found" }, 404);
   await unwatch(user, f.origin.path, was, now);
+  return c.json(shown(out, here, user, named));
+});
+
+/**
+ * PUT /api/devices/storage/folders/:id/leave-out {leaveOut: string[]}: the names of folders inside a Media folder, at any
+ * depth, whose files the Media Library leaves out (contracts/storage.ts notFootage); [] leaves out nothing more. The
+ * account's own folder only. Nothing on disk changes: its computer's next scan applies it (or this server's own watch),
+ * and a clip indexed from there before leaves through the trash unless a copy of it is found elsewhere (library/report.ts
+ * settleLeft); taking a name off brings none back. Returns the folder list like the other routes here.
+ */
+storageApp.put("/folders/:id/leave-out", async (c) => {
+  const user = c.get("user").username;
+  const id = c.req.param("id");
+  // a list an inner folder's was merged into (lib/storage.ts mediaFolders) may hold more than LEAVE_OUT_MAX: kept, never grown
+  const had = (await readStorage(user)).folders.find((x) => x.id === id)?.leaveOut?.length ?? 0;
+  const max = Math.max(had, LEAVE_OUT_MAX);
+  const names = parseLeaveOut(((await c.req.json().catch(() => null)) as { leaveOut?: unknown } | null)?.leaveOut, max);
+  if (!names) return c.json({ error: `Folder names only, at most ${max}` }, 400);
+  const out = await chained(user, async () => {
+    const st = await readStorage(user);
+    const f = st.folders.find((x) => x.id === id && x.role === "footage");
+    if (!f) return null;
+    if (names.length) f.leaveOut = names;
+    else delete f.leaveOut;
+    await writeStorage(user, st);
+    return st;
+  });
+  if (!out) return c.json({ error: "Not found" }, 404);
+  const { mine: here, named } = await scopeOf(c);
   return c.json(shown(out, here, user, named));
 });
 

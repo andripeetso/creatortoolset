@@ -114,6 +114,10 @@ describe("Available offline", () => {
   it("a computer downloads only a proxy it was told to keep", async () => {
     const get = (token: string, v: string) => app.request(`/api/devices/relay/work/offline/${v}`, { headers: { authorization: `Bearer ${token}` } });
     expect(await (await get(laptop.token, "va")).text()).toBe("proxy va");
+    // hidden while it waits on Folders left out (library/report.ts): no computer gets it
+    libraryDb().prepare("UPDATE assets SET left_hidden_at = 1 WHERE id = 'ast_va'").run();
+    expect((await get(laptop.token, "va")).status).toBe(404);
+    libraryDb().prepare("UPDATE assets SET left_hidden_at = NULL WHERE id = 'ast_va'").run();
     expect((await get(laptop.token, "vc")).status).toBe(404); // not kept offline
     expect((await get(theirs.token, "va")).status).toBe(404); // not theirs
     expect((await get("ctd_nobody", "va")).status).toBe(401);

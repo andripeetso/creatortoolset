@@ -101,8 +101,9 @@ export function sendLater(
   const dup = d
     .prepare(
       `SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (? IN (v.mac_path, v.from_path) AND v.bytes = ?)) LIMIT 1`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (? IN (v.mac_path, v.from_path) AND v.bytes = ?)) LIMIT 1`,
     )
+    // a clip hidden while it waits on Folders left out (report.ts) is no duplicate: the file is really added
     .get(libraryId, `mac:${x.quick}`, x.quick, x.size, x.fromPath, x.size) as { id: string } | undefined;
   if (dup) return { duplicateOf: dup.id };
   const versionId = randomUUID();

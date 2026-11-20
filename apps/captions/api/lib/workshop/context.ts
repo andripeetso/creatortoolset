@@ -179,7 +179,7 @@ export async function footageProfile(projectId: string | undefined): Promise<str
          EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND t.tag = ?) AS song,
          EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND t.tag = ?) AS effect
        FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
-       WHERE l.workspace_id = ? AND a.trashed_at IS NULL AND NOT ${FINISHED}`,
+       WHERE l.workspace_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}`,
     )
     .all(SOUNDS.music.tag, SOUNDS.effect.tag, homeOf(p.owner)) as { kind: string; roll: string | null; dur: number | null; ws: string | null; what: string | null; song: number; effect: number }[];
   const kinds = new Map<string, { n: number; s: number }>();

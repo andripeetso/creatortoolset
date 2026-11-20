@@ -75,7 +75,7 @@ const CLIP = `SELECT a.id, v.id AS version, a.title, a.kind,
 
 /** The library's clips a smart folder may hold: live, ready, not finished work. */
 const clipsOf = (d: DatabaseSync, libraryId: string) =>
-  d.prepare(`${CLIP} WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'ready' AND NOT ${FINISHED} ORDER BY a.created_at DESC, a.id`).all(libraryId) as unknown as Clip[];
+  d.prepare(`${CLIP} WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.state = 'ready' AND NOT ${FINISHED} ORDER BY a.created_at DESC, a.id`).all(libraryId) as unknown as Clip[];
 
 /** The library's smart folders. */
 export const rulesOf = (d: DatabaseSync, libraryId: string): Rule[] =>
@@ -107,8 +107,8 @@ export function clipText(c: Clip): string {
 
 /** Up to five clips the person put in each folder, and five they took out: what the rule means, by example. */
 function examplesOf(d: DatabaseSync, rules: Rule[]): Record<string, { in: string[]; out: string[] }> {
-  const put = d.prepare(`${CLIP} JOIN collection_items i ON i.asset_id = a.id WHERE i.collection_id = ? AND i.by_ai = 0 AND a.trashed_at IS NULL ORDER BY i.position DESC LIMIT 5`);
-  const out = d.prepare(`${CLIP} JOIN folder_out o ON o.asset_id = a.id WHERE o.collection_id = ? AND a.trashed_at IS NULL LIMIT 5`);
+  const put = d.prepare(`${CLIP} JOIN collection_items i ON i.asset_id = a.id WHERE i.collection_id = ? AND i.by_ai = 0 AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL ORDER BY i.position DESC LIMIT 5`);
+  const out = d.prepare(`${CLIP} JOIN folder_out o ON o.asset_id = a.id WHERE o.collection_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 5`);
   const brief = (c: Clip) => clipText(c).slice(0, 300);
   return Object.fromEntries(
     rules.map((r) => [r.id, { in: (put.all(r.id) as unknown as Clip[]).map(brief), out: (out.all(r.id) as unknown as Clip[]).map(brief) }]),
@@ -269,7 +269,7 @@ function apply(d: DatabaseSync, answers: Map<string, Verdict>, rules: Rule[]): n
 
 /** A clip just described, or its words or picture changed by hand: judged against every smart folder of its library. Returns how many folders it went in; null when the library has no smart folder. */
 export async function fileSmart(d: DatabaseSync, versionId: string, who: Who, workspace: string): Promise<number | null> {
-  const c = d.prepare(`${CLIP} WHERE v.id = ? AND a.current_version_id = v.id AND a.trashed_at IS NULL AND NOT ${FINISHED}`).get(versionId) as unknown as Clip | undefined;
+  const c = d.prepare(`${CLIP} WHERE v.id = ? AND a.current_version_id = v.id AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}`).get(versionId) as unknown as Clip | undefined;
   const lib = c && (d.prepare("SELECT library_id FROM assets WHERE id = ?").get(c.id) as { library_id: string }).library_id;
   const rules = lib ? rulesOf(d, lib) : [];
   if (!rules.length) return null;
@@ -363,7 +363,7 @@ export async function suggestWays(libraryId: string, who: Who, workspace: string
   if (route.off) throw new Error(route.off);
   const tags = d
     .prepare(
-      `SELECT t.tag, COUNT(*) AS n FROM asset_tags t JOIN assets a ON a.id = t.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL
+      `SELECT t.tag, COUNT(*) AS n FROM asset_tags t JOIN assets a ON a.id = t.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
        GROUP BY t.tag ORDER BY n DESC, t.tag LIMIT 80`,
     )
     .all(libraryId) as { tag: string; n: number }[];

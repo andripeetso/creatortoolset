@@ -293,6 +293,16 @@ describe("the background index", () => {
     d.prepare("UPDATE assets SET trashed_at = 1 WHERE current_version_id = ?").run(busy);
   });
 
+  it("a clip hidden while it waits on Folders left out (report.ts) gets no look", async () => {
+    const d = libraryDb();
+    const hid = await seed("ast-sw-hid");
+    d.prepare("UPDATE assets SET left_hidden_at = 1 WHERE current_version_id = ?").run(hid);
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'look'").run(hid);
+    await sweepAll();
+    expect(job(hid)).toBeUndefined();
+    d.prepare("UPDATE assets SET trashed_at = 1, left_hidden_at = NULL WHERE current_version_id = ?").run(hid);
+  });
+
   it("an uploader who lost the clip between queue and run gets nothing read or asked; with access again, the sweep queues it and it runs", async () => {
     const d = libraryDb();
     const v = await seed("ast-acc-01");

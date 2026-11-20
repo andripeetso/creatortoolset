@@ -252,7 +252,7 @@ export function brollRows(collectionId: string): CollectionRow[] {
     .prepare(
       `SELECT v.id, a.title, v.probe FROM collection_items ci JOIN assets a ON a.id = ci.asset_id
        JOIN asset_versions v ON v.id = a.current_version_id
-       WHERE ci.collection_id = ? AND a.trashed_at IS NULL ORDER BY ci.position, a.id`,
+       WHERE ci.collection_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL ORDER BY ci.position, a.id`,
     )
     .all(collectionId) as unknown as CollectionRow[];
 }

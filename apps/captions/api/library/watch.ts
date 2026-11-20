@@ -12,13 +12,14 @@ import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
-import { librariesOf } from "./report";
+import { copyFilesOn, knownCopy, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, settleSilent } from "./report";
 import { pointSource } from "./locate";
+import { showHidden } from "./trash";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
 import { changeStorage } from "../devices-storage";
-import { editorDirsOf, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
+import { editorDirsOf, leftOutBy, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 
 // a watched folder is a Source media row read where it is (UNIFIED-PRD §4.3); copying is for drops, and the migration
 // turned the old copy watches into rows read in place (§4.6 item 1)
@@ -240,7 +241,8 @@ watchApp.get("/:id/watch/size", async (c) => {
   if (!watchAllowed(user.username)) return c.json({ error: "This server cannot read your folders", code: "forbidden" }, 403);
   const f = await checkFolder(libraryId, { path: expandHome(c.req.query("path") ?? ""), mode: "reference" }, user.username);
   if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
-  const files = await filesIn(f.path, await keepOutOf(user.username));
+  const host = hostHere(user.username);
+  const files = await filesIn(f.path, await keepOutOf(user.username), listsHere(await mediaForLibrary(user.username, libraryId), host), { host });
   let bytes = 0;
   let audio = 0;
   let audioBytes = 0;
@@ -400,7 +402,10 @@ watchApp.post("/import-folder", async (c) => {
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(f.path, p)));
-  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => inside(p, k)));
+  // the owner's lists too, for a member's import (report.ts mediaForLibrary)
+  const host = hostHere(user.username);
+  const sources = listsHere(await mediaForLibrary(user.username, libraryId), host);
+  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !leftOutBy(sources, p, host) && !keep.some((k) => inside(p, k)));
   const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
   for (const file of files) {
     const s = await stat(file).catch(() => null);
@@ -600,14 +605,30 @@ export async function keepOutOf(user: string): Promise<string[]> {
   return st.folders.filter((f) => f.role !== "footage" && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))).map((f) => f.origin.path);
 }
 
-export async function filesIn(root: string, keepOut: string[] = []): Promise<string[]> {
+/**
+ * Media folders as this server's computer checks them (leftOutBy): every one on this computer ("this-computer" or any
+ * account's device here, the owner's for a member's import) is `host`'s (hostHere), so only this computer's path of each
+ * folder weighs, never another computer's path to the same folder.
+ */
+export const listsHere = (media: StorageFolder[], host: string): StorageFolder[] =>
+  media.map((m) => (onThisComputer(m) ? { ...m, origin: { ...m.origin, host } } : m));
+
+/** `media`'s Folders left out are checked on computer `o.host` (none: every computer's path); `o.dropped`, when given, gets
+ *  the files they kept out (leaveWatched's moved-in check); a file one of the library's copies wrote (`o.copies`) is never
+ *  left out. */
+export async function filesIn(root: string, keepOut: string[] = [], media: StorageFolder[] = [], o: { dropped?: string[]; copies?: Set<string>; host?: string } = {}): Promise<string[]> {
   const all = await readdir(root, { recursive: true, withFileTypes: true });
   const seen = all
     .filter((e) => e.isFile() && kindOf(e.name) !== "doc" && !RAW_FILE.test(e.name))
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
-  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !keepOut.some((k) => inside(p, k)));
+  return seen.filter((p) => {
+    if (notFootage(path.relative(root, p), editorDirs) || keepOut.some((k) => inside(p, k))) return false;
+    if (!leftOutBy(media, p, o.host) || o.copies?.has(p)) return true;
+    o.dropped?.push(p);
+    return false;
+  });
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
@@ -632,10 +653,13 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
     }
     const dup = db()
       .prepare(
-        `SELECT v.id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+        `SELECT v.id, v.asset_id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          WHERE a.library_id = ? AND v.sha256 = ? ORDER BY a.trashed_at IS NOT NULL, v.state = 'missing' DESC, v.created_at LIMIT 1`,
       )
-      .get(libraryId, sha256) as { id: string; state: string; source_key: string; source_path: string | null } | undefined;
+      .get(libraryId, sha256) as { id: string; asset_id: string; state: string; source_key: string; source_path: string | null } | undefined;
+    // the same file read where it is (outside a left-out folder: filesIn and in-place keep those out): one hidden while it
+    // waited is here after all
+    if (dup) showHidden(dup.asset_id);
     // a referenced file gone from its path, here now (moved or renamed): it reads it here, and refreshMissing brings it back
     if (dup?.state === "missing" && dup.source_path && f.mode === "reference") await pointSource(dup.id, dup.source_key, file);
     // already in the library (a browser upload of it, the same file in another folder), or in its trash: it stays there
@@ -719,6 +743,103 @@ export async function copyInto(root: string, copyTo: string, file: string, size:
   }
 }
 
+/**
+ * Clips this watch took in from files a Media folder now leaves out (`media`, leftOutBy), over the whole library: into the
+ * trash as a computer's scan does (report.ts settleLeft), unless a copy of the clip is still read in any of its folders
+ * (`live`: this pass's files) or found elsewhere. A version whose own file just went from where it read it, in a folder
+ * read now (`read`), with the size and time of a file now in a left-out folder (`dropped`), was moved in there: it
+ * counts as left out too. The left-out files are no copy any more, and a version that read one reads its own copy that
+ * keeps the clip from now on. A file one of the library's copies wrote (`copies`) is never left out. True when one moved
+ * to the trash.
+ */
+/** Each library's left-out files as last read, `${size}:${mtime}` by path (leaveWatched's moved-in look). */
+const droppedSeen = new Map<string, Map<string, string>>();
+/** Each library's files gone from where they were at its last pass (leaveWatched): a new one clears droppedSeen. */
+const vanishedSeen = new Map<string, Set<string>>();
+
+async function leaveWatched(
+  libraryId: string,
+  media: StorageFolder[],
+  host: string,
+  seen: { live: Set<string>; dropped: string[]; read: string[]; unread: string[]; unseen: Set<string>; finals: string[] },
+  copies: Set<string>,
+  now: number,
+): Promise<boolean> {
+  const { live, dropped, read, unread, unseen, finals } = seen;
+  if (!media.some((m) => m.leaveOut?.length)) return false;
+  const rows = db()
+    .prepare(
+      `SELECT w.path, w.size, w.mtime, w.version_id, v.asset_id, v.source_key, v.source_path, v.state FROM watch_seen w
+         JOIN asset_versions v ON v.id = w.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE w.library_id = ? AND a.trashed_at IS NULL`,
+    )
+    .all(libraryId) as { path: string; size: number; mtime: number; version_id: string; asset_id: string; source_key: string; source_path: string | null; state: string }[];
+  // a Finals folder is read with no lists (scanFolders): a final is never left out, whatever its project folder is named
+  const under = (roots: string[]) => (p: string) => roots.some((root) => p.startsWith(root + path.sep));
+  const inFinals = under(finals);
+  const out = new Set(rows.filter((r) => !inFinals(r.path) && leftOutBy(media, r.path, host) && !copies.has(r.path)).map((r) => r.path));
+  // moved in: only while a version's own file just went from where it read it (never a copy that went), in a folder read now
+  const inRead = under(read);
+  // a file gone from a folder read now whose size and time a file new to the watch has (`unseen`): renamed or moved
+  // there, so the watch takes it in at its new path (ingest points the version there); never moved into a left-out folder
+  const renamed = (r: { path: string; size: number; mtime: number }) => !live.has(r.path) && inRead(r.path) && unseen.has(`${r.size}:${r.mtime}`);
+  const vanished = rows.filter((r) => r.source_path === r.path && !out.has(r.path) && !live.has(r.path) && inRead(r.path) && !renamed(r));
+  // each left-out file's size and time, read once and kept while it stays left out (a file deleted long ago keeps
+  // `vanished` non-empty: no pass reads thousands of left-out files again)
+  const known = droppedSeen.get(libraryId) ?? new Map<string, string>();
+  droppedSeen.set(libraryId, known);
+  // a file that went this pass may have gone into a left-out folder in place of one read before: all are read again then
+  const before = vanishedSeen.get(libraryId);
+  if (vanished.some((r) => !before?.has(r.path))) known.clear();
+  vanishedSeen.set(libraryId, new Set(vanished.map((r) => r.path)));
+  const still = new Set(dropped);
+  for (const p of known.keys()) if (!still.has(p)) known.delete(p);
+  for (const p of vanished.length ? dropped : []) {
+    let at = known.get(p);
+    if (at === undefined) {
+      const st = await stat(p).catch(() => null);
+      if (!st) continue;
+      known.set(p, (at = `${st.size}:${Math.floor(st.mtimeMs)}`));
+    }
+    for (const r of vanished) if (`${r.size}:${r.mtime}` === at) out.add(r.path);
+  }
+  // a clip hidden while it waited (report.ts hideLeft) with a copy read here now: shown again
+  const hidden = new Set((db().prepare("SELECT id FROM assets WHERE library_id = ? AND left_hidden_at IS NOT NULL").all(libraryId) as { id: string }[]).map((x) => x.id));
+  if (hidden.size) for (const r of rows) if (hidden.has(r.asset_id) && live.has(r.path) && !out.has(r.path) && !copies.has(r.path)) showHidden(r.asset_id);
+  if (!out.size) return false;
+  const assets = new Set(rows.filter((r) => out.has(r.path)).map((r) => r.asset_id));
+  // a clip with a copy read here stays, and so does one with a file in a folder not read this pass (its drive away: unknown,
+  // never gone); each version reads its own copy (never another version's, never one of the library's copies)
+  // (`sure`: kept on a copy known now; one kept only on a folder not read is hidden until it is: a privacy list)
+  const kept = new Set<string>();
+  const sure = new Set<string>();
+  const copyOf = new Map<string, string>();
+  const inUnread = (p: string) => unread.some((root) => p.startsWith(root + path.sep));
+  for (const r of rows) {
+    if (out.has(r.path) || copies.has(r.path) || !assets.has(r.asset_id)) continue;
+    if (inUnread(r.path)) kept.add(r.asset_id);
+    if (renamed(r)) [kept, sure].forEach((s) => s.add(r.asset_id));
+    if (!live.has(r.path)) continue;
+    [kept, sure].forEach((s) => s.add(r.asset_id));
+    if (!copyOf.has(r.version_id)) copyOf.set(r.version_id, r.path);
+  }
+  const hide = db().prepare("UPDATE assets SET left_hidden_at = ? WHERE id = ? AND left_hidden_at IS NULL");
+  const copyKnown = knownCopy();
+  for (const a of kept) {
+    // a copy known elsewhere (a verified place on a computer) shows it: never hidden and shown again every pass
+    if (sure.has(a) || copyKnown(a, media)) showHidden(a);
+    else hide.run(now, a);
+  }
+  // the place this computer had at that file (serverPlace): by its version, so the key finds it; one gone already stays
+  const gone = db().prepare("UPDATE version_places SET state = 'gone', gone_at = ? WHERE version_id = ? AND kind = 'original' AND source = 'server-disk' AND path = ? AND state <> 'gone'");
+  for (const r of rows.filter((x) => out.has(x.path))) {
+    gone.run(now, r.version_id, r.path);
+    const copy = copyOf.get(r.version_id);
+    if (copy && r.source_path === r.path) await pointSource(r.version_id, r.source_key, copy);
+  }
+  return settleLeft([...assets].filter((a) => !kept.has(a)), now, "watch", media).length > 0;
+}
+
 /** One pass over a library's watch folders. Returns how many files it took in (new versions or known duplicates). */
 async function scanLibrary(libraryId: string, now: number, folders: WatchFolder[]): Promise<number> {
   try {
@@ -730,6 +851,12 @@ async function scanLibrary(libraryId: string, now: number, folders: WatchFolder[
 
 async function scanFolders(libraryId: string, now: number, folders: WatchFolder[]): Promise<number> {
   let took = 0;
+  // the Folders left out, over every folder of the library at once (leaveWatched)
+  const pass = { live: new Set<string>(), dropped: [] as string[], read: [] as string[], unread: [] as string[], unseen: new Set<string>(), finals: [] as string[] };
+  let media: StorageFolder[] = [];
+  let host: string = THIS_COMPUTER;
+  // the copies' files, read once a folder of the library has a list (nothing to tell apart before that)
+  let copies: Set<string> | undefined;
   for (const f of folders) {
     // files come in as the owner who added the folder, while the library is still theirs; never as anyone else
     if (!libraryRole(f.addedBy, libraryId)) continue;
@@ -737,11 +864,20 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
     const folderKey = `${libraryId}\0${f.path}`;
     try {
       // a Finals folder (f.projects) is read in its projects' subfolders, which may sit in an Exports folder: nothing is kept out there
-      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy));
+      const here = hostHere(f.addedBy);
+      const lists = f.projects ? [] : listsHere(await mediaFoldersOf(f.addedBy), here);
+      if (!copies && lists.some((m) => m.leaveOut?.length)) copies = copyFilesOn([THIS_COMPUTER, ...listDevices((d) => isThisMachine(d.id)).map((d) => d.id)]);
+      // the lists are known whether or not the folder can be read: one away still has its clips judged (kept, hidden)
+      if (!media.length && lists.length) [media, host] = [lists, here];
+      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), lists, { dropped: pass.dropped, copies, host: here });
+      for (const p of files) pass.live.add(p);
+      pass.read.push(f.path);
+      if (f.projects) pass.finals.push(f.path);
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {
       walked.delete(folderKey);
+      pass.unread.push(f.path);
       continue; // unplugged or unreadable: its referenced files turn missing in refreshMissing
     }
     // how many of this folder's files are still to be taken, counted down as each comes in
@@ -761,6 +897,7 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
         | { size: number; mtime: number; version_id: string | null }
         | undefined;
       const key = `${libraryId}\0${file}`;
+      if (!seen) pass.unseen.add(`${size}:${mtime}`);
       if (seen && seen.size === size && seen.mtime === mtime) {
         pending.delete(key);
         stuck.delete(key);
@@ -790,7 +927,9 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
       tell(libraryId);
     }
   }
-  if (took) libraryChanged(libraryId);
+  // no list left in the library: what the watch hid while a folder was unread is shown again (nothing would show it else)
+  const unhid = copies ? 0 : Number(db().prepare("UPDATE assets SET left_hidden_at = NULL WHERE library_id = ? AND left_hidden_at IS NOT NULL AND left_hidden_on IS NULL").run(libraryId).changes);
+  if ((copies && (await leaveWatched(libraryId, media, host, pass, copies, now))) || took || unhid) libraryChanged(libraryId);
   return took;
 }
 
@@ -856,6 +995,8 @@ export async function scanWatchFolders(now = Date.now()): Promise<number> {
   for (const [id, list] of lists) took += await scanLibrary(id, now, list);
   // ponytail: stats every referenced file each pass; fine to tens of thousands, batch by folder past that
   await refreshMissing();
+  // a clip hidden on a computer that stopped reporting goes to the trash (report.ts settleSilent)
+  for (const l of await settleSilent(now)) libraryChanged(l);
   return took;
 }
 

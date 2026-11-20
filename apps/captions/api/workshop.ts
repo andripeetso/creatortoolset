@@ -3418,7 +3418,7 @@ async function finalFromVersion(meta: SessionMeta, who: string, video: string, d
     .prepare(
       `SELECT a.library_id AS lib, a.title, v.id AS version, v.state, json_extract(v.probe, '$.width') AS w, json_extract(v.probe, '$.height') AS h
          FROM assets a JOIN asset_versions v ON v.asset_id = a.id
-        WHERE a.trashed_at IS NULL AND (v.id = ? OR (a.id = ? AND v.id = a.current_version_id))`,
+        WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.id = ? OR (a.id = ? AND v.id = a.current_version_id))`,
     )
     .get(video, video) as { lib: string; title: string | null; version: string; state: string; w: number | null; h: number | null } | undefined;
   if (!row || libraryRole(who, row.lib) !== "owner") return { code: 404, body: { error: "No such video of yours" } };

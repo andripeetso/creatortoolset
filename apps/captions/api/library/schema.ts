@@ -674,4 +674,25 @@ export const MIGRATIONS: string[] = [
   // original link on, upload-gate.ts mayLeave); an upload declares it at its start
   `ALTER TABLE asset_versions ADD COLUMN blurred_of TEXT;
   ALTER TABLE uploads ADD COLUMN blurred_of TEXT;`,
+  // a file by its size and fingerprint (report.ts: a scan's match, a file moved into a left-out folder)
+  `CREATE INDEX IF NOT EXISTS versions_quick ON asset_versions(quick);`,
+  // Folders left out (report.ts): a clip whose only known place is in a left-out folder, while it waits to be trashed or
+  // kept, is hidden from every view, search, AI, player and share link (a privacy list, owner 2026-11-20). Not the trash
+  `ALTER TABLE assets ADD COLUMN left_hidden_at INTEGER;`,
+  // the computer a hidden clip waits on (report.ts adoptLeft): after a restart only that computer takes up its wait
+  `ALTER TABLE assets ADD COLUMN left_hidden_on TEXT;`,
+  // when each running listing started (report.ts), kept through a restart: a listing that began before a clip was found
+  // in a left-out folder never counts as read since, and its last page marks gone only what it did not name
+  `CREATE TABLE listing_starts (key TEXT PRIMARY KEY, at INTEGER NOT NULL);`,
+  // a clip hidden on a computer that went silent (report.ts settleSilent): trashed, with that computer's name for the
+  // Library status line; and when each computer no longer paired was first missed (its silence starts then)
+  `ALTER TABLE assets ADD COLUMN left_trashed_from TEXT;
+  CREATE TABLE left_gone_computers (device TEXT PRIMARY KEY, since INTEGER NOT NULL);`,
+  // the pages of each running listing that came (report.ts), so one with a page lost never counts as whole; and the
+  // clips hidden while they wait, found fast (few)
+  `ALTER TABLE listing_starts ADD COLUMN pages TEXT NOT NULL DEFAULT '[]';
+  CREATE INDEX IF NOT EXISTS assets_left_hidden ON assets(left_hidden_at) WHERE left_hidden_at IS NOT NULL;`,
+  // the server process a listing began in (report.ts): one of a computer that numbers no pages, begun before a restart,
+  // marks nothing gone
+  `ALTER TABLE listing_starts ADD COLUMN boot TEXT;`,
 ];

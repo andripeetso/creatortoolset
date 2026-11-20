@@ -49,7 +49,7 @@ bulkApp.get("/:id/zip", async (c) => {
   const taken = new Set<string>();
   for (const id of ids) {
     const a = db()
-      .prepare("SELECT a.current_version_id AS v, s.source_key AS key, s.mac_path FROM assets a JOIN asset_versions s ON s.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?")
+      .prepare("SELECT a.current_version_id AS v, s.source_key AS key, s.mac_path FROM assets a JOIN asset_versions s ON s.id = a.current_version_id WHERE a.id = ? AND a.library_id = ? AND a.left_hidden_at IS NULL")
       .get(id, libraryId) as { v: string; key: string; mac_path: string | null } | undefined;
     // an original kept on a Mac is not here (its source may be its proxy): the zip holds originals only
     if (!a || a.mac_path || !(await canSee(viewer, assetRef(libraryId, id, a.v)))) continue;
@@ -93,8 +93,8 @@ bulkApp.post("/:id/jobs", async (c) => {
   const asked = Array.isArray(b?.assetIds) ? b.assetIds.filter((x): x is string => typeof x === "string").slice(0, MAX_IDS) : null;
   const rows = (
     asked
-      ? asked.map((id) => db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(id, libraryId))
-      : db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE library_id = ? AND trashed_at IS NULL").all(libraryId)
+      ? asked.map((id) => db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(id, libraryId))
+      : db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").all(libraryId)
   ).filter(Boolean) as { id: string; kind: string; v: string | null }[];
   // described again: what the person's own tags mean is learned first, so this pass already knows (learn.ts)
   if (b?.count !== true && kinds.includes("describe")) await learnAll(db(), libraryId, user.username).catch(() => 0);

@@ -227,5 +227,11 @@ describe("on this computer", () => {
     d.prepare("DELETE FROM jobs WHERE library_id = 'lib_b' AND state = 'queued'").run();
     catchUpEmbeds(d);
     expect(queued("lib_b")).toEqual(["ver-b-here", "ver-b-old", "ver-b-parked"]);
+    // a clip hidden while it waits on Folders left out (report.ts) gets no search data until it is shown
+    d.prepare("UPDATE assets SET left_hidden_at = 1 WHERE current_version_id = 'ver-b-old'").run();
+    d.prepare("DELETE FROM jobs WHERE library_id = 'lib_b' AND state = 'queued'").run();
+    catchUpEmbeds(d);
+    expect(queued("lib_b")).toEqual(["ver-b-here", "ver-b-parked"]);
+    d.prepare("UPDATE assets SET left_hidden_at = NULL WHERE current_version_id = 'ver-b-old'").run();
   });
 });

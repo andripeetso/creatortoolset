@@ -104,7 +104,7 @@ export async function offlineFor(d: Pick<Device, "id" | "owner">): Promise<WorkO
     .prepare(
       `SELECT v.id, a.id AS asset_id, a.title, a.library_id, p.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        JOIN derivatives p ON p.version_id = v.id AND p.kind = 'proxy'
-       WHERE a.trashed_at IS NULL AND v.mac_device IS NOT ?
+       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.mac_device IS NOT ?
          AND NOT EXISTS (SELECT 1 FROM version_places vp WHERE vp.version_id = v.id AND vp.device = ? AND vp.kind = 'original' AND vp.state IN ('verified', 'found'))
          AND (v.id IN (SELECT value FROM json_each(?))
            OR (v.id = a.current_version_id AND (a.library_id IN (SELECT value FROM json_each(?))
@@ -117,7 +117,7 @@ export async function offlineFor(d: Pick<Device, "id" | "owner">): Promise<WorkO
     const files = db()
       .prepare(
         `SELECT v.id, a.id AS asset_id, a.title, a.library_id, v.bytes FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-         WHERE a.trashed_at IS NULL AND v.id = a.current_version_id AND v.bytes > 0 AND v.mac_path IS NULL AND v.source_key NOT LIKE 'mac:%'
+         WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.id = a.current_version_id AND v.bytes > 0 AND v.mac_path IS NULL AND v.source_key NOT LIKE 'mac:%'
            AND a.library_id IN (SELECT value FROM json_each(?))
            AND NOT EXISTS (SELECT 1 FROM version_places vp WHERE vp.version_id = v.id AND vp.device = ? AND vp.kind = 'original' AND vp.state IN ('verified', 'found'))`,
       )
@@ -145,7 +145,7 @@ export async function dropFor(owner: string, cached: string[]): Promise<string[]
   const rows = db()
     .prepare(
       `SELECT v.id, a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.trashed_at IS NULL AND v.id IN (SELECT value FROM json_each(?))`,
+       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.id IN (SELECT value FROM json_each(?))`,
     )
     .all(JSON.stringify(cached)) as { id: string; asset_id: string; library_id: string }[];
   const keep = new Set<string>();

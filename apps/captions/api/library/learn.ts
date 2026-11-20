@@ -63,7 +63,7 @@ export async function learnTag(db: DatabaseSync, libraryId: string, tag: string,
   const rows = db
     .prepare(
       `SELECT a.id, a.title, ${SHOWS} AS text FROM asset_tags t JOIN assets a ON a.id = t.asset_id
-       WHERE a.library_id = ? AND lower(t.tag) = lower(?) AND t.source = 'user' AND a.trashed_at IS NULL ORDER BY a.id LIMIT ${LEARN_FROM}`,
+       WHERE a.library_id = ? AND lower(t.tag) = lower(?) AND t.source = 'user' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL ORDER BY a.id LIMIT ${LEARN_FROM}`,
     )
     .all(libraryId, tag) as Row[];
   if (!rows.length) {
@@ -100,7 +100,7 @@ export async function suggestTag(db: DatabaseSync, libraryId: string, tag: strin
   const rows = db
     .prepare(
       `SELECT a.id, a.title, ${SHOWS} AS text FROM assets a
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.kind IN ('video', 'image') AND ${SHOWS} IS NOT NULL
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind IN ('video', 'image') AND ${SHOWS} IS NOT NULL
          AND NOT EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = a.id AND lower(t.tag) = lower(?))
          AND NOT EXISTS (SELECT 1 FROM tag_rejections r WHERE r.asset_id = a.id AND lower(r.tag) = lower(?))
        ORDER BY a.created_at DESC LIMIT ${SUGGEST_FROM}`,
@@ -131,7 +131,7 @@ export async function learnAll(db: DatabaseSync, libraryId: string, actor: strin
   const tags = [
     ...new Set(
       [
-        ...(db.prepare("SELECT DISTINCT t.tag FROM asset_tags t JOIN assets a ON a.id = t.asset_id WHERE a.library_id = ? AND t.source = 'user' AND a.trashed_at IS NULL").all(libraryId) as { tag: string }[]),
+        ...(db.prepare("SELECT DISTINCT t.tag FROM asset_tags t JOIN assets a ON a.id = t.asset_id WHERE a.library_id = ? AND t.source = 'user' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL").all(libraryId) as { tag: string }[]),
         ...(db.prepare("SELECT tag FROM tag_notes WHERE library_id = ?").all(libraryId) as { tag: string }[]),
       ].map((r) => r.tag),
     ),

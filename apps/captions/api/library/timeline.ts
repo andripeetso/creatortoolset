@@ -716,7 +716,7 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
       `SELECT v.id, v.created_by AS actor, a.library_id AS lib FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
          JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
-       WHERE a.trashed_at IS NULL AND v.created_by IS NOT NULL AND IFNULL(json_extract(l.settings, '$.timeline'), 1)
+       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND IFNULL(json_extract(l.settings, '$.timeline'), 1)
          AND (t.version_id IS NULL OR (t.error IS NOT NULL AND t.at <= ?) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
               OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
        ORDER BY v.created_at DESC LIMIT 50`,

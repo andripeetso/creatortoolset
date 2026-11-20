@@ -35,7 +35,7 @@ export function closestVersions(libraryId: string, versionId: string): { version
   const rows = db
     .prepare(
       `SELECT e.version_id, e.model, e.vec FROM embeddings e JOIN assets a ON a.current_version_id = e.version_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND e.model = ? AND e.dims > 0 AND e.version_id != ?`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND e.model = ? AND e.dims > 0 AND e.version_id != ?`,
     )
     .all(libraryId, model, versionId) as Row[];
   const best = new Map<string, number>();
@@ -57,7 +57,7 @@ relatedApp.get("/:id/assets/:assetId/related", async (c) => {
   const libraryId = c.req.param("id");
   const viewer = await readerOf(c.get("user").username, libraryId);
   const a = viewer
-    ? (libraryDb().prepare("SELECT id, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(c.req.param("assetId"), libraryId) as
+    ? (libraryDb().prepare("SELECT id, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(c.req.param("assetId"), libraryId) as
         | { id: string; current_version_id: string | null }
         | undefined)
     : undefined;
@@ -84,7 +84,7 @@ relatedApp.get("/:id/assets/:assetId/alike", async (c) => {
   const libraryId = c.req.param("id");
   const viewer = await readerOf(c.get("user").username, libraryId);
   const a = viewer
-    ? (libraryDb().prepare("SELECT id, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(c.req.param("assetId"), libraryId) as
+    ? (libraryDb().prepare("SELECT id, current_version_id FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(c.req.param("assetId"), libraryId) as
         | { id: string; current_version_id: string | null }
         | undefined)
     : undefined;
