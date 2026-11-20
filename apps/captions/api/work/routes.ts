@@ -68,6 +68,8 @@ workApp.post("/claim", async (c) => {
         ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
         ...(strings(raw.offline, 20_000) ? { offline: raw.offline as string[] } : {}),
         ...(strings(raw.versions, 20_000) ? { versions: raw.versions as string[] } : {}),
+        // where its cache is on that computer: a plug-in's proxy plays from there (lib/plugin.ts computerProxies)
+        ...(typeof raw.dir === "string" && raw.dir.startsWith("/") && raw.dir.length <= 1024 ? { dir: raw.dir } : {}),
       }
     : undefined;
   // its unfinished downloads: asked about with the versions, never counted as held

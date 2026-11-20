@@ -213,7 +213,7 @@ export interface Device {
    * takes only Media Library jobs (CT_WORKER_KINDS=library), never an editor step. `tasks`: the computer task kinds it
    * runs (api/work/tasks.ts); absent on an older worker, which is never handed one.
    */
-  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[] }; empty?: true; library?: true; libraryKinds?: string[]; pictures?: true; at?: number; libraryOnly?: true; tasks?: string[]; proof?: true;
+  work?: { v: number; steps: string[]; cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; dir?: string }; empty?: true; library?: true; libraryKinds?: string[]; pictures?: true; at?: number; libraryOnly?: true; tasks?: string[]; proof?: true;
     /** when a claim last asked for library work (work/routes.ts): only a claim writes it, never a poll */
     libraryAt?: number;
     /** the package version that was too old: the claim was answered `update`, or a library package handed back as newer

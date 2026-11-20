@@ -209,5 +209,6 @@ export function cacheReport(): WorkClaimBody["cache"] {
     ...(offline.length ? { offline } : {}),
     versions,
     ...(parts.length ? { parts } : {}),
+    dir: proxiesDir(),
   };
 }

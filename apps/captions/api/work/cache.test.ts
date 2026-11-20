@@ -38,7 +38,7 @@ describe("the proxy cache", () => {
     expect(trimCache()).toEqual([]);
     setKeptOffline(["va"]);
     process.env.CT_PROXY_LIMIT = "1000";
-    expect(cacheReport()).toEqual({ bytes: 35, limit: 1000, offline: ["va"], versions: expect.arrayContaining(["va", "vb"]), parts: ["vc"] });
+    expect(cacheReport()).toEqual({ bytes: 35, limit: 1000, offline: ["va"], versions: expect.arrayContaining(["va", "vb"]), parts: ["vc"], dir: proxiesDir() });
   });
 
   it("over the limit, the least recently used go first, never one kept offline", () => {
@@ -196,7 +196,7 @@ describe("the worker and its cache", () => {
     claims = [{ pkg: null, account: "bo" }, { pkg, account: "bo" }];
     expect(await bo.computer.startComputerWorker(o)).toBe("update");
     expect(bodies[0]!.cache).toBeUndefined(); // nothing reported before the server named the account
-    expect(bodies[1]!.cache).toEqual({ bytes: 0, limit: 25e9, versions: [] }); // the first account's proxy is not its
+    expect(bodies[1]!.cache).toEqual({ bytes: 0, limit: 25e9, versions: [], dir: expect.stringMatching(/\/proxies\/bo$/) }); // the first account's proxy is not its
     expect(got).toEqual(["footage va"]); // so its step downloads its own copy
     expect(bodies[2]!.cache).toMatchObject({ bytes: 5, versions: ["va"] });
     expect(bo.cache.proxiesDir()).toBe(path.join(dir, "proxies", "bo"));

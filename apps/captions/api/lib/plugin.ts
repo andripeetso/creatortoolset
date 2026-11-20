@@ -5,7 +5,8 @@ import type { LibrarySlot, LibrarySource } from "../../contracts/library-source"
 import type { CopyItem, LibraryCopy } from "../../contracts/library";
 import type { EditFlag, FootageTarget, Timeline } from "../../contracts/editor";
 import type { StepInfo } from "../../contracts/editor-steps";
-import { DRIVERS, type DriverKind, type ProviderPreset } from "../../contracts/providers";
+import { DRIVERS, type Device, type DriverKind, type ProviderPreset } from "../../contracts/providers";
+import type { ComputerProxy } from "../../contracts/work";
 import { checkLibrarySlots, registerLibrarySlot } from "../library/sources";
 import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
@@ -108,6 +109,10 @@ export interface ServerPlugin {
   receiveFile?: (user: SessionUser, file: ReceivedFile) => Promise<Received>;
   // Work a Mac of the account's own runs for this plug-in: a kind its claim lists (api/devices.ts asks each in turn).
   deviceJobs?: DeviceJobSlot[];
+  // Proxies of the plug-in's own items made on the account's computer from a file there and kept in its cache (the editor
+  // plays them): `make` lists the ones that computer should make now (its last cache report says what it has); `keeps`
+  // says an id in a cache is the plug-in's, so the claim never tells the computer to drop it (api/work/offline.ts).
+  computerProxies?: { make: (device: Device) => Promise<ComputerProxy[]>; keeps: (owner: string, id: string) => Promise<boolean> };
   // Replaces a built-in tool: answers that tool's old root paths (the URLs a script or worker still posts to), mounted by
   // boot.ts ahead of the built-in router, so the plug-in answers first. `paths` must be in REPLACEABLE_PATHS, and no two
   // plug-ins may claim one. `largeBodies` are the request paths that may carry a body over 50 MB (read after the token check).
@@ -396,6 +401,7 @@ export function pluginServerWork(q: { account: string | null; workspace: string 
 }
 
 export const pluginDeviceJobs = (): DeviceJobSlot[] => loaded.flatMap((p) => p.deviceJobs ?? []);
+export const pluginComputerProxies = () => loaded.flatMap((p) => (p.computerProxies ? [p.computerProxies] : []));
 export const pluginServerName = (): string | undefined => loaded.find((p) => p.serverName)?.serverName;
 export const pluginCopySources = (): CopySource[] => loaded.flatMap((p) => (p.copySource ? [p.copySource] : []));
 

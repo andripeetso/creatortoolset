@@ -2,7 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
 import type { Device } from "../../contracts/providers";
-import type { WorkOffline } from "../../contracts/work";
+import type { ComputerProxy, WorkOffline } from "../../contracts/work";
+import { pluginComputerProxies } from "../lib/plugin";
 import { hostsOriginals, hostsProxies, LIBRARY_WORDS } from "../../contracts/library";
 import { actionDone, goOnFor } from "../lib/action-done";
 import type { AuthVars } from "../auth";
@@ -157,12 +158,21 @@ export async function dropFor(owner: string, cached: string[]): Promise<string[]
  * computer still keeps one (`kept`, its claim's report), so it lets go of what was switched off, and the cached
  * versions (`cached`) it must delete.
  */
-export async function claimExtras(deviceId: string, kept?: string[], cached?: string[]): Promise<{ empty?: true; offline?: WorkOffline[]; drop?: string[] }> {
+const someAsync = async <T>(xs: T[], f: (x: T) => Promise<boolean>) => {
+  for (const x of xs) if (await f(x).catch(() => false)) return true;
+  return false;
+};
+
+export async function claimExtras(deviceId: string, kept?: string[], cached?: string[]): Promise<{ empty?: true; offline?: WorkOffline[]; drop?: string[]; make?: ComputerProxy[] }> {
   const d = deviceOf(deviceId);
   if (!d) return {};
   const list = await offlineFor(d);
-  const gone = await dropFor(d.owner, cached ?? []);
-  const extras = { ...(list.length || kept?.length ? { offline: list } : {}), ...(gone.length ? { drop: gone } : {}) };
+  // a plug-in's own proxies (lib/plugin.ts computerProxies) are no versions here: kept, and the ones it wants made asked for
+  const slots = pluginComputerProxies();
+  const gone: string[] = [];
+  for (const id of await dropFor(d.owner, cached ?? [])) if (!(await someAsync(slots, (s) => s.keeps(d.owner, id)))) gone.push(id);
+  const make = (await Promise.all(slots.map((s) => s.make(d).catch(() => [])))).flat().filter((m) => !cached?.includes(m.id));
+  const extras = { ...(list.length || kept?.length ? { offline: list } : {}), ...(gone.length ? { drop: gone } : {}), ...(make.length ? { make } : {}) };
   if (!d.work?.empty) return extras;
   const { empty: _, ...work } = d.work;
   setDeviceWork(d.id, work);

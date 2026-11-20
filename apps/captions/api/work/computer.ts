@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import nodeModule from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { WORK_V, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
+import { WORK_V, type ComputerProxy, type WorkClaim, type WorkOffline, type WorkOutcome, type WorkPackage, type WorkResult, type WorkTable } from "../../contracts/work";
 import { Waiting } from "../editor/analyze";
 import { editDir, readEdit } from "../editor/store";
 import { limitWait, markRead, STEPS } from "../editor/worker";
@@ -13,7 +13,8 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
+import { cacheReport, dropProxies, setCacheAccount, emptyCache, keepProxy, keptPath, proxiesDir, proxyPath, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
+import { makeProxy } from "../library/media/proxy";
 import { downloadInto, resolveFiles, type Progress } from "./files";
 import { cancelLibraryJob, LIBRARY_HERE, runLibraryJob, runPictureJob, scratchRoom, stopLibraryJob, sweepScratch } from "./library";
 import { processesGone } from "../library/media/run";
@@ -262,9 +263,43 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
       console.log("[work] the server needs a newer Creator Toolset to hand it steps");
       return "update";
     } else if (claim.offline && (await keepOffline(claim.offline, o))) idleSince = Date.now();
+    else if (claim.make && (await makeKept(claim.make))) idleSince = Date.now();
   }
   return "idle";
 }
+
+/**
+ * Makes one proxy a plug-in asked for (contracts/work.ts ComputerProxy) from its file on this computer and keeps it in
+ * the cache as `<id>.mp4` (cache.ts keepProxy: never sent, never trimmed); the next claim comes first. Only a file inside
+ * the item's `under`, with no "..", is read. True when it made one.
+ */
+export async function makeKept(list: ComputerProxy[]): Promise<boolean> {
+  const m = list.find((x) => okId(x.id) && !tried.has(x.id) && sizeOf(proxyPath(x.id)) === null);
+  if (!m) return false;
+  // once per run: a file its proxy isn't smaller than (makeProxy keeps none), or one that fails, isn't made on every claim
+  tried.add(m.id);
+  const under = m.under.endsWith("/") ? m.under : `${m.under}/`;
+  if (!m.path.startsWith(under) || m.path.split("/").includes("..")) {
+    console.warn(`[work] proxy ${m.id}: ${m.path} is not inside ${under}`);
+    return false;
+  }
+  // made beside the cache's files under a name the cache doesn't count (makeProxy writes through its own .part)
+  const part = `${proxyPath(m.id)}.new`;
+  try {
+    mkdirSync(proxiesDir(), { recursive: true });
+    if (await makeProxy(m.path, part, false, m.quality ?? "standard")) keepProxy(m.id, part);
+    return true;
+  } catch (e) {
+    console.warn(`[work] proxy ${m.id}:`, e instanceof Error ? e.message : e);
+    return false;
+  } finally {
+    rmSync(part, { force: true });
+  }
+}
+
+const tried = new Set<string>();
+/** An id a cache file can be named by (ProxyCache.swift url: no "/", not hidden). */
+const okId = (id: string) => /^[\w-]{1,100}$/.test(id);
 
 /**
  * Downloads one proxy kept offline that the cache lacks, from the server's offline route; the next claim comes first,
