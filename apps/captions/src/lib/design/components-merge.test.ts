@@ -419,4 +419,14 @@ describe("saves on their way, kept and settled (last gate)", () => {
     const theirs = [f([shape("l1"), text("l3", "Hi", { weight: 400, size: 1000 }), shape("l9")])];
     expect(xs(mergeFrames(sent, base, theirs, [{ pages: sent, base }]))).toEqual(["l1@0", "l3@10", "l9@0"]);
   });
+
+  it("takes a new text the server trimmed (spaces at its ends, a name's spaces) as the one sent, with what was typed since", () => {
+    const base = [f([shape("l1")])];
+    const sent = [f([shape("l1"), text("l3", "Hello \r\n", { name: "  My  words " })])];
+    const theirs = [f([shape("l1"), text("l3", "Hello", { name: "My words" }), shape("l9")])];
+    const mine = [f([shape("l1"), text("l3", "Hello wor", { name: "  My  words " })])];
+    const out = mergeFrames(mine, base, theirs, [{ pages: sent, base }]);
+    expect(xs(out)).toEqual(["l1@0", "l3@10", "l9@0"]);
+    expect((out[0]!.layers[1] as TextLayer).text).toBe("Hello wor");
+  });
 });

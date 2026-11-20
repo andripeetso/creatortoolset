@@ -494,10 +494,15 @@ function indexed(layers: readonly Layer[]): Map<string, At> {
   walk(layers, ROOT, false);
   return out;
 }
-/** What a layer is, beside how it looks: told apart from another layer whatever the server cleaned of it. */
-const whatItIs = (l: Layer): string => {
+/**
+ * What a layer is and where, beside how it looks: told apart from another layer whatever the server cleaned of it (words
+ * and names trimmed as design-check keeps them). `flowing`: in an auto layout, where its place is the box's, not its own.
+ */
+const whatItIs = (l: Layer, flowing: boolean): string => {
   const r = l as unknown as Rec;
-  return stable([l.type, r.text, r.picture, r.shape, r.svg, l.name, r.component, (r.instance as { of?: string } | undefined)?.of]);
+  const words = typeof r.text === "string" ? r.text.replace(/\r\n/g, "\n").trim() : r.text;
+  const name = typeof l.name === "string" ? l.name.replace(/\s+/g, " ").trim() : l.name;
+  return stable([l.type, words, r.picture, r.shape, r.svg, name, r.component, (r.instance as { of?: string } | undefined)?.of]);
 };
 /** The containers a layer lies in on one side, innermost first. */
 function* ancestors(side: ReadonlyMap<string, At>, id: string): Generator<string> {
@@ -526,12 +531,16 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
   // each layer a save on its way left as the server has it (sent so, or taken out of what it was sent on): that is its
   // base, so what this window did since (an undo too) is its own and a layer it sent is not a second one
   if (sent.length) {
+    const flowsIn = (parent: string) => {
+      const p = T.get(parent)?.l;
+      return isGroup(p) && !!p.box && !!p.layout;
+    };
     const saves = sent.map((s) => ({ sent: indexed(s.layers ?? []), was: indexed(s.base ?? []) }));
     for (const id of new Set([...T.keys(), ...saves.flatMap((s) => [...s.sent.keys(), ...s.was.keys()])])) {
       // (a layer new to the base is the one sent by what it is — its kind, words, picture, shape, drawing, name, main — not
       // by values the server may have cleaned, a weight snapped or a size held in; another's new layer under that id differs)
       const fresh = !B.has(id);
-      const a = agreed(saves.map((s) => says(s.sent.get(id), s.was.has(id))), T.get(id), (x, y) => x.parent === y.parent && (fresh ? whatItIs(x.l) === whatItIs(y.l) : rounded(ownOf(x, false)) === rounded(ownOf(y, false))));
+      const a = agreed(saves.map((s) => says(s.sent.get(id), s.was.has(id))), T.get(id), (x, y) => x.parent === y.parent && (fresh ? whatItIs(x.l, flowsIn(x.parent)) === whatItIs(y.l, flowsIn(x.parent)) : rounded(ownOf(x, false)) === rounded(ownOf(y, false))));
       if (a) "gone" in a ? B.delete(id) : B.set(id, a.has);
     }
   }
