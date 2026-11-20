@@ -234,7 +234,7 @@ final class LocationAgent: @unchecked Sendable {
         filmedAsked = []
         let cache = QuickCache.shared
         var listed: [(id: String, files: [ListedFile], unreadable: [String])] = []
-        var index: [(folder: String, path: String)] = []
+        var index: [(folder: String, path: String, blur: Bool)] = []
         for f in folders where f.use == "media" {
             if isStopped { return }
             let (state, disk) = Self.state(of: f.path, allowed: MediaFiles.isAllowed(f.path, server: server), places: places)
@@ -252,7 +252,7 @@ final class LocationAgent: @unchecked Sendable {
         // the files no version matched: indexed where they are
         for i in index {
             if isStopped { break }
-            indexFile(folder: i.folder, path: i.path, cache: cache)
+            indexFile(folder: i.folder, path: i.path, blur: i.blur, cache: cache)
         }
         // known files the server has no filming date for: when and where each was filmed, read once
         for i in filmedAsked {
@@ -274,13 +274,13 @@ final class LocationAgent: @unchecked Sendable {
     }
 
     /// One report call with one folder; the files the server wants indexed.
-    private func report(_ head: [String: Any], _ folder: [String: Any]) -> [(folder: String, path: String)] {
+    private func report(_ head: [String: Any], _ folder: [String: Any]) -> [(folder: String, path: String, blur: Bool)] {
         var body = head
         body["folders"] = [folder]
         guard let r = try? api.call("POST", "/api/devices/relay/report", body, tries: 2, timeout: 60), r.status == 200,
               let o = try? JSONSerialization.jsonObject(with: r.data) as? [String: Any], let list = o["index"] as? [[String: Any]] else { return [] }
-        let pairs = { (l: [[String: Any]]) in l.compactMap { x in (x["folder"] as? String).flatMap { f in (x["path"] as? String).map { (folder: f, path: $0) } } } }
-        filmedAsked += pairs(o["filmed"] as? [[String: Any]] ?? [])
+        let pairs = { (l: [[String: Any]]) in l.compactMap { x in (x["folder"] as? String).flatMap { f in (x["path"] as? String).map { (folder: f, path: $0, blur: x["blur"] as? Bool ?? false) } } } }
+        filmedAsked += pairs(o["filmed"] as? [[String: Any]] ?? []).map { (folder: $0.folder, path: $0.path) }
         return pairs(list)
     }
 
@@ -297,10 +297,18 @@ final class LocationAgent: @unchecked Sendable {
         _ = try? api.call("POST", "/api/devices/relay/filmed", body, tries: 2, timeout: 60)
     }
 
-    private func indexFile(folder: String, path: String, cache: QuickCache) {
+    /// `blur`: the server's library has Blur faces on (contracts/places.ts ReportAnswer): the whole file's SHA-256 goes with it
+    /// (the key its blurred render links on) and no card picture or strip, which the server would not keep anyway.
+    private func indexFile(folder: String, path: String, blur: Bool, cache: QuickCache) {
         guard let size = places.guarded(path, { Places.size(path) }) ?? nil,
               let quick = cache.read(ListedFile(path: path, bytes: size, mtime: Self.mtime(path)), places: places) else { return }
         var body = MacIndex.read(path)
+        if blur {
+            body["thumb"] = nil
+            body["sprite"] = nil
+            // a whole read of a big file on a network disk: an hour at most, else it is indexed without it
+            if let sha = places.guarded(path, deadline: 3600, { try? LibraryCopyJob.sha256(of: URL(fileURLWithPath: path)) }) ?? nil { body["sha256"] = sha }
+        }
         body["folder"] = folder
         body["name"] = (path as NSString).lastPathComponent
         body["path"] = path

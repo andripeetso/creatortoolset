@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Activity, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySort, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
-import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS } from "@contracts/library";
+import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS, uploadSent } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
@@ -390,8 +390,9 @@ export default function LibraryPage() {
   // the Mac app with the server elsewhere: files are indexed where they are, never uploaded, unless the library's
   // upload setting says so (Library settings and Settings → Media Library, UploadSelect). A ref: an add's own answer
   // can change it for the files it starts
-  const upload = useRef(library?.settings.upload ?? "none");
-  upload.current = library?.settings.upload ?? "none";
+  // Blur faces: a new file is not blurred, so it is indexed where it is and nothing is sent (uploadSent)
+  const upload = useRef(library ? uploadSent(library.settings) : "none");
+  upload.current = library ? uploadSent(library.settings) : "none";
   const macRemote = !!thisMacBridge() && !watch?.allowed;
   const onMac = macRemote && !hostsOriginals(upload.current) && !hostsProxies(upload.current);
 
@@ -413,7 +414,7 @@ export default function LibraryPage() {
   // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
   const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
     if (!libId) return;
-    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, cost: levelOf(library?.settings ?? {}) !== "off" });
+    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, blur: !!library?.settings.blurFaces, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
   // a file of this library went in: its clips (and the folder's count) read again
   useEffect(

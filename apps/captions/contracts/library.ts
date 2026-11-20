@@ -45,6 +45,8 @@ export interface AssetCard {
   finished?: true;
   /** its file is on a computer: read in place from a folder there, or sent from there (Show in Finder can find it) */
   onComputer?: true;
+  /** Blur faces is on and the clip has no blurred render yet: no picture, nothing plays off its computer (LIBRARY_WORDS.notBlurred) */
+  notBlurred?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;
   /** on the computer that asked (`?device=`): its proxy in that computer's cache, or its original verified or found there (place rows) */
@@ -180,6 +182,12 @@ export interface LibrarySettings {
    * A stored `true` / `false` (before 2026-11-15) reads as "all" / "none".
    */
   upload: LibraryUpload;
+  /**
+   * Blur faces (owner only; absent: off): only a clip's blurred render, and pictures cut from it, leave the owner's
+   * computers. Upload is then Off ("none") or Blurred ("proxies": the blurred render is the clip's proxy); a clip with no
+   * blurred render yet is kept as under Off (api/library/upload-gate.ts mayLeave).
+   */
+  blurFaces?: boolean;
   /** The same for a final (a file that goes into Finals, from a project's folder in the Finals folder): "all" when unset,
    *  so a phone can download the finished file to post it. */
   finalsUpload?: LibraryUpload;
@@ -240,6 +248,10 @@ export type LibraryUpload = "none" | "originals" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "originals", "proxies", "all"];
 export const hostsOriginals = (u: LibraryUpload | null | undefined): boolean => u === "originals" || u === "all";
 export const hostsProxies = (u: LibraryUpload | null | undefined): boolean => u === "proxies" || u === "all";
+/** Under Blur faces Upload is Off or Blurred, stored as "none" and "proxies" (the blurred render is the proxy). */
+export const BLURRED_UPLOADS: readonly LibraryUpload[] = ["none", "proxies"];
+/** What a new file sends: under Blur faces nothing, since a file is not blurred when it is added. */
+export const uploadSent = (s: { upload: LibraryUpload; blurFaces?: boolean }): LibraryUpload => (s.blurFaces ? "none" : s.upload);
 /** Upload off: nothing of the library's is kept on the server (the one place the "none" word is compared). */
 export const hostsNone = (u: LibraryUpload | null | undefined): boolean => !hostsOriginals(u) && !hostsProxies(u);
 /** The Hosted media switches back to the one stored value. */
@@ -832,6 +844,10 @@ export const LIBRARY_WORDS = {
   finalExportsUpload: { label: "Final exports", tip: "Finished videos are uploaded so they can be reviewed and shared." },
   proxiesUpload: { tip: "Smaller copies of every clip are uploaded, so your team can play and edit them. The originals stay on your computers." },
   originalsUpload: { tip: "The full files are uploaded, so they can be downloaded anywhere." },
+  blurFaces: { label: "Blur faces", tip: "Only blurred videos leave your computers. Originals are never uploaded, shared or shown to your team." },
+  blurred: "Blurred",
+  blurredUpload: { tip: "The blurred video of each clip is uploaded, so your team can play it. The originals stay on your computers." },
+  notBlurred: "Not blurred yet",
   noServer: "No server connected",
   sourceMediaTip: "Where your media is kept, with all its subfolders. Files you add in the app are saved to the first folder.",
   projectFilesTip: "Where project work is saved: edits, renders and test renders.",

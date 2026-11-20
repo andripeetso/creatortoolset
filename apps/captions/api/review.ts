@@ -31,7 +31,9 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
 import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
-import { ensureLibrary, servedByPlugin } from "./library/access";
+import { ensureLibrary } from "./library/access";
+import { blursFaces } from "./library/db";
+import { mayLeave, workspaceLibrary } from "./library/upload-gate";
 import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
 import { enqueueJob } from "./library/jobs";
 import { probe as probeSummary } from "./library/media/probe";
@@ -168,7 +170,14 @@ const waitsOnBlur = (m: Meta) => {
 };
 /** A version with its files plays faces nobody has blurred: a share link shows every version. */
 const showsUnblurred = (m: Meta) => m.versions.some((v) => v.notBlurred && !v.removed);
-const NOT_BLURRED_SHARE = "Blur the faces first: this cut uses clips the catalog hasn't blurred";
+const NOT_BLURRED_SHARE = "Blur the faces first: this cut uses clips that aren't blurred yet";
+/** Blur faces is on for the workspace a cut is filed in (contracts LibrarySettings.blurFaces). */
+const blurFacesIn = async (owner: string, workspace?: string) => {
+  const lib = await workspaceLibrary(owner, workspace);
+  return !!lib && blursFaces(lib);
+};
+/** Under Blur faces Review keeps only a cut its filer blurred (an editor that blurs its render): upload-gate.ts mayLeave. */
+const takesCut = async (owner: string, workspace: string | undefined, blurred: boolean) => mayLeave(await workspaceLibrary(owner, workspace), { blurred });
 const AS_FILMED_ASK = "The faces in this cut aren't blurred. Approve it as filmed?";
 const AS_FILMED_OWNER = "Only the owner can approve a cut whose faces aren't blurred";
 
@@ -1029,6 +1038,10 @@ export async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<R
   if (projectId && !(await ownsProject(user.username, projectId))) {
     return c.json({ error: "Project not found" }, 404);
   }
+  // Blur faces: a person's own file is not known to be blurred, so it is refused before a byte is sent
+  const was = assetId ? await readMeta(assetId) : null;
+  const left = await takesCut(was?.owner ?? user.username, was ? was.workspace : await currentWorkspaceId(user), false);
+  if (!left.ok) return c.json(left.body, left.status);
   return {
     total: size,
     partSize: PART_SIZE,
@@ -1087,13 +1100,16 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean; blurred?: boolean },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
   const id = assetId ?? randomUUID();
   const now = Date.now();
   const workspace = v.workspace ?? (await folderWorkspace(v.projectId));
+  // Blur faces: a cut whose filer did not blur every face in it is never kept (`blurred`: an editor that blurred it)
+  const left = await takesCut(v.owner, (assetId && (await readMeta(assetId))?.workspace) || workspace, !!v.blurred && !v.notBlurred);
+  if (!left.ok) throw new Error(left.body.message);
   if (!assetId) {
     await mkdir(assetDir(id), { recursive: true });
     await writeJson(metaPath(id), {
@@ -1537,7 +1553,7 @@ reviewApp.patch("/assets/:id", async (c) => {
     return c.json({ error: "Project not found" }, 404);
   }
   // an existing link stays on (Review warns on it); only turning a link or its download on is refused
-  if ((share?.enabled === true || share?.download === true) && showsUnblurred(v.meta) && (await servedByPlugin(v.meta.owner, v.meta.workspace))) {
+  if ((share?.enabled === true || share?.download === true) && showsUnblurred(v.meta) && (await blurFacesIn(v.meta.owner, v.meta.workspace))) {
     return c.json({ error: NOT_BLURRED_SHARE }, 409);
   }
   let oldToken: string | undefined;
@@ -2022,7 +2038,7 @@ reviewApp.patch("/projects/:pid", async (c) => {
   if (body?.share?.enabled === true || body?.share?.download === true) {
     const p = (await readProjects()).find((x) => x.id === pid && x.owner === user.username);
     const unblurred = p && (await allMetas()).some((m) => m.projectId === pid && m.owner === user.username && showsUnblurred(m));
-    if (unblurred && (await servedByPlugin(user.username, p.workspace))) return c.json({ error: NOT_BLURRED_SHARE }, 409);
+    if (unblurred && (await blurFacesIn(user.username, p.workspace))) return c.json({ error: NOT_BLURRED_SHARE }, 409);
   }
   let oldToken: string | undefined;
   const project = await updateProjects((list) => {

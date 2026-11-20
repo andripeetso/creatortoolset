@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -29,7 +29,7 @@ import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./ma
 import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { organizeOnProbe, refileAllShoots } from "./organize";
-import { dropMacFrames, macFrames } from "./on-mac";
+import { dropHeldCopy, dropMacFrames, macFrames } from "./on-mac";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
 import { backfillRoots } from "./places";
@@ -548,7 +548,8 @@ export async function afterProbe(
   const onlyProxy = v.kind === "video" && hostsProxies(vu) && !hostsOriginals(vu);
   // Originals only keeps no proxy on the server, not even one in a bucket (UNIFIED-PRD §4.2)
   const originalsOnly = keepsOnlyOriginals(v.library_id);
-  if (v.kind !== "image" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
+  // a blurred render is its clip's proxy (Blur faces): kept as it is, never a smaller copy made and the render dropped
+  if (v.kind !== "image" && !isBlurred(v.id) && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
@@ -604,8 +605,12 @@ async function run(job: JobRow): Promise<void> {
       if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac were not found: add the file again in the Mac app");
       if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
     } else {
-      await describeFromStills(db, v.library_id, v.id, job.actor, frames, p?.duration);
-      await dropMacFrames(v.id);
+      try {
+        await describeFromStills(db, v.library_id, v.id, job.actor, frames, p?.duration);
+        await dropMacFrames(v.id);
+      } finally {
+        await dropHeldCopy(v.id); // Blur faces: stills held in memory are on disk only for the call
+      }
     }
     return;
   }

@@ -39,6 +39,7 @@ final class ImportTests: XCTestCase {
         XCTAssertEqual(importAsk("import:cancel:c1"), .cancel("c1"))
         XCTAssertEqual(importAsk(#"import:scan:{"path":"/Volumes/Footage"}"#), .scan("/Volumes/Footage"))
         XCTAssertEqual(importAsk(#"import:print:{"paths":["/a.mov"]}"#), .print(["/a.mov"]))
+        XCTAssertEqual(importAsk(#"import:hash:{"paths":["/a.mov"]}"#), .hash(["/a.mov"]))
         XCTAssertNil(importAsk("import:progress:a b"))
         XCTAssertNil(importAsk(#"import:copy:{"id":"c1","files":[{"from":"/a.mov"}]}"#))   // a pair without `to`
         XCTAssertNil(importAsk("import:delete:{}"))

@@ -1,4 +1,4 @@
-import { hostsOriginals, hostsProxies } from "@contracts/library";
+import { hostsOriginals, hostsProxies, uploadSent } from "@contracts/library";
 import type {
   TagCount,
   AssetKind,
@@ -54,12 +54,12 @@ export async function macIndexOnly(libraryId: string): Promise<boolean> {
   const libs = await listLibraries().catch(() => [] as LibrarySummary[]);
   // a library the list does not have (or none, when it fails) is not index-in-place: the upload goes as before
   const lib = libs.find((l) => l.id === libraryId);
-  return !!lib && !hostsOriginals(lib.settings.upload) && !hostsProxies(lib.settings.upload);
+  return !!lib && !hostsOriginals(uploadSent(lib.settings)) && !hostsProxies(uploadSent(lib.settings));
 }
 
 /** A member's add (drop or pick) with Hosted media Off has nowhere to go: refused in the Library page (SCREENS-COPY §3). */
 export const addRefused = (l: LibrarySummary | null | undefined): boolean =>
-  !!l?.readOnly && !hostsOriginals(l.settings.upload) && !hostsProxies(l.settings.upload);
+  !!l?.readOnly && !hostsOriginals(uploadSent(l.settings)) && !hostsProxies(uploadSent(l.settings));
 
 /**
  * A new workspace's upload choice (its form, components/workspace/ProjectList.tsx): kept on that workspace's own library,
@@ -402,7 +402,7 @@ export async function uploadFile(
    * `onMac`: the Mac app with a server elsewhere and uploading off: the file is indexed where it is (lib/onMac.ts) and
    * no byte of it is sent; with no known path it is refused, never uploaded.
    */
-  opts: { signal?: AbortSignal; onMac?: boolean } = {},
+  opts: { signal?: AbortSignal; onMac?: boolean; blur?: boolean } = {},
 ): Promise<UploadResult> {
   const { signal, onMac } = opts;
   const where = knownPath ?? (await pathOnMac(file));
@@ -410,7 +410,7 @@ export async function uploadFile(
     onProgress(0, true);
     const kept = await addInPlace(libraryId, where, file.size, collectionId);
     if (kept) return kept;
-    if (onMac) return indexOnMac(libraryId, file, where, collectionId, signal);
+    if (onMac) return indexOnMac(libraryId, file, where, collectionId, signal, opts.blur);
     onProgress(0, false);
   }
   if (onMac) throw new NotUploaded("Not added: where it is on this Mac is unknown. Drop it from Finder");

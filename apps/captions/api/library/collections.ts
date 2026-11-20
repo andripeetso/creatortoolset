@@ -12,7 +12,7 @@ import { storedZip } from "../lib/workshop/deliveries";
 import { notifyLibraryChanges } from "../lib/events";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
-import { mayServe, type Received } from "./upload-gate";
+import { mayLeave, mayServe, type Received } from "./upload-gate";
 import { blobs, libraryDb } from "./db";
 import { frameAt, frameWaits, whenFramed, type FrameInput } from "../lib/clip-frame";
 import { externalCanSee, externalRefById } from "./refs";
@@ -870,6 +870,9 @@ collectionApp.post("/:id/pieces/:pid/cover", async (c) => {
     )
     .get(piece.id, versionId) as { source_key: string; mac_path: string | null; mac_device: string | null; kind: AssetKind; proxy: string | null } | undefined;
   if (!v) return notFound(c);
+  // Blur faces: a cover is a picture of the clip, kept and shown on the Finals list and its links
+  const left = mayLeave(libraryId, { versionId });
+  if (!left.ok) return c.json(left.body, left.status);
   const dir = path.join(process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch"));
   await mkdir(dir, { recursive: true });
   const out = path.join(dir, `cover-${randomUUID()}.jpg`);
