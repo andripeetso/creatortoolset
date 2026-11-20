@@ -33,15 +33,14 @@ vi.mock("../ffmpeg-runtime", async (orig) => {
 // no face model download in a test
 vi.mock("../editor/eyeline", () => ({ eyelineOf: vi.fn(async () => null) }));
 
-// the AI: a text call is the plan (or the fix round's plan), a call with pictures the look at a cut
-const answers = { plan: "", fix: "", lookFails: 0 };
+// the AI: a text call is the plan, a call with pictures the look at a cut
+const answers = { plan: "", lookFails: 0 };
 const api = createServer((req, res) => {
   let body = "";
   req.on("data", (d) => (body += d));
   req.on("end", () => {
     let text = answers.plan;
     if (body.includes('"type":"image"')) text = JSON.stringify(answers.lookFails-- > 0 ? { fails: [{ n: 1, why: "The first shot is soft" }] } : { fails: [] });
-    else if (body.includes("Replace those shots and nothing else")) text = answers.fix;
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ content: [{ type: "text", text }], usage: { input_tokens: 1, output_tokens: 1 } }));
   });
@@ -427,13 +426,12 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     expect(await lineOf("ana", anas, "script")).toBe("Update Creator Toolset on Ana Laptop");
   });
 
-  it("two computers of one person: the one with the originals takes the job and reads them from its disk; two versions at once merge per key (PRD 2)", async () => {
+  it("two computers of one person: the one with the originals takes the job and reads them from its disk; a failed look makes no second draft (PRD 2)", async () => {
     const at = mark();
     const from = at.hits;
     const ff0 = ffRuns();
-    // the look fails each version's first shot once: both fix rounds write shots.json at the same time, on two computers
+    // the look fails each version's first shot: each cut goes to Review with it named, and no fix round runs
     answers.lookFails = 2;
-    answers.fix = JSON.stringify({ plans: [{ kind: "hard edit", lead: "sources", shots: [{ src: "S2", in: 3, dur: 1 }] }] });
     const held: { who: string; go: () => void }[] = [];
     // the first two looks' results wait for each other (a computer runs one step at a time: so two computers hold them)
     hooks.done = async (who, id) => {
@@ -458,10 +456,9 @@ describe.skipIf(rootReplaced)("where work runs, end to end: the server on a port
     expect(footage("studio-mac", from)).toEqual({});
     // the two first looks were held at once, one on each computer
     expect(held.map((h) => h.who).sort()).toEqual(["ana-laptop", "studio-mac"]);
-    // each fix round's shots.json key survived the other's
+    // no fix round: neither version's plan was planned again (owner, 2026-11-19: no draft he didn't ask for)
     const shots = srv.readStep(anas, "shots") as Record<string, { fix?: unknown }>;
-    expect(shots.v1?.fix).toBeTruthy();
-    expect(shots.v2?.fix).toBeTruthy();
+    expect([shots.v1?.fix, shots.v2?.fix]).toEqual([undefined, undefined]);
     expect(review(anas)).toMatchObject({ v1: { by: "ana" }, v2: { by: "ana" } });
     expect(serverDecodes(ff0)).toEqual([]);
   }, 240_000);

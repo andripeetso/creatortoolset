@@ -16,7 +16,7 @@ import { NeedsKey } from "../library/transcribe";
 import { Waiting } from "./analyze";
 import type { StepContext } from "./engine";
 import { knownShots } from "./index";
-import { fixPlan, noteLines, sourceSpan, workspaceSetup } from "./plan";
+import { noteLines, sourceSpan, workspaceSetup } from "./plan";
 import { fileInReview, previewFile, saidOf } from "./preview";
 import { macAway } from "./script";
 import { editDir, markDraft, readDraft, readStep, saveStep, type DraftFile, type EditMeta } from "./store";
@@ -26,13 +26,12 @@ import { styleBlock } from "./styles";
  * The look at a planned cut before the person sees it (tasks/flywheel/PLAN.md stage 4). Two frames of every shot, from
  * the rendered preview, on numbered sheets go to the person's own AI with the brief, their notes word for word, the
  * editing style and each shot's line, for one judgement of the whole cut: the shots that don't hold up, and why (a shot
- * whose footage is measured as blurry, too dark or shaky fails for that too: withFlaws). When
- * some don't, the one fix round (plan.ts fixPlan) replaces those shots, and the new cut is drafted, post-processed,
- * rendered and looked at once more. The person then gets one version in Review: the fixed one when it has fewer failing
- * shots, else the first, with the shots still failing named on it. A cut is never held back (PLAN.md D7): a look or a
- * fix that can't be made (the plan's usage limit, no AI connected, footage still being read, or a failure after its
- * last try) files the cut as it is, at once, with one line on its Review version saying it was not looked at, or not
- * fixed, and why.
+ * whose footage is measured as blurry, too dark or shaky fails for that too: withFlaws). The cut it looked at goes to
+ * Review with the shots that don't hold up named on it, and no other cut is made: a new draft only when the person or
+ * their chat asks for one (owner, 2026-11-19, on the fix round that made a second draft by itself: "He never wants a
+ * draft he didn't ask for"). A cut is never held back (PLAN.md D7): a look that can't be made (the plan's usage limit,
+ * no AI connected, footage still being read, or a failure after its last try) files the cut as it is, at once, with one
+ * line on its Review version saying it was not looked at, and why.
  */
 
 const LABEL = "Editor check";
@@ -206,11 +205,9 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
 }
 
 /**
- * The critique step (one planned version), after its preview: a cut the AI made (DraftFile.due) is looked at, round 1
- * or the fix's round 2, and filed in Review here; any other cut is filed as it is. Round 1 passing files the cut. Round 1
- * failing writes the fix round's plan and queues its draft. Round 2 files the fixed cut when it has fewer failing shots,
- * else puts the first plan back with its look and queues its draft again, filed then by the preview (the copies its
- * post-processing made went with the fix's). A look or a fix that can't be made files the cut it has, and says so on it.
+ * The critique step (one planned version), after its preview: a cut the AI made (DraftFile.due) is looked at and filed
+ * in Review here, with any failing shots named on it; any other cut is filed as it is. A look that can't be made files
+ * the cut it has, and says so on it.
  */
 export async function critiqueStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
@@ -252,24 +249,11 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
     if (signal.aborted) return;
     await markDraft(edit.id, variant, { ...d, critique: c });
   }
-  if (round === 2) {
+  if (round === 2) {   // shortcut: only a fix round started before 2026-11-19 gets here; delete with PlannedVersion.fix once none is left
     const first = saved.fix!.first;
     if (c.fails.length < first.fails.length) return file(c);
     await saveStep(edit.id, "shots", { ...shots, [variant]: { ...saved.fix!.was, critique: first } });
     return void then("draft");
   }
-  if (c.ok) return file(c);
-  let fixed: Awaited<ReturnType<typeof fixPlan>> = null;
-  try {
-    fixed = await fixPlan(edit, job.actor!, variant, saved.plan, c.fails, signal);
-  } catch (e) {
-    const why = await cant(e);
-    if (!why) throw e;
-    // looked at, and its failing shots are named: the fix is what was skipped
-    return file(c, `Not fixed before Review: ${why}`);
-  }
-  if (signal.aborted) return;
-  if (!fixed) return file(c);
-  await saveStep(edit.id, "shots", { ...shots, [variant]: { plan: fixed.plan, notes: [...saved.notes, ...fixed.notes], fix: { first: c, was: { plan: saved.plan, notes: saved.notes } } } });
-  then("draft");
+  return file(c);
 }

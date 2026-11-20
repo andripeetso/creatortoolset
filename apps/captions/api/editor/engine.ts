@@ -97,7 +97,7 @@ const KINDS: Record<string, EditKind> = {
   // with plug-in steps it rewrites the originals, on the computer that has them
   post: { source: "core", next: ["preview"], run: postStep, place: (e) => computerIf(!!e.steps?.length) },
   preview: { source: "core", next: ["file"], run: previewStep, place: () => "computer" },
-  // the look at a planned cut the AI made, after its preview (nextFor): it files the cut itself, or queues the fix round's draft
+  // the look at a planned cut the AI made, after its preview (nextFor): it files the cut itself, failing shots named on it
   critique: { source: "core", next: [], run: critiqueStep, place: () => "computer" },
   // marks the cut's library version as made from its sources: rows only, no decoding
   file: { source: "core", next: [], run: fileStep, place: () => "server" },

@@ -162,9 +162,8 @@ export interface StepFiles {
 }
 
 /**
- * A planned version's plan (plan.ts). After the look at its cut (critique.ts): `fix` on the plan of the one fix round,
- * with the first cut's look and plan to go back to; `critique` on a plan whose cut was looked at already (the first,
- * when the fix was no better), so its next draft is filed with that look and not looked at again.
+ * A planned version's plan (plan.ts). `fix` and `critique` were the fix round's (critique.ts), which no longer runs
+ * (owner, 2026-11-19): read only for a fix started before then.
  */
 export interface PlannedVersion {
   plan: EditPlan;
