@@ -189,11 +189,37 @@ final class ChatsTests: XCTestCase {
                                                            body: "Needs your review", path: "/review/ef173602-861d-44e0-8529-894f2a06243e")])
         // told once
         XCTAssertTrue(AppNotifications.fresh(rows, shown: first.shown).notes.isEmpty)
-        // it left the list and came back: news again
+        // a load that came back empty (a failed read, another workspace) forgets nothing: not told again
         let gone = AppNotifications.fresh([], shown: first.shown)
-        XCTAssertEqual(AppNotifications.fresh(rows, shown: gone.shown).notes.map(\.title), ["V1A-1"])
+        XCTAssertTrue(AppNotifications.fresh(rows, shown: gone.shown).notes.isEmpty)
         let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1}]}"#.utf8))
         XCTAssertEqual(AppNotifications.notes([ChatList.row(video)]), [AppNotifications.Note(key: "r1:v1", title: "Teaser", body: "Needs your review", path: "/review/r1")])
+    }
+
+    // 2026-11-20: a look after an empty one told all 28 waiting videos again, one notification each
+    func testAnEmptyLoadThenAFullOneTellsNothingTwiceAndOnlyOneNotification() throws {
+        let videos: [ReviewListItem] = try (1...28).map { i in
+            try decode(Data(#"{"id":"r\#(i)","name":"Cut \#(i)","approval":{"status":"needs_review"},"versions":[{"n":1}]}"#.utf8))
+        }
+        let rows = videos.map { ChatList.row($0) }
+        let first = AppNotifications.fresh(rows, shown: [])
+        XCTAssertEqual(first.notes.count, 28)
+        let one = AppNotifications.summary(first.notes)
+        XCTAssertEqual(one?.title, "28 videos wait for your review")
+        XCTAssertEqual(one?.body, "Cut 1, Cut 2, Cut 3 and 25 more")
+        XCTAssertEqual(one?.path, "")   // several places: a tap opens the app
+        // the replay: an empty load, a short one, then the full list again
+        let empty = AppNotifications.fresh([], shown: first.shown)
+        let short = AppNotifications.fresh(Array(rows.prefix(2)), shown: empty.shown)
+        XCTAssertTrue(short.notes.isEmpty)
+        XCTAssertTrue(AppNotifications.fresh(rows, shown: short.shown).notes.isEmpty)
+        // a new version is news, and alone it is its own notification
+        let v2: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Cut 1","approval":{"status":"needs_review"},"versions":[{"n":1},{"n":2}]}"#.utf8))
+        let next = AppNotifications.fresh([ChatList.row(v2)] + rows.dropFirst(), shown: short.shown)
+        XCTAssertEqual(AppNotifications.summary(next.notes)?.title, "Cut 1")
+        XCTAssertNil(AppNotifications.summary([]))
+        // what a phone told before this change still counts: the update tells nothing again
+        XCTAssertTrue(AppNotifications.fresh(rows, shown: (1...28).map { "r\($0):v1" }).notes.isEmpty)
     }
 
     @MainActor func testNoChangeLineIsOpenWhileTheAppIsInTheBackground() async {

@@ -104,7 +104,8 @@ private let verbs = [
 ]
 
 func noteTitle(_ note: ReviewNote) -> String {
-    "\(note.by) \(verbs[note.kind] ?? "updated") \(note.name)"
+    // a cut: what it is and what to do ("Reel: a new cut to review"), not who made it and its file name
+    note.kind == "ready" ? "\(note.name): a new cut to review" : "\(note.by) \(verbs[note.kind] ?? "updated") \(note.name)"
 }
 
 /// Unread notes not seen before. `seen` is nil on the first run: nothing is shown then, the
@@ -112,6 +113,27 @@ func noteTitle(_ note: ReviewNote) -> String {
 func freshNotes(_ items: [ReviewNote], seen: [String]?) -> [ReviewNote] {
     guard let seen else { return [] }
     return items.filter { $0.read != true && !seen.contains($0.id) }
+}
+
+/// The one Mac notification a refresh posts for its fresh notes: the note itself, or for several one line that counts them
+/// (a burst of cuts, or an inbox seen again, never becomes a stack of banners). `ids`: the notes a click marks read.
+struct MacNote: Equatable {
+    let title: String
+    let body: String
+    let href: String
+    let ids: [String]
+}
+
+func macNote(_ fresh: [ReviewNote]) -> MacNote? {
+    guard let first = fresh.first else { return nil }
+    if fresh.count == 1 { return MacNote(title: noteTitle(first), body: first.text ?? "", href: first.href, ids: [first.id]) }
+    let cuts = fresh.allSatisfy { $0.kind == "ready" }
+    var names: [String] = []
+    for n in fresh where !names.contains(n.name) { names.append(n.name) }
+    let more = names.count > 3 ? " and \(names.count - 3) more" : ""
+    return MacNote(title: cuts ? "\(fresh.count) videos wait for your review" : "\(fresh.count) new notifications",
+                   body: names.prefix(3).joined(separator: ", ") + more,
+                   href: Set(fresh.map(\.href)).count == 1 ? first.href : cuts ? "/review" : "/", ids: fresh.map(\.id))
 }
 
 /// The ids to remember next time: this inbox first, then what was remembered, capped.

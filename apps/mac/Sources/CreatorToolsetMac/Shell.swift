@@ -1050,7 +1050,7 @@ final class Shell: NSObject, ObservableObject {
                 case .askFirst: await askForNotifications()
                 case .post: break
                 }
-                fresh.forEach(post)
+                if let one = macNote(fresh) { post(one) }
             }
             UserDefaults.standard.set(rememberedIDs(notes.items, seen: seen), forKey: seenKey)
         } catch {
@@ -1070,20 +1070,20 @@ final class Shell: NSObject, ObservableObject {
         _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
     }
 
-    private func post(_ note: ReviewNote) {
+    private func post(_ note: MacNote) {
         let content = UNMutableNotificationContent()
-        content.title = noteTitle(note)
-        content.body = note.text ?? ""
+        content.title = note.title
+        content.body = note.body
         content.sound = .default
-        content.userInfo = ["href": note.href, "id": note.id]
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: note.id, content: content, trigger: nil))
+        content.userInfo = ["href": note.href, "id": note.ids.joined(separator: ",")]
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: note.ids.joined(separator: ","), content: content, trigger: nil))
     }
 
     private func noteClicked(href: String, id: String) {
         showWindow(href: href)
         Task {
             let client = await client()
-            try? await client.post("/api/review/notifications/read", ["ids": [id]])
+            try? await client.post("/api/review/notifications/read", ["ids": id.split(separator: ",").map(String.init)])
             await refresh()
         }
     }

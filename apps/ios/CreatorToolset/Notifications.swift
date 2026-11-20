@@ -28,11 +28,15 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
     private var away = false
     /// A look in the background is under way: it tells what is new itself, before iOS takes the moment back.
     private var looking = false
-    /// The names of everything that waited when he last saw the list, or was last told.
-    private var shown: Set<String> {
-        get { Set(defaults.stringArray(forKey: "notify.shown") ?? []) }
-        set { defaults.set(Array(newValue), forKey: "notify.shown") }
+    /// The names of everything he was told or saw waiting, newest last. Only added to: a load that came back empty, short
+    /// or of another workspace forgets nothing, so the next one never tells it all again (2026-11-20: 28 at once).
+    private var shown: [String] {
+        get { defaults.stringArray(forKey: "notify.shown") ?? [] }
+        set { defaults.set(newValue, forKey: "notify.shown") }
     }
+    /// How many names are kept: far more than ever wait at once.
+    nonisolated static let shownCap = 1000
+    nonisolated static let reviewBody = "Needs your review"
 
     // MARK: What is new (no iOS in it, so it can be tested)
 
@@ -49,11 +53,14 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
         rows.filter { $0.status.waitsOnYou && !$0.route.isAssistant }.map { row in
             let body: String
             switch row.status {
-            case .review: body = "Needs your review"
+            case .review: body = reviewBody
             case .failed: body = "Failed: \(row.detail)"
             default: body = sentences(row.detail)
             }
-            return Note(key: (row.keys.isEmpty ? [row.id] : row.keys).joined(separator: " "), title: row.title, body: body, path: row.id)
+            // a failure has its own name: the same job that waited and later failed is news twice
+            let failed = row.status == .failed ? "#failed" : ""
+            return Note(key: (row.keys.isEmpty ? [row.id] : row.keys).map { $0 + failed }.joined(separator: " "),
+                        title: row.title, body: body, path: row.id)
         }
     }
 
@@ -62,12 +69,29 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
         line.components(separatedBy: " · ").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: ". ")
     }
 
-    /// What to tell now: the rows with something he has not been shown. `shown` then becomes the
-    /// names of everything that waits, so each thing is told once and a thing that left is forgotten.
-    nonisolated static func fresh(_ rows: [ChatRow], shown: Set<String>) -> (notes: [Note], shown: Set<String>) {
-        let all = notes(rows)
-        let names = { (note: Note) in note.key.components(separatedBy: " ") }
-        return (all.filter { !shown.isSuperset(of: names($0)) }, Set(all.flatMap(names)))
+    /// What to tell now: the rows with something he has not been shown, and `shown` with their names added (capped,
+    /// oldest out). Each thing is told once: a Review version, or a job's wait or failure, is never told again.
+    /// shortcut: the same job waiting twice (a second look sheet) is told once; key a wait by its time if that matters.
+    nonisolated static func fresh(_ rows: [ChatRow], shown: [String]) -> (notes: [Note], shown: [String]) {
+        let told = Set(shown)
+        let new = notes(rows).filter { !told.isSuperset(of: $0.key.components(separatedBy: " ")) }
+        var added: [String] = []
+        for name in new.flatMap({ $0.key.components(separatedBy: " ") }) where !told.contains(name) && !added.contains(name) { added.append(name) }
+        return (new, Array((shown + added).suffix(shownCap)))
+    }
+
+    /// The one notification a look posts: the note itself, or for several one line that counts them.
+    nonisolated static func summary(_ notes: [Note]) -> Note? {
+        guard let first = notes.first else { return nil }
+        if notes.count == 1 { return first }
+        var titles: [String] = []
+        for n in notes where !titles.contains(n.title) { titles.append(n.title) }
+        let more = titles.count > 3 ? " and \(titles.count - 3) more" : ""
+        let reviews = notes.allSatisfy { $0.body == reviewBody }
+        return Note(key: notes.map(\.key).joined(separator: " "),
+                    title: reviews ? "\(notes.count) videos wait for your review" : "\(notes.count) things wait for you",
+                    body: titles.prefix(3).joined(separator: ", ") + more,
+                    path: Set(notes.map(\.path)).count == 1 ? first.path : "")
     }
 
     // MARK: Running
@@ -145,7 +169,8 @@ final class AppNotifications: NSObject, UNUserNotificationCenterDelegate {
             guard !inFront, !defaults.bool(forKey: "notify.push") else { return }
             // the rows are of the server and workspace in use: a tap goes back there
             let api = API.current
-            for note in notes {
+            // one notification however many are new: several are counted in one line
+            if let note = Self.summary(notes) {
                 let content = UNMutableNotificationContent()
                 content.title = note.title
                 content.body = note.body

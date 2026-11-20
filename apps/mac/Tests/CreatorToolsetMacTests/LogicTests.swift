@@ -39,8 +39,22 @@ final class LogicTests: XCTestCase {
         XCTAssertEqual(rememberedIDs([new, old], seen: ["gone"]), ["new", "old", "gone"])
     }
 
-    private func note(id: String, read: Bool? = nil) -> ReviewNote {
-        ReviewNote(id: id, kind: "comment", by: "Ada", name: "Launch cut", text: nil, href: "/review/x", read: read)
+    // 2026-11-20: a burst of notes (cuts filed at once, an inbox seen again) posted a banner each
+    func testSeveralFreshNotesAreOneNotification() {
+        XCTAssertNil(macNote([]))
+        XCTAssertEqual(macNote([note(id: "a")])?.ids, ["a"])
+        let cuts = (1...28).map { note(id: "c\($0)", kind: "ready", name: $0 < 3 ? "Reel" : "Cut \($0)", href: "/review/\($0)") }
+        let one = macNote(cuts)
+        XCTAssertEqual(one?.title, "28 videos wait for your review")
+        XCTAssertEqual(one?.body, "Reel, Cut 3, Cut 4 and 24 more")
+        XCTAssertEqual(one?.href, "/review")
+        XCTAssertEqual(one?.ids.count, 28)
+        XCTAssertEqual(macNote([note(id: "a"), note(id: "b")])?.title, "2 new notifications")
+        XCTAssertEqual(macNote([note(id: "a", kind: "ready", name: "Reel")])?.title, "Reel: a new cut to review")
+    }
+
+    private func note(id: String, read: Bool? = nil, kind: String = "comment", name: String = "Launch cut", href: String = "/review/x") -> ReviewNote {
+        ReviewNote(id: id, kind: kind, by: "Ada", name: name, text: nil, href: href, read: read)
     }
 
     func testSmallWindowGrowsToMostOfTheScreenOnce() {
