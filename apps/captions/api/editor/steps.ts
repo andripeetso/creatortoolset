@@ -8,6 +8,7 @@ import { env } from "../lib/env";
 import { folderPluginRows, folderPluginsEnabled, pluginsFolder } from "../lib/folder-plugins";
 import { loadedPluginInfo, pluginEditorSteps } from "../lib/plugin";
 import { writeJsonAtomic } from "../library/media/run";
+import { lutsApp } from "./luts";
 
 /**
  * The AI Editor's post-processing steps per account (contracts/editor-steps.ts): which ones new edits use, and with
@@ -133,6 +134,8 @@ export async function changeStep(user: string, id: string, body: Record<string, 
 export const editStepsApp = new Hono<{ Variables: AuthVars }>();
 
 editStepsApp.get("/", (c) => c.json(stepsView(c.get("user").username)));
+// the LUTs added under Colour (luts.ts)
+editStepsApp.route("/luts", lutsApp);
 
 editStepsApp.put("/:id", async (c) => {
   const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;

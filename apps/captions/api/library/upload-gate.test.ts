@@ -462,6 +462,7 @@ const ROUTES: Record<string, string> = {
   "apps/captions/api/library/storage/cache.ts": "PASS: the server's own stored blob",
   "apps/captions/api/media-store.ts": "PASS: the server's own stored blob",
   "apps/captions/api/editor/animation-styles.ts": "PASS: a picture a person gives a style, not footage",
+  "apps/captions/api/editor/luts.ts": "PASS: a .cube LUT file (text, under 48 MB), not footage",
 };
 
 const BODY = /parseBody|req\.arrayBuffer|req\.raw\.body|Readable\.fromWeb|pipeline\(|writeBody\(|appendBody\(|receivePart\(|uploadFile\(|startUpload|uploadInit|sendLater|parseMade|acceptLibraryFile|acceptUpload/;

@@ -5,7 +5,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import { ffmpeg } from "../../api/library/media/run";
-import { convert, convertColour, cube, display, flatStats, gamutTo709, isFlat, PROFILES, rangeOf, readTag, toXyz, type Profile } from "./plugin";
+import { convert, cube, display, gamutTo709, PROFILES, readTag, toXyz, type Profile } from "../../contracts/camera";
+import { convertColour, flatStats, isFlat, rangeOf } from "./plugin";
 
 /**
  * Each paper's own table: [scene value, 10-bit code]. Sony, Fujifilm, Panasonic and Apple give reflection (0.18 = 18%
