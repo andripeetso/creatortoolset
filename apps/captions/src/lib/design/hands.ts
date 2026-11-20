@@ -336,7 +336,7 @@ function curveBox(l: PathLayer): Rect {
 
 export function paintedBox(l: Layer): Rect {
   // a container paints its layers too (through its turn), past its box unless it cuts them there
-  const b = isGroup(l) && !l.clip && l.layers.some((k) => !k.hidden) ? boundsOf([l, ...l.layers.filter((k) => !k.hidden).map((k) => layerOut(l, paintedBox(k)))]) : l.type === "path" ? curveBox(l) : boundsOf([l]);
+  const b = isGroup(l) && !(l.box && l.clip) && l.layers.some((k) => !k.hidden) ? boundsOf([l, ...l.layers.filter((k) => !k.hidden).map((k) => layerOut(l, paintedBox(k)))]) : l.type === "path" ? curveBox(l) : boundsOf([l]);
   const fx = effectsOf(l).filter((e) => !e.hidden);
   const lines = Math.max(0, ...strokesOf(l).map((s) => Math.max(s.width, ...(s.sides ?? [])) * (s.join === "miter" ? 5 : 1) + (s.start || s.end ? Math.max(s.width, 2) * 5 : 0)));
   // words may run a little past their box, and sticker letters by their outline
