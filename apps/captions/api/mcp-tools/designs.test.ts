@@ -23,7 +23,7 @@ const nicoKey = `Bearer ${newApiKey(nico, "full")}`;
 type Layer = { id: string; type: string; text?: string; size?: number; fill?: string };
 type Frame = { id: string; n: number; name?: string; w: number; h: number; words?: string; background: string; layers: Layer[] };
 /** What design_make and design_update answer. */
-type Made = { id: string; name: string; link: string; frames: number; existed?: true; left_out?: string[]; no_pictures?: string; picture_added?: string; changed?: Array<{ frame: string; n: number; new?: true; layers: string[] }> };
+type Made = { id: string; name: string; link: string; frames: number; existed?: true; notes?: string[]; no_pictures?: string; picture_added?: string; changed?: Array<{ frame: string; n: number; new?: true; layers: string[] }> };
 /** What design_get answers for one design. */
 type Read = { id: string; link: string; how: string; fonts: string[]; no_pictures?: string; frames: Frame[]; pictures: Array<{ id: string; what: string }> };
 
@@ -73,6 +73,14 @@ describe("the Designer's tools", () => {
     expect(read.frames.map((f) => [f.id, f.n, f.w, f.h, f.words])).toEqual([["p1", 1, 1080, 1350, slides[0]], ["p2", 2, 1080, 1350, slides[1]]]);
     expect(read.how).toContain('{"type":"drawing"');
     expect(read.how).toContain('"changes"');
+    // an outline: ids, kinds, names and words, nothing of how they look, no pictures and no how
+    const outline = (await tool<{ frames: Array<{ id: string; layers: object[] }>; how?: string; more: string }>(anaKey, "design_get", { id: made.out.id, outline: true })).out;
+    expect(outline.frames.map((f) => f.id)).toEqual(["p1", "p2"]);
+    for (const l of outline.frames.flatMap((f) => f.layers)) expect(Object.keys(l).every((k) => ["id", "type", "name", "group", "text", "hidden"].includes(k))).toBe(true);
+    expect(outline.frames[0]!.layers[0]).toMatchObject({ id: "l1", type: "text" });
+    expect(outline).not.toHaveProperty("how");
+    expect(outline).not.toHaveProperty("_images");
+    expect((await tool<{ frames: Array<{ id: string }> }>(anaKey, "design_get", { id: made.out.id, outline: true, frames: ["p2"] })).out.frames.map((f) => f.id)).toEqual(["p2"]);
     expect(read.fonts).toContain("Bebas Neue");
     expect(read.link).toBe(made.out.link);
     // a test has no browser to draw the frames with: the answer says so, in place of the pictures
@@ -84,7 +92,7 @@ describe("the Designer's tools", () => {
       frames: [{ id: "p2", background: "#ffd400", layers: [{ type: "drawing", id: "dot", svg: '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#111111"/></svg>', x: 760, y: 90, w: 230, h: 230 }, { ...text, id: "title", text: "Try it today" }, { ...text, y: 1000, text: "Link in bio" }] }],
     });
     expect(wrote.error).toBe(false);
-    expect(wrote.out).toMatchObject({ id: made.out.id, frames: 2, changed: [{ frame: "p2", n: 2, layers: ["dot", "title"] }], left_out: ["Frame 2: “Link in bio” is not in its own words: left out"] });
+    expect(wrote.out).toMatchObject({ id: made.out.id, frames: 2, changed: [{ frame: "p2", n: 2, layers: ["dot", "title"] }], notes: ["frames[0].layers[2], frame p2 (Frame 2): “Link in bio” is not in its own words: left out"] });
 
     const patched = await tool(anaKey, "design_update", { id: made.out.id, changes: [{ frame: "p2", layer: "title", set: { size: 220 } }, { frame: "p2", layer: "dot", remove: true }] });
     expect(patched.out.changed).toEqual([{ frame: "p2", n: 2, layers: ["title"] }]);
@@ -106,7 +114,7 @@ describe("the Designer's tools", () => {
     // a frame given whole names all its layers; the new one is said to be new, with its id
     expect(wrote.out).toMatchObject({ frames: 2, changed: [{ frame: "p1", n: 1, layers: ["l1"] }, { n: 2, new: true, layers: ["l1", "l2"] }] });
     expect(wrote.out.changed![0]).not.toHaveProperty("new");
-    expect(wrote.out).not.toHaveProperty("left_out");
+    expect(wrote.out).not.toHaveProperty("notes");
     // a moment of a library video into this design: its id comes back, for an image layer. Laid under the other
     // layers, those keep their ids, and the answer names only the layers this call wrote
     const thumb = wrote.out.changed![1]!.frame;
@@ -114,7 +122,7 @@ describe("the Designer's tools", () => {
     expect(picture).toMatch(/^[0-9a-f]{8}\.jpg$/);
     const placed = await tool(anaKey, "design_update", { id: made.out.id, changes: [{ frame: thumb, add: { type: "image", picture, fit: "cover", x: 0, y: 0, w: 1280, h: 720 }, at: "back" }, { frame: thumb, layer: "l2", set: { color: "#ffee00" } }] });
     expect(placed.out.changed).toEqual([{ frame: thumb, n: 2, layers: ["l3", "l2"] }]);
-    expect(placed.out).not.toHaveProperty("left_out");
+    expect(placed.out).not.toHaveProperty("notes");
     expect((await tool<Read>(anaKey, "design_get", { id: made.out.id })).out.frames[1]!.layers).toMatchObject([{ id: "l3", type: "image", picture }, { id: "l1", type: "shape" }, { id: "l2", type: "text", color: "#ffee00" }]);
     expect((await tool(anaKey, "design_update", { id: made.out.id, picture: { version: "ver_nope", t: 1 } })).error).toBe(true);
     expect((await tool<Read>(anaKey, "design_get", { id: made.out.id })).out.frames.map((f) => [f.name, f.w, f.h, f.layers.length])).toEqual([[undefined, 1080, 1080, 1], ["Thumbnail", 1280, 720, 3]]);

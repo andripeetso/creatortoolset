@@ -121,16 +121,16 @@ const SMALLEST = 8;
  * come out about as long as each other. `base` gives a string's width at the layer's own size: a width at another size is that in
  * proportion, so nothing is measured twice.
  */
-export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeight" | "spacing" | "w" | "h" | "fit" | "balance">, base: (s: string) => number): { size: number; lines: string[] } {
+export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeight" | "spacing" | "w" | "h" | "fit" | "balance" | "lines">, base: (s: string) => number): { size: number; lines: string[] } {
   const text = shownText(l);
   const widthAt = (k: number) => (s: string) => textWidth(l, s, (t) => base(t) * k);
   const linesAt = (k: number, width = l.w) => wrapLines(text, width, widthAt(k));
   const fits = (k: number) => {
     const lines = linesAt(k);
-    return lines.length * lineHeightOf(l) * k <= l.h + 0.5 && lines.every((line) => widthAt(k)(line) <= l.w + 0.5);
+    return lines.length * lineHeightOf(l) * k <= l.h + 0.5 && lines.every((line) => widthAt(k)(line) <= l.w + 0.5) && (!l.lines || lines.length <= l.lines);
   };
   let k = 1;
-  if (l.fit === "shrink" && !fits(1)) {
+  if ((l.fit === "shrink" || l.lines) && !fits(1)) {
     // between the smallest and its own size: the largest that fits, to a four-thousandth
     let lo = Math.min(1, SMALLEST / l.size);
     let hi = 1;
@@ -140,6 +140,14 @@ export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeig
       else hi = mid;
     }
     k = lo;
+  }
+  // held to a number of lines: no word alone on a paragraph's last line, by shrinking a little more when that is enough
+  if (l.lines && orphaned(linesAt(k), text)) {
+    for (let s = k * 0.99; s >= k * 0.92; s -= k * 0.01)
+      if (fits(s) && !orphaned(linesAt(s), text)) {
+        k = s;
+        break;
+      }
   }
   // evened out a paragraph at a time: each of the text's own lines keeps its break, and is broken further (when it is
   // too long) at the narrowest width that takes it no more lines
@@ -158,7 +166,46 @@ export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeig
         }
         return wrap(hi);
       });
-  return { size: Math.round(l.size * k * 100) / 100, lines };
+  return { size: Math.round(l.size * k * 100) / 100, lines: l.lines ? keepLastTwo(lines, text, (s) => widthAt(k)(s) <= l.w + 0.5) : lines };
+}
+
+/** The line indexes that end a paragraph of `text` (its own line breaks), for `lines` wrapped from it. */
+function paragraphEnds(lines: readonly string[], text: string): number[] {
+  const ends: number[] = [];
+  let at = -1;
+  for (const para of text.split("\n")) {
+    // a paragraph takes as many lines as its words fill: count them off by words
+    let left = para.split(/[ \t]+/).filter(Boolean).length;
+    do left -= lines[++at]?.split(" ").filter(Boolean).length ?? left;
+    while (left > 0 && at < lines.length - 1);
+    ends.push(at);
+  }
+  return ends;
+}
+
+/** Whether a paragraph broken over two lines or more ends on a line of one word. A one-word paragraph is no orphan. */
+export function orphaned(lines: readonly string[], text: string): boolean {
+  let start = 0;
+  return paragraphEnds(lines, text).some((end) => {
+    const lone = end > start && lines[end]!.trim().split(" ").length === 1;
+    start = end + 1;
+    return lone;
+  });
+}
+
+/** A paragraph's last word that stands alone gets the word before it as company, when the two fit the width together. */
+function keepLastTwo(lines: string[], text: string, fits: (s: string) => boolean): string[] {
+  const out = [...lines];
+  let start = 0;
+  for (const end of paragraphEnds(out, text)) {
+    const before = out[end - 1]?.split(" ");
+    if (end > start && out[end]!.trim().split(" ").length === 1 && before && before.length > 1 && fits(`${before.at(-1)} ${out[end]}`)) {
+      out[end] = `${before.pop()} ${out[end]}`;
+      out[end - 1] = before.join(" ");
+    }
+    start = end + 1;
+  }
+  return out;
 }
 
 /**

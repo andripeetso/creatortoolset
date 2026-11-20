@@ -224,7 +224,7 @@ describe("designs: an AI that designs", () => {
       ],
     });
     expect(out.status).toBe(200);
-    expect(out.body.notes).toEqual(["There is no frame nope: this design's are p1, p2, p3", "Frame 2: “Buy the course” is not in its own words: left out"]);
+    expect(out.body.notes).toEqual(['frames[1]: there is no frame nope: this design\'s are p1, p2, p3 (a new frame has no "id": name it with "as")', "frames[0].layers[2], frame p2 (Frame 2): “Buy the course” is not in its own words: left out"]);
     expect(out.body.touched).toEqual(["p2", "p3"]);
     const [one, two, three] = out.body.design.pages;
     expect(two).toMatchObject({ id: "p2", background: "#102030", x: 1200, block: "b2" });
@@ -263,7 +263,7 @@ describe("designs: an AI that designs", () => {
     })).body;
     expect(out.design.pages[0]!.layers.map((l) => l.id)).toEqual(["moon", "title", "sun"]);
     expect(out.design.pages[0]!.layers[1]).toMatchObject({ type: "text", text: "Hello there", size: 600, x: 10, font: "Anton" });
-    expect(out.notes).toEqual(["Frame 1 has no layer ghost", "A change names no frame of this design (p9): its frames are p1"]);
+    expect(out.notes).toEqual(["changes[3], frame p1 (Frame 1): there is no layer ghost: its layers are moon, title, sun", "changes[4]: names no frame of this design (p9): its frames are p1"]);
     const gone = (await write(d.id, { changes: [{ frame: "p1", layer: "moon", remove: true }] })).body;
     expect(gone.design.pages[0]!.layers.map((l) => l.id)).toEqual(["title", "sun"]);
     // a field that is a set of fields takes the ones given and keeps the rest; null takes it off whole
@@ -275,7 +275,32 @@ describe("designs: an AI that designs", () => {
     const piece = await fromPiece();
     const held = (await write(piece.id, { changes: [{ frame: "p3", layer: "l1", set: { text: "Buy now" } }, { frame: "p3", add: { ...text, text: "Try it today" } }] })).body;
     expect(held.design.pages[2]!.layers.map((l) => l.type === "text" && l.text)).toEqual(["Try it today"]);
-    expect(held.notes).toEqual(["Frame 3: “Buy now” is not in its own words: left out"]);
+    expect(held.notes).toEqual(["changes[0], frame p3 (Frame 3), layer l1: “Buy now” is not in its own words: left out"]);
+  });
+
+  it("names a new frame or layer with as for the changes after it in the same call, and leads each note with the change it is about", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const rect = { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100 };
+    const out = (await write(d.id, {
+      frames: [{ as: "two", w: 1080, h: 1920, name: "Story", layers: [] }],
+      changes: [
+        { frame: "p1", add: { ...rect, id: "badge" } },
+        { frame: "two", add: rect, as: "Badge" },
+        { frame: "two", layer: "Badge", set: { fill: "#00ff00" } },
+        { frame: "two", add: { type: "rect", x: 0 } },
+        { frame: "p1", add: { ...rect, id: "badge" }, as: "badge" },
+        { frame: "p1", layer: "badge", set: { fill: "#0000ff" } },
+      ],
+    })).body as Wrote & { named: Record<string, string> };
+    const two = out.named.two!;
+    const [one, story] = out.design.pages;
+    expect(story).toMatchObject({ id: two, name: "Story", w: 1080, h: 1920 });
+    // "Badge" cannot be an id: it became l1, and the change after it found it by its name
+    expect(story!.layers).toMatchObject([{ id: "l1", fill: "#00ff00" }]);
+    expect(out.named).toEqual({ two, Badge: "l1", badge: "l2" });
+    // the second "badge" of p1 took another id, and the change that named it changed that one, not the first
+    expect(one!.layers).toMatchObject([{ id: "badge", fill: "#ff0000" }, { id: "l2", fill: "#0000ff" }]);
+    expect(out.notes).toEqual([`changes[3], frame ${two} (Frame 2): a layer of no type that can be drawn ("rect"): left out; the types are text, shape, path, image and drawing`]);
   });
 
   it("an empty canvas: started with no frame, emptied by deleting the last one, and given its first frame by hand or by an AI", async () => {
@@ -394,7 +419,7 @@ describe("designs: an AI that designs", () => {
     expect((await read(d.id, "?look=Nope")).look).toBe("There is no look called Nope");
     const out = (await write(d.id, { frames: [{ id: "p1", layers: [{ type: "image", picture: d.pictures[0], fit: "cover", x: 0, y: 0, w: 1280, h: 720 }, { ...text, text: "3 MISTAKES" }, { type: "image", picture: "ffffffff.png", x: 0, y: 0, w: 10, h: 10 }] }] })).body;
     expect(out.design.pages[0]!.layers).toMatchObject([{ type: "image" }, { type: "text", text: "3 MISTAKES" }]);
-    expect(out.notes).toEqual(["Frame 1: a picture that is not in this design: left out"]);
+    expect(out.notes).toEqual(["frames[0].layers[2], frame p1 (Frame 1): a picture that is not in this design: left out"]);
   });
 
   it("with several carousel styles the AI is told to pick one and read it first; animation styles and a plug-in's own looks are listed after, read when named, their pictures made small", async () => {

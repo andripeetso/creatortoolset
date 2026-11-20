@@ -238,13 +238,12 @@ async function slidesOf(user: AuthVars["user"], session: string, doc: string): P
 const matched = (pages: DesignPage[], slides: readonly Slide[]): DesignPage[] => (pages.some((p) => p.block) ? pages : pages.map((p, k) => (slides[k] ? { ...p, block: slides[k]!.id } : p)));
 
 const pieceOf = (d: Design): { session: string; doc: string } | null => (d.from && "session" in d.from ? d.from : null);
-const frameLabel = (p: DesignPage, k: number) => `Frame ${k + 1}${p.name ? ` (${p.name})` : ""}`;
 
 /* ---- an AI that designs (the assistant, a connected AI) ---- */
 
 /** How layers are written: what an AI that reads a design is told (GET /:id/pages). */
 export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "flipX" and "flipY" (mirrored), "opacity" (0 to 1), "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}), "blur" (pixels, up to 200: the layer drawn soft, for a glow, a haze, a cloud, something out of focus), "name" (what it is, in a word or two, like "Sun" or "Left palm": the user reads it in their list of layers, so name every layer), "group" (a short name of your choosing, like "palm trees": layers of a frame with the same group are picked and moved as one by the user and stand under that name in their list, so group what belongs together, like a badge and its words) and "blend" (how it mixes with what is under it: ${DESIGN_BLENDS.join(", ")}). Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. A "gradient" ({"to":"#rrggbb","angle":90}) on a text, a shape or a frame runs from its own colour to "to": angle 0 is left to right, 90 top to bottom; with "kind":"radial" it runs from the middle out to the corners (a spotlight), and "via":"#rrggbb" is a colour it passes through half-way. The kinds:
-- {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"spacing":0,"upper":false,"outline":{"color":"#rrggbb","width":8},"gradient":{…}}: "spacing" is pixels between the letters; "fit":"shrink" makes "size" the most, and sets the words at the largest size up to it at which they fit the box (use it whenever you cannot be sure they fit; with a size larger than the box could hold, the words fill the box); "balance":true breaks each paragraph's lines about as long as each other (for headlines); "marks":[{"words":"the floor","color":"#f2b63c"}] lays a highlighter stroke behind those words of the layer, wherever they wrap (leave "words" out for a stroke behind every line), so never place a box behind words yourself. A stroke is flat ink with square ends and no shadow; with "low":true it sits low, over the small letters and a little under the line with the tall letters standing out of it, the way a marker is drawn through a line; the words wrap inside w, and "\\n" starts a new line (which still wraps when it is too long for w); size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting).
+- {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"spacing":0,"upper":false,"outline":{"color":"#rrggbb","width":8},"gradient":{…}}: "spacing" is pixels between the letters; "fit":"shrink" makes "size" the most, and sets the words at the largest size up to it at which they fit the box (use it whenever you cannot be sure they fit; with a size larger than the box could hold, the words fill the box); "lines":2 does the same and also keeps them to at most that many lines, with no word left alone on a last line (for headlines and titles); "balance":true breaks each paragraph's lines about as long as each other (for headlines); "marks":[{"words":"the floor","color":"#f2b63c"}] lays a highlighter stroke behind those words of the layer, wherever they wrap (leave "words" out for a stroke behind every line), so never place a box behind words yourself. A stroke is flat ink with square ends and no shadow; with "low":true it sits low, over the small letters and a little under the line with the tall letters standing out of it, the way a marker is drawn through a line; the words wrap inside w, and "\\n" starts a new line (which still wraps when it is too long for w); size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting).
 - {"type":"shape","shape":"${DESIGN_SHAPES.join("|")}","fill":"#rrggbb","gradient":{…},"radius":0,"stroke":{"color":"#rrggbb","width":4,"dash":[12,8],"round":false,"side":"inside|outside"}}: a shape fills its box; "radius" rounds a rect's corners, all by one number or each by [top left, top right, bottom right, bottom left] (a picture's too); a stroke's "dash" is [dash, gap] in pixels ([0, gap] with "round" makes dots), and "side" keeps the line inside or outside the shape's edge (left out: half on each side); a triangle points up and an arrow to the right (turn them with "rotate"; "flipX" points the arrow left); a thin rect is a line.
 - {"type":"path","points":[{"x":0,"y":1},{"x":0.5,"y":0,"in":[-0.2,0],"out":[0.2,0]},{"x":1,"y":1}],"closed":false,"fill":"#rrggbb","gradient":{…},"stroke":{…}}: a line from point to point, which the user can reshape point by point. "x" and "y" are parts of the layer's box, from 0 to 1, not pixels (0,0 is the box's top left, 1,1 its bottom right); "in" and "out" are the ends of a point's two curve handles, as offsets from it in the same parts (left out: a corner, straight lines). "closed" joins the last point to the first; leave "fill" out for a line alone. A curve between two points: an "out" on the first and an "in" on the second. A marker arrow: one curved path for its shaft and a short V of three points for its head, with the same "group". For a whole illustration a "drawing" is easier.
 - {"type":"image","picture":"<id>","fit":"cover|contain","zoom":1,"focus":{"x":0.5,"y":0.5},"radius":0}: only a picture listed under "pictures" (how one gets there is below). "cover" fills the box and cuts the rest off: "focus" says which part stays (0 = the picture's left or top edge, 1 = its right or bottom), "zoom" (1 to 8) goes closer. Its colours: "adjust":{${DESIGN_ADJUST.map((k) => `"${k}":0`).join(",")}} (each -100 to 100), "duotone":{"dark":"#rrggbb","light":"#rrggbb"} (two colours in place of its own; black and white for a black and white picture), "vignette" (1 to 100 darkens the corners, -1 to -100 lightens them), "grain" (0 to 100), "blur" (pixels; a blurred photo behind words keeps them readable). They are settings of the layer, not a changed picture: 0 or null puts one back.
@@ -259,12 +258,14 @@ ${DESIGN_LAYERS}
 A frame that has "words" draws a slide of the user's carousel: those words are the author's. Place every one of them on that frame, as written: you choose where they go, how big they are and how they are split across text layers, and you never add, drop or change one (to change them, change the piece's slide first). A frame without "words" may say whatever the user asked for or agreed to.
 
 To change a design, give either or both of:
-- "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
-- "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off.
+- "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id; give it "as":"<a name of yours>" and the changes in the same call use that name as its "frame".
+- "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…},"as":"<a name of yours>"} (on top; with "at":"back", under the others; a later change in the same call names it by "as" as its "layer", and "named" in the answer gives the id a name became when it is another). Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off.
 - A change {"frame":"<id>","layer":"<a picture layer's id>","cutout":true} takes the picture's background away (the user's own Mac cuts it out, which takes some seconds; the answer says so when no Mac of theirs is on). {"set":{"picture":"<its 'uncut' id>","uncut":null}} puts the background back.
 - "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
-After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box or are cut off at the frame's edge (nothing said: they fit).
+Changes are made in the order given. One that cannot be made is left out and the rest are made: "notes" names each by where it was given ("changes[3]", "frames[0].layers[2]"), its frame and layer, and why, so send that one again fixed, never the whole call.
+
+After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box or are cut off at the frame's edge (nothing said: they fit), and the size a text that shrinks is drawn at ("as_drawn"): its own "size" stays the most it may be, so leave it.
 
 A frame you are designing or redesigning, design in rounds, never in one pass. After each change, set every frame you changed beside the look's pictures (without a look: beside what the user asked for) and name at least three things that make yours look more generic than theirs: type too small or too timid, a flat ground with no light on it, pieces with no weight or shadow, a crowded frame, a highlight on a word that does not carry the point, something there for no reason (a line or a shape that holds or means nothing). Fix them and look again. One slide takes several rounds: stop when you can no longer name a difference that matters. Before you say it is done, look at every frame once more as someone who did not make it would, and fix what gives it away. When the user asks for one change to a frame (a colour, a word, a size, a place), make that change alone with "changes": no rounds, and everything they placed by hand stays where it is.`;
 
@@ -385,9 +386,11 @@ const raw = (v: unknown): Raw | null => (v && typeof v === "object" && !Array.is
 /**
  * An AI's changes onto the design: whole frames (`frames`) and single layers (`changes`). Every frame they touch
  * goes through the same check as anything else that is saved, with its slide's words held. The answer names what
- * was left out and why, and the frames that changed.
+ * was left out and why, each note led by where it was given ("changes[3]", "frames[0].layers[2]") and the frame and
+ * layer it is about, and the frames that changed. A new frame or layer may be given a name ("as") that the changes
+ * after it use for its frame or layer: `named` says the id each name became, when it is another.
  */
-async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }> {
+async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[]; named: Record<string, string> }> {
   const frames = Array.isArray(body.frames) ? body.frames.map(raw) : [];
   const changes = Array.isArray(body.changes) ? body.changes.map(raw) : [];
   if (!frames.length && !changes.length) throw new DesignError('Give "frames" (whole frames) or "changes" (single layers): design_get says how each is written');
@@ -398,68 +401,96 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   /** each touched frame as it will be checked: its raw layers, and what else of it was given */
   const todo = new Map<string, { layers: unknown[]; more: Raw; isNew: boolean; gave: boolean; whole: boolean; set: string[] }>();
   const open = (p: DesignPage) => todo.get(p.id) ?? todo.set(p.id, { layers: [...p.layers], more: {}, isNew: false, gave: false, whole: false, set: [] }).get(p.id)!;
+  /** where each layer of this call was given ("changes[2]"), and the last place that touched each frame */
+  const givenAt = new Map<unknown, string>();
+  const frameAt = new Map<string, string>();
+  /** the layers this call adds: a note about one is named by where it was given alone (the id it was to have is no layer's) */
+  const added = new Set<unknown>();
+  /** a name a new frame or layer was given → its id (a layer's under "<frame id>\0<name>") */
+  const named = new Map<string, string>();
+  const where = (at: string | undefined, page: DesignPage, layer?: unknown) =>
+    [at, `frame ${page.id} (Frame ${next.indexOf(page) + 1})`, typeof layer === "string" && layer ? `layer ${layer}` : ""].filter(Boolean).join(", ");
 
   // pictures lying loose beside the frames are the person's: no frame of an AI's to write
   const frameIds = () => next.filter((p) => !p.loose).map((p) => p.id);
-  for (const f of frames.slice(0, DESIGN_LIMITS.pages)) {
-    if (!f) continue;
-    let page = typeof f.id === "string" ? next.find((p) => p.id === f.id && !p.loose) : undefined;
+  for (const [i, f] of frames.slice(0, DESIGN_LIMITS.pages).entries()) {
+    const at = `frames[${i}]`;
+    if (!f) {
+      notes.push(`${at}: not a frame (an object with "id", or "w", "h" and "name" for a new one): left out`);
+      continue;
+    }
+    let page = typeof f.id === "string" ? next.find((p) => p.id === (named.get(f.id as string) ?? f.id) && !p.loose) : undefined;
     if (typeof f.id === "string" && !page) {
-      notes.push(`There is no frame ${f.id}: this design's are ${frameIds().join(", ")}`);
+      notes.push(`${at}: there is no frame ${f.id}: this design's are ${frameIds().join(", ")} (a new frame has no "id": name it with "as")`);
       continue;
     }
     if (!page) {
       if (frameIds().length >= DESIGN_LIMITS.pages) {
-        notes.push(`A design holds at most ${DESIGN_LIMITS.pages} frames: the new one was not added`);
+        notes.push(`${at}: a design holds at most ${DESIGN_LIMITS.pages} frames: the new one was not added`);
         continue;
       }
       page = { id: `f${Date.now().toString(36)}${next.length}`, background: "#ffffff", layers: [] };
+      if (typeof f.as === "string" && f.as) named.set(f.as, page.id);
       // after the frames, before the loose pictures: its place among frames is its number
-      const at = frameIds().length;
-      next.splice(at, 0, page);
-      words.splice(at, 0, undefined);
+      const k = frameIds().length;
+      next.splice(k, 0, page);
+      words.splice(k, 0, undefined);
       open(page).isNew = true;
     }
     const t = open(page);
+    frameAt.set(page.id, at);
     if (Array.isArray(f.layers)) {
       t.layers = f.layers;
       t.gave = f.layers.length > 0;
       t.whole = true;
+      f.layers.forEach((l, j) => l && typeof l === "object" && givenAt.set(l, `${at}.layers[${j}]`));
     }
     t.more = { ...t.more, ...f };
+    delete t.more.as;
   }
 
-  for (const c of changes.slice(0, 200)) {
-    const page = c && next.find((p) => p.id === c.frame && !p.loose);
+  for (const [n, c] of changes.slice(0, 200).entries()) {
+    const at = `changes[${n}]`;
+    const fid = c && typeof c.frame === "string" ? (named.get(c.frame) ?? c.frame) : c?.frame;
+    const page = c && next.find((p) => p.id === fid && !p.loose);
     if (!c || !page) {
-      notes.push(`A change names no frame of this design (${String(c?.frame)}): its frames are ${frameIds().join(", ")}`);
+      notes.push(`${at}: names no frame of this design (${String(c?.frame)}): its frames are ${frameIds().join(", ")}`);
       continue;
     }
     const t = open(page);
+    frameAt.set(page.id, at);
     const add = raw(c.add);
     if (add) {
-      // an id of its own before the frame is checked, so the layers that were there keep theirs
+      // an id of its own before the frame is checked, so the layers that were there keep theirs; a name given to it
+      // ("as", or an id that is taken or cannot be one) is what later changes call it
       const ids = new Set(t.layers.map((l) => String(raw(l)?.id)));
-      let id = typeof add.id === "string" && !ids.has(add.id) ? add.id : "";
-      for (let n = t.layers.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
-      t.layers = c.at === "back" ? [{ ...add, id }, ...t.layers] : [...t.layers, { ...add, id }];
+      const name = typeof c.as === "string" && c.as ? c.as : typeof add.id === "string" ? add.id : "";
+      let id = /^[a-z0-9-]{1,24}$/.test(name) && !ids.has(name) ? name : "";
+      for (let k = t.layers.length + 1; !id; k++) if (!ids.has(`l${k}`)) id = `l${k}`;
+      if (name) named.set(`${page.id}\0${name}`, id);
+      const layer = { ...add, id };
+      givenAt.set(layer, at);
+      added.add(layer);
+      t.layers = c.at === "back" ? [layer, ...t.layers] : [...t.layers, layer];
       t.set.push(id);
       continue;
     }
-    const at = t.layers.findIndex((l) => raw(l)?.id === c.layer);
-    if (at < 0) {
-      notes.push(`${frameLabel(page, next.indexOf(page))} has no layer ${String(c.layer)}`);
+    const lid = typeof c.layer === "string" ? (named.get(`${page.id}\0${c.layer}`) ?? c.layer) : c.layer;
+    const k = t.layers.findIndex((l) => raw(l)?.id === lid);
+    if (k < 0) {
+      notes.push(`${where(at, page)}: there is no layer ${String(c.layer)}: its layers are ${t.layers.map((l) => String(raw(l)?.id)).join(", ") || "none"}`);
       continue;
     }
-    const [layer] = t.layers.splice(at, 1);
+    const [layer] = t.layers.splice(k, 1);
     if (c.remove === true) continue;
-    t.set.push(String(c.layer));
+    t.set.push(String(lid));
     // a field that is itself a set of fields ("adjust", "shadow", "gradient") takes the ones given and keeps the rest; null takes it off whole
     const was = layer as Raw;
-    const changed = raw(c.set) ? { ...was, ...Object.fromEntries(Object.entries(c.set as Raw).map(([k, v]) => [k, raw(v) && raw(was[k]) ? { ...raw(was[k]), ...raw(v) } : v])), id: was.id } : layer;
+    const changed = raw(c.set) ? { ...was, ...Object.fromEntries(Object.entries(c.set as Raw).map(([key, v]) => [key, raw(v) && raw(was[key]) ? { ...raw(was[key]), ...raw(v) } : v])), id: was.id } : layer;
+    givenAt.set(changed, at);
     if (c.order === "front") t.layers.push(changed);
     else if (c.order === "back") t.layers.unshift(changed);
-    else t.layers.splice(at, 0, changed);
+    else t.layers.splice(k, 0, changed);
   }
 
   const touched: string[] = [];
@@ -468,19 +499,20 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   for (const [id, t] of todo) {
     const k = next.findIndex((p) => p.id === id);
     const was = next[k]!;
-    const label = frameLabel(was, k);
+    // a note about a layer: where that layer was given in this call (a layer that was there already: none), else the frame's last place
+    const say = (_: number, why: string, layer?: unknown) => notes.push(`${where(layer === undefined ? frameAt.get(id) : givenAt.get(layer), was, added.has(layer) ? "" : raw(layer)?.id)}: ${why}`);
     const made = cleanPages([{ id, layers: t.layers, w: typeof t.more.w === "number" ? t.more.w : was.w, h: typeof t.more.h === "number" ? t.more.h : was.h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, name: t.more.name ?? was.name }], {
       w: d.width,
       h: d.height,
       pictures: d.pictures,
       fonts,
       words: [words[k]],
+      say,
     });
-    notes.push(...made.notes.map((note) => note.replace(/^Page 1:/, `${label}:`)));
     const page = made.pages[0]!;
     // layers were given and none of them could be drawn: the frame is as it was (a new one stays, empty)
     if (t.gave && !page.layers.length && !t.isNew) {
-      notes.push(`${label}: nothing given could be drawn, so it is as it was`);
+      notes.push(`${where(frameAt.get(id), was)}: nothing given could be drawn, so it is as it was`);
       continue;
     }
     // its place on the canvas and its slide are not the AI's to move
@@ -503,7 +535,9 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     d.width,
     d.height,
   );
-  return { design: await save({ ...now, pages, updatedAt: stamp(now) }), notes, touched, wrote };
+  // the names that became another id: a new frame's, and a layer's that was taken or could not be an id
+  const renamed = Object.fromEntries([...named].map(([name, id]) => [name.slice(name.indexOf("\0") + 1), id] as const).filter(([name, id]) => name !== id));
+  return { design: await save({ ...now, pages, updatedAt: stamp(now) }), notes, touched, wrote, named: renamed };
 }
 
 /* ---- routes ---- */

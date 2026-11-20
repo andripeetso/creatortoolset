@@ -23,7 +23,7 @@ const WIDTH = 560;
 const SMALL = 1024;
 const TIMEOUT_MS = 25_000;
 
-type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<{ jpeg: string; spills: string[] }> } };
+type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<{ jpeg: string; spills: string[]; drawn: string[] }> } };
 
 /** The page's pictures as data addresses of their small copies (made once a run, in `dir`). */
 async function smallPictures(page: DesignPage, dir: string, file: (name: string) => Promise<string>): Promise<Record<string, string>> {

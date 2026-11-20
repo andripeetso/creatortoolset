@@ -182,13 +182,21 @@ export interface PageRules {
    * A frame with none here (undefined: it is no slide) may say anything.
    */
   words?: readonly (string | undefined)[];
+  /**
+   * Where a note goes instead of the notes list: the page's place in the list, the note, and the layer as it was given
+   * (for a note about one layer), so a caller can say which of the things it sent the note is about.
+   */
+  say?: (page: number, why: string, layer?: unknown) => void;
 }
 
 /** A layer without its id, kind by kind (Omit over the whole union would keep only what every kind has). */
 type Unnamed = Layer extends infer L ? (L extends Layer ? Omit<L, "id"> : never) : never;
 
 function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own: string | undefined): Unnamed | null {
-  if (!obj(raw)) return null;
+  if (!obj(raw)) {
+    say("a layer that is not an object: left out");
+    return null;
+  }
   const box = {
     x: round(num(raw.x, -r.w, 2 * r.w, 0)),
     y: round(num(raw.y, -r.h, 2 * r.h, 0)),
@@ -212,7 +220,10 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
   if (raw.type === "text") {
     const text = typeof raw.text === "string" ? raw.text.replace(/\r\n/g, "\n").trim().slice(0, DESIGN_LIMITS.text) : "";
-    if (!text) return null;
+    if (!text) {
+      say("a text with no words: left out");
+      return null;
+    }
     // its words are a run of the page's own words, whole words: not a part of one, not letters out of two
     if (own !== undefined && !` ${plainWords(own)} `.includes(` ${plainWords(text)} `)) {
       say(`“${text.replace(/\s+/g, " ").slice(0, 60)}” is not in its own words: left out`);
@@ -239,6 +250,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
       ...gradient(raw.gradient),
       ...(typeof raw.spacing === "number" && num(raw.spacing, -20, 200, 0) ? { spacing: round(num(raw.spacing, -20, 200, 0)) } : {}),
       ...(raw.fit === "shrink" ? { fit: "shrink" as const } : {}),
+      ...(Math.round(num(raw.lines, 0, 12, 0)) ? { lines: Math.round(num(raw.lines, 0, 12, 0)) } : {}),
       ...marks(raw.marks),
       ...(raw.balance === true ? { balance: true } : {}),
       align: oneOf(raw.align, ["left", "center", "right"] as const, "left"),
@@ -314,6 +326,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     }
     return { type: "drawing", ...box, svg };
   }
+  say(`a layer of no type that can be drawn (${JSON.stringify(raw.type ?? null).slice(0, 30)}): left out; the types are text, shape, path, image and drawing`);
   return null;
 }
 
@@ -342,7 +355,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
       ...(typeof p.block === "string" && ID.test(p.block) ? { block: p.block } : {}),
     };
     for (const l of (Array.isArray(p.layers) ? p.layers : []).slice(0, DESIGN_LIMITS.layers)) {
-      const clean = cleanLayer(l, { ...r, ...size }, (why) => notes.push(`Page ${k + 1}: ${why}`), r.words ? r.words[k] : undefined);
+      const clean = cleanLayer(l, { ...r, ...size }, (why) => (r.say ? r.say(k, why, l) : notes.push(`Page ${k + 1}: ${why}`)), r.words ? r.words[k] : undefined);
       if (!clean) continue;
       const given = obj(l) && typeof l.id === "string" && ID.test(l.id) && !ids.has(l.id) ? l.id : "";
       let id = given;
@@ -358,7 +371,8 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         const at = left.indexOf(word);
         if (at >= 0) left.splice(at, 1);
       }
-      if (left.length) notes.push(`Page ${k + 1}: these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`);
+      const why = `these words of it are not on the page: ${left.slice(0, 12).join(" ")}${left.length > 12 ? " …" : ""}`;
+      if (left.length) (r.say ? r.say(k, why) : notes.push(`Page ${k + 1}: ${why}`));
     }
     // a loose picture with nothing left on it is gone
     if (loose && !layers.length) continue;

@@ -12,7 +12,7 @@
  *   PUT    /api/designs/:id             { name?, pages?, since? } → Design (what the person changed by hand). `since`: the updatedAt this window last knew; the design changed after it → 409 { error, design } and nothing is written
  *   DELETE /api/designs/:id
  *   GET    /api/designs/:id/pages       ?look=<name> → what an AI designs from: the fonts, pictures, looks' briefs (one look's pictures when named), each frame with its id, size, words and layers, and how frames and changes are written
- *   POST   /api/designs/:id/pages       { frames?: [{ id?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? }] } → DesignAnswer & { touched: frame ids } (an AI's work: whole frames replaced or added, or single layers changed; checked as above)
+ *   POST   /api/designs/:id/pages       { frames?: [{ id? | as?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? + as? }] } → DesignAnswer & { touched: frame ids, wrote, named: { name: id } } (an AI's work: whole frames replaced or added, or single layers changed; checked as above; each note led by where it was given, "changes[2]"; a later change names a new frame or layer by its "as")
  *   GET    /api/designs/:id/look        ?frames=<id>,<id> → { pictures: [{ page, jpeg (base64), spills }], why? }: the frames as small pictures, for the AI to look at
  *   POST   /api/designs/:id/pictures    { name, type, data (base64), id? } → { id, updatedAt, was }   (JPEG, PNG or WebP; `id`: the one the window gave it, so it is shown before it is here; `was`: the design's updatedAt before it); or { version, t }: that moment of a library video, copied in
  *   POST   /api/designs/:id/pictures/:pid/cutout   → { id }: that picture with its background taken away, as a new picture of the design (cut by a Mac of the person's own)
@@ -117,6 +117,8 @@ export interface TextLayer extends Box {
   fit?: "shrink";
   /** its lines evened out: broken so they are about as long as each other, in no more lines than it takes anyway */
   balance?: boolean;
+  /** at most this many lines (1 to 12): set at the largest size up to `size` that keeps to them and fits the box, with no word alone on a paragraph's last line */
+  lines?: number;
   align: "left" | "center" | "right";
   /** where the lines sit in the box; absent = top */
   valign?: "top" | "middle" | "bottom";

@@ -6,7 +6,7 @@ import { drawingUrl, drawPage, fontOf, lineHeightOf, setText, sourceOf, textWidt
  * that do not fit their box (measured with the real fonts). An AI that designs the pages is shown this, so it sees
  * what it made and what to fix. Run in the server's drawing browser (render-entry.tsx), never in the app's own page.
  */
-export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; spills: string[] }> {
+export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; spills: string[]; drawn: string[] }> {
   const layers = spec.page.layers.filter((l) => !l.hidden);
   // the person's own fonts first: each from its file, once (one that cannot be read is drawn in the fallback face)
   await Promise.all(
@@ -36,6 +36,8 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
   ctx.setTransform(spec.scale, 0, 0, spec.scale, 0, 0);
   drawPage(ctx, spec.page, spec.width, spec.height, loaded, true);
   const spills: string[] = [];
+  // what the drawing worked out for a text that shrinks: the size it came to and its lines, beside the size it was given
+  const worked: string[] = [];
   for (const l of layers) {
     if (l.type !== "text") continue;
     ctx.font = fontOf(l);
@@ -47,8 +49,9 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
     const lines = set.lines;
     const wide = Math.ceil(Math.max(...lines.map(widthOf)));
     const tall = Math.ceil(lines.length * lineHeightOf(drawn));
-    const said = `“${l.text.replace(/\s+/g, " ").slice(0, 40)}”`;
-    if (wide > l.w + 1 || tall > l.h + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" ? " (it cannot shrink further)" : ""}`);
+    const said = `layer ${l.id} “${l.text.replace(/\s+/g, " ").slice(0, 40)}”`;
+    if ((l.fit === "shrink" || l.lines) && set.size < l.size) worked.push(`${said} is drawn at size ${set.size} (its size ${l.size} is the most) in ${lines.length} ${lines.length === 1 ? "line" : "lines"}`);
+    if (wide > l.w + 1 || tall > l.h + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" || l.lines ? " (it cannot shrink further)" : ""}`);
     // words that fit their box and are still cut: the box itself reaches over the frame's edge (a turned box is left to the eye)
     else if (!l.rotate) {
       const left = l.x + (l.align === "center" ? (l.w - wide) / 2 : l.align === "right" ? l.w - wide : 0);
@@ -56,5 +59,5 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
       if (left < -1 || top < -1 || left + wide > spec.width + 1 || top + tall > spec.height + 1) spills.push(`${said} is cut off at the frame's edge: the words run from ${Math.round(left)}, ${Math.round(top)} to ${Math.round(left + wide)}, ${Math.round(top + tall)}, and the frame is ${spec.width} × ${spec.height}`);
     }
   }
-  return { jpeg: c.toDataURL("image/jpeg", 0.82).split(",")[1] ?? "", spills };
+  return { jpeg: c.toDataURL("image/jpeg", 0.82).split(",")[1] ?? "", spills, drawn: worked };
 }

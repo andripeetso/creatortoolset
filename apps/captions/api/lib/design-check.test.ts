@@ -33,7 +33,13 @@ describe("a design's pages, checked", () => {
       rules,
     );
     expect(pages[0]!.layers).toEqual([]);
-    expect(notes).toEqual(["Page 1: a picture that is not in this design: left out", "Page 1: a drawing that is not plain shapes: left out"]);
+    expect(notes).toEqual([
+      "Page 1: a picture that is not in this design: left out",
+      "Page 1: a drawing that is not plain shapes: left out",
+      'Page 1: a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image and drawing',
+      "Page 1: a text with no words: left out",
+      "Page 1: a layer that is not an object: left out",
+    ]);
   });
 
   it("holds an AI's answer to each page's own words: placed, split and cased as it likes, never added to or changed", () => {
