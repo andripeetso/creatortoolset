@@ -286,6 +286,17 @@ struct WideButton: View {
     }
 }
 
+/// The iPhone's own share sheet.
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
 // MARK: The message box
 
 /// The message box: a pill with what goes in front (attach, a time), the text, and one round

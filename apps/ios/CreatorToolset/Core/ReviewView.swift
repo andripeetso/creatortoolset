@@ -12,7 +12,8 @@ struct ReviewRouteView: View {
 }
 
 /// One video in Review: watch a version, say Approve or Request changes, and talk about it in
-/// comments pinned to moments of the video. What others write and decide shows up by itself.
+/// comments pinned to moments of the video, typed or spoken. ••• shares a link, saves the video or opens the edit
+/// that made it. What others write and decide shows up by itself.
 struct ReviewAssetView: View {
     let id: String
     /// The version a link asked for; the newest when it names none, or one the video hasn't got.
@@ -39,12 +40,29 @@ struct ReviewAssetView: View {
     @State private var scrollTarget: String?
     @State private var loadError: String?
     @State private var writeError: String?
+    /// Talk a note instead of typing it: the video waits, the note stays at that moment (`pinned`).
+    /// (`-ReviewRecord`: a simulator picture of a note being spoken, with a microphone that hears nothing)
+    @StateObject private var voice = debugArg("ReviewRecord") != nil ? VoiceInput(mic: .init(start: {}, stop: { nil })) : VoiceInput()
+    @State private var pinned: Double?
+    /// ••• is open (`-ReviewMore`: a simulator picture of it).
+    @State private var more = debugArg("ReviewMore") != nil
+    /// Request changes with no open notes: the next note asks for them.
+    @State private var asking = false
+    /// The share sheet's link or file; `saved` is a downloaded video to delete when the sheet closes.
+    @State private var sharing: [Any]?
+    @State private var saved: URL?
+    @State private var preparing = false
 
     private var shown: ReviewAsset.Version? { asset?.versions.first { $0.n == version } }
     /// Where the player is, in seconds.
     private var now: Double {
+        if let pinned { return pinned }
         let seconds = player?.currentTime().seconds ?? 0
         return seconds.isFinite ? seconds : 0
+    }
+    /// The open notes on the version on screen: Request changes sends them.
+    private var openNotes: Int {
+        comments.filter { $0.version == version && $0.parentId == nil && $0.resolved != true }.count
     }
 
     var body: some View {
@@ -64,19 +82,36 @@ struct ReviewAssetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(asset?.name ?? "")
+        .navigationTitle(asset?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if shown != nil {
-                if (asset?.versions.count ?? 0) > 1 {
-                    ToolbarItem(placement: .topBarTrailing) { versionMenu }
-                } else if #available(iOS 26.0, *) {
-                    // one version: a word, not something that looks pressable
-                    ToolbarItem(placement: .topBarTrailing) { versionWord }.sharedBackgroundVisibility(.hidden)
-                } else {
-                    ToolbarItem(placement: .topBarTrailing) { versionWord }
+            if let asset {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 0) {
+                        Text(asset.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                        if shown != nil { versionMenu }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { more = true } label: {
+                        Group {
+                            if preparing { ProgressView() } else { Image(systemName: "ellipsis") }
+                        }
+                        .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .disabled(preparing)
+                    .accessibilityLabel("More")
                 }
             }
+        }
+        .confirmationDialog(asset?.title ?? "", isPresented: Binding(get: { more && asset != nil }, set: { more = $0 })) {
+            if let asset { moreActions(asset) }
+        }
+        .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } }), onDismiss: {
+            if let saved { try? FileManager.default.removeItem(at: saved.deletingLastPathComponent()) }
+            saved = nil
+        }) {
+            if let sharing { ShareSheet(items: sharing).presentationDetents([.medium, .large]) }
         }
         .task { await follow() }
         .onChange(of: scenePhase) { _, phase in
@@ -84,7 +119,10 @@ struct ReviewAssetView: View {
         }
         // writing starts: the video waits at the moment being written about
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in player?.pause() }
-        .onDisappear { player?.pause() }
+        .onDisappear {
+            player?.pause()
+            voice.cancel()
+        }
         .confirmationDialog("Delete this comment?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             titleVisibility: .visible, presenting: deleting) { comment in
             Button("Delete", role: .destructive) { Task { await delete(comment) } }
@@ -117,7 +155,7 @@ struct ReviewAssetView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 decision(asset)
-                                if let extras = ReviewExtras.actions { extras(asset, comments) }
+                                earlierNotes(asset)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
@@ -125,6 +163,8 @@ struct ReviewAssetView: View {
                                 Divider().padding(.leading, 16)
                                 threadView(thread)
                             }
+                            // the last note scrolls clear of the floating note box
+                            Color.clear.frame(height: 72)
                         }
                     }
                     .scrollDismissesKeyboard(.interactively)
@@ -139,29 +179,43 @@ struct ReviewAssetView: View {
         }
     }
 
-    /// "V2" at the right of the bar: a menu of the versions, newest first.
-    private var versionMenu: some View {
-        Menu {
-            Picker("Version", selection: Binding(get: { version }, set: { show($0) })) {
-                ForEach((asset?.versions ?? []).reversed()) { v in Text(["V\(v.n)", v.blurTag].compactMap { $0 }.joined(separator: " · ")).tag(v.n) }
+    /// "v2 of 2 ▾" under the title: a menu of the versions, newest first; one version is a word, not a menu.
+    @ViewBuilder private var versionMenu: some View {
+        let count = asset?.versions.count ?? 0
+        if count > 1 {
+            Menu {
+                Picker("Version", selection: Binding(get: { version }, set: { show($0) })) {
+                    ForEach((asset?.versions ?? []).reversed()) { v in Text(["v\(v.n)", v.blurTag].compactMap { $0 }.joined(separator: " · ")).tag(v.n) }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Text("v\(version) of \(asset?.latest?.n ?? count)")
+                    Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                }
+                .font(.caption.weight(.semibold))
+                .frame(minWidth: 44, minHeight: 22)
             }
-        } label: {
-            HStack(spacing: 3) {
-                Text("V\(version)")
-                Image(systemName: "chevron.down").font(.caption2.weight(.bold))
-            }
-            .font(.subheadline.weight(.semibold))
-            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel("Version \(version) of \(asset?.latest?.n ?? count)")
+        } else {
+            Text("v\(version)").font(.caption).foregroundStyle(.secondary)
         }
-        .accessibilityLabel("Version \(version)")
+    }
+
+    /// •••: Share link (managers), Save video (the version on screen, as it plays), Open project (the edit that made it).
+    @ViewBuilder private func moreActions(_ asset: ReviewAsset) -> some View {
+        if manage {
+            Button("Share link") { Task { await shareLink() } }
+        }
+        if let v = shown, v.status == "ready", v.removed != true {
+            Button("Save video") { Task { await saveVideo(asset, v) } }
+        }
+        if let edit = asset.latest?.editId {
+            Button("Open project") { AppNavigator.shared.open(.edit(edit)) }
+        }
     }
 
     /// The website's amber (#f59e0b).
     private static let amber = Color(red: 0.96, green: 0.62, blue: 0.04)
-
-    private var versionWord: some View {
-        Text("V\(version)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-    }
 
     /// The player in the version's own shape, at most 45% of the height. A version with no video
     /// to play says why in its place.
@@ -182,22 +236,55 @@ struct ReviewAssetView: View {
         }
     }
 
-    /// Approve and Request changes, side by side. The one already said shows as chosen; the other stays to press.
+    /// Approve (left) and Request changes (right), side by side, as in the chat. The one already said shows as chosen;
+    /// the other stays to press. Approve says what it starts ("Approve · add B-roll"); Request changes sends the open
+    /// notes, and with none puts the cursor in the note box to write them.
     private func decision(_ asset: ReviewAsset) -> some View {
         let status = ReviewStatus(rawValue: asset.approval.status)
+        let open = openNotes
         return HStack(spacing: 10) {
             if status == .approved {
                 ChosenMark(title: ReviewStatus.approved.label, color: .green)
             } else {
-                WideButton(title: "Approve", systemImage: "checkmark", busy: deciding == .approved) { Task { await decide(.approved) } }
+                WideButton(title: ReviewAsset.approveTitle(shown?.next), systemImage: "checkmark", busy: deciding == .approved) { Task { await decide(.approved) } }
             }
             if status == .changes {
                 ChosenMark(title: ReviewStatus.changes.label, color: .orange)
             } else {
-                WideButton(title: "Request changes", kind: .plain, busy: deciding == .changes) { Task { await decide(.changes) } }
+                WideButton(title: open > 0 ? "Request changes · \(open) note\(open == 1 ? "" : "s")" : "Request changes", kind: .plain,
+                           busy: deciding == .changes) {
+                    if open > 0 {
+                        Task { await requestChanges() }
+                    } else {
+                        asking = true
+                        replyTo = nil
+                        focus += 1
+                    }
+                }
             }
         }
         .disabled(deciding != nil)
+    }
+
+    /// The notes on the version before this one, under the player: what this version was asked to change.
+    @ViewBuilder private func earlierNotes(_ asset: ReviewAsset) -> some View {
+        let before = asset.versions.last { $0.n < version }?.n
+        let notes = before.map { n in comments.filter { $0.version == n && $0.parentId == nil } } ?? []
+        if let before, !notes.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Notes on v\(before) · \(notes.count)").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                ForEach(notes) { note in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        if let time = note.timeLabel { TimeChip(text: time, on: false) }
+                        Text(note.text.isEmpty ? "Drawing or attachment" : note.text).font(.subheadline).lineLimit(3)
+                        if note.resolved == true {
+                            Image(systemName: "checkmark.circle.fill").font(.footnote).foregroundStyle(.green).accessibilityLabel("Resolved")
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     /// A comment, its replies indented under it, and Reply and Resolve. A resolved thread steps back and offers Reopen.
@@ -274,6 +361,7 @@ struct ReviewAssetView: View {
     private var box: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let writeError { QuietNotice(text: writeError).padding(.horizontal, 26) }
+            if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 26) }
             if let replyTo {
                 HStack(spacing: 6) {
                     Image(systemName: "arrowshape.turn.up.left.fill").font(.caption)
@@ -291,12 +379,23 @@ struct ReviewAssetView: View {
                 .chatSurface(cornerRadius: 22)
                 .padding(.horizontal, 12)
             }
-            ChatComposer(text: $draft, placeholder: "Comment", sending: sending, autofocus: focus > 0,
+            ChatComposer(text: $draft, placeholder: asking ? "What should change in v\(version)?" : "Comment", sending: sending,
+                         autofocus: focus > 0,
+                         mic: ComposerMic(phase: voice.phase) {
+                             // the video waits, and the note stays at this moment while it is spoken
+                             if case .idle = voice.phase, replyTo == nil, player != nil {
+                                 player?.pause()
+                                 atTime = true
+                                 pinned = now
+                             }
+                             voice.toggle { draft = VoiceInput.appended($0, to: draft) }
+                         },
                          onSend: { Task { await send() } }) {
                 // a reply is about its comment, not a moment; a version with nothing to play has no moments
                 if replyTo == nil, player != nil {
                     Button {
                         atTime.toggle()
+                        pinned = nil
                     } label: {
                         TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                             TimeChip(text: atTime ? clock(now) : "No time", on: atTime)
@@ -341,6 +440,20 @@ struct ReviewAssetView: View {
 
     private func load() async {
         if debugArg("ReviewHold") != nil { return }   // a simulator picture of the loading state
+        #if DEBUG
+        if PhoneDemo.on, let demo = PhoneDemo.review, asset == nil {
+            asset = demo.asset
+            comments = demo.comments
+            manage = true
+            version = demo.asset.opening(wanted)
+            open()
+            if debugArg("ReviewRecord") != nil {
+                pinned = 42
+                voice.toggle { _ in }
+            }
+            return
+        }
+        #endif
         guard let api = ToolsetAPI.current else {
             loadError = "Not signed in"
             return
@@ -394,6 +507,7 @@ struct ReviewAssetView: View {
         guard n != version else { return }
         version = n
         replyTo = nil
+        pinned = nil
         open()
     }
 
@@ -409,6 +523,7 @@ struct ReviewAssetView: View {
 
     private func play(from seconds: Double) {
         guard let player else { return }
+        pinned = nil
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         player.play()
     }
@@ -417,6 +532,7 @@ struct ReviewAssetView: View {
 
     private func reply(to comment: ReviewComment) {
         replyTo = comment
+        asking = false
         focus += 1
         scrollTarget = comment.id
     }
@@ -443,6 +559,7 @@ struct ReviewAssetView: View {
         guard let data = await write("/comments", json: body) else { return }
         draft = ""
         replyTo = nil
+        pinned = nil
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         // the server answers with the comment: it is shown at once
         guard let made = try? JSONDecoder().decode(ReviewComment.self, from: data) else {
@@ -451,6 +568,51 @@ struct ReviewAssetView: View {
         }
         if !comments.contains(where: { $0.id == made.id }) { comments.append(made) }
         scrollTarget = made.id
+        if asking {
+            asking = false
+            await requestChanges()
+        }
+    }
+
+    /// Request changes with the open notes: the video is marked, and what made it makes the next cut from them.
+    private func requestChanges() async {
+        guard await decide(.changes), let asset, let send = ReviewExtras.requestChanges else { return }
+        do {
+            try await send(asset)
+        } catch {
+            writeError = error.localizedDescription
+        }
+    }
+
+    /// The video's share link (the same one each time; download only where it was turned on), to the share sheet.
+    private func shareLink() async {
+        guard let api = ToolsetAPI.current else { return }
+        preparing = true
+        defer { preparing = false }
+        struct Shared: Decodable {
+            struct Share: Decodable { let token: String }
+            let share: Share?
+        }
+        guard let data = await write("", method: "PATCH", json: ["share": ["enabled": true]]),
+              let token = (try? JSONDecoder().decode(Shared.self, from: data))?.share?.token else { return }
+        sharing = [api.server.appendingPathComponent("r/\(token)")]
+    }
+
+    /// The version on screen as it plays (blurred where it is), to the share sheet: Save Video, Save to Files.
+    private func saveVideo(_ asset: ReviewAsset, _ v: ReviewAsset.Version) async {
+        guard let api = ToolsetAPI.current else { return }
+        preparing = true
+        defer { preparing = false }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            let file = try await api.download(asset.media(v, "play"), filename: "\(asset.title) v\(v.n).mp4", into: folder)
+            writeError = nil
+            saved = file
+            sharing = [file]
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            writeError = error.localizedDescription
+        }
     }
 
     private func resolve(_ comment: ReviewComment) async {
@@ -469,29 +631,32 @@ struct ReviewAssetView: View {
         if replyTo?.id == comment.id { replyTo = nil }
     }
 
-    private func decide(_ status: ReviewStatus, asFilmed: Bool = false) async {
-        guard let api = ToolsetAPI.current else { return }
+    /// True when the server took it. It names the version on screen, so an older one is never approved by mistake.
+    @discardableResult
+    private func decide(_ status: ReviewStatus, asFilmed: Bool = false) async -> Bool {
+        guard let api = ToolsetAPI.current else { return false }
         deciding = status
         defer { deciding = nil }
         let data: Data
         do {
-            switch try await ReviewApproval.send(api, asset: id, status, asFilmed: asFilmed) {
+            switch try await ReviewApproval.send(api, asset: id, status, asFilmed: asFilmed, version: version) {
             case .ask(let line):
                 asFilmedAsk = line
-                return
+                return false
             case .done(let answer):
                 data = answer
             }
             writeError = nil
         } catch {
             writeError = error.localizedDescription
-            return
+            return false
         }
         if let fresh = try? JSONDecoder().decode(ReviewAsset.self, from: data) {
             asset = fresh
         } else {
             await load()
         }
+        return true
     }
 }
 

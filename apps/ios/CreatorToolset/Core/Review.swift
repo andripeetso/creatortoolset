@@ -36,7 +36,30 @@ struct ReviewAsset: Codable, Hashable, Identifiable {
         var notBlurred: Bool? = nil
         /// Its owner approved it with the faces as filmed.
         var approvedAsFilmed: AsFilmed? = nil
+        /// What approving it starts ("B-roll", "cards"): an edit in passes.
+        var next: String? = nil
+        /// What made it (managers only): the app's own AI Editor (`draft`), a plug-in's (`edit`), and its link back.
+        var draft: Made? = nil
+        var edit: Made? = nil
+        var source: Source? = nil
         var id: Int { n }
+
+        struct Made: Codable, Hashable {
+            /// The edit's id: `edit` for the app's own editor, `project` for a plug-in's.
+            var edit: String? = nil
+            var project: String? = nil
+            /// The cut's name inside the edit.
+            var name: String? = nil
+            var draft: String? = nil
+        }
+
+        struct Source: Codable, Hashable {
+            var label: String? = nil
+            var href: String? = nil
+        }
+
+        /// The edit that made it, when one did.
+        var editId: String? { draft?.edit ?? edit?.project }
 
         struct AsFilmed: Codable, Hashable {
             let by: String
@@ -50,6 +73,23 @@ struct ReviewAsset: Codable, Hashable, Identifiable {
     }
 
     var latest: Version? { versions.last }
+
+    /// The name of what made it, not the file's: an edit's cut "Hook v1" or "Hook, V2A_D1" reads "Hook". The video's
+    /// own name when nothing made it.
+    var title: String {
+        guard let v = latest else { return name }
+        if let label = v.source?.label, let cut = v.edit?.draft, label.hasSuffix(", \(cut)") {
+            return String(label.dropLast(cut.count + 2))
+        }
+        if let cut = v.draft?.name, name.hasSuffix(" \(cut)") { return String(name.dropLast(cut.count + 1)) }
+        return name
+    }
+
+    /// Approve's words: what approving the newest cut starts, when it starts something.
+    static func approveTitle(_ next: String?) -> String {
+        guard let next, !next.isEmpty else { return "Approve" }
+        return "Approve · add \(next)"
+    }
 
     func media(_ v: Version, _ file: String) -> String {
         "/api/review/assets/\(id)/v/\(v.n)/\(file)?c=\(Int(v.createdAt))"
@@ -164,10 +204,12 @@ enum ReviewApproval {
         case ask(String)
     }
 
-    static func send(_ api: API, asset id: String, _ status: ReviewStatus, asFilmed: Bool = false,
+    /// `version`: the one the press was about; the server refuses it when a newer one is in Review.
+    static func send(_ api: API, asset id: String, _ status: ReviewStatus, asFilmed: Bool = false, version: Int? = nil,
                      session: URLSession = API.session) async throws -> Answer {
         var body: [String: Any] = ["status": status.rawValue]
         if asFilmed { body["asFilmed"] = true }
+        if let version { body["version"] = version }
         let request = api.request("/api/review/assets/\(id)/approval", method: "POST", json: body)
         do {
             return .done(try await api.data(request, session: session, coded: true))
@@ -179,9 +221,9 @@ enum ReviewApproval {
     }
 }
 
-/// More buttons under a Review video from a part of the app Review itself doesn't know:
-/// whatever made the video can put its own next step here ("Revise from the comments").
+/// What Request changes does besides marking the video, from a part of the app Review itself doesn't know: whatever
+/// made the video makes its next cut from the open notes. Throws the server's refusal.
 @MainActor
 enum ReviewExtras {
-    static var actions: ((ReviewAsset, [ReviewComment]) -> AnyView)?
+    static var requestChanges: ((ReviewAsset) async throws -> Void)?
 }

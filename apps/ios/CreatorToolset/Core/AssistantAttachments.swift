@@ -325,6 +325,8 @@ final class AssistantDraft: ObservableObject {
     static let maxVideos = 50
 
     @Published var text = "" { didSet { keep() } }
+    /// Request changes under a ready cut: the box's question ("What should change in v2?") until the next message goes.
+    @Published var ask: String?
     @Published private(set) var pictures: [QueuedMessage.Picture] = [] { didSet { keep() } }
     /// Picked videos, on their way up; one Photos is still handing over is `pending`.
     @Published private(set) var videos: [QueuedMessage.Video] = [] { didSet { keep() } }
@@ -459,6 +461,7 @@ final class AssistantDraft: ObservableObject {
         videos = []
         files = []
         notice = nil
+        ask = nil
         return message
     }
 

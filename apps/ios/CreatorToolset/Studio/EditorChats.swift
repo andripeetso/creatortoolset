@@ -166,8 +166,10 @@ enum EditorChats {
             guard on else { return }
             _ = try? await api.send("/api/editor/todo/read", json: ["keys": row.keys])
         }
-        ReviewExtras.actions = { asset, comments in
-            on ? AnyView(ReviseFromComments(asset: asset, comments: comments)) : AnyView(EmptyView())
+        // Request changes on a Review video an edit made: the editor makes the next cut from its open notes
+        ReviewExtras.requestChanges = { asset in
+            guard on, let api = ToolsetAPI.current, let made = asset.latest?.edit, let edit = made.project, let draft = made.draft else { return }
+            try await api.send("/api/editor/\(edit)/drafts/\(pathPiece(draft))/revise")
         }
         // the plug-in list or the account arrives after Chats' first read (a first sign-in): read again
         ServerPlugins.shared.$known.map { $0.plugins.contains(Studio.plugin) }
@@ -241,70 +243,6 @@ enum EditorChats {
             if edit.stage == "published" || edit.stage == "toPost" { return row(cuts, .time(when), shelf: .done) }
             // ponytail: "finished" is the edit's last change with cuts and nothing running; a rename on the Mac reads as Done once more
             return row(cuts, .time(when), finished: edit.drafts > 0 ? when : nil)
-        }
-    }
-}
-
-/// Under a Review video that an edit made: "Revise from 2 comments". The editor makes the next
-/// cut from the open comments, and the edit's thread opens to follow it.
-private struct ReviseFromComments: View {
-    let asset: ReviewAsset
-    let comments: [ReviewComment]
-    @State private var made: Made?
-    @State private var busy = false
-    @State private var error: String?
-
-    /// The newest version an edit made: which edit, which of its cuts.
-    struct Made: Equatable {
-        var edit: String
-        var draft: String
-        var version: Int
-    }
-
-    private struct Detail: Decodable {
-        var asset: Video
-        struct Video: Decodable { var versions: [Version] }
-        struct Version: Decodable {
-            var n: Int
-            var edit: Edit?
-        }
-        struct Edit: Decodable {
-            var project: String
-            var draft: String
-        }
-    }
-
-    private var open: Int {
-        comments.filter { $0.version == made?.version && $0.parentId == nil && $0.resolved != true }.count
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let made, open > 0 {
-                WideButton(title: "Revise from \(open) comment\(open == 1 ? "" : "s")", systemImage: "wand.and.stars", kind: .plain, busy: busy) {
-                    Task { await revise(made) }
-                }
-            }
-            if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-        }
-        .task(id: asset.versions.count) {
-            guard let api = ToolsetAPI.current,
-                  let detail: Detail = try? await api.get("/api/review/assets/\(asset.id)"),
-                  let newest = detail.asset.versions.last, let edit = newest.edit else { return }
-            made = Made(edit: edit.project, draft: edit.draft, version: newest.n)
-        }
-    }
-
-    private func revise(_ made: Made) async {
-        guard let api = ToolsetAPI.current else { return }
-        busy = true
-        defer { busy = false }
-        do {
-            try await api.send("/api/editor/\(made.edit)/drafts/\(pathPiece(made.draft))/revise")
-            error = nil
-            AppNavigator.shared.open(.edit(made.edit))
-        } catch {
-            self.error = error.localizedDescription
         }
     }
 }

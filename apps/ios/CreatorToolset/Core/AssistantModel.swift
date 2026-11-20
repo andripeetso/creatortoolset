@@ -115,6 +115,15 @@ struct AssistantMedia: Decodable, Equatable, Identifiable {
     var poster: String?
     var href: String
     var duration: Double?
+    /// A cut waiting in Review (an editor's ready line): Approve and Request changes under the player act on it.
+    var cut: Cut?
+
+    struct Cut: Decodable, Equatable {
+        var asset: String
+        var n: Int
+        /// What approving it starts ("B-roll"): Approve reads "Approve · add B-roll".
+        var next: String?
+    }
 }
 
 /// One thing the assistant asked to do on the person's Mac: Allow or Deny, within ten minutes.
