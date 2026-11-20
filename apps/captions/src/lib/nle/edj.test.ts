@@ -40,7 +40,7 @@ const split = (t: EdjTrans) => {
   return { pre, post: t.len - pre };
 };
 
-function weights(t: EdjTrans, u: number) {
+function weights(t: EdjTrans, u: number): Record<string, number> {
   if (t.type === "dissolve") return { alpha: u };
   if (t.type === "crossfade") return { a: Math.cos((u * Math.PI) / 2), b: Math.sin((u * Math.PI) / 2) };
   return u < 0.5 ? { a: 1 - 2 * u, color: 2 * u, b: 0 } : { a: 0, color: 2 - 2 * u, b: 2 * u - 1 };
@@ -95,7 +95,7 @@ function golden() {
       const start = c.cut - split(c).pre;
       const frames = range(start, start + c.len - 1);
       const ws = frames.map((f) => weights(c, (f - start) / c.len));
-      const col = (k: string) => ws.map((w) => r6((w as Record<string, number>)[k]!));
+      const col = (k: string) => ws.map((w) => r6(w[k]!));
       return { ...c, start, frames, ...Object.fromEntries(Object.keys(ws[0]!).map((k) => [k, col(k)])) };
     }),
     handles: HANDLE_CASES.map((c) => {

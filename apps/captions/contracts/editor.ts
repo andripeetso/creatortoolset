@@ -410,7 +410,7 @@ export interface EdjTrans { type: TransType; len: number; at: "center" | "start"
 export interface EdjCamera { curve?: string; lut?: string; from?: "file"; on: boolean }
 export interface EdjSource { path?: string; fps?: number; dur?: number; w?: number; h?: number; camera?: EdjCamera; [k: string]: unknown }
 /** a Design frame as a clip: `path` is a content-hashed PNG with alpha (a new render is a new path) */
-export interface EdjDesignSource { kind: "design"; design: string; frame: string; path: string; w: number; h: number; [k: string]: unknown }
+export interface EdjDesignSource { kind: "design"; design: string; frame: string; path: string; w: number; h: number; camera?: undefined; [k: string]: unknown }
 
 export interface EdjItem {
   src: string;
