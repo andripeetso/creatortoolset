@@ -1,12 +1,14 @@
 import type { PictureSpec } from "@contracts/design";
-import { drawingUrl, drawPage, fontOf, lineHeightOf, setText, sourceOf, textWidth, type Loaded } from "./draw";
+import { drawingUrl, drawPage, fontsOfText, sourceOf, textBlock, type Loaded } from "./draw";
+import { setOwnFamilies } from "./fonts";
+import { paintPictures } from "./paint";
 
 /**
  * A page as a small JPEG, drawn by the same function as the designer's canvas and the saved PNG, and the words on it
  * that do not fit their box (measured with the real fonts). An AI that designs the pages is shown this, so it sees
  * what it made and what to fix. Run in the server's drawing browser (render-entry.tsx), never in the app's own page.
  */
-export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; spills: string[] }> {
+export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; spills: string[]; drawn: string[] }> {
   const layers = spec.page.layers.filter((l) => !l.hidden);
   // the person's own fonts first: each from its file, once (one that cannot be read is drawn in the fallback face)
   await Promise.all(
@@ -16,7 +18,9 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
       await face.load().then(() => void document.fonts.add(face), () => {});
     }),
   );
-  await Promise.all([...new Set(layers.flatMap((l) => (l.type === "text" ? [fontOf(l)] : [])))].map((f) => document.fonts.load(f).catch(() => [])));
+  // a text's weights and slants are faces of its family: the person's own faces of it among them
+  setOwnFamilies(Object.keys(spec.fonts ?? {}));
+  await Promise.all([...new Set(layers.flatMap((l) => (l.type === "text" ? fontsOfText(l) : [])))].map((f) => document.fonts.load(f).catch(() => [])));
   const loaded: Loaded = new Map();
   await Promise.all(
     layers.map(async (l) => {
@@ -29,6 +33,16 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
       await img.decode().then(() => loaded.set(src, img), () => {});
     }),
   );
+  // the pictures that fill shapes, words and the frame
+  await Promise.all(
+    paintPictures(spec.page).map(async (src) => {
+      const address = spec.pictures[src];
+      if (!address || loaded.has(src)) return;
+      const img = new Image();
+      img.src = address;
+      await img.decode().then(() => loaded.set(src, img), () => {});
+    }),
+  );
   const c = document.createElement("canvas");
   c.width = Math.round(spec.width * spec.scale);
   c.height = Math.round(spec.height * spec.scale);
@@ -36,19 +50,21 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
   ctx.setTransform(spec.scale, 0, 0, spec.scale, 0, 0);
   drawPage(ctx, spec.page, spec.width, spec.height, loaded, true);
   const spills: string[] = [];
+  // what the drawing worked out for a text that shrinks: the size it came to and its lines, beside the size it was given
+  const worked: string[] = [];
   for (const l of layers) {
     if (l.type !== "text") continue;
-    ctx.font = fontOf(l);
     // as it is drawn: at the size it shrank to, when it shrinks to fit
-    const set = setText(l, (t) => ctx.measureText(t).width);
-    const drawn = { ...l, size: set.size };
-    ctx.font = fontOf(drawn);
-    const widthOf = (s: string) => textWidth(l, s, (t) => ctx.measureText(t).width);
-    const lines = set.lines;
-    const wide = Math.ceil(Math.max(...lines.map(widthOf)));
-    const tall = Math.ceil(lines.length * lineHeightOf(drawn));
-    const said = `“${l.text.replace(/\s+/g, " ").slice(0, 40)}”`;
-    if (wide > l.w + 1 || tall > l.h + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" ? " (it cannot shrink further)" : ""}`);
+    const set = textBlock(ctx, l);
+    const wide = Math.ceil(Math.max(...set.widths));
+    const tall = Math.ceil(set.tall);
+    const lines = set.widths.length;
+    const said = `layer ${l.id} “${l.text.replace(/\s+/g, " ").slice(0, 40)}”`;
+    if ((l.fit === "shrink" || l.lines) && set.size < l.size) worked.push(`${said} is drawn at size ${set.size} (its size ${l.size} is the most) in ${lines} ${lines === 1 ? "line" : "lines"}`);
+    // a text that shrinks is set by widths measured at one size and scaled, so at the size it lands on it can be drawn up to
+    // about 1 % wider than measured: that is no spill (a 2-line headline set at 125.5 drew 907 wide in a 900 box)
+    const slack = l.fit === "shrink" || l.lines ? 1.01 : 1;
+    if (wide > l.w * slack + 1 || tall > l.h * slack + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" || l.lines ? " (it cannot shrink further)" : ""}`);
     // words that fit their box and are still cut: the box itself reaches over the frame's edge (a turned box is left to the eye)
     else if (!l.rotate) {
       const left = l.x + (l.align === "center" ? (l.w - wide) / 2 : l.align === "right" ? l.w - wide : 0);
@@ -56,5 +72,5 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
       if (left < -1 || top < -1 || left + wide > spec.width + 1 || top + tall > spec.height + 1) spills.push(`${said} is cut off at the frame's edge: the words run from ${Math.round(left)}, ${Math.round(top)} to ${Math.round(left + wide)}, ${Math.round(top + tall)}, and the frame is ${spec.width} × ${spec.height}`);
     }
   }
-  return { jpeg: c.toDataURL("image/jpeg", 0.82).split(",")[1] ?? "", spills };
+  return { jpeg: c.toDataURL("image/jpeg", 0.82).split(",")[1] ?? "", spills, drawn: worked };
 }

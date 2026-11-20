@@ -11,7 +11,7 @@ import { type Args, pick, str, ToolError, type ToolContext, type ToolModule, whe
 
 type Frame = Args & { id: string; n: number };
 type ForAi = Args & { id: string; name: string; frames: Frame[]; look?: { name: string; brief?: string; pictures: Array<{ what: string; jpeg: string }>; more?: string } | string };
-type Look = { pictures: Array<{ page: number; jpeg: string; spills: string[] }>; why?: string };
+type Look = { pictures: Array<{ page: number; jpeg: string; spills: string[]; drawn?: string[] }>; why?: string };
 type Image = { text: string; jpeg: string };
 
 const enc = (v: unknown) => encodeURIComponent(String(v));
@@ -28,11 +28,13 @@ async function seen(ctx: ToolContext, at: string, frames: readonly Frame[], only
     return `Frame ${n}${f ? ` (id ${f.id})` : ""}`;
   };
   const spills = look.pictures.flatMap((p) => p.spills.map((s) => `${named(p.page)}: ${s}`));
+  const drawn = look.pictures.flatMap((p) => (p.drawn ?? []).map((s) => `${named(p.page)}: ${s}`));
   // the frames beyond the six: named, with how to see them
   const missed = look.pictures.length ? ask.filter((f) => !look.pictures.some((p) => p.page === f.n)).map((f) => f.id) : [];
   return {
     said: {
       ...(spills.length ? { does_not_fit: spills } : {}),
+      ...(drawn.length ? { as_drawn: drawn } : {}),
       ...(look.pictures.length ? {} : { no_pictures: look.why ?? "No pictures of the frames could be made" }),
       ...(missed.length ? { not_pictured: `Six frames are pictured at a time. To see the others, call design_get with this id and frames: ${JSON.stringify(missed)}` } : {}),
     },
@@ -40,13 +42,23 @@ async function seen(ctx: ToolContext, at: string, frames: readonly Frame[], only
   };
 }
 
+/** A frame as an outline: its size and words, and each layer's id, kind, name, group and words (cut at 120 letters), without how anything looks. */
+const outlined = (f: Frame) => ({
+  ...pick(f, ["id", "n", "name", "w", "h", "words"]),
+  layers: ((f.layers ?? []) as Args[]).map((l) => ({
+    ...pick(l, ["id", "type", "name", "group"]),
+    ...(typeof l.text === "string" ? { text: l.text.length > 120 ? `${l.text.slice(0, 120)}…` : l.text } : {}),
+    ...(l.hidden ? { hidden: true } : {}),
+  })),
+});
+
 export const designTools: ToolModule = {
   defs: [
     {
       name: "design_get",
       description:
-        "The Designer: the user's designs, each a canvas of frames (still pictures: carousel slides, covers, thumbnails; nothing here moves) made of layers they edit by hand. With no id it lists them. With an id (as in /design/<id>) it gives every frame with its layers and a picture of it, and how to design and change them; look: a look's name adds that look's pictures; frames: the ids to picture.",
-      inputSchema: { type: "object", properties: { id: str, look: str, frames: { type: "array", items: str } } },
+        "The Designer: the user's designs, each a canvas of frames (still pictures: carousel slides, covers, thumbnails; nothing here moves) made of layers they edit by hand. With no id it lists them. With an id (as in /design/<id>) it gives every frame with its layers and a picture of it, and how to design and change them; look: a look's name adds that look's pictures; frames: the ids to picture; outline: true gives ids, kinds, names and words only, no pictures (a big design).",
+      inputSchema: { type: "object", properties: { id: str, look: str, frames: { type: "array", items: str }, outline: { type: "boolean" } } },
     },
     {
       name: "design_make",
@@ -55,8 +67,8 @@ export const designTools: ToolModule = {
     },
     {
       name: "design_update",
-      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). The answer shows the changed frames as pictures and says what was left out or does not fit.",
-      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, picture: { type: "object" }, name: str }, required: ["id"] },
+      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers (as names a new frame or layer for the changes after it), sizes copies frames into other sizes, fill copies a frame once per row of words, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). The answer shows the changed frames as pictures and names each change left out (changes[2]) and why.",
+      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, sizes: { type: "object" }, fill: { type: "object" }, picture: { type: "object" }, name: str }, required: ["id"] },
     },
     {
       name: "carousel_style_save",
@@ -77,6 +89,8 @@ export const designTools: ToolModule = {
       const read = await ctx.json<ForAi>(`${at}/pages${a.look ? `?look=${enc(a.look)}` : ""}`);
       const look = typeof read.look === "object" ? read.look : null;
       const asked = Array.isArray(a.frames) ? a.frames.map(String) : [];
+      if (a.outline === true)
+        return { id: read.id, name: read.name, link: `${ctx.origin}/design/${read.id}`, frames: read.frames.filter((f) => !asked.length || asked.includes(f.id)).map(outlined), more: "A frame's layers in full, and its picture: design_get with this id and frames: [its id]. How layers are written comes with a read without outline." };
       const drawn = await seen(ctx, at, read.frames, asked);
       // asked for some frames: those alone, as they are and as they are drawn (the rest was read before)
       if (asked.length) return { id: read.id, name: read.name, frames: read.frames.filter((f) => asked.includes(f.id)), ...drawn.said, _images: drawn.images };
@@ -112,8 +126,9 @@ export const designTools: ToolModule = {
       // a picture first: it is in the design before the frames that may show it are checked
       const picture = a.picture ? (await ctx.json<{ id: string }>(`${at}/pictures`, "POST", a.picture)).id : "";
       const added = picture ? { picture_added: picture } : {};
-      if (picture && !a.frames && !a.changes) return { id: a.id, ...added };
-      if (named && !a.frames && !a.changes) return about(ctx.origin, named, named.pages.length);
+      const copies = !!a.sizes || !!a.fill;
+      if (picture && !a.frames && !a.changes && !copies) return { id: a.id, ...added };
+      if (named && !a.frames && !a.changes && !copies) return about(ctx.origin, named, named.pages.filter((p) => !p.loose).length);
       // a change that asks for a cut-out: the picture is cut first (a new picture of the design), and the change becomes
       // a plain one that shows it and remembers the picture it was cut from
       const changes = Array.isArray(a.changes) ? (a.changes as Args[]) : undefined;
@@ -133,12 +148,13 @@ export const designTools: ToolModule = {
           delete c.cutout;
         }
       }
-      const { design, notes, touched, wrote } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes });
-      const frames = design.pages.map((p, k) => ({ id: p.id, n: k + 1 }));
+      const { design, notes, touched, wrote, named: renamed } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[]; named?: Record<string, string> }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes, sizes: a.sizes, fill: a.fill });
+      // the layers lying loose on the canvas are no frame
+      const frames = design.pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1 }]));
       const drawn = await seen(ctx, at, frames, touched);
       // each frame written, with the layers this call wrote in it (a frame given whole: all of them)
       const changed = wrote.map((w) => ({ frame: w.frame, n: frames.find((f) => f.id === w.frame)?.n, ...(w.isNew ? { new: true } : {}), layers: w.layers }));
-      return { ...about(ctx.origin, design, design.pages.length), ...added, changed, ...(notes.length ? { left_out: notes } : {}), ...unnamed(design), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
+      return { ...about(ctx.origin, design, frames.length), ...added, changed, ...(renamed && Object.keys(renamed).length ? { named: renamed } : {}), ...(notes.length ? { notes } : {}), ...unnamed(design), ...drawn.said, ...(drawn.images.length ? { _images: drawn.images } : {}) };
     },
   },
   steps: { design_get: "Looking at the design", design_make: "Starting the design", design_update: "Designing" },

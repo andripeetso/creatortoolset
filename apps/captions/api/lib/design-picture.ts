@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Design, DesignPage } from "../../contracts/design";
+import { facesOf } from "../../src/lib/design/fonts";
+import { textFonts } from "../../src/lib/design/runs";
 import { startTask } from "../work/tasks";
+import { paintPictures } from "../../src/lib/design/paint";
 
 /**
  * A design's pages as small pictures, for the AI that designed them to look at (GET /api/designs/:id/look). They are
@@ -20,6 +23,8 @@ export interface PagePicture {
   jpeg: string;
   /** the words on the page that do not fit their box, as the AI is told them */
   spills: string[];
+  /** what the drawing worked out for each text that shrinks: the size it is drawn at and its lines (left out by an older drawing) */
+  drawn?: string[];
 }
 export interface Look {
   pictures: PagePicture[];
@@ -50,12 +55,17 @@ export async function pagePictures(d: Design, pages: DesignPage[], which: number
   const files: Record<string, string> = {};
   const families = new Set<string>();
   for (const { page } of asked)
+    for (const pic of paintPictures(page)) files[`pic-${pic}`] = path.join(dir, pic);
+  for (const { page } of asked)
     for (const l of page.layers) {
       if (l.type === "image" && !l.hidden) files[`pic-${l.picture}`] = path.join(dir, l.picture);
-      if (l.type === "text" && fonts[l.font]) {
-        families.add(l.font);
-        files[`font-${l.font}`] = fonts[l.font]!;
-      }
+      // the text's own font and its runs', with every face of their families: a weight or a slant is one of those
+      if (l.type === "text")
+        for (const face of textFonts(l).flatMap((f) => facesOf(f, Object.keys(fonts))))
+          if (fonts[face.family]) {
+            families.add(face.family);
+            files[`font-${face.family}`] = fonts[face.family]!;
+          }
     }
   const input = { width: d.width, height: d.height, pages: asked, fonts: [...families], files };
   const key = createHash("sha256").update(JSON.stringify(input)).digest("hex");

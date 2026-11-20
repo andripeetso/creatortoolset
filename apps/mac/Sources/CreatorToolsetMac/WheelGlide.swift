@@ -2,7 +2,8 @@
 // jumps. (A trackpad's scroll already arrives as a smooth stream.) Here each step is handed to the page a little per
 // frame, easing out, the way apps built on Chromium glide a wheel. A trackpad, a Magic Mouse and a mouse whose own
 // driver already smooths send "precise" scrolls: those pass through untouched, as does every scroll while Reduce
-// Motion is on (AppWebView.scrollWheel, TitleBar.swift).
+// Motion is on, and so does every scroll over a canvas, timeline or viewer the page marks as its own (the "wheel"
+// message, src/lib/mac-wheel.ts) (AppWebView.scrollWheel, TitleBar.swift).
 import AppKit
 
 /// The arithmetic of the glide, apart from the events (WheelGlideTests).
@@ -18,6 +19,13 @@ struct WheelGlide {
     private var carry = CGPoint.zero
 
     var resting: Bool { left == .zero && carry == .zero }
+
+    /// Whether a scroll glides: only a plain wheel's step, with Reduce Motion off, over a place that does not handle the
+    /// wheel itself (`snap`: a canvas, timeline or viewer, where one step must land at once).
+    static func glides(_ event: NSEvent, snap: Bool, reduceMotion: Bool) -> Bool {
+        // precise: a trackpad, a Magic Mouse, or a mouse whose driver smooths already
+        !snap && !reduceMotion && !event.hasPreciseScrollingDeltas && event.phase.isEmpty && event.momentumPhase.isEmpty
+    }
 
     /// A wheel step. One against the way the page is still gliding starts from rest: it never fights what is left.
     mutating func add(x: CGFloat, y: CGFloat) {

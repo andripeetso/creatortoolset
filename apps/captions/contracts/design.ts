@@ -12,7 +12,7 @@
  *   PUT    /api/designs/:id             { name?, pages?, since? } → Design (what the person changed by hand). `since`: the updatedAt this window last knew; the design changed after it → 409 { error, design } and nothing is written
  *   DELETE /api/designs/:id
  *   GET    /api/designs/:id/pages       ?look=<name> → what an AI designs from: the fonts, pictures, looks' briefs (one look's pictures when named), each frame with its id, size, words and layers, and how frames and changes are written
- *   POST   /api/designs/:id/pages       { frames?: [{ id?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? }] } → DesignAnswer & { touched: frame ids } (an AI's work: whole frames replaced or added, or single layers changed; checked as above)
+ *   POST   /api/designs/:id/pages       { frames?: [{ id? | as?, name?, x?, y?, w?, h?, background?, layers }], changes?: [{ frame, layer?, set? | remove? | order? | add? + as? }] } → DesignAnswer & { touched: frame ids, wrote, named: { name: id } } (an AI's work: whole frames replaced or added, or single layers changed; checked as above; each note led by where it was given, "changes[2]"; a later change names a new frame or layer by its "as")
  *   GET    /api/designs/:id/look        ?frames=<id>,<id> → { pictures: [{ page, jpeg (base64), spills }], why? }: the frames as small pictures, for the AI to look at
  *   POST   /api/designs/:id/pictures    { name, type, data (base64), id? } → { id, updatedAt, was }   (JPEG, PNG or WebP; `id`: the one the window gave it, so it is shown before it is here; `was`: the design's updatedAt before it); or { version, t }: that moment of a library video, copied in
  *   POST   /api/designs/:id/pictures/:pid/cutout   → { id }: that picture with its background taken away, as a new picture of the design (cut by a Mac of the person's own)
@@ -41,7 +41,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 60, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -58,8 +58,45 @@ export interface Gradient {
   /** a colour it passes through half-way */
   via?: string;
 }
-/** A line round a shape. */
-export interface Stroke {
+/** How a gradient paint runs: along its angle, from the middle out (a circle reaching the corners), round the middle like a clock hand from its angle, or out from the middle in a diamond reaching the corners. */
+export const DESIGN_GRADIENTS = ["linear", "radial", "angular", "diamond"] as const;
+/** How a picture paint lies in its layer: filling it (cut at the edges), fitting in it whole, one part of it (`crop`) filling it, or repeated. */
+export const DESIGN_PICTURE_MODES = ["fill", "fit", "crop", "tile"] as const;
+/** What an open line can end in. */
+export const DESIGN_HEADS = ["arrow", "triangle", "circle", "bar"] as const;
+export type DesignHead = (typeof DESIGN_HEADS)[number];
+/** A colour of a gradient and where along it it lies, 0 (its start) to 1 (its end). */
+export interface GradientStop {
+  at: number;
+  color: string;
+}
+/** What every paint and every line of a list has: kept but not drawn, how see-through (0 to 1; absent = 1), how it mixes with what is under it. */
+export interface PaintLook {
+  hidden?: boolean;
+  opacity?: number;
+  blend?: DesignBlend;
+}
+/**
+ * One fill of a layer's or a frame's list (`fills`, bottom first): a colour ("#rrggbb" or "#rrggbbaa", the last two
+ * digits how solid it is), a gradient through any number of colours, or a picture of the design.
+ */
+export type Paint = PaintLook &
+  (
+    | { type: "solid"; color: string }
+    | { type: "gradient"; /** absent = linear */ kind?: Exclude<(typeof DESIGN_GRADIENTS)[number], "linear">; /** degrees: 0 is left to right, 90 top to bottom (angular: where it starts) */ angle: number; stops: GradientStop[] }
+    | {
+        type: "image";
+        picture: string;
+        mode: (typeof DESIGN_PICTURE_MODES)[number];
+        /** crop: the part of the picture shown, as fractions of its width and height */
+        crop?: { x: number; y: number; w: number; h: number };
+        /** tile: one tile's width as a part of the layer's width (absent = 0.25) */
+        scale?: number;
+      }
+  );
+/** A line round a shape (one of a list: `strokes`, bottom first). */
+export interface Stroke extends PaintLook {
+  /** "#rrggbb" or "#rrggbbaa" */
   color: string;
   width: number;
   /** dashes: how long each is and the gap after it, in pixels; absent = an unbroken line */
@@ -68,9 +105,52 @@ export interface Stroke {
   round?: boolean;
   /** the side of the shape's edge the line lies on; absent = half on each */
   side?: "inside" | "outside";
+  /** a width for each side of a box (a rectangle, a picture, a frame): top, right, bottom, left; 0 leaves a side bare */
+  sides?: [number, number, number, number];
+  /** its ends (absent: as `round` says) and its corners (absent: as the shape has them) */
+  cap?: "butt" | "round" | "square";
+  join?: "miter" | "round" | "bevel";
+  /** what an open path's line starts and ends in */
+  start?: DesignHead;
+  end?: DesignHead;
 }
 /** A corner radius in pixels: one for every corner, or one each for the top left, top right, bottom right and bottom left. */
 export type Radius = number | [number, number, number, number];
+
+/** How a layer follows its frame's edges when the frame changes size, side to side and up and down (src/lib/design/resize.ts). */
+export const DESIGN_PINS_X = ["left", "right", "both", "center", "scale"] as const;
+export const DESIGN_PINS_Y = ["top", "bottom", "both", "center", "scale"] as const;
+/**
+ * left/top: keeps its distance to that edge; right/bottom: to the other one; both: to both edges, so it stretches;
+ * center: keeps its distance to the middle; scale: its place and size keep their share of the frame.
+ */
+export interface Pin {
+  x?: (typeof DESIGN_PINS_X)[number];
+  y?: (typeof DESIGN_PINS_Y)[number];
+}
+/**
+ * One of a layer's effects. A shadow falls under it (`spread` grows it, a negative one shrinks it; blur 0 with a spread
+ * and an offset is a hard sticker shadow); an inner shadow lies inside its edges. A blur draws the layer soft (edges
+ * too); a progressive blur is sharp up to `from` and fully blurred from `to` (parts of the box along `angle`: 90 is top to
+ * bottom), its edges kept; a background blur blurs what lies under the layer, inside its shape (frosted glass). Noise is
+ * a grain on the layer itself, `amount` 1 to 100, grains `size` pixels across. `hidden`: kept, not drawn.
+ */
+export type Effect =
+  | { type: "shadow" | "inner-shadow"; color: string; opacity: number; blur: number; x: number; y: number; spread?: number; hidden?: true }
+  | { type: "blur" | "background-blur"; blur: number; hidden?: true }
+  | { type: "progressive-blur"; blur: number; from: number; to: number; angle: number; hidden?: true }
+  | { type: "noise"; amount: number; size?: number; hidden?: true };
+export const DESIGN_EFFECTS = ["shadow", "inner-shadow", "blur", "progressive-blur", "background-blur", "noise"] as const satisfies readonly Effect["type"][];
+export const EFFECTS_MAX = 8;
+/** Ready-made sets of effects, each put on a layer in place of its own. */
+export const EFFECT_PRESETS: readonly { name: string; effects: Effect[] }[] = [
+  { name: "Soft lift", effects: [{ type: "shadow", color: "#000000", opacity: 0.14, blur: 60, x: 0, y: 28, spread: -8 }, { type: "shadow", color: "#000000", opacity: 0.2, blur: 6, x: 0, y: 3 }] },
+  { name: "Sticker", effects: [{ type: "shadow", color: "#000000", opacity: 1, blur: 0, x: 10, y: 12, spread: 2 }] },
+  { name: "Pressed", effects: [{ type: "inner-shadow", color: "#000000", opacity: 0.35, blur: 14, x: 0, y: 6 }] },
+  { name: "Frosted glass", effects: [{ type: "background-blur", blur: 30 }, { type: "noise", amount: 8, size: 2 }] },
+  { name: "Fade to blur", effects: [{ type: "progressive-blur", blur: 40, from: 0.45, to: 1, angle: 90 }] },
+  { name: "Grain", effects: [{ type: "noise", amount: 25, size: 2 }] },
+];
 
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
@@ -82,7 +162,9 @@ interface Box {
   rotate?: number;
   /** 0 to 1; absent = 1 */
   opacity?: number;
-  /** a soft shadow under the layer: its colour ("#rrggbb"), how strong (0 to 1), its blur and how far it falls, in pixels */
+  /** its effects, bottom first (each drawn where its kind is: shadows under it, the rest on it); given, `shadow` and (but a picture's) `blur` are not read */
+  effects?: Effect[];
+  /** a soft shadow under the layer: its colour ("#rrggbb"), how strong (0 to 1), its blur and how far it falls, in pixels (read as one shadow effect) */
   shadow?: { color: string; opacity: number; blur: number; x: number; y: number };
   /** how it mixes with what is under it; absent = it lies over it */
   blend?: DesignBlend;
@@ -99,6 +181,29 @@ interface Box {
   hidden?: boolean;
   /** drawn, but a press on the page goes through it: it is picked in the layers list only */
   locked?: boolean;
+  /** how it follows the frame's edges when the frame changes size; absent = it stays where it is on the canvas (a copy in another size places it by its share of the frame) */
+  pin?: Pin;
+}
+
+/** How a part of a text is set, beside the layer's own: what a run leaves out is the layer's. */
+export interface TextStyle {
+  font?: string;
+  /** 100 to 900; absent = the weight of the font's own face. A weight the family has no face for is drawn in its nearest one */
+  weight?: number;
+  /** slanted: the family's italic face when it has one, else its upright face leaned over */
+  italic?: boolean;
+  size?: number;
+  /** "#rrggbb" */
+  color?: string;
+  underline?: boolean;
+  /** a line through the letters ("was €49") */
+  strike?: boolean;
+  spacing?: number;
+}
+/** A part of a text set its own way: from letter `start` up to (not with) letter `end` of `text`, counted in UTF-16 units as a JavaScript string is. */
+export interface TextRun extends TextStyle {
+  start: number;
+  end: number;
 }
 
 export interface TextLayer extends Box {
@@ -111,18 +216,33 @@ export interface TextLayer extends Box {
   /** "#rrggbb" */
   color: string;
   gradient?: Gradient;
+  /** its fills, bottom first, in place of `color` and `gradient` (a picture fill shows the picture through the letters) */
+  fills?: Paint[];
+  /** lines round its letters, bottom first, under their fills, in place of `outline` */
+  strokes?: Stroke[];
   /** pixels between the letters, beside the font's own; absent = 0 */
   spacing?: number;
   /** "shrink": `size` is the most, and the words are set at the largest size up to it at which they fit the box */
   fit?: "shrink";
   /** its lines evened out: broken so they are about as long as each other, in no more lines than it takes anyway */
   balance?: boolean;
+  /** at most this many lines (1 to 12): set at the largest size up to `size` that keeps to them and fits the box, with no word alone on a paragraph's last line */
+  lines?: number;
   align: "left" | "center" | "right";
   /** where the lines sit in the box; absent = top */
   valign?: "top" | "middle" | "bottom";
   /** line height as a multiple of the size; absent = 1.15 */
   lineHeight?: number;
   upper?: boolean;
+  /** the letters' case as drawn, the words kept as typed: "small" sets small letters as small capitals; absent = `upper`'s, else as typed */
+  case?: "upper" | "lower" | "title" | "small";
+  /** the whole text's weight, slant and lines (TextStyle); a run sets its own part apart from these */
+  weight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  /** parts of the text set apart (a word in another colour, size, font or weight), in order, none overlapping */
+  runs?: TextRun[];
   /** a line round each letter (sticker letters): its colour and its width in pixels */
   outline?: { color: string; width: number };
   /**
@@ -156,6 +276,9 @@ export interface ImageLayer extends Box {
   /** the picture this one was cut out of (its background taken away): kept, so the background can be put back */
   uncut?: string;
   radius?: Radius;
+  /** corners rounded smoothly into the sides, 0 to 1 (absent = plain round corners) */
+  smooth?: number;
+  strokes?: Stroke[];
 }
 
 export interface ShapeLayer extends Box {
@@ -164,7 +287,11 @@ export interface ShapeLayer extends Box {
   fill: string;
   gradient?: Gradient;
   radius?: Radius;
+  smooth?: number;
   stroke?: Stroke;
+  /** its fills and lines, bottom first, in place of `fill`, `gradient` and `stroke` */
+  fills?: Paint[];
+  strokes?: Stroke[];
 }
 
 /** A drawing the AI made: SVG markup with a viewBox and no text, no script, no link and nothing from outside it. */
@@ -191,9 +318,52 @@ export interface PathLayer extends Box {
   fill?: string;
   gradient?: Gradient;
   stroke?: Stroke;
+  /** its fills and lines, bottom first, in place of `fill`, `gradient` and `stroke` */
+  fills?: Paint[];
+  strokes?: Stroke[];
 }
 
 export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer;
+
+/**
+ * A ruler guide of a frame: a line across it, `at` pixels from its left edge (axis "x": an up-and-down line) or from
+ * its top ("y"), in the frame's own pixels, so it moves with the frame. Layers moved in the frame catch on it. Shown on
+ * the canvas only: never drawn in a saved picture.
+ */
+export interface DesignGuide {
+  axis: "x" | "y";
+  at: number;
+}
+/**
+ * A layout grid of a frame, shown over it on the canvas and caught on like guides (never in a saved picture).
+ * "columns" / "rows": `count` of them across the frame (down it), `margin` pixels kept clear at both ends and `gutter`
+ * pixels between them. "grid": square cells of `size` pixels. `color` is what it is shown in, `hidden` hides it.
+ */
+export interface DesignGrid {
+  kind: "columns" | "rows" | "grid";
+  count?: number;
+  gutter?: number;
+  margin?: number;
+  size?: number;
+  color: string;
+  hidden?: boolean;
+}
+/** How many guides and grids a frame holds. */
+export const DESIGN_AIDS = { guides: 40, grids: 6, count: 100 } as const;
+/**
+ * Where a social app covers or cuts a picture, shown over a frame when it names them in `safe` (never in a saved
+ * picture). `crop`: the app shows only the middle at this width : height, cutting the rest off (a taller frame loses
+ * its top and bottom, a wider one its sides). `inset`: the parts of the frame its buttons, bars and caption lie over,
+ * as fractions of the frame's width (left, right) and height (top, bottom).
+ * shortcut: insets follow the published 9:16 guidance (about 14 % top, 35 % bottom on a reel), not a measurement of every phone; re-measure when the apps change their layout.
+ */
+export const DESIGN_SAFE = [
+  { id: "feed", name: "Feed crop 4:5", crop: 4 / 5 },
+  { id: "grid", name: "Profile grid 3:4", crop: 3 / 4 },
+  { id: "reel", name: "Reel buttons and caption", inset: { top: 0.14, bottom: 0.35, left: 0.06, right: 0.14 } },
+  { id: "story", name: "Story bars", inset: { top: 0.14, bottom: 0.2, left: 0.06, right: 0.06 } },
+] as const;
+export type DesignSafe = (typeof DESIGN_SAFE)[number]["id"];
 
 /**
  * A frame: one picture of the design, with a place and a size of its own on the design's canvas, so a carousel's
@@ -211,18 +381,28 @@ export interface DesignPage {
   /** the Workshop carousel slide (its block's id) this frame draws: its words are that slide's, as the piece has them now */
   block?: string;
   /**
-   * not a frame: pictures lying on the canvas outside every frame (one dropped on empty canvas, or dragged out of a
-   * frame). Its box is always the box round its layers, it has no background, no name and no export, and it is gone
-   * once it has no layer left
+   * not a frame: layers lying on the canvas outside every frame (drawn or dropped on empty canvas, or dragged wholly
+   * out of a frame), any kind of layer. Its box is always the box round its layers, it has no background, no name and
+   * no export, and it is gone once it has no layer left
    */
   loose?: true;
+  /** false: the parts of its layers outside the frame show on the canvas (never in its PNG); absent = they are hidden */
+  clip?: false;
   /** "#rrggbb" */
   background: string;
   gradient?: Gradient;
+  /** its fills, bottom first, in place of `background` and `gradient` */
+  fills?: Paint[];
+  /** lines round its edge, over everything on it */
+  strokes?: Stroke[];
   /** the frame's finish, over everything on it: a film grain, 1 to 100 (absent = none) */
   grain?: number;
   /** and its edges darkened (1 to 100) or lightened (-1 to -100), the middle left as it is */
   vignette?: number;
+  /** its ruler guides, layout grids and the social apps' covered parts it shows: the designer's aids, on the canvas only */
+  guides?: DesignGuide[];
+  grids?: DesignGrid[];
+  safe?: DesignSafe[];
   /** bottom first: a later layer is drawn over an earlier one */
   layers: Layer[];
 }

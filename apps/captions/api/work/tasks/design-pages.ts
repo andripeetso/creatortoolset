@@ -7,6 +7,7 @@ import { installExportBrowser, rendererUrl } from "../../caption-frames";
 import { FETCHING, NO_BROWSER, type DesignPagesInput, type Look, type PagePicture } from "../../lib/design-picture";
 import { ffmpeg } from "../../library/media/run";
 import { taskKind } from "../tasks";
+import { paintPictures } from "../../../src/lib/design/paint";
 
 /**
  * A design's pages drawn in a headless browser (lib/design-picture.ts asks for them): on the person's Mac, which has
@@ -23,22 +24,23 @@ const WIDTH = 560;
 const SMALL = 1024;
 const TIMEOUT_MS = 25_000;
 
-type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<{ jpeg: string; spills: string[] }> } };
+type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<{ jpeg: string; spills: string[]; drawn: string[] }> } };
 
 /** The page's pictures as data addresses of their small copies (made once a run, in `dir`). */
 async function smallPictures(page: DesignPage, dir: string, file: (name: string) => Promise<string>): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  for (const l of page.layers) {
-    if (l.type !== "image" || l.hidden || out[l.picture]) continue;
+  // the image layers' pictures and the pictures that fill shapes, words and the frame
+  for (const picture of new Set([...page.layers.flatMap((l) => (l.type === "image" && !l.hidden ? [l.picture] : [])), ...paintPictures(page)])) {
+    if (out[picture]) continue;
     // a JPEG stays a JPEG; a PNG or a WebP becomes a PNG, which keeps what is see-through
-    const jpeg = l.picture.endsWith(".jpg");
-    const small = path.join(dir, "small", `${l.picture.split(".")[0]}.${jpeg ? "jpg" : "png"}`);
+    const jpeg = picture.endsWith(".jpg");
+    const small = path.join(dir, "small", `${picture.split(".")[0]}.${jpeg ? "jpg" : "png"}`);
     try {
       if (!(await stat(small).then(() => true, () => false))) {
         await mkdir(path.dirname(small), { recursive: true });
-        await ffmpeg(["-i", await file(`pic-${l.picture}`), "-frames:v", "1", "-vf", `scale=w='min(${SMALL},iw)':h='min(${SMALL},ih)':force_original_aspect_ratio=decrease`, ...(jpeg ? ["-q:v", "4", "-f", "mjpeg"] : ["-f", "image2", "-c:v", "png"]), small], true);
+        await ffmpeg(["-i", await file(`pic-${picture}`), "-frames:v", "1", "-vf", `scale=w='min(${SMALL},iw)':h='min(${SMALL},ih)':force_original_aspect_ratio=decrease`, ...(jpeg ? ["-q:v", "4", "-f", "mjpeg"] : ["-f", "image2", "-c:v", "png"]), small], true);
       }
-      out[l.picture] = `data:image/${jpeg ? "jpeg" : "png"};base64,${(await readFile(small)).toString("base64")}`;
+      out[picture] = `data:image/${jpeg ? "jpeg" : "png"};base64,${(await readFile(small)).toString("base64")}`;
     } catch {
       // a picture that cannot be read is drawn as its grey place
     }
@@ -65,7 +67,8 @@ async function draw(input: DesignPagesInput, dir: string, file: (name: string) =
       const width = page.w ?? input.width;
       // the person's own fonts this frame's words are set in, each as its file's address (the drawing page is a file itself)
       const own: Record<string, string> = {};
-      for (const l of page.layers) if (l.type === "text" && input.fonts.includes(l.font) && !own[l.font]) own[l.font] = pathToFileURL(await file(`font-${l.font}`)).href;
+      // (every face the pages ask for: a run's font, and the faces of a family a weight or a slant is drawn in)
+      for (const f of input.fonts) if (!own[f]) own[f] = pathToFileURL(await file(`font-${f}`)).href;
       const spec: PictureSpec = { width, height: page.h ?? input.height, page, pictures: await smallPictures(page, dir, file), ...(Object.keys(own).length ? { fonts: own } : {}), scale: Math.min(1, WIDTH / width) };
       pictures.push({ page: n, ...(await tab.evaluate((s) => (globalThis as unknown as RendererWindow).designRenderer!.draw(s), spec)) });
     }

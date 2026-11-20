@@ -33,7 +33,13 @@ describe("a design's pages, checked", () => {
       rules,
     );
     expect(pages[0]!.layers).toEqual([]);
-    expect(notes).toEqual(["Page 1: a picture that is not in this design: left out", "Page 1: a drawing that is not plain shapes: left out"]);
+    expect(notes).toEqual([
+      "Page 1: a picture that is not in this design: left out",
+      "Page 1: a drawing that is not plain shapes: left out",
+      'Page 1: a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image and drawing',
+      "Page 1: a text with no words: left out",
+      "Page 1: a layer that is not an object: left out",
+    ]);
   });
 
   it("holds an AI's answer to each page's own words: placed, split and cased as it likes, never added to or changed", () => {
@@ -120,6 +126,35 @@ describe("the designer's own fonts and a layer's shadow", () => {
     expect(pages[0]!.layers[0]!.shadow).toEqual({ color: "#aabbcc", opacity: 1, blur: 0, x: 1000, y: 8 });
     expect(pages[0]!.layers[1]!.shadow).toEqual({ color: "#112233", opacity: 0.35, blur: 24, x: 0, y: 8 });
     expect(pages[0]!.layers[2]).not.toHaveProperty("shadow");
+  });
+
+  it("keeps a list of effects, each held to what can be drawn, and leaves the old shadow and blur out beside one", () => {
+    const fx = [
+      { type: "shadow", color: "#ABC", opacity: 3, blur: -1, x: 5, y: 99999, spread: 500 },
+      { type: "inner-shadow", color: "red", hidden: true },
+      { type: "glow", blur: 9 },
+      "soft",
+      { type: "progressive-blur", blur: 900, from: -1, to: 2, angle: 45 },
+      { type: "background-blur" },
+      { type: "noise", amount: 0, size: 1 },
+    ];
+    const [a, b, c, pic] = cleanPages([{ layers: [text({ effects: fx, shadow: { color: "#000000" }, blur: 30 }), text({ effects: [] , blur: 30 }), text({ blur: 30 }), { type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 10, h: 10, blur: 20, effects: Array(12).fill({ type: "blur", blur: 5 }) }] }], rules).pages[0]!.layers;
+    expect(a!.effects).toEqual([
+      { type: "shadow", color: "#aabbcc", opacity: 1, blur: 0, x: 5, y: 1000, spread: 200 },
+      { type: "inner-shadow", color: "#000000", opacity: 0.35, blur: 24, x: 0, y: 8, hidden: true },
+      { type: "progressive-blur", blur: 200, from: 0, to: 1, angle: 45 },
+      { type: "background-blur", blur: 24 },
+      { type: "noise", amount: 1 },
+    ]);
+    expect(a).not.toHaveProperty("shadow");
+    expect(a).not.toHaveProperty("blur");
+    // an empty list is none, and stands for none
+    expect(b).not.toHaveProperty("effects");
+    expect(b).not.toHaveProperty("blur");
+    expect(c).toMatchObject({ blur: 30 });
+    // a picture's own blur is one of its colour changes, beside its effects
+    expect(pic).toMatchObject({ blur: 20 });
+    expect(pic!.effects).toHaveLength(8);
   });
 
   it("keeps a gradient, letter spacing, a blend, a flip, a shape's kind and a picture's zoom and focus, each held to what can be drawn", () => {
@@ -320,6 +355,39 @@ describe("a text's highlighter strokes", () => {
   });
 });
 
+describe("a text's runs, weight, slant, lines and case", () => {
+  it("keeps parts of a text set apart, by letters or by a phrase, in order and inside the text; a style it cannot draw is left out", () => {
+    const [l, plain] = cleanPages(
+      [
+        {
+          layers: [
+            text({
+              text: "Was €49, now €29. Now!",
+              weight: 450,
+              italic: true,
+              underline: "yes",
+              case: "small",
+              runs: [{ words: "now", color: "#F00" }, { start: 4, end: 7, strike: true, font: "Comic Sans", size: 9000 }, { start: 30, end: 2, weight: 800 }, { words: "€49", underline: false }, { start: 0, end: 3 }, "bold"],
+            }),
+            text({ case: "sideways", runs: [] }),
+          ],
+        },
+      ],
+      rules,
+    ).pages[0]!.layers;
+    expect(l).toMatchObject({ weight: 500, italic: true, case: "small" });
+    expect(l).not.toHaveProperty("underline");
+    // "€49" struck through and its size held to what can be drawn (the font it cannot draw left out); "now" red in both places, whatever its case
+    expect((l as { runs: unknown[] }).runs).toEqual([
+      { start: 4, end: 7, strike: true, size: 600 },
+      { start: 9, end: 12, color: "#ff0000" },
+      { start: 18, end: 21, color: "#ff0000" },
+    ]);
+    expect(plain).not.toHaveProperty("case");
+    expect(plain).not.toHaveProperty("runs");
+  });
+});
+
 describe("frames on a canvas", () => {
   const frame = (id: string, more: object = {}) => ({ id, background: "#ffffff", layers: [], ...more });
   it("gives every frame a place and a size: none placed yet, in a row; a new one beside the rightmost; one sent without its place where it was", () => {
@@ -369,5 +437,81 @@ describe("the pages a design starts with", () => {
     expect(pages).toHaveLength(DESIGN_LIMITS.pages + 1);
     expect(pages.at(-1)).toMatchObject({ id: "pa", loose: true, x: -400, w: 100, h: 80 });
     expect(pages.filter((p) => p.loose)).toHaveLength(1);
+  });
+
+  it("keeps any kind of layer loose, and a frame's clip only when it is off and only on a frame", () => {
+    const shape = { type: "shape", shape: "star", fill: "#ff0000", x: 0, y: 0, w: 60, h: 60 };
+    const words = { type: "text", text: "Aside", font: "Inter", size: 40, color: "#111111", align: "left", x: 0, y: 70, w: 200, h: 50 };
+    const { pages } = cleanPages([{ id: "f1", w: 500, h: 500, clip: false, layers: [] }, { id: "f2", w: 500, h: 500, clip: "no", layers: [] }, { id: "pa", loose: true, clip: false, x: 900, y: 0, w: 200, h: 120, layers: [shape, words] }], rules);
+    expect(pages.map((p) => p.clip)).toEqual([false, undefined, undefined]);
+    expect(pages[2]!.layers.map((l) => l.type)).toEqual(["shape", "text"]);
+  });
+});
+
+describe("fills and lines as lists", () => {
+  it("keeps colours with a see-through part, gradients of any number of stops and kinds, and pictures of the design's own, each held to what can be drawn", () => {
+    const { pages, notes } = cleanPages(
+      [
+        {
+          background: "#000000",
+          fills: [{ type: "solid", color: "#FFFFFF80" }, { type: "image", picture: "ab12cd34.jpg", mode: "tile", scale: 9, opacity: 0.4, blend: "multiply" }],
+          strokes: [{ color: "#ff0000", width: 12, side: "inside", sides: [0, 0, 12, 0] }],
+          layers: [
+            {
+              type: "shape",
+              shape: "rect",
+              fill: "#dddddd",
+              x: 0,
+              y: 0,
+              w: 100,
+              h: 100,
+              smooth: 3,
+              fills: [
+                { type: "gradient", kind: "diamond", angle: 900, stops: [{ at: 1, color: "#000000" }, { at: -2, color: "#ffffff00" }, { at: 0.5, color: "nope" }], hidden: true },
+                { type: "gradient", kind: "spiral", stops: [{ at: 0, color: "#000000" }, { at: 1, color: "#ffffff" }] },
+                { type: "gradient", stops: [{ at: 0, color: "#000000" }] },
+                { type: "image", picture: "elsewhere.jpg", mode: "fill" },
+                { type: "image", picture: "ab12cd34.jpg", mode: "crop", crop: { x: 0.9, y: 0, w: 0.5, h: 2 } },
+                { type: "wobble" },
+              ],
+              strokes: [{ color: "#000000", width: 0 }, { color: "#ffffff", width: 30, opacity: 2, cap: "round", join: "bevel", dash: [4, 4], hidden: true }],
+            },
+            text({ strokes: [{ color: "#ffffff", width: 99 }, { color: "#000000", width: 8 }], fills: [{ type: "image", picture: "ab12cd34.jpg", mode: "fit" }] }),
+            { type: "path", x: 0, y: 0, w: 100, h: 100, points: [{ x: 0, y: 0 }, { x: 1, y: 1 }], strokes: [{ color: "#000000", width: 6, start: "circle", end: "arrow" }, { color: "#000000", width: 6, end: "spear" }] },
+            { type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 100, h: 100, smooth: 0.6, strokes: [{ color: "#000000", width: 4 }] },
+          ],
+        },
+      ],
+      rules,
+    );
+    const [p] = pages;
+    expect(p!.fills).toEqual([{ type: "solid", color: "#ffffff80" }, { type: "image", picture: "ab12cd34.jpg", mode: "tile", scale: 4, opacity: 0.4, blend: "multiply" }]);
+    expect(p!.strokes).toEqual([{ color: "#ff0000", width: 12, side: "inside", sides: [0, 0, 12, 0] }]);
+    const [shape, words, path, picture] = p!.layers as unknown as Record<string, unknown>[];
+    expect(shape!.smooth).toBe(1);
+    expect(shape!.fills).toEqual([
+      { type: "gradient", kind: "diamond", angle: 360, stops: [{ at: 0, color: "#ffffff00" }, { at: 0.5, color: "#000000" }, { at: 1, color: "#000000" }], hidden: true },
+      { type: "gradient", angle: 90, stops: [{ at: 0, color: "#000000" }, { at: 1, color: "#ffffff" }] },
+      // a crop is a part of the picture: no more than all of it, and inside it
+      { type: "image", picture: "ab12cd34.jpg", mode: "crop", crop: { x: 0.5, y: 0, w: 0.5, h: 1 } },
+    ]);
+    expect(shape!.strokes).toEqual([{ color: "#ffffff", width: 30, cap: "round", join: "bevel", dash: [4, 4], hidden: true }]);
+    // a text's lines are held to an outline's widths
+    expect(words!.strokes).toEqual([{ color: "#ffffff", width: 60 }, { color: "#000000", width: 8 }]);
+    expect(words!.fills).toEqual([{ type: "image", picture: "ab12cd34.jpg", mode: "fit" }]);
+    // a path with lines of its own gets no thin line of the app's
+    expect(path!.stroke).toBeUndefined();
+    expect(path!.strokes).toEqual([{ color: "#000000", width: 6, start: "circle", end: "arrow" }, { color: "#000000", width: 6 }]);
+    expect([picture!.smooth, picture!.strokes]).toEqual([0.6, [{ color: "#000000", width: 4 }]]);
+    expect(notes).toEqual(["Page 1: a gradient fill with fewer than two colours: left out", "Page 1: a picture fill of a picture that is not in this design: left out"]);
+  });
+
+  it("keeps a design without lists as it was, and an empty list as no fill at all", () => {
+    const old = { background: "#ffffff", layers: [{ type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10, stroke: { color: "#000000", width: 2 } }] };
+    const { pages } = cleanPages([old], rules);
+    expect(pages[0]!.layers[0]).toEqual({ id: "l1", type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 10, h: 10, stroke: { color: "#000000", width: 2 } });
+    expect("fills" in pages[0]!).toBe(false);
+    const none = cleanPages([{ ...old, layers: [{ ...old.layers[0], fills: [] }] }], rules).pages[0]!.layers[0] as unknown as Record<string, unknown>;
+    expect(none.fills).toEqual([]);
   });
 });

@@ -1,4 +1,6 @@
 import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer } from "@contracts/design";
+import { effectsOf, reachOf } from "./effects";
+import { strokesOf } from "./paint";
 
 /**
  * What the hands on the canvas work out, as plain functions: where the frames lie, the view (pan and zoom), a layer's
@@ -29,7 +31,7 @@ export type Align = "left" | "center" | "right" | "top" | "middle" | "bottom";
 export const frameOf = (p: Pick<DesignPage, "x" | "y" | "w" | "h">, k: number, w: number, h: number): Rect => ({ x: p.x ?? k * (w + DESIGN_GAP), y: p.y ?? 0, w: p.w ?? w, h: p.h ?? h });
 /** Where a new frame of this size goes: beside the rightmost frame, level with `like` (the frame it is made from). */
 export const besideFrames = (frames: readonly Rect[], like: Rect | undefined, size: { w: number; h: number }): Rect => ({ x: frames.length ? Math.max(...frames.map((f) => f.x + f.w)) + DESIGN_GAP : 0, y: like?.y ?? 0, w: size.w, h: size.h });
-export const ZOOM = { min: 0.02, max: 32 } as const;
+export const ZOOM = { min: 0.02, max: 256 } as const;
 const zoomIn = (z: number) => Math.min(ZOOM.max, Math.max(ZOOM.min, z));
 const round = (n: number) => Math.round(n * 100) / 100;
 
@@ -40,9 +42,11 @@ export function zoomAt(v: View, z: number, sx: number, sy: number): View {
 }
 
 /** The view that shows `box` whole, in the middle of the room, zoomed in no further than `most`. */
-export function fitView(box: Rect, room: { w: number; h: number }, pad = 56, most: number = ZOOM.max): View {
-  const z = zoomIn(Math.min(most, Math.max(1, room.w - 2 * pad) / box.w, Math.max(1, room.h - 2 * pad) / box.h));
-  return { z, x: (room.w - box.w * z) / 2 - box.x * z, y: (room.h - box.h * z) / 2 - box.y * z };
+export function fitView(box: Rect, room: { w: number; h: number }, pad: number | { x: number; top: number; bottom: number } = 56, most: number = ZOOM.max): View {
+  const p = typeof pad === "number" ? { x: pad, top: pad, bottom: pad } : pad;
+  const tall = room.h - p.top - p.bottom;
+  const z = zoomIn(Math.min(most, Math.max(1, room.w - 2 * p.x) / Math.max(box.w, 1e-6), Math.max(1, tall) / Math.max(box.h, 1e-6)));
+  return { z, x: (room.w - box.w * z) / 2 - box.x * z, y: p.top + (tall - box.h * z) / 2 - box.y * z };
 }
 
 /** The upright box round every layer given, each through its own rotation. */
@@ -215,11 +219,13 @@ export const groupOf = (layers: readonly Layer[], l: Layer): string[] => (l.grou
  * when it touches any there, else those of the first frame it touches any in (picked layers are always of one frame).
  * `deep` (⌘ held): never a frame, always the layers.
  */
-export function boxPick(frames: readonly { rect: Rect; layers: readonly Layer[] }[], box: Rect, o: { home: number; deep?: boolean }): { frames: number[] } | { at: number; layers: string[] } | null {
-  const touched = frames.map((_, k) => k).filter((k) => intersects(frames[k]!.rect, box));
+export function boxPick(frames: readonly { rect: Rect; layers: readonly Layer[]; reach?: Rect }[], box: Rect, o: { home: number; deep?: boolean }): { frames: number[] } | { at: number; layers: string[] } | null {
+  // `reach`: where a frame shows on the canvas (one that does not clip: its layers past its edges too); its layers are touched there
+  const touched = frames.map((_, k) => k).filter((k) => intersects(frames[k]!.reach ?? frames[k]!.rect, box));
+  const onFrame = (k: number) => intersects(frames[k]!.rect, box);
   const pickable = (l: Layer) => !l.hidden && !l.locked;
   const covered = (f: Rect) => f.x >= box.x && f.y >= box.y && f.x + f.w <= box.x + box.w && f.y + f.h <= box.y + box.h;
-  if (!o.deep && touched.some((k) => covered(frames[k]!.rect) || !frames[k]!.layers.some(pickable))) return { frames: touched };
+  if (!o.deep && touched.some((k) => onFrame(k) && (covered(frames[k]!.rect) || !frames[k]!.layers.some(pickable)))) return { frames: touched.filter(onFrame) };
   for (const k of [o.home, ...touched.filter((n) => n !== o.home)]) {
     const f = frames[k];
     if (!f) continue;
@@ -303,6 +309,64 @@ export function hugLoose(pages: DesignPage[], drop = true): DesignPage[] {
 
 
 /**
+ * Where layers dragged out of frame `k` land, by the box they cover on the canvas now: the frame under their middle
+ * (the later of two that lie over each other; a loose piece is no frame to land in, and one that is `full` keeps them
+ * out); else, lying wholly off the frame they came from, loose on the canvas (-1); else (partly on it still, or a
+ * loose piece moved about) where they were.
+ */
+export function dropTarget(frames: readonly { rect: Rect; loose?: boolean; full?: boolean }[], k: number, moved: Rect): number {
+  const mx = moved.x + moved.w / 2;
+  const my = moved.y + moved.h / 2;
+  const over = frames.map((f) => !f.loose && mx >= f.rect.x && mx <= f.rect.x + f.rect.w && my >= f.rect.y && my <= f.rect.y + f.rect.h).lastIndexOf(true);
+  if (over >= 0) return over === k || !frames[over]!.full ? over : k;
+  const home = frames[k]!;
+  const touches = moved.x < home.rect.x + home.rect.w && moved.x + moved.w > home.rect.x && moved.y < home.rect.y + home.rect.h && moved.y + moved.h > home.rect.y;
+  return home.loose || touches ? k : -1;
+}
+
+/** Layers from a place on the canvas (`from`: their frame's top left corner, 0, 0 for the canvas itself) to another, where they stay on the canvas. */
+export const rehome = <L extends { x: number; y: number }>(layers: readonly L[], from: { x?: number; y?: number }, to: { x?: number; y?: number }): L[] =>
+  layers.map((l) => ({ ...l, x: l.x + (from.x ?? 0) - (to.x ?? 0), y: l.y + (from.y ?? 0) - (to.y ?? 0) }));
+
+/**
+ * Everything a layer paints, in its frame's pixels: its box (turned), and past it its lines (an outside or mitred one,
+ * a line's heads), its blurs and its shadows (each where it falls, as soft as its blur). Generous: a few pixels too
+ * many cost nothing, one too few cuts a shadow off in a square.
+ */
+export function paintedBox(l: Layer): Rect {
+  const b = boundsOf([l]);
+  const fx = effectsOf(l).filter((e) => !e.hidden);
+  const lines = Math.max(0, ...strokesOf(l).map((s) => Math.max(s.width, ...(s.sides ?? [])) * (s.join === "miter" ? 5 : 1) + (s.start || s.end ? Math.max(s.width, 2) * 5 : 0)));
+  // words may run a little past their box, and sticker letters by their outline
+  const grow = lines + reachOf(fx) + (l.type === "text" ? l.size * 0.3 : 0);
+  let x0 = b.x - grow;
+  let y0 = b.y - grow;
+  let x1 = b.x + b.w + grow;
+  let y1 = b.y + b.h + grow;
+  for (const e of fx) {
+    if (e.type !== "shadow") continue;
+    const r = grow + e.blur * 1.5 + Math.max(0, e.spread ?? 0);
+    x0 = Math.min(x0, b.x + e.x - r);
+    y0 = Math.min(y0, b.y + e.y - r);
+    x1 = Math.max(x1, b.x + b.w + e.x + r);
+    y1 = Math.max(y1, b.y + b.h + e.y + r);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * What of a frame shows on the canvas, in its own pixels, on whole pixels: the frame itself when it clips its layers;
+ * else (a frame with Clip content off, a loose piece) the frame and all its layers paint, shadows and lines too.
+ */
+export function shownArea(p: DesignPage, w: number, h: number): Rect {
+  const out = p.loose || p.clip === false ? p.layers.filter((l) => !l.hidden).map(paintedBox) : [];
+  if (!out.length) return { x: 0, y: 0, w, h };
+  const x = Math.floor(Math.min(0, ...out.map((r) => r.x)));
+  const y = Math.floor(Math.min(0, ...out.map((r) => r.y)));
+  return { x, y, w: Math.ceil(Math.max(w, ...out.map((r) => r.x + r.w))) - x, h: Math.ceil(Math.max(h, ...out.map((r) => r.y + r.h))) - y };
+}
+
+/**
  * A frame as the server has it now (`theirs`) and as this window changed it meanwhile (`mine`, from `base`): what was
  * changed here stays, everything else is the server's. So a frame dragged aside while its layers were designed
  * somewhere else keeps both its new place and its new layers.
@@ -311,7 +375,7 @@ export function hugLoose(pages: DesignPage[], drop = true): DesignPage[] {
 export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
   if (!base) return mine;
   const out: Record<string, unknown> = { ...theirs };
-  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "grain", "vignette", "layers"] as const) {
+  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "grain", "vignette", "clip", "guides", "grids", "safe", "layers"] as const) {
     if (JSON.stringify(mine[f]) === JSON.stringify(base[f])) continue;
     if (mine[f] === undefined) delete out[f];
     else out[f] = mine[f];
