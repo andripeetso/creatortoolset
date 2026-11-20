@@ -35,7 +35,8 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
 
     /// An open-ended range (`bytes=n-`) is cut to this many bytes, so a seek does not read the rest of the file.
     static let openRangeCap: Int64 = 8 << 20
-    private static let chunk: Int64 = 1 << 20
+    // 4 MB a piece: each piece is one hop to the main thread, and a 4K camera file plays at 5-10 MB a second
+    private static let chunk: Int64 = 4 << 20
 
     private let root: @MainActor () -> URL
     /// the folders the page may play from: its server's, for the clip's workspace (`?ws=` on the media URL; none: any)
