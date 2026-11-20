@@ -1805,7 +1805,8 @@ export async function workspaceFolders(owner: string, has: (ws?: string) => bool
 const processing = (m: Meta) =>
   m.versions.some((x) => x.status === "processing");
 
-/** Two assets' locks, always in id order so crossing moves can't deadlock. Plug-ins use it to move versions between two videos. */
+/** Two assets' locks, always in id order so crossing moves can't deadlock. Plug-ins use it to move versions between two videos.
+ *  Not re-entrant: inside `fn`, never call what takes one of these locks again (updateMeta, addVersion, trashAsset…). */
 export function withReviewLocks<T>(a: string, b: string, fn: () => Promise<T>): Promise<T> {
   const [x, y] = [a, b].sort();
   return withLock(x, () => withLock(y, fn));

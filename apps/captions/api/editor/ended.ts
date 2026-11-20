@@ -15,6 +15,9 @@ import { readDraft, readEdit, readStep, type EditMeta } from "./store";
  * own page tells nobody). A step that will be tried again is still queued, so only a failure for good ends a run.
  */
 
+/** Several versions ready at once: "Draft 2 of “X”" when they are all that draft; each version is its own Review video with its own numbering, so mixed drafts name none. */
+const headline = (drafts: number[], name: string) => (new Set(drafts).size === 1 ? `${draftName(drafts[0]!)} of ${name}` : name);
+
 /**
  * A draft's cut in Review, as the ready line plays it in the chat with Approve and Request changes under it (AssistantMedia
  * `cut`): no AI turn to watch it. `next`: the pass approving it starts (passes.ts), as filing named it on the version.
@@ -98,7 +101,7 @@ export function runEnded(job: JobRow): void {
         end = {
           status: "done",
           detail: n === all ? "Done" : `${n} of ${all} versions done`,
-          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `${cutName(edit, ready[0]!)} of ${name} is ready.` : `${draftName(Math.max(...ready.map((v) => readStep(edit.id, "review")?.[v]?.n ?? 1)))} of ${name} is ready in ${n} versions.`) + (left ? ` ${left}` : "") + (n > MAX_CUTS ? ` The chat plays ${MAX_CUTS}; the other ${n - MAX_CUTS} are in Review.` : ""),
+          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `${cutName(edit, ready[0]!)} of ${name} is ready.` : `${headline(ready.map((v) => readStep(edit.id, "review")?.[v]?.n ?? 1), name)} is ready in ${n} versions.`) + (left ? ` ${left}` : "") + (n > MAX_CUTS ? ` The chat plays ${MAX_CUTS}; the other ${n - MAX_CUTS} are in Review.` : ""),
           media: cutsOf(edit, ready),
         };
     }

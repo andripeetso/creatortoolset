@@ -92,7 +92,8 @@ struct ReviewAsset: Codable, Hashable, Identifiable {
     }
 
     /// What a version is called here: "Draft 2" for a cut an edit made, "v2" for a video uploaded as it is.
-    func label(_ n: Int) -> String { latest?.editId != nil ? Self.draftName(n) : "v\(n)" }
+    /// Decided per version: a hand upload on top of an edit's cuts stays "v3", and the cuts below it stay drafts.
+    func label(_ n: Int) -> String { versions.first { $0.n == n }?.editId != nil ? Self.draftName(n) : "v\(n)" }
 
     /// Approve's words: what approving the newest cut starts, when it starts something.
     static func approveTitle(_ next: String?) -> String {
