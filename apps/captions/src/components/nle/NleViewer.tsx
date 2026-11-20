@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { Grid2x2, Music } from "lucide-react";
 import { timecode, type NleTimeline } from "@/lib/nle/model";
 import type { NleClock } from "@/lib/nle/audio";
@@ -24,7 +24,7 @@ const readPrefs = (): { zoom: Zoom; guides: boolean } => {
   }
 };
 
-export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, clock, transport, loop, below, over, onDragStart, onDragEnd }: {
+export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, onMenu, clock, transport, loop, below, over, onDragStart, onDragEnd }: {
   tl: NleTimeline;
   /** the playhead's clock */
   playhead: NleClock;
@@ -33,6 +33,8 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, clock, t
   nameOf: (src: string) => string;
   /** a click on the frame (play / pause) */
   onClick: () => void;
+  /** a right-click on the frame */
+  onMenu?: (e: MouseEvent<HTMLDivElement>) => void;
   clock: ReactNode;
   transport: ReactNode;
   /** looping playback's part (seconds), for the player to have its start ready */
@@ -86,7 +88,7 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, clock, t
       <div ref={board} data-wheel="snap" className={cn("relative min-h-0 flex-1 bg-[#2a2a2e]", prefs.zoom === "fit" ? "overflow-hidden" : "overflow-scroll")}>
         <div className="flex min-h-full min-w-full items-center justify-center" style={{ padding: PAD, width: prefs.zoom === "fit" ? undefined : W * scale + 2 * PAD, height: prefs.zoom === "fit" ? undefined : H * scale + 2 * PAD }}>
           <div data-frame className="relative shrink-0 shadow-[0_0_0_1px_rgb(255_255_255/0.28),0_4px_24px_rgb(0_0_0/0.45)]"
-            style={{ width: W * scale, height: H * scale }} onClick={onClick} draggable={!!onDragStart} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+            style={{ width: W * scale, height: H * scale }} onClick={onClick} onContextMenu={onMenu} draggable={!!onDragStart} onDragStart={onDragStart} onDragEnd={onDragEnd}>
             <NlePlayer tl={tl} clock={playhead} rate={rate} urlOf={urlOf} nameOf={nameOf} loop={loop} className="block size-full" />
             {over}
             {prefs.guides && (

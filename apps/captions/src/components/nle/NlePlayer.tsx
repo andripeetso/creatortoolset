@@ -41,7 +41,9 @@ type Media = {
 /** A source's file as this browser plays it; `lead`: seconds into the file where the source's frame 0 is; `frame`: the
  *  file of picture n when the source is a numbered picture sequence (from 0). `why`, with no `url`: it doesn't play here,
  *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). */
-export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string };
+export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string;
+  /** what it shows may be drawn into a design (Design on This Frame): a blurred copy, the person's own file, a design */
+  grab?: true };
 
 /** The line for a Mac file that didn't load, from the Mac app's answer (HTTP 409 disk_away, 403 not allowed). */
 export async function whyNot(url: string): Promise<string | undefined> {
@@ -139,6 +141,8 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         };
         v.requestVideoFrameCallback(seen);
       }
+      // read back from the viewer for Design on This Frame: the canvas it is drawn on stays readable
+      el.crossOrigin = "anonymous";
       el.src = file.frame ? file.frame(0) : u;
       return m;
     };
@@ -207,7 +211,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         const { got, frame } = m.seq;
         for (let i = n; i <= n + SEQ_AHEAD; i++) {
           if (got.has(i)) continue;
-          const img = new Image();
+          const img = Object.assign(new Image(), { crossOrigin: "anonymous" });
           img.src = frame(i);
           got.set(i, img);
         }

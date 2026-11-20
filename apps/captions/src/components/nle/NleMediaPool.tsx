@@ -84,7 +84,7 @@ const loadPrefs = (): Prefs => {
   }
 };
 
-export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, onBinDrag, onRelink }: {
+export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, onBinDrag, onRelink, onNewText }: {
   tl: NleTimeline;
   nameOf: (src: string) => string;
   /** a source's file here (null: not here) */
@@ -101,6 +101,8 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
   onBinDrag: (dt: DataTransfer | null) => void;
   /** looks for the files not found here */
   onRelink?: () => void;
+  /** New Text, in its menu */
+  onNewText?: () => void;
 }) {
   const [prefs, setPrefs] = useState(loadPrefs);
   const set = (p: Partial<Prefs>) => setPrefs((was) => {
@@ -184,7 +186,9 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
             ))}
           </nav>
         )}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* a right-click off the clips: the pool's own menu */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col"
+          onContextMenu={(e) => { if (e.defaultPrevented || !onNewText || !pool) return; e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, src: "" }); }}>
           {pool && find !== null && (
             <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-black/60 px-2">
               <Search className="size-3 shrink-0 text-zinc-500" />
@@ -254,8 +258,9 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
             style={{ left: (menu ?? viewMenu)!.x, top: Math.min((menu ?? viewMenu)!.y, window.innerHeight - 200) }} onPointerDown={(e) => e.stopPropagation()}>
             {menu ? (
               <>
-                <MenuRow label="Select on timeline" onClick={() => { onPick(menu.src); setMenu(null); }} />
-                {onRelink && <MenuRow label="Relink…" onClick={() => { onRelink(); setMenu(null); }} />}
+                {menu.src && <MenuRow label="Select on timeline" onClick={() => { onPick(menu.src); setMenu(null); }} />}
+                {menu.src && onRelink && <MenuRow label="Relink…" onClick={() => { onRelink(); setMenu(null); }} />}
+                {onNewText && <MenuRow label="New Text" onClick={() => { onNewText(); setMenu(null); }} />}
               </>
             ) : viewMenu!.what === "view" ? (
               <>
