@@ -207,6 +207,29 @@ describe("work the assistant started ends", () => {
     expect(await card()).toMatchObject({ status: "stopped", detail: "Stopped" });
   });
 
+  it("an edit done on a later try clears its failed cards further up; another edit's failure stays", async () => {
+    const cookie = await cookieOf("ana");
+    for (const id of ["e30", "e31"]) {
+      const t = await turn(cookie, `Start ${id}`);
+      await tool(t.token, "tiny_card", { id });
+      await t.end();
+      workEnded("ana", `edit:${id}`, { status: "failed", detail: "Not in a footage folder" });
+    }
+    // a run that only waits (for a folder) also ends "done", and clears nothing
+    const waits = await turn(cookie, "Retry e30");
+    await tool(waits.token, "tiny_card", { id: "e30" });
+    await waits.end();
+    expect(workEnded("ana", "edit:e30", { status: "done", detail: "Waits for a Project files folder" })).toBe(true);
+    expect((await viewOf(cookie)).messages.flatMap((m: AssistantMessage) => m.work ?? []).filter((w) => w.id === "edit:e30:new")[0]).toMatchObject({ status: "failed" });
+    const again = await turn(cookie, "Retry e30 again");
+    await tool(again.token, "tiny_card", { id: "e30" });
+    await again.end();
+    expect(workEnded("ana", "edit:e30", { status: "done", detail: "Done", redone: true })).toBe(true);
+    const cards = (await viewOf(cookie)).messages.flatMap((m: AssistantMessage) => m.work ?? []);
+    expect(cards.filter((w) => w.id === "edit:e30:new").map((w) => [w.status, w.detail])).toEqual([["done", "Done on a later try"], ["done", "Waits for a Project files folder"], ["done", "Done"]]);
+    expect(cards.find((w) => w.id === "edit:e31:new")).toMatchObject({ status: "failed" });
+  });
+
   it("its running card gets its end and the chat says so once, with answer buttons; work nobody started from the chat says nothing", async () => {
     const cookie = await cookieOf("ana");
     const t = await turn(cookie, "Start the tiny edit");

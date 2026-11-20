@@ -103,12 +103,13 @@ export function runEnded(job: JobRow): void {
           detail: n === all ? "Done" : `${n} of ${all} versions done`,
           say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `${cutName(edit, ready[0]!)} of ${name} is ready.` : `${headline(ready.map((v) => readStep(edit.id, "review")?.[v]?.n ?? 1), name)} is ready in ${n} versions.`) + (left ? ` ${left}` : "") + (n > MAX_CUTS ? ` The chat plays ${MAX_CUTS}; the other ${n - MAX_CUTS} are in Review.` : ""),
           media: cutsOf(edit, ready),
+          redone: n === all,
         };
     }
     // the person's phones hear of a run that failed or left cuts in Review, wherever it was started
     if (waits) emitEvent("waiting", { owner: who, kind: end.status === "failed" ? "failed" : "review", title: edit.name ?? "Edit", headline: waits, path: `/editor/${edit.id}`, ...(edit.projectId ? { workspace: edit.projectId } : {}) });
     // said already for the draft that went to Review: the other cards end without a second line
-    workEnded(who, `edit:${edit.id}`, filed ? { status: end.status, detail: end.detail } : end);
+    workEnded(who, `edit:${edit.id}`, filed ? { status: end.status, detail: end.detail, redone: end.redone } : end);
   } catch (e) {
     console.error("[editor] ending:", e);
   }
