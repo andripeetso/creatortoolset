@@ -375,10 +375,13 @@ export function shownArea(p: DesignPage, w: number, h: number): Rect {
 export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
   if (!base) return mine;
   const out: Record<string, unknown> = { ...theirs };
-  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "grain", "vignette", "clip", "guides", "grids", "safe", "layers"] as const) {
-    if (JSON.stringify(mine[f]) === JSON.stringify(base[f])) continue;
-    if (mine[f] === undefined) delete out[f];
-    else out[f] = mine[f];
+  const m = mine as unknown as Record<string, unknown>;
+  const b = base as unknown as Record<string, unknown>;
+  // every field but the id, so a field added to frames later is never dropped here
+  for (const f of new Set([...Object.keys(m), ...Object.keys(b)])) {
+    if (f === "id" || JSON.stringify(m[f]) === JSON.stringify(b[f])) continue;
+    if (m[f] === undefined) delete out[f];
+    else out[f] = m[f];
   }
   return out as unknown as DesignPage;
 }
