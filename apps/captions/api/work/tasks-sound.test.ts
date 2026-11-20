@@ -53,7 +53,8 @@ const c = client(o);
 const claim = async (tasks: string[]) => (await c.post<{ task?: TaskPackage }>("work/claim", { v: WORK_V, steps: [], tasks })).task;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const read = async (u: string, init?: RequestInit): Promise<any> => (await app.request(u, init)).json();
-const until = (fn: () => Promise<unknown>) => vi.waitFor(fn, { timeout: 30_000, interval: 100 });
+// under the ffmpeg project's 30 s a test, so a wait that never ends says what it waited for
+const until = (fn: () => Promise<unknown>) => vi.waitFor(fn, { timeout: 20_000, interval: 100 });
 const at = (...p: string[]) => path.join(process.env.DATA_DIR!, ...p);
 
 /** Runs `upload` on This Mac (the server is the person's computer), then waiting for a computer: both results. */
