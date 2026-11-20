@@ -6,8 +6,8 @@ import { afterAll, expect, it } from "vitest";
 import type { AuthVars } from "./auth";
 
 // A workspace with no Project files folder on the computer doing an edit, and no Media folder there to put one next
-// to (its footage is elsewhere): ensureUseFolder answers a pause with the card's default, never an error. The card's
-// Use <default> is Settings → Folders' own request; after it, the folder is there for the job's next claim.
+// to (its footage is elsewhere): ensureUseFolder answers a pause on its Media Library setup, never an error. The pick is
+// Settings → Folders' own request; after it, the folder is there for the job's next claim.
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "projects-wait-"));
 process.env.DATA_DIR = dir;
 delete process.env.CT_LOCAL;
@@ -33,13 +33,14 @@ app.use(async (c, next) => {
 app.use("/api/*", inRequestWorkspace);
 app.route("/api/devices/storage", storageApp);
 
-it("no Project files and no Media folder: a pause with the workspace's default, then Use <default> makes the row", async () => {
+it("no Project files and no Media folder: a pause on its setup, then the picked default makes the row", async () => {
   const mac = pairDevice("ana", "Ana's Mac").device.id;
   const r = await ensureUseFolder("ana", "ws-tiny", "projects", mac);
   const wait = { kind: "projects", workspace: "ws-tiny", workspaceName: "Tiny Acrobatics", device: mac, path: "~/Movies/Creator Toolset/Tiny Acrobatics/Project files" };
-  expect(r).toMatchObject({ wait: { ...wait, title: "Project files folder for Tiny Acrobatics", actions: [{ id: "use_default" }, { id: "choose" }] } });
+  // no Project files anywhere: its Media Library setup again, where Project files are chosen (owner, 2026-11-20)
+  expect(r).toMatchObject({ wait: { kind: "setup", again: true, workspace: "ws-tiny", actions: [{ id: "customise" }] } });
 
-  // the card's [Use <default>]: the request ActionCard's addProjectsFolder sends
+  // the setup's pick (Settings → Folders' own request) of the default
   const res = await app.request("/api/devices/storage/folders", {
     method: "POST",
     headers: { "content-type": "application/json", "X-CT-Workspace": "ws-tiny" },
@@ -50,7 +51,7 @@ it("no Project files and no Media folder: a pause with the workspace's default, 
   expect(rows).toEqual([expect.objectContaining({ role: "projects", workspace: "ws-tiny", make: true, origin: { host: mac, path: wait.path } })]);
   // the job's next claim finds it: no pause any more, and that workspace only
   expect(await ensureUseFolder("ana", "ws-tiny", "projects", mac)).toEqual(rows[0]);
-  expect(await ensureUseFolder("ana", "ws-other", "projects", mac)).toMatchObject({ wait: { workspace: "ws-other", path: "~/Movies/Creator Toolset/Other/Project files" } });
+  expect(await ensureUseFolder("ana", "ws-other", "projects", mac)).toMatchObject({ wait: { kind: "setup", workspace: "ws-other" } });
   // Exports gets the same card, with its own folder
   expect(await ensureUseFolder("ana", "ws-other", "library", mac)).toMatchObject({ wait: { kind: "exports", title: "Final exports folder for Other", path: "~/Movies/Creator Toolset/Other/Final exports" } });
 });
