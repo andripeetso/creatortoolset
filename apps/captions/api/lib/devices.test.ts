@@ -64,6 +64,19 @@ describe("saveReport disks", () => {
     saveReport(device.id, report(3, []));
     expect(reportOf(device.id)?.machine?.disks).toEqual([]);
   });
+  it("keeps the Mac app's Cache folder when the editor worker's report comes without one", () => {
+    const { device } = pairDevice("tinyacrobatics", "Tiny Cache");
+    const report = (at: number, cacheFolder?: string): MacReport => ({ at, drivers: [], homes: [], machine: { cpus: 8, memGb: 16, ...(cacheFolder ? { cacheFolder } : {}) } });
+    saveReport(device.id, report(1, "/Volumes/SSD/Creator Toolset Cache"));
+    saveReport(device.id, report(2));
+    expect(reportOf(device.id)?.machine?.cacheFolder).toBe("/Volumes/SSD/Creator Toolset Cache");
+    saveReport(device.id, report(3, "/Volumes/Other/cache"));
+    expect(reportOf(device.id)?.machine?.cacheFolder).toBe("/Volumes/Other/cache");
+    // its disk unplugged: the Mac app says none, and the server forgets it
+    saveReport(device.id, { at: 4, drivers: [], homes: [], machine: { cpus: 8, memGb: 16, cacheFolder: "" } });
+    saveReport(device.id, report(5));
+    expect(reportOf(device.id)?.machine?.cacheFolder).toBe("");
+  });
 });
 
 // Disks are the owner's: another account that sees the Mac (an admin, for a workspace or another admin's Mac) gets none.
@@ -73,6 +86,9 @@ describe("forViewer", () => {
     expect(forViewer("tinyacrobatics", d).report?.machine?.disks).toHaveLength(1);
     expect(forViewer("someadmin", d).report?.machine?.disks).toBeUndefined();
     expect(forViewer("someadmin", d).report?.machine?.host).toBe("h");
+    const c = { ...d, report: { ...d.report!, machine: { ...d.report!.machine!, disks: undefined, cacheFolder: "/Volumes/SSD/cache" } } } as Device;
+    expect(forViewer("tinyacrobatics", c).report?.machine?.cacheFolder).toBe("/Volumes/SSD/cache");
+    expect(forViewer("someadmin", c).report?.machine?.cacheFolder).toBeUndefined();
   });
   it("keeps the team's AI worker's disks for the admins who are sent it", () => {
     const w = { id: "w", owner: "workspace", report: { at: 1, drivers: [], homes: [], machine: { os: "mac", host: "h", cpus: 1, disks: [{ name: "footage", path: "/Volumes/footage", freeGb: 3 }] } } } as unknown as Device;

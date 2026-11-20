@@ -257,6 +257,12 @@ export interface Machine {
   gpuFreeGb?: number;
   /** the disks it keeps files on: its system disk, external drives, network shares (with the machine they live on) */
   disks?: Disk[];
+  /**
+   * its Cache folder (Settings → Storage › This computer): where it keeps disposable working files shared by every
+   * workspace, the AI Editor worker's work folder among them. "": none (its own defaults on the internal disk); absent:
+   * this reporter doesn't know it (the editor worker's report), so the last one is kept.
+   */
+  cacheFolder?: string;
 }
 
 /**
@@ -311,6 +317,8 @@ export function parseMachine(v: unknown): Machine | undefined {
     return [out];
   });
   if (disks.length) m.disks = disks;
+  const cache = o.cacheFolder;
+  if (cache === "" || (typeof cache === "string" && cache.startsWith("/") && cache.length <= 300 && !cache.split("/").includes(".."))) m.cacheFolder = cache;
   return m;
 }
 

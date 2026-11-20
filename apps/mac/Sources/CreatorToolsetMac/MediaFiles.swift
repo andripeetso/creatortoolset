@@ -66,6 +66,9 @@ enum MediaFiles {
 
     static var granted: [String] { defaults.stringArray(forKey: key) ?? [] }
 
+    /// Every folder this app already reads: picked or dropped here, and each server's Settings → Folders folders.
+    static var usedFolders: [String] { granted + (decoded(serversKey) as [String: [ServerFolder]]).values.flatMap { $0.map(\.path) } }
+
     static func add(_ folder: String) {
         if !granted.contains(folder) { defaults.set(granted + [folder], forKey: key) }
         // picked or dropped here: a Settings → Folders folder at or under it needs no OK (LocationAgent.swift)

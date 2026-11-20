@@ -121,7 +121,7 @@ final class Worker: ObservableObject {
     @discardableResult
     func start(server: URL, token: String, data: URL, thisMac: Bool,
                plugins: [String: String] = pluginEnvironment(approved: PluginRecord.live.load(), paused: UserDefaults.standard.bool(forKey: pluginsPausedKey))) -> Bool {
-        guard !thisMac, !needsUpdate, let folder, let program else { return isRunning }
+        guard !thisMac, !needsUpdate, !DownloadLocation.isMoving, let folder, let program else { return isRunning }
         if let old = process {
             guard isSilent, replacing == nil else { return true }
             AppLog.write("worker: pid \(old.processIdentifier) said nothing for \(Int(silentAfter)) s, replacing it")

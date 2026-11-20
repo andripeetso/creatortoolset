@@ -7,7 +7,7 @@ import Foundation
 /// The questions the page may ask over the "thisMac" handler (TitleBar.swift); any other is answered as off.
 /// "dropped" is answered by the window itself (AppWebView.dragItems). These have parts of their own:
 /// "install:<claude|codex>:<key>" (installAsk), "ai-install:<id>" (aiInstallAsk), and the Media Library's "import:…" (Import.swift).
-let thisMacAsks = ["state", "start", "access", "access:off", "folder", "download-folder", "dropped", "files", "connect", "connect.link", "connect.unlink", "ai-install-progress", "pair"]
+let thisMacAsks = ["state", "start", "access", "access:off", "folder", "download:location", "download:choose", "download:show", "cache:location", "cache:choose", "cache:show", "dropped", "files", "connect", "connect.link", "connect.unlink", "ai-install-progress", "pair"]
 
 /// The files picked in this app's open panel for the page (Shell runOpenPanelWith), newest first, each once, at most
 /// `cap`: the page asks where they are after the panel closes, and a second pick must not lose the first's while that
@@ -153,33 +153,82 @@ extension Shell {
         return ["path": url.path, "children": Imports.subfolders(url.path), "siblings": Imports.subfolders(url.deletingLastPathComponent().path)]
     }
 
-    /// "download-folder" from the page (Settings → Storage › This computer, Download location › Change…): this Mac's open
+    /// "download:choose" from the page (Settings → Storage › This computer, Download location › Change…): this Mac's open
     /// panel for the download cache's folder. Reply { path } or { path: null }. The worker reads it when it next starts.
     @MainActor func chooseDownloadFolder() -> [String: Any] {
+        // the launch move to the default folder is still going: a second move now would split the files between the two
+        if DownloadLocation.isMoving { return ["path": NSNull(), "error": "Your downloads are being moved. Try again in a minute."] }
         let open = NSOpenPanel()
         open.canChooseDirectories = true
         open.canChooseFiles = false
         open.canCreateDirectories = true
         open.prompt = "Choose"
         guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
+        // a disk event while the panel was open may have started one (from here on the main thread, none can start)
+        if DownloadLocation.isMoving { return ["path": NSNull(), "error": "Your downloads are being moved. Try again in a minute."] }
         // the cache's files come along first (a kept proxy may be the only copy); the new folder is kept only once they are there
-        let from = DownloadLocation.path().map { [URL(fileURLWithPath: $0)] } ?? cacheRoots()
+        let moves = DownloadLocation.path().map { [(URL(fileURLWithPath: $0), url)] } ?? cacheRoots(into: url.path)
         do {
-            for root in from { try ProxyCacheMove.move(from: root, to: url) }
+            for (root, to) in moves { try ProxyCacheMove.move(from: root, to: to) }
         } catch ProxyCacheMoveError.noSpace(let needed, let free) {
             return ["path": NSNull(), "error": "That disk has \(workBytes(free)) free; the downloads need \(workBytes(needed))."]
+        } catch ProxyCacheMoveError.inside {
+            return ["path": NSNull(), "error": "Choose a folder outside the one your downloads are in now."]
         } catch {
             return ["path": NSNull(), "error": error.localizedDescription]
         }
         UserDefaults.standard.set(url.path, forKey: DownloadLocation.key)
-        runners.restartIdleWorkers()
+        locationMoved()
         return ["path": url.path]
     }
 
-    /// The cache folders a Download location change moves from when none was chosen: one per server (ProxyCache.defaultRoot).
-    @MainActor private func cacheRoots() -> [URL] {
-        let local = server.map { ProxyCache.defaultRoot(server: $0.url, localData: $0.dataDir) }
-        return [local].compactMap { $0 } + servers.compactMap { URL(string: $0.url) }.map { ProxyCache.defaultRoot(server: $0, localData: nil) }
+    /// Settings → Storage › This computer (KeptRows.tsx): where the open server's download cache is, the Cache folder, and
+    /// Change… / Show in Finder for each. Nil for any other ask.
+    @MainActor func storageAsk(_ ask: String) -> [String: Any]? {
+        switch ask {
+        case "download:location": return ["path": downloadRoot().path]
+        case "download:choose": return chooseDownloadFolder()
+        case "download:show": return reveal(downloadRoot())
+        case "cache:location": return CacheFolder.path().map { ["path": $0] } ?? ["path": NSNull()]
+        case "cache:choose": return chooseCacheFolder()
+        case "cache:show": return CacheFolder.path().map { reveal(URL(fileURLWithPath: $0)) } ?? ["ok": false]
+        default: return nil
+        }
+    }
+
+    /// The open server's download cache: the Download location, else its own default folder.
+    @MainActor private func downloadRoot() -> URL {
+        if let p = DownloadLocation.path() { return URL(fileURLWithPath: p) }
+        let local = server.flatMap { $0.url.host == base.host && $0.url.port == base.port ? $0.dataDir : nil }
+        return ProxyCache.defaultRoot(server: base, localData: local)
+    }
+
+    /// Opens the folder in the Finder (made first: it may not exist before its first file).
+    private func reveal(_ folder: URL) -> [String: Any] {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+        return ["ok": true]
+    }
+
+    /// Cache folder › Change…: this Mac's open panel. Nothing moves (the cache is disposable; the old folder can be deleted
+    /// by hand); the open server hears of it at once (the editor worker reads it there). Reply { path } or { path: null }.
+    @MainActor func chooseCacheFolder() -> [String: Any] {
+        let open = NSOpenPanel()
+        open.canChooseDirectories = true
+        open.canChooseFiles = false
+        open.canCreateDirectories = true
+        open.prompt = "Choose"
+        guard open.runModal() == .OK, let url = open.url else { return ["path": NSNull()] }
+        UserDefaults.standard.set(url.path, forKey: CacheFolder.key)
+        runner?.reportNow()
+        return ["path": url.path]
+    }
+
+    /// What a Download location change moves when none was chosen: each server's default folder (ProxyCache.defaultRoot)
+    /// to its own folder in the new one (ProxyCache.root).
+    @MainActor private func cacheRoots(into location: String) -> [(URL, URL)] {
+        let local = server.map { (ProxyCache.defaultRoot(server: $0.url, localData: $0.dataDir), ProxyCache.root(server: $0.url, location: location)) }
+        return [local].compactMap { $0 } + servers.compactMap { URL(string: $0.url) }.map { (ProxyCache.root(server: $0, location: nil), ProxyCache.root(server: $0, location: location)) }
     }
 
     func pushThisMac(problem: String? = nil) {

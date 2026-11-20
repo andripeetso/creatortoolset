@@ -3,7 +3,7 @@ import { EMPTIED, type KeptKind, type KeptRow, type KeptView, type WorkspaceStor
 import { Button } from "@/components/ui/button";
 import { confirmDialog, type DialogOpts } from "@/lib/dialogs";
 import { useCachedLoad } from "@/lib/local-cache";
-import { chooseDownloadLocation, downloadLocation, showDownloadLocation, thisMacBridge, thisMacState } from "@/lib/thisMac";
+import { cacheFolder, chooseCacheFolder, chooseDownloadLocation, downloadLocation, showCacheFolder, showDownloadLocation, thisMacBridge, thisMacState } from "@/lib/thisMac";
 import { call } from "./StorageRows";
 import { Card, EmptyRow, ErrorRow, InfoTip, LoadingRow, Row, RowMenu, saveFailed, Section } from "./ui";
 
@@ -205,6 +205,9 @@ function MacComputer() {
   const [location, setLocation] = useState<string | null>(null);
   // the row shows only once the Mac answers: a Mac release without the location bridge shows nothing, not a blank path
   useEffect(() => void downloadLocation().then((r) => setLocation(r?.path ?? null), () => {}), []);
+  // undefined until the Mac answers (an app without it never does); null: the internal disk's own folders
+  const [cache, setCache] = useState<string | null | undefined>(undefined);
+  useEffect(() => void cacheFolder().then((r) => r && "path" in r && setCache(r.path ?? null), () => {}), []);
   const row = kept.data?.rows.find((r) => r.kind === "proxies" && r.device?.id === mine);
   // the cap is named only when the server enforces one (cacheLimit), so the tooltip never promises a limit it does not hold
   const cap = row?.limit ? capLabel(row.limit) : "";
@@ -218,6 +221,11 @@ function MacComputer() {
   const change = async () => {
     const r = await chooseDownloadLocation();
     if (r?.path) setLocation(r.path);
+    else if (r?.error) saveFailed(r.error); // no room on that disk, or the downloads are still moving
+  };
+  const changeCache = async () => {
+    const r = await chooseCacheFolder();
+    if (r?.path) setCache(r.path);
   };
   return (
     <Section title="This computer">
@@ -235,10 +243,24 @@ function MacComputer() {
         {location !== null && (
           <Row
             title="Download location"
+            tip="Proxies and files you make available offline."
             control={
               <>
                 <span className="min-w-0 truncate text-sm text-muted-foreground">{location}</span>
                 <RowMenu label="Download location" items={[{ label: "Change…", onSelect: change }, { label: "Show in Finder", onSelect: () => showDownloadLocation() }]} />
+              </>
+            }
+          />
+        )}
+        {cache !== undefined && (
+          <Row
+            title="Cache folder"
+            tip="The AI Editor's temporary work, shared by all workspaces; safe to empty."
+            description="Changing it moves nothing: you can delete the old folder by hand."
+            control={
+              <>
+                <span className="min-w-0 truncate text-sm text-muted-foreground">{cache ?? "On this computer's own disk"}</span>
+                <RowMenu label="Cache folder" items={[{ label: "Change…", onSelect: changeCache }, ...(cache ? [{ label: "Show in Finder", onSelect: () => showCacheFolder() }] : [])]} />
               </>
             }
           />

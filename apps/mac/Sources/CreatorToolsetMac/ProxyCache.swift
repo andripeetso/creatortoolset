@@ -7,19 +7,134 @@ import Foundation
 // (GET /api/auth/check with the window's cookies, never anything from the page), and only for a page of that server.
 // Remembered per server while the app runs, so it still plays when the server doesn't answer.
 
-/// The Download location (UNIFIED-PRD M15): the folder a worker keeps its download cache in, passed as CT_PROXY_DIR
-/// (api/work/cache.ts). Nil = the default folder under the server's data.
+/// The Download location (UNIFIED-PRD M15): the folder workers keep their download cache in, one folder in it per server
+/// (ProxyCache.root), passed as CT_PROXY_DIR (api/work/cache.ts). Nil = each server's default folder under its data, also
+/// while the picked folder's disk is not connected (nothing is written under /Volumes on the internal disk).
 enum DownloadLocation {
     static let key = "downloadLocation"
+    static let defaultName = "Creator Toolset Downloads"
 
-    static func path(_ defaults: UserDefaults = .standard) -> String? {
+    static func path(_ defaults: UserDefaults = .standard, mounted: [String]? = nil) -> String? {
+        guard let p = defaults.string(forKey: key), !p.isEmpty else { return nil }
+        guard p.hasPrefix("/Volumes/") else { return p }
+        return CacheFolder.connected(p, mounted ?? mountPaths()) ? p : nil
+    }
+
+    private static let lock = NSLock()
+    private static var settling = false
+    /// While caches move into the Download location, no worker starts (Worker.start) and no other folder is taken
+    /// (chooseDownloadFolder): nothing writes into a folder being moved.
+    static var isMoving: Bool { lock.withLock { settling } }
+
+    /// Brings the caches to the Download location: with none picked yet, it becomes "Creator Toolset Downloads" on the
+    /// Cache folder's default disk once every server's cache fits there; then, while it is connected, each server's cache
+    /// in its default folder (every relay folder's work/proxies: all of them before, or downloaded while its disk was
+    /// away) moves to its folder there. A move that fails is tried again the next time (a launch, a disk coming back), so
+    /// a cache is never left where nothing reads it. Whether anything changed.
+    @discardableResult
+    static func settle(defaults: UserDefaults = .standard, volumes: () -> [CacheFolder.Volume] = CacheFolder.volumes,
+                       used: [String] = MediaFiles.usedFolders, mounted: [String]? = nil, relays: [URL] = ProxyCache.relays(),
+                       free: (URL) -> Int64? = ProxyCacheMove.freeSpace) -> Bool {
+        let fm = FileManager.default
+        let moves = { (location: URL) in
+            relays.map { ($0.appendingPathComponent("work/proxies", isDirectory: true), location.appendingPathComponent($0.lastPathComponent, isDirectory: true)) }
+                .filter { fm.fileExists(atPath: $0.0.path) }
+        }
+        var changed = false
+        if (defaults.string(forKey: key) ?? "").isEmpty {
+            guard let disk = CacheFolder.largest(volumes(), used: used) else { return false }
+            let to = URL(fileURLWithPath: disk.path).appendingPathComponent(defaultName, isDirectory: true)
+            // taken only once it can be written and every cache fits there
+            guard (try? fm.createDirectory(at: to, withIntermediateDirectories: true)) != nil else { return false }
+            let needed = moves(to).reduce(Int64(0)) { $0 + ProxyCacheMove.size($1.0) }
+            guard needed == 0 || (free(to) ?? 0) >= needed else { return false }
+            defaults.set(to.path, forKey: key)
+            changed = true
+        }
+        guard let location = path(defaults, mounted: mounted) else { return changed }
+        // a download still being written stays (a busy worker writes it there) and comes along the next time
+        let fresh = { (f: URL) in
+            f.pathExtension == "part" && ((try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { -$0.timeIntervalSinceNow < 600 } ?? false)
+        }
+        for (from, to) in moves(URL(fileURLWithPath: location)) where ProxyCacheMove.size(from) > 0 {
+            if (try? ProxyCacheMove.move(from: from, to: to, free: free, busy: fresh)) != nil { changed = true }
+        }
+        return changed
+    }
+
+    /// settle off the main thread, workers held meanwhile; `done` on the main thread when anything changed.
+    static func settleInBackground(done: @escaping @MainActor () -> Void) {
+        let started = lock.withLock { () -> Bool in
+            guard !settling else { return false }
+            settling = true
+            return true
+        }
+        guard started else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let changed = settle()
+            lock.withLock { settling = false }
+            if changed { DispatchQueue.main.async { MainActor.assumeIsolated { done() } } }
+        }
+    }
+}
+
+/// The Cache folder (Settings → Storage › This computer): where this Mac keeps disposable working files every workspace
+/// shares, reported to the server (contracts/providers.ts Machine.cacheFolder) for the AI Editor worker's work folder.
+/// The person's pick, else a folder on the largest external disk that holds a folder this app already reads (so macOS
+/// asks nobody about a new disk), else nil: the internal disk's own defaults. A pick whose disk is not connected falls
+/// back the same way, so nothing is ever written under /Volumes on the internal disk. Changing it moves nothing.
+enum CacheFolder {
+    static let key = "cacheFolder"
+    static let folderName = "Creator Toolset Cache"
+
+    struct Volume: Equatable {
+        var path: String
+        var bytes: Int64
+        /// a disk of its own attached to this Mac: not a share, a cloud drive or another program's mount, nor a volume or
+        /// partition of the internal disk
+        var external = true
+    }
+
+    static func chosen(_ defaults: UserDefaults = .standard) -> String? {
         guard let p = defaults.string(forKey: key), !p.isEmpty else { return nil }
         return p
+    }
+
+    static func path(_ defaults: UserDefaults = .standard, volumes: () -> [Volume] = volumes, used: [String] = MediaFiles.usedFolders,
+                     mounted: [String]? = nil) -> String? {
+        if let p = chosen(defaults), connected(p, mounted ?? mountPaths()) { return p }
+        return largest(volumes(), used: used).map { ($0.path as NSString).appendingPathComponent(folderName) }
+    }
+
+    /// The largest external disk holding one of `used` (folders this app already reads).
+    static func largest(_ volumes: [Volume], used: [String]) -> Volume? {
+        volumes.filter { v in v.external && used.contains { $0 == v.path || $0.hasPrefix(v.path + "/") } }.max { $0.bytes < $1.bytes }
+    }
+
+    /// The internal disk always is; a folder under /Volumes only while its volume is mounted (`mounted`: the mount points).
+    static func connected(_ p: String, _ mounted: [String]) -> Bool {
+        !p.hasPrefix("/Volumes/") || mounted.contains { $0.hasPrefix("/Volumes/") && (p == $0 || p.hasPrefix($0 + "/")) }
+    }
+
+    /// The mounted volumes under /Volumes that files are kept on (diskReport's rules), never waiting on a share; whether
+    /// a local one is external comes from Disk Arbitration, never from the volume (asking it counts as reading it).
+    static func volumes() -> [Volume] {
+        mountedFileSystems().compactMap { st in
+            let block = Int64(st.f_bsize)
+            let facts = VolumeFacts(path: cField(st.f_mntonname), freeBytes: Int64(st.f_bavail) * block, totalBytes: Int64(st.f_blocks) * block,
+                                    fstype: cField(st.f_fstypename), source: cField(st.f_mntfromname),
+                                    readOnly: st.f_flags & UInt32(MNT_RDONLY) != 0, browsable: st.f_flags & UInt32(MNT_DONTBROWSE) == 0)
+            guard facts.path.hasPrefix("/Volumes/"), let report = diskReport(facts) else { return nil }
+            let local = st.f_flags & UInt32(MNT_LOCAL) != 0 && report["network"] as? Bool != true
+            return Volume(path: facts.path, bytes: facts.totalBytes, external: local && volumeIsInternal(at: facts.path) == false)
+        }
     }
 }
 
 enum ProxyCacheMoveError: Error, Equatable {
     case noSpace(needed: Int64, free: Int64)
+    /// the new folder is inside the one it moves from: it would sink a level deeper on every move
+    case inside
 }
 
 /// A Download location change (UNIFIED-PRD M15): the cache's files move to the new folder, kept ones too (a kept proxy
@@ -29,13 +144,29 @@ enum ProxyCacheMove {
         (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
     }
 
-    static func move(from: URL, to: URL, free: (URL) -> Int64? = freeSpace) throws {
+    /// Every file in a folder, at any depth.
+    private static func files(_ root: URL) -> [URL] {
+        (FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])?.allObjects as? [URL] ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+    }
+
+    /// The bytes of every file in a folder.
+    static func size(_ folder: URL) -> Int64 {
+        files(folder.resolvingSymlinksInPath()).reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
+
+    /// The worker's lists beside its files (api/work/cache.ts): two folders' lists are merged, never one dropped, or a proxy
+    /// made here (kept.json: the only copy) would lose its protection from the size limit.
+    static let lists = ["kept.json", "offline.json", "made.json"]
+
+    /// `busy`: a file left where it is this time (a download still being written).
+    static func move(from: URL, to: URL, free: (URL) -> Int64? = freeSpace, busy: (URL) -> Bool = { _ in false }) throws {
         guard from.standardizedFileURL.path != to.standardizedFileURL.path else { return }
+        guard !to.resolvingSymlinksInPath().path.hasPrefix(from.resolvingSymlinksInPath().path + "/") else { throw ProxyCacheMoveError.inside }
         let fm = FileManager.default
         // the enumerator returns real paths (/var → /private/var), so the base is resolved too, or the relative paths come out wrong
         let root = from.resolvingSymlinksInPath()
-        let files = (fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])?.allObjects as? [URL] ?? [])
-            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        let files = files(root).filter { !busy($0) }
         let needed = files.reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
         try fm.createDirectory(at: to, withIntermediateDirectories: true)
         let have = free(to) ?? 0
@@ -44,9 +175,29 @@ enum ProxyCacheMove {
             let rel = String(file.resolvingSymlinksInPath().path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let target = to.appendingPathComponent(rel)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // a file already at the target is that folder's own: never overwritten
-            if !fm.fileExists(atPath: target.path) { try fm.moveItem(at: file, to: target) }
+            if !fm.fileExists(atPath: target.path) {
+                try fm.moveItem(at: file, to: target)
+            } else if lists.contains(file.lastPathComponent) {
+                try merge(file, into: target)
+                try fm.removeItem(at: file)
+            } else {
+                // the same version is already there (the target's copy wins, never overwritten): this one goes
+                try fm.removeItem(at: file)
+            }
         }
+    }
+
+    /// A list (ids) or made.json (id → size) joined into the target's: the target's entries win.
+    static func merge(_ file: URL, into target: URL) throws {
+        let read = { (u: URL) in (try? Data(contentsOf: u)).flatMap { try? JSONSerialization.jsonObject(with: $0) } }
+        let merged: Any
+        switch (read(file), read(target)) {
+        case let (a as [String], b as [String]): merged = b + a.filter { !b.contains($0) }
+        case let (a as [String: Any], b as [String: Any]): merged = a.merging(b) { _, theirs in theirs }
+        case let (a?, nil): merged = a
+        default: return
+        }
+        try JSONSerialization.data(withJSONObject: merged).write(to: target, options: .atomic)
     }
 }
 
@@ -58,12 +209,16 @@ enum ProxyCache {
 
     /// A server's relay folder (ClaudeRequest.swift relayFolder); the tests give their own.
     static var relay: (URL) -> URL = { relayFolder(for: $0, localData: nil) }
+    /// Every server's relay folder on this Mac (not This Mac's own server's: its worker never runs); the tests give their own.
+    static var relays: () -> [URL] = {
+        (try? FileManager.default.contentsOfDirectory(at: appSupport.appendingPathComponent("relay"), includingPropertiesForKeys: nil)) ?? []
+    }
 
+    /// Where a server's worker keeps its cache (CT_PROXY_DIR) and the page plays it from: its folder in the Download
+    /// location, named as its relay folder (two servers' accounts of one name never share one), else its default folder.
     /// The worker's CT_PROXY_DIR for `server`: its folder in the Download location; nil for its default (DATA_DIR/proxies).
     static func workerDir(server: URL) -> String? { DownloadLocation.path().map { root(server: server, location: $0).path } }
 
-    /// Where a server's worker keeps its cache and the page plays it from: its folder in the Download location, named as
-    /// its relay folder (two servers' accounts of one name never share one), else its default folder.
     static func root(server: URL, location: String? = DownloadLocation.path()) -> URL {
         guard let location else { return relay(server).appendingPathComponent("work/proxies", isDirectory: true) }
         return URL(fileURLWithPath: location).appendingPathComponent(relay(server).lastPathComponent, isDirectory: true)
