@@ -245,7 +245,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // Crash reports go to the Sentry project in Info.plist (SentryDSN); a fork sets its own or leaves it empty to send none.
-        if let dsn = Bundle.main.object(forInfoDictionaryKey: "SentryDSN") as? String, !dsn.isEmpty {
+        // Unit tests host the app too; their fake servers' errors and hangs are not the app's.
+        if let dsn = Bundle.main.object(forInfoDictionaryKey: "SentryDSN") as? String, !dsn.isEmpty,
+           ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             SentrySDK.start { options in
                 options.dsn = dsn
                 #if DEBUG
@@ -312,7 +314,8 @@ enum BackgroundRefresh {
     static let identifier = (Bundle.main.bundleIdentifier ?? "com.creatortoolset.ios") + ".refresh"
 
     static func register() {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
+        // .main: with nil iOS calls this on a background queue, and assumeIsolated below stops the app there.
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
             MainActor.assumeIsolated {
                 schedule()
                 task.expirationHandler = run(done: task.setTaskCompleted(success:)) {
