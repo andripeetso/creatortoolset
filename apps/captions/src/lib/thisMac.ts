@@ -472,6 +472,11 @@ async function importAsk<T>(ask: string, on = macImports()): Promise<T> {
  *  Imports/ was one, for a Media folder added with Allow on this Mac. The file is then used where it is. */
 export const NOT_A_COPY_FOLDER = "Not a folder this app copies into.";
 
+/** The Mac app's refusals about the file itself (Import.swift copy): in a Media folder already, another workspace's or
+ *  server's, or not one it can vouch for as dropped or picked here. Shown as they are, never worked around by uploading
+ *  the file instead. */
+export const FILE_REFUSED = / is in the Media folder .*: drop the folder with the footage itself$|^Not a file from a drop or a pick in this window\.$/;
+
 export type ImportCopied = { copied: { from: string; to: string }[]; failed: { from: string; error: string }[]; stopped?: boolean };
 /** Copies each `from` to `to` ("~/" is this Mac's home folder), never over another file; answers when all are done. */
 export const importCopy = (id: string, files: { from: string; to: string }[]) =>

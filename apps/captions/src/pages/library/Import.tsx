@@ -62,6 +62,27 @@ export async function importPlace(libraryId: string, file: File, name?: string):
   return r.copied[0].to;
 }
 
+/**
+ * A dropped folder that holds a Media folder of this computer that isn't this workspace's own: the line refusing the
+ * drop (the same as the AI Editor's, apps/editor worker.py import_outside), else null. Its files would be another
+ * library's footage copied into this one. shortcut: by path, not real path (the page can't resolve links); the Mac app checks real paths on each copy.
+ */
+export async function holdsMediaFolder(folders: string[]): Promise<string | null> {
+  const me = thisMacDevice();
+  // no device id: nothing says which folders are on this Mac (the Mac app checks each copy itself)
+  if (!folders.length || !me) return null;
+  const r = await fetch("/api/devices/storage?all=1").catch(() => null);
+  const view = r?.ok ? ((await r.json()) as StorageView) : null;
+  const own = new Set(await sourceRowsHere());
+  // another workspace's Media folder in it: its files would be that library's footage
+  const media = (view?.folders ?? []).filter((f) => f.role === "footage" && f.origin.host === me && !own.has(f.origin.path)).map((f) => f.origin.path);
+  for (const p of folders) {
+    const inside = media.find((m) => underFolder(m, p));
+    if (inside) return `${p} holds the Media folder ${inside}: drop the folder with the footage itself`;
+  }
+  return null;
+}
+
 /** Runs `fn` on each item, `n` at a time. */
 async function each<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   let i = 0;

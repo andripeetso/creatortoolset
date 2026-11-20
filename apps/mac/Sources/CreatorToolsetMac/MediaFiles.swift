@@ -130,8 +130,18 @@ enum MediaFiles {
     /// Each Settings → Folders Media folder of `server` this Mac may read, with "Imports" after it: where that server's
     /// page copies a file from outside the Media folders (the import rule, contracts/storage.ts importTarget). Never
     /// another server's: a page from one server never fills another's library.
-    static func importsFolders(server: String) -> [String] {
-        serverFolders(server).filter { $0.use == "media" && isAllowed($0.path, server: server) }.map { ($0.path as NSString).appendingPathComponent("Imports") }
+    static func importsFolders(server: String, allowed: Bool = true) -> [String] {
+        serverFolders(server).filter { $0.use == "media" && isAllowed($0.path, server: server) == allowed }.map { ($0.path as NSString).appendingPathComponent("Imports") }
+    }
+
+    /// Every Settings → Folders Media folder of every server this Mac is signed in to (a device token for its host), of
+    /// every workspace, allowed here or not: a file inside one is never copied into any library (Import.swift copy), so
+    /// one server's footage never lands in another's. A server with no sign-in left never blocks a drop.
+    static func signedInMediaFolders(signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil }) -> [String] {
+        (decoded(serversKey) as [String: [ServerFolder]])
+            // the key is host or host:port; an IPv6 host has colons of its own, so both readings are asked (never fails open)
+            .filter { key, _ in signedIn(key) || key.lastIndex(of: ":").map { signedIn(String(key[..<$0])) } == true }
+            .values.flatMap { $0.filter { $0.use == "media" }.map(\.path) }
     }
 
     /// "Allow on this Mac" (the page's folderGrant, a press): only a folder the server lists for this Mac.

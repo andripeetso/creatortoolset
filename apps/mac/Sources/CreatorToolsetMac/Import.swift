@@ -10,7 +10,9 @@ import UniformTypeIdentifiers
 //   drop or pick of this window; `to` under ~/Movies/Creator Toolset, a folder chosen in this app's folder picker, or a
 //   listed Media folder's Imports/ of the page's own server (MediaFiles.importsFolders). The folder a destination is in
 //   must be there: a Media folder whose drive isn't connected is never made on the internal disk, its copy fails and the
-//   page offers Retry.
+//   page offers Retry. A Media folder this Mac isn't allowed to read yet says so ("Allow … on this Mac"). A `from` inside
+//   any Media folder of any server this Mac is signed in to (any workspace's; real paths) is never copied: it is that
+//   library's footage.
 //   A file is never overwritten: the same name and size there is taken as copied already, another file gets " 2", " 3"…
 //   A cancelled or failed copy removes its partial file. The destination joins the folders whose media the page may
 //   play and scan (MediaFiles).
@@ -136,7 +138,8 @@ final class Imports: @unchecked Sendable {
             if !taken { jobs[id] = Job() }
             lock.unlock()
             if taken { return done(["error": "That copy is running already."]) }
-            DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.copyDestinations(server: server))) }
+            DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.copyDestinations(server: server),
+                                                                                waiting: MediaFiles.importsFolders(server: server, allowed: false), media: MediaFiles.signedInMediaFolders())) }
         case .progress(let id)?:
             done(with(id) { j in ["bytes": j.bytes, "of": j.of, "file": j.file ?? NSNull()] as [String: Any] } ?? ["bytes": 0, "of": 0])
         case .cancel(let id)?:
@@ -177,20 +180,29 @@ final class Imports: @unchecked Sendable {
 
     /// Copies `files` (see the top of this file), keeping the job's progress; the reply when it ends. Each destination
     /// folder written into is granted (`grant`) for playing and scanning.
-    func copy(id: String, _ files: [ImportPair], sources: [String], destinations: [String], grant: (String) -> Void = MediaFiles.add) -> [String: Any] {
+    /// `waiting`: Imports/ of Media folders not allowed on this Mac yet; `media`: every listed Media folder, never copied from.
+    func copy(id: String, _ files: [ImportPair], sources: [String], destinations: [String], waiting: [String] = [], media: [String] = [],
+              grant: (String) -> Void = MediaFiles.add) -> [String: Any] {
         defer { lock.lock(); jobs[id] = nil; lock.unlock() }
         let size = { (p: String) in ((try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? NSNumber)?.int64Value }
-        _ = with(id) { $0.of = files.compactMap { size($0.from) }.reduce(0, +) }
+        // only what this window was given counts: a page learns nothing of other files from the total
+        _ = with(id) { $0.of = files.filter { Self.inside($0.from, sources) != nil && Self.inside($0.from, media) == nil }.compactMap { size($0.from) }.reduce(0, +) }
         var copied: [[String: String]] = []
         var failed: [[String: String]] = []
         var stopped = false
         for f in files {
             if with(id, { $0.cancelled }) == true { stopped = true; break }
+            // a file this window wasn't given gets the one answer, in a Media folder or not: a page learns nothing of other
+            // paths from it (the page never uploads such a file instead: AddFinalDialog copyIn)
             guard Self.inside(f.from, sources) != nil, let bytes = size(f.from) else {
                 failed.append(["from": f.from, "error": "Not a file from a drop or a pick in this window."]); continue
             }
+            if let inMedia = Self.inside(f.from, media) {
+                failed.append(["from": f.from, "error": "\(f.from) is in the Media folder \(inMedia): drop the folder with the footage itself"]); continue
+            }
             guard let root = Self.destination(f.to, destinations) else {
-                failed.append(["from": f.from, "error": "Not a folder this app copies into."]); continue
+                let away = Self.inside(f.to, waiting).map { (($0 as NSString).deletingLastPathComponent as NSString).lastPathComponent }
+                failed.append(["from": f.from, "error": away.map { "Allow \($0) on this Mac in Settings → Folders first." } ?? "Not a folder this app copies into."]); continue
             }
             let holder = (root as NSString).deletingLastPathComponent
             guard Places.shared.reachable(holder), FileManager.default.fileExists(atPath: holder) else {
