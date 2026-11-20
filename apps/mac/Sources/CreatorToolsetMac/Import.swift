@@ -11,7 +11,8 @@ import UniformTypeIdentifiers
 //   listed Media folder's Imports/ of the page's own server (MediaFiles.importsFolders). The folder a destination is in
 //   must be there: a Media folder whose drive isn't connected is never made on the internal disk, its copy fails and the
 //   page offers Retry. A Media folder this Mac isn't allowed to read yet says so ("Allow … on this Mac"). A `from` inside
-//   any Media folder the page's server lists (any workspace's; real paths) is never copied: it is that library's footage.
+//   any Media folder of any server this Mac is signed in to (any workspace's; real paths) is never copied: it is that
+//   library's footage.
 //   A file is never overwritten: the same name and size there is taken as copied already, another file gets " 2", " 3"…
 //   A cancelled or failed copy removes its partial file. The destination joins the folders whose media the page may
 //   play and scan (MediaFiles).
@@ -135,7 +136,7 @@ final class Imports: @unchecked Sendable {
             lock.unlock()
             if taken { return done(["error": "That copy is running already."]) }
             DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.copyDestinations(server: server),
-                                                                                waiting: MediaFiles.importsFolders(server: server, allowed: false), media: MediaFiles.mediaFolders(server: server))) }
+                                                                                waiting: MediaFiles.importsFolders(server: server, allowed: false), media: MediaFiles.signedInMediaFolders())) }
         case .progress(let id)?:
             done(with(id) { j in ["bytes": j.bytes, "of": j.of, "file": j.file ?? NSNull()] as [String: Any] } ?? ["bytes": 0, "of": 0])
         case .cancel(let id)?:

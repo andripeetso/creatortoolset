@@ -134,11 +134,13 @@ enum MediaFiles {
         serverFolders(server).filter { $0.use == "media" && isAllowed($0.path, server: server) == allowed }.map { ($0.path as NSString).appendingPathComponent("Imports") }
     }
 
-    /// Every Settings → Folders Media folder `server` lists for this Mac, of every workspace, allowed here or not: a file
-    /// inside one is never copied into that server's libraries (Import.swift copy). That server's list only: one removed
-    /// from the app never blocks a drop.
-    static func mediaFolders(server: String) -> [String] {
-        serverFolders(server).filter { $0.use == "media" }.map(\.path)
+    /// Every Settings → Folders Media folder of every server this Mac is signed in to (a device token for its host), of
+    /// every workspace, allowed here or not: a file inside one is never copied into any library (Import.swift copy), so
+    /// one server's footage never lands in another's. A server with no sign-in left never blocks a drop.
+    static func signedInMediaFolders(signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil }) -> [String] {
+        (decoded(serversKey) as [String: [ServerFolder]])
+            .filter { key, _ in signedIn(String(key.split(separator: ":").first ?? Substring(key))) }
+            .values.flatMap { $0.filter { $0.use == "media" }.map(\.path) }
     }
 
     /// "Allow on this Mac" (the page's folderGrant, a press): only a folder the server lists for this Mac.
