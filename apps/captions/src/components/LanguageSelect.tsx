@@ -10,13 +10,12 @@ import { cn } from "@/lib/utils";
  * The language spoken in a workspace's or an edit's videos: one code, or "" for the person's own languages (Settings →
  * Voice; none there = English, as api/transcribe.ts hears it), or for `fallback`. Saved as `languages: [code]` (none: []). A short
  * list you can type into, so 30 languages never fill the screen. With `values` it ticks several (a workspace whose videos
- * mix languages): every language is a row that turns on or off and the list stays open. Nothing picked shows the default
- * ticked, and the first pick starts from it (English ticked + Estonian = both); unticking the last goes back to the default.
+ * mix languages): every language is a row that turns on or off and the list stays open. Only what is saved is ticked:
+ * the default is marked, never ticked for you, so picking Estonian alone saves ["et"] (with "en" in it, transcription
+ * would ask for English first, api/transcribe.ts firstAsk).
  */
-export function toggleLanguage(values: string[], defaults: string[], code: string): string[] {
-  const shown = values.length ? values : defaults;
-  return shown.includes(code) ? shown.filter((c) => c !== code) : [...shown, code].slice(0, 5);
-}
+export const toggleLanguage = (values: string[], code: string): string[] =>
+  values.includes(code) ? values.filter((c) => c !== code) : [...values, code].slice(0, 5);
 
 export function LanguageSelect({ id, value, onChange, values, onValuesChange, disabled, className, placeholder, fallback }: {
   id?: string;
@@ -42,12 +41,12 @@ export function LanguageSelect({ id, value, onChange, values, onValuesChange, di
   const one = !many && !placeholder && mine.length <= 1 ? (mine[0] ?? "en") : null;
   const rest = SPOKEN_LANGUAGES.filter((c) => c !== one);
   const isDefault = many ? !values.length : !value || value === one;
-  const ticked = (c: string) => (many ? (values.length ? values : defaults).includes(c) : value === c);
+  const ticked = (c: string) => (many ? values.includes(c) : value === c);
   const pick = (code: string) => {
     if (!many) {
       onChange?.(code);
       setOpen(false);
-    } else onValuesChange?.(toggleLanguage(values, defaults, code));
+    } else onValuesChange?.(toggleLanguage(values, code));
   };
   return (
     // modal: inside a window (the Projects one) the window's scroll lock would eat the list's wheel; the popover's own
