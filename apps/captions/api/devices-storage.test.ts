@@ -207,6 +207,30 @@ describe("a folder added in Settings for the computer this server runs on", () =
     expect(await watchedPaths()).not.toContain(path.join(dir, "Projects B"));
   });
 
+  // 2026-11-20: a helper's Project files card ("Use" on its ~/Movies folder) removed his Mac's Projects row
+  it("a Projects folder added for one computer replaces only that computer's own, never another's; Exports stays one", async () => {
+    type Row = { role?: string; origin: { host: string; path: string } };
+    const rows = async (role: string) =>
+      ((await view()).folders as Row[]).filter((f) => f.role === role).map((f) => `${f.origin.host === mac ? "mac" : f.origin.host === other ? "helper" : f.origin.host}:${path.basename(f.origin.path)}`).sort();
+    expect((await add(mac, path.join(dir, "Mac Projects"), "projects")).status).toBe(200);
+    // the helper's card: its own row comes, the Mac's stays
+    expect((await add(other, "~/Movies/Creator Toolset/Projects", "projects")).status).toBe(200);
+    expect(await rows("projects")).toEqual(["helper:Projects", "mac:Mac Projects"]);
+    // the same computer again: its own is replaced
+    expect((await add(mac, path.join(dir, "Mac Projects 2"), "projects")).status).toBe(200);
+    expect(await rows("projects")).toEqual(["helper:Projects", "mac:Mac Projects 2"]);
+    expect((await add(other, "~/Movies/Creator Toolset/Projects 2", "projects")).status).toBe(200);
+    expect(await rows("projects")).toEqual(["helper:Projects 2", "mac:Mac Projects 2"]);
+    // Exports is one folder (Finals and the chat read it): a pick on another computer moves it there
+    expect((await add(mac, path.join(dir, "Mac Exports"), "library")).status).toBe(200);
+    expect((await add(other, "~/Movies/Creator Toolset/Final exports", "library")).status).toBe(200);
+    expect(await rows("library")).toEqual(["helper:Final exports"]);
+    // the tests after this one start with no Exports folder
+    for (const f of (await view()).folders as (Row & { id: string })[]) {
+      if (f.role === "library") expect((await app.request(`/api/devices/storage/folders/${encodeURIComponent(f.id)}`, { method: "DELETE" })).status).toBe(200);
+    }
+  });
+
   it("a folder that is not there is refused with the reason, as in setup", async () => {
     const r = await add(mac, path.join(dir, "no-such-folder"));
     expect(r.status).toBe(400);
@@ -417,5 +441,23 @@ describe("each workspace", () => {
     // Change Exports never adds the old one's Footage
     expect((await change(path.join(dir, "Exports D"))).status).toBe(200);
     expect(await media()).toEqual(before);
+  });
+
+  it("a computer's Projects folder in a workspace never takes another computer's (a helper's card took his Mac's)", async () => {
+    const mac = pairDevice(USER, "Tiny WS Mac").device.id;
+    const helper = pairDevice(USER, "Tiny WS Helper").device.id;
+    const addIn = (host: string, p: string, role: string) =>
+      app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": "ws-b" }, body: JSON.stringify({ role, host, path: p }) });
+    type View = { folders: { role: string; origin: { host: string; path: string } }[] };
+    const rows = async (role: string) =>
+      ((await (await app.request("/api/devices/storage", { headers: { "x-ct-workspace": "ws-b" } })).json()) as View).folders
+        .filter((f) => f.role === role && (f.origin.host === mac || f.origin.host === helper))
+        .map((f) => `${f.origin.host === mac ? "mac" : "helper"}:${path.basename(f.origin.path)}`)
+        .sort();
+    expect((await addIn(mac, path.join(dir, "WS Mac Projects"), "projects")).status).toBe(200);
+    expect((await addIn(helper, "~/Movies/Creator Toolset/Projects", "projects")).status).toBe(200);
+    expect(await rows("projects")).toEqual(["helper:Projects", "mac:WS Mac Projects"]);
+    expect((await addIn(mac, path.join(dir, "WS Mac Projects 2"), "projects")).status).toBe(200);
+    expect(await rows("projects")).toEqual(["helper:Projects", "mac:WS Mac Projects 2"]);
   });
 });
