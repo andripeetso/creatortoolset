@@ -369,11 +369,8 @@ describe("designs: an AI that designs", () => {
     const put = (await write(d.id, { changes: [{ frame: "canvas", add: { ...text, x: 4000, text: "Save 20%" }, as: "sale" }] })).body as Wrote & { named: Record<string, string> };
     const id = put.named.sale ?? "sale";
     const out = await write(d.id, { changes: [{ frame: "canvas", layer: id, to: "p3" }, { frame: "p1", layer: "l1", to: "p3" }] });
-    // nothing else in the call: nothing was changed, and the error names both
-    expect(out.status).toBe(400);
-    const error = (out.body as unknown as { error: string }).error;
-    expect(error).toContain(`changes[0], the canvas, layer ${id}: “Save 20%” is not in frame p3's own words: it stays where it is`);
-    expect(error).toContain("changes[1], frame p1 (Frame 1), layer l1: “Roll the mat out” is not in frame p3's own words");
+    expect(out.status).toBe(200);
+    expect(out.body.notes).toEqual([`changes[0], the canvas, layer ${id}: “Save 20%” is not in frame p3's own words: it stays where it is`, "changes[1], frame p1 (Frame 1), layer l1: “Roll the mat out” is not in frame p3's own words: it stays where it is"]);
     expect((await read(d.id)).canvas).toEqual([expect.objectContaining({ id, text: "Save 20%" })]);
     const pages = (await call<Design>("GET", `/api/designs/${d.id}`)).body.pages;
     expect(pages[0]!.layers).toEqual(d.pages[0]!.layers);
