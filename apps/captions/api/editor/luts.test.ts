@@ -31,7 +31,7 @@ async function login(username: string) {
   const res = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password: "password1" }) });
   cookies[username] = res.headers.get("set-cookie")!.split(";")[0]!;
 }
-const call = (user: string, workspace: string, method: string, url: string, body?: BodyInit) =>
+const call = (user: string, workspace: string, method: string, url: string, body?: string | FormData) =>
   app.request(`/api/edit-steps/luts${url}`, { method, headers: { cookie: cookies[user]!, "x-ct-workspace": workspace, ...(typeof body === "string" ? { "content-type": "application/json" } : {}) }, body });
 const upload = (user: string, workspace: string, text: string, name = "Tiny look.cube") => {
   const form = new FormData();
