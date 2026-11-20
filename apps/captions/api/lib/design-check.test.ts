@@ -320,6 +320,39 @@ describe("a text's highlighter strokes", () => {
   });
 });
 
+describe("a text's runs, weight, slant, lines and case", () => {
+  it("keeps parts of a text set apart, by letters or by a phrase, in order and inside the text; a style it cannot draw is left out", () => {
+    const [l, plain] = cleanPages(
+      [
+        {
+          layers: [
+            text({
+              text: "Was €49, now €29. Now!",
+              weight: 450,
+              italic: true,
+              underline: "yes",
+              case: "small",
+              runs: [{ words: "now", color: "#F00" }, { start: 4, end: 7, strike: true, font: "Comic Sans", size: 9000 }, { start: 30, end: 2, weight: 800 }, { words: "€49", underline: false }, { start: 0, end: 3 }, "bold"],
+            }),
+            text({ case: "sideways", runs: [] }),
+          ],
+        },
+      ],
+      rules,
+    ).pages[0]!.layers;
+    expect(l).toMatchObject({ weight: 500, italic: true, case: "small" });
+    expect(l).not.toHaveProperty("underline");
+    // "€49" struck through and its size held to what can be drawn (the font it cannot draw left out); "now" red in both places, whatever its case
+    expect((l as { runs: unknown[] }).runs).toEqual([
+      { start: 4, end: 7, strike: true, size: 600 },
+      { start: 9, end: 12, color: "#ff0000" },
+      { start: 18, end: 21, color: "#ff0000" },
+    ]);
+    expect(plain).not.toHaveProperty("case");
+    expect(plain).not.toHaveProperty("runs");
+  });
+});
+
 describe("frames on a canvas", () => {
   const frame = (id: string, more: object = {}) => ({ id, background: "#ffffff", layers: [], ...more });
   it("gives every frame a place and a size: none placed yet, in a row; a new one beside the rightmost; one sent without its place where it was", () => {

@@ -1,19 +1,23 @@
 import type { DesignPage, DesignShape, Gradient, ImageLayer, Layer, Radius, ShapeLayer, Stroke, TextLayer } from "@contracts/design";
-import { designWeight } from "./fonts";
+import { faceOf } from "./fonts";
 import { onPath, tracePath } from "./path";
 import { blurPixels, retouch, retouches } from "./retouch";
+import { casedText, pieceFont, setRuns, usesRuns, type RunLine } from "./runs";
 
 /**
  * Draws a design's page (contracts/design.ts) on a 2D canvas, in the design's own pixels. The editor's stage and the
  * PNG that is saved are drawn by this one function, so what is saved is what was seen.
  */
 
-/** The CSS font of a text layer at its size (each bundled family is one weight: src/lib/types.ts). */
+/** The CSS font of a text layer at its size: its font's face nearest its weight (src/lib/design/fonts.ts faceOf). */
 // a sign the face does not have (an arrow, in most of the serifs) is drawn in Inter, which every machine has from the
 // app, and not in whatever face that machine falls back to: the same on the person's canvas and in an AI's picture
-export const fontOf = (l: Pick<TextLayer, "font" | "size">, scale = 1): string => `${designWeight(l.font)} ${l.size * scale}px "${l.font}", "Inter"`;
+export const fontOf = (l: Pick<TextLayer, "font" | "size" | "weight">, scale = 1): string => {
+  const f = faceOf(l.font, l.weight);
+  return `${f.css} ${l.size * scale}px "${f.family}", "Inter"`;
+};
 export const lineHeightOf = (l: Pick<TextLayer, "size" | "lineHeight">): number => l.size * (l.lineHeight ?? 1.15);
-export const shownText = (l: Pick<TextLayer, "text" | "upper">): string => (l.upper ? l.text.toUpperCase() : l.text);
+export const shownText = (l: Pick<TextLayer, "text" | "upper" | "case">): string => casedText(l);
 
 /**
  * The lines a text makes inside `width`: its own line breaks are kept, and a line too long is broken between words
@@ -121,7 +125,7 @@ const SMALLEST = 8;
  * come out about as long as each other. `base` gives a string's width at the layer's own size: a width at another size is that in
  * proportion, so nothing is measured twice.
  */
-export function setText(l: Pick<TextLayer, "text" | "upper" | "size" | "lineHeight" | "spacing" | "w" | "h" | "fit" | "balance">, base: (s: string) => number): { size: number; lines: string[] } {
+export function setText(l: Pick<TextLayer, "text" | "upper" | "case" | "size" | "lineHeight" | "spacing" | "w" | "h" | "fit" | "balance">, base: (s: string) => number): { size: number; lines: string[] } {
   const text = shownText(l);
   const widthAt = (k: number) => (s: string) => textWidth(l, s, (t) => base(t) * k);
   const linesAt = (k: number, width = l.w) => wrapLines(text, width, widthAt(k));
@@ -195,32 +199,38 @@ export function measurer(font: string): (s: string) => number {
  * is drawn. A stroke runs from just over the letters' tops to just under their feet, and a little past the words:
  * `ink` is how far the text's letters reach over and under the line they stand on, as its font draws them (tall
  * capitals reach higher than a round book face, and capitals alone reach nowhere under it), so every stroke of one text
- * is as high as the others. Without it, what most faces come to.
+ * is as high as the others. Without it, what most faces come to. A text with runs gives its size, line height and
+ * ink a line each (the line's largest letters), and `width` the line and the place in it a string starts at.
  */
 export function markBoxes(
   marks: TextLayer["marks"],
   lines: readonly string[],
-  size: number,
-  lh: number,
+  size: number | readonly number[],
+  lh: number | readonly number[],
   top: number,
-  left: (line: string) => number,
-  width: (s: string) => number,
-  ink: { up: number; down: number } = { up: size * 0.72, down: size * 0.2 },
+  left: (line: string, k: number) => number,
+  width: (s: string, k: number, from: number) => number,
+  ink?: { up: number; down: number } | readonly { up: number; down: number }[],
 ): { x: number; y: number; w: number; h: number; color: string }[] {
   const out: { x: number; y: number; w: number; h: number; color: string }[] = [];
-  const pad = size * 0.14;
-  const over = size * 0.1;
+  const tops: number[] = [];
+  lines.reduce((t, _, k) => (tops.push(t), t + (typeof lh === "number" ? lh : lh[k]!)), top);
   const box = (k: number, from: number, to: number, m: { color: string; low?: true }) => {
     const line = lines[k]!;
     if (to <= from || !line.slice(from, to).trim()) return;
+    const sz = typeof size === "number" ? size : size[k]!;
+    const high = typeof lh === "number" ? lh : lh[k]!;
+    const up = (ink && "up" in ink ? ink : ink?.[k]) ?? { up: sz * 0.72, down: sz * 0.2 };
+    const pad = sz * 0.14;
+    const over = sz * 0.1;
     // the words' left end is where their last letter ends, less their own width: right with letters spaced apart too,
     // where the width of what stands before them is one space between letters short
-    const wide = width(line.slice(from, to));
+    const wide = width(line.slice(from, to), k, from);
     // the line the letters stand on is where drawText puts it: 0.8 of the size under the top of the letters' own room
-    const foot = top + k * lh + (lh - size) / 2 + size * 0.8;
+    const foot = tops[k]! + (high - sz) / 2 + sz * 0.8;
     // low: over the small letters and a little under the line they stand on, the tall letters standing out of it
-    const y = m.low ? foot - ink.up * 0.72 : foot - ink.up - over;
-    out.push({ x: left(line) + width(line.slice(0, to)) - wide - pad, y, w: wide + 2 * pad, h: foot + (m.low ? size * 0.14 : ink.down + over) - y, color: m.color });
+    const y = m.low ? foot - up.up * 0.72 : foot - up.up - over;
+    out.push({ x: left(line, k) + width(line.slice(0, to), k, 0) - wide - pad, y, w: wide + 2 * pad, h: foot + (m.low ? sz * 0.14 : up.down + over) - y, color: m.color });
   };
   // the lines end to end with one space between them: where a phrase is found there says which lines it is on
   // ponytail: found by its small letters, place for place. A letter whose small form is longer (the Turkish İ) moves
@@ -249,6 +259,7 @@ export function markBoxes(
 }
 
 function drawText(ctx: Ctx, given: TextLayer, cast = false) {
+  if (usesRuns(given)) return drawRuns(ctx, given, cast);
   ctx.font = fontOf(given);
   ctx.textBaseline = "alphabetic";
   const set = setTextOnce(given, (s) => ctx.measureText(s).width);
@@ -302,6 +313,159 @@ function drawText(ctx: Ctx, given: TextLayer, cast = false) {
     if (l.outline) each((ch, x) => ctx.strokeText(ch, x, y));
     ctx.fillStyle = fill;
     each((ch, x) => ctx.fillText(ch, x, y));
+  });
+}
+
+/**
+ * `setRuns`, kept a layer (as `setTextOnce`): used again while the layer is the same one and each of its faces is as
+ * wide as it was (a face that arrived since changes that).
+ */
+const runsOnce = new WeakMap<object, { wide: number; set: ReturnType<typeof setRuns> }>();
+export function setRunsOnce(l: TextLayer, measure: (font: string, s: string) => number): ReturnType<typeof setRuns> {
+  const wide = fontsOfText(l).reduce((n, f) => n + measure(f, "Hamburg 1"), 0);
+  const had = runsOnce.get(l);
+  if (had?.wide === wide) return had.set;
+  const set = setRuns(l, measure);
+  runsOnce.set(l, { wide, set });
+  return set;
+}
+
+/** Every CSS font a text is drawn in (its own and its runs' faces), at 100px: what must be loaded before it is drawn. */
+export function fontsOfText(l: TextLayer): string[] {
+  const styles = [l, ...(l.runs ?? [])];
+  return [...new Set(styles.map((r) => pieceFont(faceOf(r.font ?? l.font, r.weight ?? l.weight, r.italic ?? l.italic), 100)))];
+}
+
+const measureOn = (ctx: Ctx) => (font: string, s: string) => {
+  ctx.font = font;
+  return ctx.measureText(s).width;
+};
+
+/** How a text is set, measured on `ctx`: the size of its own letters, each line's width, and all of them together high. */
+export function textBlock(ctx: Ctx, l: TextLayer): { size: number; widths: number[]; tall: number } {
+  if (usesRuns(l)) {
+    const set = setRuns(l, measureOn(ctx));
+    return { size: set.size, widths: set.lines.map((r) => r.width), tall: set.lines.reduce((n, r) => n + r.height, 0) };
+  }
+  ctx.font = fontOf(l);
+  const set = setText(l, (t) => ctx.measureText(t).width);
+  const drawn = { ...l, size: set.size };
+  ctx.font = fontOf(drawn);
+  return { size: set.size, widths: set.lines.map((s) => textWidth(l, s, (t) => ctx.measureText(t).width)), tall: set.lines.length * lineHeightOf(drawn) };
+}
+
+/** The size a text's own letters are drawn at (their own, or the one they shrank to), for where no drawing is under way. */
+export function textSize(l: TextLayer): number {
+  return usesRuns(l) ? setRuns(l, (font, s) => measurer(font)(s)).size : setText(l, measurer(fontOf(l))).size;
+}
+
+/** How far an upright face is leaned over when italic is asked for and its family has no italic face: about 12°. */
+const SLANT = 0.21;
+
+/**
+ * A text with runs (or a slant, lines under or through it, small capitals), drawn piece by piece: each in its own
+ * face, size and colour, every piece of a line on one baseline, a line as high as its largest letters. The highlighter
+ * strokes lie under the words as in drawText, a line each as high as that line's letters are drawn.
+ */
+function drawRuns(ctx: Ctx, l: TextLayer, cast: boolean) {
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  const measure = measureOn(ctx);
+  const lines: RunLine[] = setRunsOnce(l, measure).lines;
+  const tall = lines.reduce((n, r) => n + r.height, 0);
+  const top = l.valign === "middle" ? (l.h - tall) / 2 : l.valign === "bottom" ? l.h - tall : 0;
+  const lefts = lines.map((r) => (l.align === "center" ? (l.w - r.width) / 2 : l.align === "right" ? l.w - r.width : 0));
+  /** The first letters of a piece, as wide as they are drawn. */
+  const partWidth = (p: RunLine["pieces"][number], part: string) => {
+    const font = pieceFont(p, p.size);
+    const each = Array.from(part);
+    return (p.spacing ? each.reduce((n, ch) => n + measure(font, ch), 0) : measure(font, part)) + p.spacing * each.length;
+  };
+  if (l.marks?.length && !cast) {
+    // how far the letters reach over and under the line, for the size they are set at: the most of any line, in proportion to each line's size
+    let up = 0;
+    let down = 0;
+    for (const r of lines)
+      for (const p of r.pieces) {
+        if (!p.text.trim()) continue;
+        ctx.font = pieceFont(p, p.size);
+        const m = ctx.measureText(p.text);
+        up = Math.max(up, m.actualBoundingBoxAscent / r.size);
+        down = Math.max(down, m.actualBoundingBoxDescent / r.size);
+      }
+    const xAt = (k: number, at: number) => {
+      let x = 0;
+      let n = 0;
+      for (const p of lines[k]!.pieces) {
+        if (at >= n + p.text.length) {
+          x += p.width;
+          n += p.text.length;
+          continue;
+        }
+        return x + partWidth(p, p.text.slice(0, at - n));
+      }
+      return x;
+    };
+    const ink = up > 0 ? lines.map((r) => ({ up: up * r.size, down: down * r.size })) : undefined;
+    for (const b of markBoxes(l.marks, lines.map((r) => r.text), lines.map((r) => r.size), lines.map((r) => r.height), top, (_, k) => lefts[k]!, (s, k, from) => xAt(k, from + s.length) - xAt(k, from), ink)) {
+      ctx.beginPath();
+      roundedRect(ctx, b.x, b.y, b.w, b.h, l.size * 0.02);
+      ctx.fillStyle = b.color;
+      ctx.fill();
+    }
+  }
+  const fill = fillOf(ctx, l.color, l.gradient, l.w, l.h);
+  if (l.outline) {
+    ctx.lineJoin = "round";
+    ctx.lineWidth = l.outline.width * 2;
+    ctx.strokeStyle = l.outline.color;
+  }
+  let y0 = top;
+  lines.forEach((r, k) => {
+    // every piece on the line's baseline: 0.8 of its largest letters under the top of their room
+    const y = y0 + (r.height - r.size) / 2 + r.size * 0.8;
+    y0 += r.height;
+    const draw = (outline: boolean) => {
+      let x = lefts[k]!;
+      for (const p of r.pieces) {
+        ctx.font = pieceFont(p, p.size);
+        if (!outline) ctx.fillStyle = p.color ?? fill;
+        const put = (t: string, at: number) => {
+          // leaned over about the baseline, so the letters stand where they would upright
+          if (p.slant) {
+            ctx.save();
+            ctx.transform(1, 0, -SLANT, 1, SLANT * y, 0);
+          }
+          if (outline) ctx.strokeText(t, at, y);
+          else ctx.fillText(t, at, y);
+          if (p.slant) ctx.restore();
+        };
+        if (!p.spacing) put(p.text, x);
+        else {
+          let at = x;
+          for (const ch of Array.from(p.text)) {
+            put(ch, at);
+            at += measure(pieceFont(p, p.size), ch) + p.spacing;
+          }
+        }
+        x += p.width;
+      }
+    };
+    // every outline of the line first, so none lies over the letter before it
+    if (l.outline) draw(true);
+    draw(false);
+    // lines under and through the letters, in their colour, as thick as their size asks
+    let x = lefts[k]!;
+    r.pieces.forEach((p, j) => {
+      if (p.underline || p.strike) {
+        ctx.fillStyle = p.color ?? fill;
+        const thick = Math.max(1, p.size * 0.06);
+        const w = p.width - (j === r.pieces.length - 1 ? p.spacing : 0);
+        if (p.underline) ctx.fillRect(x, y + p.size * 0.1, w, thick);
+        if (p.strike) ctx.fillRect(x, y - p.size * 0.3 - thick / 2, w, thick);
+      }
+      x += p.width;
+    });
   });
 }
 

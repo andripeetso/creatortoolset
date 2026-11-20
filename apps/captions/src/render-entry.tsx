@@ -18,7 +18,7 @@ declare global {
   }
 }
 
-const fontFiles: [family: string, file: string, weight: number][] = [
+const fontFiles: [family: string, file: string, weight: number | string][] = [
   ["Anton", "Anton-Regular.ttf", 400],
   ["Archivo Black", "ArchivoBlack-Regular.ttf", 400],
   ["Bebas Neue", "BebasNeue-Regular.ttf", 400],
@@ -33,7 +33,8 @@ const fontFiles: [family: string, file: string, weight: number][] = [
   // the Designer's own (src/lib/design/fonts.ts)
   ["Poppins Regular", "Poppins-Regular.ttf", 400],
   ["DM Serif Display", "DMSerifDisplay-Regular.ttf", 400],
-  ["Caveat", "Caveat-Variable.ttf", 700],
+  // one file for every weight from 400 to 700 (src/lib/design/fonts.ts VARIABLE)
+  ["Caveat", "Caveat-Variable.ttf", "400 700"],
   ["Coustard Black", "Coustard-Black.ttf", 400],
   ["Bevan", "Bevan-Regular.ttf", 400],
 ];

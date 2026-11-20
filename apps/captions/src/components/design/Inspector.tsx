@@ -16,13 +16,15 @@ import {
   AlignVerticalJustifyStart,
   AlignVerticalSpaceAround,
   Ban,
-  CaseUpper,
   Check,
   ChevronDown,
   CircleDot,
   Crop,
   FlipHorizontal2,
   FlipVertical2,
+  Italic,
+  Strikethrough,
+  Underline,
   Group,
   Link2,
   Minus,
@@ -42,7 +44,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { typedHex } from "@/lib/design/colour";
 import { boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
-import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
+import { DESIGN_FONTS, designWeight, faceOf, WEIGHT_NAMES, weightsOf } from "@/lib/design/fonts";
+import { caseOf } from "@/lib/design/runs";
 import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
 import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
@@ -832,7 +835,7 @@ export function Inspector({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="max-h-96 w-56 overflow-y-auto">
                   {DESIGN_FONTS.map((f) => (
-                    <DropdownMenuItem key={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family } : l))} className="flex items-center justify-between gap-2">
+                    <DropdownMenuItem key={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
                       <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}"`, fontWeight: designWeight(f.family) }}>
                         {f.label}
                       </span>
@@ -841,7 +844,7 @@ export function Inspector({
                   ))}
                   <DropdownMenuSeparator />
                   {ownFonts.map((f) => (
-                    <DropdownMenuItem key={f.id} data-own-font={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family } : l))} className="flex items-center justify-between gap-2">
+                    <DropdownMenuItem key={f.id} data-own-font={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
                       <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}", "Inter"`, fontWeight: 400 }}>
                         {f.family}
                       </span>
@@ -900,6 +903,33 @@ export function Inspector({
                 }}
               />
               {fontSaid && <p className={cn("text-[11px] leading-4", DIM)}>{fontSaid}</p>}
+              {/* the weights the font's family has a face for, and the slant and lines over the letters */}
+              <div className="flex items-center gap-1">
+                <div className="min-w-0 flex-1">
+                  {(() => {
+                    const weight = same((l) => (l.type === "text" ? faceOf(l.font, l.weight, l.italic).weight : undefined));
+                    return (
+                      <PickOne
+                        label="Weight"
+                        value={weight === null ? "Mixed" : (WEIGHT_NAMES[weight] ?? String(weight))}
+                        options={(fontNow ? weightsOf(fontNow) : []).map((w) => [String(w), WEIGHT_NAMES[w] ?? String(w)] as const)}
+                        onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, weight: Number(v) } : l))}
+                      />
+                    );
+                  })()}
+                </div>
+                {(
+                  [
+                    ["italic", "Italic", Italic],
+                    ["underline", "Underline", Underline],
+                    ["strike", "Strikethrough", Strikethrough],
+                  ] as const
+                ).map(([k, label, Icon]) => (
+                  <Tap key={k} label={label} on={same((l) => (l.type === "text" ? !!l[k] : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? ({ ...l, [k]: l[k] ? undefined : true } as Layer) : l))}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </Tap>
+                ))}
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 {num("Aa", "Font size", same((l) => (l.type === "text" ? l.size : undefined)), (n) => (l) => (l.type === "text" ? { ...l, size: n } : l), { min: 8, max: 600 })}
                 {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}
@@ -937,10 +967,19 @@ export function Inspector({
                 <Tap label="Even out the lines" on={same((l) => (l.type === "text" ? !!l.balance : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, balance: l.balance ? undefined : true } : l))}>
                   <WrapText className="h-3.5 w-3.5" />
                 </Tap>
-                <Tap label="Capitals" on={same((l) => (l.type === "text" ? !!l.upper : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, upper: l.upper ? undefined : true } : l))}>
-                  <CaseUpper className="h-3.5 w-3.5" />
-                </Tap>
               </div>
+              {(() => {
+                const CASES = [["typed", "As typed"], ["upper", "Upper case"], ["lower", "Lower case"], ["title", "Title case"], ["small", "Small capitals"]] as const;
+                const now = same((l) => (l.type === "text" ? (caseOf(l) ?? "typed") : undefined));
+                return (
+                  <PickOne
+                    label="Case"
+                    value={CASES.find(([v]) => v === now)?.[1] ?? "Mixed"}
+                    options={CASES}
+                    onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, upper: undefined, case: v === "typed" ? undefined : v } : l))}
+                  />
+                );
+              })()}
             </Section>
           )}
           {text && (

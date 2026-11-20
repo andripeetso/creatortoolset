@@ -1,5 +1,6 @@
 import type { PictureSpec } from "@contracts/design";
-import { drawingUrl, drawPage, fontOf, lineHeightOf, setText, sourceOf, textWidth, type Loaded } from "./draw";
+import { drawingUrl, drawPage, fontsOfText, sourceOf, textBlock, type Loaded } from "./draw";
+import { setOwnFamilies } from "./fonts";
 
 /**
  * A page as a small JPEG, drawn by the same function as the designer's canvas and the saved PNG, and the words on it
@@ -16,7 +17,9 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
       await face.load().then(() => void document.fonts.add(face), () => {});
     }),
   );
-  await Promise.all([...new Set(layers.flatMap((l) => (l.type === "text" ? [fontOf(l)] : [])))].map((f) => document.fonts.load(f).catch(() => [])));
+  // a text's weights and slants are faces of its family: the person's own faces of it among them
+  setOwnFamilies(Object.keys(spec.fonts ?? {}));
+  await Promise.all([...new Set(layers.flatMap((l) => (l.type === "text" ? fontsOfText(l) : [])))].map((f) => document.fonts.load(f).catch(() => [])));
   const loaded: Loaded = new Map();
   await Promise.all(
     layers.map(async (l) => {
@@ -38,15 +41,10 @@ export async function pagePicture(spec: PictureSpec): Promise<{ jpeg: string; sp
   const spills: string[] = [];
   for (const l of layers) {
     if (l.type !== "text") continue;
-    ctx.font = fontOf(l);
     // as it is drawn: at the size it shrank to, when it shrinks to fit
-    const set = setText(l, (t) => ctx.measureText(t).width);
-    const drawn = { ...l, size: set.size };
-    ctx.font = fontOf(drawn);
-    const widthOf = (s: string) => textWidth(l, s, (t) => ctx.measureText(t).width);
-    const lines = set.lines;
-    const wide = Math.ceil(Math.max(...lines.map(widthOf)));
-    const tall = Math.ceil(lines.length * lineHeightOf(drawn));
+    const set = textBlock(ctx, l);
+    const wide = Math.ceil(Math.max(...set.widths));
+    const tall = Math.ceil(set.tall);
     const said = `“${l.text.replace(/\s+/g, " ").slice(0, 40)}”`;
     if (wide > l.w + 1 || tall > l.h + 1) spills.push(`${said} does not fit its box: at size ${set.size} it takes ${wide} × ${tall}, and the box is ${l.w} × ${l.h}${l.fit === "shrink" ? " (it cannot shrink further)" : ""}`);
     // words that fit their box and are still cut: the box itself reaches over the frame's edge (a turned box is left to the eye)

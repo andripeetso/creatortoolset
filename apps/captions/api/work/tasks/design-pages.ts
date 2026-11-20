@@ -65,7 +65,8 @@ async function draw(input: DesignPagesInput, dir: string, file: (name: string) =
       const width = page.w ?? input.width;
       // the person's own fonts this frame's words are set in, each as its file's address (the drawing page is a file itself)
       const own: Record<string, string> = {};
-      for (const l of page.layers) if (l.type === "text" && input.fonts.includes(l.font) && !own[l.font]) own[l.font] = pathToFileURL(await file(`font-${l.font}`)).href;
+      // (every face the pages ask for: a run's font, and the faces of a family a weight or a slant is drawn in)
+      for (const f of input.fonts) if (!own[f]) own[f] = pathToFileURL(await file(`font-${f}`)).href;
       const spec: PictureSpec = { width, height: page.h ?? input.height, page, pictures: await smallPictures(page, dir, file), ...(Object.keys(own).length ? { fonts: own } : {}), scale: Math.min(1, WIDTH / width) };
       pictures.push({ page: n, ...(await tab.evaluate((s) => (globalThis as unknown as RendererWindow).designRenderer!.draw(s), spec)) });
     }
