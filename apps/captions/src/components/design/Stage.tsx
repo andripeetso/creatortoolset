@@ -5,6 +5,8 @@ import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, set
 import { boundsOf, boxPick, dropTarget, frameOf, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
+import { aidTargets } from "@/lib/design/aids";
+import { Aids } from "./Aids";
 import { cn } from "@/lib/utils";
 
 /**
@@ -494,7 +496,8 @@ export function Stage({
         const targets: Rect[] = [host.loose || out ? { x: -1e9, y: -1e9, w: 0, h: 0 } : { x: 0, y: 0, w: g.w, h: g.h }, ...host.layers.filter((l) => !l.hidden && (to !== k || copy || !ids.includes(l.id))).map((l) => boundsOf([l]))];
         const near = SNAP / live.current.z;
         const at = { ...b0, x: b0.x + ox + m.dx, y: b0.y + oy + m.dy };
-        const s = snapMove(at, targets, near);
+        // and on the host frame's guides, grids and safe parts (lib/design/aids.ts)
+        const s = snapMove(at, host.loose || out ? targets : [...targets, ...aidTargets(host, g.w, g.h)], near);
         // an axis that caught on no edge or middle catches on even spacing with the layers beside it (not the frame)
         const others = targets.slice(1);
         const evenX = m.lockX || s.x !== undefined ? null : snapSpacing({ ...at, y: at.y + (m.lockY ? 0 : s.dy) }, others, near, "x");
@@ -920,6 +923,7 @@ export function Stage({
           }}
         >
           <canvas ref={canvas} aria-label="The frames" className="pointer-events-none block h-full w-full" />
+          <Aids pages={pages} frames={fr} view={view} at={at} onCommit={onCommit} />
           {pages.map((p, k) => !p.loose && (
             <button
               key={p.id}

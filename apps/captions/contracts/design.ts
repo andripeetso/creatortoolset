@@ -196,6 +196,46 @@ export interface PathLayer extends Box {
 export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer;
 
 /**
+ * A ruler guide of a frame: a line across it, `at` pixels from its left edge (axis "x": an up-and-down line) or from
+ * its top ("y"), in the frame's own pixels, so it moves with the frame. Layers moved in the frame catch on it. Shown on
+ * the canvas only: never drawn in a saved picture.
+ */
+export interface DesignGuide {
+  axis: "x" | "y";
+  at: number;
+}
+/**
+ * A layout grid of a frame, shown over it on the canvas and caught on like guides (never in a saved picture).
+ * "columns" / "rows": `count` of them across the frame (down it), `margin` pixels kept clear at both ends and `gutter`
+ * pixels between them. "grid": square cells of `size` pixels. `color` is what it is shown in, `hidden` hides it.
+ */
+export interface DesignGrid {
+  kind: "columns" | "rows" | "grid";
+  count?: number;
+  gutter?: number;
+  margin?: number;
+  size?: number;
+  color: string;
+  hidden?: boolean;
+}
+/** How many guides and grids a frame holds. */
+export const DESIGN_AIDS = { guides: 40, grids: 6, count: 100 } as const;
+/**
+ * Where a social app covers or cuts a picture, shown over a frame when it names them in `safe` (never in a saved
+ * picture). `crop`: the app shows only the middle at this width : height, cutting the rest off (a taller frame loses
+ * its top and bottom, a wider one its sides). `inset`: the parts of the frame its buttons, bars and caption lie over,
+ * as fractions of the frame's width (left, right) and height (top, bottom).
+ * shortcut: insets follow the published 9:16 guidance (about 14 % top, 35 % bottom on a reel), not a measurement of every phone; re-measure when the apps change their layout.
+ */
+export const DESIGN_SAFE = [
+  { id: "feed", name: "Feed crop 4:5", crop: 4 / 5 },
+  { id: "grid", name: "Profile grid 3:4", crop: 3 / 4 },
+  { id: "reel", name: "Reel buttons and caption", inset: { top: 0.14, bottom: 0.35, left: 0.06, right: 0.14 } },
+  { id: "story", name: "Story bars", inset: { top: 0.14, bottom: 0.2, left: 0.06, right: 0.06 } },
+] as const;
+export type DesignSafe = (typeof DESIGN_SAFE)[number]["id"];
+
+/**
  * A frame: one picture of the design, with a place and a size of its own on the design's canvas, so a carousel's
  * slides, a cover and a thumbnail can lie side by side in one design. (Called a page where it is a carousel's.)
  */
@@ -225,6 +265,10 @@ export interface DesignPage {
   grain?: number;
   /** and its edges darkened (1 to 100) or lightened (-1 to -100), the middle left as it is */
   vignette?: number;
+  /** its ruler guides, layout grids and the social apps' covered parts it shows: the designer's aids, on the canvas only */
+  guides?: DesignGuide[];
+  grids?: DesignGrid[];
+  safe?: DesignSafe[];
   /** bottom first: a later layer is drawn over an earlier one */
   layers: Layer[];
 }
