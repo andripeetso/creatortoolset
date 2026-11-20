@@ -105,7 +105,7 @@ ${MY_KEYS.map((k) => `- ${k.env} (${k.name}): ${k.what}`).join("\n")}`;
  * Link downloads (yt-dlp) run on the person's computer, in the shell of the AI that answers there, never on the server:
  * only where the server is that computer too (CT_LOCAL=1), so use_file takes the download by its path and nothing uploads.
  */
-const LINK_LOCAL = `A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is yours to fetch, on the user's computer and never on the server: run yt-dlp in your own shell, on the computer you run on, saving into one of this workspace's Media folders from Settings → Folders (listed below as Footage; \`yt-dlp -P <Media folder> <link>\`; \`-x --audio-format mp3\` for the sound only, \`--download-sections "*1:05-1:45"\` for a part of it), and cut or convert it there with ffmpeg. With none listed below, ask for one first (navigate /settings/folders). Never ask the user to download it for you. When yt-dlp is missing, install it (\`brew install yt-dlp\`, or \`pip install -U yt-dlp\`). When a download fails, update yt-dlp once and try again. Then use_file takes it by its path: a song to the Media Library with sound music, a sound effect with sound effect (it lands in the library's Music or Sound effects folder), and a video like one they dropped.`;
+const LINK_LOCAL = `A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is yours to fetch, on the user's computer and never on the server: run yt-dlp in your own shell, on the computer you run on, saving into Imports/<this chat's name> inside the first of this workspace's Media folders from Settings → Folders (listed below as Footage; \`yt-dlp -P "<Media folder>/Imports/<chat name>" <link>\`; never anywhere else, so it is copied in once and found there; \`-x --audio-format mp3\` for the sound only, \`--download-sections "*1:05-1:45"\` for a part of it), and cut or convert it there with ffmpeg. With none listed below, ask for one first (navigate /settings/folders). Never ask the user to download it for you. When yt-dlp is missing, install it (\`brew install yt-dlp\`, or \`pip install -U yt-dlp\`). When a download fails, update yt-dlp once and try again. Then use_file takes it by its path: a song to the Media Library with sound music, a sound effect with sound effect (it lands in the library's Music or Sound effects folder), and a video like one they dropped.`;
 const LINK_AWAY = `A link to a video or a song (YouTube, Instagram, TikTok, X and the like) is not downloaded here: a download runs on the user's computer, never on the server, and this server is not on their computer. Say so in a line: the chat in the Creator Toolset app with its own server on their computer fetches links.`;
 
 /** Added for the dock's turns, where Claude also has the user's Mac (answerWithTools onAsk). */
@@ -1823,6 +1823,13 @@ const chatOf = (conv: Conv, id: string | undefined): Chat | null =>
   !id ? null : conv.id === id ? (conv as Chat) : (conv.past?.find((p) => p.id === id) ?? null);
 
 /** The chat a message is in (the chat a scheduled task was made from: the reply that made it). */
+/** The name of the chat a reply is written in (its title in the list), or null: the Imports/ folder its files go into. */
+export function chatNameOfTurn(username: string, turn: string): string | null {
+  const conv = load(username);
+  const chat = [{ title: conv.title, messages: conv.messages }, ...(conv.past ?? [])].find((c) => c.messages.some((m) => m.id === turn));
+  return chat ? (chat.title ?? titleOf(chat.messages)) : null;
+}
+
 export function chatOfTurn(username: string, turn: string): string | null {
   const conv = load(username);
   if (conv.messages.some((m) => m.id === turn)) return conv.id!;

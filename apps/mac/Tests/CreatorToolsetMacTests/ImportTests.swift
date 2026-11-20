@@ -109,6 +109,30 @@ final class ImportTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("Lib/Footage/B 3.mov")))
     }
 
+    /// The import rule: a listed Media folder's Imports/ takes copies; with that Media folder gone (its drive away) nothing
+    /// is written, not even the folder.
+    func testCopiesIntoAMediaFoldersImportsOnlyWhileItIsThere() throws {
+        let suite = "import-tests-\(UUID().uuidString)"
+        let was = MediaFiles.defaults
+        MediaFiles.defaults = UserDefaults(suiteName: suite)!
+        defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
+        let media = at("Tiny Footage")
+        try FileManager.default.createDirectory(atPath: media, withIntermediateDirectories: true)
+        MediaFiles.setServerFolders([.init(id: "f1", path: media, workspaces: ["*"], use: "media"), .init(id: "f2", path: at("Gone"), workspaces: ["*"], use: "media")], server: "s")
+        XCTAssertTrue(MediaFiles.importsFolders.isEmpty)   // not allowed on this Mac yet
+        MediaFiles.allow(media, server: "s")
+        MediaFiles.allow(at("Gone"), server: "s")
+        XCTAssertEqual(Set(MediaFiles.importsFolders), [media + "/Imports", at("Gone") + "/Imports"])
+        let a = try write("Downloads/A001.mov", Data(repeating: 1, count: 10))
+        let into = media + "/Imports/Summer reel/A001.mov"
+        let reply = Imports().copy(id: "m1", [ImportPair(from: a, to: into), ImportPair(from: a, to: at("Gone/Imports/Summer reel/A001.mov"))],
+                                   sources: [at("Downloads")], destinations: MediaFiles.importsFolders) { _ in }
+        XCTAssertEqual((reply["copied"] as? [[String: String]])?.map { $0["to"] }, [into])
+        XCTAssertEqual((reply["failed"] as? [[String: String]])?.map { $0["error"] }, ["Gone isn't connected."])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: at("Gone")))
+        XCTAssertNil(Imports.destination(media + "/A001.mov", MediaFiles.importsFolders))   // the Media folder itself: never
+    }
+
     func testScanFindsMediaOnlyInGrantedFolders() throws {
         try write("Footage/A001.MOV")
         try write("Footage/Day 2/song.mp3")

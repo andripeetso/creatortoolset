@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Sound } from "../../../contracts/library";
@@ -6,7 +7,7 @@ import type { SaveAfter } from "../../library/routes";
 import { probe } from "../../library/media/probe";
 import { makeThumb } from "../../library/media/thumb";
 import { keepIn, quickPrint } from "../files";
-import { TASK_EXPIRED, taskKind, type TaskRow } from "../tasks";
+import { TASK_EXPIRED, taskKind, TaskWaits, type TaskRow } from "../tasks";
 
 /**
  * A save into a library whose Upload is none (api/library/routes.ts saveToLibrary): the file goes to the workspace's
@@ -25,8 +26,9 @@ export interface LibrarySaveInput {
   filename: string;
   /** the server's copy until a computer has it */
   staged: string;
-  /** each computer that may take it: its folder for this save (id and path there) */
-  folders: Record<string, { id: string; path: string }>;
+  /** each computer that may take it: its folder for this save (id and path there); `media`: the Media folder whose
+   *  Imports/ `path` is (the import rule), which must be there before anything is written */
+  folders: Record<string, { id: string; path: string; media?: string }>;
   footage: boolean;
   sound?: Sound;
   sources: string[];
@@ -52,9 +54,12 @@ taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
   serve: (t, name) => (name === "file" ? (t.input as LibrarySaveInput).staged : undefined),
   async run(input, ctx) {
     const src = await ctx.file("file");
-    const folder = (await ctx.call("folder", null)) as { id: string; path: string } | null;
+    const folder = (await ctx.call("folder", null)) as { id: string; path: string; media?: string } | null;
     if (!folder) throw new Error("This computer has no folder for it");
-    const dir = folder.path === "~" || folder.path.startsWith("~/") ? path.join(homedir(), folder.path.slice(1)) : folder.path;
+    const home = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(homedir(), p.slice(1)) : p);
+    // the Media folder's drive away: the save waits for it, never makes the folder on the internal disk
+    if (folder.media && !existsSync(home(folder.media))) throw new TaskWaits(`Waiting for ${path.basename(folder.media)}: its drive isn't connected`);
+    const dir = home(folder.path);
     const at = await keepIn(dir, input.filename, src);
     const quick = await quickPrint(at);
     if (!quick) throw new Error(`Could not read ${at}`);

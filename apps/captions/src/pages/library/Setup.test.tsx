@@ -177,7 +177,8 @@ describe("Media Library setup: scratch, This Mac", () => {
     expect(h.calls.map((c) => c.body.role)).toEqual(["footage", "projects", "library"]);
     expect(h.calls.every((c) => c.body.host === "this-computer" && c.workspace === "ws_1")).toBe(true);
     const s = h.updates[0]!.settings;
-    expect(s).toMatchObject({ defaultFolders: true, importMode: "copy", organize: "ai", proxy: true, proxyQuality: "standard", describe: true, timeline: true, lookBudget: null });
+    expect(s).not.toHaveProperty("importMode");
+    expect(s).toMatchObject({ defaultFolders: true, organize: "ai", proxy: true, proxyQuality: "standard", describe: true, timeline: true, lookBudget: null });
     expect(typeof s.setupAt).toBe("string");
     expect(s).not.toHaveProperty("upload"); // a Mac library has no server to upload to
     expect(h.events.map((e) => e.detail)).toEqual([{ workspace: "ws_1" }]);
@@ -287,7 +288,7 @@ describe("Media Library setup: existing folders", () => {
     await next(); // analysis
     await press(button("Done"));
     expect(folderPaths()).toEqual(["/Volumes/NAS/Media", "/Volumes/NAS/Project files", "/Volumes/NAS/Final exports"]);
-    expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: true, importMode: "copy" });
+    expect(h.updates[0]!.settings).toMatchObject({ defaultFolders: true });
   });
 
   // replaced (Andri 13:00 sign-off: B3, no Found badges; the box beside Source media names what it uses)
@@ -306,18 +307,14 @@ describe("Media Library setup: existing folders", () => {
     expect(h.makes).toEqual([]);
   });
 
-  it("'Use files where they are' is saved as in-place", async () => {
+  it("asks nothing about how to import: where a file is decides", async () => {
     await mount("mac");
     await press(button("Use my existing folders"));
     await next();
-    h.picks = ["/Volumes/NAS/Media"];
-    await press(button("Add folder…"));
-    await press(button("Use files where they are"));
-    await next();
-    await next();
-    await press(button("Done"));
-    expect(h.updates[0]!.settings).toMatchObject({ importMode: "in-place" });
+    expect(button("Use files where they are")).toBeFalsy();
+    expect(button("Copy into Source media")).toBeFalsy();
   });
+
 });
 
 describe("Media Library setup: own server and Cloud", () => {

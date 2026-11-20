@@ -200,8 +200,8 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  */
 export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true, transcribe: true } as const;
 /**
- * A new library's stored settings (UNIFIED-PRD §2 M4, M9): Smart folders, no monthly limit. importMode stays absent until
- * setup writes it; existing libraries keep what they store (none of these is written to them).
+ * A new library's stored settings (UNIFIED-PRD §2 M4, M9): Smart folders, no monthly limit. Existing libraries keep
+ * what they store (none of these is written to them).
  */
 export const newLibrarySettings = (extra: Record<string, unknown> = {}): string => JSON.stringify({ organize: "ai", lookBudget: null, ...extra });
 

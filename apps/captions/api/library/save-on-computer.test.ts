@@ -89,6 +89,9 @@ async function account(name: string, upload: string, role: "user" | "admin" = "u
   const mac = pairDevice(name, `${name[0]!.toUpperCase()}${name.slice(1)}'s Mac`);
   const disk = path.join(root, "computers", name);
   const media = path.join(disk, "Source media");
+  mkdirSync(media, { recursive: true }); // a listed Media folder is there; a save waits while it isn't (its drive away)
+  // a file from outside lands in Imports/<the chat's name, or the day> (contracts/storage.ts importTarget)
+  const imports = path.join(media, "Imports", new Date().toISOString().slice(0, 10));
   const finished = path.join(disk, "Final exports");
   await changeStorage(name, (st) => {
     const at = { host: mac.device.id };
@@ -111,7 +114,7 @@ async function account(name: string, upload: string, role: "user" | "admin" = "u
     }
     if (!stop?.()) throw new Error("no save to take");
   };
-  return { lib, mac, media, finished, online, takes };
+  return { lib, mac, media, imports, finished, online, takes };
 }
 
 /** Every file under the server's data folder holding exactly `text` (but `except`). */
@@ -168,7 +171,7 @@ describe("Upload none: a save lands on the computer, indexed in place", () => {
     const src = drop("tina", "00000000-0000-4000-8000-0000000000a1", "Handstand.mp4", "tiny acrobatics handstand");
     const [saved] = await Promise.all([useFile(findUser("tina") as never, "00000000-0000-4000-8000-0000000000a1", "library"), tina.takes()]);
     expect(saved).toMatchObject({ to: "library", libraryId: tina.lib, versionId: expect.any(String) });
-    const at = path.join(tina.media, "Handstand.mp4");
+    const at = path.join(tina.imports, "Handstand.mp4");
     expect(readFileSync(at, "utf8")).toBe("tiny acrobatics handstand");
     const v = inPlace(saved.versionId!);
     expect(v).toMatchObject({ mac_path: at, mac_device: tina.mac.device.id, place: { device: tina.mac.device.id, folder_id: "tina-media", path: at, state: "verified" } });
@@ -184,7 +187,7 @@ describe("Upload none: a save lands on the computer, indexed in place", () => {
     ]);
     expect(res.status).toBe(200);
     const saved = (await res.json()) as { versionId: string };
-    const at = path.join(tina.media, "Cartwheel.mp4");
+    const at = path.join(tina.imports, "Cartwheel.mp4");
     expect(inPlace(saved.versionId)).toMatchObject({ mac_path: at, place: { folder_id: "tina-media", state: "verified" } });
     expect(serverCopies("tiny acrobatics cartwheel", [src])).toEqual([]);
   });
@@ -193,7 +196,7 @@ describe("Upload none: a save lands on the computer, indexed in place", () => {
     saveMyKey("tina", "ELEVENLABS_API_KEY", "tinas-own");
     await elevenLabs("tiny acrobatics voice", async () => {
       const [made] = await Promise.all([makeVoice(findUser("tina") as never, { text: "Hello there", voice: "Sam", name: "Hello" }), tina.takes()]);
-      const at = path.join(tina.media, "Hello.mp3");
+      const at = path.join(tina.imports, "Hello.mp3");
       expect(inPlace((made as MadeVoice).versionId)).toMatchObject({ mac_path: at, place: { folder_id: "tina-media", state: "verified" } });
       expect(readFileSync(at, "utf8")).toBe("tiny acrobatics voice");
       expect(serverCopies("tiny acrobatics voice")).toEqual([]);
@@ -232,7 +235,7 @@ describe("Upload none: a save lands on the computer, indexed in place", () => {
       .all(tina.lib) as { source_key: string; folder_id: string; filed: number }[];
     expect(rows).toHaveLength(2);
     for (const row of rows) expect(row).toMatchObject({ source_key: expect.stringMatching(/^mac:/), folder_id: "tina-media", filed: 1 });
-    expect(readdirSync(tina.media).filter((n) => n.endsWith(".m4a"))).toHaveLength(2);
+    expect(readdirSync(tina.imports).filter((n) => n.endsWith(".m4a"))).toHaveLength(2);
   });
 });
 
@@ -241,16 +244,16 @@ describe("Upload none with the computer offline", () => {
     const uma = await account("uma", "none");
     drop("uma", "00000000-0000-4000-8000-0000000000b1", "Flip.mp4", "tiny acrobatics flip");
     const saved = await useFile(findUser("uma") as never, "00000000-0000-4000-8000-0000000000b1", "library");
-    expect(saved).toMatchObject({ waiting: true, note: `Uma's Mac is offline. I'll save it to Source media (${uma.media}) when it's back.` });
+    expect(saved).toMatchObject({ waiting: true, note: `Uma's Mac is offline. I'll save it to Source media (${uma.imports}) when it's back.` });
     expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(uma.lib)).toEqual({ n: 0 });
-    expect(existsSync(path.join(uma.media, "Flip.mp4"))).toBe(false);
+    expect(existsSync(path.join(uma.imports, "Flip.mp4"))).toBe(false);
     // the server's video work is on, and still the server never takes it
     await taskTick();
     expect(d.prepare("SELECT state, held_by FROM computer_tasks WHERE actor = 'uma'").get()).toEqual({ state: "queued", held_by: null });
     expect(d.prepare("SELECT COUNT(*) AS n FROM assets WHERE library_id = ?").get(uma.lib)).toEqual({ n: 0 });
     uma.online();
     expect(await uma.takes()).toBe("done");
-    const at = path.join(uma.media, "Flip.mp4");
+    const at = path.join(uma.imports, "Flip.mp4");
     expect(readFileSync(at, "utf8")).toBe("tiny acrobatics flip");
     const v = d.prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ?").get(uma.lib) as { id: string };
     expect(inPlace(v.id)).toMatchObject({ mac_path: at, place: { folder_id: "uma-media", state: "verified" } });
@@ -267,6 +270,47 @@ describe("Upload none with the computer offline", () => {
   });
 });
 
+describe("the one import rule: a chat's file goes into Imports/<chat>, once", () => {
+  it("lands once in the first Media folder's Imports/<chat name>; the same file again is not copied again", async () => {
+    const ivy = await account("ivy", "none");
+    ivy.online();
+    const src = drop("ivy", "00000000-0000-4000-8000-0000000001a1", "Tuck.mp4", "tiny acrobatics tuck");
+    const [saved] = await Promise.all([useFile(findUser("ivy") as never, "00000000-0000-4000-8000-0000000001a1", "library", undefined, undefined, undefined, "Summer reel: part 1"), ivy.takes()]);
+    const at = path.join(ivy.media, "Imports", "Summer reel part 1", "Tuck.mp4");
+    expect(readFileSync(at, "utf8")).toBe("tiny acrobatics tuck");
+    expect(inPlace(saved.versionId!)).toMatchObject({ mac_path: at, place: { folder_id: "ivy-media", state: "verified" } });
+    // the same file dropped again, in another chat: the library has it, so no task and no second copy
+    drop("ivy", "00000000-0000-4000-8000-0000000001a2", "Tuck again.mp4", "tiny acrobatics tuck");
+    const again = await useFile(findUser("ivy") as never, "00000000-0000-4000-8000-0000000001a2", "library", undefined, undefined, undefined, "Other chat");
+    expect(again).toMatchObject({ note: "Already in the Media Library" });
+    expect(existsSync(path.join(ivy.media, "Imports", "Other chat"))).toBe(false);
+    expect(readdirSync(path.join(ivy.media, "Imports", "Summer reel part 1"))).toEqual(["Tuck.mp4"]);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM computer_tasks WHERE actor = 'ivy'").get()).toEqual({ n: 1 });
+    expect(serverCopies("tiny acrobatics tuck", [src, path.join(dataDir, "assistant", "files", "ivy", "00000000-0000-4000-8000-0000000001a2", "file")])).toEqual([]);
+  });
+
+  it("the Media folder's drive away: the save waits (no try used up), writes nothing anywhere, and lands once it is back", async () => {
+    const jo = await account("jo", "none");
+    rmSync(jo.media, { recursive: true });
+    jo.online();
+    drop("jo", "00000000-0000-4000-8000-0000000001b1", "Spin.mp4", "tiny acrobatics spin");
+    const was = COMPUTER_SAVE.ms;
+    COMPUTER_SAVE.ms = 50;
+    const [saved, ran] = await Promise.all([useFile(findUser("jo") as never, "00000000-0000-4000-8000-0000000001b1", "library", undefined, undefined, undefined, "Spin chat"), jo.takes()]);
+    COMPUTER_SAVE.ms = was;
+    expect(ran).toBe("failed");
+    expect(saved).toMatchObject({ waiting: true });
+    expect(d.prepare("SELECT state, attempts, line FROM computer_tasks WHERE actor = 'jo'").get()).toEqual({ state: "queued", attempts: 0, line: "Waiting for Source media: its drive isn't connected" });
+    expect(existsSync(jo.media)).toBe(false);
+    expect(serverCopies("tiny acrobatics spin", [path.join(dataDir, "assistant", "files", "jo", "00000000-0000-4000-8000-0000000001b1", "file")]).filter((p) => !p.includes(`${path.sep}staging${path.sep}`))).toEqual([]);
+    // the drive is back
+    mkdirSync(jo.media);
+    d.prepare("UPDATE computer_tasks SET run_after = 0 WHERE actor = 'jo'").run();
+    expect(await jo.takes()).toBe("done");
+    expect(readFileSync(path.join(jo.media, "Imports", "Spin chat", "Spin.mp4"), "utf8")).toBe("tiny acrobatics spin");
+  });
+});
+
 describe("which folder, and no computer at all", () => {
   it("the workspace's own Source media folder comes before one for every workspace, whatever the list order", async () => {
     const ora = await account("ora", "none");
@@ -276,7 +320,7 @@ describe("which folder, and no computer at all", () => {
     ora.online();
     drop("ora", "00000000-0000-4000-8000-0000000000e1", "Pike.mp4", "tiny acrobatics pike");
     const [saved] = await Promise.all([useFile(findUser("ora") as never, "00000000-0000-4000-8000-0000000000e1", "library"), ora.takes()]);
-    expect(inPlace(saved.versionId!)).toMatchObject({ mac_path: path.join(ora.media, "Pike.mp4"), place: { folder_id: "ora-media" } });
+    expect(inPlace(saved.versionId!)).toMatchObject({ mac_path: path.join(ora.imports, "Pike.mp4"), place: { folder_id: "ora-media" } });
     expect(existsSync(path.join(every, "Pike.mp4"))).toBe(false);
   });
 
@@ -416,7 +460,7 @@ describe("the rest of a waiting save", () => {
     chu.online();
     expect(await chu.takes()).toBe("done");
     expect(await card(kept.save)).toMatchObject({ status: "done", detail: "Saved" });
-    expect(readFileSync(path.join(chu.media, "Kept.mp3"), "utf8")).toBe("tiny acrobatics chat voice one");
+    expect(readFileSync(path.join(chu.imports, "Kept.mp3"), "utf8")).toBe("tiny acrobatics chat voice one");
   });
 
   it("the Export tray's Finals state: waiting while the computer is offline, sent once the final lands in its piece", async () => {
@@ -443,6 +487,6 @@ describe("any other Upload: as before", () => {
     const v = d.prepare("SELECT source_key, mac_path FROM asset_versions WHERE id = ?").get(saved.versionId!) as { source_key: string; mac_path: string | null };
     expect(v).toEqual({ source_key: `libraries/${vic.lib}/v/${saved.versionId}/source`, mac_path: null });
     expect(d.prepare("SELECT COUNT(*) AS n FROM computer_tasks WHERE actor = 'vic'").get()).toEqual({ n: 0 });
-    expect(existsSync(path.join(vic.media, "Bridge.mp4"))).toBe(false);
+    expect(existsSync(path.join(vic.imports, "Bridge.mp4"))).toBe(false);
   });
 });

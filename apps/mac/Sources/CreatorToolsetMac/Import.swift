@@ -7,7 +7,9 @@ import UniformTypeIdentifiers
 // handler, TitleBar.swift; src/lib/thisMac.ts):
 // - import:copy:{"id","files":[{"from","to"}]} copies dropped or picked files into the library's folder on this Mac and
 //   answers when it is done with { copied:[{from,to}], failed:[{from,error}], stopped? }. `from` must lie under a recent
-//   drop or pick of this window; `to` under ~/Movies/Creator Toolset or a folder chosen in this app's folder picker.
+//   drop or pick of this window; `to` under ~/Movies/Creator Toolset, a folder chosen in this app's folder picker, or a
+//   listed Media folder's Imports/ (MediaFiles.importsFolders). The folder a destination is in must be there: a Media
+//   folder whose drive isn't connected is never made on the internal disk, its copy fails and the page offers Retry.
 //   A file is never overwritten: the same name and size there is taken as copied already, another file gets " 2", " 3"…
 //   A cancelled or failed copy removes its partial file. The destination joins the folders whose media the page may
 //   play and scan (MediaFiles).
@@ -83,8 +85,8 @@ final class Imports: @unchecked Sendable {
     /// The library's default folder on this Mac: every copy destination under it is allowed.
     static var home = FileManager.default.homeDirectoryForCurrentUser
     static var defaultRoot: String { home.appendingPathComponent("Movies/Creator Toolset").path }
-    /// The folders a copy may write into: the default and each one chosen in this app's folder picker.
-    static var destinations: [String] { [defaultRoot] + (UserDefaults.standard.stringArray(forKey: chosenKey) ?? []) }
+    /// The folders a copy may write into: the default, each one chosen in this app's folder picker, each Media folder's Imports/.
+    static var destinations: [String] { [defaultRoot] + (UserDefaults.standard.stringArray(forKey: chosenKey) ?? []) + MediaFiles.importsFolders }
     static func chose(_ folder: String) {
         let old = UserDefaults.standard.stringArray(forKey: chosenKey) ?? []
         if !old.contains(folder) { UserDefaults.standard.set(old + [folder], forKey: chosenKey) }
@@ -162,6 +164,10 @@ final class Imports: @unchecked Sendable {
             }
             guard let root = Self.destination(f.to, destinations) else {
                 failed.append(["from": f.from, "error": "Not a folder this app copies into."]); continue
+            }
+            let holder = (root as NSString).deletingLastPathComponent
+            guard Places.shared.reachable(holder), FileManager.default.fileExists(atPath: holder) else {
+                failed.append(["from": f.from, "error": "\((holder as NSString).lastPathComponent) isn't connected."]); continue
             }
             let name = Self.freeName(f.to, size: bytes) { size($0) }
             _ = with(id) { $0.file = f.from }

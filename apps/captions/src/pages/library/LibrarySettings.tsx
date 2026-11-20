@@ -66,19 +66,6 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
       .catch((e: unknown) => onError(message(e)));
   return (
     <>
-      <Section title={LIBRARY_WORDS.importTitle}>
-        <Card>
-          <RadioList
-            name="import-mode"
-            value={s.importMode ?? (s.setupAt ? "copy" : "in-place")}
-            options={[
-              { value: "copy", label: LIBRARY_WORDS.importCopy.label, tip: LIBRARY_WORDS.importCopy.tip },
-              { value: "in-place", label: LIBRARY_WORDS.importInPlace.label, tip: LIBRARY_WORDS.importInPlace.tip },
-            ]}
-            onChange={(v) => void save({ importMode: v })}
-          />
-        </Card>
-      </Section>
       <Section title={LIBRARY_WORDS.foldersTitle}>
         <OwnerFolders library={library} workspace={workspace === undefined ? windowWorkspace : workspace} onChange={onChange} onError={onError} />
       </Section>

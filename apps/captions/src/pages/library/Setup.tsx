@@ -65,8 +65,6 @@ interface Answers {
   /** "" = the default: inside the Library folder, or beside the first Source media folder; else set by its own Change… */
   projects: string;
   exports: string;
-  /** How should imported media behave? true: copied into Source media (the default) */
-  copy: boolean;
   proxy: boolean;
   proxyQuality: ProxyQuality;
   effort: AnalysisLevel;
@@ -84,7 +82,6 @@ const START: Answers = {
   sources: [],
   projects: "",
   exports: "",
-  copy: true,
   proxy: true,
   proxyQuality: "standard",
   effort: ANALYSIS_DEFAULT,
@@ -353,7 +350,6 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
       }
       doing = "Saving the setup";
       const settings: Partial<LibrarySettings> = {
-        importMode: a.copy ? "copy" : "in-place",
         organize: a.organize,
         proxy: a.proxy || proxiesHosted(a),
         proxyQuality: a.proxyQuality,
@@ -463,13 +459,6 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
                   </Row>
                 )}
               </Card>
-              <div className="space-y-2">
-                <p className="text-sm font-medium">{LIBRARY_WORDS.importTitle}</p>
-                <div role="radiogroup" aria-label={LIBRARY_WORDS.importTitle} className="space-y-2">
-                  <Pick on={a.copy} label={LIBRARY_WORDS.importCopy.label} tip={LIBRARY_WORDS.importCopy.tip} onPick={() => set({ copy: true })} />
-                  <Pick on={!a.copy} label={LIBRARY_WORDS.importInPlace.label} tip={LIBRARY_WORDS.importInPlace.tip} onPick={() => set({ copy: false })} />
-                </div>
-              </div>
               {a.start === "existing" && (
                 <Card>
                   <LibraryFolderBox
