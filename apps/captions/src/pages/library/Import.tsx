@@ -1,20 +1,20 @@
 import { useEffect, useState } from "react";
 import type { LibrarySummary } from "@contracts/library";
 import { folderName } from "@/components/LibraryProcessing";
-import type { StorageFolder, StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, importTarget, underFolder, type StorageFolder, type StorageView } from "@contracts/storage";
 import { PLACES_MAX } from "@contracts/places";
 import { Button } from "@/components/ui/button";
 import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
 import { allGranted, folderGrant, listMediaFolders } from "@/lib/local-files";
-import { indexOnMac } from "@/lib/onMac";
+import { indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
-import { importPrint, importScan, macImports, macMediaUrl, pathOnMac, thisMacBridge } from "@/lib/thisMac";
+import { importCopy, importPrint, importScan, macImports, macMediaUrl, NOT_A_COPY_FOLDER, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { WORDS } from "@/lib/wording";
 
 /**
- * How files come into the Media Library. There is no question: the stored answer (settings.importMode, unset reads as
- * in place) decides. In place, a dropped folder is a Source media row and is indexed where it is. Copy, and loose files in
- * either mode, go into the first Source media row on this computer (copyInto), then are indexed in place from there.
+ * How files come into the Media Library: the one import rule (contracts/storage.ts importTarget), no question. A file
+ * inside a Media folder on this computer is indexed where it is; one from outside, a loose file or a dropped folder's,
+ * is copied once into the first Media folder's Imports/ (copyInto), then indexed in place from there.
  */
 
 /**
@@ -28,15 +28,38 @@ export const addFrom = (serverHere: boolean | undefined): AddFrom => (!thisMacBr
 /** Copying loose files needs the Mac app's import asks; a folder on the server's own computer is copied by the server. */
 export const copyAvailable = (from: AddFrom, serverCopies = false) => (from === "here" && serverCopies) || (from !== "browser" && macImports());
 
-/** Where a copy of a dropped file goes: under the first Source media row, with its folder's name (webkitRelativePath) or its own. */
-export const copyInto = (row: string, file: File): string => `${row.replace(/\/+$/, "")}/${file.webkitRelativePath || file.name}`;
+/** Where a copy of a dropped file goes: under `dir` (importTarget), with its folder's name (webkitRelativePath) or its own. */
+export const copyInto = (dir: string, file: File): string => `${dir.replace(/\/+$/, "")}/${file.webkitRelativePath || file.name}`;
 
-/** The Source media folders on this computer, in the order the folder list has them. */
+/** The Source media folders on this computer: the workspace's own first, then one every workspace uses (as a save on a
+ *  computer picks, api/library/routes.ts saveOnComputer), each in the order the folder list has them. */
 export async function sourceRowsHere(): Promise<string[]> {
   const me = thisMacDevice();
   const r = me ? await fetch("/api/devices/storage").catch(() => null) : null;
   const view = r?.ok ? ((await r.json()) as StorageView) : null;
-  return (view?.folders ?? []).filter((f) => f.role === "footage" && f.origin.host === me).map((f) => f.origin.path);
+  const here = (view?.folders ?? []).filter((f) => f.role === "footage" && f.origin.host === me);
+  return [...here].sort((a, b) => Number(a.workspace === EVERY_WORKSPACE) - Number(b.workspace === EVERY_WORKSPACE)).map((f) => f.origin.path);
+}
+
+/**
+ * Where one file added from this Mac is read from, by the import rule (an edit's footage, EditorPage): its own place when
+ * it is inside a Media folder here, else a copy made once in the first Media folder's Imports/<name>/. Undefined: no copy
+ * to read (a browser, an older Mac app, or a file the library has already, which is never copied again). Throws when a
+ * file from outside has no Media folder to go to, or the copy fails (its drive isn't connected).
+ */
+export async function importPlace(libraryId: string, file: File, name?: string): Promise<string | undefined> {
+  const at = macImports() ? await pathOnMac(file) : undefined;
+  if (!at) return undefined;
+  const rows = await sourceRowsHere();
+  if (rows.some((r) => underFolder(at, r))) return at;
+  if ((await checkUpload(libraryId, file.size, `mac:${await quickPrint(file)}`).catch(() => null))?.duplicateOf) return undefined;
+  const dir = importTarget(rows, name);
+  if (!dir) throw new Error("Add a Media folder in Settings → Folders");
+  const r = await importCopy(`copy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, [{ from: at, to: copyInto(dir, file) }]);
+  // shortcut: a Mac app that doesn't copy into Imports/ yet uses the file where it is, as an older app does; gone once every Mac has the release
+  if (!r.copied[0] && r.failed[0]?.error === NOT_A_COPY_FOLDER) return at;
+  if (!r.copied[0]) throw new Error(r.failed[0]?.error ?? "Could not copy the file");
+  return r.copied[0].to;
 }
 
 /** Runs `fn` on each item, `n` at a time. */
@@ -184,11 +207,12 @@ export interface ImportLook {
 }
 
 /**
- * The stored answer applied to an add (LibraryPage addFiles), with no question. `prepare` finds where the files are;
- * `answer` resolves to where each copy goes: none in place or for a browser's upload, each file under the first Source
- * media row for Copy, or null when Copy has no row on this computer (the add is refused, `onError` says so).
+ * The import rule applied to an add (LibraryPage addFiles), with no question. `prepare` finds where the files are;
+ * `answer` resolves to where each copy goes: none for a file inside a Media folder here or a browser's upload, each
+ * file from outside under the first Media folder's Imports/<the day>/, or null when there is no Media folder on this
+ * computer (the add is refused, `onError` says so). A file the library has already is never copied (import-queue.ts).
  */
-export function useImportQuestion({ library, serverHere, onError }: { library: LibrarySummary | null; serverHere: boolean; onError: (e: string) => void }) {
+export function useImportQuestion({ serverHere, onError }: { serverHere: boolean; onError: (e: string) => void }) {
   const prepare = async (files: File[], paths?: Map<File, string>): Promise<ImportLook> => {
     const from = addFrom(serverHere);
     let known = paths;
@@ -201,22 +225,20 @@ export function useImportQuestion({ library, serverHere, onError }: { library: L
   };
 
   const answer = async (look: ImportLook, files: File[]): Promise<Map<File, string> | null> => {
-    const copying = library?.settings.importMode === "copy";
-    // loose files are copied in either mode; a folder's files only under Copy (in place, its row indexes them where they are)
-    const want = look.from === "browser" || !look.paths ? [] : files.filter((f) => look.paths!.has(f) && (copying || !f.webkitRelativePath));
-    if (!want.length) return new Map();
-    if (!copyAvailable(look.from)) {
-      // an older Mac app can't copy: Copy is refused, in place indexes a loose file where it is (no copy was chosen)
-      if (!copying) return new Map();
-      onError("Copy needs the latest Mac app");
+    if (look.from === "browser" || !look.paths) return new Map();
+    const rows = await sourceRowsHere();
+    const want = files.filter((f) => {
+      const at = look.paths!.get(f);
+      return at && !rows.some((r) => underFolder(at, r));
+    });
+    // shortcut: an older Mac app can't copy, so a file from outside is indexed where it is, as before; gone once every Mac has 0.19
+    if (!want.length || !copyAvailable(look.from)) return new Map();
+    const dir = importTarget(rows);
+    if (!dir) {
+      onError("Add a Media folder in Settings → Folders");
       return null;
     }
-    const row = (await sourceRowsHere())[0];
-    if (!row) {
-      onError("Add a Source media folder on this computer first");
-      return null;
-    }
-    return new Map(want.map((f) => [f, copyInto(row, f)]));
+    return new Map(want.map((f) => [f, copyInto(dir, f)]));
   };
 
   return { prepare, answer };

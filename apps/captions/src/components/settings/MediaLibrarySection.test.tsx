@@ -88,7 +88,7 @@ async function render(el: ReactNode) {
 }
 
 /** The owner page's sections, in the order the page draws them (the §3.1 order). */
-const SECTION_TITLES = [LIBRARY_WORDS.importTitle, LIBRARY_WORDS.foldersTitle, LIBRARY_WORDS.organizationTitle, LIBRARY_WORDS.proxyTitle, LIBRARY_WORDS.hostedTitle, LIBRARY_WORDS.analysisTitle, LIBRARY_WORDS.modelsTitle];
+const SECTION_TITLES = [LIBRARY_WORDS.foldersTitle, LIBRARY_WORDS.organizationTitle, LIBRARY_WORDS.proxyTitle, LIBRARY_WORDS.hostedTitle, LIBRARY_WORDS.analysisTitle, LIBRARY_WORDS.modelsTitle];
 const headings = () => [...host!.querySelectorAll("h2")].map((h) => h.textContent ?? "");
 const bodyText = () => document.body.textContent ?? "";
 /** a radio input by its label (RadioList gives each its label as aria-label) */
@@ -106,14 +106,14 @@ describe("Settings → Media Library, the owner's page", () => {
 
   it("has no description line under any row: the words of a tip stay out of the page until its ⓘ is opened", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    for (const t of [LIBRARY_WORDS.importCopy.tip, LIBRARY_WORDS.smartFolders.tip, LIBRARY_WORDS.generateProxies.tip, LIBRARY_WORDS.descriptionsTip]) expect(bodyText()).not.toContain(t);
+    for (const t of [LIBRARY_WORDS.smartFolders.tip, LIBRARY_WORDS.generateProxies.tip, LIBRARY_WORDS.descriptionsTip]) expect(bodyText()).not.toContain(t);
   });
 
   // replaced (CEO 11-19 ruling 3): Effort is setup's six stops, its ⓘ on the title says what the chosen stop does
   it("gives each setting its ⓘ tip, Effort one for its chosen stop", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
     // replaced (CEO 11-19): the Library folder row took the Use default folders switch's place, with its own ⓘ
-    for (const label of [LIBRARY_WORDS.importCopy.label, LIBRARY_WORDS.importInPlace.label, LIBRARY_WORDS.libraryFolder.label, LIBRARY_WORDS.smartFolders.label, LIBRARY_WORDS.generateProxies.label, LIBRARY_WORDS.descriptions, LIBRARY_WORDS.videoBreakdown, LIBRARY_WORDS.transcripts]) {
+    for (const label of [LIBRARY_WORDS.libraryFolder.label, LIBRARY_WORDS.smartFolders.label, LIBRARY_WORDS.generateProxies.label, LIBRARY_WORDS.descriptions, LIBRARY_WORDS.videoBreakdown, LIBRARY_WORDS.transcripts]) {
       expect(tip(label), label).not.toBeNull();
     }
     expect(tip(LIBRARY_WORDS.effort)).not.toBeNull();
@@ -165,12 +165,6 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(host!.querySelector('button[role="switch"][aria-label="Proxies"]')).toBeNull();
   });
 
-  it("an import mode never stored reads as Copy on a set-up library", async () => {
-    const setUp: LibrarySummary = { ...library, settings: { ...SETTINGS, setupAt: "2026-11-01T00:00:00.000Z" } };
-    await render(<LibrarySettingsBody library={setUp} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(radio("Copy into Source media").checked).toBe(true);
-  });
-
   it("with Use default folders off, a Source media folder not chosen yet shows Set…", async () => {
     const off: LibrarySummary = { ...library, settings: { ...SETTINGS, defaultFolders: false } };
     await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
@@ -206,17 +200,15 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(headings()).not.toContain(LIBRARY_WORDS.modelsTitle);
   });
 
-  it("saves a picked import mode", async () => {
+  it("asks nothing about how to import: where a file is decides", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(radio("Use files where they are").checked).toBe(true);
-    await act(async () => radio("Copy into Source media").click());
-    expect(patches.at(-1)).toEqual({ settings: { importMode: "copy" } });
+    expect(bodyText()).not.toContain("How should imported media behave?");
   });
 
   it("a library given to this person (not the owner's) renders the member page, not the owner's sections", async () => {
     const given: LibrarySummary = { ...library, readOnly: true };
     await render(<LibrarySettingsBody library={given} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(headings()).not.toContain(LIBRARY_WORDS.importTitle);
+    expect(headings()).not.toContain(LIBRARY_WORDS.organizationTitle);
     // the member page (UNIFIED-PRD §3.2): the workspace's settings, read only
     expect(headings()).toContain("Workspace settings");
   });

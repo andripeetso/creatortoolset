@@ -51,18 +51,17 @@ function clip(lib: string, id: string, width: number, height: number) {
 const proxyJobs = (v: string) => (libraryDb().prepare("SELECT COUNT(*) AS n FROM jobs WHERE version_id = ? AND kind = 'proxy'").get(v) as { n: number }).n;
 
 describe("new libraries", () => {
-  it("start on Smart folders with No limit; import mode is left absent until setup writes it", () => {
+  it("start on Smart folders with No limit; nothing asks how to import (the import rule decides)", () => {
     expect(JSON.parse(newLibrarySettings())).toEqual({ organize: "ai", lookBudget: null });
     const id = libraryOf("settings-owner");
     expect(stored(id)).toEqual({ organize: "ai", lookBudget: null });
-    expect(stored(id).importMode).toBeUndefined();
   });
 });
 
 describe("the library settings PATCH", () => {
   it("saves what the setup and the settings pages write, and stops writing copyTo and places", async () => {
     const r = await patch("lib_set", {
-      importMode: "copy",
+      importMode: "copy", // from an app before the import rule: ignored
       proxyQuality: "high",
       transcribe: false,
       lookTalking: true,
@@ -79,8 +78,8 @@ describe("the library settings PATCH", () => {
       places: [{ path: "/Users/x/Movies", mode: "in-place" }],
     });
     expect(r.status).toBe(200);
+    expect(stored("lib_set").importMode).toBeUndefined();
     expect(stored("lib_set")).toMatchObject({
-      importMode: "copy",
       proxyQuality: "high",
       transcribe: false,
       lookTalking: true,

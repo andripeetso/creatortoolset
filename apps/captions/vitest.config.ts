@@ -42,6 +42,19 @@ const ffmpegFiles = [
   "api/work/tasks/caption-studio.test.ts",
   "api/work/tasks/export.test.ts",
   "api/work/tasks/media-tasks.test.ts",
+  // real ffmpeg with no timeouts of their own: the files the full runs kept timing out (11-19)
+  "api/library/collections.test.ts",
+  "api/library/editor-row.test.ts",
+  "api/library/organize.test.ts",
+  "api/library/pictures.test.ts",
+  "api/library/shoots.test.ts",
+  "api/library/similar-posted.test.ts",
+  "api/library/timeline.test.ts",
+  "api/mcp-tools/review-links.test.ts",
+  "api/review-frame.test.ts",
+  "api/transcribe-mic.test.ts",
+  "api/work/look.test.ts",
+  "api/work/pictures.test.ts",
   "scripts/plugin-build.test.mjs",
   "editor-steps/colour/plugin.test.ts",
   "editor-steps/face-refine/plugin.test.ts",
@@ -84,7 +97,7 @@ export default defineConfig({
       },
       {
         extends: true,
-        test: { name: "ffmpeg", include: ffmpegFiles, maxWorkers: 4, testTimeout: 30_000, sequence: { groupOrder: 1 } },
+        test: { name: "ffmpeg", include: ffmpegFiles, maxWorkers: 4, testTimeout: 30_000, hookTimeout: 30_000, sequence: { groupOrder: 1 } },   // hooks too: several make their clips with ffmpeg in beforeAll
       },
     ],
   },

@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
  * graded here, exactly, over the proxy; "Full-quality clip" plays the shot from
  * the original. The gallery keeps graded stills (in this browser) to wipe against.
  */
-export function GradePanel({ view, item, pending, video, edit: shotOf, look, onLive, onApply, onClose }: {
+export function GradePanel({ view, item, pending, video, edit: shotOf, look, onLive, onApply, onClose, hint }: {
   view: TimelineView;
   item: TimelineItem;
   /** its unsent grade edit */
@@ -34,6 +34,8 @@ export function GradePanel({ view, item, pending, video, edit: shotOf, look, onL
   onLive: (g: Grade | null) => void;
   onApply: (changes: [TimelineItem, Partial<ItemEdit>][]) => void;
   onClose: () => void;
+  /** the line under it: where the grade goes (Review's next comment when left out) */
+  hint?: string;
 }) {
   const ref = look ? shotOf : null;
   const [g, setG] = useState<Grade>(full(pending ?? item.grade));
@@ -270,7 +272,7 @@ export function GradePanel({ view, item, pending, video, edit: shotOf, look, onL
         </div>
       )}
       <p className="text-[10px] leading-snug text-zinc-500">
-        The grade is sent with the next comment{ref ? " and rendered in the next version" : ""}.
+        {hint ?? <>The grade is sent with the next comment{ref ? " and rendered in the next version" : ""}.</>}
       </p>
       {stage && createPortal(
         <Stage still={clip ? null : stillNow} grade={shown} cmp={cmp} wipe={wipe} setWipe={setWipe}

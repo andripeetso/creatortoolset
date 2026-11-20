@@ -52,8 +52,9 @@ export async function measure(tl: NleTimeline, srcs: string[], onLine: (l: strin
     for (const s of [...left]) {
       const g = got[s];
       if (g?.words) spoken.set(s, g.words);
-      if (g?.blocks) measured.set(s, { blocks: blocksOf(g.blocks) });
-      if (g?.blocks || g?.error || !g) left.delete(s);
+      // "" is an answer too (a file under one 400 ms block): measured, nothing to wait for
+      if (g?.blocks !== undefined) measured.set(s, { blocks: blocksOf(g.blocks) });
+      if (g?.blocks !== undefined || g?.error || !g) left.delete(s);
       if (g?.error || !g) failed[s] = g?.error ?? "Not found";
       if (g?.line) lines.push(g.line);
     }

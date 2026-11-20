@@ -870,7 +870,7 @@ export function AssistantDock() {
         }
         if (!connectedNow || !e.dataTransfer.files.length) return;
         e.preventDefault();
-        droppedFiles(e.dataTransfer, droppedOnMac).then(
+        droppedFiles(e.dataTransfer, () => droppedOnMac({ chosen: true })).then(
           (d) => {
             if (d.folders.length) setDraft((cur) => ({ ...cur, folders: [...new Set([...cur.folders, ...d.folders])].slice(0, MAX_FOLDERS) }));
             if (d.files.length || !d.folders.length) void addFiles(d.files, d.folder, d.paths);

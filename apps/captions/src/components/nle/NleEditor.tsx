@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Link2, Loader2, Magnet, MousePointer2, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
-import { freshHist, histChange, histRedo, histUndo, type Hist } from "@/lib/edit-history";
+import { ChevronRight, Gauge, Link2, Loader2, Magnet, MousePointer2, MoveHorizontal, Pause, Play, Redo2, Repeat, Save, Scissors, SkipBack, SkipForward, Undo2, UnfoldHorizontal } from "lucide-react";
+import { freshHist, histChange, histGo, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, blade, clipOfPart, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
-  loopNext, loopPart, markedPart, NO_MARKS, place, setTrack, sourceTimeline,
+  loopNext, loopPart, markedPart, markerAt, markersCsv, markersOf, NO_MARKS, place, removeMarker, setMarker, setTrack, sourceTimeline,
   timecode, toSaved, unlink, withKeys, type Gap, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
-import { COMMANDS, runAll, stateView, type NleState } from "@/lib/nle/commands";
+import { COMMANDS, runAll, stateView, type NleRun, type NleState } from "@/lib/nle/commands";
 import { nlePending, nleReply, type NleAsk } from "@/lib/editor";
 import { clientId, onTopic } from "@/lib/sync";
 import { dragging, type Dragged } from "@/lib/nle/drag";
-import { fingerprint, keepUnsaved, readUnsaved } from "@/lib/nle/unsaved";
+import { addAutosave, AUTOSAVE_MS, fingerprint, LIVE_MS, markSaved, readAutosaves, sealAutosave, toRestore, type Autosave } from "@/lib/nle/autosave";
 import { cn } from "@/lib/utils";
 import { commandOfKey, keyAction } from "@/lib/nle/keys";
-import { NleInspector } from "./NleInspector";
+import { CAMERA_FILE, readCamera, rangeReader } from "@/lib/nle/camera";
+import { downloadText } from "@/lib/download";
+import { NleMarkerDialog } from "./NleMarkerDialog";
+import { CHAT_STEP, NleInspector } from "./NleInspector";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
@@ -26,7 +29,7 @@ import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
 import { NleViewer, SoundCard, SourceStrip, Timecode } from "./NleViewer";
 
 export type { NleFile };
-import { NleTracks as Timeline, useLinkedSelection, type Tool } from "./NleTracks";
+import { NleTracks as Timeline, useLinkedSelection, type MenuAt, type Tool } from "./NleTracks";
 
 // A non-linear editor for one timeline, laid out as editors are (NleLayout): the Media Pool on the left (the timeline's own
 // sources, then the page's media bin), the viewer in the middle playing the timeline live from its files (or, as Source,
@@ -65,17 +68,15 @@ const STEPS = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "prevEd
 /** Home and End go there even from within the frame they are on. */
 const HOME_END = new Set(["start", "end"]);
 const VIEWER = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "start", "end", "markIn", "markOut", "clearMarks", "clearIn", "clearOut"]);
+/** a row of the editor's menu: its words, its key, what it does, greyed */
+type MenuRow = [string, string, () => void, boolean];
 /** The edit and draft a timeline page's path shows, as api/editor/nle-bridge.ts reads it. */
 const PAGE = /^\/editor\/(?!p\/)([^/?#]+)\/([^/?#]+)/;
 /** The chat's requests already taken by this window: one delivered twice is run once. */
 const taken = new Set<string>();
 
-/** What a timeline opens as: as saved, and with the edits this browser kept unsaved on that same timeline (unsaved.ts). */
-const openOf = (initial: NleTimeline, key: string) => {
-  const saved = withKeys(initial);
-  const base = fingerprint(initial);
-  return { key, base, saved, now: readUnsaved(key, base) ?? saved };
-};
+/** What a timeline opens as: as saved (its autosaves come back a moment later: lib/nle/autosave.ts). */
+const openOf = (initial: NleTimeline, key: string) => ({ key, base: fingerprint(initial), saved: withKeys(initial) });
 
 /** A playhead and its clock (lib/nle/audio.ts NleClock): played on the sound's time (backwards for J), it stops on the
  *  last frame, or with `loop` (seconds) goes round that part. `time` is React's only at a pause, a seek or a stop; while
@@ -162,16 +163,27 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   const [first] = useState(() => openOf(initial, resetKey));
   // the timeline open now (its key and fingerprint), for keeping its unsaved edits
   const opened = useRef(first);
-  const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(first.now));
+  const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(first.saved));
   const [saved, setSaved] = useState<NleTimeline>(first.saved);
   const [live, setLive] = useState<NleTimeline | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   // a gap picked on the timeline (its clips' selection let go); any edit lets it go
   const [gap, setGap] = useState<Gap | null>(null);
+  // a transition picked on the timeline (the clip after its cut); picking clips lets it go
+  const [transPick, pickTrans] = useState<string | null>(null);
   const pick = useCallback((keys: string[]) => {
     setSelected(keys);
+    pickTrans(null);
     if (keys.length) setGap(null);
   }, []);
+  // a double click on a transition's band picks it alone
+  const pickTransAt = useCallback((k: string) => {
+    setSelected([]);
+    setGap(null);
+    pickTrans(k);
+  }, []);
+  // the marker open in its dialog (its frame)
+  const [markerEdit, setMarkerEdit] = useState<number | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [snap, setSnap] = useState(true);
   const [linkSel, toggleLinkSel] = useLinkedSelection();
@@ -188,25 +200,60 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       return false;
     }
   });
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<MenuAt | null>(null);
   const [sound, setSound] = useState<{ normalize: string[] } | { duck: string } | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
-  // every edit kept in this browser until it is saved, so a reload or the page opened again never loses it. Before the
-  // effect below: on another version it still keeps the last edits under the timeline they were made on
-  useEffect(() => keepUnsaved(opened.current.key, opened.current.base, hist.now === saved ? null : hist.now), [hist.now, saved]);
-  // said once when a timeline opens with edits that were never saved
-  const back = opened.current.now !== opened.current.saved;
+  // autosaves: unsaved edits kept in this browser a moment after each change (the live one, rewritten), sealed every
+  // 30 s, on leaving the window and on closing the timeline when they changed, so a reload, a crash or the page opened
+  // again never loses them
+  const [autosaves, setAutosaves] = useState<Autosave[]>([]);
+  const latest = useRef({ hist, saved });
+  latest.current = { hist, saved };
+  const snapped = useRef<NleTimeline | null>(null);
+  const keep = useCallback((live: boolean) => {
+    const { hist: h, saved: s } = latest.current;
+    const o = opened.current;
+    const p = h.now !== s && h.now !== snapped.current
+      ? ((snapped.current = h.now), addAutosave(o.key, { at: Date.now(), base: o.base, label: h.labels?.[h.past.length], tl: h.now, ...(live ? { live: true as const } : {}) }))
+      : live ? null : sealAutosave(o.key);
+    void p?.then((r) => opened.current.key === o.key && setAutosaves(r.list));
+  }, []);
+  const autosave = useCallback(() => keep(false), [keep]);
   useEffect(() => {
-    if (back) toast("Your edits that weren't saved are back", { description: "Save keeps them in this version" });
-  }, [back, resetKey]);
+    if (hist.now === saved) return;
+    const t = setTimeout(() => keep(true), LIVE_MS);
+    return () => clearTimeout(t);
+  }, [hist.now, saved, keep]);
+  useEffect(() => {
+    if (hist.now === saved) return;
+    const t = setInterval(autosave, AUTOSAVE_MS);
+    return () => clearInterval(t);
+  }, [hist.now === saved, autosave]); // eslint-disable-line react-hooks/exhaustive-deps -- unsaved or not only
+  useEffect(() => {
+    window.addEventListener("blur", autosave);
+    window.addEventListener("pagehide", autosave);
+    return () => {
+      window.removeEventListener("blur", autosave);
+      window.removeEventListener("pagehide", autosave);
+      autosave();
+    };
+  }, [autosave]);
+  // a timeline opened with unsaved edits on it: the newest autosave since its last save comes back, said once
+  const [back, setBack] = useState<NleTimeline | null>(null);
+  useEffect(() => {
+    if (back && latest.current.hist.now === back) toast("Your edits that weren't saved are back", { description: "Save keeps them in this version" });
+  }, [back]);
 
   useEffect(() => {
     if (opened.current.key === resetKey) return; // opened with the page
+    autosave(); // the one closing
     const o = openOf(initial, resetKey);
     opened.current = o;
-    setHist(freshHist(o.now));
+    snapped.current = null;
+    setAutosaves([]);
+    setHist(freshHist(o.saved));
     setSaved(o.saved);
     setLive(null);
     setSelected([]);
@@ -214,6 +261,27 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     tln.seek(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a new version only
   }, [resetKey]);
+  useEffect(() => {
+    const o = opened.current;
+    let on = true;
+    void readAutosaves(o.key).then((r) => {
+      if (!on) return;
+      setAutosaves(r.list);
+      const last = toRestore(r, o.base);
+      if (!last) return;
+      snapped.current = last.tl;
+      // only on a timeline not edited yet
+      setHist((h) => (h.past.length || h.future.length || h.now !== o.saved ? h : freshHist(last.tl)));
+      setBack(last.tl);
+    });
+    return () => void (on = false);
+  }, [resetKey]);
+  /** An autosave picked in History: back to it as one step, so undo goes back to where it was left. */
+  const restore = (a: Autosave) => {
+    autosave(); // where it was stays an autosave too
+    snapped.current = a.tl;
+    setHist((h) => histChange(h, () => a.tl, "Restore autosave"));
+  };
 
   const tl = hist.now;
   const sel = selected.filter((k) => find(tl, k));
@@ -290,6 +358,17 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     const made = place(next, clips, how);
     commit(made.tl);
     setSelected(made.keys.slice(0, 1));
+    if (isVideo(at.track)) lookCamera(s.src, d.path, made.tl);
+  };
+  // the camera curve its file names, read in the background onto its source: never in the way of laying the clip, and a
+  // failed read records nothing
+  const lookCamera = (src: string, path: string, at: NleTimeline) => {
+    const f = urlOf(src, at);
+    if (!f?.url || f.frame || f.why || !CAMERA_FILE.test(path) || at.sources[src]?.camera) return;
+    void readCamera(rangeReader(f.url)).then((camera) => camera && setHist((h) => {
+      const x = h.now.sources[src];
+      return x?.path === path && !x.camera ? { ...h, now: { ...h.now, sources: { ...h.now.sources, [src]: { ...x, camera } } } } : h;
+    }));
   };
   // a drop with the marks its file has in the source viewer: their part only
   const marked = (d: NleDrop): NleDrop => (d.from !== undefined || d.to !== undefined ? d : { ...d, ...markedPart(srcMarks[d.path], sfpsOf(d), d.seconds) });
@@ -321,7 +400,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
   if (control) control.current = { put: (d) => lay(marked(d), { track: "V1", frame: marks[0] ?? Math.round(now() * fps) }), source: openSource };
 
   // the registry's commands (lib/nle/commands.ts) on the timeline as it is now; keys, the menu and the chat all run them
-  const stateNow = (): NleState => ({ tl, sel, playhead: Math.round(now() * fps), marks, clipboard, mode, gap });
+  const stateNow = (): NleState => ({ tl, sel, playhead: Math.round(now() * fps), marks, clipboard, mode, gap, trans: transPick });
   /** A command's state after, onto the page: a changed timeline as one undo step named `label` (read only: nothing), then
    *  the picks, the marks, what Paste lays and the playhead. */
   const apply = (s: NleState, next: NleState, label: string) => {
@@ -330,6 +409,9 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       commit(next.tl, label);
     } else if (next.gap !== s.gap) setGap(next.gap ?? null);
     if (next.sel !== s.sel) setSelected(next.sel);
+    if ((next.trans ?? null) !== (s.trans ?? null)) pickTrans(next.trans ?? null);
+    // picking clips (⌘A, Escape, the chat's ref) lets go of a picked transition
+    else if (next.sel !== s.sel) pickTrans(null);
     if (next.marks !== s.marks) setMarks(next.marks);
     if (next.clipboard !== s.clipboard) clipboard = next.clipboard ?? [];
     if (next.playhead !== s.playhead) seek(next.playhead / fps);
@@ -338,6 +420,29 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     const s = stateNow();
     if (COMMANDS[id].enabled(s)) apply(s, COMMANDS[id].run(s, {}), COMMANDS[id].title);
   };
+  /** The Inspector's commands on clips `on` (the picks when left out), one undo step; the picks stay. */
+  const runOn = (list: NleRun[], on?: string[]) => {
+    const s = stateNow();
+    try {
+      const next = runAll(on ? { ...s, sel: on } : s, list);
+      apply(s, { ...next, sel: s.sel }, [...new Set(list.map((r) => COMMANDS[r.id]?.title ?? r.id))].join(", "));
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  /** a command on one cut (the clip after it), from its menu: the picks and the playhead stay */
+  const runAtCut = (id: string, cut: string) => {
+    const s = stateNow();
+    const c = find(tl, cut);
+    if (c) apply(s, { ...COMMANDS[id].run({ ...s, sel: [cut], playhead: c.item.rec }, {}), sel: s.sel, playhead: s.playhead }, COMMANDS[id].title);
+  };
+  // M: a marker at the playhead, or the one there opened
+  const marker = () => {
+    const m = markerAt(tl, Math.round(now() * fps));
+    if (m) setMarkerEdit(m.frame);
+    else run("addMarker");
+  };
+  const exportMarkers = () => downloadText(`${tl.timeline.name || "Timeline"} Markers.csv`, markersCsv(tl), "text/csv;charset=utf-8");
 
   // The chat's editor commands (api/editor/nle-bridge.ts): asked for on topic nle:<this window>, taken once each, and run
   // here on the timeline as it is now, with its unsaved edits: a run is one undo step, unsaved like his own (Save stays his).
@@ -356,7 +461,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         try {
           const list = a.commands ?? [];
           const next = runAll(s, list);
-          apply(s, next, list.map((r) => COMMANDS[r.id]?.title ?? r.id).join(", "));
+          apply(s, next, CHAT_STEP + list.map((r) => COMMANDS[r.id]?.title ?? r.id).join(", "));
           s = next;
           reply({ result: stateView(next) });
         } catch (e) {
@@ -386,6 +491,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     try {
       await onSave(toSaved(now));
       setSaved(now);
+      void markSaved(opened.current.key);
     } catch {
       // not saved: the page says why, and the timeline stays as it is to save again
     }
@@ -403,6 +509,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
       const c = COMMANDS[id];
       // Q in the source viewer: back to the timeline (the owner's Q ripples on the timeline)
       if (id === "rippleStart" && inSource) show("timeline");
+      else if (id === "addMarker") marker();
       else if (c.chat) {
         // playing, stepping and marks go to what the viewer shows (Source or Timeline)
         const X = VIEWER.has(id) ? T : tln;
@@ -434,6 +541,9 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         case "toolSelect": setTool("select"); break;
         case "toolTrim": setTool("trim"); break;
         case "toolBlade": setTool("blade"); break;
+        case "toolSlide": setTool("slide"); break;
+        case "toolStretch": setTool("stretch"); break;
+        case "exportMarkers": exportMarkers(); break;
         case "snap": setSnap((s) => !s); break;
         case "linkedSelection": toggleLinkSel(); break;
         case "zoomIn": zoom("="); break;
@@ -542,11 +652,14 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               } />
           </Panel>
         }
-        inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} />}
+        inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} playhead={Math.round(tln.time * fps)}
+          transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => setHist((h) => histGo(h, i))}
+          autosaves={autosaves} onAutosave={restore} />}
         timeline={
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => show("timeline")}>
           <Timeline tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
+            trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}
@@ -558,6 +671,8 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
                 <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there. W or ⌘B splits at the playhead" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "slide"} aria-label="Slide" title="Slide: drag a clip between its neighbours, they trim" onClick={() => setTool("slide")} className={iconBtn(tool === "slide")}><MoveHorizontal className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "stretch"} aria-label="Rate Stretch" title="Rate Stretch: drag an end, the clip plays faster or slower" onClick={() => setTool("stretch")} className={iconBtn(tool === "stretch")}><Gauge className="size-3.5" /></button>
                 {sep}
                 <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Edit mode">
                   {(["overwrite", "insert"] as const).map((m) => (
@@ -584,7 +699,24 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
         <div className="fixed inset-0 z-50" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
           <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 300) }}
             onPointerDown={(e) => e.stopPropagation()}>
-            {([
+            {menu.on === "clip" && menu.cut && (
+              <div className="group/sub relative">
+                <button type="button" role="menuitem" aria-haspopup="menu" className={menuRow}><span>Add Transition</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
+                <div role="menu" aria-label="Add Transition" className="absolute -top-1 left-full hidden w-44 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl group-focus-within/sub:block group-hover/sub:block">
+                  {(isVideo(find(tl, menu.cut)?.track ?? "V") ? [["Cross Dissolve", "addDissolve", "⌘T"], ["Dip to Black", "addDipToBlack", ""], ["Dip to White", "addDipToWhite", ""]] : [["Cross Fade", "addDissolve", "⌘T"]]).map(([l, id, k]) => (
+                    <button key={id} type="button" role="menuitem" className={menuRow} onClick={() => { setMenu(null); runAtCut(id, menu.cut!); }}>
+                      <span>{l}</span><span className="text-zinc-500">{k}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(menu.on === "gap" ? [["Close Gap", "", () => run("closeGap"), false] as MenuRow]
+              : menu.on === "ruler" ? [
+                ["Add Marker", "M", marker, false],
+                ["Export Markers…", "", exportMarkers, !markersOf(tl).length],
+              ] as MenuRow[]
+              : [
               ["Cut", "⌘X", () => run("cut"), false],
               ["Copy", "⌘C", () => run("copy"), false],
               ["Paste", "⌘V", () => run("paste"), !clipboard.length],
@@ -593,13 +725,18 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               ["Ripple delete", "S", () => run("rippleDelete"), false],
               [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), !linked && sel.length < 2],
               ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !soundKeys(tl, sel).length],
-            ] as const).map(([l, key, fn, off]) => (
+            ] as MenuRow[]).map(([l, key, fn, off]) => (
               <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
                 <span>{l}</span><span className="text-zinc-500">{key}</span>
               </button>
             ))}
           </div>
         </div>
+      )}
+      {markerEdit !== null && markersOf(tl).some((m) => m.frame === markerEdit) && (
+        <NleMarkerDialog key={markerEdit} marker={markersOf(tl).find((m) => m.frame === markerEdit)!} fps={fps} onClose={() => setMarkerEdit(null)}
+          onDone={(patch) => { commit(setMarker(tl, markerEdit, patch), "Edit marker"); setMarkerEdit(null); }}
+          onDelete={() => { commit(removeMarker(tl, markerEdit), "Delete marker"); setMarkerEdit(null); }} />
       )}
     </>
   );

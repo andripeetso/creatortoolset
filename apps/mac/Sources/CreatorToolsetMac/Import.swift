@@ -7,7 +7,10 @@ import UniformTypeIdentifiers
 // handler, TitleBar.swift; src/lib/thisMac.ts):
 // - import:copy:{"id","files":[{"from","to"}]} copies dropped or picked files into the library's folder on this Mac and
 //   answers when it is done with { copied:[{from,to}], failed:[{from,error}], stopped? }. `from` must lie under a recent
-//   drop or pick of this window; `to` under ~/Movies/Creator Toolset or a folder chosen in this app's folder picker.
+//   drop or pick of this window; `to` under ~/Movies/Creator Toolset, a folder chosen in this app's folder picker, or a
+//   listed Media folder's Imports/ of the page's own server (MediaFiles.importsFolders). The folder a destination is in
+//   must be there: a Media folder whose drive isn't connected is never made on the internal disk, its copy fails and the
+//   page offers Retry.
 //   A file is never overwritten: the same name and size there is taken as copied already, another file gets " 2", " 3"…
 //   A cancelled or failed copy removes its partial file. The destination joins the folders whose media the page may
 //   play and scan (MediaFiles).
@@ -17,6 +20,9 @@ import UniformTypeIdentifiers
 // - import:print:{"paths":[…]} → { prints:{ path: hex } }: each granted file's quick fingerprint, the same as the page's
 //   quickPrint (src/lib/onMac.ts), which the server's duplicate check compares.
 // - import:locate:{"folder"?,"files":[…]} → Locate… in the Media Library (Locate.swift).
+// - import:chosen:{"workspace","paths":[…]} → { kept }: the page's own drop, in its workspace: each path that is exactly a
+//   recent drop or pick of this window is remembered for that server and workspace (MediaFiles.chosen, the AI Editor's
+//   copyFrom). A path the page names that this window wasn't given is left out.
 // - import:make:{"in","names":[…]} → { made:[path], failed:[{name,error}], children:[name] }: setup's Library folder on
 //   Done. Each named folder missing in `in` is made (an existing one is left as it is); `children` are the folders in `in`
 //   after (no names: only that, for a dropped folder's Found). `in` must be a folder this app may write or read (a pick, a
@@ -38,6 +44,7 @@ enum ImportAsk: Equatable {
     case locate(folder: String?, files: [LocateFile])
     case make(in: String, names: [String])
     case thumb(path: String, max: Int)
+    case chosen(workspace: String, paths: [String])
 }
 
 /// An `import:` ask as its parts; nil when it is malformed.
@@ -61,6 +68,9 @@ func importAsk(_ ask: String) -> ImportAsk? {
     case "make":
         guard let folder = json["in"] as? String, let names = json["names"] as? [String], names.count <= 10 else { return nil }
         return .make(in: (folder as NSString).expandingTildeInPath, names: names)
+    case "chosen":
+        guard let ws = json["workspace"] as? String, !ws.isEmpty, ws.count <= 200, let paths = json["paths"] as? [String], paths.count <= 500 else { return nil }
+        return .chosen(workspace: ws, paths: paths)
     case "thumb":
         guard let path = json["path"] as? String else { return nil }
         let max = (json["max"] as? NSNumber)?.intValue ?? 480
@@ -85,6 +95,9 @@ final class Imports: @unchecked Sendable {
     static var defaultRoot: String { home.appendingPathComponent("Movies/Creator Toolset").path }
     /// The folders a copy may write into: the default and each one chosen in this app's folder picker.
     static var destinations: [String] { [defaultRoot] + (UserDefaults.standard.stringArray(forKey: chosenKey) ?? []) }
+    /// A copy from `server`'s page: that server's Media folders' Imports/ first (so a copy there checks that Media folder
+    /// is there, never a picked folder around it), then `destinations`.
+    static func copyDestinations(server: String) -> [String] { MediaFiles.importsFolders(server: server) + destinations }
     static func chose(_ folder: String) {
         let old = UserDefaults.standard.stringArray(forKey: chosenKey) ?? []
         if !old.contains(folder) { UserDefaults.standard.set(old + [folder], forKey: chosenKey) }
@@ -111,7 +124,7 @@ final class Imports: @unchecked Sendable {
 
     /// One ask answered: `sources` are this window's recent drops and picks. A copy, a scan and prints run off the
     /// main thread, and `done` is called on the main thread.
-    func answer(_ ask: String, sources: [String], done: @escaping ([String: Any]) -> Void) {
+    func answer(_ ask: String, sources: [String], server: String = "", done: @escaping ([String: Any]) -> Void) {
         let main = { (reply: [String: Any]) in DispatchQueue.main.async { done(reply) } }
         switch importAsk(ask) {
         case .copy(let id, let files)?:
@@ -120,7 +133,7 @@ final class Imports: @unchecked Sendable {
             if !taken { jobs[id] = Job() }
             lock.unlock()
             if taken { return done(["error": "That copy is running already."]) }
-            DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.destinations)) }
+            DispatchQueue.global(qos: .userInitiated).async { main(self.copy(id: id, files, sources: sources, destinations: Self.copyDestinations(server: server))) }
         case .progress(let id)?:
             done(with(id) { j in ["bytes": j.bytes, "of": j.of, "file": j.file ?? NSNull()] as [String: Any] } ?? ["bytes": 0, "of": 0])
         case .cancel(let id)?:
@@ -142,6 +155,10 @@ final class Imports: @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).async { main(Self.make(in: folder, names: names, allowed: MediaFiles.granted + Self.destinations + sources)) }
         case .thumb(let path, let max)?:
             DispatchQueue.global(qos: .userInitiated).async { main(Self.thumb(path, max: max, allowed: MediaFiles.granted + Self.destinations + sources)) }
+        case .chosen(let workspace, let paths)?:
+            let kept = paths.map { URL(fileURLWithPath: $0).path }.filter(sources.contains)   // the window's drops are kept as URL paths
+            if !server.isEmpty, !kept.isEmpty { MediaFiles.chosen(kept, server: server, workspace: workspace) }
+            done(["kept": kept.count])
         case nil: done(["error": "Not an import this app knows."])
         }
     }
@@ -162,6 +179,10 @@ final class Imports: @unchecked Sendable {
             }
             guard let root = Self.destination(f.to, destinations) else {
                 failed.append(["from": f.from, "error": "Not a folder this app copies into."]); continue
+            }
+            let holder = (root as NSString).deletingLastPathComponent
+            guard Places.shared.reachable(holder), FileManager.default.fileExists(atPath: holder) else {
+                failed.append(["from": f.from, "error": "\((holder as NSString).lastPathComponent) isn't connected."]); continue
             }
             let name = Self.freeName(f.to, size: bytes) { size($0) }
             _ = with(id) { $0.file = f.from }

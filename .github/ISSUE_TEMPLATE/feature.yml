@@ -1,0 +1,56 @@
+name: Feature request
+description: Suggest something Creator Toolset should do.
+title: "Idea: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Creator Toolset keeps your files on your computers or on a server you run, and uses the AI and services you connect. If an idea would send a file or a key somewhere new, say so in the form.
+        Ideas you want to talk over first can go to the Ideas category in Discussions.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where would it live
+      options:
+        - Mac app
+        - Phone (iPhone app or phone browser)
+        - Web app
+        - Server (self-hosting)
+        - Plug-ins or packs
+        - Help center or docs
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do, and what gets in the way?
+      description: Describe the job, not the fix. A recent example helps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: A rough sketch or the steps you would expect are enough.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you use today
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and Discussions.
+          required: true

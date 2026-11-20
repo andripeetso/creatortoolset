@@ -179,7 +179,7 @@ describe("the setup card", () => {
       ["library", p.mac, "~/Movies/Creator Toolset/Media Library/Final exports", true],
     ]);
     const s = JSON.parse((libraryDb().prepare("SELECT settings FROM libraries WHERE id = ?").get(card.libraryId) as { settings: string }).settings);
-    expect(s).toMatchObject({ importMode: "copy", proxy: true, proxyQuality: "standard", organize: "ai", timeline: true, upload: "none", finalsUpload: "all" });
+    expect(s).toMatchObject({ proxy: true, proxyQuality: "standard", organize: "ai", timeline: true, upload: "none", finalsUpload: "all" });
     expect(Date.parse(s.setupAt)).toBeGreaterThan(0);
     expect((await p.message(m.id))!.action).toBeUndefined();
     expect(told).toContain("eve:assistant");
