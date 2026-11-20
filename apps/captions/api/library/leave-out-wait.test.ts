@@ -399,7 +399,7 @@ describe("a hidden clip with a copy known elsewhere", () => {
     d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, bytes, confirmed_at, checked_at, state, source) VALUES (?, ?, ?, ?, 10, 0, 0, 'verified', 'scan')").run(
       clip(811).version, y.mac.id, y.ids.C, `${y.roots.C}/k.mov`,
     );
-    settleSilent(t + 15 * DAY);
+    await settleSilent(t + 15 * DAY);
     expect([trashed(811), hidden(811)]).toEqual([false, false]);
   });
 
@@ -431,5 +431,45 @@ describe("Library status: clips hidden while a folder is unread", () => {
     const lines = libraryStatus(clip(820).library_id).hidden ?? [];
     expect(lines.find((x) => x.computer === "Tiny Mac H2")?.clips).toBe(1);
     expect(lines.some((x) => x.computer === "this server" && x.clips >= 1)).toBe(true);
+  });
+});
+
+describe("one account's report never judges another account's hidden clip", () => {
+  it("a member's report leaves the owner's hidden clip hidden; a silent check from the watch judges it by the owner's lists", async () => {
+    createUser("bo", "password1", { role: "user" });
+    const m = computer("Tiny Mac M1");
+    await m.setUp();
+    const at = await m.index("A", "Day/m.mov", 830);
+    await m.away("B");
+    await m.list("A", [{ rel: "Private/m.mov", q: 830 }]);
+    expect(hidden(830)).toBe(true);
+    // the watch finds the file the clip reads at its left-out path again (refreshMissing)
+    d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, bytes, confirmed_at, checked_at, state, source) VALUES (?, ?, '', ?, 10, 0, 0, 'found', 'server-disk')").run(
+      at.versionId, m.mac.id, `${m.roots.A}/Private/m.mov`,
+    );
+    const bo = pairDevice("bo", "Bo's Mac").device;
+    await applyReport(bo, [], (t += 1000));
+    expect(hidden(830)).toBe(true);
+    await settleSilent(t + 30 * DAY);
+    expect([trashed(830), hidden(830)]).toEqual([true, false]);
+  });
+});
+
+describe("each computer's own path decides", () => {
+  it("a place on another computer at the same drive path as a left-out folder of this one counts", async () => {
+    const x = computer("Tiny Mac S1");
+    const y = computer("Tiny Mac S2");
+    await x.setUp();
+    await y.setUp();
+    const at = await x.index("A", "Day/s.mov", 840);
+    await x.away("B");
+    await x.list("A", [{ rel: "Private/s.mov", q: 840 }]);
+    expect(hidden(840)).toBe(true);
+    // Y has a file at the very path X leaves out ("Private" is on X's A only)
+    d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, bytes, confirmed_at, checked_at, state, source) VALUES (?, ?, '', ?, 10, 0, 0, 'verified', 'scan')").run(
+      at.versionId, y.mac.id, `${x.roots.A}/Private/s.mov`,
+    );
+    await x.away("B");
+    expect(hidden(840)).toBe(false);
   });
 });

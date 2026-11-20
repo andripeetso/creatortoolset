@@ -31,7 +31,7 @@ import { locateApp } from "./locate";
 import { folderStatesFor, placesApp } from "./places";
 import { whereIsMany } from "./whereis";
 import { PLACES_MAX, placeWordOf } from "../../contracts/places";
-import { emptyTrash, inReview, setTrashedAt, showHidden } from "./trash";
+import { emptyTrash, inReview, setTrashedAt } from "./trash";
 import { copiesWake } from "./copies";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -394,13 +394,11 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const quick = await quickPrint(file);
   if (!quick) return { error: "The file could not be read", code: "failed" };
   const dup = db()
-    .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ((v.quick = ? AND v.bytes = ?) OR v.sha256 = ?) LIMIT 1")
+    // one hidden while it waits on Folders left out is no copy to point at: the file goes to the computer, which indexes
+    // it there (on-mac.ts: a place of that clip, shown again)
+    .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND ((v.quick = ? AND v.bytes = ?) OR v.sha256 = ?) LIMIT 1")
     .get(lib, quick, size, `mac:${quick}`) as { id: string } | undefined;
-  // the same file again: one hidden while it waited on Folders left out is here after all (trash.ts showHidden)
-  if (dup) {
-    showHidden(dup.id);
-    return { duplicateOf: dup.id };
-  }
+  if (dup) return { duplicateOf: dup.id };
   // held here only until a computer has fetched it (the task removes it)
   const staged = path.join(stagingDir(), `computer-${lib}-${quick}`);
   await copyFile(file, staged);
@@ -413,10 +411,7 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const got = db()
     .prepare("SELECT a.id AS assetId, v.id AS versionId FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.quick = ? AND v.bytes = ? LIMIT 1")
     .get(lib, quick, size) as { assetId: string; versionId: string } | undefined;
-  if (got) {
-    showHidden(got.assetId);
-    return got;
-  }
+  if (got) return got;
   // a computer has it but is not done yet: it lands there in a moment
   const held = started.state === "queued" ? taskOf(started.id)?.held_by : null;
   const on = held && folders[held] ? held : first[0];
@@ -455,11 +450,10 @@ function duplicateOf(row: UploadRow, sha256: string): { id: string; current: str
   const dup = db()
     .prepare(
       `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
     )
+    // one hidden while it waits on Folders left out is no copy to keep instead: the upload is kept, the file really added
     .get(row.library_id, sha256, made?.quick ?? null, made?.proxy?.size ?? row.size) as { id: string; current: string | null } | undefined;
-  // uploaded again: one hidden while it waited on Folders left out is here after all (trash.ts showHidden)
-  if (dup) showHidden(dup.id);
   return dup;
 }
 
@@ -643,7 +637,8 @@ libraryApp.post("/:id/uploads/check", async (c) => {
   const b = (await c.req.json().catch(() => null)) as { size?: unknown; sha256?: unknown; quick?: unknown } | null;
   const size = Number(b?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
-  const live = "FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL";
+  // a clip hidden while it waits on Folders left out is no copy here: the file is sent (duplicateOf, saveOnComputer)
+  const live = "FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL";
   if (typeof b?.sha256 !== "string") return c.json({ maybe: !!db().prepare(`SELECT 1 ${live} AND v.bytes = ? LIMIT 1`).get(libraryId, size) });
   const quick = typeof b.quick === "string" && /^[0-9a-f]{64}$/.test(b.quick) ? b.quick : null;
   const dup = db()

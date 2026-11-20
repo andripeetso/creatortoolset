@@ -11,7 +11,7 @@ import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
 import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
-import { accountOf, ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
+import { accountOf, ensureLibrary, homeOf, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { blursFaces, libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
@@ -206,16 +206,19 @@ function leaveLibrary(dev: Device, folderId: string, inLibs: string, own: Readon
 
 /**
  * A clip's places that count as a copy of it, in `states`: not one of the library's own copies (COPY_PLACE), and not
- * inside a folder a list leaves out (`media`, any computer's path: a file this server's watch marks found again there
- * is no copy outside them). Prepared once per call of its caller.
+ * inside a folder a list leaves out (`media`, at the path the place's own computer has: a file this server's watch
+ * marks found again there is no copy outside them). Prepared once per call of its caller.
  */
 const placesThatCount = (states: string[]) => {
   const q = db().prepare(
-    `SELECT p.path FROM version_places p JOIN asset_versions v ON v.id = p.version_id
+    `SELECT p.path, p.device FROM version_places p JOIN asset_versions v ON v.id = p.version_id
       WHERE v.asset_id = ? AND p.kind = 'original' AND p.state IN (SELECT value FROM json_each(?)) AND NOT ${COPY_PLACE}`,
   );
   const want = JSON.stringify(states);
-  return (id: string, media: StorageFolder[]) => (q.all(id, want) as { path: string }[]).some((p) => !leftOutBy(media, p.path));
+  // each computer's own path of a folder counts (a folder of this server's own computer, "this-computer", is its device's)
+  const out = (media: StorageFolder[], p: { path: string; device: string }) =>
+    leftOutBy(media, p.path, p.device) || (isThisMachine(p.device) && leftOutBy(media, p.path, THIS_COMPUTER));
+  return (id: string, media: StorageFolder[]) => (q.all(id, want) as { path: string; device: string }[]).some((p) => !out(media, p));
 };
 
 /**
@@ -279,28 +282,40 @@ export const SILENT_MS = 14 * 86_400_000;
  * Clips hidden while they waited on a computer that has sent no report for SILENT_MS (its last seen time; one no longer
  * paired from when it was first missed here, left_gone_computers): settled as gone, into the trash (never deleted; the
  * Library status names the computer, left_trashed_from), unless a copy of it is known elsewhere (placesThatCount, `media`
- * the lists) or it is held in Review or by a share link: shown again. Run from every report and every watch pass.
+ * its own library's lists) or it is held in Review or by a share link: shown again. Run from every report and every watch pass.
  * Returns the libraries changed.
  */
-export function settleSilent(now: number, media: StorageFolder[] = []): string[] {
+export async function settleSilent(now: number): Promise<string[]> {
   const d = db();
   const known = placesThatCount(["verified", "found"]);
   const hidden = d
     .prepare("SELECT id, library_id, left_hidden_on AS device FROM assets WHERE left_hidden_at IS NOT NULL AND trashed_at IS NULL AND left_hidden_on IS NOT NULL")
     .all() as { id: string; library_id: string; device: string }[];
+  // each computer once: when it went silent (one no longer paired: from when it was first missed)
+  const silentSince = new Map<string, { since: number; name: string }>();
+  for (const device of new Set(hidden.map((h) => h.device))) {
+    const dev = deviceOf(device);
+    if (!dev) d.prepare("INSERT OR IGNORE INTO left_gone_computers (device, since) VALUES (?, ?)").run(device, now);
+    else d.prepare("DELETE FROM left_gone_computers WHERE device = ?").run(device);
+    const since = dev ? (dev.lastSeen ?? dev.createdAt) : (d.prepare("SELECT since FROM left_gone_computers WHERE device = ?").get(device) as { since: number }).since;
+    silentSince.set(device, { since, name: dev?.name ?? "a computer no longer paired" });
+  }
+  // each clip judged by its own library's lists (its owner's Media folders), read once per library
+  const lists = new Map<string, StorageFolder[]>();
+  const listsOf = async (lib: string) => {
+    if (!lists.has(lib)) lists.set(lib, await libraryLists(lib));
+    return lists.get(lib)!;
+  };
   const changed: string[] = [];
   for (const h of hidden) {
-    const dev = deviceOf(h.device);
-    if (!dev) d.prepare("INSERT OR IGNORE INTO left_gone_computers (device, since) VALUES (?, ?)").run(h.device, now);
-    else d.prepare("DELETE FROM left_gone_computers WHERE device = ?").run(h.device);
-    const since = dev ? (dev.lastSeen ?? dev.createdAt) : (d.prepare("SELECT since FROM left_gone_computers WHERE device = ?").get(h.device) as { since: number }).since;
+    const { since, name } = silentSince.get(h.device)!;
     if (now - since < SILENT_MS) continue;
     for (const w of leftWaiting.values()) w.delete(h.id);
     // a copy known elsewhere (another computer, an upload found again): shown, never trashed
-    if (known(h.id, media) || trashHeld(h.id, now)) showLeft(h.id);
+    if (known(h.id, await listsOf(h.library_id)) || trashHeld(h.id, now)) showLeft(h.id);
     else {
       setTrashedAt(h.id, now);
-      d.prepare("UPDATE assets SET left_trashed_from = ? WHERE id = ?").run(dev?.name ?? "a computer no longer paired", h.id);
+      d.prepare("UPDATE assets SET left_trashed_from = ? WHERE id = ?").run(name, h.id);
     }
     changed.push(h.library_id);
   }
@@ -313,7 +328,7 @@ export function settleSilent(now: number, media: StorageFolder[] = []): string[]
  * found place that counts (placesThatCount: not a drive away, not one of the library's copies, not inside a folder
  * `media` leaves out). Hidden is not the trash: it is trashed or kept when it settles. Returns the libraries changed.
  */
-function hideLeft(device: string, now: number, media: StorageFolder[]): string[] {
+function hideLeft(device: string, owner: string, now: number, media: StorageFolder[]): string[] {
   const d = db();
   const known = placesThatCount(["verified", "found"]);
   const hide = d.prepare("UPDATE assets SET left_hidden_at = ?, left_hidden_on = ? WHERE id = ? AND left_hidden_at IS NULL AND trashed_at IS NULL");
@@ -325,8 +340,12 @@ function hideLeft(device: string, now: number, media: StorageFolder[]): string[]
   };
   const waiting = leftWaiting.get(device);
   for (const id of waiting?.keys() ?? []) note(id, known(id, media) ? show.run(id) : hide.run(now, device, id));
-  // every other clip hidden (on another computer, by the watch): a copy known now, verified anywhere, shows it at once
-  for (const { id } of d.prepare("SELECT id FROM assets WHERE left_hidden_at IS NOT NULL AND trashed_at IS NULL").all() as { id: string }[])
+  // every other clip hidden in this computer's owner's libraries (on another computer, by the watch): a copy known now,
+  // verified anywhere, shows it at once. Only the owner's: `media` is the owner's lists, never another account's
+  const theirs = d.prepare(
+    "SELECT a.id FROM assets a JOIN libraries l ON l.id = a.library_id WHERE a.left_hidden_at IS NOT NULL AND a.trashed_at IS NULL AND l.workspace_id = ?",
+  );
+  for (const { id } of theirs.all(homeOf(owner)) as { id: string }[])
     if (!waiting?.has(id) && known(id, media)) note(id, show.run(id));
   return changed;
 }
@@ -554,8 +573,8 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     const lib = db().prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;
     if (lib) touched.add(lib.library_id);
   }
-  for (const l of hideLeft(dev.id, now, media)) touched.add(l);
-  for (const l of settleSilent(now, media)) touched.add(l);
+  for (const l of hideLeft(dev.id, dev.owner, now, media)) touched.add(l);
+  for (const l of await settleSilent(now)) touched.add(l);
   for (const l of touched) libraryChanged(l);
   return { ok: true, index, ...(filmed?.length ? { filmed } : {}) };
 }
@@ -599,6 +618,13 @@ export const mediaFoldersOf = async (user: string): Promise<StorageFolder[]> => 
  * The Media folders whose lists a file `user` brings into `libraryId` is checked against: the person's own and, for a
  * member adding to the owner's library, the owner's too. Either list leaves a file out: they are privacy lists.
  */
+/** The lists a clip of `libraryId` is judged by: its owner's Media folders (settleSilent). */
+async function libraryLists(libraryId: string): Promise<StorageFolder[]> {
+  const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
+  const owner = row ? accountOf(row.workspace_id) : null;
+  return owner ? mediaFoldersOf(owner) : [];
+}
+
 export async function mediaForLibrary(user: string, libraryId: string): Promise<StorageFolder[]> {
   const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
   const owner = row ? accountOf(row.workspace_id) : null;

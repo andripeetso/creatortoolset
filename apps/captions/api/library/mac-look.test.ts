@@ -323,3 +323,15 @@ describe("the sheets a Mac keeps", () => {
     expect(r.status).toBe(200);
   });
 });
+
+describe("a clip hidden while it waits on Folders left out (report.ts)", () => {
+  it("is no look for any Mac until it is shown again", async () => {
+    const v = await seed("ast-m-hid");
+    expect(job(v)).toMatchObject({ state: "needs_key", error: MAC_WAITS });
+    libraryDb().prepare("UPDATE assets SET left_hidden_at = 1 WHERE current_version_id = ?").run(v);
+    expect(await claim()).toBeNull();
+    libraryDb().prepare("UPDATE assets SET left_hidden_at = NULL WHERE current_version_id = ?").run(v);
+    expect((await claim())?.options?.version).toBe(v);
+    libraryDb().prepare("DELETE FROM jobs WHERE version_id = ?").run(v);
+  });
+});

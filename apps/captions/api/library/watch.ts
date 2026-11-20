@@ -991,7 +991,7 @@ export async function scanWatchFolders(now = Date.now()): Promise<number> {
   // ponytail: stats every referenced file each pass; fine to tens of thousands, batch by folder past that
   await refreshMissing();
   // a clip hidden on a computer that stopped reporting goes to the trash (report.ts settleSilent)
-  for (const l of settleSilent(now)) libraryChanged(l);
+  for (const l of await settleSilent(now)) libraryChanged(l);
   return took;
 }
 

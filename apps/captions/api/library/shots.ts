@@ -149,7 +149,7 @@ export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boo
     .prepare(
       `SELECT v.id, v.created_by AS actor, j.state FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN libraries l ON l.id = a.library_id LEFT JOIN jobs j ON j.version_id = v.id AND j.kind = 'look'
-       WHERE a.trashed_at IS NULL AND a.kind = 'video' AND v.created_by IS NOT NULL
+       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind = 'video' AND v.created_by IS NOT NULL
          AND (a.roll = 'b' OR (a.roll = 'a' AND IFNULL(json_extract(l.settings, '$.lookTalking'), 0)))
          AND IFNULL(json_extract(l.settings, '$.look'), 1) AND IFNULL(json_extract(v.probe, '$.duration'), 0) > ?
          AND (j.id IS NULL OR (j.state = 'needs_key' AND IFNULL(j.error, '') != ?))
