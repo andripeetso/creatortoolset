@@ -30,7 +30,7 @@ import { findUser, USERNAME_RE, type SessionUser } from "./users";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
-import { addToFinals, belowHd, libraryOf as libraryFor } from "./library/finals";
+import { addToFinals, belowHd, finalsItemName, libraryOf as libraryFor } from "./library/finals";
 import { ensureLibrary, servedByPlugin } from "./library/access";
 import { blursFaces } from "./library/db";
 import { mayLeave, workspaceLibrary } from "./library/upload-gate";
@@ -1360,7 +1360,7 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
       owner: v.meta.owner,
       libraryId: ownLibrary(v.meta.id, v.meta.owner),
       label: project?.name || v.meta.name,
-      item: ver.name || null,
+      item: ver.name ? finalsItemName(ver.name) : null,
       kind: "review",
       width: ver.width,
       height: ver.height,
