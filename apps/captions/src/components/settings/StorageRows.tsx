@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, THIS_COMPUTER, connectFor, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports, pairThisMac, thisMacBridge, thisMacState, type ThisMacState } from "@/lib/thisMac";
@@ -34,6 +35,7 @@ export const getStorage = () => call<StorageView>(STORAGE_API);
 // a new folder goes to the workspace the call works in; one is moved or removed by its id, whatever workspace it is in
 const addStorageFolder = (b: AddFolderBody, workspace?: string | null) => call<StorageState>(`${STORAGE_API}/folders`, "POST", b, workspace);
 const moveStorageFolder = (id: string, workspaces: string[] | null) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "PATCH", { workspaces } satisfies MoveFolderBody);
+export const leaveOutOfFolder = (id: string, leaveOut: string[]) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}/leave-out`, "PUT", { leaveOut });
 export const removeStorageFolder = (id: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}`, "DELETE");
 const repointStorageFolder = (id: string, path: string) => call<StorageState>(`${STORAGE_API}/folders/${encodeURIComponent(id)}/re-point`, "POST", { path });
 
@@ -248,6 +250,7 @@ export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder
   const exports = f.role === "library";
   const tagged = !!w?.all || (exports && !!w?.many);
   const [picking, setPicking] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // the buttons work on this Mac's own folders, in the Mac app's window, and only when pressed (no prompt opens by itself)
@@ -294,6 +297,7 @@ export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder
             {allow}
             {repoint}
           </span>
+          {!!f.leaveOut?.length && <Status>{`Leaves out ${f.leaveOut.join(", ")}`}</Status>}
           {problem && <Status tone="broken">{problem}</Status>}
           <FolderReach folder={f} devices={devices} />
         </span>
@@ -303,6 +307,7 @@ export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder
           label={`Actions for ${f.name}`}
           items={[
             ...(w?.many && !locked ? [{ label: "Workspaces", onSelect: () => setPicking(true) }] : []),
+            ...(f.role === "footage" && !locked ? [{ label: "Folders left out", onSelect: () => setLeaving(true) }] : []),
             ...(canRevealFolder(f) ? [{ label: "Show in Finder", onSelect: () => revealFolder(f) }] : []),
             ...(locked
               ? []
@@ -318,6 +323,7 @@ export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder
         />
       }
     />
+    {leaving && <LeaveOutDialog folder={f} onClose={() => setLeaving(false)} onChanged={onChanged} />}
     {picking && w && (
       <WorkspacesDialog
         title={`Workspaces that use ${f.name}`}
@@ -329,6 +335,40 @@ export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder
       />
     )}
     </>
+  );
+}
+
+/** A Media folder's Folders left out: one folder name a line, left out wherever it sits inside the folder. */
+function LeaveOutDialog({ folder: f, onClose, onChanged }: { folder: StorageFolder; onClose: () => void; onChanged: () => void }) {
+  const [text, setText] = useState((f.leaveOut ?? []).join("\n"));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await leaveOutOfFolder(f.id, text.split("\n").map((n) => n.trim()).filter(Boolean));
+      onChanged();
+      onClose();
+    } catch (x) {
+      setError(msg(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <FormDialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={`Folders left out of ${f.name}`}
+      description={`Files in folders with these names are not imported, at any depth inside ${f.name}, in any case. One name a line, at most ${LEAVE_OUT_MAX}. Clips already added from them go to the trash; taking a name off the list doesn't bring them back (Restore does). Nothing on disk is moved.`}
+      submitLabel="Save"
+      onSubmit={save}
+      busy={busy}
+      error={error}
+    >
+      <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={5} disabled={busy} aria-label="Folder names" />
+    </FormDialog>
   );
 }
 

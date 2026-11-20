@@ -56,6 +56,13 @@ describe.skipIf(rootReplaced)("Workshop: the final video of a project", () => {
     video(theirs.libraryId, "ast_theirs", { width: 1080, height: 1920 });
     expect((await call("maker", "POST", url, { assetId: "ast_theirs" })).status).toBe(404);
 
+    // one hidden while it waits on Folders left out (library/report.ts) is no final: not found
+    video(before.libraryId, "ast_hid", { width: 1080, height: 1920 });
+    libraryDb().prepare("UPDATE assets SET left_hidden_at = 1 WHERE id = 'ast_hid'").run();
+    const hid = await call("maker", "POST", url, { assetId: "ast_hid" });
+    expect(hid.status).toBe(404);
+    expect(await hid.json()).toEqual({ error: "No such video of yours" });
+
     video(before.libraryId, "ast_final", { width: 1080, height: 1920 });
     const linked = await call("maker", "POST", url, { versionId: "v_ast_final" });
     expect(linked.status).toBe(200);

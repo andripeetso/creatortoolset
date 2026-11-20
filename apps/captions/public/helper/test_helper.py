@@ -176,6 +176,7 @@ class Scan(unittest.TestCase):
             self.assertEqual([len(p["files"]) for p in pages], [3, 3, 1])
             self.assertEqual(len({p["scan"] for p in pages}), 1)
             self.assertEqual([p.get("complete", False) for p in pages], [False, False, True])
+            self.assertEqual([p["page"] for p in pages], [0, 1, 2])
             self.assertEqual(len(self.reads), 7)
             self.assertTrue(all(len(f["quick"]) == 64 for p in pages for f in p["files"]))
             # again: nothing read twice, a new scan id

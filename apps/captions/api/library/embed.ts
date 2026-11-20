@@ -194,7 +194,7 @@ export async function semanticHits(
     db
       .prepare(
         `SELECT e.version_id, e.chunk, e.start_s, e.vec FROM embeddings e JOIN assets a ON a.current_version_id = e.version_id
-         WHERE a.library_id = ? AND a.trashed_at IS NULL AND e.model = ? AND e.dims > 0${where.map((w) => ` AND ${w.sql}`).join("")}
+         WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND e.model = ? AND e.dims > 0${where.map((w) => ` AND ${w.sql}`).join("")}
          ORDER BY e.version_id, e.chunk`,
       )
       .all(libraryId, route.model, ...where.flatMap((w) => w.params)) as { version_id: string; chunk: number; start_s: number; vec: Uint8Array }[]
@@ -256,7 +256,7 @@ export function catchUpEmbeds(db = libraryDb()): number {
          (SELECT e.model FROM embeddings e WHERE e.version_id = v.id LIMIT 1) AS model
        FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
        LEFT JOIN jobs j ON j.version_id = v.id AND j.kind = 'embed'
-       WHERE a.trashed_at IS NULL AND (j.state IS NULL OR j.state IN ('done', 'needs_key'))
+       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (j.state IS NULL OR j.state IN ('done', 'needs_key'))
          AND (EXISTS (SELECT 1 FROM transcripts t WHERE t.version_id = v.id) OR EXISTS (SELECT 1 FROM descriptions d WHERE d.version_id = v.id))`,
     )
     .all() as { library_id: string; version_id: string; state: string | null; actor: string | null; model: string | null }[];

@@ -193,7 +193,7 @@ export function filterClauses(query: SearchQuery): { sql: string; params: (strin
 
 /** The SQL for one page of a library's assets, with `limit + 1` rows so the caller knows there is a next page. */
 export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { sql: string; params: (string | number)[]; limit: number } {
-  const where = ["a.library_id = ?", query.trashed ? "a.trashed_at IS NOT NULL" : "a.trashed_at IS NULL"];
+  const where = ["a.library_id = ?", query.trashed ? "a.trashed_at IS NOT NULL" : "a.trashed_at IS NULL AND a.left_hidden_at IS NULL"];
   const params: (string | number)[] = [libraryId];
   const fts = query.q ? ftsQuery(query.q) : null;
   if (fts) {

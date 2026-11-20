@@ -11,7 +11,7 @@ import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
 import { stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
 import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
-import { deviceOf } from "../lib/devices";
+import { deviceOf, isThisMachine, listDevices } from "../lib/devices";
 import { ownerKeeps } from "../../src/lib/wording";
 
 /**
@@ -366,14 +366,25 @@ export function libraryStatus(libraryId: string): LibraryStatus {
   const rows = db
     .prepare(
       `SELECT j.kind, SUM(j.state = 'done') AS done, SUM(j.state = 'failed') AS failed, SUM(j.state IN ('queued', 'running', 'needs_key')) AS open
-       FROM jobs j JOIN assets a ON a.current_version_id = j.version_id WHERE a.library_id = ? AND a.trashed_at IS NULL GROUP BY j.kind`,
+       FROM jobs j JOIN assets a ON a.current_version_id = j.version_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL GROUP BY j.kind`,
     )
     .all(libraryId) as { kind: string; done: number; failed: number; open: number }[];
   const stages = STAGES.flatMap((kind) => {
     const r = rows.find((x) => x.kind === kind);
     return r ? [{ kind, done: r.done, failed: r.failed, open: r.open, of: r.done + r.failed + r.open }] : [];
   });
-  return { ...head, stages };
+  // clips hidden on a computer that went silent and so went to the trash (report.ts settleSilent), by computer
+  const leftOut = db
+    .prepare("SELECT left_trashed_from AS computer, COUNT(*) AS clips FROM assets WHERE library_id = ? AND trashed_at IS NOT NULL AND left_trashed_from IS NOT NULL GROUP BY left_trashed_from ORDER BY computer")
+    .all(libraryId) as { computer: string; clips: number }[];
+  // clips hidden while they wait on a folder not read (report.ts hideLeft; the watch's on this server), by computer
+  const here = listDevices((x) => isThisMachine(x.id))[0]?.name ?? "this server";
+  const hidden = (
+    db
+      .prepare("SELECT left_hidden_on AS device, COUNT(*) AS clips FROM assets WHERE library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NOT NULL GROUP BY left_hidden_on")
+      .all(libraryId) as { device: string | null; clips: number }[]
+  ).map((r) => ({ computer: r.device ? (deviceOf(r.device)?.name ?? "a computer no longer paired") : here, clips: r.clips }));
+  return { ...head, stages, ...(leftOut.length ? { leftOut } : {}), ...(hidden.length ? { hidden } : {}) };
 }
 
 /**

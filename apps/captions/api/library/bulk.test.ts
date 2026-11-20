@@ -89,6 +89,25 @@ describe("Download as one zip", () => {
     }
   });
 
+  it("Run again skips a clip hidden while it waits on Folders left out (report.ts)", async () => {
+    seed("lh2", "Waiting", "waiting clip bytes 2");
+    libraryDb().prepare("UPDATE assets SET left_hidden_at = 1 WHERE id = 'lh2'").run();
+    expect(await (await call("owner-z", "POST", "/api/library/lib_z/jobs", { kinds: ["transcribe"], assetIds: ["c1", "lh2"] })).json()).toEqual({ clips: 1 });
+    libraryDb().prepare("DELETE FROM jobs WHERE version_id IN (SELECT id FROM asset_versions WHERE asset_id = 'lh2')").run();
+    libraryDb().prepare("DELETE FROM asset_versions WHERE asset_id = 'lh2'").run();
+    libraryDb().prepare("DELETE FROM assets WHERE id = 'lh2'").run();
+  });
+
+  it("leaves out a clip hidden while it waits on Folders left out (report.ts), as one in the trash", async () => {
+    seed("lho", "Waiting", "waiting clip bytes");
+    libraryDb().prepare("UPDATE assets SET left_hidden_at = 1 WHERE id = 'lho'").run();
+    const zip = Buffer.from(await (await call("owner-z", "GET", "/api/library/lib_z/zip?ids=c1,lho")).arrayBuffer());
+    expect(zip.includes("first clip bytes")).toBe(true);
+    expect(zip.includes("waiting clip bytes")).toBe(false);
+    libraryDb().prepare("DELETE FROM asset_versions WHERE asset_id = 'lho'").run();
+    libraryDb().prepare("DELETE FROM assets WHERE id = 'lho'").run();
+  });
+
   it("is 404 for another account, and when nothing asked for can be given", async () => {
     expect((await call("someone-else", "GET", "/api/library/lib_z/zip?ids=c1")).status).toBe(404);
     expect((await call("owner-z", "GET", "/api/library/lib_z/zip?ids=gone")).status).toBe(404);

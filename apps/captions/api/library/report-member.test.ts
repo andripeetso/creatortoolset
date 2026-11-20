@@ -64,6 +64,22 @@ it("a member's shared workspace: a known file gets one place row, an unknown one
   expect(after.libraries).toBe(0);
 });
 
+it("a member's place at a file their folder now leaves out turns gone, and the owner's clip stays", async () => {
+  version("ver_private", 5);
+  await applyReport(bo, [{ id: "fold_bo", state: "ok", files: [file("Private/p.mp4", 5)], unreadable: [] }]);
+  const place = () => d.prepare("SELECT state FROM version_places WHERE device = ? AND version_id = 'ver_private'").get(bo.id);
+  expect(place()).toEqual({ state: "verified" });
+  await changeStorage("bo", (st) => {
+    st.folders.find((f) => f.id === "fold_bo")!.leaveOut = ["Private"];
+  });
+  await applyReport(bo, [{ id: "fold_bo", state: "ok", files: [file("Private/p.mp4", 5)], unreadable: [] }]);
+  expect(place()).toEqual({ state: "gone" });
+  expect(d.prepare("SELECT trashed_at FROM assets WHERE id = 'ast_ver_private'").get()).toEqual({ trashed_at: null });
+  await changeStorage("bo", (st) => {
+    delete st.folders.find((f) => f.id === "fold_bo")!.leaveOut;
+  });
+});
+
 it("a stray library of the member's own for that workspace changes nothing: new places still go to the owner's", async () => {
   d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_stray', ?, 'Library', 'local', ?, 0)").run(homeOf("bo"), JSON.stringify({ projectId: BRAND }));
   const before = counts();

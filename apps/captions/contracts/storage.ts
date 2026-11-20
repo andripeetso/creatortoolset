@@ -113,6 +113,9 @@ export interface StorageFolder {
   checkedAt?: number;
   /** a Media folder that is also a destination for the library's copies */
   copyTo?: true;
+  /** a Media folder: the names of folders inside it, at any depth, whose files are left out of the Media Library (Settings →
+   *  Folders, Folders left out; notFootage). None: only what notFootage always leaves out. Nothing on disk is moved */
+  leaveOut?: string[];
   /** set by the page's view only, never stored: this folder's computer is not one of the account's ("Computer not found") */
   missing?: true;
 }
@@ -300,13 +303,70 @@ export const PHONE_UPLOADS_DIR = "Phone uploads";
 
 /**
  * A file under a Media folder that is not footage, by its path below the folder: inside one of `editorDirs` (see
- * editorDirsOf; apps/editor skips the same folders), inside a PHONE_UPLOADS_DIR folder, or a half-written file (".tmp", ".part": "clip.part.mp4" and
- * "clip.tmp" are; "party.mp4" and "clip.partial.mov" are not). Every scan leaves these out of the Media Library.
+ * editorDirsOf; apps/editor skips the same folders), inside a PHONE_UPLOADS_DIR folder, or a half-written file (".tmp",
+ * ".part": "clip.part.mp4" and "clip.tmp" are; "party.mp4" and "clip.partial.mov" are not). Every scan leaves these out of
+ * the Media Library, and the folders a Media folder's list names too (leftOutBy: only its list decides that).
  */
 export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set()): boolean {
   const parts = rel.split(/[\\/]/);
   const dirs = parts.slice(0, -1);
   return dirs.includes(PHONE_UPLOADS_DIR) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+}
+const nameKey = (n: string) => n.normalize("NFC").toLowerCase();
+
+/** Each list's names as compared and each folder's roots, made once per list or folder object (a pass reads thousands of paths). */
+const nameSets = new WeakMap<readonly string[], Set<string>>();
+const rootSets = new WeakMap<object, { own: string[]; reach: Record<string, string> }>();
+const rootKey = (r: string) => r.normalize("NFC").replace(/\/+$/, "");
+const rootsOf = (f: Pick<StorageFolder, "origin" | "reach" | "mountPath">) => {
+  let r = rootSets.get(f);
+  if (!r) {
+    r = {
+      own: [f.origin.path, f.mountPath].filter((x): x is string => !!x).map(rootKey),
+      reach: Object.fromEntries(Object.entries(f.reach ?? {}).map(([h, x]) => [h, rootKey(x.path)])),
+    };
+    rootSets.set(f, r);
+  }
+  return r;
+};
+
+/** Whether a file, by its path below a Media folder, is inside a folder named in `names` (StorageFolder.leaveOut), at any
+ *  depth. A privacy list fails safe: any case, either Unicode form (a Mac disk ignores case and may hand back decomposed names). */
+export function inLeftOut(rel: string, names: readonly string[]): boolean {
+  if (!names.length) return false;
+  let out = nameSets.get(names);
+  if (!out) nameSets.set(names, (out = new Set(names.map(nameKey))));
+  return rel.split(/[\\/]/).slice(0, -1).some((d) => out.has(nameKey(d)));
+}
+
+/**
+ * Whether `file` (a full path) is inside a folder that one of `folders` (Media folders) leaves out (inLeftOut with its
+ * leaveOut; the list only, never the other files notFootage leaves out). `host`: the computer the path is on, when it is
+ * known; only each folder's path there counts (the path it was added at, inside its container, or where that computer
+ * found its marker), so a folder at the same path on another computer never decides. No `host`: the path on any
+ * computer that found it counts. Every folder that holds the file counts, so a Media folder inside another, kept apart
+ * for another workspace, leaves out what either list names: the safer of the two, and one rule for every reader.
+ */
+export function leftOutBy(folders: ReadonlyArray<Pick<StorageFolder, "origin" | "reach" | "mountPath" | "leaveOut">>, file: string, host?: string): boolean {
+  const at = file.normalize("NFC");
+  return folders.some((f) => {
+    if (!f.leaveOut?.length) return false;
+    const r = rootsOf(f);
+    const roots = host === undefined ? [...r.own, ...Object.values(r.reach)] : [...(f.origin.host === host ? r.own : []), ...(r.reach[host] ? [r.reach[host]] : [])];
+    return roots.some((root) => at.startsWith(`${root}/`) && inLeftOut(at.slice(root.length + 1), f.leaveOut!));
+  });
+}
+
+/** At most this many names in a Media folder's leaveOut. */
+export const LEAVE_OUT_MAX = 50;
+
+/** A leaveOut list as sent (one folder name each, trimmed, no path), or null when it is not one; [] leaves nothing out.
+ *  `max`: the most names it may hold (a list an inner folder's merged into may hold more than LEAVE_OUT_MAX already). */
+export function parseLeaveOut(v: unknown, max = LEAVE_OUT_MAX): string[] | null {
+  if (!Array.isArray(v) || v.length > max) return null;
+  const names = v.map((n) => (typeof n === "string" ? n.trim().normalize("NFC") : ""));
+  if (names.some((n) => !n || n.length > 255 || n === "." || n === ".." || /[\\/\0]/.test(n))) return null;
+  return [...new Set(names)];
 }
 
 /**

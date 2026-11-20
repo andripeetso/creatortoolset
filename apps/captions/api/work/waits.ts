@@ -337,7 +337,7 @@ class Ctx {
         .prepare(
           `SELECT j.id FROM jobs j
              JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
-           WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.created_by = ? AND a.trashed_at IS NULL
+           WHERE j.kind = 'look' AND j.state = 'needs_key' AND j.error = ? AND v.created_by = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
            ORDER BY v.id IN (SELECT value FROM json_each(?)) DESC, j.id LIMIT 200`,
         )
         .all(MAC_WAITS, owner, JSON.stringify(firstClips(this.now))) as { id: number }[];
@@ -695,6 +695,8 @@ function candidateJobs(libraryId: string, now: number): (JobRow & { source_key: 
     .prepare(
       `SELECT j.*, v.source_key FROM jobs j LEFT JOIN asset_versions v ON v.id = j.version_id
        WHERE j.library_id = ?
+         -- a clip hidden while it waits on Folders left out (library/report.ts) waits for nothing here
+         AND NOT EXISTS (SELECT 1 FROM asset_versions hv JOIN assets ha ON ha.id = hv.asset_id WHERE hv.id = j.version_id AND ha.left_hidden_at IS NOT NULL)
          AND ((j.state = 'queued' AND j.run_after <= ? AND NOT ${HELD_SQL} AND j.kind IN (${marks}))
               OR (j.kind = 'look' AND j.state = 'needs_key' AND j.error = ?))
        ORDER BY j.id LIMIT 500`,

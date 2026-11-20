@@ -191,7 +191,7 @@ export async function catchUpPictures(db = libraryDb()): Promise<number> {
         .prepare(
           `SELECT d.version_id, d.kind, d.storage_key, a.library_id, v.created_by FROM derivatives d JOIN assets a ON a.current_version_id = d.version_id
              JOIN asset_versions v ON v.id = d.version_id JOIN libraries l ON l.id = a.library_id
-           WHERE a.trashed_at IS NULL AND a.kind IN ('video', 'image') AND d.kind IN ('thumb', 'looksheets') AND d.storage_key IS NOT NULL
+           WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind IN ('video', 'image') AND d.kind IN ('thumb', 'looksheets') AND d.storage_key IS NOT NULL
              AND COALESCE(json_extract(l.settings, '$.pictures'), 1)
              AND (a.library_id || '/' || IFNULL(v.created_by, '')) NOT IN (SELECT value FROM json_each(?))
              AND NOT EXISTS (SELECT 1 FROM pictures p WHERE p.version_id = d.version_id AND p.model = ? AND (p.seg = -1) = (d.kind = 'thumb'))
@@ -245,7 +245,7 @@ function libraryRows(libraryId: string, where: { sql: string; params: (string | 
     libraryDb()
       .prepare(
         `SELECT p.version_id, p.seg, p.start_s, p.vec FROM pictures p JOIN assets a ON a.current_version_id = p.version_id
-         WHERE a.library_id = ? AND a.trashed_at IS NULL AND p.model = ? AND length(p.vec) > 0${where.map((w) => ` AND ${w.sql}`).join("")}`,
+         WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND p.model = ? AND length(p.vec) > 0${where.map((w) => ` AND ${w.sql}`).join("")}`,
       )
       .all(libraryId, PICTURE_MODEL, ...where.flatMap((w) => w.params)) as (Omit<Row, "vec"> & { vec: Uint8Array })[]
   ).map((r) => ({ ...r, vec: vecOf(r.vec) }));

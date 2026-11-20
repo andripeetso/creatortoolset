@@ -268,6 +268,9 @@ export interface ReportFolder {
   scan?: string;
   /** this page ends the listing: every row of this folder on this computer that the listing did not name is gone */
   complete?: boolean;
+  /** the page's number in its listing, from 0 (Mac app and helper from 2026-11-20): a listing counts as whole only when
+   *  every page up to the last came; one from a computer that sends none never counts so for Folders left out */
+  page?: number;
   files?: ReportFile[];
   /** folders (paths on that computer) that could not be read in time: their rows become unchecked, never gone */
   unreadable?: string[];
