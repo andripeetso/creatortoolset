@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in Creator Toolset does not work the way the help center says it should.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please search existing issues and the [help center](https://creatortoolset.com/docs) first.
+        Do not paste API keys, passwords, or customer footage here. For a security problem, report it privately from the repository's Security tab instead (Report a vulnerability).
+
+  - type: input
+    id: app-version
+    attributes:
+      label: Creator Toolset version
+      description: The Mac app version (shown in its About window), or the release your own server runs.
+      placeholder: "for example 0.18.16"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where it happened
+      options:
+        - Mac app
+        - Phone (iPhone app or phone browser)
+        - Web app (desktop browser)
+        - Server (your own server, Docker)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: server-kind
+    attributes:
+      label: Server kind
+      description: "Which server the app was connected to: This Mac is the server built into the Mac app, Your own server is one you run yourself. Creator Toolset Cloud is not open to add yet, so choose it only if the app shows it to you."
+      options:
+        - This Mac (built into the Mac app)
+        - Your own server
+        - Creator Toolset Cloud
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you clicked or typed, in order. Name the tool you were in (Caption Studio, Editor, Review, Content Workshop and so on).
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Include any message the app showed, word for word.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Mac app: Servers menu, then Open server log. Paste the lines around the error. Remove names, file paths and keys first. Leave this empty if you have no log."
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and the help center.
+          required: true
+        - label: I removed API keys, passwords, and personal or customer footage from this report.
+          required: true
