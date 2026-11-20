@@ -28,6 +28,8 @@ export function layoutIn(base: string, names: readonly string[] | undefined): { 
 /** The names to make inside `base`: the uses not found there (all of them when nothing is known of it). */
 export const missingIn = (names: readonly string[] | undefined): string[] => layoutIn("", names).filter((l) => !l.found).map((l) => FOLDER_LABELS[l.use]);
 
+const fold = "grid transition-[grid-template-rows] duration-[260ms] ease-out motion-reduce:transition-none";
+
 const wrapAtSlashes = (p: string) => p.replace(/\//g, "/​");
 
 /** One line of the summary: the use, the folder (its name inside the Library folder, else its full path), and a note. */
@@ -35,6 +37,8 @@ export interface SummaryLine {
   use: LibraryUse;
   folder: string;
   note?: string;
+  /** a button on the line that picks this one folder by itself (the owner page: Set…, Change…, Add folder…) */
+  action?: { label: string; onClick: () => void };
 }
 
 /**
@@ -93,21 +97,31 @@ export function LibraryFolderBox({
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </div>
-        {/* folded: the summary; unrolled: the rows. The height moves between them (none with reduced motion) */}
-        <div className={cn("grid transition-[grid-template-rows] duration-[260ms] ease-out motion-reduce:transition-none", open ? "grid-rows-[0fr_1fr]" : "grid-rows-[1fr_0fr]")}>
+        {/* folded: the summary; unrolled: the rows. Each folds in its own one-row grid: in one shared two-row grid the hidden
+            0fr row's content sizes the 1fr row, so the folded summary stood as tall as the rows (11-20) */}
+        <div className={cn(fold, open ? "grid-rows-[0fr]" : "grid-rows-[1fr]")}>
           <div className="min-h-0 overflow-hidden" inert={open || undefined}>
             <dl aria-label="The folders" className={cn("grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 px-3 pb-3 pt-1 text-xs transition-opacity motion-reduce:transition-none sm:px-4", open && "opacity-0")}>
               {lines.map((l) => (
                 <div key={l.use} className="contents">
                   <dt className="text-muted-foreground">{FOLDER_LABELS[l.use]}</dt>
-                  <dd className="min-w-0 truncate" title={l.folder}>
-                    {l.folder}
-                    {l.note && <span className="text-muted-foreground"> · {l.note}</span>}
+                  <dd className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate" title={l.folder}>
+                      {l.folder}
+                      {l.note && <span className="text-muted-foreground"> · {l.note}</span>}
+                    </span>
+                    {l.action && (
+                      <Button size="sm" variant="ghost" className="h-6 shrink-0 px-2 text-xs" onClick={l.action.onClick}>
+                        {l.action.label}
+                      </Button>
+                    )}
                   </dd>
                 </div>
               ))}
             </dl>
           </div>
+        </div>
+        <div className={cn(fold, open ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
           <div className={cn("min-h-0 overflow-hidden bg-background transition-opacity motion-reduce:transition-none", !open && "opacity-0")} inert={!open || undefined}>
             <div className="border-t">{children}</div>
           </div>

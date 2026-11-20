@@ -78,6 +78,10 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
     const w = watch.data?.folders.find((x) => x.path === f.origin.path && x.adding > 0);
     return w ? [{ f, count: w.adding }] : [];
   });
+  // each folder is picked by itself (11-20, Andri): not set: Set…; Source media: Add folder… for one more; Project files and
+  // Final exports: Change… (the one picked takes the old one's place)
+  const buttonFor = (role: Role) =>
+    !folders.some((f) => f.role === role) ? LIBRARY_WORDS.setFolder : role === "footage" ? LIBRARY_WORDS.addFolder : LIBRARY_WORDS.changeFolder;
   const nameOf = (f: StorageFolder) => (base && parent(f) === base ? f.name : f.origin.path);
 
   return (
@@ -88,7 +92,7 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
         head={base ? LIBRARY_WORDS.foldersInIt : LIBRARY_WORDS.foldersInUse}
         lines={ROLES.map((role) => {
           const mine = folders.filter((f) => f.role === role);
-          return { use: role as "footage" | "projects" | "library", folder: mine.length ? mine.map(nameOf).join(", ") : LIBRARY_WORDS.notSet };
+          return { use: role as "footage" | "projects" | "library", folder: mine.length ? mine.map(nameOf).join(", ") : LIBRARY_WORDS.notSet, action: { label: buttonFor(role), onClick: () => setAdding(role) } };
         })}
         open={unrolled}
         onToggle={() => setUnrolled((o) => !o)}
@@ -120,16 +124,9 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
                   ) : undefined
                 }
                 control={
-                  // a folder not set yet: Set…; Source media: Add folder… for one more. A set one is changed from its own menu
-                  none ? (
-                    <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
-                      {LIBRARY_WORDS.setFolder}
-                    </Button>
-                  ) : role === "footage" ? (
-                    <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
-                      {LIBRARY_WORDS.addFolder}
-                    </Button>
-                  ) : undefined
+                  <Button size="sm" variant="outline" onClick={() => setAdding(role)}>
+                    {buttonFor(role)}
+                  </Button>
                 }
               />
               {mine.map((f) => (
@@ -148,7 +145,11 @@ export function OwnerFolders({ library, workspace, onChange, onError }: { librar
           devices={devices}
           serverDisks={store.data.serverDisks}
           here={store.data.here}
-          onChanged={refresh}
+          onChanged={() => {
+            refresh();
+            // a Project files or Final exports folder picked by itself: these are no longer the default ones, so not locked
+            if (adding !== "footage" && defaults) void setDefaults(false);
+          }}
         />
       )}
     </Card>
