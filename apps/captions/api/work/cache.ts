@@ -1,6 +1,6 @@
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { WorkClaimBody, WorkOffline } from "../../contracts/work";
+import type { MadeProxy, WorkClaimBody, WorkOffline } from "../../contracts/work";
 import { env } from "../lib/env";
 
 /**
@@ -86,6 +86,21 @@ export const cacheLimit = (): number => {
 };
 
 // the file is named inside the try: no account yet means no cache, and an empty list
+/** What became of each proxy a plug-in asked for (contracts/work.ts MadeProxy), kept beside the cache: its size, or skipped. */
+const madeFile = () => path.join(proxiesDir(), "made.json");
+export function madeProxies(): Record<string, MadeProxy> {
+  try {
+    const v = JSON.parse(readFileSync(madeFile(), "utf8")) as unknown;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, MadeProxy>) : {};
+  } catch {
+    return {};
+  }
+}
+export function noteMade(id: string, made: MadeProxy): void {
+  mkdirSync(proxiesDir(), { recursive: true });
+  writeFileSync(madeFile(), JSON.stringify({ ...madeProxies(), [id]: made }));
+}
+
 const readIds = (file: () => string): string[] => {
   try {
     const v = JSON.parse(readFileSync(file(), "utf8")) as unknown;
@@ -210,5 +225,10 @@ export function cacheReport(): WorkClaimBody["cache"] {
     versions,
     ...(parts.length ? { parts } : {}),
     dir: proxiesDir(),
+    // a size for a proxy still here, and every skip (so it isn't asked for again)
+    ...(() => {
+      const made = Object.fromEntries(Object.entries(madeProxies()).filter(([id, m]) => "skip" in m || versions.includes(id)));
+      return Object.keys(made).length ? { made } : {};
+    })(),
   };
 }

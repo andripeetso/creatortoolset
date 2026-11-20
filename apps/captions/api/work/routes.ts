@@ -6,7 +6,7 @@ import { Hono, type Context } from "hono";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { parseMachine, type Device } from "../../contracts/providers";
-import { WORK_MIN, type WorkClaim, type WorkResult } from "../../contracts/work";
+import { WORK_MIN, type MadeProxy, type WorkClaim, type WorkResult } from "../../contracts/work";
 import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker";
 import { deviceForToken, deviceOf, noteMachine, setDeviceWork, touchDevice } from "../lib/devices";
 import { onLeave } from "../lib/sync";
@@ -46,6 +46,19 @@ const held = (id: number, device: string): JobRow | undefined =>
 const strings = (v: unknown, max: number): string[] | null =>
   Array.isArray(v) && v.length <= max && v.every((x) => typeof x === "string" && x.length <= 100) ? (v as string[]) : null;
 
+/** A cache report's `made` (contracts/work.ts MadeProxy): each a size or a skip, at most 20 000; anything else is none. */
+function madeOf(v: unknown): Record<string, MadeProxy> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Record<string, MadeProxy> = {};
+  for (const [id, m] of Object.entries(v as Record<string, unknown>).slice(0, 20_000)) {
+    const x = (m ?? {}) as Record<string, unknown>;
+    if (id.length > 100) continue;
+    if (x.skip === true) out[id] = { skip: true };
+    else if (Number.isSafeInteger(x.w) && Number.isSafeInteger(x.h) && (x.w as number) > 0 && (x.h as number) > 0) out[id] = { w: x.w as number, h: x.h as number };
+  }
+  return out;
+}
+
 export const workApp = new Hono();
 
 // library jobs (phase 6): their own ids, under work/lib/:id/
@@ -70,6 +83,7 @@ workApp.post("/claim", async (c) => {
         ...(strings(raw.versions, 20_000) ? { versions: raw.versions as string[] } : {}),
         // where its cache is on that computer: a plug-in's proxy plays from there (lib/plugin.ts computerProxies)
         ...(typeof raw.dir === "string" && raw.dir.startsWith("/") && raw.dir.length <= 1024 ? { dir: raw.dir } : {}),
+        ...(madeOf(raw.made) ? { made: madeOf(raw.made)! } : {}),
       }
     : undefined;
   // its unfinished downloads: asked about with the versions, never counted as held

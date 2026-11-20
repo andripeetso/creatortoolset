@@ -12,7 +12,7 @@ import type { ServerPlugin } from "../lib/plugin";
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "computer-proxies-"));
 process.env.DATA_DIR = dir;
 const { ffmpegCommand } = await import("../ffmpeg-runtime");
-const { keptProxies, proxyPath, setCacheAccount } = await import("./cache");
+const { keptProxies, madeProxies, proxyPath, setCacheAccount } = await import("./cache");
 const { makeKept } = await import("./computer");
 const { claimExtras } = await import("./offline");
 const { mountPlugins } = await import("../lib/plugin");
@@ -38,9 +38,19 @@ describe("a plug-in's proxies made on the computer", () => {
     expect(existsSync(proxyPath("ext_outside")) || existsSync(proxyPath("ext_dots"))).toBe(false);
     expect(await makeKept([{ id: "ext_master", path: master, under: censored }])).toBe(true);
     expect(existsSync(proxyPath("ext_master"))).toBe(true);
-    expect(keptProxies()).toContain("ext_master"); // kept: never trimmed by the size limit
+    expect(keptProxies()).not.toContain("ext_master"); // a cache file like any proxy: the size limit counts it
+    expect(madeProxies().ext_master).toEqual({ w: 1280, h: 720 }); // its size goes in the cache report
     // made once: not again while it is there
     expect(await makeKept([{ id: "ext_master", path: master, under: censored }])).toBe(false);
+  }, 60_000);
+
+  it("only for a heavy file when asked so: a light one is recorded as skipped and never asked again", async () => {
+    const light = path.join(censored, "light.mp4");
+    execFileSync(ffmpegCommand(), ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=duration=1:size=1280x720:rate=30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", light]);
+    expect(await makeKept([{ id: "src_light", path: light, under: censored, heavyOnly: true }])).toBe(true);
+    expect(existsSync(proxyPath("src_light"))).toBe(false);
+    expect(madeProxies().src_light).toEqual({ skip: true });
+    expect(await makeKept([{ id: "src_light", path: light, under: censored, heavyOnly: true }])).toBe(false);
   }, 60_000);
 
   it("the claim asks only for the ones the computer lacks, and never tells it to drop the plug-in's", async () => {
