@@ -369,7 +369,7 @@ function proxiesOf(db: DatabaseSync, ids: string[], device?: string): Map<string
   for (const r of rows) {
     const p = (r.probe ? JSON.parse(r.probe) : {}) as Partial<ProbeSummary>;
     if ((!r.server && !r.cached) || !p.width || !p.height) continue;
-    // the proxy is drawn upright by the file's own rotation (ffmpeg turns it on decode); the library's turn is the player's
+    // the proxy is drawn upright by the file's own rotation (turned when it is made); the library's turn is the player's
     const [w, h] = (p.rotation ?? 0) % 180 ? [p.height, p.width] : [p.width, p.height];
     out.set(r.id, { ...proxySize(w, h, libraryProxyQuality(r.library_id)), ...(r.server ? { server: true as const } : {}), ...(r.cached ? { cached: true as const } : {}) });
   }

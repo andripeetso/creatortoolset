@@ -70,8 +70,9 @@ export default defineConfig({
     // No free-disk reserve in tests: the test machine's temp disk may be a small one that other runs fill (a /tmp in
     // memory), and the 20 GB default then refused every file saved to the Media Library. The reserve's own tests
     // (api/library/routes.test.ts) set it themselves. No cut model (api/library/cuts.ts): a test machine with a graphics
-    // card would fetch it, and the readings tests pin are cutsOf's.
-    env: { LIBRARY_DISK_RESERVE_GB: "0", CT_CUT_MODEL: "0", CT_PICTURE_MODEL: "0" },
+    // card would fetch it, and the readings tests pin are cutsOf's. No proxy floor (api/work/cache.ts roomFor): a test's
+    // scratch disk is small; api/work/computer-proxies.test.ts sets one where it tests it.
+    env: { LIBRARY_DISK_RESERVE_GB: "0", CT_PROXY_FLOOR: "0", CT_CUT_MODEL: "0", CT_PICTURE_MODEL: "0" },
     projects: [
       {
         extends: true,

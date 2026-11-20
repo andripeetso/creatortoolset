@@ -11,6 +11,7 @@ import type { ServerPlugin } from "../lib/plugin";
 // keeps the proxy in its cache, never sent.
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "computer-proxies-"));
 process.env.DATA_DIR = dir;
+process.env.CT_PROXY_FLOOR = "0"; // a test's scratch disk may be small: only the floor test sets one
 const { ffmpegCommand } = await import("../ffmpeg-runtime");
 const { keptProxies, madeProxies, proxyPath, setCacheAccount } = await import("./cache");
 const { makeKept } = await import("./computer");
@@ -52,7 +53,7 @@ describe("a plug-in's proxies made on the computer", () => {
       expect(madeProxies().ext_full).toBeUndefined(); // not skipped for good: made once there is room
       expect(existsSync(proxyPath("ext_master"))).toBe(true); // and nothing was trimmed for a proxy that could never fit
     } finally {
-      delete process.env.CT_PROXY_FLOOR;
+      process.env.CT_PROXY_FLOOR = "0";
     }
   }, 60_000);
 
