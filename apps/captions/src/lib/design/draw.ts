@@ -600,14 +600,17 @@ function place(ctx: Ctx, l: Layer) {
  * A container's layers (or a frame's), bottom first, but those not shown (hidden; a reference one in a saved picture).
  * A mask is not drawn: the layers above it, up to the next mask, are cut to it (a hidden one masks nothing).
  */
+/** Whether a layer is drawn: not hidden, and a reference one only on the designer's canvas. */
+const shown = (k: Layer) => !k.hidden && (drawing.designing || !k.reference);
+
 function drawLayers(ctx: Ctx, layers: readonly Layer[], loaded: Loaded, frame: string, exact: boolean, area: Area) {
-  const shown = (k: Layer) => !k.hidden && (drawing.designing || !k.reference);
   let mask: Layer | null = null;
   let run: Layer[] = [];
   const flush = () => {
     const m = mask;
     if (m && run.length) {
       const under = run;
+      // shortcut: the masked layers are drawn together on a sheet of their own, so a blend or a background blur among them mixes only with what is cut with them; lay them on the canvas one by one if that is ever missed
       masked(ctx, paintedBox(m), m.mask!, (g) => (m.mask === "vector" ? shapeOf(g, m, loaded, frame, exact) : drawLayer(g, { ...m, mask: undefined }, loaded, frame, exact, area)), (g, s) => {
         // a background blur in the masked layers reads what is under it on their own sheet
         const was = drawing.area;
@@ -633,21 +636,33 @@ function drawLayers(ctx: Ctx, layers: readonly Layer[], loaded: Loaded, frame: s
   flush();
 }
 
-/** What a layer's shape alone covers, solid, as it lies (a combined shape's part, a shape mask): no lines, effects or fade. */
+/** What a layer's shape alone covers, solid, as it lies (a combined shape's part, a shape mask): no lines, effects or fade, nor those of a group's layers. */
 const SOLID = [{ type: "solid", color: "#000000" }] as const;
 function shapeOf(g: Ctx, k: Layer, loaded: Loaded, frame: string, exact: boolean) {
   g.save();
   place(g, k);
-  paintLayer(g, { ...k, fills: [...SOLID], strokes: [], effects: [], shadow: undefined, blur: undefined } as Layer, loaded, true, frame, exact);
+  if (isGroup(k) && !k.boolean) {
+    // a group: its box's own shape (cutting its layers when it clips) and each of its shown layers' shapes
+    if (k.box) {
+      g.beginPath();
+      roundedRect(g, 0, 0, k.w, k.h, k.radius, k.smooth);
+      g.fillStyle = "#000000";
+      g.fill();
+      if (k.clip) g.clip();
+    }
+    for (const c of k.layers) if (shown(c)) shapeOf(g, c, loaded, frame, exact);
+  } else paintLayer(g, { ...k, fills: [...SOLID], strokes: [], effects: [], shadow: undefined, blur: undefined } as Layer, loaded, true, frame, exact);
   g.restore();
 }
 
 /** A boolean group: its shown layers' shapes combined (compose.ts), in its own fills and lines. */
 function combined(ctx: Ctx, l: GroupLayer, loaded: Loaded, cast: boolean, frame: string, exact: boolean) {
-  const parts = l.layers.filter((k) => !k.hidden && (drawing.designing || !k.reference));
+  const parts = l.layers.filter(shown);
   const lines = strokesOf(l).filter((s) => !s.hidden && s.width > 0);
   const reach = Math.max(0, ...lines.map((s) => (s.side === "inside" ? 0 : s.width)));
-  const box = { x: -reach, y: -reach, w: l.w + 2 * reach, h: l.h + 2 * reach };
+  // the box, and whatever of its layers' shapes lies past it (words that run over their box, a curve's bulge)
+  const b = boundsOf([{ x: 0, y: 0, w: l.w, h: l.h }, ...parts.map(paintedBox)]);
+  const box = { x: b.x - reach, y: b.y - reach, w: b.w + 2 * reach, h: b.h + 2 * reach };
   combine(
     ctx,
     box,
@@ -669,8 +684,7 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   // soften a hard shadow when zoomed in
   // a container that fades or blends does so as one: its layers are drawn together first, and laid down at once
   // and throws its shadow once, from all its layers together (each layer's own would darken where they overlap)
-  // (a combined shape with lines is made once and kept: its lines are worked from its pixels)
-  const whole = isGroup(l) && ((l.opacity ?? 1) < 1 || !!l.blend || fx.some((e) => e.type === "shadow") || (!!l.boolean && strokesOf(l).some((s) => !s.hidden)));
+  const whole = isGroup(l) && ((l.opacity ?? 1) < 1 || !!l.blend || fx.some((e) => e.type === "shadow"));
   const own = whole || worksPixels(fx) || fx.some((e) => e.type === "shadow" && ((e.spread ?? 0) !== 0 || strokesOf(l).some((st) => !st.hidden))) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
   const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
   const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
@@ -744,8 +758,7 @@ function inkOf(ctx: Ctx, l: Layer): number {
     // a container's layers, and its own lines, past its box (none past the edge that cuts them)
     const own = Math.max(0, ...strokesOf(l).filter((s) => !s.hidden).map((s) => Math.max(s.width * 1.5, ...(s.sides ?? [0]))));
     const inner = l.layers.filter((k) => !k.hidden);
-    // a combined shape is drawn in its box (shapeBounds) but for its lines
-    if (l.clip || l.boolean || !inner.length) return own;
+    if (l.clip || !inner.length) return own;
     const b = boundsOf(inner.map(paintedBox));
     return Math.max(own, -b.x, -b.y, b.x + b.w - l.w, b.y + b.h - l.h);
   }

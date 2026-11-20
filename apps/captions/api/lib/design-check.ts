@@ -664,8 +664,11 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
           sayL("a group with no layers in it: left out");
           continue;
         }
-        // a boolean group given no fills is drawn in its bottom layer's fills and lines, as one made by hand is
-        const look = clean.boolean && !clean.fills && inner[0] ? { ...(fillsOf(inner[0]).length ? { fills: fillsOf(inner[0]) } : {}), ...(!clean.strokes && strokesOf(inner[0]).length ? { strokes: strokesOf(inner[0]) } : {}) } : {};
+        // a boolean group given no fills is drawn in its bottom layer's fills and lines, as one made by hand is (a grey
+        // when that has none: a picture, a group), never in nothing
+        const bottom = clean.boolean && !clean.fills && inner[0] ? fillsOf(inner[0]) : null;
+        if (bottom && !bottom.length) sayL('a boolean group is drawn in its own "fills" (its layers\' colours are not drawn): given none, it is grey');
+        const look = bottom ? { fills: bottom.length ? bottom : [{ type: "solid" as const, color: "#d9d9d9" }], ...(!clean.strokes && strokesOf(inner[0]!).length ? { strokes: strokesOf(inner[0]!) } : {}) } : {};
         out.push({ ...clean, id, layers: inner, ...look });
       }
       return out;

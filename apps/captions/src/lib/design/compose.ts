@@ -35,14 +35,22 @@ export function sheetOf(ctx: Ctx, b: Area): Area | null {
   return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
 }
 
-/** A blank canvas of sheet `s`, drawn on as ctx draws now (the same units and place). */
-function blank(ctx: Ctx, s: Area): { canvas: Canvas; g: Ctx } | null {
+/** A blank canvas of sheet `s`, drawn on as ctx draws now (the same units and place). `read`: its pixels are read back (kept off the graphics card). */
+function blank(ctx: Ctx, s: Area, read = false): { canvas: Canvas; g: Ctx } | null {
   const canvas = newCanvas(s.w, s.h);
-  const g = canvas?.getContext("2d", { willReadFrequently: true }) as Ctx | null | undefined;
+  const g = canvas?.getContext("2d", read ? { willReadFrequently: true } : undefined) as Ctx | null | undefined;
   if (!canvas || !g) return null;
   const t = ctx.getTransform();
   g.setTransform(t.a, t.b, t.c, t.d, t.e - s.x, t.f - s.y);
   return { canvas, g };
+}
+
+/** A sheet's canvas emptied. */
+function clear(g: Ctx, s: Area) {
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, s.w, s.h);
+  g.restore();
 }
 
 /** `by` laid on `g` with this compositing, pixel for pixel (both a sheet's size). */
@@ -76,9 +84,11 @@ export function combine(ctx: Ctx, box: Area, op: DesignBoolean, shapes: readonly
   const cover = s && blank(ctx, s);
   if (!s || !cover || !shapes.length) return;
   shapes[0]!(cover.g);
+  // one canvas for every shape after the first, emptied before each
+  const one = shapes.length > 1 ? blank(ctx, s) : null;
   for (const draw of shapes.slice(1)) {
-    const one = blank(ctx, s);
     if (!one) return;
+    clear(one.g, s);
     draw(one.g);
     lay(cover.g, one.canvas, OPS[op]);
   }
@@ -125,17 +135,26 @@ function lineOf(ctx: Ctx, s: Area, cover: Canvas, w: number, side: Stroke["side"
   return outer;
 }
 
-/** `src` grown by r pixels every way: laid again round rings of steps out to r (the shape itself under them). */
+/**
+ * `src` grown by r pixels every way, in steps of 1, 1, 2, 4 … (the last what is left): each step lays what is grown so
+ * far round a ring of its own size, and is never wider than what it lays is thick, so no part, however thin, is left
+ * with gaps; about 16 draws a step.
+ */
 function grow(ctx: Ctx, s: Area, src: Canvas, r: number) {
   const out = blank(ctx, s);
-  if (!out) return null;
+  const was = blank(ctx, s);
+  if (!out || !was) return null;
   lay(out.g, src, "source-over");
-  for (const part of [1, 2 / 3, 1 / 3]) {
-    const rr = r * part;
-    if (rr < 0.5) continue;
-    // steps close enough that the edge between two is less than a pixel off the ring
-    const n = Math.min(96, Math.max(8, Math.ceil(rr * 1.5)));
-    for (let i = 0; i < n; i++) lay(out.g, src, "source-over", rr * Math.cos((2 * Math.PI * i) / n), rr * Math.sin((2 * Math.PI * i) / n));
+  let done = 0;
+  while (done < r - 0.25) {
+    // as wide as what is grown so far (1 at first), the last step what is left
+    const k = Math.min(Math.max(1, done), r - done);
+    clear(was.g, s);
+    lay(was.g, out.canvas, "source-over");
+    // steps close enough on the ring that its edge between two is well under a pixel off it
+    const n = Math.min(32, Math.max(8, Math.ceil(k * 1.5)));
+    for (let i = 0; i < n; i++) lay(out.g, was.canvas, "source-over", k * Math.cos((2 * Math.PI * i) / n), k * Math.sin((2 * Math.PI * i) / n));
+    done += k;
   }
   return out;
 }
@@ -147,7 +166,7 @@ function grow(ctx: Ctx, s: Area, src: Canvas, r: number) {
 export function masked(ctx: Ctx, box: Area, mode: DesignMask, mask: (g: Ctx) => void, run: (g: Ctx, sheet: Area) => void): void {
   const s = sheetOf(ctx, box);
   const top = s && blank(ctx, s);
-  const cut = s && blank(ctx, s);
+  const cut = s && blank(ctx, s, mode === "luminance");
   if (!s || !top || !cut) return;
   run(top.g, s);
   mask(cut.g);

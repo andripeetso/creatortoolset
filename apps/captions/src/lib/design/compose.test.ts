@@ -75,6 +75,57 @@ describe("combined shapes", () => {
   });
 });
 
+describe("combined shapes: lines, parts and cost", () => {
+  const BLUE_LINE = (more: object = {}) => ({ color: "#0000ff", width: 4, ...more });
+  const ring = (line: object) => combined("subtract", [circle("a", 10, 10, 40), circle("b", 20, 20, 20)], { strokes: [BLUE_LINE(line)] });
+
+  it("a line outside or inside lies on that side of the edge only", () => {
+    const outside = draw([ring({ side: "outside" })]);
+    // the outer edge is at y 10 above the middle: outside it 6..10, inside it the ring
+    expect([outside.at(30, 8), outside.at(30, 12)]).toEqual([BLUE, RED]);
+    const inside = draw([ring({ side: "inside" })]);
+    expect([inside.at(30, 8), inside.at(30, 12)]).toEqual([WHITE, BLUE]);
+  });
+
+  it("a wide line round a thin part has no gaps in it, at twice the pixels too", () => {
+    // a bar 1 high, lined 16 wide outside: everything from 16 above it to 16 below it is the line or the bar
+    const bar = { id: "bar", type: "shape", shape: "rect", fill: "#000000", x: 10, y: 30, w: 60, h: 1 } as Layer;
+    for (const scale of [1, 2]) {
+      const d = draw([combined("union", [bar], { strokes: [BLUE_LINE({ width: 16, side: "outside" })] })], {}, scale);
+      for (let y = 15; y <= 46; y++) if (y !== 30) expect(d.at(40, y), `y ${y} at ${scale}×`).toEqual(BLUE);
+    }
+  });
+
+  it("a group as a part counts its layers' shapes only, not their shadows or fades", () => {
+    const shadowed = { id: "inner", type: "group", x: 0, y: 0, w: 20, h: 20, layers: [{ id: "s", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 20, h: 20, opacity: 0.3, effects: [{ type: "shadow", color: "#000000", opacity: 1, blur: 0, x: 30, y: 0 }] }] } as Layer;
+    const d = draw([combined("union", [shadowed, circle("c", 60, 30, 10)])]);
+    // the square solid in the union's colour; where its shadow fell, nothing
+    expect([d.at(10, 10), d.at(40, 10)]).toEqual([RED, WHITE]);
+  });
+
+  it("draws what of a part lies past its box (a curve's bulge)", () => {
+    const bulge = { id: "p", type: "path", x: 0, y: 0, w: 40, h: 20, closed: true, fill: "#000000", points: [{ x: 0, y: 1, out: [0, -2] }, { x: 1, y: 1, in: [0, -2] }] } as Layer;
+    // the group hugs the path's box (20, 30, 40 × 20); the curve reaches 10 above it: (40, 25) is inside it
+    expect(draw([combined("union", [bulge], { x: 20, y: 30, w: 40, h: 20 })]).at(40, 25)).toEqual(RED);
+  });
+
+  it("makes three canvases for five parts, not one a part", () => {
+    let made = 0;
+    vi.stubGlobal("OffscreenCanvas", class extends Canvas {
+      constructor(w: number, h: number) {
+        super(w, h);
+        made++;
+      }
+    });
+    try {
+      draw([combined("union", [0, 1, 2, 3, 4].map((n) => circle(`c${n}`, n * 12, 10, 20)))]);
+    } finally {
+      vi.stubGlobal("OffscreenCanvas", Canvas);
+    }
+    expect(made).toBe(3);
+  });
+});
+
 describe("masks", () => {
   const pic = (more: object = {}): Layer => ({ id: "pic", type: "image", picture: "pic", fit: "cover", x: 0, y: 0, w: W, h: H, ...more }) as Layer;
   const blob = (more: object = {}): Layer => circle("m", 20, 10, 40, { mask: "alpha", ...more });
@@ -115,6 +166,16 @@ describe("masks", () => {
     expect(half[0]).toBeLessThan(145);
     expect(draw([blob({ ...faint, mask: "luminance" }), pic()]).at(40, 30)[0]).toBeCloseTo(half[0]!, -1);
     expect(draw([blob({ ...faint, mask: "vector" }), pic()]).at(40, 30)).toEqual(BLUE);
+  });
+
+  it("cuts in a turned group as it lies, and by its light at twice the pixels", () => {
+    const strip = { id: "m", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 40, h: 10, mask: "alpha" } as Layer;
+    // turned a quarter about its middle (40, 25): the strip stands up, x 35..45, y 5..45
+    const turned = { id: "g", type: "group", x: 20, y: 20, w: 40, h: 10, rotate: 90, layers: [strip, pic({ x: 0, y: 0, w: 40, h: 10 })] } as Layer;
+    const d = draw([turned]);
+    expect([d.at(40, 10), d.at(25, 25)]).toEqual([BLUE, WHITE]);
+    expect(draw([blob({ fill: "#000000", mask: "luminance" }), pic()], {}, 2).at(40, 30)).toEqual(WHITE);
+    expect(draw([blob({ fill: "#ffffff", mask: "luminance" }), pic()], {}, 2).at(40, 30)).toEqual(BLUE);
   });
 
   it("a hidden mask masks nothing; the next mask starts its own run; a mask in a box cuts only that box's layers", () => {

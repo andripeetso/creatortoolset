@@ -596,6 +596,12 @@ describe("combined shapes and masks, checked", () => {
     expect([own.fills, own.strokes]).toEqual([[{ type: "solid", color: "#111111" }], [{ color: "#ffffff", width: 4 }]]);
   });
 
+  it("draws a boolean group with no fills over a picture in grey, saying so", () => {
+    const { pages, notes } = take([{ type: "group", boolean: "subtract", layers: [{ type: "image", picture: "ab12cd34.jpg", x: 0, y: 0, w: 400, h: 400 }, disc({ x: 100, y: 100, w: 200, h: 200 })] }]);
+    expect((pages[0]!.layers[0] as Extract<Layer, { type: "group" }>).fills).toEqual([{ type: "solid", color: "#d9d9d9" }]);
+    expect(notes.join(" ")).toContain('drawn in its own "fills"');
+  });
+
   it("drops a way of combining or masking it does not know, saying so; a plain group keeps no fills", () => {
     const { pages, notes } = take([{ type: "group", boolean: "merge", fills: [{ type: "solid", color: "#111111" }], layers: [disc({ mask: "stencil" }), disc({ mask: "luminance" })] }]);
     const g = pages[0]!.layers[0] as Extract<Layer, { type: "group" }>;
