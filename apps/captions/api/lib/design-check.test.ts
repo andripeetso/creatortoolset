@@ -627,7 +627,8 @@ describe("components: ids and caps", () => {
     const ids = (ls: Layer[]): string[] => ls.flatMap((l) => [l.id, ...(l.type === "group" ? ids(l.layers) : [])]);
     const got = ids(pages[0]!.layers);
     expect(got).toContain("i2.bg");
-    expect(got.filter((id) => id.includes("."))).toEqual(["i2.bg"]);
+    // (and under a plain group whose id it starts with: a detached instance's layers keep theirs)
+    expect(got.filter((id) => id.includes("."))).toEqual(["i2.bg", "g.y"]);
   });
 
   it("says what a cap leaves out of an instance", () => {
@@ -637,5 +638,13 @@ describe("components: ids and caps", () => {
     const { notes } = cleanPages([{ layers: [{ id: "i", type: "group", x: 0, y: 0, w: 10, h: 10, instance: { of: "pill", props, overrides: { bg: { effects: nest } } }, layers: [] }] }], rules);
     expect(notes.join("\n")).toMatch(/at most 12 property values/);
     expect(notes.join("\n")).toMatch(/override of bg nests deeper/);
+  });
+});
+
+describe("components: a detached instance's ids", () => {
+  it("keeps an id in parts under the group whose id it starts with, as a detached instance's layers have", () => {
+    const rect = (id: string) => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 10, h: 10 });
+    const { pages } = cleanPages([{ layers: [{ id: "i2", type: "group", x: 0, y: 0, w: 10, h: 10, layers: [rect("i2.bg")] }] }], { w: 1080, h: 1350, pictures: [], fonts: [], measure: null });
+    expect((pages[0]!.layers[0] as { layers: Layer[] }).layers[0]!.id).toBe("i2.bg");
   });
 });

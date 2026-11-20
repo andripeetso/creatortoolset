@@ -406,18 +406,21 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
  * taken again after a delete). An instance's layers keep its id before theirs (lib/design/components.ts).
  */
 function apart(mine: DesignPage, all: Sides, theirs: DesignPage): DesignPage {
-  const kinds = new Map(everyLayer(theirs.layers).map((l) => [l.id, l.type]));
-  const clash = everyLayer(mine.layers).filter((l) => {
+  const there = new Map(everyLayer(theirs.layers).map((l) => [l.id, l]));
+  // (one both sides have alike is one layer: this window's own save, come back with the server's change)
+  const both = everyLayer(mine.layers).filter((l) => {
+    const t = there.get(l.id);
     const b = all.base.get(l.id);
-    return all.theirs.has(l.id) && (!b || (b.type !== kinds.get(l.id) && !same(l, b)));
+    return !!t && !same(l, t) && (!b || (b.type !== t.type && !same(l, b)));
   });
+  // an instance's layers go with it, under its new id
+  const clash = both.filter((l) => !both.some((k) => l.id.startsWith(`${k.id}.`)));
   if (!clash.length) return mine;
   const fresh = freshLayerIds([...theirs.layers, ...mine.layers], clash.length);
   const to = new Map(clash.map((l, n) => [l.id, fresh[n]!]));
   const renamed = (id: string): string => {
-    if (to.has(id)) return to.get(id)!;
     const head = [...to.keys()].find((k) => id.startsWith(`${k}.`));
-    return head ? to.get(head)! + id.slice(head.length) : id;
+    return head ? to.get(head)! + id.slice(head.length) : (to.get(id) ?? id);
   };
   return { ...mine, layers: mapLayers(mine.layers, (l) => (renamed(l.id) === l.id ? l : ({ ...l, id: renamed(l.id) } as Layer))) };
 }
@@ -451,7 +454,7 @@ function mergeFields<T extends { id: string; layers?: Layer[] }>(mine: T, base: 
   for (const f of new Set([...Object.keys(m), ...Object.keys(b), ...(words ? ["text", "runs"] : [])])) {
     if (f === "id" || (same(m[f], b[f]) && !(words && (f === "text" || f === "runs")))) continue;
     if (m[f] === undefined) delete out[f];
-    else if (f === "layers" && Array.isArray(theirs.layers) && !same(theirs.layers, base.layers)) out[f] = mergeLayers(mine.layers ?? [], base.layers ?? [], theirs.layers, all);
+    else if (f === "layers" && Array.isArray(theirs.layers) && !same(theirs.layers, base.layers)) out[f] = mergeLayers(mine.layers ?? [], base.layers ?? [], theirs.layers, all, !!(m.box && m.layout));
     else out[f] = f === "instance" && !same(t[f], b[f]) ? mergeKeys(m[f], b[f], t[f], 3) : m[f];
   }
   return out as T;
@@ -463,8 +466,13 @@ function mergeFields<T extends { id: string; layers?: Layer[] }>(mine: T, base: 
  * never lost to a delete), unless the server moved it elsewhere; a group the server took apart while this window added
  * to it: what was added lies where it was, in its place. One added on either side is there.
  */
-export function mergeLayers(mine: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[], all?: Sides): Layer[] {
-  const sides = all ?? { base: new Map(everyLayer(base).map((l) => [l.id, l])), theirs: new Set(everyLayer(theirs).map((l) => l.id)) };
+function mergeLayers(mine: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[], sides: Sides, inFlow: boolean): Layer[] {
+  /** Changed by a hand here: an instance's layers are its main's, and a place in an auto layout is the layout's. */
+  const own = (l: Layer) => {
+    const { layers: _l, ...rest } = l as Layer & { layers?: Layer[] };
+    const { x: _x, y: _y, w: _w, h: _h, ...placed } = rest;
+    return isGroup(l) && l.instance ? (inFlow ? { ...placed } : rest) : inFlow ? { ...placed, layers: (l as { layers?: Layer[] }).layers } : l;
+  };
   const was = new Map(base.map((l) => [l.id, l]));
   const here = new Map(mine.map((l) => [l.id, l]));
   const there = new Set(theirs.map((l) => l.id));
@@ -481,9 +489,10 @@ export function mergeLayers(mine: readonly Layer[], base: readonly Layer[], thei
     const b = was.get(l.id);
     let keep: Layer[] = [];
     // added here (somewhere the server has it is another level: it moved it, and it is there)
-    if (!b) keep = sides.theirs.has(l.id) ? [] : [l];
+    // (one the server has at this level is there already; one it has elsewhere that it never had is its own new one)
+    if (!b) keep = there.has(l.id) || (sides.theirs.has(l.id) && !sides.base.has(l.id)) ? [] : [l];
     // changed here, taken out there (but not moved elsewhere)
-    else if (!there.has(l.id) && !same(l, b) && !sides.theirs.has(l.id)) {
+    else if (!there.has(l.id) && !same(own(l), own(b)) && !sides.theirs.has(l.id)) {
       const inner = isGroup(l) ? everyLayer(l.layers) : [];
       // taken apart there: its layers are the server's now, and only what was added here comes out of it
       keep = inner.some((k) => sides.theirs.has(k.id)) && isGroup(l) ? l.layers.filter((k) => !sides.base.has(k.id) && !sides.theirs.has(k.id)).map((k) => layerOut(l, k)) : [l];

@@ -195,3 +195,10 @@ describe("masks in a list", () => {
     expect(maskWithNext(row.layers, "x", "mg")).toBeNull();
   });
 });
+
+describe("fresh ids", () => {
+  it("never gives again an id below the highest a frame has (one deleted in the middle)", () => {
+    const r = (id: string): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 1, h: 1 });
+    expect(freshLayerIds([r("l1"), r("l2"), r("l9")], 1)).toEqual(["l10"]);
+  });
+});

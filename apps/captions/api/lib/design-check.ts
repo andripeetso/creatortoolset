@@ -438,7 +438,7 @@ function componentOf(raw: Record<string, unknown>, say: (why: string) => void): 
       return {};
     }
     const given = (obj(i.props) ? Object.entries(i.props) : []).flatMap(([k, v]): [string, string | boolean][] => (propName(k) && (typeof v === "boolean" || typeof v === "string") ? [[propName(k), typeof v === "string" ? v.slice(0, DESIGN_LIMITS.text) : v]] : []));
-    if (given.length > DESIGN_LIMITS.props) say(`an instance gives at most ${DESIGN_LIMITS.props} property values: ${given.slice(DESIGN_LIMITS.props).map(([k]) => k).join(", ")} left out`);
+    if (given.length > DESIGN_LIMITS.props) say(`an instance gives at most ${DESIGN_LIMITS.props} property values: ${given.length - DESIGN_LIMITS.props} left out`);
     const props = Object.fromEntries(given.slice(0, DESIGN_LIMITS.props));
     const overrides: Record<string, Record<string, unknown>> = {};
     const asked = obj(i.overrides) ? Object.entries(i.overrides) : [];
@@ -691,7 +691,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     let held = 0;
     let full = false;
     /** `flowing`: the layers are an auto layout box's: they may fill and lie out of its flow. */
-    /** `owner`: the id of the instance these layers are of (its layers' ids are "<its id>.<the main's layer id>"). */
+    /** `owner`: the id of the group these layers are in (an instance's layers' ids are "<its id>.<the main's layer id>", and stay so when it is detached). */
     const take = (list: unknown, depth: number, flowing = false, owner?: string): Layer[] => {
       const out: Layer[] = [];
       for (const l of Array.isArray(list) ? list : []) {
@@ -708,7 +708,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         const clean = cleanLayer(l, { ...r, ...size }, sayL, r.words ? r.words[k] : undefined, depth > 0);
         if (!clean) continue;
         held++;
-        // an id in parts only for a layer of an instance, its own id first: no other layer may take one of those
+        // an id in parts only under the group it starts with (an instance's, or one's that was): no other layer may take one
         const ok = (id: string) => LAYER_ID.test(id) && (!id.includes(".") || (!!owner && id.startsWith(`${owner}.`)));
         const given = obj(l) && typeof l.id === "string" && ok(l.id) && !ids.has(l.id) ? l.id : "";
         let id = given;
@@ -721,7 +721,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
           out.push({ ...clean, id } as Layer);
           continue;
         }
-        const inner = take(obj(l) ? l.layers : [], depth + 1, !!clean.layout, clean.instance ? id : owner);
+        const inner = take(obj(l) ? l.layers : [], depth + 1, !!clean.layout, id);
         // a plain group with nothing in it is nothing (a box may be empty: a card waiting for its words)
         if (!inner.length && !clean.box && !clean.instance) {
           sayL("a group with no layers in it: left out");

@@ -69,7 +69,7 @@ function overridden<L extends Layer>(l: L, ov: Rec | undefined, ok: (f: string) 
   let n = { ...l } as Rec;
   if (l.type === "text" && typeof ov.text === "string" && !("runs" in ov)) n = retext(l, ov.text) as unknown as Rec;
   for (const [f, v] of Object.entries(ov)) {
-    if (!ok(f) || (f === "instance" && !(isInstance(l) && v && typeof v === "object" && typeof (v as Rec).of === "string"))) continue;
+    if (!ok(f) || (f === "instance" && !(isInstance(l) && v && typeof v === "object" && typeof ((v as Rec).of ?? l.instance.of) === "string"))) continue;
     if (v === null) delete n[f];
     // a nested instance's main or values: onto what its main gives it (its own overrides stay the main's)
     else n[f] = f === "instance" ? { ...(l as unknown as Instance).instance, ...(v as Rec) } : v;
@@ -226,12 +226,18 @@ function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly
     return `c${n}`;
   };
   let changed = false;
+  // a main made a key of its own: the new instances of its old key are its (made with it, in that window or that write)
+  const moved = new Map<string, string>();
+  const placed = new Set(was?.flatMap((p) => everyLayer(p.layers).flatMap((l) => (isInstance(l) ? [`${p.id}/${l.id}`] : []))));
   const out = pages.map((p) => {
+    // a frame copied whole (in another size too) keeps its layers' ids: its main is a copy whatever its size
+    const copied = !was?.some((q) => q.id === p.id);
     const layers = mapLayers(p.layers, (l) => {
       const k = isMain(l) ? keeper.get(l.component) : undefined;
       if (!isMain(l) || !k || k.at === `${p.id}/${l.id}`) return l;
-      if (shape(l) !== shape(k.main)) {
+      if (shape(l) !== shape(k.main) && !(copied && l.id === k.main.id)) {
         const key = fresh();
+        if (!moved.has(l.component)) moved.set(l.component, key);
         say?.(`frame ${p.id}, layer ${l.id}: the design has a main component "${l.component}" already: this one is "${key}"`);
         return { ...l, component: key };
       }
@@ -240,7 +246,8 @@ function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly
     });
     return layers === p.layers ? p : ((changed = true), { ...p, layers });
   });
-  return changed ? out : (pages as P[]);
+  if (!changed) return pages as P[];
+  return !moved.size ? out : out.map((p) => ({ ...p, layers: mapLayers(p.layers, (l) => (isInstance(l) && moved.has(l.instance.of) && !placed.has(`${p.id}/${l.id}`) ? { ...l, instance: { ...l.instance, of: moved.get(l.instance.of)! } } : l)) }));
 }
 
 /** Every instance of a list that lies in no instance, through `fn`; the same list when nothing changed. */

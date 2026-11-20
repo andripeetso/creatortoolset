@@ -281,7 +281,9 @@ export function freshLayerIds(layers: readonly Layer[], count: number, also: rea
   const all = everyLayer(layers);
   const taken = new Set([...all.map((l) => l.id), ...also]);
   const out: string[] = [];
-  for (let n = all.length + 1; out.length < count; n++) if (!taken.has(`l${n}`)) out.push(`l${n}`);
+  // past the highest l<n> it has, so one taken out in the middle is never given again (another window may still edit it)
+  const top = Math.max(all.length, ...[...taken].map((id) => Number(/^l(\d+)$/.exec(id)?.[1] ?? 0)));
+  for (let n = top + 1; out.length < count; n++) if (!taken.has(`l${n}`)) out.push(`l${n}`);
   return out;
 }
 
