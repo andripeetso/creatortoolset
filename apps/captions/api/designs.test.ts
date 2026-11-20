@@ -1368,6 +1368,9 @@ describe("designs: styles", () => {
     // the style changed alone: every slide naming it
     const recolour = await write(d.id, { styles: { colors: { accent: { color: "#2255ff" } } } });
     expect(recolour.status).toBe(200);
+    // the frames the style reached are what the call wrote (and the AI is shown)
+    expect(recolour.body.touched.sort()).toEqual(["p1", "p2"]);
+    expect((recolour.body as unknown as { wrote: { frame: string; layers: string[] }[] }).wrote.map((w) => [w.frame, w.layers.sort()])).toEqual([["p1", ["a", "t"]], ["p2", ["b"]]]);
     now = recolour.body.design;
     expect(now.styles!.colors!.accent).toEqual({ name: "Accent", color: "#2255ff" });
     expect([layer(now, 0, "a").fill, layer(now, 0, "t").color, (layer(now, 1, "b").fills as { color: string }[])[0]!.color]).toEqual(["#2255ff", "#2255ff", "#2255ff"]);

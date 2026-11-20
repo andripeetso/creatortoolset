@@ -933,7 +933,19 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   );
   // the names that became another id: a new frame's, and a layer's that was taken or could not be an id
   const renamed = Object.fromEntries([...named].map(([name, id]) => [name.slice(name.indexOf("\0") + 1), id] as const).filter(([name, id]) => name !== id));
-  return { design: await save(await settle({ ...now, ...(d.styles ? { styles: d.styles } : {}), pages, updatedAt: stamp(now) }, now.pages, notes, true)), notes, touched, wrote, named: renamed };
+  const saved = await save(await settle({ ...withStyles(now, d.styles), pages, updatedAt: stamp(now) }, now.pages, notes, true));
+  // a style changed: the frames whose layers took its new value were written too (and are shown)
+  if (restyle?.changed)
+    for (const p of saved.pages) {
+      const was = new Map(everyLayer(now.pages.find((x) => x.id === p.id)?.layers ?? []).map((l) => [l.id, JSON.stringify(l)]));
+      const layers = everyLayer(p.layers).filter((l) => was.has(l.id) && was.get(l.id) !== JSON.stringify(l)).map((l) => l.id);
+      if (!layers.length || p.loose) continue;
+      const w = wrote.find((x) => x.frame === p.id);
+      if (w) w.layers = [...new Set([...w.layers, ...layers])];
+      else wrote.push({ frame: p.id, isNew: false, layers });
+      if (!touched.includes(p.id)) touched.push(p.id);
+    }
+  return { design: saved, notes, touched, wrote, named: renamed };
 }
 
 /** The sizes an AI asks copies in: a format's id ("cover") or {name?, w, h}; anything else is named in a note. */

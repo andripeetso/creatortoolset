@@ -91,7 +91,7 @@ export const designTools: ToolModule = {
       const look = typeof read.look === "object" ? read.look : null;
       const asked = Array.isArray(a.frames) ? a.frames.map(String) : [];
       if (a.outline === true)
-        return { id: read.id, name: read.name, link: `${ctx.origin}/design/${read.id}`, styles: read.styles, frames: read.frames.filter((f) => !asked.length || asked.includes(f.id)).map(outlined), more: "A frame's layers in full, and its picture: design_get with this id and frames: [its id]. How layers are written comes with a read without outline." };
+        return { id: read.id, name: read.name, link: `${ctx.origin}/design/${read.id}`, styles: read.styles, frames: read.frames.filter((f) => !asked.length || asked.includes(f.id)).map(outlined), more: "A frame's layers in full, and its picture: design_get with this id and frames: [its id]. How layers and the design's styles (brand colours and type, named once) are written comes with a read without outline." };
       const drawn = await seen(ctx, at, read.frames, asked);
       // asked for some frames: those alone, as they are and as they are drawn (the rest was read before)
       if (asked.length) return { id: read.id, name: read.name, frames: read.frames.filter((f) => asked.includes(f.id)), ...drawn.said, _images: drawn.images };
