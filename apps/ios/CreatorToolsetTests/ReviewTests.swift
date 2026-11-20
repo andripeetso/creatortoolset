@@ -198,6 +198,31 @@ final class ReviewTests: XCTestCase {
         XCTAssertEqual(ApprovalServer.bodies.count, 1)
     }
 
+    func testTheCodesDecideWhetherToAsk() async throws {
+        ApprovalServer.bodies = []
+        ApprovalServer.answer = { _ in (409, #"{"error":"The faces in this cut aren't blurred. Approve it as filmed?","code":"not_blurred"}"#) }
+        guard case .ask(let line) = try await ReviewApproval.send(api, asset: "a1", .approved, session: ApprovalServer.session()) else {
+            return XCTFail("expected the question")
+        }
+        XCTAssertEqual(line, "The faces in this cut aren't blurred. Approve it as filmed?")
+        // owner_only: the server's line, never the question
+        ApprovalServer.answer = { _ in (403, #"{"error":"Only the owner can approve a cut whose faces aren't blurred","code":"owner_only"}"#) }
+        do {
+            _ = try await ReviewApproval.send(api, asset: "a1", .approved, session: ApprovalServer.session())
+            XCTFail("expected the refusal")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Only the owner can approve a cut whose faces aren't blurred")
+        }
+        // another coded 409 is a plain refusal, not the question
+        ApprovalServer.answer = { _ in (409, #"{"error":"This video was removed","code":"gone"}"#) }
+        do {
+            _ = try await ReviewApproval.send(api, asset: "a1", .approved, session: ApprovalServer.session())
+            XCTFail("expected the refusal")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "This video was removed")
+        }
+    }
+
     func testAVersionWithUnblurredFacesShowsTheTag() throws {
         func version(_ extra: String) throws -> ReviewAsset.Version {
             try JSONDecoder().decode(ReviewAsset.Version.self, from: Data(#"{"n":2,"name":"V2.mp4","duration":8,"width":1080,"height":1920,"status":"ready","createdAt":1,"removed":false\#(extra)}"#.utf8))

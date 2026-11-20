@@ -116,6 +116,14 @@ enum APIError: LocalizedError, Equatable {
     }
 }
 
+/// A refusal with a `code`, for a caller that tells them apart (`API.data(_:coded:)`); its text is the server's line.
+struct CodedRefusal: LocalizedError, Equatable {
+    let status: Int
+    let code: String
+    let line: String
+    var errorDescription: String? { line }
+}
+
 /// The server's JSON API, with the sign-in cookie sent by hand on every request (the session keeps no cookies, so
 /// nothing is ever sent to another host, such as a storage bucket a media URL redirects to).
 struct API {
@@ -191,7 +199,9 @@ struct API {
     /// The body of a 2xx answer. No answer at all throws `.offline`; a request that was called off stays cancelled. A
     /// DPoP proof the server couldn't check this time (`INVALID_DPOP`) is sent once more with a fresh proof; a server
     /// too busy to check one (503 `busy`) is asked again later, up to 3 times, after its `Retry-After` or 1, 2, 4 s.
-    func data(_ request: URLRequest, session: URLSession = API.session, again: Bool = true, busyTries: Int = 0) async throws -> Data {
+    /// `coded`: a refusal that carries a `code` throws `CodedRefusal`, so the caller can tell refusals apart.
+    func data(_ request: URLRequest, session: URLSession = API.session, again: Bool = true, busyTries: Int = 0,
+              coded: Bool = false) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -207,20 +217,23 @@ struct API {
             if let credential, credential.kind == .dpop, let url = request.url {
                 for (k, v) in credential.headers(method: request.httpMethod ?? "GET", url: url) { fresh.setValue(v, forHTTPHeaderField: k) }
             }
-            return try await self.data(fresh, session: session, again: again, busyTries: busyTries + 1)
+            return try await self.data(fresh, session: session, again: again, busyTries: busyTries + 1, coded: coded)
         }
         if status == 401 {
             let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["code"] as? String
             if code == "INVALID_DPOP", again, let credential, credential.kind == .dpop, let url = request.url {
                 var fresh = request
                 for (k, v) in credential.headers(method: request.httpMethod ?? "GET", url: url) { fresh.setValue(v, forHTTPHeaderField: k) }
-                return try await self.data(fresh, session: session, again: false)
+                return try await self.data(fresh, session: session, again: false, coded: coded)
             }
             // only the server in use: an upload to another server failing must not sign this one out
             await MainActor.run { if Servers.shared.currentId == key ?? server.absoluteString { Servers.shared.sessionExpired(credential?.token ?? cookie, code: code) } }
             throw APIError.signedOut
         }
         guard (200..<300).contains(status) else {
+            if let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["code"] as? String, coded {
+                throw CodedRefusal(status: status, code: code, line: Self.message(data, status: status))
+            }
             if let line = APIError.refusal(status, try? JSONSerialization.jsonObject(with: data) as? [String: Any]) {
                 throw APIError.refused(line)
             }
