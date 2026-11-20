@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
@@ -157,7 +157,7 @@ type Drag = {
 
 export const NleTracks = memo(function NleTracks({
   tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onLowerUnderVoice, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
-  trans = null, onTrans, onMarker,
+  trans = null, onTrans, onMarker, lane,
 }: {
   tl: NleTimeline;
   /** the playhead at rest (a pause, a seek): a new one draws the timeline again */
@@ -197,6 +197,8 @@ export const NleTracks = memo(function NleTracks({
   onTrans?: (key: string) => void;
   /** a double click on a marker (its frame): open it */
   onMarker?: (frame: number) => void;
+  /** a lane under the video tracks: its head, and what is on it at `pps` pixels a second */
+  lane?: { head: ReactNode; body: (pps: number) => ReactNode };
 }) {
   const fps = tl.timeline.fps;
   const content = lengthOf(tl) / fps;
@@ -710,14 +712,15 @@ export const NleTracks = memo(function NleTracks({
       }}>
       {/* Resolve's: room above the video tracks and under the sound tracks, both for a box to start in */}
       <div className="flex flex-1"><div data-head className={headCol} style={{ width: LABEL_W }} onContextMenu={(e) => openTrackMenu(e, null)} /></div>
-      {order.map((id) => {
+      {order.map((id, i) => {
         const t = tl.tracks[id];
         const v = isVideo(id);
         const off = v ? t.hidden : t.mute;
         const h = laneH(id);
         const n = t.items.length;
         return (
-          <div key={id} className="flex border-b border-black/50" style={{ height: h }}>
+          <Fragment key={id}>
+          <div className="flex border-b border-black/50" style={{ height: h }}>
             {/* Resolve's header: the track's badge, lock and eye (or sound) on top, its name and clip count under */}
             <div data-head className="group/h sticky left-0 z-20 flex shrink-0 flex-col justify-center gap-0.5 overflow-hidden border-r border-black/60 bg-[#1f1f23] py-0.5 pr-1.5 pl-2.5 text-[11px]" style={{ width: LABEL_W }}
               onContextMenu={(e) => openTrackMenu(e, id)}>
@@ -849,6 +852,16 @@ export const NleTracks = memo(function NleTracks({
               })}
             </div>
           </div>
+          {/* a lane of the page's under the video tracks (the Captions lane): its own head and what is on it */}
+          {lane && v && !isVideo(order[i + 1] ?? "A") && (
+            <div className="flex border-b border-black/50" style={{ height: 30 }}>
+              <div data-head className="sticky left-0 z-20 flex shrink-0 items-center gap-1 overflow-hidden border-r border-black/60 bg-[#1f1f23] pr-1.5 pl-2.5 text-[11px]" style={{ width: LABEL_W }}>
+                {lane.head}
+              </div>
+              <div className="relative flex-1" onPointerDown={(e) => e.stopPropagation()}>{lane.body(pps)}</div>
+            </div>
+          )}
+          </Fragment>
         );
       })}
       <div className="flex flex-1"><div data-head className={headCol} style={{ width: LABEL_W }} onContextMenu={(e) => openTrackMenu(e, null)} /></div>

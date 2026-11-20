@@ -32,6 +32,8 @@ import { NleText } from "./NleText";
 import { getDesign } from "@/lib/designs";
 import { canGrab, designFile, isDesign, placeText, renderScale } from "@/lib/nle/text-clip";
 import { drawFrame, grabDesign, grabFrame, makeText } from "@/lib/nle/text-design";
+import { CaptionsBody, CaptionsHead, CaptionsOver, captionsHref, downloadSrt, useCaptionClip } from "./NleCaptions";
+import { captionCards, captionsStale, fromOf, withoutCards } from "@/lib/nle/captions";
 
 export type { NleFile };
 import { NleTracks as Timeline, useLinkedSelection, type MenuAt, type Tool } from "./NleTracks";
@@ -144,7 +146,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -167,6 +169,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   onRelink?: () => void;
   /** in the middle of the Viewer's bar, in place of the timeline's name: a way to the edit's other timelines */
   picker?: ReactNode;
+  /** the Captions lane (lib/nle/captions.ts): `send` gives the saved cut's render to Caption Studio (made, or moved from
+   *  the timeline's older captions) and answers with its clip; `open` goes to Caption Studio. None: no Captions lane */
+  captions?: { send: () => Promise<{ project: string; clip: string; note?: string }>; open: (href: string) => void };
 }) {
   const [first] = useState(() => openOf(initial, resetKey));
   // the timeline open now (its key and fingerprint), for keeping its unsaved edits
@@ -482,6 +487,25 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   };
   if (control) control.current = { put: (d) => lay(marked(d), { track: "V1", frame: marks[0] ?? Math.round(now() * fps) }), source: openSource };
 
+  // the Captions lane: Caption Studio's clip (components/nle/NleCaptions.tsx), made from the saved cut's render
+  const cap = useCaptionClip(tl.captions);
+  const [capBusy, setCapBusy] = useState(false);
+  const [capMenu, setCapMenu] = useState<{ x: number; y: number } | null>(null);
+  // burned in, Caption Studio's captions replace the caption cards in renders, so the viewer leaves them out too
+  const burnt = !!tl.captions?.burn && !!cap?.clip && !captionsStale(shown);
+  const viewed = useMemo(() => (burnt ? withoutCards(shown) : shown), [burnt, shown]);
+  const sendCaptions = () => {
+    if (!captions || capBusy || readOnly) return;
+    if (dirty) return void toast.error("Save this cut first: its captions are made from the saved cut's render");
+    const at = tl;
+    setCapBusy(true);
+    captions.send().then((r) => {
+      // onto the timeline as it is now; `from` is the cut that was rendered
+      setHist((h) => histChange(h, (now) => ({ ...now, captions: { project: r.project, clip: r.clip, burn: at.captions?.burn ?? false, from: fromOf(at) } }), at.captions ? "Update Captions" : "Make Captions"));
+      if (r.note) toast(r.note);
+    }, (e: Error) => toast.error(e.message)).finally(() => setCapBusy(false));
+  };
+
   // the registry's commands (lib/nle/commands.ts) on the timeline as it is now; keys, the menu and the chat all run them
   const stateNow = (): NleState => ({ tl, sel, playhead: Math.round(now() * fps), marks, clipboard, mode, gap, trans: transPick });
   /** A command's state after, onto the page: a changed timeline as one undo step named `label` (read only: nothing), then
@@ -498,6 +522,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     if (next.marks !== s.marks) setMarks(next.marks);
     if (next.clipboard !== s.clipboard) clipboard = next.clipboard ?? [];
     if (next.playhead !== s.playhead) seek(next.playhead / fps);
+    if (next.captionsAsk) sendCaptions();
   };
   const run = (id: string) => {
     const s = stateNow();
@@ -714,13 +739,14 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 )}
               </div>
             }>
-            <NleViewer tl={inSource ? srcTl! : shown} playhead={T.clock} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
+            <NleViewer tl={inSource ? srcTl! : viewed} playhead={T.clock} rate={T.rate} urlOf={inSource ? srcUrl : urlFor}
               nameOf={inSource ? () => source!.name : nameOfSrc} onClick={() => T.play(!T.playing)}
               onMenu={(e) => { e.preventDefault(); viewerBox.current = e.currentTarget; setMenu({ x: e.clientX, y: e.clientY, on: "viewer" }); }}
               loop={loop ? (inSource ? loopPart(sm, srcFrames, sfps) : lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null) : null}
               onDragStart={inSource ? (e) => { e.dataTransfer.setData(VIEWER_MIME, "1"); e.dataTransfer.effectAllowed = "copy"; note(source); } : undefined}
               onDragEnd={() => note(null)}
-              over={inSource && !srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} clock={srcT.clock} /> : null}
+              over={inSource ? (!srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} clock={srcT.clock} /> : null)
+                : cap?.clip && !captionsStale(shown) ? <CaptionsOver clip={cap.clip} clock={T.clock} fps={fps} /> : null}
               below={inSource ? (
                 <SourceStrip clock={srcT.clock} seconds={srcSecs} from={sm[0] !== null ? sm[0] / sfps : null} to={sm[1] !== null ? (sm[1] + 1) / sfps : null}
                   onSeek={(t) => { srcT.play(false); srcT.seek(t); }} />
@@ -764,6 +790,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
             onLowerUnderVoice={readOnly ? undefined : (duck) => setSound({ duck })}
             onDrop={readOnly ? undefined : dropOn}
+            lane={captions && {
+              head: <CaptionsHead link={tl.captions} busy={capBusy} readOnly={readOnly} onMake={() => run("makeCaptions")} onBurn={() => run("burnCaptions")} onMenu={setCapMenu} />,
+              body: (pps) => <CaptionsBody pps={pps} link={tl.captions} clip={cap ? cap.clip : undefined} captioning={!!cap?.captioning} stale={captionsStale(shown)} busy={capBusy} cards={captionCards(tl)}
+                readOnly={readOnly} onUpdate={() => run("updateCaptions")} onOpen={() => tl.captions && captions.open(captionsHref(tl.captions))} />,
+            }}
             tools={
               <>
                 <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
@@ -838,6 +869,20 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       )}
       {keysOpen && <NleKeyboard onClose={() => setKeysOpen(false)} />}
       {designing && <Suspense><DesignEditor id={designing.id} onDone={() => void designDone()} /></Suspense>}
+      {capMenu && (
+        <div className="fixed inset-0 z-50" onPointerDown={() => setCapMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCapMenu(null); }}>
+          <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: capMenu.x, top: Math.min(capMenu.y, window.innerHeight - 160) }}
+            onPointerDown={(e) => e.stopPropagation()}>
+            {([
+              [tl.captions ? "Update Captions" : "Make Captions", () => run(tl.captions ? "updateCaptions" : "makeCaptions"), readOnly || capBusy || (!!tl.captions && !captionsStale(tl))],
+              ["Open in Caption Studio", () => tl.captions && captions?.open(captionsHref(tl.captions)), !tl.captions],
+              ["Export Subtitles…", () => cap?.clip && downloadSrt(tl.timeline.name ?? "", cap.clip), !cap?.clip?.cues?.length],
+            ] as [string, () => void, boolean][]).map(([l, fn, off]) => (
+              <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setCapMenu(null); fn(); }}>{l}</button>
+            ))}
+          </div>
+        </div>
+      )}
       {markerEdit !== null && markersOf(tl).some((m) => m.frame === markerEdit) && (
         <NleMarkerDialog key={markerEdit} marker={markersOf(tl).find((m) => m.frame === markerEdit)!} fps={fps} onClose={() => setMarkerEdit(null)}
           onDone={(patch) => { commit(setMarker(tl, markerEdit, patch), "Edit marker"); setMarkerEdit(null); }}
