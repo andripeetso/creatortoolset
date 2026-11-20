@@ -61,6 +61,18 @@ final class DownloadLocationTests: XCTestCase {
         XCTAssertNil(path([]))
     }
 
+    // The report names the pick even while its disk is away (the worker waits for it, never moves to another disk); with
+    // none picked, the default; with no default, "".
+    func testTheReportNamesThePickedCacheFolderWhileItsDiskIsAway() {
+        let d = suite()
+        let other = CacheFolder.Volume(path: "/Volumes/Other", bytes: 9_000)
+        XCTAssertEqual(CacheFolder.reported(d, volumes: { [] }, used: []), "")
+        XCTAssertEqual(CacheFolder.reported(d, volumes: { [other] }, used: ["/Volumes/Other/Footage"]), "/Volumes/Other/Creator Toolset Cache")
+        d.set("/Volumes/SSD/cache", forKey: CacheFolder.key)
+        XCTAssertEqual(CacheFolder.reported(d, volumes: { [other] }, used: ["/Volumes/Other/Footage"]), "/Volumes/SSD/cache")
+        XCTAssertEqual(CacheFolder.reported(d, volumes: { [] }, used: []), "/Volumes/SSD/cache")
+    }
+
     // The caches go to the Download location: its default once every cache fits, and anything left in a default folder
     // (a move that failed, downloads while its disk was away) the next time.
     func testTheCachesSettleInTheDownloadLocation() throws {
