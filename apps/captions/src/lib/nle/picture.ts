@@ -5,7 +5,10 @@
 // (the rest stays where it was), `zoom` scales it, `flip` mirrors it, `rot` turns it (degrees, counter-clockwise), and
 // `pan` / `tilt` move it right / up in frame px. Nothing keeps it inside the frame: what is outside is not seen.
 
+import type { EdjTrans } from "@contracts/editor";
+import { valueAt } from "./keyframes";
 import { endOf, isVideo, trackNo, type NleItem, type NleTimeline } from "./model";
+import { transSpan, transWeights } from "./trans";
 
 export interface Placement {
   /** source px to frame px, as a canvas takes it: x = a*u + c*v + e, y = b*u + d*v + f */
@@ -40,7 +43,70 @@ export function placement(it: NleItem, track: string, sw: number, sh: number, W:
   };
 }
 
-export type Playing = { track: string; item: NleItem };
+/** A clip that plays: `seen` how much of it shows at the frame (its fades, a transition's share, 0–1), `under` a dip's
+ *  colour drawn over the whole frame right under it (the earlier clip of the dip). */
+export type Playing = { track: string; item: NleItem; seen?: number; under?: "black" | "white" };
+
+/** The clip with its zoom, pan, tilt, rotation and opacity at timeline frame `f` from its keys (keyframes.ts valueAt);
+ *  the clip itself when it keys none. */
+export function keyed(tl: NleTimeline, it: NleItem, f: number): NleItem {
+  if (!it.keys) return it;
+  const fps = tl.timeline.fps;
+  const out = { ...it };
+  for (const p of ["zoom", "pan", "tilt", "rot", "opacity"] as const) if (it.keys[p]?.length) out[p] = valueAt(it, p, f, fps, tl.sources[it.src]?.fps || fps);
+  return out;
+}
+
+/** A transition at a cut: the timeline frames [start, start + len) both clips play in. */
+type Cut = { start: number; len: number; type: EdjTrans["type"] };
+const cutsOf = new WeakMap<NleTimeline, Map<NleItem, { into?: Cut; out?: Cut }>>();
+/** Each clip's transitions: `into` the one at its own start (it is the later clip), `out` the one at its end. */
+function cuts(tl: NleTimeline) {
+  let m = cutsOf.get(tl);
+  if (m) return m;
+  cutsOf.set(tl, (m = new Map()));
+  for (const t of Object.values(tl.tracks)) {
+    const on = t.items.filter((i) => i.enabled !== false);
+    for (const b of on) {
+      const a = b.trans && b.trans.len >= 1 ? on.find((x) => x !== b && endOf(x) === b.rec) : undefined;
+      if (!a) continue;
+      const c = { start: b.rec - transSpan(b.trans!).pre, len: b.trans!.len, type: b.trans!.type };
+      m.set(b, { ...m.get(b), into: c });
+      m.set(a, { ...m.get(a), out: c });
+    }
+  }
+  return m;
+}
+
+/** The timeline frames a clip plays: from a transition's start into it to the end of one out of it (its handles). */
+function spanOf(tl: NleTimeline, it: NleItem): [number, number] {
+  const c = cuts(tl).get(it);
+  return [c?.into ? c.into.start : it.rec, c?.out ? c.out.start + c.out.len : endOf(it)];
+}
+
+/**
+ * How much of the clip shows (a picture) or is heard (a sound, as a gain factor) at timeline frame `f`, from its fades and
+ * its transitions (contracts/edj-golden.json): a transition takes the place of the fade on its edge. A dissolve shows the
+ * later clip at u over the earlier at full; a dip the earlier at its share over the colour, then the later; a sound (or a
+ * crossfade) is equal power both sides. Fractional `f` is fine (a sound's gain between frames).
+ */
+export function seenAt(tl: NleTimeline, it: NleItem, f: number, sound: boolean): { seen: number; under?: "black" | "white" } {
+  const c = cuts(tl).get(it);
+  const k = f - it.rec;
+  let seen = Math.max(0, Math.min(1, !c?.into && it.fade_in ? k / it.fade_in : 1, !c?.out && it.fade_out ? (it.len - k) / it.fade_out : 1));
+  let under: "black" | "white" | undefined;
+  const share = (t: Cut, side: "a" | "b") => {
+    const u = Math.max(0, Math.min(1, (f - t.start) / t.len));
+    const w = transWeights({ type: sound ? "crossfade" : t.type === "crossfade" ? "dissolve" : t.type }, u) as Record<string, number>;
+    return "alpha" in w ? (side === "a" ? 1 : w.alpha) : w[side];
+  };
+  if (c?.into && f < c.into.start + c.into.len) seen *= share(c.into, "b");
+  if (c?.out && f >= c.out.start) {
+    seen *= share(c.out, "a");
+    if (!sound && c.out.type.startsWith("dip") && f < c.out.start + c.out.len) under = c.out.type === "dip_white" ? "white" : "black";
+  }
+  return under ? { seen, under } : { seen };
+}
 
 const pictureTracks = (tl: NleTimeline) =>
   Object.entries(tl.tracks).filter(([id, t]) => isVideo(id) && !t.hidden && t.enabled !== false);
@@ -48,12 +114,22 @@ const pictureTracks = (tl: NleTimeline) =>
 /** Bottom to top: V1, a track named SOURCE… (the intro's source) right over it, then V2, V3, … (the renderer draws no V0) */
 const layer = ([id, t]: [string, { name?: string }]) => (id !== "V1" && (t.name ?? "").toUpperCase().startsWith("SOURCE") ? 1.5 : trackNo(id));
 
-/** The pictures at frame `f`, the bottom one first: tracks that show, clips that are on. */
+/** The pictures at frame `f`, the bottom one first: tracks that show, clips that are on (both clips of a transition,
+ *  the earlier first), each with how much of it shows (seenAt). */
 export function picturesAt(tl: NleTimeline, f: number): Playing[] {
   return pictureTracks(tl)
     .filter(([id]) => trackNo(id) >= 1)
     .sort((x, y) => layer(x) - layer(y))
-    .flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false && i.rec <= f && f < endOf(i)).map((item) => ({ track, item })));
+    .flatMap(([track, t]) =>
+      t.items
+        .filter((i) => {
+          if (i.enabled === false) return false;
+          const [a, b] = spanOf(tl, i);
+          return a <= f && f < b;
+        })
+        .sort((x, y) => x.rec - y.rec)
+        .map((item) => ({ track, item, ...seenAt(tl, item, f, false) })),
+    );
 }
 
 /** The next picture on each track that starts within `ahead` frames after `f` and doesn't play on from the one before it
@@ -61,10 +137,12 @@ export function picturesAt(tl: NleTimeline, f: number): Playing[] {
  *  ones opened at once is a 4K decoder each. */
 export const picturesSoon = (tl: NleTimeline, f: number, ahead: number, chain?: Map<string, string>): Playing[] =>
   pictureTracks(tl).flatMap(([track, t]) => {
-    const on = t.items.find((i) => i.enabled !== false && i.rec <= f && f < endOf(i));
+    // a clip starts where a transition into it starts (its head handle)
+    const from = (i: NleItem) => spanOf(tl, i)[0];
+    const on = t.items.find((i) => i.enabled !== false && from(i) <= f && f < spanOf(tl, i)[1]);
     const next = t.items
-      .filter((i) => i.enabled !== false && i.rec > f && i.rec <= f + ahead && !(on && chain && chain.get(keyOf(i)) === chain.get(keyOf(on))))
-      .sort((a, b) => a.rec - b.rec)[0];
+      .filter((i) => i.enabled !== false && from(i) > f && from(i) <= f + ahead && !(on && chain && chain.get(keyOf(i)) === chain.get(keyOf(on))))
+      .sort((a, b) => from(a) - from(b))[0];
     return next ? [{ track, item: next }] : [];
   });
 
@@ -74,7 +152,8 @@ export const keyOf = (i: NleItem) => i._k ?? `${i.src}:${i.rec}`;
  *  frame), at the same speed, neither held nor reversed. Then one <video> plays across the cut: no new element, no seek. */
 export function continues(tl: NleTimeline, a: NleItem, b: NleItem): boolean {
   if (a.src !== b.src || endOf(a) !== b.rec || (a.speed || 1) !== (b.speed || 1)) return false;
-  if (a.freeze || b.freeze || a.rev || b.rev || a.fx || b.fx) return false;
+  // a transition plays both at once, each from its own element
+  if (a.freeze || b.freeze || a.rev || b.rev || a.fx || b.fx || b.trans) return false;
   const fps = tl.timeline.fps;
   const sfps = tl.sources[a.src]?.fps || fps;
   return Math.abs(b.in - (a.in + a.len * (sfps / fps) * (a.speed || 1))) <= 1 + 1e-6;
@@ -95,12 +174,12 @@ export function chains(tl: NleTimeline): Map<string, string> {
 }
 
 /** The fields that change how a picture is drawn: any of them set, the canvas draws it. */
-const DRAWN = ["zoom", "pan", "tilt", "rot", "flip", "crop", "fit_x", "fit_y", "frame", "split", "under", "zoom_to", "pan_to", "tilt_to", "look", "fade_in", "fade_out", "freeze", "rev", "fx"];
+const DRAWN = ["zoom", "pan", "tilt", "rot", "flip", "crop", "fit_x", "fit_y", "frame", "split", "under", "zoom_to", "pan_to", "tilt_to", "look", "fade_in", "fade_out", "freeze", "rev", "fx", "keys"];
 
 /** When the one picture showing is its plain <video> (none of DRAWN, fully seen): how the element fills the frame, as
  *  placement() would ("cover" on the tracks that cover it, else "contain"). Null: the canvas draws it. */
 export function plainVideo(on: Playing[]): "cover" | "contain" | null {
-  if (on.length !== 1) return null;
+  if (on.length !== 1 || (on[0].seen ?? 1) < 1 || on[0].under) return null;
   const { item, track } = on[0];
   const set = (k: string) => {
     const v = (item as Record<string, unknown>)[k];
@@ -124,27 +203,62 @@ export function pickSlot(slots: { owner: string; used: number; busy: boolean }[]
   return best;
 }
 
-/** A sound to play: from `at` seconds on the timeline, `offset` seconds into its file, for `dur` seconds of timeline. */
-export type SoundPiece = { key: string; track?: string; src: string; at: number; offset: number; dur: number; speed: number; gain: number; fadeIn?: number; fadeOut?: number };
+/** A sound to play: from `at` seconds on the timeline, `offset` seconds into its file, for `dur` seconds of timeline, at
+ *  `gain` (its gain_db + norm_db, linear). `env`, when it keys its gain or has a transition: its whole gain through it as
+ *  [seconds from `at`, linear gain] points, straight lines between (fades, keys, crossfades in), for the player to follow
+ *  instead of `gain` and the fades. */
+export type SoundPiece = { key: string; track?: string; src: string; at: number; offset: number; dur: number; speed: number; gain: number; fadeIn?: number; fadeOut?: number; env?: [number, number][] };
 
-/** Every clip on the sound tracks that are heard, as pieces. */
+const dbOf = (v: unknown) => Number(v) || 0;
+
+/** Every clip on the sound tracks that are heard, as pieces (a transition's two clips run on into their handles). */
 export function soundPieces(tl: NleTimeline): SoundPiece[] {
   const fps = tl.timeline.fps;
   return Object.entries(tl.tracks)
     .filter(([id, t]) => !isVideo(id) && !t.mute && t.enabled !== false)
-    .flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false).map((i) => ({
-      key: keyOf(i),
-      track,
-      src: i.src,
-      at: i.rec / fps,
-      offset: i.in / (tl.sources[i.src]?.fps || fps),
-      dur: i.len / fps,
-      speed: i.speed || 1,
-      gain: Math.pow(10, (i.gain_db ?? 0) / 20),
-      // seconds of fade from / to silence
-      ...(i.fade_in ? { fadeIn: i.fade_in / fps } : {}),
-      ...(i.fade_out ? { fadeOut: i.fade_out / fps } : {}),
-    })));
+    .flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false).map((i) => {
+      const sfps = tl.sources[i.src]?.fps || fps;
+      const [from, to] = spanOf(tl, i);
+      const norm = dbOf(i.norm_db);
+      const piece: SoundPiece = {
+        key: keyOf(i),
+        track,
+        src: i.src,
+        at: from / fps,
+        offset: i.in / sfps + ((from - i.rec) * (i.speed || 1)) / fps,
+        dur: (to - from) / fps,
+        speed: i.speed || 1,
+        gain: Math.pow(10, (dbOf(i.gain_db) + norm) / 20),
+      };
+      if (i.keys?.gain_db?.length || cuts(tl).has(i)) {
+        // the gain at each frame's start, straight on to the next (the renderer steps the keys' value a frame at a time)
+        const env: [number, number][] = [];
+        for (let f = from; f <= to; f++) {
+          const db = valueAt(i, "gain_db", f, fps, sfps) + norm;
+          const v = Math.pow(10, db / 20) * seenAt(tl, i, f, true).seen;
+          // a point between two of the same value says nothing
+          if (env.length >= 2 && env[env.length - 1]![1] === v && env[env.length - 2]![1] === v) env[env.length - 1]![0] = (f - from) / fps;
+          else env.push([(f - from) / fps, v]);
+        }
+        return { ...piece, env };
+      }
+      return {
+        ...piece,
+        // seconds of fade from / to silence
+        ...(i.fade_in ? { fadeIn: i.fade_in / fps } : {}),
+        ...(i.fade_out ? { fadeOut: i.fade_out / fps } : {}),
+      };
+    }));
+}
+
+/** A piece's `env` as points on the sound engine's clock (`t0`: when its start plays there), from `from` seconds into
+ *  it, at `rate` × speed: the value at `from`, then each point after it. */
+export function envPoints(env: [number, number][], t0: number, from: number, rate: number): [number, number][] {
+  const i = env.findIndex(([x]) => x > from);
+  if (i < 0) return [[t0 + from / rate, env[env.length - 1]![1]]];
+  const [x0, v0] = env[Math.max(0, i - 1)]!, [x1, v1] = env[i]!;
+  const v = i === 0 ? v1 : v0 + ((v1 - v0) * (from - x0)) / (x1 - x0);
+  return [[t0 + from / rate, v], ...env.slice(i).map(([x, g]): [number, number] => [t0 + x / rate, g])];
 }
 
 /** Seconds into its source the clip shows at timeline second `t`. */
