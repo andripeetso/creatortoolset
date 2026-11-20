@@ -437,20 +437,20 @@ function componentOf(raw: Record<string, unknown>, say: (why: string) => void): 
       say('an instance needs "instance": {"of": a main component\'s "component" key}: it is a plain group');
       return {};
     }
-    const props = Object.fromEntries(
-      (obj(i.props) ? Object.entries(i.props) : [])
-        .flatMap(([k, v]): [string, string | boolean][] => (propName(k) && (typeof v === "boolean" || typeof v === "string") ? [[propName(k), typeof v === "string" ? v.slice(0, DESIGN_LIMITS.text) : v]] : []))
-        .slice(0, DESIGN_LIMITS.props),
-    );
+    const given = (obj(i.props) ? Object.entries(i.props) : []).flatMap(([k, v]): [string, string | boolean][] => (propName(k) && (typeof v === "boolean" || typeof v === "string") ? [[propName(k), typeof v === "string" ? v.slice(0, DESIGN_LIMITS.text) : v]] : []));
+    if (given.length > DESIGN_LIMITS.props) say(`an instance gives at most ${DESIGN_LIMITS.props} property values: ${given.slice(DESIGN_LIMITS.props).map(([k]) => k).join(", ")} left out`);
+    const props = Object.fromEntries(given.slice(0, DESIGN_LIMITS.props));
     const overrides: Record<string, Record<string, unknown>> = {};
-    for (const [k, v] of (obj(i.overrides) ? Object.entries(i.overrides) : []).slice(0, DESIGN_LIMITS.layers + 1)) {
+    const asked = obj(i.overrides) ? Object.entries(i.overrides) : [];
+    if (asked.length > DESIGN_LIMITS.layers + 1) say(`an instance overrides at most ${DESIGN_LIMITS.layers + 1} layers: the rest left out`);
+    for (const [k, v] of asked.slice(0, DESIGN_LIMITS.layers + 1)) {
       if ((k !== "" && !LAYER_ID.test(k)) || !obj(v)) continue;
       const kept = Object.fromEntries(Object.entries(v).filter(([f]) => (k ? !FIXED.has(f) : FROM_MAIN.has(f))));
       if (Object.keys(kept).length) overrides[k] = kept;
     }
     // values as a layer has them: a few levels deep at most (a fill's stops), never a nest without end
     const deep = (v: unknown, d: number): boolean => !!v && typeof v === "object" && (d > 5 || Object.values(v).some((x) => deep(x, d + 1)));
-    for (const [k, v] of Object.entries(overrides)) if (deep(v, 0)) delete overrides[k];
+    for (const [k, v] of Object.entries(overrides)) if (deep(v, 0)) (delete overrides[k], say(`an instance's override of ${k || "itself"} nests deeper than a layer's fields do: left out`));
     const big = JSON.stringify(overrides).length > DESIGN_LIMITS.overrideBytes;
     if (big) say(`an instance's overrides run past ${DESIGN_LIMITS.overrideBytes} characters: left out`);
     return { instance: { of: i.of, ...(Object.keys(props).length ? { props } : {}), ...(!big && Object.keys(overrides).length ? { overrides } : {}) } };
@@ -691,7 +691,8 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
     let held = 0;
     let full = false;
     /** `flowing`: the layers are an auto layout box's: they may fill and lie out of its flow. */
-    const take = (list: unknown, depth: number, flowing = false): Layer[] => {
+    /** `owner`: the id of the instance these layers are of (its layers' ids are "<its id>.<the main's layer id>"). */
+    const take = (list: unknown, depth: number, flowing = false, owner?: string): Layer[] => {
       const out: Layer[] = [];
       for (const l of Array.isArray(list) ? list : []) {
         const sayL = (why: string) => (r.say ? r.say(k, why, l) : notes.push(`Page ${k + 1}: ${why}`));
@@ -707,7 +708,9 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         const clean = cleanLayer(l, { ...r, ...size }, sayL, r.words ? r.words[k] : undefined, depth > 0);
         if (!clean) continue;
         held++;
-        const given = obj(l) && typeof l.id === "string" && LAYER_ID.test(l.id) && !ids.has(l.id) ? l.id : "";
+        // an id in parts only for a layer of an instance, its own id first: no other layer may take one of those
+        const ok = (id: string) => LAYER_ID.test(id) && (!id.includes(".") || (!!owner && id.startsWith(`${owner}.`)));
+        const given = obj(l) && typeof l.id === "string" && ok(l.id) && !ids.has(l.id) ? l.id : "";
         let id = given;
         for (let n = held; !id || ids.has(id); n++) id = `l${n}`;
         ids.add(id);
@@ -718,7 +721,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
           out.push({ ...clean, id } as Layer);
           continue;
         }
-        const inner = take(obj(l) ? l.layers : [], depth + 1, !!clean.layout);
+        const inner = take(obj(l) ? l.layers : [], depth + 1, !!clean.layout, clean.instance ? id : owner);
         // a plain group with nothing in it is nothing (a box may be empty: a card waiting for its words)
         if (!inner.length && !clean.box && !clean.instance) {
           sayL("a group with no layers in it: left out");

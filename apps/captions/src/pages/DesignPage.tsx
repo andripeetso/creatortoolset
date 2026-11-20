@@ -357,6 +357,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   // made again on top of that change. The window closing: a save the browser carries on with after the page is gone,
   // which it only does for a small one (64 KB); a bigger design is sent the plain way, and may not get there.
   useEffect(() => {
+    const told = (d: Design & { notes?: string[] }) => void (d.notes?.length && toast(`Not saved: ${d.notes.join("; ")}`, { id: "design-not-saved" }));
     const flush = (closing: boolean) => {
       const pages = unsaved.current;
       unsaved.current = null;
@@ -366,9 +367,11 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         return void fetch(`/api/designs/${id}`, { method: "PUT", keepalive: body.length < 60_000, headers: { "content-type": "application/json" }, body }).catch(() => {});
       }
       saving.current = saving.current.then(() =>
+        // on the way out of the page: what the server kept less of (a merged frame past its layers) is said where it
+        // still shows, as a notice
         saveDesign(id, { pages, since: server.current.at }).then(
-          () => {},
-          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: syncInstances(mergeFrames(pages, server.current.pages, layoutPages(e.design.pages, measureWords))), since: e.design.updatedAt }).then(() => {}, () => {}) : undefined),
+          told,
+          (e) => (e instanceof DesignChanged ? saveDesign(id, { pages: syncInstances(mergeFrames(pages, server.current.pages, layoutPages(e.design.pages, measureWords))), since: e.design.updatedAt }).then(told, () => {}) : undefined),
         ),
       );
     };

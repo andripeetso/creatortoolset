@@ -142,7 +142,7 @@ async function settle(d: Design, was: readonly DesignPage[], notes?: string[], a
   if (!usesComponents(d.pages)) return d;
   const checked = componentCheck(d.pages, DESIGN_LIMITS.components);
   notes?.push(...checked.notes);
-  const synced = syncInstances(checked.pages, was);
+  const synced = syncInstances(checked.pages, was, (n) => notes?.push(n));
   const changed = synced.filter((p, i) => p !== d.pages[i]);
   if (!changed.length) return d;
   const again = cleanPages(changed, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d), ...(ai ? {} : { measure: null }) });

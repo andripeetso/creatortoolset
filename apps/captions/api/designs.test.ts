@@ -374,6 +374,25 @@ describe("designs: an AI that designs", () => {
     expect(JSON.stringify(c2now.instance)).not.toContain('"a":');
   });
 
+  it("keeps an override inside an instance in an instance through a save and a read, and names a second main of one key", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true, pages: 2 })).body;
+    const [p1, p2] = d.pages.map((p) => p.id);
+    const shape = (id: string, fill: string) => ({ type: "shape", id, shape: "ellipse", fill, x: 0, y: 0, w: 40, h: 40 });
+    const dot = { type: "group", id: "d", box: true, component: "dot", x: 600, y: 40, w: 40, h: 40, layers: [shape("o1", "#ff0000")] };
+    const chip = { type: "group", id: "c", box: true, component: "chip", x: 40, y: 40, w: 200, h: 60, layers: [{ type: "group", id: "n", instance: { of: "dot" }, x: 10, y: 10 }] };
+    await write(d.id, { frames: [{ id: p1, layers: [dot, chip] }, { id: p2, layers: [{ type: "group", id: "i", instance: { of: "chip" }, x: 40, y: 400 }] }] });
+    const r = (await write(d.id, { changes: [{ frame: p2, layer: "i.n.o1", set: { fill: "#0000ff" } }] })).body;
+    const inst = () => r.design.pages.find((p) => p.id === p2)!.layers[0] as GroupLayer;
+    expect(inst().instance).toEqual({ of: "chip", overrides: { "n.o1": { fill: "#0000ff" } } });
+    const again = (await call<Design>("GET", `/api/designs/${d.id}`)).body;
+    expect(everyLayer(again.pages.find((p) => p.id === p2)!.layers).find((l) => l.id === "i.n.o1")).toMatchObject({ fill: "#0000ff" });
+    // an AI's main with a key the design has, and other layers: a main of its own, said
+    const clash = (await write(d.id, { changes: [{ frame: p2, add: { type: "group", box: true, component: "dot", x: 500, y: 500, w: 50, h: 50, layers: [shape("q", "#00ff00")] } }] })).body;
+    expect(clash.notes.join("\n")).toMatch(/has a main component "dot" already/);
+    const mains = everyLayer(clash.design.pages.flatMap((p) => p.layers)).filter((l) => (l as GroupLayer).component);
+    expect(mains.map((l) => (l as GroupLayer).component).sort()).toEqual(["c1", "chip", "dot"]);
+  });
+
   it("an AI fills a slide whose number chip is a main: each copy gets an instance with its own number, the main stays one", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
     const p1 = d.pages[0]!.id;

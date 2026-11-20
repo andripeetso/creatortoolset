@@ -71,7 +71,8 @@ function overridden<L extends Layer>(l: L, ov: Rec | undefined, ok: (f: string) 
   for (const [f, v] of Object.entries(ov)) {
     if (!ok(f) || (f === "instance" && !(isInstance(l) && v && typeof v === "object" && typeof (v as Rec).of === "string"))) continue;
     if (v === null) delete n[f];
-    else n[f] = v;
+    // a nested instance's main or values: onto what its main gives it (its own overrides stay the main's)
+    else n[f] = f === "instance" ? { ...(l as unknown as Instance).instance, ...(v as Rec) } : v;
   }
   return n as L;
 }
@@ -114,14 +115,18 @@ function make(inst: Instance, c: Made, chain: readonly string[] = []): Instance 
     return out as L;
   };
   const flowing = (g: Layer) => isGroup(g) && !!g.box && !!g.layout;
-  const copy = (l: Layer, inFlow: boolean): Layer => {
+  /** A layer of the main's (`nested`: inside an instance in it, whose properties are its own) as this instance has it: its overrides are flat, by the id it has in the main ("n.x" inside instance n). */
+  const copy = (l: Layer, inFlow: boolean, nested = false): Layer => {
     c.budget--;
     let n = { ...l, id: pre + l.id } as Layer;
     for (const f of MAIN_ONLY) delete (n as unknown as Rec)[f];
-    n = laidOut(overridden(withProps(n, props), o[l.id], (f) => !FIXED.has(f)), had.get(pre + l.id), inFlow);
-    // a nested instance shown as another main (a swap, a property) is made from that one
-    if (isInstance(n) && isInstance(l) && !same(n.instance, l.instance)) return overridden(make({ ...n, layers: [] }, c, [...chain, inst.instance.of]), o[l.id], (f) => !FIXED.has(f) && f !== "instance");
-    return isGroup(n) && isGroup(l) ? { ...n, layers: l.layers.map((k) => copy(k, flowing(l))) } : n;
+    n = laidOut(overridden(nested ? n : withProps(n, props), o[l.id], (f) => !FIXED.has(f)), had.get(pre + l.id), inFlow);
+    // a nested instance shown as another main (a swap, a property) is made from that one, what this one changes inside it on top
+    if (isInstance(n) && isInstance(l) && !same(n.instance, l.instance)) {
+      const swapped = overridden(make({ ...n, layers: [] }, c, [...chain, inst.instance.of]), o[l.id], (f) => !FIXED.has(f) && f !== "instance");
+      return { ...swapped, layers: mapLayers(swapped.layers, (k) => overridden(k, o[k.id.slice(pre.length)], (f) => !FIXED.has(f))) };
+    }
+    return isGroup(n) && isGroup(l) ? { ...n, layers: l.layers.map((k) => copy(k, flowing(l), nested || isInstance(l))) } : n;
   };
   const root: Rec = {};
   for (const [f, v] of Object.entries(inst)) if (!FROM_MAIN.has(f) && !MAIN_ONLY.includes(f)) root[f] = v;
@@ -139,12 +144,14 @@ function noticed(inst: Instance, c: Made, before: ReadonlyMap<string, Layer>): I
   if (!inst.layers.length || !before.has(inst.id)) return inst;
   // shown as another main now (a variant, a swap): its overrides go to the layers named alike there
   const old = before.get(inst.id);
+  // attached again (it was plain layers): what they were changed to is what it changes
+  const fresh = !isInstance(old);
   // (only while its layers are still the old main's: a window that switched it sends them made from the new one, its
   // overrides moved already; told by their ids, as a check may have laid them out again)
   const ids = (ls: readonly Layer[]) => everyLayer(ls).map((l) => l.id).join("|");
   if (isInstance(old) && old.instance.of !== inst.instance.of && c.mains.has(inst.instance.of) && ids(inst.layers) === ids(old.layers)) {
     const { overrides, ...rest } = inst.instance;
-    const moved = overrides ? remapped(overrides, c.mains.get(old.instance.of), c.mains.get(inst.instance.of)!) : {};
+    const moved = overrides ? remapped(overrides, madeMain(old.instance.of, c), madeMain(inst.instance.of, c) ?? c.mains.get(inst.instance.of)!) : {};
     return { ...inst, layers: [], instance: { ...rest, ...(Object.keys(moved).length ? { overrides: moved } : {}) } };
   }
   const want = make(inst, c);
@@ -157,19 +164,26 @@ function noticed(inst: Instance, c: Made, before: ReadonlyMap<string, Layer>): I
   const look = (l: Layer, key: string, ok: (f: string) => boolean) => {
     const w = made.get(l.id) as Rec | undefined;
     if (!w) return;
-    const p = before.get(l.id) as Rec | undefined;
+    const p = fresh ? undefined : (before.get(l.id) as Rec | undefined);
     const r = l as unknown as Rec;
     for (const f of new Set([...Object.keys(r), ...Object.keys(w)])) {
       const v = r[f];
       // the runs of words that are a property's move with its value: never an override of their own
       if (!ok(f) || same(v, w[f]) || (p && same(v, p[f])) || (f === "runs" && l.bind?.text)) continue;
-      changed = true;
       const b = l.bind;
       const swapped = f === "instance" && b?.swap && isInstance(l) && isInstance(w as unknown as Layer) && same({ ...l.instance, of: (w as unknown as Instance).instance.of }, (w as unknown as Instance).instance);
-      if (f === "text" && b?.text && typeof v === "string") props[b.text] = v;
-      else if (f === "hidden" && b?.visible) props[b.visible] = !v;
-      else if (swapped) props[b!.swap!] = (l as Instance).instance.of;
+      const own = !key.includes(".");
+      if (f === "instance" && isInstance(l)) {
+        // a nested instance: only which main it shows and its values (what changed in it is kept flat, above)
+        const wi = (w as unknown as Instance).instance;
+        const rec: Rec = { ...(l.instance.of !== wi.of ? { of: l.instance.of } : {}), ...(!same(l.instance.props, wi.props) ? { props: l.instance.props ?? null } : {}) };
+        if (!Object.keys(rec).length) continue;
+        if (own && swapped) props[b!.swap!] = l.instance.of;
+        else (overrides[key] ??= {}).instance = rec;
+      } else if (own && f === "text" && b?.text && typeof v === "string") props[b.text] = v;
+      else if (own && f === "hidden" && b?.visible) props[b.visible] = !v;
       else (overrides[key] ??= {})[f] = v === undefined ? null : v;
+      changed = true;
     }
   };
   // its own size only when it is a box of a size of its own on that side: a plain group's is the box round its layers, a
@@ -180,8 +194,8 @@ function noticed(inst: Instance, c: Made, before: ReadonlyMap<string, Layer>): I
     for (const l of ls) {
       if (!l.id.startsWith(pre)) continue;
       look(l, l.id.slice(pre.length), (f) => !FIXED.has(f));
-      // a nested instance's own layers are its own: what changed there is its overrides (it was looked at first)
-      if (isGroup(l) && !isInstance(l)) walk(l.layers);
+      // inside a nested instance too: kept here by the id in the main ("n.x"), so the main's own changes still reach it
+      if (isGroup(l)) walk(l.layers);
     }
   };
   walk(inst.layers);
@@ -192,16 +206,35 @@ function noticed(inst: Instance, c: Made, before: ReadonlyMap<string, Layer>): I
   return { ...inst, instance: { ...rest, ...(Object.keys(props).length ? { props } : {}), ...(Object.keys(overrides).length ? { overrides } : {}) } };
 }
 
-/** A main copied (pasted, duplicated) is an instance of it: of each key the main kept is the one that was there before (`was`), else the first. */
-function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly DesignPage[]): P[] {
+/**
+ * A main copied (pasted, duplicated) is an instance of it: of each key the main kept is the one that was there before
+ * (`was`), else the first. A second main of a key that is not a copy of the first (made in two windows at once, an AI's
+ * with a key the design has) keeps its layers under a key of its own, said.
+ */
+function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly DesignPage[], say?: (note: string) => void): P[] {
   const before = new Set(was?.flatMap((p) => everyLayer(p.layers).flatMap((l) => (isMain(l) ? [`${p.id}/${l.id}/${l.component}`] : []))));
-  const keeper = new Map<string, string>();
-  for (const p of pages) for (const l of everyLayer(p.layers)) if (isMain(l) && before.has(`${p.id}/${l.id}/${l.component}`)) keeper.set(l.component, `${p.id}/${l.id}`);
-  for (const p of pages) for (const l of everyLayer(p.layers)) if (isMain(l) && !keeper.has(l.component)) keeper.set(l.component, `${p.id}/${l.id}`);
+  const keeper = new Map<string, { at: string; main: Main }>();
+  for (const pass of [true, false])
+    for (const p of pages) for (const l of everyLayer(p.layers)) if (isMain(l) && !keeper.has(l.component) && (!pass || before.has(`${p.id}/${l.id}/${l.component}`))) keeper.set(l.component, { at: `${p.id}/${l.id}`, main: l });
+  // a copy is the same layers but for their ids, at the same size
+  const shape = (m: GroupLayer) => stable([m.w, m.h, mapLayers(m.layers, (k) => ({ ...k, id: "" }))]);
+  const taken = new Set<string>();
+  const fresh = () => {
+    let n = 1;
+    while (taken.has(`c${n}`) || keeper.has(`c${n}`) || pages.some((p) => everyLayer(p.layers).some((l) => isGroup(l) && (l.component === `c${n}` || l.instance?.of === `c${n}`)))) n++;
+    taken.add(`c${n}`);
+    return `c${n}`;
+  };
   let changed = false;
   const out = pages.map((p) => {
     const layers = mapLayers(p.layers, (l) => {
-      if (!isMain(l) || keeper.get(l.component) === `${p.id}/${l.id}`) return l;
+      const k = isMain(l) ? keeper.get(l.component) : undefined;
+      if (!isMain(l) || !k || k.at === `${p.id}/${l.id}`) return l;
+      if (shape(l) !== shape(k.main)) {
+        const key = fresh();
+        say?.(`frame ${p.id}, layer ${l.id}: the design has a main component "${l.component}" already: this one is "${key}"`);
+        return { ...l, component: key };
+      }
       const { component, set: _s, variant: _v, ...rest } = l;
       return { ...rest, instance: { of: component } };
     });
@@ -210,28 +243,43 @@ function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly
   return changed ? out : (pages as P[]);
 }
 
+/** Every instance of a list that lies in no instance, through `fn`; the same list when nothing changed. */
+function outerInstances(layers: readonly Layer[], fn: (l: Instance) => Layer): Layer[] {
+  let changed = false;
+  const out = layers.map((l) => {
+    const n = isInstance(l) ? fn(l) : isGroup(l) ? ((inner) => (inner === l.layers ? l : { ...l, layers: inner }))(outerInstances(l.layers, fn)) : l;
+    if (n !== l) changed = true;
+    return n;
+  });
+  return changed ? out : (layers as Layer[]);
+}
+
 /**
  * Every instance of a design made again from its main (make). `was`: the frames before this change, when it is a change
  * (the person's, an AI's): what was changed since on an instance's own layers is kept as its overrides (its words or
  * its showing, on a layer bound to a property: that property's value), and a main copied is an instance of it. Without
  * `was` (a design loaded, frames merged, undone) the instances are only made again. The same list when nothing changed.
  */
-export function syncInstances<P extends DesignPage>(pages: readonly P[], was?: readonly DesignPage[]): P[] {
+export function syncInstances<P extends DesignPage>(pages: readonly P[], was?: readonly DesignPage[], say?: (note: string) => void): P[] {
   if (!usesComponents(pages)) return pages as P[];
-  let out = was ? copiesOfMains(pages, was) : (pages as P[]);
+  let out = was ? copiesOfMains(pages, was, say) : (pages as P[]);
   if (was) {
     const c = madeFrom(out);
     out = out.map((p) => {
       const b = was.find((q) => q.id === p.id);
       if (b === p) return p;
       const before = new Map(b ? everyLayer(b.layers).map((l) => [l.id, l]) : []);
-      const layers = mapLayers(p.layers, (l) => (isInstance(l) ? noticed(l, c, before) : l));
+      const layers = outerInstances(p.layers, (l) => noticed(l, c, before));
       return layers === p.layers ? p : { ...p, layers };
     });
   }
   const c = madeFrom(out);
   let changed = out !== pages;
+  // no main changed (a layer moved, a word typed elsewhere): only the frames this change touched are made again
+  const mainsWere = was && new Map([...mainsOf(was)].map(([k, v]) => [k, v.main]));
+  const still = !!mainsWere && mainsWere.size === c.mains.size && [...c.mains].every(([k, m]) => mainsWere.get(k) === m);
   const made = out.map((p) => {
+    if (still && was!.find((q) => q.id === p.id) === p) return p;
     const layers = mapLayers(p.layers, (l) => {
       if (!isInstance(l)) return l;
       const n = make(l, c);
@@ -247,7 +295,7 @@ function namePath(layers: readonly Layer[], id: string, at: string[] = []): stri
   for (const l of layers) {
     const here = [...at, l.name ?? l.type];
     if (l.id === id) return here;
-    if (isGroup(l) && !isInstance(l)) {
+    if (isGroup(l)) {
       const p = namePath(l.layers, id, here);
       if (p) return p;
     }

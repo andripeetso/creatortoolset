@@ -2,7 +2,7 @@ import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer, type PathLayer 
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
-import { boundsOf, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, outOf, parentOf, seenBox } from "./tree";
+import { boundsOf, everyLayer, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, outOf, parentOf, seenBox } from "./tree";
 import { pathBounds } from "./path";
 
 /**
@@ -388,51 +388,115 @@ export const hovers = (buttons: number, tool: string, space: boolean) => !button
  * there (lib/design/components.ts) both stay.
  */
 export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
-  return base ? mergeFields(mine, base, theirs) : mine;
+  if (!base) return mine;
+  const all: Sides = { base: new Map(everyLayer(base.layers).map((l) => [l.id, l])), theirs: new Set(everyLayer(theirs.layers).map((l) => l.id)) };
+  return mergeFields(apart(mine, all, theirs), base, theirs, all);
 }
 
-/** A frame or a layer changed on both sides: each field this window changed is its own, every other the server's; layers held, layer by layer (mergeLayers). */
-function mergeFields<T extends { id: string; layers?: Layer[] }>(mine: T, base: T, theirs: T): T {
+/** Every layer of a frame's base and of the server's frame, by id. */
+interface Sides {
+  base: ReadonlyMap<string, Layer>;
+  theirs: ReadonlySet<string>;
+}
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * This window's frame with each layer that is not the server's layer of its id given an id of its own: one both sides
+ * added under the same id, and one this window changed whose id the server gave a new layer of another kind (an id
+ * taken again after a delete). An instance's layers keep its id before theirs (lib/design/components.ts).
+ */
+function apart(mine: DesignPage, all: Sides, theirs: DesignPage): DesignPage {
+  const kinds = new Map(everyLayer(theirs.layers).map((l) => [l.id, l.type]));
+  const clash = everyLayer(mine.layers).filter((l) => {
+    const b = all.base.get(l.id);
+    return all.theirs.has(l.id) && (!b || (b.type !== kinds.get(l.id) && !same(l, b)));
+  });
+  if (!clash.length) return mine;
+  const fresh = freshLayerIds([...theirs.layers, ...mine.layers], clash.length);
+  const to = new Map(clash.map((l, n) => [l.id, fresh[n]!]));
+  const renamed = (id: string): string => {
+    if (to.has(id)) return to.get(id)!;
+    const head = [...to.keys()].find((k) => id.startsWith(`${k}.`));
+    return head ? to.get(head)! + id.slice(head.length) : id;
+  };
+  return { ...mine, layers: mapLayers(mine.layers, (l) => (renamed(l.id) === l.id ? l : ({ ...l, id: renamed(l.id) } as Layer))) };
+}
+
+/** Objects changed on both sides, key by key (`depth` levels down): what this window changed is its own, the rest the server's. */
+function mergeKeys(m: unknown, b: unknown, t: unknown, depth: number): unknown {
+  const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+  if (depth <= 0 || !obj(m) || !obj(t) || (b !== undefined && !obj(b))) return m;
+  const base = (b ?? {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...t };
+  for (const k of new Set([...Object.keys(m), ...Object.keys(base)])) {
+    if (same(m[k], base[k])) continue;
+    if (m[k] === undefined) delete out[k];
+    else out[k] = same(t[k], base[k]) ? m[k] : mergeKeys(m[k], base[k], t[k], depth - 1);
+  }
+  return out;
+}
+
+/**
+ * A frame or a layer changed on both sides: each field this window changed is its own, every other the server's; its
+ * layers, layer by layer (mergeLayers); a text's words and runs together, from the side that changed them; an
+ * instance's main, values and overrides key by key (a value set here and an override set there both stay).
+ */
+function mergeFields<T extends { id: string; layers?: Layer[] }>(mine: T, base: T, theirs: T, all: Sides): T {
   const out: Record<string, unknown> = { ...theirs };
   const m = mine as unknown as Record<string, unknown>;
   const b = base as unknown as Record<string, unknown>;
+  const t = theirs as unknown as Record<string, unknown>;
+  const words = ["text", "runs"].some((f) => !same(m[f], b[f]));
   // every field but the id, so a field added to frames later is never dropped here
-  for (const f of new Set([...Object.keys(m), ...Object.keys(b)])) {
-    if (f === "id" || JSON.stringify(m[f]) === JSON.stringify(b[f])) continue;
+  for (const f of new Set([...Object.keys(m), ...Object.keys(b), ...(words ? ["text", "runs"] : [])])) {
+    if (f === "id" || (same(m[f], b[f]) && !(words && (f === "text" || f === "runs")))) continue;
     if (m[f] === undefined) delete out[f];
-    else out[f] = f === "layers" && Array.isArray(theirs.layers) && JSON.stringify(theirs.layers) !== JSON.stringify(base.layers) ? mergeLayers(mine.layers ?? [], base.layers ?? [], theirs.layers) : m[f];
+    else if (f === "layers" && Array.isArray(theirs.layers) && !same(theirs.layers, base.layers)) out[f] = mergeLayers(mine.layers ?? [], base.layers ?? [], theirs.layers, all);
+    else out[f] = f === "instance" && !same(t[f], b[f]) ? mergeKeys(m[f], b[f], t[f], 3) : m[f];
   }
   return out as T;
 }
 
 /**
- * Layers changed on both sides, one by one: one this window changed is merged field by field with the server's (so a
- * main changed here and an instance's override set there both stay, lib/design/components.ts), any other is the
- * server's; one taken out on either side is gone; one added on either side is there. Both adding a layer of the same
- * id: this window's layers, as they were before layers were merged one by one.
+ * Layers changed on both sides, one by one: one this window changed is merged field by field with the server's, any
+ * other is the server's; one taken out here is gone. One the server took out that this window changed stays (an edit is
+ * never lost to a delete), unless the server moved it elsewhere; a group the server took apart while this window added
+ * to it: what was added lies where it was, in its place. One added on either side is there.
  */
-export function mergeLayers(mine: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[]): Layer[] {
+export function mergeLayers(mine: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[], all?: Sides): Layer[] {
+  const sides = all ?? { base: new Map(everyLayer(base).map((l) => [l.id, l])), theirs: new Set(everyLayer(theirs).map((l) => l.id)) };
   const was = new Map(base.map((l) => [l.id, l]));
   const here = new Map(mine.map((l) => [l.id, l]));
   const there = new Set(theirs.map((l) => l.id));
-  const added = mine.filter((l) => !was.has(l.id));
-  if (added.some((l) => there.has(l.id))) return [...mine];
   const out = theirs.flatMap((t) => {
     const me = here.get(t.id);
     const b = was.get(t.id);
-    if (!b) return [t];
+    // new there (or a new layer of another kind under an old id)
+    if (!b || b.type !== t.type) return [t];
     if (!me) return [];
-    return [JSON.stringify(me) === JSON.stringify(b) ? t : (mergeFields(me, b, t) as Layer)];
+    return [same(me, b) ? t : (mergeFields(me, b, t, sides) as Layer)];
   });
-  // what was added here goes in where it lies among this window's layers
-  for (const l of added) out.splice(Math.min(mine.indexOf(l), out.length), 0, l);
+  // what this window has that the server's list has not, each where it lies among this window's layers
+  mine.forEach((l, n) => {
+    const b = was.get(l.id);
+    let keep: Layer[] = [];
+    // added here (somewhere the server has it is another level: it moved it, and it is there)
+    if (!b) keep = sides.theirs.has(l.id) ? [] : [l];
+    // changed here, taken out there (but not moved elsewhere)
+    else if (!there.has(l.id) && !same(l, b) && !sides.theirs.has(l.id)) {
+      const inner = isGroup(l) ? everyLayer(l.layers) : [];
+      // taken apart there: its layers are the server's now, and only what was added here comes out of it
+      keep = inner.some((k) => sides.theirs.has(k.id)) && isGroup(l) ? l.layers.filter((k) => !sides.base.has(k.id) && !sides.theirs.has(k.id)).map((k) => layerOut(l, k)) : [l];
+    }
+    if (keep.length) out.splice(Math.min(n, out.length), 0, ...keep);
+  });
   // reordered here: the layers both sides have go in this window's order, the others stay where they are
   const common = (list: readonly Layer[]) => list.filter((l) => was.has(l.id) && here.has(l.id) && there.has(l.id)).map((l) => l.id);
   if (common(mine).join() === common(base).join()) return out;
   const order = common(mine);
   const byId = new Map(out.map((l) => [l.id, l]));
-  let n = 0;
-  return out.map((l) => (order.includes(l.id) ? byId.get(order[n++]!)! : l));
+  let k = 0;
+  return out.map((l) => (order.includes(l.id) ? byId.get(order[k++]!)! : l));
 }
 
 /**

@@ -1137,6 +1137,8 @@ export function hits(l: Layer, px: number, py: number, near = 8): boolean {
   if (l.type === "path") return onPath(l, px, py, near);
   if (!isGroup(l)) return inLayer(l, px, py).inside;
   const inBox = inLayer(l, px, py).inside;
+  // an instance with nothing to draw (its main is gone) is picked by its box, so it can be found and taken out
+  if (l.instance && !l.layers.length) return inBox;
   // as it is drawn: only a box cuts its layers
   if (l.box && l.clip && !inBox) return false;
   const p = into(l, { x: px, y: py });

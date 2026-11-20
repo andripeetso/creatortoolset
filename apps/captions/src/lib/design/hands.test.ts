@@ -90,8 +90,10 @@ describe("the hands on the canvas", () => {
     // reordered here while the server changed a layer: this window's order, the server's change
     const two: DesignPage = { ...base, layers: [l("l1", 0), l("l2", 0)] };
     expect(mergeFrame({ ...two, layers: [l("l2", 0), l("l1", 0)] }, two, { ...two, layers: [l("l1", 0), l("l2", 50)] }).layers).toEqual([l("l2", 50), l("l1", 0)]);
-    // both added a layer of one id: this window's layers whole, as before
-    expect(mergeFrame({ ...base, layers: [l("l1", 0), l("l2", 1)] }, base, theirs).layers).toEqual([l("l1", 0), l("l2", 1)]);
+    // both added a layer of one id: both are there, this window's under an id of its own
+    const both = mergeFrame({ ...base, layers: [l("l1", 0), l("l2", 1)] }, base, theirs).layers;
+    expect(both.map((x) => x.x).sort((a, b) => a - b)).toEqual([1, 40, 80]);
+    expect(new Set(both.map((x) => x.id)).size).toBe(3);
     // a name taken off here stays off; a frame this window made (the server never had it) is this window's whole
     expect(mergeFrame({ ...base, name: undefined }, { ...base, name: "Cover" }, { ...theirs, name: "Cover" }).name).toBeUndefined();
     expect(mergeFrame(mine, undefined, theirs)).toBe(mine);

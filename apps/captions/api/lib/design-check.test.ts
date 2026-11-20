@@ -617,3 +617,25 @@ describe("combined shapes and masks, checked", () => {
     expect(notes.join(" ")).toMatch(/"boolean" is "union".*a mask is "alpha"/);
   });
 });
+
+describe("components: ids and caps", () => {
+  const rules = { w: 1080, h: 1350, pictures: [], fonts: [], measure: null };
+  const rect = (id: string) => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 10, h: 10 });
+
+  it("takes an id in parts only for a layer of the instance it names", () => {
+    const { pages } = cleanPages([{ layers: [{ id: "i2", type: "group", x: 0, y: 0, w: 10, h: 10, instance: { of: "pill" }, layers: [rect("i2.bg")] }, rect("i2.x"), { id: "g", type: "group", x: 0, y: 0, w: 10, h: 10, layers: [rect("g.y")] }] }], rules);
+    const ids = (ls: Layer[]): string[] => ls.flatMap((l) => [l.id, ...(l.type === "group" ? ids(l.layers) : [])]);
+    const got = ids(pages[0]!.layers);
+    expect(got).toContain("i2.bg");
+    expect(got.filter((id) => id.includes("."))).toEqual(["i2.bg"]);
+  });
+
+  it("says what a cap leaves out of an instance", () => {
+    let nest: Record<string, unknown> = { color: "#000000" };
+    for (let i = 0; i < 10; i++) nest = { a: nest };
+    const props = Object.fromEntries(Array.from({ length: DESIGN_LIMITS.props + 2 }, (_, n) => [`P${n}`, "x"]));
+    const { notes } = cleanPages([{ layers: [{ id: "i", type: "group", x: 0, y: 0, w: 10, h: 10, instance: { of: "pill", props, overrides: { bg: { effects: nest } } }, layers: [] }] }], rules);
+    expect(notes.join("\n")).toMatch(/at most 12 property values/);
+    expect(notes.join("\n")).toMatch(/override of bg nests deeper/);
+  });
+});
