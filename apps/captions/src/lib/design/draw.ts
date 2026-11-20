@@ -826,7 +826,7 @@ function inkOf(ctx: Ctx, l: Layer): number {
     // a container's layers, and its own lines, past its box (none past the edge that cuts them)
     const own = Math.max(0, ...strokesOf(l).filter((s) => !s.hidden).map((s) => Math.max(s.width * 1.5, ...(s.sides ?? [0]))));
     const inner = l.layers.filter((k) => !k.hidden);
-    if (l.clip || !inner.length) return own;
+    if ((l.box && l.clip) || !inner.length) return own;
     const b = boundsOf(inner.map(paintedBox));
     return Math.max(own, -b.x, -b.y, b.x + b.w - l.w, b.y + b.h - l.h);
   }
@@ -867,13 +867,8 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
   const room = exact ? EXACT_WORK_PIXELS : WORK_PIXELS;
   let scale = Math.hypot(t.a, t.b);
   if (bw * bh * scale * scale > room) scale = Math.sqrt(room / (bw * bh));
-  // a picture or a drawing that has not loaded yet is a grey box: it is worked again once it is there
-  const src = sourceOf(l);
-  // words are drawn again once a font arrives (their width changes with it)
-  // and a container once a picture or a font of a layer in it arrives
-  const inner = isGroup(l) ? [l, ...everyLayer(l.layers)] : [];
-  const ready = (k: Layer) => [sourceOf(k) ? !!loaded.get(sourceOf(k)!)?.width : "", k.type === "text" ? fontsOfText(k).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", fillsOf(k).map((p) => (p.type === "image" ? !!loaded.get(p.picture)?.width : ""))];
-  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : "", l.type === "text" ? fontsOfText(l).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", inner.map(ready), drawing.designing]);
+  // worked again once a picture (or another put in its place) or a font of it, or of a layer in it, arrives (readyOf)
+  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, readyOf(ctx, loaded, [l]), drawing.designing]);
   let mine = workedKept.get(loaded);
   if (!mine) workedKept.set(loaded, (mine = new Map()));
   return keptOr(mine, `${frame}/${l.id}`, key, Math.ceil(bw * bh * scale * scale), KEPT_WORK, () => {
@@ -1141,7 +1136,8 @@ export function hits(l: Layer, px: number, py: number, near = 8): boolean {
   if (l.type === "path") return onPath(l, px, py, near);
   if (!isGroup(l)) return inLayer(l, px, py).inside;
   const inBox = inLayer(l, px, py).inside;
-  if (l.clip && !inBox) return false;
+  // as it is drawn: only a box cuts its layers
+  if (l.box && l.clip && !inBox) return false;
   const p = into(l, { x: px, y: py });
   if (l.boolean) {
     // where the combined shape is: in any part, in the bottom one and no other, in every part, in an odd number of them

@@ -426,3 +426,28 @@ describe("follow-ups: a line-only part, a group part's clip and masks, a piece's
     expect(paint("#00ff00")).toEqual([0, 255, 0, 255]);
   });
 });
+
+describe("follow-ups 2: a picture in an effect's piece, clip only on a box", () => {
+  it("a picture put in the place of another under the same id inside a faded group is drawn again", () => {
+    const pics = new Map<string, Canvas>();
+    const paint = (colour: string) => {
+      const c = new Canvas(30, 30);
+      const g = c.getContext("2d");
+      g.fillStyle = colour;
+      g.fillRect(0, 0, 30, 30);
+      pics.set("faded", c);
+      const faded = { id: "fg", type: "group", x: 0, y: 0, w: W, h: H, opacity: 0.99, layers: [{ id: "ph", type: "image", picture: "faded", fit: "cover", x: 0, y: 0, w: W, h: H }] } as Layer;
+      const canvas = new Canvas(W, H);
+      const ctx = canvas.getContext("2d");
+      drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "faded", background: "#ffffff", layers: [faded] } as DesignPage, W, H, pics as unknown as Loaded, false);
+      return Array.from(ctx.getImageData(20, 30, 1, 1).data);
+    };
+    expect(paint("#ff0000")[0]).toBeGreaterThan(240);
+    expect(paint("#00ff00")[1]).toBeGreaterThan(240);
+  });
+
+  it("a plain group's clip is not drawn, so it does not limit where it is clicked", () => {
+    const g = { id: "g", type: "group", clip: true, x: 0, y: 0, w: 20, h: 20, layers: [{ id: "r", type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 60, h: 60 }] } as Layer;
+    expect([hits(g, 40, 40), hits({ ...g, box: true } as Layer, 40, 40)]).toEqual([true, false]);
+  });
+});
