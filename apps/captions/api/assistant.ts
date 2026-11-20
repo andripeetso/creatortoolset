@@ -742,6 +742,13 @@ export function workEnded(username: string, idStart: string, end: WorkEnd & { sa
     hit = true;
     // href: where the card leads once the work is there (a card may lead elsewhere while it runs)
     for (const w of holders.flatMap((m) => m.work!.filter(mine))) Object.assign(w, { status: end.status, ...(end.detail ? { detail: end.detail } : {}), ...(end.href ? { href: end.href } : {}) });
+    // the same thing ("edit:<id>") done now: its failed tries further up stop showing as failures (owner, 2026-11-20:
+    // a chat whose edit got done was still full of red cards from the tries before)
+    if (end.status === "done") {
+      const root = idStart.split(":").slice(0, 2).join(":");
+      for (const m of list.slice(0, list.indexOf(holders[0]!)))
+        for (const w of m.work ?? []) if (w.status === "failed" && cardOf(w.id, root)) Object.assign(w, { status: "done", detail: "Done on a later try" });
+    }
     if (!end.say || said) continue;
     said = true;
     // the line carries the card it is about, so it has a page to open however far back the work was started; `media`: the cuts it made, to play in the chat
