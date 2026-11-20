@@ -85,7 +85,7 @@ describe("loudness meter (BS.1770-4)", () => {
 
 const block = (lufs: number) => lufsToEnergy(lufs);
 /** a source of `s` seconds at `lufs` throughout */
-const flat = (s: number, lufs: number): Measured => ({ blocks: Array.from({ length: s * 10 - 3 }, () => block(lufs)) });
+const flat = (s: number, lufs: number): { blocks: number[] } => ({ blocks: Array.from({ length: s * 10 - 3 }, () => block(lufs)) });
 
 function tl(): NleTimeline {
   return {
@@ -135,7 +135,7 @@ describe("Lower Under Voice", () => {
   });
 
   it("speech from a level gate when there are no words", () => {
-    const loud = flat(4, -20).blocks as number[];
+    const loud = flat(4, -20).blocks;
     const m = new Map<string, Measured>([["voice", { blocks: [...loud.slice(0, 20), ...Array(20).fill(block(-60)), ...loud.slice(0, 20)] }]]);
     const spans = speechSpans(tl(), new Map(), m);
     // blocks 0–19 (0–2.3 s) and 40–59 (4–6.3 s) speak
