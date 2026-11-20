@@ -57,7 +57,10 @@ extension ChatList {
             guard case .chat(let id) = row.route else { return row }
             var row = row
             row.workspace = spaces[id] ?? (open?.id == id ? open?.workspace : nil)
-            row.fold = folds[id]
+            // a chat that asks or works again is in play, whatever an older read of the list said
+            var busy = row.status.waitsOnYou
+            if case .working = row.status { busy = true }
+            row.fold = busy ? nil : folds[id]
             return row
         }
     }

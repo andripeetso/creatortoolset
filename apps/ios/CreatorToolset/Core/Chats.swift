@@ -142,7 +142,7 @@ enum ChatList {
 
     /// A tab's badge: its rows that wait on the person.
     static func waiting(_ rows: [ChatRow], chats: Bool) -> Int {
-        rows.filter { onChats($0) == chats && $0.fold == nil && $0.status.waitsOnYou }.count
+        rows.filter { onChats($0) == chats && $0.status.waitsOnYou }.count
     }
 
     /// The page of the website a route stands for, and so its row's id.
@@ -396,6 +396,8 @@ final class ChatsModel: ObservableObject {
                 } else if event.name == "change", event.field("topic") != "assistant" {
                     self.changed.send()
                     self.loadSoon()
+                } else if event.name == "change" {
+                    self.foldsSoon()
                 }
             }
         }
@@ -416,6 +418,21 @@ final class ChatsModel: ObservableObject {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             await self?.load()
+        }
+    }
+
+    private var foldsTask: Task<Void, Never>?
+    /// A chat that changed may be settled or snoozed no more, or newly: one read of the list of chats for a burst.
+    private func foldsSoon() {
+        foldsTask?.cancel()
+        foldsTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let api = ToolsetAPI.current, api.cacheKey == self?.key,
+                  let list = (try? await api.get("/api/assistant/chats") as ChatSummary.List)?.chats.items,
+                  let self, api.cacheKey == self.key else { return }
+            chatSpaces = ChatList.spaces(list)
+            chatFolds = ChatList.folds(list)
+            rebuild()
         }
     }
 

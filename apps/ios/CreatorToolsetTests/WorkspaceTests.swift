@@ -162,12 +162,14 @@ final class WorkspaceTests: XCTestCase {
         let folds = ChatList.folds(try JSONDecoder().decode(ChatSummary.List.self, from: Data(json.utf8)).chats.items)
         XCTAssertEqual(folds, ["c1": .settled, "c2": .snoozed])
         let rows = ["c1", "c2", "c3", "c4"].map { id in
-            ChatRow(id: "/?chat=\(id)", route: .chat(id), title: id, detail: "", status: .failed, at: .distantPast)
+            ChatRow(id: "/?chat=\(id)", route: .chat(id), title: id, detail: "", status: .done, at: .distantPast)
         }
         let placed = ChatList.placed(rows, spaces: [:], folds: folds, open: nil)
         XCTAssertEqual(placed.map(\.fold), [.settled, .snoozed, nil, nil])
-        // a chat put away is no news on the tab's badge
-        XCTAssertEqual(ChatList.waiting(placed, chats: true), 2)
+        // one that asks since that list was read is in play again
+        var asks = rows[0]
+        asks.status = .approval
+        XCTAssertNil(ChatList.placed([asks], spaces: [:], folds: folds, open: nil)[0].fold)
     }
 
     func testProjectsAreGroupedLikeTheWorkshop() {
