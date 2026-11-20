@@ -102,8 +102,28 @@ final class WheelGlideTests: XCTestCase {
             y = Int((try await web.evaluateJavaScript("Math.round(scrollY)") as? Double) ?? -1)
         }
         guard y > 0 else { throw XCTSkip("the web view did not take scroll events here (no display to show a window on)") }
+        XCTAssertEqual(y, 120)   // the whole step in one move (3 lines × 40), where a glide's first frame is a small part
         try await tell("glide")
         XCTAssertFalse(web.wheelSnaps)
+    }
+
+    /// "snap" stops a glide already in flight, and a new page starts from "glide" (an older server never says).
+    @MainActor func testSnapStopsAGlideAndANewPageGlidesAgain() {
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        let web = AppWebView()
+        window.contentView = web
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        web.scrollWheel(with: wheelStep(lines: -3, in: window))
+        XCTAssertFalse(web.glide.resting)
+        web.wheelSnaps = true          // what the page's "snap" message sets
+        XCTAssertTrue(web.glide.resting)
+        web.wheelSnaps = false
+        web.scrollWheel(with: wheelStep(lines: -3, in: window))
+        web.wheelSnaps = true
+        web.wheelPageChanged()         // a navigation committed, or the web process ended
+        XCTAssertFalse(web.wheelSnaps)
+        XCTAssertTrue(web.glide.resting)
     }
 
     /// The whole path in a real web view: one wheel step moves the page by the same distance as before, over several

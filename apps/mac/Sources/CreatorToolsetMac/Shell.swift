@@ -1066,7 +1066,12 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     }
 
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        (webView as? AppWebView)?.wheelPageChanged()
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        (webView as? AppWebView)?.wheelPageChanged()
         AppLog.write("the page's web process ended: reloading \(webView.url?.absoluteString ?? "")")
         if webView.url == nil { open("/") } else { webView.reload() }
     }

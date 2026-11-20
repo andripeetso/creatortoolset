@@ -8,11 +8,24 @@ export function watchWheelPlaces(win: Window = window) {
   const app = (win as unknown as { webkit?: { messageHandlers?: { wheel?: Handler } } }).webkit?.messageHandlers?.wheel;
   if (!app) return;
   let last = "";
-  const check = (e: Event) => {
-    const now = (e.target as Element | null)?.closest?.('[data-wheel="snap"]') ? "snap" : "glide";
+  let at: { x: number; y: number } | null = null;
+  const tell = (el: Element | null) => {
+    const now = el?.closest?.('[data-wheel="snap"]') ? "snap" : "glide";
     if (now !== last) app.postMessage((last = now));
   };
-  // a wheel step corrects it too: the page can change under a pointer that has not moved
+  const check = (e: Event) => tell(e.target as Element | null);
   win.addEventListener("pointerover", check, { passive: true, capture: true });
+  win.addEventListener("pointermove", (e) => (at = { x: (e as PointerEvent).clientX, y: (e as PointerEvent).clientY }), {
+    passive: true,
+    capture: true,
+  });
+  // a wheel step corrects it too
   win.addEventListener("wheel", check, { passive: true, capture: true });
+  // the page can change under a pointer that has not moved (a new route, a canvas or dialog appearing), and the first
+  // wheel step would still go the old way: look again at the pointer's place whenever the page's elements change
+  new MutationObserver(() => at && tell(win.document.elementFromPoint(at.x, at.y))).observe(win.document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributeFilter: ["data-wheel"],
+  });
 }
