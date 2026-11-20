@@ -32,7 +32,7 @@ import { rendersOf } from "./preview";
 import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
 import { cardsApp } from "./cards/routes";
-import { markPasses, nextPass } from "./passes";
+import { approvePass, markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, removeLearned, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 import { onEvent } from "../lib/events";
@@ -95,6 +95,23 @@ onEvent("review.changes", async ({ asset, owner }) => {
     const newest = Math.max(0, ...((await readMeta(asset))?.versions ?? []).map((v) => v.n));
     const open = (await readComments(asset)).filter((x) => x.version === newest && !x.parentId && !x.resolved && x.text.trim());
     await addFeedback(e.id, open.map((x) => ({ at: x.createdAt, from: "review" as const, variant, ...(x.t !== undefined ? { t: x.t } : {}), text: x.text, by: x.user ?? x.author })));
+    return;
+  }
+});
+
+/**
+ * A cut an edit in passes filed was approved in Review: that is the go for its next pass (approvePass). Only the newest
+ * cut of the version, and only from someone who may work on the edit (a guest on a share link approves, nothing starts).
+ */
+onEvent("review.approved", async ({ asset, owner, by, n }) => {
+  for (const e of allEdits()) {
+    if (ownerOf(e) !== owner || e.trashedAt) continue;
+    const filed = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset);
+    if (!filed) continue;
+    const [variant, p] = filed;
+    if (p.n !== n || !by || !(await editRole(by, e))) return;
+    const next = (await readMeta(asset))?.versions.find((v) => v.n === n)?.next;
+    await approvePass(e, variant, next, by);
     return;
   }
 });

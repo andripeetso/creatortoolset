@@ -17,6 +17,8 @@ export interface CoreEvents {
   "review.finished": { asset: string; owner: string; by: string; key: boolean; words?: string; turn?: string };
   /** A Review video was set to Changes (sent back to be fixed). `by`: who set it. */
   "review.changes": { asset: string; owner: string; by: string };
+  /** A Review video's version `n` was approved (its newest when the press named none). `by`: who pressed ("" for a guest on a share link). */
+  "review.approved": { asset: string; owner: string; by: string; n: number };
   "session.published": { id: string; owner: string; from: SessionStatus };
   "session.status": { id: string; owner: string; from: SessionStatus; to: SessionStatus };
   /** Something in a Media Library changed (a piece, an item, a collection, a file): open Finals and Library pages refetch. */

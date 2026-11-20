@@ -19,6 +19,8 @@ const { enqueueJob } = await import("../library/jobs");
 const { saveTranscript } = await import("../library/transcribe");
 const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
 const { readStep, saveStep } = await import("./store");
+const { addVersion } = await import("../review");
+const { writeFile } = await import("node:fs/promises");
 const { STEPS, tick } = await import("./worker");
 
 const words: TimedWord[] = [
@@ -117,6 +119,40 @@ describe.skipIf(rootReplaced)("AI Editor: edit in passes", () => {
     expect(e.passes).toEqual({ waiting: true, next: "broll" });
     await call("maker", "POST", `/api/editor/${id}/pass`);
     expect(readStep(id, "passes")).toEqual({ v1: ["broll"], v2: ["broll", "cards"] });
+  });
+
+  it("Approve on a pass's cut in Review is the go for its next pass: queued once, never by a second press or an older cut", async () => {
+    const style = await json<{ id: string }>(call("maker", "POST", "/api/editor/styles", { name: "Tiny approve", passes: true, brollCollectionId: "col_a" }));
+    const { id } = await json<{ id: string }>(call("maker", "POST", "/api/editor", { sources: ["ver_a"], style: style.id }));
+    await saveStep(id, "analysis", { sentences, notes: [] });
+    await saveStep(id, "plan", { lines, plans: plans.slice(0, 1), notes: [] });
+    enqueueJob(libraryDb(), "maker", `${id}:`, "draft", "maker", true, "edit_jobs");
+    await drain();
+    expect((await view(id)).passes).toEqual({ waiting: true, next: "broll" });
+    // the first cut as the editor files it: the version names what approving it starts
+    const cut = (await addVersion(undefined, { owner: "maker", name: "Tiny approve v1.mp4", mime: "video/mp4", bytes: 1, next: "B-roll" }, (dest) => writeFile(dest, "x")))!;
+    await saveStep(id, "review", { v1: { assetId: cut.meta.id, n: cut.n } });
+    const approve = (body: Record<string, unknown>) => call("maker", "POST", `/api/review/assets/${cut.meta.id}/approval`, { status: "approved", ...body });
+    const brolls = () => libraryDb().prepare("SELECT state FROM edit_jobs WHERE version_id = ? AND kind = 'broll'").all(`${id}:v1`);
+    const settle = () => new Promise((r) => setTimeout(r, 200));
+
+    // an older version than the newest is refused, and starts nothing
+    const old = await approve({ version: 2 });
+    expect([old.status, ((await old.json()) as { code: string }).code]).toEqual([409, "not_newest"]);
+    await settle();
+    expect(brolls()).toEqual([]);
+
+    const yes = await approve({ version: 1 });
+    expect(((await yes.json()) as { versions: { next?: string }[] }).versions[0]!.next).toBe("B-roll");
+    await settle();
+    expect(readStep(id, "passes")).toEqual({ v1: ["broll"] });
+    expect(brolls()).toEqual([{ state: "queued" }]);
+    await drain();
+    // approving the same cut again: its pass is recorded, nothing more is queued
+    expect((await approve({})).status).toBe(200);
+    await settle();
+    expect(readStep(id, "passes")).toEqual({ v1: ["broll"] });
+    expect(brolls()).toEqual([{ state: "done" }]);
   });
 
   it("an edit not in passes has no Carry on: 409, and no passes in its view", async () => {

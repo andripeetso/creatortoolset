@@ -2,7 +2,7 @@ import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Critique } from "../../contracts/edit-plan";
 import type { Item, Renders, Timeline } from "../../contracts/editor";
-import { addVersion, fileTimelineView, readMeta, toLibrary } from "../review";
+import { addVersion, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
 import { blobs, libraryDb } from "../library/db";
@@ -22,6 +22,7 @@ import { sayFor } from "./progress";
 import { followPicked, HELD_NOTE } from "./subject";
 import { renderPlanPreview, sfxMix } from "./plan-render";
 import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveDraft, saveFiled, saveStep } from "./store";
+import { nextPass, PASS_WORD } from "./passes";
 import { mayLeave, workspaceLibrary } from "../library/upload-gate";
 import type { StepContext } from "./worker";
 
@@ -354,9 +355,11 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
     return;
   }
   // a moment of a long recording is filed under its own title, so twenty of them in Review can be told apart
+  // an edit in passes: approving this cut starts the version's next pass (passes.ts approvePass)
+  const pass = nextPass(edit, variant);
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
-  const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId };
+  const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId, ...(pass ? { next: PASS_WORD[pass] } : {}) };
   // `given`: the thumbnail and waveform made where the preview was rendered (a computer, api/work/result.ts), so Review
   // and the library take them instead of decoding the preview again
   const place = async (dest: string) => {
@@ -368,6 +371,8 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));
   if (!added) throw new Error("Could not file the preview in Review");
+  // a new cut after Approve (its next pass) or Request changes waits for review again, as the new version it is
+  if (added.n > 1 && (added.meta.approval.status === "approved" || added.meta.approval.status === "changes")) await setApproval(added.meta.id, "needs_review", ownerOf(edit));
   // the timeline this version shows: kept as it is now (a later cut of the draft doesn't change what this version's keys name)
   await saveFiled(edit.id, added.meta.id, added.n, { variant, timeline });
   const db = libraryDb();
