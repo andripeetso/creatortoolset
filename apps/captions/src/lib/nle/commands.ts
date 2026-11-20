@@ -7,6 +7,7 @@ import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, spee
 import { INSPECTOR_COMMANDS } from "./inspector-commands";
 import { addTransition, handlesAt, removeTransition } from "./trans";
 import { pendingText, placeText } from "./text-clip";
+import { captionsStale } from "./captions";
 
 // Every edit that can be made to an open timeline, by id: the keys (keys.ts), the menus and the chat's nle_run all run
 // these (keys.ts commandOfKey), so a key and the chat do the same thing. A command is pure: the editor's state in, the state after it out.
@@ -28,6 +29,8 @@ export interface NleState {
   gap?: Gap | null;
   /** a transition picked on the timeline: the handle of the clip after its cut */
   trans?: string | null;
+  /** Make or Update Captions asked for: the page sends the saved cut's render to Caption Studio (lib/nle/captions.ts) */
+  captionsAsk?: "make" | "update" | null;
 }
 
 export interface NleParam {
@@ -234,6 +237,14 @@ const LIST: NleCommand[] = [
     const made = placeText(s.tl, pendingText(s.tl, t?.words ?? ""), s.playhead);
     return { ...s, tl: made.tl, sel: [made.key] };
   }, { words: { type: "text", about: "its words", optional: true } }),
+  // captions are Caption Studio's (lib/nle/captions.ts): made from the saved cut's render, which the page sends
+  cmd("makeCaptions", "Make Captions: the saved cut's render to Caption Studio, transcribed there, its captions on the Captions lane", (s) => !s.tl.captions,
+    (s) => ({ ...s, captionsAsk: "make" })),
+  cmd("updateCaptions", "Update Captions: captions from an older cut moved through the edit, only new material transcribed (save the cut first)",
+    (s) => captionsStale(s.tl), (s) => ({ ...s, captionsAsk: "update" })),
+  cmd("burnCaptions", "Burn in the captions on export and in the render, or not", (s) => !!s.tl.captions,
+    (s, p) => ({ ...s, tl: { ...s.tl, captions: { ...s.tl.captions!, burn: p.on === undefined ? !s.tl.captions!.burn : p.on !== 0 } } }),
+    { on: { type: "number", about: "1 on, 0 off (left out: switched)", optional: true } }),
   ...INSPECTOR_COMMANDS,
 ];
 

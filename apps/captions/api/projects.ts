@@ -2248,6 +2248,8 @@ export async function clipWithCaptions(
       name: clip.name,
       origin: { projectId, clipId, revision: meta.revision ?? 0 },
       data,
+      /** the project's workspace (its Meta.projectId) */
+      workspace: meta.projectId,
     };
   });
 }
