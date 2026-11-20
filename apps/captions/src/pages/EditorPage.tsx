@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { showAssistantNotice, useAssistant } from "@/lib/assistant";
 import { createEdit, createEmpty, deleteEdit, footageTarget, listAnimationStyles, listEdits, listStyles, makeVoice, patchEdit, restoreEdit, runEdit } from "@/lib/editor";
 import { changeFolderItems, getAsset, listAssets, listCollections, listLibraries, macIndexOnly, uploadFile } from "@/lib/library";
+import { importPlace } from "@/pages/library/Import";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { confirmHeavy, openToolSetup } from "@/lib/setup";
@@ -626,7 +627,9 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
           setAdding(`${of}${file.name}`);
           // a file the Mac app reads where it lies is not sent: it has no percent
           const onMac = await macIndexOnly(target.libraryId);
-          const up = await uploadFile(target.libraryId, file, (sent, inPlace) => setAdding(`${of}${file.name}${inPlace || !file.size ? "" : ` · ${Math.round((sent / file.size) * 100)}%`}`), target.collectionId, undefined, { onMac });
+          // the import rule: inside a Media folder it is read where it is, from outside it is copied into Imports/<this edit>
+          const at = onMac ? await importPlace(target.libraryId, file, name.trim() || undefined) : undefined;
+          const up = await uploadFile(target.libraryId, file, (sent, inPlace) => setAdding(`${of}${file.name}${inPlace || !file.size ? "" : ` · ${Math.round((sent / file.size) * 100)}%`}`), target.collectionId, at, { onMac });
           const assetId = up.assetId ?? up.duplicateOf;
           if (!assetId) throw new Error(`Could not add ${file.name} to the Media Library`);
           await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);

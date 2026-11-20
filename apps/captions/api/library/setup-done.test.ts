@@ -25,11 +25,11 @@ libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind
 
 describe("setup's Done", () => {
   it("comes back with setupAt and every answer, in the PATCH reply and in the list the page loads", async () => {
-    const answers = { importMode: "in-place", organize: "ai", proxy: false, proxyQuality: "high", transcribe: true, defaultFolders: false, setupAt: "2026-11-19T09:00:00.000Z", upload: "none", finalsUpload: "none", lookBudget: null };
+    const answers = { organize: "ai", proxy: false, proxyQuality: "high", transcribe: true, defaultFolders: false, setupAt: "2026-11-19T09:00:00.000Z", upload: "none", finalsUpload: "none", lookBudget: null };
     const r = await app.request("/api/library/lib_done", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings: answers }) });
     expect(r.status).toBe(200);
     const saved = ((await r.json()) as LibrarySummary).settings;
-    expect(saved).toMatchObject({ setupAt: "2026-11-19T09:00:00.000Z", importMode: "in-place", proxy: false, proxyQuality: "high", defaultFolders: false, upload: "none", finalsUpload: "none" });
+    expect(saved).toMatchObject({ setupAt: "2026-11-19T09:00:00.000Z", proxy: false, proxyQuality: "high", defaultFolders: false, upload: "none", finalsUpload: "none" });
     const list = (await (await app.request("/api/library")).json()) as { libraries: LibrarySummary[] };
     expect(list.libraries.find((l) => l.id === "lib_done")?.settings.setupAt).toBe("2026-11-19T09:00:00.000Z");
   });

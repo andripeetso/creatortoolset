@@ -429,8 +429,8 @@ export default function LibraryPage() {
 
   const saved = (l: LibrarySummary) => setLibraries((all) => all?.map((x) => (x.id === l.id ? l : x)) ?? all);
   const organize = useOrganize({ onSaved: saved, setFolders: folderList.set });
-  const importQ = useImportQuestion({ library, serverHere: !!watch?.allowed, onError: setError });
-  const drop = useLibraryDrop({ library, ignore: DRAG, readsFolders: !!watch?.allowed, addFiles, onWatch: watchLoad.set, onError: setError });
+  const importQ = useImportQuestion({ serverHere: !!watch?.allowed, onError: setError });
+  const drop = useLibraryDrop({ library, ignore: DRAG, readsFolders: !!watch?.allowed, addFiles, onError: setError });
 
   const create = async () => {
     try {

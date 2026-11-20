@@ -1,11 +1,11 @@
 import type { DesignPage, DesignShape, Effect, ImageLayer, Layer, Radius, ShapeLayer, TextLayer } from "@contracts/design";
 import { faceOf } from "./fonts";
 import { fillsOf, strokesOf } from "./paint";
-import { eachStroke, fillWith, strokeWith } from "./paint-draw";
+import { castFills, eachStroke, fillWith, strokeWith } from "./paint-draw";
 import { onPath, tracePath } from "./path";
 import { addNoise, effectsOf, fullAlpha, innerShadow, progressiveBlur, reachOf, spreadAlpha, worksPixels } from "./effects";
 import { blurPixels, retouch, retouches } from "./retouch";
-import { casedText, pieceFont, setRuns, usesRuns, type RunLine } from "./runs";
+import { balancedWidth, casedText, fitScale, pieceFont, setRuns, usesRuns, type RunLine } from "./runs";
 
 /**
  * Draws a design's page (contracts/design.ts) on a 2D canvas, in the design's own pixels. The editor's stage and the
@@ -128,13 +128,10 @@ export function textWidth(l: Pick<TextLayer, "spacing">, s: string, measure: (s:
   return letters.reduce((n, ch) => n + measure(ch), 0) + l.spacing * Math.max(0, letters.length - 1);
 }
 
-/** The smallest size words are shrunk to, in pixels. */
-const SMALLEST = 8;
-
 /**
  * How a text is set in its box: the size it is drawn at and its lines. The size is its own, or (when it shrinks to
  * fit) the largest up to its own at which every line fits the box's width and all of them its height, never under
- * SMALLEST. Balanced, each paragraph's lines are broken at the narrowest width that takes it no more lines, so they
+ * the smallest (runs.ts fitScale). Balanced, each paragraph's lines are broken at the narrowest width that takes it no more lines, so they
  * come out about as long as each other. `base` gives a string's width at the layer's own size: a width at another size is that in
  * proportion, so nothing is measured twice.
  */
@@ -146,26 +143,8 @@ export function setText(l: Pick<TextLayer, "text" | "upper" | "case" | "size" | 
     const lines = linesAt(k);
     return lines.length * lineHeightOf(l) * k <= l.h + 0.5 && lines.every((line) => widthAt(k)(line) <= l.w + 0.5) && (!l.lines || lines.length <= l.lines);
   };
-  let k = 1;
-  if ((l.fit === "shrink" || l.lines) && !fits(1)) {
-    // between the smallest and its own size: the largest that fits, to a four-thousandth
-    let lo = Math.min(1, SMALLEST / l.size);
-    let hi = 1;
-    for (let n = 0; n < 12; n++) {
-      const mid = (lo + hi) / 2;
-      if (fits(mid)) lo = mid;
-      else hi = mid;
-    }
-    k = lo;
-  }
-  // held to a number of lines: no word alone on a paragraph's last line, by shrinking a little more when that is enough
-  if (l.lines && orphaned(linesAt(k), text)) {
-    for (let s = k * 0.99; s >= k * 0.92; s -= k * 0.01)
-      if (fits(s) && !orphaned(linesAt(s), text)) {
-        k = s;
-        break;
-      }
-  }
+  // shrunk to fit (runs.ts fitScale); held to a number of lines, no word alone on a paragraph's last line
+  const k = fitScale(l, fits, (s) => orphaned(linesAt(s), text));
   // evened out a paragraph at a time: each of the text's own lines keeps its break, and is broken further (when it is
   // too long) at the narrowest width that takes it no more lines
   const lines = !l.balance
@@ -173,15 +152,7 @@ export function setText(l: Pick<TextLayer, "text" | "upper" | "case" | "size" | 
     : text.split("\n").flatMap((para) => {
         const wrap = (width: number) => wrapLines(para, width, widthAt(k));
         const own = wrap(l.w);
-        if (own.length < 2) return own;
-        let lo = 0;
-        let hi = l.w;
-        for (let n = 0; n < 10; n++) {
-          const mid = (lo + hi) / 2;
-          if (wrap(mid).length <= own.length) hi = mid;
-          else lo = mid;
-        }
-        return wrap(hi);
+        return own.length < 2 ? own : wrap(balancedWidth(l.w, own.length, (width) => wrap(width).length));
       });
   return { size: Math.round(l.size * k * 100) / 100, lines: l.lines ? keepLastTwo(lines, text, (s) => widthAt(k)(s) <= l.w + 0.5) : lines };
 }
@@ -341,7 +312,7 @@ function drawText(ctx: Ctx, given: TextLayer, cast: boolean, loaded: Loaded) {
     ctx.fillStyle = b.color;
     ctx.fill();
   }
-  const fills = fillsOf(l);
+  const fills = cast ? castFills(fillsOf(l)) : fillsOf(l);
   const strokes = strokesOf(l);
   // a line round the letters lies under their fill, all of it outside them: drawn twice as wide
   const outline = (draw: () => void) =>
@@ -477,7 +448,7 @@ function drawRuns(ctx: Ctx, l: TextLayer, cast: boolean, loaded: Loaded) {
     }
   }
   // a piece in a colour of its own is that colour; any other is painted with each of the layer's fills
-  const fills = fillsOf(l);
+  const fills = cast ? castFills(fillsOf(l)) : fillsOf(l);
   const strokes = strokesOf(l);
   const paint = (own: string | undefined, draw: () => void) => {
     if (!own) return fillWith(ctx, fills, l.w, l.h, loaded, draw);
@@ -626,15 +597,18 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   ctx.translate(-l.w / 2, -l.h / 2);
   ctx.globalAlpha = l.opacity ?? 1;
   const fx = effectsOf(l).filter((e) => !e.hidden);
-  const own = worksPixels(fx) || fx.some((e) => e.type === "shadow" && e.spread) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
+  // a shadow is thrown by the layer drawn whole in a box of its own only when it has lines too: its fills and lines cast one
+  // shadow together, and a spread grows or shrinks that shape; fills alone already cast one (castFills), and the box would
+  // soften a hard shadow when zoomed in
+  const own = worksPixels(fx) || fx.some((e) => e.type === "shadow" && ((e.spread ?? 0) !== 0 || strokesOf(l).some((st) => !st.hidden))) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
   const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
   const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
   for (const e of fx) {
     if (e.type !== "shadow") continue;
-    const grown = e.spread ? own?.spread(e.spread) : null;
+    const grown = own?.spread(e.spread ?? 0);
     castShadow(ctx, e, (g) => (grown ? lay(g, grown) : paint(g, true)));
   }
-  const glass = fx.find((e): e is Effect & { blur: number } => e.type === "background-blur");
+  const glass = fx.find((e): e is Effect & { blur: number } => e.type === "background-blur" && e.blur > 0);
   if (glass) backdrop(ctx, l, glass.blur, (g) => paint(g, true), area);
   if (l.blend) ctx.globalCompositeOperation = l.blend;
   paint(ctx, false);
@@ -674,7 +648,7 @@ type Worked = { body: Piece | null; spread: (n: number) => Piece | null };
 const workedKept = new WeakMap<Loaded, Map<string, { key: string; size: number; made: Worked }>>();
 
 /** A w × h box (with `m` design pixels of room round it) drawn at `scale` by `draw`, its pixels then changed by `work`. Null when no canvas can be made. */
-function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) => void, work: (px: Uint8ClampedArray, w: number, h: number) => void): Piece | null {
+function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) => void, work?: (px: Uint8ClampedArray, w: number, h: number) => void): Piece | null {
   const bw = w + 2 * m;
   const bh = h + 2 * m;
   const pw = Math.max(1, Math.ceil(bw * scale));
@@ -684,10 +658,38 @@ function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) 
   if (!canvas || !g) return null;
   g.setTransform(scale, 0, 0, scale, m * scale, m * scale);
   draw(g);
+  // nothing to work (a shadow with no spread): its pixels are not read back
+  if (!work) return { canvas, m, bw, bh };
   const pixels = g.getImageData(0, 0, pw, ph);
   work(pixels.data, pw, ph);
   g.putImageData(pixels, 0, 0);
   return { canvas, m, bw, bh };
+}
+
+/**
+ * How far past its box a layer may be drawn, in design pixels: its lines (outside the edge, a sharp corner's point, an
+ * arrow's head) and, for a text, words that run over the box and letters that reach past their line.
+ */
+function inkOf(ctx: Ctx, l: Layer): number {
+  // a line reaches its width past the edge at most (outside, or round letters), half again at a square corner; a
+  // corner set to a point reaches up to the canvas's miter limit (10) times half its width
+  const lines = Math.max(0, ...strokesOf(l).filter((s) => !s.hidden).map((s) => Math.max(s.width * (s.join === "miter" ? 10 : 1.5), ...(s.sides ?? [0])) + (s.start || s.end ? Math.max(s.width * 4, 8) + s.width : 0)));
+  if (l.type !== "text") return lines;
+  let wide: number[];
+  let tall: number;
+  if (usesRuns(l)) {
+    const set = setRunsOnce(l, measureOn(ctx));
+    wide = set.lines.map((r) => r.width);
+    tall = set.lines.reduce((n, r) => n + r.height, 0);
+  } else {
+    ctx.font = fontOf(l);
+    const set = setTextOnce(l, (s) => ctx.measureText(s).width);
+    const drawn = { ...l, size: set.size };
+    ctx.font = fontOf(drawn);
+    wide = set.lines.map((s) => textWidth(drawn, s, (t) => ctx.measureText(t).width));
+    tall = set.lines.length * lineHeightOf(drawn);
+  }
+  return lines + Math.max(0, tall - l.h, ...wide.map((w) => w - l.w)) + l.size * 0.5;
 }
 
 /**
@@ -698,7 +700,8 @@ function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) 
  */
 function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: string, exact: boolean): Worked {
   const t = ctx.getTransform();
-  const reach = reachOf(fx);
+  // room round the box for what its blur spreads and for what is drawn past it (its lines, words that run over)
+  const reach = reachOf(fx) + Math.ceil(inkOf(ctx, l));
   const grow = Math.max(0, ...fx.map((e) => (e.type === "shadow" ? (e.spread ?? 0) : 0)));
   const bw = l.w + 2 * (reach + grow);
   const bh = l.h + 2 * (reach + grow);
@@ -707,7 +710,8 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
   if (bw * bh * scale * scale > room) scale = Math.sqrt(room / (bw * bh));
   // a picture or a drawing that has not loaded yet is a grey box: it is worked again once it is there
   const src = sourceOf(l);
-  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : ""]);
+  // words are drawn again once a font arrives (their width changes with it)
+  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : "", l.type === "text" ? fontsOfText(l).map((f) => measureOn(ctx)(f, "Hamburg 1")) : ""]);
   let mine = workedKept.get(loaded);
   if (!mine) workedKept.set(loaded, (mine = new Map()));
   return keptOr(mine, `${frame}/${l.id}`, key, Math.ceil(bw * bh * scale * scale), KEPT_WORK, () => {
@@ -733,7 +737,7 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
     const spreads = new Map<number, Piece | null>();
     const spread = (n: number) => {
       if (!spreads.has(n))
-        spreads.set(n, pieceOf(l.w, l.h, reach + Math.max(0, n), scale, (g) => (body ? g.drawImage(body.canvas as CanvasImageSource, -body.m, -body.m, body.bw, body.bh) : paintLayer(g, l, loaded, true, frame, exact)), (px, w, h) => spreadAlpha(px, w, h, (n * w) / (l.w + 2 * (reach + Math.max(0, n))))));
+        spreads.set(n, pieceOf(l.w, l.h, reach + Math.max(0, n), scale, (g) => (body ? g.drawImage(body.canvas as CanvasImageSource, -body.m, -body.m, body.bw, body.bh) : paintLayer(g, l, loaded, true, frame, exact)), n ? (px, w, h) => spreadAlpha(px, w, h, (n * w) / (l.w + 2 * (reach + Math.max(0, n)))) : undefined));
       return spreads.get(n)!;
     };
     return { body, spread };
@@ -840,14 +844,14 @@ function paintLayer(ctx: Ctx, l: Layer, loaded: Loaded, cast: boolean, frame: st
   else if (l.type === "shape") {
     ctx.beginPath();
     shapePath(ctx, l);
-    fillWith(ctx, fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
+    fillWith(ctx, cast ? castFills(fillsOf(l)) : fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
     // a rectangle keeps its square corners; a star's or an arrow's points are rounded off, or a wide line would spike far out of them
     strokeWith(ctx, strokesOf(l), () => shapePath(ctx, l), l.w, l.h, l.shape === "rect" || l.shape === "ellipse" ? "miter" : "round", { box: l.shape === "rect" });
   } else if (l.type === "path") {
     const trace = () => tracePath(ctx, l.points, !!l.closed, l.w, l.h);
     ctx.beginPath();
     trace();
-    fillWith(ctx, fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
+    fillWith(ctx, cast ? castFills(fillsOf(l)) : fillsOf(l), l.w, l.h, loaded, () => ctx.fill());
     strokeWith(ctx, strokesOf(l), trace, l.w, l.h, "round", { points: l.points, closed: !!l.closed });
   } else {
     const pic = loaded.get(sourceOf(l)!);

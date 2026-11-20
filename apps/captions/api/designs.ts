@@ -13,7 +13,7 @@ import { stylePictures } from "./editor/cards/step";
 import { sourcesWorkspace } from "./editor/store";
 import { frameAt, pictureInto } from "./lib/clip-frame";
 import { cutOut, NoMac, splitPicture } from "./lib/cutouts";
-import { cleanPages, coverPage, plainPages, slideWords, withFrames } from "./lib/design-check";
+import { cleanPages, coverPage, inWords, plainPages, slideWords, withFrames } from "./lib/design-check";
 import { pagePictures } from "./lib/design-picture";
 import { smallJpeg } from "./lib/small-jpeg";
 import { FontError, fontFaces } from "./lib/font-file";
@@ -462,7 +462,11 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
         continue;
       }
       page = { id: `f${Date.now().toString(36)}${next.length}`, background: "#ffffff", layers: [] };
-      if (typeof f.as === "string" && f.as) named.set(f.as, page.id);
+      // a name that is already a frame's id keeps naming that frame: the new one is found by its own id (in "named")
+      if (typeof f.as === "string" && f.as) {
+        if (next.some((p) => p.id === f.as)) notes.push(`${at}: "as" ${f.as} is already a frame's id: the new frame is ${page.id}`);
+        else named.set(f.as, page.id);
+      }
       // after the frames, before the loose pictures: its place among frames is its number
       const k = frameIds().length;
       next.splice(k, 0, page);
@@ -561,7 +565,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       continue;
     }
     const list = page ? open(page).layers : canvas.map((x) => x.layer);
-    const lid = typeof c.layer === "string" ? (named.get(`${home}\0${c.layer}`) ?? c.layer) : c.layer;
+    // a layer that has that id is the one meant: a name given in this call never stands for another layer
+    const lid = typeof c.layer === "string" && !list.some((l) => raw(l)?.id === c.layer) ? (named.get(`${home}\0${c.layer}`) ?? c.layer) : c.layer;
     const k = list.findIndex((l) => raw(l)?.id === lid);
     if (k < 0) {
       notes.push(`${here}: there is no layer ${String(c.layer)}: its layers are ${list.map((l) => String(raw(l)?.id)).join(", ") || "none"}`);
@@ -574,6 +579,12 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     }
     if (goes && goes !== "canvas" && open(goes).layers.length >= DESIGN_LIMITS.layers) {
       notes.push(`${here}, layer ${String(lid)}: a frame holds at most ${DESIGN_LIMITS.layers} layers: it stays where it is`);
+      continue;
+    }
+    const own = goes && goes !== "canvas" ? words[next.indexOf(goes)] : undefined;
+    const moving = own !== undefined && c.remove !== true ? setOn(raw(list[k])!, c.set) : null;
+    if (moving?.type === "text" && typeof moving.text === "string" && !inWords(own!, moving.text)) {
+      notes.push(`${here}, layer ${String(lid)}: “${moving.text.replace(/\s+/g, " ").slice(0, 60)}” is not in frame ${(goes as DesignPage).id}'s own words: it stays where it is`);
       continue;
     }
     let layer: Raw;
@@ -703,7 +714,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
 /** The sizes an AI asks copies in: a format's id ("cover") or {name?, w, h}; anything else is named in a note. */
 function sizesOf(v: unknown, notes: string[], at: string): { name: string; w: number; h: number }[] {
   const out: { name: string; w: number; h: number }[] = [];
-  for (const [i, s] of (Array.isArray(v) ? v : []).entries()) {
+  for (const [i, s] of (Array.isArray(v) ? v : []).slice(0, DESIGN_LIMITS.pages).entries()) {
     const f = formatOf(s) ?? (typeof s === "string" ? DESIGN_FORMATS.find((x) => x.name.toLowerCase() === s.toLowerCase()) : null);
     const r = raw(s);
     const fits = (n: unknown) => typeof n === "number" && n >= DESIGN_LIMITS.frameMin && n <= DESIGN_LIMITS.frameMax;
@@ -755,10 +766,11 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw, named: 
 
   const sizes = raw(body.sizes);
   if (sizes) {
-    const asked = Array.isArray(sizes.frames) ? sizes.frames.map(String) : null;
+    const asked = Array.isArray(sizes.frames) ? sizes.frames.slice(0, DESIGN_LIMITS.pages).map(String) : null;
     const from = asked ? asked.flatMap((id, i) => frames.find((p) => p.id === ref(id)) ?? (notes.push(`sizes.frames[${i}]: there is no frame ${id}: this design's are ${frames.map((p) => p.id).join(", ")}`), [])) : frames;
     let y = bottom + below;
     for (const size of sizesOf(sizes.to, notes, "sizes.to")) {
+      if (full) break;
       for (const p of from)
         if (!full) {
           const id = fresh();
@@ -773,7 +785,7 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw, named: 
   const fill = raw(body.fill);
   if (fill) {
     const p = frames.find((x) => x.id === ref(fill.frame));
-    const rows = (Array.isArray(fill.rows) ? fill.rows.map(raw) : []).filter((r): r is Raw => !!r);
+    const rows = (Array.isArray(fill.rows) ? fill.rows.slice(0, DESIGN_LIMITS.pages).map(raw) : []).filter((r): r is Raw => !!r);
     if (!p) notes.push(`fill.frame: "fill" names no frame of this design (${String(fill.frame)}): its frames are ${frames.map((x) => x.id).join(", ")}`);
     else if (!rows.length) notes.push('fill.rows: "fill" takes "rows": one object a copy');
     else {
@@ -781,6 +793,7 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw, named: 
       const asked = fill.sizes === undefined ? [{ name: "", w: p.w ?? d.width, h: p.h ?? d.height }] : sizesOf(fill.sizes, notes, "fill.sizes");
       const missing = new Set<string>();
       for (const [n, row] of rows.entries()) {
+        if (full) break;
         const { page: filled, missing: none } = fillRow(p, row);
         none.forEach((k) => missing.add(k));
         const name = filled.name && filled.name !== p.name ? filled.name : `${label(p)} ${n + 1}`;
@@ -1010,8 +1023,13 @@ designsApp.post("/:id/pages", (c) =>
     if (b.sizes === undefined && b.fill === undefined) return writeForAi(c.get("user"), await mine(c), b);
     // copies: after the frames and changes of the same call, so a frame designed in it is copied as it now is
     const first = b.frames !== undefined || b.changes !== undefined ? await writeForAi(c.get("user"), await mine(c), b) : null;
-    const more = await copiesForAi(c.get("user"), first?.design ?? (await mine(c)), b, first?.named);
-    return first ? { ...more, notes: [...first.notes, ...more.notes], touched: [...first.touched, ...more.touched], wrote: [...first.wrote, ...more.wrote], named: first.named } : more;
+    if (!first) return copiesForAi(c.get("user"), await mine(c), b);
+    // the frames and changes are saved already: copies that cannot be made are a note, so the AI does not send them again
+    const more = await copiesForAi(c.get("user"), first.design, b, first.named).catch((e: unknown) => {
+      if (e instanceof DesignError) return { ...first, notes: [e.message], touched: [], wrote: [] };
+      throw e;
+    });
+    return { ...more, notes: [...first.notes, ...more.notes], touched: [...first.touched, ...more.touched], wrote: [...first.wrote, ...more.wrote], named: first.named };
   }),
 );
 // what it made, to look at: the frames named in ?frames=<id>,<id> (else the first ones) as small pictures, with the words that do not fit

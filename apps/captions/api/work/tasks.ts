@@ -250,6 +250,11 @@ async function runOnServer(t: TaskRow): Promise<unknown> {
 const finish = (id: number, holder: string) =>
   db().prepare("UPDATE computer_tasks SET state = 'done', lease_until = NULL, error = NULL, line = NULL, done_at = ? WHERE id = ? AND held_by = ? AND state = 'running'").run(Date.now(), id, holder);
 
+/** Thrown by a run that can't go on yet and must not use up a try (the Media folder's drive isn't connected): the task
+ *  waits WAIT_MS and is offered again, until its kind's ttlMs. */
+export class TaskWaits extends Error {}
+const WAIT_MS = 5 * 60_000;
+
 /** A failed try: queued again after a backoff, or failed for good after three (or at once: `final`), the tool told. */
 function fail(t: TaskRow, error: string, final = false): void {
   const last = final || t.attempts >= MAX_ATTEMPTS;
@@ -454,7 +459,13 @@ taskWorkApp.post("/:id/fail", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const t = held(c, d);
   if (!t) return GONE(c);
-  const b = (await c.req.json().catch(() => null)) as { error?: unknown; final?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { error?: unknown; final?: unknown; wait?: unknown } | null;
+  if (b?.wait === true && typeof b.error === "string") {
+    // not a try: queued again with the line saying why it waits
+    db().prepare("UPDATE computer_tasks SET state = 'queued', attempts = MAX(attempts - 1, 0), run_after = ?, line = ?, lease_until = NULL, held_by = NULL, claim_id = NULL WHERE id = ? AND state = 'running'").run(Date.now() + WAIT_MS, b.error.slice(0, 500), t.id);
+    await rm(incoming(t.id), { recursive: true, force: true });
+    return c.json({ ok: true });
+  }
   fail(t, typeof b?.error === "string" && b.error ? b.error : "Your computer could not run this", b?.final === true);
   await rm(incoming(t.id), { recursive: true, force: true });
   return c.json({ ok: true });
@@ -536,7 +547,7 @@ export async function runTaskJob(p: TaskPackage, c: Client, o: Pick<WorkerOption
     return r?.ok === true ? "done" : "failed";
   } catch (e) {
     if (ac.signal.aborted) return "stopped";
-    await post(`${base}/fail`, { error: e instanceof Error ? e.message : String(e) }).catch(() => {});
+    await post(`${base}/fail`, { error: e instanceof Error ? e.message : String(e), ...(e instanceof TaskWaits ? { wait: true } : {}) }).catch(() => {});
     return "failed";
   } finally {
     release();

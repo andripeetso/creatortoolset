@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { DESIGN_GAP } from "@contracts/design";
-import { dropTarget, paintedBox, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
+import { dropTarget, paintedBox, rehome, shownArea, groupName, alignLayers, besideFrames, boundsOf, boxPick, distribute, fitView, frameOf, freshIds, layerName, mergeFrame, mergeFrames, pageName, groupOf, freshGroup, hovers, hugLoose, regroup, snapSpacing, withGroups, resizeAll, resizeBox, snapMove, zoomAt, ZOOM } from "./hands";
 
 const box = (x: number, y: number, w: number, h: number, rotate?: number) => ({ x, y, w, h, ...(rotate ? { rotate } : {}) });
 /** A corner of a turned box on the page: (ux, uy) in half sizes from its middle. */
@@ -88,6 +88,25 @@ describe("the hands on the canvas", () => {
     // a name taken off here stays off; a frame this window made (the server never had it) is this window's whole
     expect(mergeFrame({ ...base, name: undefined }, { ...base, name: "Cover" }, { ...theirs, name: "Cover" }).name).toBeUndefined();
     expect(mergeFrame(mine, undefined, theirs)).toBe(mine);
+  });
+
+  it("looks for a layer under the pointer only with the move tool, no button down and Space not held", () => {
+    expect(hovers(0, "move", false)).toBe(true);
+    expect(hovers(1, "move", false)).toBe(false);
+    expect(hovers(4, "move", false)).toBe(false);
+    expect(hovers(0, "rect", false)).toBe(false);
+    expect(hovers(0, "move", true)).toBe(false);
+  });
+
+  it("keeps a frame's fills and lines changed here when the server changed something else, and any field frames get later", () => {
+    const base: DesignPage = { id: "p1", x: 0, y: 0, w: 1080, h: 1350, background: "#ffffff", layers: [] };
+    const theirs: DesignPage = { ...base, name: "From the server" };
+    const fills: DesignPage["fills"] = [{ type: "solid", color: "#ff0000" }];
+    const strokes: DesignPage["strokes"] = [{ color: "#000000", width: 4 }];
+    const mine = { ...base, fills, strokes, later: 1 } as DesignPage;
+    expect(mergeFrame(mine, base, theirs)).toEqual({ ...theirs, fills, strokes, later: 1 });
+    // fills taken off here stay off; the id is always the server's frame
+    expect(mergeFrame({ ...base, id: "p9" }, { ...base, fills }, { ...theirs, fills })).toEqual(theirs);
   });
 
   it("does this window's work again on the design as the server has it: frames made, deleted, moved and reordered here, beside what changed there", () => {

@@ -514,4 +514,30 @@ describe("fills and lines as lists", () => {
     const none = cleanPages([{ ...old, layers: [{ ...old.layers[0], fills: [] }] }], rules).pages[0]!.layers[0] as unknown as Record<string, unknown>;
     expect(none.fills).toEqual([]);
   });
+
+  it("finds a run's words where they are in the text, a letter whose lower case is longer kept in its place", () => {
+    const layer = cleanPages([{ layers: [text({ text: "İSTANBUL €49", runs: [{ words: "€49", color: "#ff0000" }, { words: "stanbul", italic: true }] })] }], rules).pages[0]!.layers[0] as { runs?: object[] };
+    expect(layer.runs).toEqual([{ start: 1, end: 8, italic: true }, { start: 9, end: 12, color: "#ff0000" }]);
+  });
+
+  it("finds a run's Greek words whatever sigma ends them", () => {
+    const layer = cleanPages([{ layers: [text({ text: "ΟΔΟΣ ΚΑΙ", runs: [{ words: "οδος", italic: true }] })] }], rules).pages[0]!.layers[0] as { runs?: object[] };
+    expect(layer.runs).toEqual([{ start: 0, end: 4, italic: true }]);
+  });
+
+  it("checks a text with hundreds of runs over every letter in well under a second", () => {
+    const long = "Roll the mat out ".repeat(120).slice(0, DESIGN_LIMITS.text);
+    const runs = Array.from({ length: 200 }, (_, n) => (n % 2 ? { start: 0, end: long.length, color: "#ff0000" } : { words: "o", weight: 700 }));
+    const t = performance.now();
+    const { pages } = cleanPages([{ layers: Array.from({ length: DESIGN_LIMITS.layers }, () => text({ text: long, runs })) }], rules);
+    expect(performance.now() - t).toBeLessThan(1000);
+    expect(pages[0]!.layers).toHaveLength(DESIGN_LIMITS.layers);
+  });
+
+  it("a frame fill that cannot be drawn is told where the notes about its layers go", () => {
+    const told: string[] = [];
+    const { notes } = cleanPages([{ layers: [], fills: [{ type: "gradient", stops: [{ at: 0, color: "#000000" }] }] }], { ...rules, say: (_, why) => told.push(why) });
+    expect(told).toEqual(["a gradient fill with fewer than two colours: left out"]);
+    expect(notes).toEqual([]);
+  });
 });

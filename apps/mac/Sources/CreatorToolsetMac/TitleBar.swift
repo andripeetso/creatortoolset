@@ -119,12 +119,22 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
     }
 
     // A wheel mouse's steps glide instead of jumping the page (WheelGlide.swift).
-    private var glide = WheelGlide()
+    private(set) var glide = WheelGlide()
     private var glideLink: CADisplayLink?
     /// The newest wheel step: its place, window and held keys are reused for the frames of its glide.
     private var glideStep: CGEvent?
     /// The pointer is over a canvas, timeline or viewer that pans and zooms by the wheel itself (the page's "wheel" message).
-    var wheelSnaps = false
+    var wheelSnaps = false {
+        // a step already gliding must not keep moving a canvas the pointer just reached
+        didSet { if wheelSnaps { glide.stop() } }
+    }
+
+    /// A new page (or a web process that ended) has not said where the pointer is yet, and an older server never does:
+    /// the wheel glides until it does (Shell's navigation delegate).
+    func wheelPageChanged() {
+        wheelSnaps = false
+        glide.stop()
+    }
 
     override func scrollWheel(with event: NSEvent) {
         guard WheelGlide.glides(event, snap: wheelSnaps, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion),

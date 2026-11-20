@@ -68,6 +68,13 @@ describe("sizedCopy (a copy in another size)", () => {
     expect(r.stroke!.width).toBeCloseTo(8 * k, 1);
   });
 
+  it("a copy scales a layer's effects and its runs' size and spacing with it", () => {
+    const page = frame([text("t", { x: 140, y: 575, w: 800, h: 200, size: 100, runs: [{ start: 0, end: 2, size: 160, spacing: 10 }], effects: [{ type: "shadow", color: "#000000", opacity: 0.3, blur: 40, x: 10, y: 20, spread: 6 }, { type: "background-blur", blur: 30 }, { type: "noise", amount: 12, size: 2 }] })]);
+    const t = sizedCopy(page, { w: 540, h: 675 }, "p5").layers[0] as TextLayer;
+    expect(t.runs).toEqual([{ start: 0, end: 2, size: 80, spacing: 5 }]);
+    expect(t.effects).toEqual([{ type: "shadow", color: "#000000", opacity: 0.3, blur: 20, x: 5, y: 10, spread: 3 }, { type: "background-blur", blur: 15 }, { type: "noise", amount: 12, size: 2 }]);
+  });
+
   it("a pinned layer in a copy follows its pin and draws at its own size", () => {
     const page = frame([text("t", { x: 80, y: 1200, w: 300, h: 80, pin: { x: "left", y: "bottom" } })]);
     const t = sizedCopy(page, { w: 1080, h: 1920 }, "p4").layers[0] as TextLayer;
@@ -86,6 +93,15 @@ describe("fillRow (one row of data onto a copy)", () => {
     expect(missing).toEqual(["Price"]);
     // shown again
     expect(fillRow(out, { Badge: { visible: true } }).page.layers[1]!.hidden).toBeUndefined();
+  });
+
+  it("a text's runs move with its new words, never left on the letters they were at", () => {
+    const page = frame([text("p", { name: "Price", text: "Only €49 today", runs: [{ start: 5, end: 8, strike: true }] })]);
+    const out = fillRow(page, { Price: "Now just €29" }).page.layers[0] as TextLayer;
+    expect(out.text).toBe("Now just €29");
+    expect(out.runs).toBeUndefined();
+    const kept = fillRow(page, { Price: "Only €49 today!" }).page.layers[0] as TextLayer;
+    expect(kept.runs).toEqual([{ start: 5, end: 8, strike: true }]);
   });
 });
 

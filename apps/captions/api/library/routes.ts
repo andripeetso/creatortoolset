@@ -47,7 +47,7 @@ import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
 import { addFolder } from "../devices-storage";
 import { workspaceById } from "../lib/workspaces";
-import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName, libraryBase, THIS_COMPUTER } from "../../contracts/storage";
+import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName, importTarget, libraryBase, THIS_COMPUTER } from "../../contracts/storage";
 import { quickPrint } from "../work/files";
 import { libraryWorkspace, serverKind } from "../work/server-work";
 import { WORK_MIN } from "../../contracts/work";
@@ -244,8 +244,9 @@ export async function saveToLibrary(
   footage = false,
   sound?: Sound,
   /** finals: a final, which follows the library's Finals setting, not its Upload; after: what runs once a save that
-   *  waited for a computer lands there (work/tasks/library-save.ts) */
-  opts: { finals?: boolean; after?: SaveAfter } = {},
+   *  waited for a computer lands there (work/tasks/library-save.ts); importName: the chat or edit it came from, whose
+   *  Imports/ folder a save on a computer goes into (contracts/storage.ts importTarget) */
+  opts: { finals?: boolean; after?: SaveAfter; importName?: string } = {},
 ): Promise<SavedTo | null> {
   const lib =
     libraryId ??
@@ -261,7 +262,7 @@ export async function saveToLibrary(
     return { error: "Not enough free disk space for this file", code: "disk_reserve" };
   }
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here
-  if (serverKind() !== "local" && hostsNone(opts.finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after);
+  if (serverKind() !== "local" && hostsNone(opts.finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after, opts.importName);
   const staged = path.join(stagingDir(), `save-${randomUUID()}`);
   try {
     await copyFile(file, staged);
@@ -340,11 +341,11 @@ export const NO_COMPUTER = "Add a computer, or turn on Originals in Settings →
 export const COMPUTER_SAVE = { ms: 30_000 };
 
 /**
- * A save under Upload none (owner, 2026-11-19): the file goes to the workspace's first Source media folder (a finished
- * file: its Final exports folder) on whichever of the asker's computers takes the task (work/tasks/library-save.ts), which
+ * A save under Upload none (owner, 2026-11-19): the file goes to the Imports/<chat or edit name>/ of the workspace's first
+ * Source media folder (the import rule, importTarget; a finished file: its Final exports folder) on whichever of the asker's computers takes the task (work/tasks/library-save.ts), which
  * indexes it there in place. With none online it waits for one, and the answer is the one line naming the folder.
  */
-async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter): Promise<SavedTo> {
+async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter, importName?: string): Promise<SavedTo> {
   const { librariesOf, useOf } = await import("./report");
   const { storageOf } = await import("../devices-storage");
   const { awaitTask, startTask, taskOf } = await import("../work/tasks");
@@ -352,12 +353,13 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const label = FOLDER_LABELS[use === "media" ? "footage" : "library"];
   // no computer at all: nothing to wait for
   if (!listDevices((d) => d.owner === username).length) return { error: NO_COMPUTER, code: "no_computer" };
-  const folders: Record<string, { id: string; path: string }> = {};
+  const folders: Record<string, { id: string; path: string; media?: string }> = {};
   // the workspace's own folder before one for every workspace, then in list order
   const all = (await storageOf(username)).folders;
   for (const f of [...all].sort((a, b) => Number(a.workspace === EVERY_WORKSPACE) - Number(b.workspace === EVERY_WORKSPACE))) {
     if (useOf(f) !== use || folders[f.origin.host] || deviceOf(f.origin.host)?.owner !== username) continue;
-    if ((await librariesOf(username, f, false)).some((l) => l.id === lib)) folders[f.origin.host] = { id: f.id, path: f.origin.path };
+    if (!(await librariesOf(username, f, false)).some((l) => l.id === lib)) continue;
+    folders[f.origin.host] = use === "media" ? { id: f.id, path: importTarget([f.origin.path], importName)!, media: f.origin.path } : { id: f.id, path: f.origin.path };
   }
   const first = Object.entries(folders)[0];
   if (!first) return { error: `Upload is off for this workspace, so files stay on your computer, and none of yours has a ${label} folder for it: add one in Settings → Folders.`, code: "no_folder" };
@@ -1017,7 +1019,6 @@ export const settingsOf = (json: string): LibrarySettings => {
     ...(typeof s.defaultFolders === "boolean" ? { defaultFolders: s.defaultFolders } : {}),
     upload: uploadOf(s.upload),
     finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
-    ...(s.importMode === "in-place" || s.importMode === "copy" ? { importMode: s.importMode } : {}),
     ...(s.organize ? { organize: s.organize } : {}),
     lookLevel: lookLevelOf(s.lookLevel),
     timelineModel: watchModelOf(s.timelineModel),
@@ -1051,7 +1052,7 @@ libraryApp.get("/:id/status", (c) => {
   return c.json(libraryStatus(libraryId));
 });
 
-// PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, importMode?, organize?, … } } → LibrarySummary;
+// PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, organize?, … } } → LibrarySummary;
 // the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one (or all, when proxies are
 // hosted) and have none get one. organize "ai" files what is in no folder yet (UNIFIED-PRD §4.9); it does not force describe.
 // copyTo and places are read only by the one-time migration (§4.6), so nothing writes them.
@@ -1091,7 +1092,6 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     libraryChanged(libraryId);
   }
   if (LIBRARY_UPLOADS.includes(s.finalsUpload as LibraryUpload)) put("finalsUpload", s.finalsUpload);
-  if (s.importMode === "in-place" || s.importMode === "copy") put("importMode", s.importMode);
   // Hosted proxies: the switch stays on and every video gets a proxy (UNIFIED-PRD §3.1, §4.1), whatever the request says
   const hosted = hostsProxies(libraryUpload(libraryId));
   const proxy = hosted ? true : b?.settings?.proxy;
@@ -1148,7 +1148,7 @@ libraryApp.post("/:id/setup/quick", async (c) => {
   }
   return patchLibrary(c, libraryId, {
     settings: {
-      importMode: "copy", proxy: true, proxyQuality: "standard", ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value, lookBudget: null,
+      proxy: true, proxyQuality: "standard", ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value, lookBudget: null,
       defaultFolders: !b?.base, setupAt: new Date().toISOString(),
       // a library on This Mac has no server to upload to, so the hosted answers stay as they are (the page's setup)
       ...(watchAllowed(user.username) ? {} : hostedSettings(HOSTED_DEFAULT)),

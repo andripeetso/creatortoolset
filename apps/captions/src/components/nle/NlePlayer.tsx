@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { readSound } from "@/lib/synced-sound";
-import { fadePoints, isSoundFile, nleAudio, runningAudio, type NleClock } from "@/lib/nle/audio";
-import { fadeAt, lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
-import { chains, drawScale, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, steer, type SoundPiece } from "@/lib/nle/picture";
+import { fadePoints, isSoundFile, nleAudio, nleOut, runningAudio, type NleClock } from "@/lib/nle/audio";
+import { lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
+import { chains, drawScale, envPoints, keyed, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, spanOf, steer, type SoundPiece } from "@/lib/nle/picture";
 import { localFileState, pathLine } from "@/lib/local-files";
 import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type ShotOp } from "@/lib/nle/shot";
 
@@ -15,8 +15,9 @@ import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type
 // frame, and a clip that plays on from the one before it in the same file keeps its element across the cut (no seek);
 // at most MAX_VIDEOS are open at once. A video is played at the clip's speed and its speed bent when it drifts; the canvas
 // is drawn only when a picture changed (requestVideoFrameCallback) or the playhead moved. A card made as numbered
-// pictures shows its picture for the frame. A clip's fades ramp its picture's opacity (black under V1) and its sound's
-// gain. A clip whose file can't play here is a red Media Offline frame with its name and why, never an older render. A
+// pictures shows its picture for the frame. A clip's keys move its picture and its gain frame by frame; its fades ramp
+// its picture's opacity (black under V1) and its sound's gain; a transition plays both clips of its cut, each into its
+// handle and from its own element, mixed as the renderer mixes them (picture.ts seenAt), so never as the plain <video>. A clip whose file can't play here is a red Media Offline frame with its name and why, never an older render. A
 // picture not ready yet (a file opening, a move landing) keeps the frame drawn last on screen, never black.
 
 type Media = {
@@ -292,10 +293,12 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         painted = false;
       }
       // what is on screen now: each picture's file and frame (a shot's other pictures too), before anything is drawn
-      const pics = on.map(({ item, track }) => {
-        const key = keyOf(item);
+      const pics = on.map(({ item: raw, track, seen = 1, under }) => {
+        const key = keyOf(raw);
+        // its zoom, pan, tilt, rotation and opacity on this frame
+        const item = keyed(t, raw, f);
         const k = f - item.rec;
-        if (item.fx === "flash") return { item, track, key, k, m: null, d: null, got: null };
+        if (item.fx === "flash") return { item, track, key, k, seen, under, m: null, d: null, got: null };
         const v1 = track === "V1";
         // V1 plays a freeze held and a reversed shot backwards (seeked frame by frame); the other tracks as they are
         const still = v1 && (!!item.freeze || !!item.rev);
@@ -315,14 +318,15 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
             more += stamp(pm, pd);
           }
         }
-        return { item, track, key, k, m, d, got, more };
+        return { item, track, key, k, seen, under, m, d, got, more };
       });
       // Play waits until the pictures at the playhead can play on (or the clock's half second is up)
       if (c.state === "waiting" && pics.every((p) => p.item.fx === "flash" || readyToPlay(p.m, p.d))) c.ready();
       // drawn again only for a new frame of a picture (or, with no playing video telling its frames, a new playhead
       // frame), an edit, a resize; a picture not ready (a file opening, a move landing) keeps the last frame on screen,
       // never black (a file that can't play errors, and is drawn as Media Offline)
-      const told = run && pics.some((p) => p.d && p.m?.vfc);
+      // keys and transitions change the picture every frame, whatever the videos do
+      const told = run && pics.some((p) => p.d && p.m?.vfc) && !pics.some((p) => p.item.keys || p.under || p.seen < 1);
       const sig = `${cw}x${ch}|${told ? "" : f}|${pics.map((p) => `${p.key}:${stamp(p.m, p.d)}${p.more ?? ""}`).join("|")}`;
       // one plain picture (picture.ts plainVideo) with its frame: its hardware-decoded <video> shown as it is, the canvas
       // not drawn; back to the canvas only once it has drawn the new picture, so a cut between the two never shows black
@@ -344,9 +348,13 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         ctx.fillStyle = "#000";
         if (f < lengthOf(t)) ctx.fillRect(0, 0, W, H);
         else ctx.clearRect(0, 0, W, H);
-        for (const { item, track, k, m, d, got } of pics) {
-          // the fades: how much of the picture shows now (what is under it, or black, shows through)
-          const fade = fadeAt(item, s * fps - item.rec);
+        for (const { item, track, k, m, d, got, seen: fade, under } of pics) {
+          // a dip's colour over the whole frame, under the earlier clip and the later one
+          if (under) {
+            ctx.fillStyle = under === "white" ? "#fff" : "#000";
+            ctx.fillRect(0, 0, W, H);
+          }
+          // `fade`: how much of the picture shows now from its fades and transitions (what is under it shows through)
           if (item.fx === "flash") {
             // a designed white flash, fading as its file does (drawn over everything, as the renderer does)
             flashes.push(1 - (item.in + k) / Math.max(Number(t.sources[item.src]?.dur) || item.len, 1));
@@ -357,7 +365,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
             missing(ctx, item, track, name(item.src), why ?? (m ? "This file won't play here" : undefined));
             continue;
           }
-          if (!d || !got) continue;
+          if (!d || !got || !fade) continue;
           if (drawnAsShot(item, track, W, H)) {
             const plan = shotPlan(item, k, (pic) => (got[pic] ? [got[pic]!.w, got[pic]!.h] : null), W, H);
             const lc = layer.getContext("2d")!;
@@ -408,7 +416,9 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
           if (item.fx === "flash") continue;
           const key = keyOf(item);
           const m = media(chain.get(key) ?? key, item.src, false);
-          const at = track === "V1" ? shotTime(item, "main", 0, fps, srcFps) : sourceTime(t, item, item.rec / fps);
+          // waiting on the first frame it shows: a transition into it starts before its cut (its head handle)
+          const k = spanOf(t, item)[0] - item.rec;
+          const at = track === "V1" ? shotTime(item, "main", k, fps, srcFps) : sourceTime(t, item, (item.rec + k) / fps);
           if (m && !m.seq && m.el instanceof HTMLVideoElement) keep(m.el, at + m.lead, false, 1);
         }
       }
@@ -464,9 +474,10 @@ function piecesNear(pieces: Piece[], t: number, ahead = 2): { p: Piece; now: boo
   const tracks = new Map<string, Piece[]>();
   for (const p of pieces) tracks.set(p.track ?? "", [...(tracks.get(p.track ?? "") ?? []), p]);
   for (const list of tracks.values()) {
-    const on = list.find((p) => p.at <= t && t < p.at + p.dur);
-    if (on) out.push({ p: on, now: true });
-    const next = list.filter((p) => p.at > t && p.at <= t + ahead && p.owner !== on?.owner).sort((a, b) => a.at - b.at)[0];
+    // both clips of a transition are heard at once
+    const on = list.filter((p) => p.at <= t && t < p.at + p.dur);
+    for (const p of on) out.push({ p, now: true });
+    const next = list.filter((p) => p.at > t && p.at <= t + ahead && !on.some((o) => o.owner === p.owner)).sort((a, b) => a.at - b.at)[0];
     if (next) out.push({ p: next, now: false });
   }
   return out.sort((a, b) => Number(b.now) - Number(a.now));
@@ -518,7 +529,7 @@ function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => N
     // the clip's gain, up from silence over its fade in and down over its fade out, on the engine's clock (`t0`: when
     // its first frame plays there)
     const ramp = (g: GainNode, p: Piece, t0: number, late: number) => {
-      const [first, ...rest] = fadePoints(p, t0, late, clock.rate);
+      const [first, ...rest] = p.env ? envPoints(p.env, t0, late, clock.rate) : fadePoints(p, t0, late, clock.rate);
       g.gain.cancelScheduledValues(0);
       g.gain.setValueAtTime(first[1], first[0]);
       for (const [t, v] of rest) g.gain.linearRampToValueAtTime(v, t);
@@ -550,7 +561,7 @@ function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => N
           src.playbackRate.value = p.speed * clock.rate;
           const g = ctx.createGain();
           ramp(g, p, clock.engineTimeOf(p.at), late);
-          src.connect(g).connect(ctx.destination);
+          src.connect(g).connect(nleOut(ctx));
           src.start(Math.max(ctx.currentTime, clock.engineTimeOf(p.at + late)), offset, Math.min(dur, buf.duration - offset));
           nodes.push({ stop: () => src.stop(), disconnect: () => (src.disconnect(), g.disconnect()) });
         }, () => {});
@@ -575,7 +586,7 @@ function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => N
         const el = Object.assign(new Audio(), { crossOrigin: "anonymous", preload: "auto", preservesPitch: true });
         el.src = p.url;
         const gain = ctx.createGain();
-        ctx.createMediaElementSource(el).connect(gain).connect(ctx.destination);
+        ctx.createMediaElementSource(el).connect(gain).connect(nleOut(ctx));
         voices.push((v = { el, url: p.url, owner: p.owner, used: tick, gain, piece: "", laid: -1 }));
       } else return null;
       if (v.owner !== p.owner) Object.assign(v, { owner: p.owner, piece: "" });

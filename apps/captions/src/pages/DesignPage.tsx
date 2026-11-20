@@ -359,6 +359,23 @@ function DesignPage({ id }: { id: string }) {
     setShaping((s) => (s && ids.length === 1 && ids[0] === s.id ? s : null));
     setError(null);
   }, []);
+  // the words being typed taken away (by the assistant, another window, ⌘Z): the typing ends, so its keys are the canvas's again
+  useEffect(() => {
+    if (editing && !base?.layers.some((l) => l.id === editing)) setEditing(null);
+  }, [editing, base]);
+  // the picked frame by its id: a change that takes it away (a loose piece left empty, ⌘Z, a write from elsewhere) never
+  // lets `at` and the picked ids land on another frame's layers (new loose layers are l1… like a frame's first ones)
+  const pickedOn = useRef<{ at: number; selected: string[]; id?: string }>({ at, selected });
+  useEffect(() => {
+    const was = pickedOn.current;
+    const id = pages[k]?.id;
+    if (was.at !== at || was.selected !== selected || !was.id) return void (pickedOn.current = { at, selected, id });
+    if (id === was.id) return;
+    const moved = pages.findIndex((p) => p.id === was.id);
+    if (moved >= 0) return void (pickedOn.current = { at: moved, selected, id: was.id }, setAt(moved));
+    pickedOn.current = { at, selected: [], id };
+    pick(at, []);
+  }, [pages, k, at, selected, pick]);
   const step = (back: boolean) => {
     if (locked) return;
     merging.current = null;
@@ -815,8 +832,11 @@ function DesignPage({ id }: { id: string }) {
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (typingIn(e.target) || !design) return;
       const mod = e.metaKey || e.ctrlKey;
+      // words being typed with focus on a button of the style panel: their keys are not the canvas's (Backspace, Delete, the
+      // tool letters); ⌘Z, the arrows and Escape still reach the canvas
+      const wordKey = !mod && !e.altKey && (e.key === "Backspace" || e.key === "Delete" || e.key.length === 1);
+      if (typingIn(e.target) || !design || (editing && wordKey)) return;
       const c = e.code;
       const has = mine.length > 0;
       const run = (fn: () => unknown) => (e.preventDefault(), void fn());
@@ -1119,6 +1139,7 @@ function DesignPage({ id }: { id: string }) {
               framed={framed}
               framedIds={framedIds}
               onPick={pick}
+              onError={setError}
               onLive={setLive}
               onCommit={setPages}
               tool={tool}

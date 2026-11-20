@@ -366,6 +366,9 @@ export function shownArea(p: DesignPage, w: number, h: number): Rect {
   return { x, y, w: Math.ceil(Math.max(w, ...out.map((r) => r.x + r.w))) - x, h: Math.ceil(Math.max(h, ...out.map((r) => r.y + r.h))) - y };
 }
 
+/** Whether the pointer moving over the canvas looks for a layer to hover: never mid-drag (a button down), with another tool or Space held, so a drag does no hit test on every move. */
+export const hovers = (buttons: number, tool: string, space: boolean) => !buttons && tool === "move" && !space;
+
 /**
  * A frame as the server has it now (`theirs`) and as this window changed it meanwhile (`mine`, from `base`): what was
  * changed here stays, everything else is the server's. So a frame dragged aside while its layers were designed
@@ -375,10 +378,13 @@ export function shownArea(p: DesignPage, w: number, h: number): Rect {
 export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, theirs: DesignPage): DesignPage {
   if (!base) return mine;
   const out: Record<string, unknown> = { ...theirs };
-  for (const f of ["name", "x", "y", "w", "h", "background", "gradient", "grain", "vignette", "clip", "guides", "grids", "safe", "layers"] as const) {
-    if (JSON.stringify(mine[f]) === JSON.stringify(base[f])) continue;
-    if (mine[f] === undefined) delete out[f];
-    else out[f] = mine[f];
+  const m = mine as unknown as Record<string, unknown>;
+  const b = base as unknown as Record<string, unknown>;
+  // every field but the id, so a field added to frames later is never dropped here
+  for (const f of new Set([...Object.keys(m), ...Object.keys(b)])) {
+    if (f === "id" || JSON.stringify(m[f]) === JSON.stringify(b[f])) continue;
+    if (m[f] === undefined) delete out[f];
+    else out[f] = m[f];
   }
   return out as unknown as DesignPage;
 }

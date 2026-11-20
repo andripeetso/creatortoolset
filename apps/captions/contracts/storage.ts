@@ -213,6 +213,31 @@ export function finalsFolderOf(folders: StorageFolder[]): StorageFolder | undefi
 export const finalsDirName = (title: string): string =>
   title.replace(/[\/\\:*?"<>|\p{Cc}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/^\.+|[. ]+$/g, "").slice(0, 100).trim() || "Untitled";
 
+/** The folder inside a workspace's first Media folder that files from outside the Media folders are copied into, one
+ *  subfolder per edit or chat. Scans read it as any other footage. */
+export const IMPORTS_DIR = "Imports";
+
+/** Whether `p` is `dir` or inside it, on a "/" boundary ("/Volumes/TEAM2" is not inside "/Volumes/TEAM"), in one Unicode form. */
+export const underFolder = (p: string, dir: string): boolean => {
+  const a = p.normalize("NFC");
+  const d = dir.normalize("NFC").replace(/(.)\/+$/, "$1");
+  return a === d || a.startsWith(d.endsWith("/") ? d : `${d}/`);
+};
+
+/**
+ * The one import rule (owner, 2026-11-19): a file inside one of `media` (a workspace's Media folders on one computer, in
+ * list order) is used where it is; one from outside is copied once into `<first Media folder>/Imports/<name>/`. `name`:
+ * the edit's or chat's, made safe for a file name (the same name reuses its folder); none: the day, "2026-11-19". Null
+ * when there is no Media folder. Whoever writes there checks the Media folder itself is there first: a drive that isn't
+ * connected makes the copy wait, never land on the internal disk.
+ */
+export function importTarget(media: readonly string[], name?: string, now = new Date()): string | null {
+  const first = media[0];
+  if (!first) return null;
+  const sub = name?.trim() ? finalsDirName(name) : now.toISOString().slice(0, 10);
+  return `${first.replace(/(.)\/+$/, "$1")}/${IMPORTS_DIR}/${sub}`;
+}
+
 /** A plug-in's own Exports route: a computer and the folder (`disk`) the plug-in makes its folder in. The app's own
  *  Exports folder is added like any other, AddFolderBody with role "library". */
 export interface MakeLibraryBody {

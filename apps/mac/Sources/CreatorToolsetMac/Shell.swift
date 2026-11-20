@@ -243,7 +243,7 @@ final class Shell: NSObject, ObservableObject {
             }
             // the Media Library's imports (Import.swift): a copy reads only from this window's recent drops and picks
             if isImportAsk(ask) {
-                return Imports.shared.answer(ask, sources: (self.pickedFiles + (view?.droppedPlaces ?? [])).map(\.path), done: done)
+                return Imports.shared.answer(ask, sources: (self.pickedFiles + (view?.droppedPlaces ?? [])).map(\.path), server: MediaFiles.serverKey(self.base), done: done)
             }
             // plug-ins (Plugins.swift): answered before the default below, which turns the AI on
             if isPluginAsk(ask) { return self.pluginAnswer(pluginAsk(ask), done: done) }
@@ -1066,7 +1066,12 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     }
 
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        (webView as? AppWebView)?.wheelPageChanged()
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        (webView as? AppWebView)?.wheelPageChanged()
         AppLog.write("the page's web process ended: reloading \(webView.url?.absoluteString ?? "")")
         if webView.url == nil { open("/") } else { webView.reload() }
     }

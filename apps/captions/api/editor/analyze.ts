@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Sentence } from "../../contracts/editor";
+import { LoudnessMeter } from "../../src/lib/nle/loudness";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { deviceStatus } from "../lib/device-transcribe";
 import { env } from "../lib/env";
@@ -116,6 +117,61 @@ export async function readEnergy(src: string, signal?: AbortSignal): Promise<Flo
         });
       }),
   );
+}
+
+/**
+ * The editor's Normalize and Lower Under Voice measure (src/lib/nle/loudness.ts): a version's sound decoded whole at
+ * 48 kHz in stereo (a mono file as dual mono, as it plays and renders) through the player's own BS.1770 meter, each
+ * 400 ms block's energy, 10 a second. Run only by the nle-loudness computer task (work/tasks/loudness.ts), which
+ * mayRunHere places; kept per version in the editor cache, as the energy is.
+ */
+export const LOUDNESS_TASK = "nle-loudness";
+export const loudFile = (versionId: string) => path.join(env.dataDir, "editor", "cache", `${versionId}.loud.f32`);
+const LOUD_RATE = 48000;
+
+/** A version's measured blocks from the cache, or null when it was never measured. */
+export async function readLoud(versionId: string): Promise<Float32Array | null> {
+  try {
+    const b = await readFile(loudFile(versionId));
+    return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
+  } catch {
+    return null;
+  }
+}
+
+/** Each 400 ms block's energy of `src`'s first sound stream. */
+export function measureLoud(src: string, signal?: AbortSignal): Promise<Float32Array> {
+  return ffmpegSlot(
+    () =>
+      new Promise((resolve, reject) => {
+        const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", src, "-vn", "-map", "0:a:0", "-ac", "2", "-ar", String(LOUD_RATE), "-f", "f32le", "pipe:1"];
+        const p = spawn(ffmpegCommand(), args, { signal });
+        const meter = new LoudnessMeter(LOUD_RATE, 2, { truePeak: false });
+        const blocks: number[] = [];
+        meter.onBlock = (e) => blocks.push(e);
+        let carry = Buffer.alloc(0);
+        let err = "";
+        p.stdout.on("data", (d: Buffer) => {
+          const buf = carry.length ? Buffer.concat([carry, d]) : d;
+          const frames = Math.floor(buf.length / 8);
+          const l = new Float32Array(frames), r = new Float32Array(frames);
+          for (let i = 0; i < frames; i++) (l[i] = buf.readFloatLE(i * 8)), (r[i] = buf.readFloatLE(i * 8 + 4));
+          meter.process([l, r]);
+          carry = Buffer.from(buf.subarray(frames * 8));
+        });
+        p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
+        p.on("error", reject);
+        p.on("close", (code) => (code === 0 ? resolve(Float32Array.from(blocks)) : reject(new Error(err.trim() || `ffmpeg exited ${code}`))));
+      }),
+  );
+}
+
+/** Keeps a version's measured blocks in the cache. */
+export async function keepLoud(versionId: string, blocks: ArrayLike<number>): Promise<void> {
+  const f = loudFile(versionId);
+  await mkdir(path.dirname(f), { recursive: true });
+  await writeFile(`${f}.part`, Float32Array.from(blocks));
+  await rename(`${f}.part`, f);
 }
 
 /** A version's energy from the cache, read once and kept (it depends only on the file). */

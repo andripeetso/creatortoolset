@@ -3,7 +3,13 @@ import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, 
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
-import { addTrack, addTrackAt, boxPick, canDeleteTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, gapAt, endOf, find, isVideo, keepLooks, lengthOf, lookOn, move, moveTarget, moveTrack, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type Gap, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
+import { KEY_PROPS, type KeyEase, type KeyProp } from "@contracts/editor";
+import { addTrack, addTrackAt, boxPick, canDeleteTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, gapAt, endOf, find, isVideo, keepLooks, lengthOf, lookOn, markersOf, move, moveTarget, moveTrack, NO_MARKS, paste, rateStretch, roll, setFade, setItems, setMarker, slide, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type Gap, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
+import { COMMANDS, runAll, type NleRun } from "@/lib/nle/commands";
+import { keysIn, valueAt, valueOn } from "@/lib/nle/keyframes";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuRadioGroup, ContextMenuRadioItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { setTransition, TRANS_NAMES, transSpan } from "@/lib/nle/trans";
+import { MARKER_HEX } from "./NleMarkerDialog";
 import { dragging } from "@/lib/nle/drag";
 import { cn } from "@/lib/utils";
 import { drawWave, idleLevels, levels, type Levels } from "@/lib/waveform";
@@ -19,10 +25,19 @@ import { Timecode } from "./NleViewer";
 // copy and leave it, an end to trim it, ⌥ + an end to roll the cut, a top corner to fade it in or out. Trim tool: drag a clip to slip it, an end to ripple-trim it, ⌥ + an end to roll.
 // Blade tool: a click cuts the clip there. A drag on empty space draws a box: every clip it touches is picked (⇧ adds,
 // ⌘ flips). With Linked Selection on, a click picks the clip with the clips linked to it (⌥-click: the one alone).
-// A right-click on a track header opens the track menu (add, move, delete, lock).
+// Slide tool: drag a clip between its neighbours, they trim. Rate Stretch tool: drag an end, the clip's speed changes and it
+// shows the same frames. A transition is a band over its cut: a double click picks it, its ends drag its length (as far as the
+// clips' handles go: the end turns red where they stop it). Markers stand on the ruler: a click goes there, a drag moves
+// one, a double click opens it.
+// The picked clips show a ◆ at each keyframe along their bottom: a click goes there, a drag moves it in time, a right-click
+// sets its ease or deletes it. A sound clip's volume line (its gain, or its keys) drags up and down; ⌥-click adds a key on it.
+// A right-click on a track header opens the track menu (add, move, delete, lock); on a clip the clip menu (at a cut: Add
+// Transition), on a gap the gap menu, on the ruler the ruler menu.
 // The panel's title bar carries the editor's tools (`tools`, `end`) and the timeline's own: track height and zoom.
 
-export type Tool = "select" | "trim" | "blade";
+export type Tool = "select" | "trim" | "blade" | "slide" | "stretch";
+/** what a right-click opened the editor's menu on: a clip (`cut`: the clip after the cut it was at), a gap, the ruler */
+export type MenuAt = { x: number; y: number; on?: "clip" | "gap" | "ruler"; cut?: string | null };
 
 const LABEL_W = 152;
 const RULER_H = 30;
@@ -76,12 +91,61 @@ const DAY = 24 * 3600;
 const MAX_PPS = 600;
 const MAX_PX = 16e6;
 
+/** a sound clip's volume line, bottom to top, in dB (the Inspector's Volume range) */
+const VOL_DB = [-60, 24] as const;
+const VOL_SPAN = VOL_DB[1] - VOL_DB[0];
+const dbText = (db: number) => `${db > 0 ? "+" : ""}${db.toFixed(1)} dB`;
+const EASES: [KeyEase, string][] = [["linear", "Linear"], ["ease", "Ease"], ["hold", "Hold"]];
+const KEY_NAMES: Record<KeyProp, string> = { zoom: "Zoom", pan: "Position X", tilt: "Position Y", rot: "Rotation Angle", opacity: "Opacity", gain_db: "Volume" };
+
+/** The registry's commands on clip `k` with the playhead at timeline frame `f` (fractional: a key under speed ≠ 1). */
+const runAt = (tl: NleTimeline, k: string, f: number, list: NleRun[]) => runAll({ tl, sel: [k], playhead: f, marks: NO_MARKS }, list).tl;
+
+/** The keys of `props` on clip `k` at timeline frame `from` moved to `to`, each with its value and ease (deleteKey, then key). */
+function moveKeys(tl: NleTimeline, k: string, props: KeyProp[], from: number, to: number): NleTimeline {
+  for (const prop of props) {
+    const old = keysIn(tl, k, prop).find((x) => Math.abs(x.f - from) < 1e-2);
+    if (!old) continue;
+    tl = runAt(runAt(tl, k, from, [{ id: "deleteKey", params: { prop } }]), k, to, [{ id: "key", params: { prop, value: old.key[1], ease: old.key[2] } }]);
+  }
+  return tl;
+}
+
+/** The clip's keyframes as the timeline shows them: one ◆ a frame, with the props keyed there. */
+const keyMarks = (tl: NleTimeline, k: string) => {
+  const at = new Map<number, { f: number; props: KeyProp[]; ease: KeyEase }>();
+  for (const prop of KEY_PROPS) for (const x of keysIn(tl, k, prop)) {
+    const id = Math.round(x.f * 100);
+    const m = at.get(id);
+    if (m) m.props.push(prop);
+    else at.set(id, { f: x.f, props: [prop], ease: x.key[2] });
+  }
+  return [...at.values()];
+};
+
+/** A sound clip's volume line as an SVG path over 0…1 of its width and height: its gain, or its keys eased between. */
+function volLine(it: NleItem, fps: number, sfps: number): string {
+  const len = Math.max(1, it.len);
+  const fs = new Set([0, len]);
+  const keys = (it.keys?.gain_db ?? []).map((k) => (k[0] - it.in) / ((it.speed ?? 1) * sfps / fps)).filter((f) => f > 0 && f < len);
+  // a point just before each key draws a Hold's step; samples between keys draw an Ease's curve
+  for (const f of keys) fs.add(f).add(Math.max(0, f - 1e-3));
+  const at = [...fs].sort((a, b) => a - b);
+  const pts = it.keys?.gain_db?.length ? at.flatMap((f, i) => (i ? Array.from({ length: 16 }, (_, n) => at[i - 1]! + ((f - at[i - 1]!) * (n + 1)) / 16) : [f])) : at;
+  return pts.map((f, i) => {
+    const db = Math.min(VOL_DB[1], Math.max(VOL_DB[0], valueAt(it, "gain_db", it.rec + f, fps, sfps)));
+    return `${i ? "L" : "M"}${(f / len).toFixed(5)} ${(1 - (db - VOL_DB[0]) / VOL_SPAN).toFixed(4)}`;
+  }).join("");
+}
+
 type Drag = {
   key: string;
   track: string;
-  grip: "body" | "head" | "tail" | "fade-head" | "fade-tail";
-  /** a fade drag: the fade it started from */
+  grip: "body" | "head" | "tail" | "fade-head" | "fade-tail" | "trans-head" | "trans-tail";
+  /** a fade drag: the fade it started from; a transition's end: its length */
   f0?: number;
+  /** a transition's end dragged past where the handles let it go */
+  clamped?: boolean;
   /** an ⌥-drag: the copy's clips, picked when let go */
   copy?: string[];
   x0: number;
@@ -92,7 +156,8 @@ type Drag = {
 };
 
 export const NleTracks = memo(function NleTracks({
-  tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
+  tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onLowerUnderVoice, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
+  trans = null, onTrans, onMarker,
 }: {
   tl: NleTimeline;
   /** the playhead at rest (a pause, a seek): a new one draws the timeline again */
@@ -106,11 +171,13 @@ export const NleTracks = memo(function NleTracks({
   onSeek: (t: number) => void;
   onSelect: (keys: string[]) => void;
   onLive: (tl: NleTimeline | null) => void;
-  onCommit: (tl: NleTimeline) => void;
+  onCommit: (tl: NleTimeline, label?: string) => void;
   onBlade: (frame: number, key: string) => void;
   onDrop?: (dt: DataTransfer, at: { track: string; frame: number }) => void;
-  onMenu: (at: { x: number; y: number }, key: string) => void;
+  onMenu: (at: MenuAt, key: string) => void;
   onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
+  /** a sound track menu's Lower Under Voice… (NleSound.tsx) */
+  onLowerUnderVoice?: (track: string) => void;
   nameOf: (it: NleItem) => string;
   /** the timeline's zoom keys (= - \), for the editor's key handler */
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
@@ -125,6 +192,11 @@ export const NleTracks = memo(function NleTracks({
   /** the gap picked by a click on empty space (ripple deleted with the delete keys) */
   gap?: Gap | null;
   onGap?: (g: Gap | null) => void;
+  /** the picked transition: the clip after its cut (a double click on a band picks it) */
+  trans?: string | null;
+  onTrans?: (key: string) => void;
+  /** a double click on a marker (its frame): open it */
+  onMarker?: (frame: number) => void;
 }) {
   const fps = tl.timeline.fps;
   const content = lengthOf(tl) / fps;
@@ -250,11 +322,122 @@ export const NleTracks = memo(function NleTracks({
     e.preventDefault();
     e.stopPropagation();
     if (!selected.includes(key)) onSelect(linkedSelection ? withLinked(tl, [key]) : [key]);
-    onMenu({ x: e.clientX, y: e.clientY }, key);
+    // near an end where another clip meets it: that cut (the clip after it)
+    const hit = find(tl, key);
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const near = Math.min(2 * EDGE_PX, box.width / 4);
+    const items = hit ? tl.tracks[hit.track].items : [];
+    const cut = !hit ? null
+      : e.clientX - box.left < near && items.some((x) => endOf(x) === hit.item.rec) ? key
+      : box.right - e.clientX < near ? items.find((x) => x.rec === endOf(hit.item))?._k ?? null : null;
+    onMenu({ x: e.clientX, y: e.clientY, on: "clip", cut }, key);
+  };
+  // a transition's band: its end drags its length (a double click picks it)
+  const [clampedKey, setClampedKey] = useState<string | null>(null);
+  const transDown = (e: ReactPointerEvent, it: NleItem, track: string, edge: Edge | null) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    if (!edge || tl.tracks[track].locked) return;
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    drag.current = { key: it._k!, track, grip: edge === "head" ? "trans-head" : "trans-tail", f0: it.trans!.len, x0: e.clientX, base: tl, moved: false, next: tl, keys: [] };
+  };
+  // a marker on the ruler: a click puts the playhead on it, a drag moves it (one step when let go)
+  const mdrag = useRef<{ frame: number; x0: number; base: NleTimeline; next: NleTimeline; moved: boolean } | null>(null);
+  const marker = {
+    onPointerDown: (e: ReactPointerEvent<HTMLElement>, frame: number) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      mdrag.current = { frame, x0: e.clientX, base: tl, next: tl, moved: false };
+    },
+    onPointerMove: (e: ReactPointerEvent) => {
+      const m = mdrag.current;
+      if (!m) return;
+      e.stopPropagation();
+      if (!m.moved && Math.abs(e.clientX - m.x0) < 3) return;
+      m.moved = true;
+      m.next = setMarker(m.base, m.frame, { frame: m.frame + Math.round(((e.clientX - m.x0) / pps) * fps) });
+      onLive(m.next);
+    },
+    onPointerUp: (e: ReactPointerEvent) => {
+      const m = mdrag.current;
+      mdrag.current = null;
+      if (!m) return;
+      e.stopPropagation();
+      if (!m.moved) return onSeek(m.frame / fps);
+      onLive(null);
+      if (m.next !== m.base) onCommit(m.next);
+    },
+  };
+  // a ◆ on a picked clip: a click puts the playhead on it, a drag moves its keys in time (one step when let go)
+  const kdrag = useRef<{ k: string; f: number; props: KeyProp[]; lo: number; hi: number; x0: number; base: NleTimeline; next: NleTimeline; moved: boolean } | null>(null);
+  const keyMark = {
+    onPointerDown: (e: ReactPointerEvent<HTMLElement>, it: NleItem, f: number, props: KeyProp[]) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      kdrag.current = { k: it._k!, f, props, lo: it.rec, hi: endOf(it) - 1, x0: e.clientX, base: tl, next: tl, moved: false };
+    },
+    onPointerMove: (e: ReactPointerEvent) => {
+      const m = kdrag.current;
+      if (!m) return;
+      e.stopPropagation();
+      if (!m.moved && Math.abs(e.clientX - m.x0) < 3) return;
+      m.moved = true;
+      const to = Math.min(m.hi, Math.max(m.lo, m.f + Math.round(((e.clientX - m.x0) / pps) * fps)));
+      m.next = to === m.f ? m.base : moveKeys(m.base, m.k, m.props, m.f, to);
+      onLive(m.next);
+    },
+    onPointerUp: (e: ReactPointerEvent) => {
+      const m = kdrag.current;
+      kdrag.current = null;
+      if (!m) return;
+      e.stopPropagation();
+      if (!m.moved) return onSeek(Math.round(m.f) / fps);
+      onLive(null);
+      if (m.next !== m.base) onCommit(m.next, COMMANDS.key.title);
+    },
+  };
+  // a sound clip's volume line: a drag sets its gain, or (keyed) the key nearest the pointer; ⌥-click adds a key there
+  const vdrag = useRef<{ k: string; f: number | null; db0: number; y0: number; body: number; base: NleTimeline; next: NleTimeline } | null>(null);
+  const [volTip, setVolTip] = useState<{ k: string; db: number } | null>(null);
+  const vol = (e: ReactPointerEvent, k: string, track: string, body: number) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const hit = find(tl, k);
+    if (!hit || tl.tracks[track].locked) return;
+    const f = frameAt(e.clientX);
+    if (e.altKey) return onCommit(runAt(tl, k, f, [{ id: "key", params: { prop: "gain_db" } }]), COMMANDS.key.title);
+    if (!selected.includes(k)) onSelect([k]);
+    // keyed: the key nearest the pointer, or (none on the clip) a new one where it is
+    const near = keysIn(tl, k, "gain_db").sort((a, b) => Math.abs(a.f - f) - Math.abs(b.f - f))[0];
+    const at = hit.item.keys?.gain_db?.length ? near?.f ?? f : null;
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    vdrag.current = { k, f: at, db0: at === null ? hit.item.gain_db ?? 0 : valueOn(tl, k, "gain_db", at), y0: e.clientY, body, base: tl, next: tl };
+    setVolTip({ k, db: vdrag.current.db0 });
+  };
+  const volMove = (e: ReactPointerEvent) => {
+    const v = vdrag.current;
+    if (!v) return;
+    e.stopPropagation();
+    const db = Math.min(VOL_DB[1], Math.max(VOL_DB[0], Math.round((v.db0 - ((e.clientY - v.y0) * VOL_SPAN) / Math.max(1, v.body)) * 10) / 10));
+    v.next = v.f === null ? setItems(v.base, [v.k], { gain_db: db || undefined }) : runAt(v.base, v.k, v.f, [{ id: "key", params: { prop: "gain_db", value: db } }]);
+    setVolTip({ k: v.k, db });
+    onLive(v.next);
+  };
+  const volUp = (e: ReactPointerEvent) => {
+    const v = vdrag.current;
+    vdrag.current = null;
+    if (!v) return;
+    e.stopPropagation();
+    setVolTip(null);
+    if (v.next === v.base) return;
+    onLive(null);
+    onCommit(v.next, "Volume");
   };
   // the clips call through this (one object for good), so a clip that didn't change isn't drawn again
   const ctl = useRef<Ctl>(null!);
-  ctl.current = { down, fade, menu };
+  ctl.current = { down, fade, menu, vol, volMove, volUp };
 
   // a box drawn on empty space: every clip it touches on the tracks it spans (Resolve's), live while it is drawn
   const boxEl = useRef<HTMLDivElement>(null);
@@ -315,7 +498,18 @@ export const NleTracks = memo(function NleTracks({
     d.copy = undefined;
     if (d.grip === "fade-head" || d.grip === "fade-tail") {
       next = setFade(d.base, d.key, d.grip === "fade-head" ? "head" : "tail", d.f0! + (d.grip === "fade-head" ? df : -df));
-    } else if (d.grip === "body" && tool === "select") {
+    } else if (d.grip === "trans-head" || d.grip === "trans-tail") {
+      // a centred one grows both ways, so its end moves half as far as its length changes
+      const t = it.trans!;
+      const want = Math.max(1, d.f0! + (d.grip === "trans-tail" ? df : -df) * (t.at === "center" ? 2 : 1));
+      next = setTransition(d.base, d.key, { len: want });
+      const clamped = (find(next, d.key)?.item.trans?.len ?? 0) < want;
+      if (clamped !== !!d.clamped) setClampedKey(clamped ? d.key : null);
+      d.clamped = clamped;
+    } else if (d.grip === "body" && tool === "slide") {
+      if (snap) df = snapDelta([it.rec, endOf(it)], df, targets, tol);
+      next = slide(d.base, d.key, df);
+    } else if (d.grip === "body" && tool !== "trim") {
       if (snap) df = snapDelta([it.rec, endOf(it)], df, targets, tol);
       if (e.altKey) {
         // ⌥: a copy moves, the clips stay (onto the track it is over when it is one of its kind and open)
@@ -334,7 +528,8 @@ export const NleTracks = memo(function NleTracks({
         // the cut at the clip's start is the end of the clip before it
         const prev = d.grip === "head" ? d.base.tracks[d.track].items.find((x) => endOf(x) === it.rec) : it;
         next = prev ? roll(d.base, prev._k!, df) : d.base;
-      } else next = trim(d.base, d.key, d.grip, df, tool === "trim");
+      } else if (tool === "stretch") next = rateStretch(d.base, d.key, d.grip, df);
+      else next = trim(d.base, d.key, d.grip, df, tool === "trim");
     }
     d.moved = true;
     d.next = next;
@@ -353,6 +548,7 @@ export const NleTracks = memo(function NleTracks({
     }
     const d = drag.current;
     drag.current = null;
+    if (d?.clamped) setClampedKey(null);
     if (!d?.moved) return;
     onLive(null);
     if (d.next !== d.base) onCommit(d.next);
@@ -464,7 +660,10 @@ export const NleTracks = memo(function NleTracks({
     }>
     <TimelineFrame scroller={scroller} inner={inner} seconds={shown} pps={pps} labelWidth={LABEL_W} rulerHeight={RULER_H} noMarks
       className="min-h-0 flex-1 overflow-y-scroll bg-[#151517] select-none" stickyRuler="bg-[#1d1d20] border-b border-black/60"
-      ruler={{ onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && scrubTo(e.clientX), className: "cursor-ew-resize" }}
+      ruler={{
+        onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && scrubTo(e.clientX), className: "cursor-ew-resize",
+        onContextMenu: (e) => { e.preventDefault(); onMenu({ x: e.clientX, y: e.clientY, on: "ruler" }, ""); },
+      }}
       rulerLabel={<span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead"><Timecode clock={clock} fps={fps} /></span>}
       rulerChildren={
         <>
@@ -480,6 +679,15 @@ export const NleTracks = memo(function NleTracks({
           {marks[0] !== null && marks[1] !== null && (
             <div className="pointer-events-none absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
           )}
+          {markersOf(tl).map((m) => (
+            <div key={m.frame} data-marker={m.frame} role="button" aria-label={`Marker ${m.name}`} title={[m.name, m.note].filter(Boolean).join("\n")}
+              className="absolute bottom-0 z-[11] h-3 cursor-pointer" style={{ left: (m.frame / fps) * pps - 5, width: Math.max(10, ((m.dur ?? 1) / fps) * pps + 5) }}
+              onPointerDown={(e) => marker.onPointerDown(e, m.frame)} onPointerMove={marker.onPointerMove} onPointerUp={marker.onPointerUp}
+              onDoubleClick={(e) => { e.stopPropagation(); onMarker?.(m.frame); }}>
+              {(m.dur ?? 1) > 1 && <span className="absolute bottom-0 left-[5px] h-1 opacity-60" style={{ width: ((m.dur! / fps) * pps), background: MARKER_HEX[m.color] }} />}
+              <span className="absolute bottom-0 left-0 h-3 w-[10px] [clip-path:polygon(0_0,100%_0,100%_60%,50%_100%,0_60%)]" style={{ background: MARKER_HEX[m.color] ?? MARKER_HEX.Blue }} />
+            </div>
+          ))}
           <div ref={rulerHead} className="pointer-events-none absolute inset-y-0 z-10" style={{ left: time * pps }}>
             <div className="absolute inset-y-0 left-0 w-px bg-red-500" />
             <div className="absolute top-0 left-px h-[15px] w-[13px] -translate-x-1/2 bg-red-500 [clip-path:polygon(0_0,100%_0,100%_62%,50%_100%,0_62%)]" />
@@ -552,6 +760,13 @@ export const NleTracks = memo(function NleTracks({
                 onDoubleClick={() => sizeTrack(id, null)} />
             </div>
             <div data-lane={id} className={cn("relative flex-1", t.locked && "bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(255,255,255,0.03)_6px_12px)]")}
+              onContextMenu={(e) => {
+                const g = e.target === e.currentTarget ? gapAt(tl, id, frameAt(e.clientX)) : null;
+                if (!g) return;
+                onSelect([]);
+                onGap?.(g);
+                onMenu({ x: e.clientX, y: e.clientY, on: "gap" }, "");
+              }}
               onDragOver={(e) => {
                 if (!onDrop || t.locked) return hideGhost();
                 e.preventDefault();
@@ -586,7 +801,48 @@ export const NleTracks = memo(function NleTracks({
                     // a flash is drawn by the player itself, it never needs its file
                     offline={fileOf && it.fx !== "flash" && (!file || file.why) ? file?.why || "Media offline" : null}
                     path={String(tl.sources[it.src]?.path ?? "")} from={from} to={from + (it.len / fps) * (it.speed || 1)}
-                    url={fileOf ? file?.url || null : undefined} still={!!file?.frame} drawW={drawW} x0={x0} x1={x1} ctl={ctl} />
+                    url={fileOf ? file?.url || null : undefined} still={!!file?.frame} drawW={drawW} x0={x0} x1={x1} ctl={ctl}
+                    vol={v ? null : volLine(it, fps, sfps)} volTip={volTip && volTip.k === it._k ? dbText(volTip.db) : null} />
+                );
+              })}
+              {t.items.filter((it) => picked.has(it._k!)).flatMap((it) => keyMarks(tl, it._k!).map(({ f, props, ease }, i) => (
+                // keyed by place, so the ◆ being dragged keeps the pointer while the live timeline moves it
+                <ContextMenu key={`k${it._k}:${i}`}>
+                  <ContextMenuTrigger asChild>
+                    <span data-keyframe={f} role="button" aria-label={`Keyframe ${timecode(Math.round(f), fps)}`} title={`${props.map((p) => KEY_NAMES[p]).join(", ")} (drag: move, right-click: Linear, Ease, Hold)`}
+                      className="absolute z-[4] flex size-[11px] cursor-ew-resize items-center justify-center"
+                      style={{ left: (f / fps) * pps - 5, top: Math.max(1, h - 2 - barOf(h) - 12) }}
+                      onPointerDown={(e) => keyMark.onPointerDown(e, it, f, props)} onPointerMove={keyMark.onPointerMove} onPointerUp={keyMark.onPointerUp}>
+                      <span className="size-[7px] rotate-45 border border-black/70 bg-[#e8483f]" />
+                    </span>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent className="min-w-32">
+                    <ContextMenuRadioGroup value={ease} onValueChange={(how) => onCommit(runAt(tl, it._k!, f, props.map((prop) => ({ id: "key", params: { prop, ease: how, value: keysIn(tl, it._k!, prop).find((x) => Math.abs(x.f - f) < 1e-2)!.key[1] } }))), COMMANDS.key.title)}>
+                      {EASES.map(([v_, l]) => <ContextMenuRadioItem key={v_} value={v_}>{l}</ContextMenuRadioItem>)}
+                    </ContextMenuRadioGroup>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onSelect={() => onCommit(runAt(tl, it._k!, f, props.map((prop) => ({ id: "deleteKey", params: { prop } }))), COMMANDS.deleteKey.title)}>Delete</ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
+              )))}
+              {t.items.filter((it) => it.trans).map((it) => {
+                const tr = it.trans!;
+                const { pre } = transSpan(tr);
+                const on = trans === it._k;
+                const ends = (tr.at === "start" ? ["tail"] : tr.at === "end" ? ["head"] : ["head", "tail"]) as Edge[];
+                return (
+                  <div key={`t${it._k}`} data-trans={it._k} role="button" aria-pressed={on} aria-label={`${TRANS_NAMES[tr.type]} ${id}`} title={`${TRANS_NAMES[tr.type]} ${timecode(tr.len, fps).replace(/^0:/, "")}`}
+                    className={cn("absolute top-[3px] z-[3] overflow-hidden rounded-[3px] border text-center text-[9px] leading-3 text-white", on ? "border-[#e8483f] bg-[#6b6b74]" : "border-zinc-300/70 bg-[#55555d]/90")}
+                    style={{ left: ((it.rec - pre) / fps) * pps, width: Math.max(4, (tr.len / fps) * pps), height: Math.max(8, h - 8 - barOf(h)) }}
+                    onPointerDown={(e) => transDown(e, it, id, null)} onDoubleClick={(e) => { e.stopPropagation(); onTrans?.(it._k!); }}
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onMenu({ x: e.clientX, y: e.clientY, on: "clip", cut: it._k! }, it._k!); }}>
+                    <span className="pointer-events-none block truncate px-1">{(tr.len / fps) * pps > 50 ? TRANS_NAMES[tr.type] : ""}</span>
+                    {ends.map((edge) => (
+                      <span key={edge} data-edge={edge} data-clamped={clampedKey === it._k || undefined} aria-label={`${TRANS_NAMES[tr.type]} length`}
+                        className={cn("absolute inset-y-0 w-1.5 cursor-ew-resize hover:bg-white/40", edge === "head" ? "left-0" : "right-0", clampedKey === it._k && "bg-red-500")}
+                        onPointerDown={(e) => transDown(e, it, id, edge)} />
+                    ))}
+                  </div>
                 );
               })}
             </div>
@@ -600,7 +856,7 @@ export const NleTracks = memo(function NleTracks({
         <div key={i} ref={g} data-ghost className="pointer-events-none absolute z-[16] hidden truncate rounded-[3px] border border-white/70 bg-white/20 px-1 text-[10px] leading-4 text-white" />
       ))}
     </TimelineFrame>
-    {trackMenu && <TrackMenu tl={tl} {...trackMenu} onClose={() => setTrackMenu(null)} onCommit={onCommit} onTrack={onTrack}
+    {trackMenu && <TrackMenu tl={tl} {...trackMenu} onClose={() => setTrackMenu(null)} onCommit={onCommit} onTrack={onTrack} onLowerUnderVoice={onLowerUnderVoice}
       onSwap={(a, b) => setHeights((all) => {
         // a moved track takes its height with it
         const next = { ...all };
@@ -618,13 +874,14 @@ const MENU = "rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl";
 const MENU_ROW = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
 
 /** Resolve's track menu: add a track (above or below this one, or at the ends of its kind), move, delete, lock, hide or mute. */
-function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap }: {
+function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUnderVoice }: {
   tl: NleTimeline; x: number; y: number;
   /** the track right-clicked, null: the empty part of the header column */
   id: string | null;
   onClose: () => void; onCommit: (tl: NleTimeline) => void; onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
   /** two tracks that traded numbers (Move Track): their heights trade too */
   onSwap: (a: string, b: string) => void;
+  onLowerUnderVoice?: (track: string) => void;
 }) {
   const t = id ? tl.tracks[id] : null;
   // a track keeps its number (the AI Editor reads tracks by number): a new one goes on top / at the bottom, or right
@@ -659,6 +916,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap }: {
     [t?.locked ? "Unlock Track" : "Lock Track", id ? () => onTrack(id, { locked: t!.locked ? undefined : true }) : null],
     v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", () => onTrack(id!, { hidden: t!.hidden ? undefined : true })]
       : [t?.mute ? "Unmute Track" : "Mute Track", id ? () => onTrack(id, { mute: t!.mute ? undefined : true }) : null],
+    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", () => onLowerUnderVoice(id)] as [string, () => void]] : []),
   ];
   const run = (fn: () => void) => () => {
     onClose();
@@ -684,6 +942,10 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap }: {
 
 type Ctl = {
   down: (e: ReactPointerEvent, key: string, track: string) => void;
+  /** the volume line: pressed (its body's height in px), dragged, let go */
+  vol: (e: ReactPointerEvent, key: string, track: string, body: number) => void;
+  volMove: (e: ReactPointerEvent) => void;
+  volUp: (e: ReactPointerEvent) => void;
   fade: (e: ReactPointerEvent, key: string, track: string, edge: Edge) => void;
   menu: (e: ReactMouseEvent, key: string) => void;
 };
@@ -714,7 +976,7 @@ const ramp = (side: "left" | "right", px: number) => (
  * waveform, an offline clip dark red with its name (the why on hover). Plain values only, so it is drawn again only when
  * it changes.
  */
-const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl }: {
+const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl, vol, volTip }: {
   k: string; track: string; video: boolean; left: number; width: number; height: number; name: string; length: string; on: boolean; dim: boolean;
   tool: Tool; locked: boolean;
   /** the fades, in px */
@@ -726,6 +988,8 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
   /** the clip's width its pictures or waveform are drawn at, and the part of it drawn (px): they stretch with a zoom */
   drawW: number; x0: number; x1: number;
   ctl: MutableRefObject<Ctl>;
+  /** a sound clip's volume line (volLine), null on a video clip; the dB it is being dragged to */
+  vol?: string | null; volTip?: string | null;
 }) {
   const w = Math.max(2, width);
   const bar = w > 24 ? barOf(height) : 0;
@@ -754,6 +1018,18 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
       <span className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
       <span className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
       {on && <span className="pointer-events-none absolute inset-0 rounded-[3px] border-2 border-[#e8483f]" />}
+      {vol && body >= 12 && w > 8 && (
+        <svg className="pointer-events-none absolute top-0 left-0 z-[1] overflow-visible" style={{ width: "100%", height: body }} viewBox="0 0 1 1" preserveAspectRatio="none">
+          <path d={vol} fill="none" stroke="rgb(0 0 0 / 0.55)" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+          <path d={vol} fill="none" stroke="white" strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
+          {!locked && tool !== "blade" && (
+            <path data-volume d={vol} fill="none" stroke="transparent" strokeWidth={9} vectorEffect="non-scaling-stroke" className="cursor-ns-resize" style={{ pointerEvents: "stroke" }}
+              aria-label={`${name} volume`} onPointerDown={(e) => ctl.current.vol(e, k, track, body)} onPointerMove={(e) => ctl.current.volMove(e)} onPointerUp={(e) => ctl.current.volUp(e)}
+              onPointerCancel={(e) => ctl.current.volUp(e)}><title>Drag: volume (⌥-click: add a keyframe)</title></path>
+          )}
+        </svg>
+      )}
+      {volTip && <span className="pointer-events-none absolute top-0.5 left-1 z-[3] rounded-sm bg-black/80 px-1 font-mono text-[10px] leading-3.5 text-white tabular-nums">{volTip}</span>}
       {fades && (["head", "tail"] as const).map((edge) => (
         <span key={edge} role="slider" aria-label={edge === "head" ? "Fade in" : "Fade out"} aria-valuenow={Math.round(edge === "head" ? fadeIn : fadeOut)}
           title={edge === "head" ? "Drag: fade in" : "Drag: fade out"}

@@ -30,6 +30,7 @@ const ACTIONS: Record<Exclude<KeyAction, `lock:${string}`>, true> = {
   linkedSelection: true, nudgeBack: true, nudgeBack5: true, nudgeOn: true, nudgeOn5: true, frameBack: true, frameOn: true, secondBack: true,
   secondOn: true, prevEdit: true, nextEdit: true, start: true, end: true, zoomIn: true, zoomOut: true, zoomFit: true, mediaPool: true,
   inspector: true, clearIn: true, clearOut: true, insertEdit: true, overwriteEdit: true, loop: true,
+  addMarker: true, prevMarker: true, nextMarker: true, addDissolve: true,
 };
 
 describe("nle commands", () => {
@@ -133,5 +134,96 @@ describe("nle commands", () => {
     const lines = commandLines();
     expect(lines).toContain("setLength(seconds: the new length in seconds)");
     expect(lines).not.toMatch(/^save\b|^play\b|^undo\b/m);
+  });
+});
+
+describe("lowerUnderVoice from the chat", () => {
+  it("refuses with no speech known, on A1 and on an empty track; never touches the keys", async () => {
+    const { spoken, measured } = await import("./loudness");
+    const tl = reel();
+    const k = key(tl, "A2", 0);
+    tl.tracks.A2.items[0]!.keys = { gain_db: [[10, -3, "linear"]] };
+    expect(() => runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 2 } }])).toThrow("Command 1 (lowerUnderVoice): No speech on A1 is known yet");
+    expect(() => runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 1 } }])).toThrow("A1 is the voice");
+    expect(() => runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 3 } }])).toThrow("A3 has no clips");
+    expect(find(tl, k)!.item.keys!.gain_db).toEqual([[10, -3, "linear"]]);
+    // once the track menu has read the words: A2 comes down where A1 speaks (source seconds 4.2–5 = frames 5–25; 150 ms down, 400 ms up)
+    spoken.set("cam", [[4.2, 5]]);
+    try {
+      const out = runAll(stateOf(tl), [{ id: "lowerUnderVoice", params: { track: 2 } }]).tl;
+      expect(find(out, k)!.item.keys!.gain_db!.map((x) => [x[0], x[1]])).toEqual([[1.25, 0], [5, -12], [25, -12], [35, 0]]);
+    } finally {
+      spoken.clear();
+      measured.clear();
+    }
+  });
+});
+
+describe("nle commands: markers, lift and extract, split all, gaps, transitions", () => {
+  it("M adds a marker at the playhead (not on one already there); ⇧↑ ⇧↓ go from marker to marker", () => {
+    let s = press("addMarker", stateOf(reel(), { playhead: 40 }));
+    s = press("addMarker", { ...s, playhead: 100 });
+    expect(s.tl.markers).toEqual([{ frame: 40, name: "Marker 1", color: "Blue" }, { frame: 100, name: "Marker 2", color: "Blue" }]);
+    expect(COMMANDS.addMarker.enabled({ ...s, playhead: 40 })).toBe(false);
+    expect(press("nextMarker", { ...s, playhead: 0 }).playhead).toBe(40);
+    expect(press("nextMarker", { ...s, playhead: 40 }).playhead).toBe(100);
+    expect(press("nextMarker", { ...s, playhead: 120 }).playhead).toBe(120);
+    expect(press("prevMarker", { ...s, playhead: 100 }).playhead).toBe(40);
+    expect(COMMANDS.deleteMarker.run({ ...s, playhead: 100 }, {}).tl.markers).toEqual([{ frame: 40, name: "Marker 1", color: "Blue" }]);
+  });
+
+  it("the chat names a marker, colours it from the eight and gives it a note and a duration", () => {
+    const s = runAll(stateOf(reel(), { playhead: 25 }), [
+      { id: "addMarker", params: { name: "Hook ends", color: "Green" } },
+      { id: "editMarker", params: { color: "Lavender", note: "breath", frames: 12 } },
+    ]);
+    expect(s.tl.markers).toEqual([{ frame: 25, name: "Hook ends", color: "Lavender", note: "breath", dur: 12 }]);
+    expect(() => runAll(s, [{ id: "editMarker", params: { color: "Orange" } }])).toThrow("color is one of Red, Yellow, Green, Cyan, Blue, Purple, Pink, Lavender");
+    expect(commandLines()).toContain("editMarker(name?: its name, color?: its colour (Red | Yellow | Green | Cyan | Blue | Purple | Pink | Lavender), note?: a note, frames?: its duration in frames)");
+  });
+
+  it("nothing picked, In and Out marked: Delete lifts the range on the unlocked tracks, ripple delete extracts it", () => {
+    const tl = setTrack(reel(), "A2", { locked: true });
+    const s = stateOf(tl, { marks: [50, 99] });
+    const lifted = press("delete", s).tl;
+    expect(lifted.tracks.V1.items.map((i) => [i.rec, i.len])).toEqual([[0, 50], [100, 50]]);
+    expect(lifted.tracks.A2.items[0].len).toBe(150);
+    const pulled = press("rippleDelete", s).tl;
+    expect(pulled.tracks.V1.items.map((i) => [i.rec, i.len])).toEqual([[0, 50], [50, 50]]);
+    // a picked clip wins over the range; no range and nothing picked: nothing to do
+    expect(press("delete", { ...s, sel: [key(tl, "V2", 90)] }).tl.tracks.V2.items).toEqual([]);
+    expect(COMMANDS.delete.enabled(stateOf(tl, { marks: [50, null] }))).toBe(false);
+  });
+
+  it("W with nothing picked splits every unlocked track at the playhead", () => {
+    const tl = setTrack(reel(), "A2", { locked: true });
+    const out = press("split", stateOf(tl, { playhead: 30 })).tl;
+    expect(out.tracks.V1.items.map((i) => i.rec)).toEqual([0, 30, 75]);
+    expect(out.tracks.A1.items.map((i) => i.rec)).toEqual([0, 30, 75]);
+    expect(out.tracks.A2.items).toHaveLength(1);
+  });
+
+  it("Close Gap closes the picked gap", () => {
+    const tl = remove(reel(), [key(reel(), "V2", 90)]);
+    const cut = remove(tl, [key(tl, "V1", 0)]);
+    const s = stateOf(cut, { gap: { track: "V1", from: 0, to: 75 } });
+    expect(COMMANDS.closeGap.enabled(stateOf(cut))).toBe(false);
+    expect(COMMANDS.closeGap.run(s, {}).tl.tracks.V1.items[0].rec).toBe(0);
+  });
+
+  it("⌘T: a 1 s cross dissolve at the cut nearest the playhead, the linked voice a crossfade; a dip from the menu; Delete takes a picked one off", () => {
+    const s = stateOf(reel(), { playhead: 60 });
+    const out = press("addDissolve", s).tl;
+    expect(out.tracks.V1.items[1].trans).toEqual({ type: "dissolve", len: 25, at: "center" });
+    expect(out.tracks.A1.items[1].trans).toEqual({ type: "crossfade", len: 25, at: "center" });
+    // B-roll picked: its track has no cut, nothing changes
+    expect(press("addDissolve", { ...s, sel: [key(s.tl, "V2", 90)] }).tl).toBe(s.tl);
+    const dip = COMMANDS.addDipToBlack.run(s, {}).tl;
+    expect(dip.tracks.V1.items[1].trans?.type).toBe("dip_black");
+    expect(dip.tracks.A1.items[1].trans?.type).toBe("crossfade");
+    const k = out.tracks.V1.items[1]._k!;
+    const off = press("delete", stateOf(out, { trans: k })).tl;
+    expect(off.tracks.V1.items[1].trans).toBeUndefined();
+    expect(off.tracks.V1.items).toHaveLength(2);
   });
 });

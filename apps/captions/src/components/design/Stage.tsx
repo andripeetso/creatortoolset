@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type Layer, type PathLayer, type TextLayer } from "@contracts/design";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
-import { boundsOf, boxPick, dropTarget, frameOf, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { boundsOf, boxPick, dropTarget, frameOf, hovers, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, zoomStop, type KeptFrame, type ViewStore } from "@/lib/design/view";
@@ -84,6 +84,7 @@ export function Stage({
   framed,
   framedIds,
   onPick,
+  onError,
   onLive,
   onCommit,
   tool,
@@ -122,6 +123,8 @@ export function Stage({
   framedIds: readonly string[];
   /** `frames`: every frame picked, by id, when more than the one at `at` */
   onPick: (at: number, ids: string[], framed?: boolean, frames?: string[]) => void;
+  /** says why a hand did less than asked (the canvas full) */
+  onError?: (why: string) => void;
   /** frames while a drag is under way (not a step to undo) */
   onLive: (pages: DesignPage[] | null) => void;
   /** frames once a drag or an edit ends (one step to undo, however many frames it changed; `merge`: joined to the step before it of the same name) */
@@ -210,6 +213,21 @@ export function Stage({
   const here = fr[at];
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
   const typed = page?.layers.find((l): l is TextLayer => l.id === editing && l.type === "text");
+  // Escape with the words being typed and focus on the style panel ends the typing through the words' own finish (saved,
+  // or the layer gone when they were taken out whole); the text stays picked. Ahead of the page's canvas keys, which would
+  // pick nothing. Escape in the words themselves, a field, a menu or a dialog is theirs.
+  const typedId = typed?.id;
+  useEffect(() => {
+    if (!typedId) return;
+    const end = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || (e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable],[role="menu"],[role="dialog"]'))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      typing.current?.end();
+    };
+    window.addEventListener("keydown", end, true);
+    return () => window.removeEventListener("keydown", end, true);
+  }, [typedId]);
   // the words being typed are set at the size they are drawn at (their own, or the one they shrank to)
   const typedAs = typed ? { ...typed, size: textSize(typed) } : typed;
   const cropped = page?.layers.find((l): l is ImageLayer => l.id === cropping && l.type === "image");
@@ -522,6 +540,9 @@ export function Stage({
     const b0 = boundsOf(moving);
     const looseId = `p${Date.now().toString(36)}`;
     let last: { pages: DesignPage[]; to: number; ids: string[] } | null = null;
+    // the canvas holds no more loose pieces: layers let go off their frame go back where they were, and it says why
+    const canvasFull = pages.filter((q) => q.loose).length >= DESIGN_LIMITS.loose;
+    let keptIn = false;
     drag(
       e,
       (ev) => {
@@ -530,8 +551,9 @@ export function Stage({
         const fits = (n: number) => pages[n]!.layers.length + moving.length <= DESIGN_LIMITS.layers;
         // layers taken wholly off their frame onto empty canvas lie loose there, uncut (hands.ts dropTarget)
         const lands = dropTarget(pages.map((q, n) => ({ rect: fr[n]!, loose: q.loose, full: !fits(n) })), k, { ...b0, x: f.x + b0.x + m.dx, y: f.y + b0.y + m.dy });
-        const out = lands < 0;
-        const to = out ? k : lands;
+        keptIn = lands < 0 && canvasFull;
+        const out = lands < 0 && !canvasFull;
+        const to = lands < 0 ? k : lands;
         if (!out && to === k && copy && !fits(k)) return;
         const host = pages[to]!;
         const g = fr[to]!;
@@ -570,6 +592,8 @@ export function Stage({
       (moved) => {
         setGuides(null);
         onLive(null);
+        // let go where they could not lie (past the frame's edge, its clip hiding them): as if the drag never happened
+        if (keptIn) return void onError?.(`A canvas holds at most ${DESIGN_LIMITS.loose} pieces outside its frames`);
         if (last) {
           onCommit(last.pages);
           // a loose picture whose last picture went into a frame is gone, and the frames after it move up one
@@ -908,8 +932,7 @@ export function Stage({
   const over = (e: React.PointerEvent) => {
     const p = world(e);
     if (pen) setPenAt(p);
-    const { k, hit: under } = pickAt(p);
-    const hit = !e.buttons && tool === "move" && !space ? under : null;
+    const { k, hit } = hovers(e.buttons, tool, space) ? pickAt(p) : { k: -1, hit: null };
     if ((hit?.id ?? null) !== (hover?.id ?? null) || (hit && k !== hover?.k)) setHover(hit ? { k, id: hit.id } : null);
   };
 

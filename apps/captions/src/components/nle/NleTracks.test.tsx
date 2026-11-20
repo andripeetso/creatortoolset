@@ -147,3 +147,198 @@ describe("picking clips", () => {
     act(() => root.unmount());
   });
 });
+
+// two Tiny Acrobatics shots cut together with a centred 5-frame dissolve: the first has 10 frames of its source left after
+// it, the second 3 before it, so the dissolve can grow to 7
+const cut = withKeys({
+  timeline: { fps: 25 },
+  sources: { a: { path: "/m/a.mp4", fps: 25, dur: 160 } },
+  tracks: { V1: { items: [{ src: "a", rec: 0, len: 50, in: 100 }, { src: "a", rec: 50, len: 50, in: 3, trans: { type: "dissolve", len: 5, at: "center" } }] }, A1: { items: [] } },
+} as unknown as NleTimeline);
+// px a second, from how wide a clip of `len` frames is drawn
+const ppsOf = (el: Element, len: number) => parseFloat((el as HTMLElement).style.width) / (len / 25);
+
+describe("transitions, markers, gaps and the new tools on the timeline", () => {
+  it("a transition's band: a double click picks it, its end drags its length as far as the handles go, red where they stop it", async () => {
+    const onTrans = vi.fn();
+    const { host, root, onLive, onCommit, pointer } = await mount({ tl: cut, onTrans });
+    const band = host.querySelector("[data-trans]")!;
+    expect(band.getAttribute("aria-label")).toBe("Cross Dissolve V1");
+    const pps = ppsOf(band, 5);
+    const end = band.querySelector('[data-edge="tail"]')!;
+    await pointer(end, "pointerdown", 500);
+    expect(onTrans).not.toHaveBeenCalled();
+    await pointer(end, "pointermove", 500 + pps); // a second on: wants 5 + 2 × 25 frames
+    const live = onLive.mock.calls.at(-1)![0] as NleTimeline;
+    expect(live.tracks.V1.items[1].trans!.len).toBe(7);
+    expect(host.querySelector("[data-clamped]")).not.toBeNull();
+    await pointer(end, "pointerup", 500 + pps);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.V1.items[1].trans!.len).toBe(7);
+    expect(host.querySelector("[data-clamped]")).toBeNull();
+    await act(() => void band.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    expect(onTrans).toHaveBeenCalledWith(cut.tracks.V1.items[1]._k);
+    act(() => root.unmount());
+  });
+
+  it("a right-click at a cut offers that cut; on a gap, the gap menu with the gap picked; on the ruler, the ruler menu", async () => {
+    const onMenu = vi.fn();
+    const onGap = vi.fn();
+    const { host, root } = await mount({ tl: cut, onMenu, onGap });
+    const ctx = (el: Element, clientX: number) => act(() => void el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX, clientY: 10 })));
+    const later = host.querySelectorAll('[data-clip][aria-label^="V1"]')[1]!;
+    await ctx(later, 3);
+    expect(onMenu).toHaveBeenLastCalledWith(expect.objectContaining({ on: "clip", cut: cut.tracks.V1.items[1]._k }), cut.tracks.V1.items[1]._k);
+    await ctx(later, 500);
+    expect(onMenu.mock.calls.at(-1)![0].cut).toBeNull();
+    act(() => root.unmount());
+
+    const g = await mount({ onMenu, onGap });
+    const pps = ppsOf(g.host.querySelector("[data-clip]")!, 100);
+    await ctx(g.host.querySelector('[data-lane="V1"]')!, 152 + 6 * pps); // 6 s: between the shots
+    expect(onGap).toHaveBeenLastCalledWith({ track: "V1", from: 100, to: 200 });
+    expect(onMenu).toHaveBeenLastCalledWith(expect.objectContaining({ on: "gap" }), "");
+    const ruler = g.host.querySelector('[title="The playhead"]')!.parentElement!.nextElementSibling!;
+    await ctx(ruler, 300);
+    expect(onMenu).toHaveBeenLastCalledWith(expect.objectContaining({ on: "ruler" }), "");
+    act(() => g.root.unmount());
+  });
+
+  it("a marker on the ruler: a click puts the playhead on it, a drag moves it, a double click opens it", async () => {
+    const onSeek = vi.fn();
+    const onMarker = vi.fn();
+    const marked = { ...tl, markers: [{ frame: 50, name: "Hook", color: "Red" }] } as NleTimeline;
+    const { host, root, onCommit, pointer } = await mount({ tl: marked, onSeek, onMarker });
+    const pps = ppsOf(host.querySelector("[data-clip]")!, 100);
+    const m = host.querySelector('[data-marker="50"]')!;
+    await pointer(m, "pointerdown", 400);
+    await pointer(m, "pointerup", 400);
+    expect(onSeek).toHaveBeenLastCalledWith(2);
+    await pointer(m, "pointerdown", 400);
+    await pointer(m, "pointermove", 400 + pps);
+    await pointer(m, "pointerup", 400 + pps);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).markers).toEqual([{ frame: 75, name: "Hook", color: "Red" }]);
+    expect(onSeek).toHaveBeenCalledTimes(1);
+    await act(() => void m.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    expect(onMarker).toHaveBeenCalledWith(50);
+    act(() => root.unmount());
+  });
+
+  it("Slide moves a clip between its neighbours, they trim; Rate Stretch pulls an end and changes its speed", async () => {
+    const three = withKeys({
+      timeline: { fps: 25 },
+      sources: { a: { path: "/m/a.mp4", fps: 25, dur: 1000 } },
+      tracks: { V1: { items: [0, 50, 100].map((rec) => ({ src: "a", rec, len: 50, in: 200 })) }, A1: { items: [] } },
+    } as unknown as NleTimeline);
+    const s = await mount({ tl: three, tool: "slide" });
+    const pps = ppsOf(s.host.querySelector("[data-clip]")!, 50);
+    const mid = s.host.querySelectorAll("[data-clip]")[1]!;
+    await s.pointer(mid, "pointerdown", 500);
+    await s.pointer(mid, "pointermove", 500 + 0.4 * pps);
+    await s.pointer(mid, "pointerup", 500 + 0.4 * pps);
+    expect((s.onCommit.mock.calls[0][0] as NleTimeline).tracks.V1.items.map((i) => [i.rec, i.len])).toEqual([[0, 60], [60, 50], [110, 40]]);
+    act(() => s.root.unmount());
+
+    const r = await mount({ tl: three, tool: "stretch" });
+    const last = r.host.querySelectorAll("[data-clip]")[2]!;
+    await r.pointer(last, "pointerdown", 998);
+    await r.pointer(last, "pointermove", 998 + 2 * pps);
+    await r.pointer(last, "pointerup", 998 + 2 * pps);
+    const it = (r.onCommit.mock.calls[0][0] as NleTimeline).tracks.V1.items[2];
+    expect([it.len, it.speed]).toEqual([100, 0.5]);
+    act(() => r.root.unmount());
+  });
+});
+
+describe("keyframes and the volume line on the timeline", () => {
+  // a Tiny Acrobatics cut: the shot plays at double speed with two zoom keys, the next shot has one, the voice has its gain
+  const keyed = withKeys({
+    timeline: { fps: 25 },
+    sources: { a: { path: "/m/a.mp4" }, b: { path: "/m/b.mp4" }, v: { path: "/m/voice.wav" } },
+    tracks: {
+      V1: { items: [
+        { src: "a", rec: 0, len: 100, in: 0, speed: 2, keys: { zoom: [[20, 1, "linear"], [120, 1.5, "ease"]] } },
+        { src: "b", rec: 100, len: 50, in: 0, keys: { zoom: [[10, 2, "linear"]] } },
+      ] },
+      A1: { items: [{ src: "v", rec: 0, len: 100, in: 0 }] },
+    },
+  } as unknown as NleTimeline);
+  const [shot, next] = keyed.tracks.V1.items.map((i) => i._k!);
+
+  it("the picked clip alone shows a ◆ at each key's timeline frame; a click puts the playhead there", async () => {
+    const onSeek = vi.fn();
+    const { host, root, pointer } = await mount({ tl: keyed, selected: [shot], onSeek });
+    const pps = ppsOf(host.querySelector("[data-clip]")!, 100);
+    const marks = [...host.querySelectorAll("[data-keyframe]")] as HTMLElement[];
+    // source frames 20 and 120 at double speed: timeline frames 10 and 60
+    expect(marks.map((m) => Number(m.dataset.keyframe))).toEqual([10, 60]);
+    expect(parseFloat(marks[1].style.left)).toBeCloseTo((60 / 25) * pps - 5);
+    await pointer(marks[1], "pointerdown", 300);
+    await pointer(marks[1], "pointerup", 300);
+    expect(onSeek).toHaveBeenCalledWith(60 / 25);
+    act(() => root.unmount());
+  });
+
+  it("a ◆ dragged a second on moves its key 25 timeline frames, 50 source frames at double speed, in one step", async () => {
+    const { host, root, onLive, onCommit, pointer } = await mount({ tl: keyed, selected: [shot, next] });
+    const pps = ppsOf(host.querySelector("[data-clip]")!, 100);
+    expect(host.querySelectorAll("[data-keyframe]")).toHaveLength(3);
+    const m = host.querySelector('[data-keyframe="10"]')!;
+    await pointer(m, "pointerdown", 300);
+    await pointer(m, "pointermove", 300 + pps / 2);
+    await pointer(m, "pointermove", 300 + pps);
+    expect(onLive).toHaveBeenCalled();
+    await pointer(m, "pointerup", 300 + pps);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.V1.items[0].keys!.zoom).toEqual([[70, 1, "linear"], [120, 1.5, "ease"]]);
+    act(() => root.unmount());
+  });
+
+  it("a right-click on a ◆ sets its ease or deletes it, through the Inspector's commands", async () => {
+    const { host, root, onCommit } = await mount({ tl: keyed, selected: [shot] });
+    const open = () => act(() => void host.querySelector('[data-keyframe="60"]')!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 10 })));
+    const item = (name: string) => [...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')].find((b) => b.textContent === name) as HTMLElement;
+    await open();
+    await act(() => item("Hold").click());
+    expect(onCommit.mock.calls[0]).toEqual([expect.anything(), "Keyframe"]);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.V1.items[0].keys!.zoom).toEqual([[20, 1, "linear"], [120, 1.5, "hold"]]);
+    await open();
+    await act(() => item("Delete").click());
+    expect((onCommit.mock.calls[1][0] as NleTimeline).tracks.V1.items[0].keys!.zoom).toEqual([[20, 1, "linear"]]);
+    act(() => root.unmount());
+  });
+
+  it("the volume line drags the gain, showing the dB, one step when let go", async () => {
+    const { host, root, onLive, onCommit, pointer } = await mount({ tl: keyed });
+    const line = host.querySelector("[data-volume]")!;
+    await pointer(line, "pointerdown", 300, false, { clientY: 20 });
+    await pointer(line, "pointermove", 300, false, { clientY: 19 });
+    await pointer(line, "pointermove", 300, false, { clientY: 18 });
+    // the line's body is 23 px for 84 dB: 2 px up = +7.3 dB
+    expect(host.textContent).toContain("+7.3 dB");
+    expect(onLive).toHaveBeenCalledTimes(2);
+    await pointer(line, "pointerup", 300, false, { clientY: 18 });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onCommit.mock.calls[0]).toEqual([expect.anything(), "Volume"]);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.A1.items[0].gain_db).toBe(7.3);
+    expect(host.textContent).not.toContain("dB");
+    act(() => root.unmount());
+  });
+
+  it("⌥-click on the volume line adds a key there; then a drag moves the key nearest the pointer", async () => {
+    const first = await mount({ tl: keyed });
+    const pps = ppsOf(first.host.querySelector("[data-clip]")!, 100);
+    await first.pointer(first.host.querySelector("[data-volume]")!, "pointerdown", 152 + 2 * pps, true);
+    const added = first.onCommit.mock.calls[0][0] as NleTimeline;
+    expect(added.tracks.A1.items[0].keys!.gain_db).toEqual([[50, 0, "linear"]]);
+    act(() => first.root.unmount());
+
+    const { host, root, onCommit, pointer } = await mount({ tl: added });
+    const line = host.querySelector("[data-volume]")!;
+    await pointer(line, "pointerdown", 152 + 3 * pps, false, { clientY: 20 });
+    await pointer(line, "pointermove", 152 + 3 * pps, false, { clientY: 22 });
+    await pointer(line, "pointerup", 152 + 3 * pps, false, { clientY: 22 });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.A1.items[0].keys!.gain_db).toEqual([[50, -7.3, "linear"]]);
+    act(() => root.unmount());
+  });
+});

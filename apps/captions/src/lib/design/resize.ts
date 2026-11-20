@@ -1,5 +1,6 @@
 import type { DesignPage, Layer, Pin } from "../../../contracts/design";
 import { withFills } from "./paint";
+import { retext } from "./runs";
 
 /**
  * A frame that changes size, and its layers with it: each follows the frame's edges as its pin says (contracts/design.ts
@@ -39,15 +40,20 @@ function shareAxis(at: number, size: number, from: number, to: number, k: number
   return [middle - (size * k) / 2, size * k];
 }
 
-/** What a layer draws scaled by `k`: its words' size, its lines, corners, shadow and blur. */
+/** What a layer draws scaled by `k`: its words' size (its runs' too), its lines, corners, shadows and blurs. */
 function scaled<L extends Layer>(l: L, k: number): L {
   if (k === 1) return l;
   const out: Layer = { ...l };
   if (out.shadow) out.shadow = { ...out.shadow, blur: round(out.shadow.blur * k), x: round(out.shadow.x * k), y: round(out.shadow.y * k) };
   if (out.blur) out.blur = Math.max(1, Math.round(out.blur * k));
+  if (out.effects)
+    out.effects = out.effects.map((e) =>
+      e.type === "noise" ? e : e.type === "shadow" || e.type === "inner-shadow" ? { ...e, blur: round(e.blur * k), x: round(e.x * k), y: round(e.y * k), ...(e.spread ? { spread: round(e.spread * k) } : {}) } : { ...e, blur: round(e.blur * k) },
+    );
   if (out.type === "text") {
     out.size = round(Math.max(8, out.size * k));
     if (out.spacing) out.spacing = round(out.spacing * k);
+    if (out.runs) out.runs = out.runs.map((r) => ({ ...r, ...(r.size !== undefined ? { size: round(Math.max(8, r.size * k)) } : {}), ...(r.spacing ? { spacing: round(r.spacing * k) } : {}) }));
     if (out.outline) out.outline = { ...out.outline, width: round(out.outline.width * k) };
   }
   if ((out.type === "shape" || out.type === "path") && out.stroke) out.stroke = { ...out.stroke, width: round(out.stroke.width * k) };
@@ -115,7 +121,8 @@ export function fillRow(page: DesignPage, row: Record<string, unknown>): { page:
       if (!hit(l)) return l;
       let out: Layer = { ...l };
       if (typeof set.visible === "boolean") out = { ...out, hidden: set.visible ? undefined : true };
-      if (out.type === "text" && typeof set.text === "string") out = { ...out, text: set.text };
+      // its runs move with the words, as when they are typed
+      if (out.type === "text" && typeof set.text === "string") out = retext(out, set.text);
       // a layer with a list of fills takes the colour as its one fill
       if (typeof set.color === "string") out = (out.type === "text" || out.type === "shape") && out.fills ? withFills(out, [{ type: "solid", color: set.color }]) : out.type === "text" ? { ...out, color: set.color } : out.type === "shape" ? { ...out, fill: set.color } : out;
       return out;

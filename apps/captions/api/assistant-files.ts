@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AuthVars } from "./auth";
+import { jobTurn, type AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, readUploadState, receivedParts, receivePart, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
@@ -294,6 +294,8 @@ export async function useFile(
   name?: string,
   versionOf?: string,
   sound?: Sound,
+  /** the chat it was dropped in: a save on a computer goes into that chat's Imports/ folder */
+  importName?: string,
 ): Promise<{ to: AssistantFileUse; id: string; name: string; href: string; note?: string; version?: number; versionId?: string; libraryId?: string; captioning?: boolean; waiting?: true; store?: string }> {
   const meta = (await readFileMeta(user.username, id)) ?? (await arrival(user.username, id));
   if (!mayUse(user, TOOL_OF[to])) throw new Error(`${USE_NAMES[to]} isn't switched on for this account.`);
@@ -320,7 +322,7 @@ export async function useFile(
     // under Upload none it goes to their computer instead (saveToLibrary): nothing is refused for it
     const gate = lib && !hostsNone(libraryUpload(lib)) ? mayReceive("original", { id: lib }, "person") : null;
     if (gate && !gate.ok) throw new Error(gate.body.message);
-    const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound);
+    const saved = await saveToLibrary(user.username, file, fileName, [], lib, !sound, sound, importName ? { importName } : {});
     if (!saved) throw new Error("This account has no Media Library it may add to.");
     if ("error" in saved) throw new Error(saved.error);
     // id: the save's own, which names the chat's card for it (library-save:<id>): it ends when the file lands, or is dropped
@@ -359,7 +361,10 @@ assistantFilesApp.post("/:id/use", async (c) => {
   const to = b?.to as AssistantFileUse;
   if (!FILE_USES.includes(to)) return c.json({ error: `to is one of ${FILE_USES.join(", ")}` }, 400);
   try {
-    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined, typeof b?.version_of === "string" && b.version_of ? b.version_of : undefined, b?.sound && Object.hasOwn(SOUNDS, String(b.sound)) ? (b.sound as Sound) : undefined));
+    // the chat's turn (its job token): the chat's name is the Imports/ folder the file goes into
+    const turn = jobTurn(c.req.header("authorization"));
+    const chat = turn ? (await import("./assistant")).chatNameOfTurn(c.get("user").username, turn) : null;
+    return c.json(await useFile(c.get("user"), c.req.param("id"), to, typeof b?.name === "string" ? b.name : undefined, typeof b?.version_of === "string" && b.version_of ? b.version_of : undefined, b?.sound && Object.hasOwn(SOUNDS, String(b.sound)) ? (b.sound as Sound) : undefined, chat ?? undefined));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 409);
   }

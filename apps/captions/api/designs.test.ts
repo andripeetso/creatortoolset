@@ -341,8 +341,8 @@ describe("designs: an AI that designs", () => {
     // "Badge" cannot be an id: it became l1, and the change after it found it by its name
     expect(story!.layers).toMatchObject([{ id: "l1", fill: "#00ff00" }]);
     expect(out.named).toEqual({ two, Badge: "l1", badge: "l2" });
-    // the second "badge" of p1 took another id, and the change that named it changed that one, not the first
-    expect(one!.layers).toMatchObject([{ id: "badge", fill: "#ff0000" }, { id: "l2", fill: "#0000ff" }]);
+    // the second "badge" of p1 took another id; a change naming "badge" changes the layer whose id it is, never the new one
+    expect(one!.layers).toMatchObject([{ id: "badge", fill: "#0000ff" }, { id: "l2", fill: "#ff0000" }]);
     expect(out.notes).toEqual([`changes[3], frame ${two} (Frame 2): a layer of no type that can be drawn ("rect"): left out; the types are text, shape, path, image and drawing`]);
     // the same in one call with a move onto the canvas and copies: a moved layer is found where it went by its name,
     // and "fill" copies a frame the call made, by its "as"
@@ -354,6 +354,53 @@ describe("designs: an AI that designs", () => {
     expect(more.design.pages.filter((p) => !p.loose).map((p) => p.name)).toEqual([undefined, "Story", "Card", "Card copy"]);
     expect((await read(d.id)).canvas).toEqual([expect.objectContaining({ id: "badge", fill: "#123456" })]);
     expect(more.notes).toEqual([`changes[2], frame ${more.named.card} (Frame 3): a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image and drawing`]);
+  });
+
+  it("a layer moved into a frame that has its id takes another: a later change naming that id changes the frame's own layer", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const box = { type: "shape", shape: "rect", w: 100, h: 50, x: 0, y: 0 };
+    await call("PUT", `/api/designs/${d.id}`, { pages: [{ id: "p1", x: 0, y: 0, w: 1080, h: 1080, background: "#ffffff", layers: [{ ...box, id: "l1", fill: "#ff0000" }] }, { id: "pa", loose: true, x: -500, y: 100, w: 100, h: 50, background: "#ffffff", layers: [{ ...box, id: "l1", fill: "#0000ff" }] }] });
+    const out = (await write(d.id, { changes: [{ frame: "canvas", layer: "l1", to: "p1" }, { frame: "p1", layer: "l1", set: { fill: "#00ff00" } }] })).body;
+    expect(out.design.pages.find((p) => p.id === "p1")!.layers).toMatchObject([{ id: "l1", fill: "#00ff00" }, { id: "l2", fill: "#0000ff" }]);
+  });
+
+  it("a new frame named with an existing frame's id leaves that id naming the existing frame", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const out = (await write(d.id, { frames: [{ as: "p1", background: "#000000", layers: [] }], changes: [{ frame: "p1", add: { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100, id: "box" } }] })).body;
+    expect(out.notes).toEqual([expect.stringContaining('"as" p1 is already a frame\'s id')]);
+    const pages = (await call<Design>("GET", `/api/designs/${d.id}`)).body.pages;
+    expect(pages.find((p) => p.id === "p1")!.layers.map((l) => l.id)).toEqual(["box"]);
+    expect(pages.find((p) => p.id !== "p1")!.layers).toEqual([]);
+  });
+
+  it("a text moved onto a slide's frame that is not in its words stays where it was, and the AI is told", async () => {
+    const d = await fromPiece();
+    const put = (await write(d.id, { changes: [{ frame: "canvas", add: { ...text, x: 4000, text: "Save 20%" }, as: "sale" }] })).body as Wrote & { named: Record<string, string> };
+    const id = put.named.sale ?? "sale";
+    const out = await write(d.id, { changes: [{ frame: "canvas", layer: id, to: "p3" }, { frame: "p1", layer: "l1", to: "p3" }] });
+    expect(out.status).toBe(200);
+    expect(out.body.notes).toEqual([`changes[0], the canvas, layer ${id}: “Save 20%” is not in frame p3's own words: it stays where it is`, "changes[1], frame p1 (Frame 1), layer l1: “Roll the mat out” is not in frame p3's own words: it stays where it is"]);
+    expect((await read(d.id)).canvas).toEqual([expect.objectContaining({ id, text: "Save 20%" })]);
+    const pages = (await call<Design>("GET", `/api/designs/${d.id}`)).body.pages;
+    expect(pages[0]!.layers).toEqual(d.pages[0]!.layers);
+    expect(pages[2]!.layers).toEqual(d.pages[2]!.layers);
+  });
+
+  it("frames and changes saved before copies that cannot be made stay saved, and the answer says why there are no copies", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const out = await write(d.id, { changes: [{ frame: "p1", add: { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100, id: "box" } }], fill: { frame: "nope", rows: [{}] } });
+    expect(out.status).toBe(200);
+    expect(out.body.touched).toEqual(["p1"]);
+    expect(out.body.notes).toEqual([expect.stringContaining("No copy was made: fill.frame:")]);
+    expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pages[0]!.layers.map((l) => l.id)).toEqual(["box"]);
+  });
+
+  it("a call with thousands of sizes or rows is read only as far as a design can hold", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const out = await write(d.id, { sizes: { to: Array.from({ length: 5000 }, () => "huge") }, fill: { frame: "p1", rows: Array.from({ length: 5000 }, (_, n) => ({ Nope: String(n) })) } });
+    expect(out.status).toBe(200);
+    expect(out.body.notes.filter((n) => n.startsWith("sizes.to["))).toHaveLength(20);
+    expect(out.body.touched).toHaveLength(19);
   });
 
   it("layers lying on the canvas outside every frame: seen, added, changed, moved into a frame and out, removed, each checked", async () => {

@@ -1,10 +1,27 @@
-import { useReducer, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FileText, Film, FlipHorizontal2, FlipVertical2, Link2, Music, RotateCcw, Rows3, type LucideIcon } from "lucide-react";
+import { useEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
-  find, isPlain, isVideo, lengthOf, move, partsOf, putParts, rateOf, resetFields, setFades, setItems, setSpeed, slip, trim, withLinked,
-  type Flip, type NleItem, type NleTimeline,
+  ChevronDown, ChevronLeft, ChevronRight, Diamond, FileText, Film, FlipHorizontal2, FlipVertical2, History, Link2, MessageCircle, Music, Palette,
+  RotateCcw, Rows3, type LucideIcon,
+} from "lucide-react";
+import type { EdjCamera, EdjTrans, KeyEase, KeyProp } from "@contracts/editor";
+import { PROFILES, type CameraLut, type Profile } from "@contracts/camera";
+import type { TimelineItem, TimelineView } from "@contracts/edit-timeline";
+import type { Grade } from "@contracts/grade";
+import {
+  find, handlesAt, isPlain, isVideo, lengthOf, maxLen, move, NO_MARKS, partsOf, putParts, rateOf, resetFields, setFades, setItems, setSpeed, slip,
+  timecode, trim, withLinked, type Flip, type NleItem, type NleTimeline,
 } from "@/lib/nle/model";
+import { runAll, type NleRun } from "@/lib/nle/commands";
+import { onKey, soundsAtCut } from "@/lib/nle/inspector-commands";
+import { keysIn, valueOn } from "@/lib/nle/keyframes";
+import type { Hist } from "@/lib/edit-history";
+import type { Autosave } from "@/lib/nle/autosave";
+import { fmtAgo } from "@/components/settings/helpers";
+import { addLut, listLuts } from "@/lib/editor";
 import { cn } from "@/lib/utils";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuRadioGroup, ContextMenuRadioItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { GradePanel } from "@/components/GradePanel";
 import { Panel } from "./NleLayout";
 
 // The Inspector panel, laid out like Resolve's: tabs with icons (Video: Transform, Cropping, Composite with the fades,
@@ -14,25 +31,43 @@ import { Panel } from "./NleLayout";
 // nothing and keeps them here (for this selection) to put back when it is turned on again. A number is dragged sideways
 // (on the field or its label) or typed (click, Enter, Esc cancels): it changes the player at once while it is dragged
 // or typed (`onLive`) and is one step of undo when let go or entered (`onCommit`). Double-click a label to reset it.
-// Nothing here eases or animates: every change shows at once.
+// Nothing here eases or animates: every change shows at once. A keyed row (◆) shows its value at the playhead and a
+// change there keys it; keys, a picked transition and the camera run through the command registry (inspector-commands.ts).
+// A picked transition takes the Video tab (Resolve's place for it).
 
-type Tab = "video" | "audio" | "file" | "timeline";
-const TABS: [Tab, string, LucideIcon][] = [["video", "Video", Film], ["audio", "Audio", Music], ["file", "File", FileText], ["timeline", "Timeline", Rows3]];
+type Tab = "video" | "audio" | "color" | "file" | "timeline" | "history";
+const TABS: [Tab, string, LucideIcon][] = [
+  ["video", "Video", Film], ["audio", "Audio", Music], ["color", "Color", Palette], ["file", "File", FileText], ["timeline", "Timeline", Rows3], ["history", "History", History],
+];
+/** a history step that came from the chat: its label starts with this (NleEditor names them) */
+export const CHAT_STEP = "chat: ";
 const RED = "#e5483b";
 const folded = new Set<string>();
 /** a section turned off: what its clips had (`null`: nothing to put back) by section and selection */
 const parked = new Map<string, Record<string, Partial<NleItem>> | null>();
 let lastTab: Tab = "video";
 
-export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes }: {
+export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave }: {
   /** the timeline as committed (what a change is made from) */
   tl: NleTimeline;
   keys: string[];
   nameOf: (it: NleItem) => string;
   onLive: (tl: NleTimeline | null) => void;
-  onCommit: (tl: NleTimeline) => void;
+  onCommit: (tl: NleTimeline, label?: string) => void;
   /** what else the Timeline tab says (the page's own notes on this timeline) */
   notes?: ReactNode;
+  /** in timeline frames, as of the last pause or seek */
+  playhead?: number;
+  /** the picked transition: the handle of the clip after its cut */
+  transKey?: string | null;
+  /** registry commands run on clips `on` (the page's picks when left out) as one undo step */
+  onRun?: (list: NleRun[], on?: string[]) => void;
+  hist?: Hist<NleTimeline>;
+  /** back or on to place `i` of the history */
+  onHistory?: (i: number) => void;
+  /** this timeline's autosaves, oldest first, listed under the steps; a click restores one as a step */
+  autosaves?: Autosave[];
+  onAutosave?: (a: Autosave) => void;
 }) {
   const [pref, setPref] = useState<Tab>(lastTab);
   const fps = tl.timeline.fps;
@@ -40,8 +75,12 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes }: {
   const videos = hits.filter((h) => isVideo(h.track)).map((h) => h.item._k!);
   // the sound of the selection: its sound clips and the ones linked to its pictures
   const sounds = withLinked(tl, hits.map((h) => h.item._k!)).filter((k) => !isVideo(find(tl, k)!.track));
-  const can: Record<Tab, boolean> = { video: videos.length > 0, audio: sounds.length > 0, file: hits.length > 0, timeline: true };
-  const tab: Tab = !hits.length ? "timeline" : can[pref] ? pref : (["video", "audio", "file"] as const).find((t) => can[t])!;
+  const trans = transKey && find(tl, transKey)?.item.trans ? transKey : null;
+  const can: Record<Tab, boolean> = {
+    video: videos.length > 0 || !!trans, audio: sounds.length > 0, color: videos.length > 0, file: hits.length > 0, timeline: true, history: !!hist,
+  };
+  const tab: Tab = can[pref] ? pref : !hits.length && !trans ? "timeline" : (["video", "audio", "file"] as const).find((t) => can[t])!;
+  const e: Edit = { tl, onLive, onCommit, playhead, onRun: onRun ?? (() => {}) };
   const pick = (t: Tab) => {
     lastTab = t;
     setPref(t);
@@ -54,28 +93,56 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes }: {
         {nameOf(first.item)}{hits.length > 1 ? <span className="text-zinc-500"> · {hits.length} clips</span> : null}
       </span>
     ) : null}>
-      <div role="tablist" aria-label="Inspector" className="grid shrink-0 grid-cols-4 border-b border-black/70 bg-[#1c1c1f]">
+      <div role="tablist" aria-label="Inspector" className="grid shrink-0 grid-cols-6 border-b border-black/70 bg-[#1c1c1f]">
         {TABS.map(([t, l, Icon]) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} disabled={!can[t]} onClick={() => pick(t)}
             className={cn("relative flex h-11 flex-col items-center justify-center gap-0.5 text-[10.5px]",
               tab === t ? "text-zinc-50" : "text-zinc-400 hover:text-zinc-100", "disabled:text-zinc-700 disabled:hover:text-zinc-700")}>
             <Icon className="size-4" strokeWidth={1.6} />
-            {l}
+            <span className="max-w-full truncate px-0.5">{l}</span>
             {tab === t && <span className="absolute inset-x-2 bottom-0 h-0.5" style={{ background: RED }} />}
           </button>
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-scroll bg-[#19191c] pb-4 text-[11.5px]" role="tabpanel">
-        {tab === "timeline" ? <TimelineTab tl={tl} onCommit={onCommit} notes={notes} />
-          : tab === "video" ? <VideoTab tl={tl} keys={videos} onLive={onLive} onCommit={onCommit} />
-          : tab === "audio" ? <AudioTab tl={tl} keys={sounds} onLive={onLive} onCommit={onCommit} />
-          : <FileTab tl={tl} item={first!.item} keys={hits.map((h) => h.item._k!)} fps={fps} onLive={onLive} onCommit={onCommit} />}
+        {tab === "timeline" ? <TimelineTab tl={tl} onCommit={onCommit} notes={notes} onRun={e.onRun} />
+          : tab === "history" ? <HistoryTab hist={hist!} onHistory={onHistory ?? (() => {})} autosaves={autosaves} onAutosave={onAutosave ?? (() => {})} />
+          : tab === "video" ? (trans ? <TransitionTab {...e} k={trans} /> : <VideoTab {...e} keys={videos} />)
+          : tab === "audio" ? <AudioTab {...e} keys={sounds} />
+          : tab === "color" ? <ColorTab {...e} keys={videos} nameOf={nameOf} onClose={() => pick("video")} />
+          : <FileTab {...e} item={first!.item} keys={hits.map((h) => h.item._k!)} fps={fps} />}
       </div>
     </Panel>
   );
 }
 
-type Edit = { tl: NleTimeline; onLive: (tl: NleTimeline | null) => void; onCommit: (tl: NleTimeline) => void };
+type Edit = {
+  tl: NleTimeline; onLive: (tl: NleTimeline | null) => void; onCommit: (tl: NleTimeline, label?: string) => void;
+  playhead: number; onRun: (list: NleRun[], on?: string[]) => void;
+};
+
+/** A row's ◆: its props keyed on clips `keys` at the playhead. */
+type KeyCtl = { on: boolean; ease?: KeyEase; toggle: () => void; setEase: (how: KeyEase) => void; del: () => void; prev: (() => void) | null; next: (() => void) | null };
+function keyCtl(e: Edit, keys: string[], props: KeyProp[]): KeyCtl {
+  const s = { tl: e.tl, sel: keys, playhead: e.playhead };
+  const on = onKey(s, props[0]);
+  const frames = keys.flatMap((k) => keysIn(e.tl, k, props[0]).map((x) => Math.round(x.f)));
+  const all = (id: string, more: Record<string, string> = {}) => e.onRun(props.map((prop) => ({ id, params: { prop, ...more } })), keys);
+  return {
+    on: on.length > 0,
+    ease: on.length ? keysIn(e.tl, on[0], props[0]).find((x) => Math.abs(x.f - e.playhead) < 1e-2)?.key[2] : undefined,
+    toggle: () => all(on.length ? "deleteKey" : "key"),
+    setEase: (ease) => all("key", { ease }),
+    del: () => all("deleteKey"),
+    prev: frames.some((f) => f < e.playhead) ? () => e.onRun([{ id: "prevKey", params: { prop: props[0] } }], keys) : null,
+    next: frames.some((f) => f > e.playhead) ? () => e.onRun([{ id: "nextKey", params: { prop: props[0] } }], keys) : null,
+  };
+}
+/** Whether clips `keys` key any of `props`. */
+const keyed = (tl: NleTimeline, keys: string[], props: KeyProp[]) => keys.some((k) => props.some((p) => find(tl, k)?.item.keys?.[p]?.length));
+/** The timeline with the props keyed at the playhead to `values` (registry "key"), each as the command's units. */
+const keyAt = (e: Edit, keys: string[], values: Partial<Record<KeyProp, number>>) =>
+  runAll({ tl: e.tl, sel: keys, playhead: e.playhead, marks: NO_MARKS }, Object.entries(values).map(([prop, value]) => ({ id: "key", params: { prop, value } }))).tl;
 type NumOpts = { step: number; min?: number; max?: number; unit?: string; digits?: number };
 
 /** A section's switch and reset over clip `fields` (see the top of the file). `bump` redraws when nothing was committed. */
@@ -134,16 +201,18 @@ function VideoTab({ keys, ...e }: Edit & { keys: string[] }) {
     const f: Flip | undefined = n.h && n.v ? "hv" : n.h ? "h" : n.v ? "v" : undefined;
     onCommit(set({ flip: f }));
   };
-  const pos = (v: [number, number]) => set({ pan: v[0] || undefined, tilt: v[1] || undefined });
+  const at = (p: KeyProp) => valueOn(tl, keys[0], p, e.playhead);
+  const has = (...p: KeyProp[]) => keyed(tl, keys, p);
+  const pos = (v: [number, number]) => (has("pan", "tilt") ? keyAt(e, keys, { pan: v[0], tilt: v[1] }) : set({ pan: v[0] || undefined, tilt: v[1] || undefined }));
   return (
     <>
       <Section title="Transform" {...part(e, keys, "transform", ["zoom", "pan", "tilt", "rot", "flip"], bump)}>
-        <NumberRow edit={e} label="Zoom" tags={["X", "Y"]} value={item.zoom ?? 1} def={1} step={0.01} min={0.05} max={10} digits={3}
-          make={(v) => set({ zoom: v === 1 ? undefined : v })} />
-        <PairRow label="Position" tags={["X", "Y"]} value={[item.pan ?? 0, item.tilt ?? 0]} def={[0, 0]} step={1} digits={3}
-          onLive={(v) => e.onLive(v && pos(v))} onCommit={(v) => onCommit(pos(v))} />
-        <NumberRow edit={e} label="Rotation Angle" slider value={item.rot ?? 0} def={0} step={0.1} min={-360} max={360} digits={3}
-          make={(v) => set({ rot: v || undefined })} />
+        <NumberRow edit={e} label="Zoom" tags={["X", "Y"]} value={at("zoom")} def={1} step={0.01} min={0.05} max={10} digits={3}
+          make={(v) => (has("zoom") ? keyAt(e, keys, { zoom: v }) : set({ zoom: v === 1 ? undefined : v }))} k={keyCtl(e, keys, ["zoom"])} />
+        <PairRow label="Position" tags={["X", "Y"]} value={[at("pan"), at("tilt")]} def={[0, 0]} step={1} digits={3}
+          onLive={(v) => e.onLive(v && pos(v))} onCommit={(v) => onCommit(pos(v), "Position")} k={keyCtl(e, keys, ["pan", "tilt"])} />
+        <NumberRow edit={e} label="Rotation Angle" slider value={at("rot")} def={0} step={0.1} min={-360} max={360} digits={3}
+          make={(v) => (has("rot") ? keyAt(e, keys, { rot: v }) : set({ rot: v || undefined }))} k={keyCtl(e, keys, ["rot"])} />
         <Row label="Flip" reset={item.flip ? () => onCommit(set({ flip: undefined })) : null}>
           <div className="flex gap-1.5">
             {(["h", "v"] as const).map((a) => (
@@ -161,14 +230,16 @@ function VideoTab({ keys, ...e }: Edit & { keys: string[] }) {
         ))}
       </Section>
       <Section title="Composite" {...part(e, keys, "composite", ["opacity", "fade_in", "fade_out"], bump)}>
-        <NumberRow edit={e} label="Opacity" slider value={Math.round((item.opacity ?? 1) * 10000) / 100} def={100} step={1} min={0} max={100} digits={2}
-          make={(v) => set({ opacity: v >= 100 ? undefined : Math.max(0, v) / 100 })} />
+        <NumberRow edit={e} label="Opacity" slider value={Math.round(at("opacity") * 10000) / 100} def={100} step={1} min={0} max={100} digits={2}
+          make={(v) => (has("opacity") ? keyAt(e, keys, { opacity: Math.max(0, v) / 100 }) : set({ opacity: v >= 100 ? undefined : Math.max(0, v) / 100 }))}
+          k={keyCtl(e, keys, ["opacity"])} />
         {fadeRows(e, keys, item)}
       </Section>
       <Section title="Speed Change" {...part(e, keys, "speed", ["speed"], bump)}>
         <NumberRow edit={e} label="Speed" value={(item.speed ?? 1) * 100} def={100} step={1} min={10} max={1600} unit="%" digits={2}
           make={(v) => setSpeed(tl, keys, v / 100)} />
       </Section>
+      <CameraSection {...e} keys={keys} />
     </>
   );
 }
@@ -178,8 +249,9 @@ function AudioTab({ keys, ...e }: Edit & { keys: string[] }) {
   const item = find(e.tl, keys[0])!.item;
   return (
     <Section title="Volume" {...part(e, keys, "volume", ["gain_db", "fade_in", "fade_out"], bump)}>
-      <NumberRow edit={e} label="Volume" slider value={item.gain_db ?? 0} def={0} step={0.1} min={-60} max={24} unit="dB" digits={2}
-        make={(v) => setItems(e.tl, keys, { gain_db: v ? Math.round(v * 100) / 100 : undefined })} />
+      <NumberRow edit={e} label="Volume" slider value={valueOn(e.tl, keys[0], "gain_db", e.playhead)} def={0} step={0.1} min={-60} max={24} unit="dB" digits={2}
+        make={(v) => (keyed(e.tl, keys, ["gain_db"]) ? keyAt(e, keys, { gain_db: Math.round(v * 100) / 100 })
+          : setItems(e.tl, keys, { gain_db: v ? Math.round(v * 100) / 100 : undefined }))} k={keyCtl(e, keys, ["gain_db"])} />
       {fadeRows(e, keys, item)}
     </Section>
   );
@@ -213,7 +285,7 @@ function FileTab({ item, keys, fps, ...e }: Edit & { item: NleItem; keys: string
   );
 }
 
-function TimelineTab({ tl, onCommit, notes }: { tl: NleTimeline; onCommit: (tl: NleTimeline) => void; notes?: ReactNode }) {
+function TimelineTab({ tl, onCommit, notes, onRun }: { tl: NleTimeline; onCommit: (tl: NleTimeline) => void; notes?: ReactNode; onRun: Edit["onRun"] }) {
   const t = tl.timeline;
   const fps = t.fps;
   const n = Object.values(tl.tracks).reduce((a, x) => a + x.items.length, 0);
@@ -230,6 +302,17 @@ function TimelineTab({ tl, onCommit, notes }: { tl: NleTimeline; onCommit: (tl: 
         <Row label="Frame rate"><span className="font-mono tabular-nums text-zinc-300">{fps} fps</span></Row>
         <Row label="Length"><span className="font-mono tabular-nums text-zinc-300">{(len / fps).toFixed(2)} s · {len} f</span></Row>
         <Row label="Clips"><span className="tabular-nums text-zinc-400">{n} on {Object.keys(tl.tracks).length} tracks</span></Row>
+      </Section>
+      <Section title="Markers">
+        {tl.markers?.length ? [...tl.markers].sort((a, b) => a.frame - b.frame).map((m, i) => (
+          <button key={i} type="button" title={typeof m.note === "string" && m.note ? m.note : undefined}
+            onClick={() => onRun([{ id: "seek", params: { seconds: m.frame / fps } }])}
+            className="grid h-6 min-w-0 grid-cols-[0.625rem_minmax(0,1fr)_auto] items-center gap-2 rounded-sm px-2 text-left hover:bg-white/5">
+            <span className="size-2.5 rounded-sm" style={{ background: markerColor(m.color) }} />
+            <span className="truncate text-zinc-200">{typeof m.name === "string" && m.name ? m.name : "Marker"}</span>
+            <span className="font-mono tabular-nums text-zinc-400">{timecode(m.frame, fps)}</span>
+          </button>
+        )) : <p className="px-2 text-zinc-500">No markers</p>}
       </Section>
       {notes && <div className="px-3 pt-2 text-zinc-500">{notes}</div>}
     </>
@@ -408,8 +491,8 @@ function Slider({ label, value, min, max, step, onLive, onCommit }: {
  * A number row whose change is `make(value)`: the label and field scrub it, a `slider` sits before the field, `tags`
  * show it twice (Zoom X and Y: the model keeps one zoom, so the two stay linked). `def` omitted: no reset.
  */
-function NumberRow({ edit, make, label, value, def, slider, tags, ...o }: NumOpts & {
-  edit: Edit; make: (v: number) => NleTimeline; label: string; value: number; def?: number; slider?: boolean; tags?: [string, string];
+function NumberRow({ edit, make, label, value, def, slider, tags, k, ...o }: NumOpts & {
+  edit: Edit; make: (v: number) => NleTimeline; label: string; value: number; def?: number; slider?: boolean; tags?: [string, string]; k?: KeyCtl;
 }) {
   // the value while it is dragged or typed: the row shows it, the timeline it is made from is still the committed one
   const [live, setLive] = useState<number | null>(null);
@@ -423,7 +506,7 @@ function NumberRow({ edit, make, label, value, def, slider, tags, ...o }: NumOpt
   const onCommit = (v: number) => {
     setLive(null);
     edit.onLive(null);
-    if (!same(v, value)) edit.onCommit(make(v));
+    if (!same(v, value)) edit.onCommit(make(v), label);
   };
   const shown = live ?? value;
   const field = (tag?: string) => <NumField label={label} tag={tag} value={shown} narrow={slider} {...o} onLive={onLive} onCommit={onCommit} />;
@@ -439,15 +522,16 @@ function NumberRow({ edit, make, label, value, def, slider, tags, ...o }: NumOpt
             {field(tags[1])}
           </>
         ) : field()}
+        {k && <KeyButtons label={label} k={k} />}
       </div>
     </Row>
   );
 }
 
 /** Two numbers on one row (Position X and Y, width and height). `def` omitted: no reset. */
-function PairRow({ label, tags, value, def, step, digits = 1, min, max, onLive, onCommit }: {
+function PairRow({ label, tags, value, def, step, digits = 1, min, max, onLive, onCommit, k }: {
   label: string; tags: [string, string]; value: [number, number]; def?: [number, number]; step: number; digits?: number; min?: number; max?: number;
-  onLive: (v: [number, number] | null) => void; onCommit: (v: [number, number]) => void;
+  onLive: (v: [number, number] | null) => void; onCommit: (v: [number, number]) => void; k?: KeyCtl;
 }) {
   const [live, setLive] = useState<[number, number] | null>(null);
   const shown = live ?? value;
@@ -467,6 +551,7 @@ function PairRow({ label, tags, value, def, step, digits = 1, min, max, onLive, 
           <NumField key={i} label={label} tag={tags[i]} value={shown[i]} step={step} digits={digits} min={min} max={max}
             onLive={(v) => go(v === null ? null : at(i, v))} onCommit={(v) => done(at(i, v))} />
         ))}
+        {k && <KeyButtons label={label} k={k} />}
       </div>
     </Row>
   );
@@ -488,5 +573,195 @@ function TextField({ value, label, onCommit }: { value: string; label: string; o
         if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
       }}
       className="h-[22px] w-full min-w-0 rounded-sm border border-black bg-[#0f0f11] px-1.5 text-zinc-100 outline-none focus:border-zinc-400" />
+  );
+}
+
+const EASES: [KeyEase, string][] = [["linear", "Linear"], ["ease", "Ease"], ["hold", "Hold"]];
+
+/** ◀ ◆ ▶ at the right of a keyed row: ◆ adds a key at the playhead or (filled: one is there) deletes it; right-click it for its ease. */
+function KeyButtons({ label, k }: { label: string; k: KeyCtl }) {
+  const arrow = "inline-flex h-4 w-3 items-center justify-center rounded-sm text-zinc-500 hover:text-zinc-100 disabled:text-zinc-800 disabled:hover:text-zinc-800";
+  return (
+    <span className="-ml-0.5 flex shrink-0 items-center">
+      <button type="button" aria-label={`${label}: previous keyframe`} title="Previous keyframe" disabled={!k.prev} onClick={k.prev ?? undefined} className={arrow}>
+        <ChevronLeft className="size-3" />
+      </button>
+      <ContextMenu>
+        <ContextMenuTrigger asChild disabled={!k.on}>
+          <button type="button" aria-label={`${label} keyframe`} aria-pressed={k.on} title={k.on ? "Delete keyframe (right-click: Linear, Ease, Hold)" : "Add keyframe"}
+            onClick={k.toggle} className="inline-flex size-4 items-center justify-center rounded-sm text-zinc-400 hover:text-zinc-100">
+            <Diamond className="size-3" fill={k.on ? RED : "none"} stroke={k.on ? RED : "currentColor"} />
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="min-w-32">
+          <ContextMenuRadioGroup value={k.ease} onValueChange={(v) => k.setEase(v as KeyEase)}>
+            {EASES.map(([v, l]) => <ContextMenuRadioItem key={v} value={v}>{l}</ContextMenuRadioItem>)}
+          </ContextMenuRadioGroup>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={k.del}>Delete</ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+      <button type="button" aria-label={`${label}: next keyframe`} title="Next keyframe" disabled={!k.next} onClick={k.next ?? undefined} className={arrow}>
+        <ChevronRight className="size-3" />
+      </button>
+    </span>
+  );
+}
+
+/** Pick one: a radio list, a row each. */
+function Radios({ label, value, options, onPick }: { label: string; value: string; options: [string, string][]; onPick: (v: string) => void }) {
+  return (
+    <RadioGroup aria-label={label} value={value} onValueChange={onPick} className="gap-0.5 py-0.5">
+      {options.map(([v, l]) => (
+        <label key={v} className="flex min-h-[22px] min-w-0 cursor-pointer items-center gap-2 text-zinc-200">
+          <RadioGroupItem value={v} aria-label={l} className="size-3.5 border-zinc-500" />
+          <span className="truncate" title={l}>{l}</span>
+        </label>
+      ))}
+    </RadioGroup>
+  );
+}
+
+const TRANS_NAMES: Record<EdjTrans["type"], string> = { dissolve: "Cross Dissolve", dip_black: "Dip to Black", dip_white: "Dip to White", crossfade: "Cross Fade" };
+const ALIGN: [EdjTrans["at"], string][] = [["center", "Center"], ["start", "Start on Cut"], ["end", "End on Cut"]];
+
+/** A picked transition: its type, length (as long as the clips' handles allow) and alignment, and its linked sound. */
+function TransitionTab({ k, ...e }: Edit & { k: string }) {
+  const hit = find(e.tl, k)!;
+  const t = hit.item.trans!;
+  const fps = e.tl.timeline.fps;
+  const video = isVideo(hit.track);
+  const s = { tl: e.tl, sel: [k], trans: k, playhead: e.playhead, marks: NO_MARKS };
+  const run = (params: Record<string, string | number>) => e.onRun([{ id: "transition", params }], [k]);
+  const h = handlesAt(e.tl, k);
+  const sounds = soundsAtCut(e.tl, k);
+  return (
+    <Section title="Transition">
+      <Row label="Type">
+        <Radios label="Transition type" value={t.type} onPick={(type) => run({ type })}
+          options={(video ? (["dissolve", "dip_black", "dip_white"] as const) : (["crossfade"] as const)).map((x) => [x, TRANS_NAMES[x]])} />
+      </Row>
+      <NumberRow edit={e} label="Duration" value={t.len / fps} step={1 / fps} min={1 / fps} max={h ? maxLen(h, t.at) / fps : t.len / fps} unit="s" digits={2}
+        make={(v) => runAll(s, [{ id: "transition", params: { frames: v * fps } }]).tl} />
+      <Row label="Alignment">
+        <Radios label="Alignment" value={t.at} options={ALIGN} onPick={(at) => run({ at })} />
+      </Row>
+      {video && (
+        <Row label="Cross-fade sound">
+          <input type="checkbox" role="switch" aria-label="Cross-fade sound" disabled={!sounds.length} checked={sounds.some((x) => find(e.tl, x)!.item.trans)}
+            onChange={(ev) => run({ sound: ev.target.checked ? 1 : 0 })} className="size-3.5 accent-zinc-300" />
+        </Row>
+      )}
+    </Section>
+  );
+}
+
+/** The picked clips' file's camera conversion (per file: every clip of it gets it): None, what the file says, a curve, an added LUT. */
+function CameraSection({ keys, ...e }: Edit & { keys: string[] }) {
+  const [luts, setLuts] = useState<CameraLut[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const file = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    listLuts().then(setLuts, (x: Error) => setError(x.message));
+  }, []);
+  const src = e.tl.sources[find(e.tl, keys[0])?.item.src ?? ""];
+  if (!src || src.kind === "design") return null;
+  const cam = src.camera as EdjCamera | undefined;
+  const value = !cam?.on ? "none" : cam.lut ?? (cam.from === "file" ? "file" : cam.curve ?? "none");
+  const name = (c: string) => PROFILES[c as Profile]?.label ?? c;
+  const options: [string, string][] = [
+    ["none", "None"],
+    ...(cam?.from === "file" && cam.curve ? [["file", `${name(cam.curve)} (from the file)`] as [string, string]] : []),
+    ...Object.entries(PROFILES).map(([id, p]): [string, string] => [id, p.label]),
+    ...luts.map((l): [string, string] => [l.id, l.name]),
+    ...(cam?.lut && !luts.some((l) => l.id === cam.lut) ? [[cam.lut, cam.lut] as [string, string]] : []),
+  ];
+  const add = (f: File | undefined) => {
+    if (!f) return;
+    setError(null);
+    addLut(f).then(setLuts, (x: Error) => setError(x.message));
+  };
+  return (
+    <Section title="Camera">
+      <div className="grid min-w-0 gap-1 px-2">
+        <Radios label="Camera" value={value} options={options} onPick={(pick) => e.onRun([{ id: "camera", params: { pick } }], keys)} />
+        <button type="button" onClick={() => file.current?.click()} className="w-fit rounded-sm px-1 text-left text-zinc-300 hover:bg-white/5 hover:text-zinc-100">Add LUT…</button>
+        <input ref={file} type="file" accept=".cube" hidden aria-label="LUT file" onChange={(ev) => {
+          add(ev.target.files?.[0]);
+          ev.target.value = "";
+        }} />
+        {error && <p role="alert" className="text-[11px] text-red-400">{error}</p>}
+      </div>
+    </Section>
+  );
+}
+
+/** The Review Color panel on the first picked clip's grade (by hand only); "Copy to take" goes to V1's clips of the same file. */
+function ColorTab({ keys, nameOf, onClose, ...e }: Edit & { keys: string[]; nameOf: (it: NleItem) => string; onClose: () => void }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const tl = e.tl;
+  const hit = find(tl, keys[0])!;
+  const asItem = (it: NleItem, track: string): TimelineItem => ({ key: it._k!, track, rec: it.rec, len: it.len, label: nameOf(it), src: it.src, grade: it.grade as Grade | undefined });
+  const item = asItem(hit.item, hit.track);
+  const view: TimelineView = {
+    name: String(tl.timeline.name ?? ""), fps: tl.timeline.fps, duration: lengthOf(tl) / tl.timeline.fps, width: tl.timeline.width ?? 0, height: tl.timeline.height ?? 0,
+    tracks: [{ id: "V1", name: "V1", items: (tl.tracks.V1?.items ?? []).map((it) => asItem(it, "V1")) }], markers: [], words: [], flags: [],
+  };
+  return (
+    <GradePanel view={view} item={item} pending={item.grade} video={video} hint="The grade is kept with the timeline's next Save"
+      onLive={(g) => e.onLive(g && setItems(tl, [item.key], { grade: g }))}
+      // no grade in a change: the same as the clip has now
+      onApply={(changes) => e.onCommit(changes.reduce((t, [it, c]) => (c.grade ? setItems(t, [it.key], { grade: c.grade }) : t), tl), "Grade")}
+      onClose={onClose} />
+  );
+}
+
+const MARKER_CSS: Record<string, string> = {
+  red: "#e5483b", yellow: "#e6c229", green: "#3fb950", cyan: "#22c3d6", blue: "#3b82f6", purple: "#a855f7", pink: "#ec4899", lavender: "#b4a7f5", magenta: "#b4a7f5",
+};
+const markerColor = (c: unknown) => MARKER_CSS[String(c).toLowerCase()] ?? "#3b82f6";
+
+/** The undo steps, oldest first: a click goes back (or on) to that one; the ones after it stay grey until a new edit.
+ *  Under them the autosaves, newest first: a click restores one as a new step. */
+function HistoryTab({ hist, onHistory, autosaves, onAutosave }: {
+  hist: Hist<NleTimeline>; onHistory: (i: number) => void; autosaves: Autosave[]; onAutosave: (a: Autosave) => void;
+}) {
+  const here = hist.past.length;
+  const rows = hist.past.length + 1 + hist.future.length;
+  return (
+    <>
+    <ol aria-label="History" className="py-1">
+      {Array.from({ length: rows }, (_, i) => {
+        const l = hist.labels?.[i];
+        const chat = !!l?.startsWith(CHAT_STEP);
+        const name = (chat ? l!.slice(CHAT_STEP.length) : l) || (i === 0 ? "Opened" : "Edit");
+        return (
+          <li key={i}>
+            <button type="button" aria-current={i === here ? "step" : undefined} onClick={() => onHistory(i)}
+              className={cn("flex h-6 w-full min-w-0 items-center gap-2 px-3 text-left hover:bg-white/5", i > here ? "text-zinc-600" : "text-zinc-200", i === here && "bg-white/10")}>
+              <span className="w-6 shrink-0 text-right tabular-nums text-zinc-500">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">{name}</span>
+              {chat && <MessageCircle aria-label="From the chat" className="size-3 shrink-0 text-zinc-400" />}
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+    {autosaves.length > 0 && (
+      <section className="border-t border-white/10 py-1">
+        <h3 className="px-3 py-1 text-[11px] text-zinc-500">Autosaves</h3>
+        <ol aria-label="Autosaves">
+          {[...autosaves].reverse().map((a, i) => (
+            <li key={`${a.at}:${i}`}>
+              <button type="button" onClick={() => onAutosave(a)} className="flex h-6 w-full min-w-0 items-center gap-2 px-3 text-left text-zinc-200 hover:bg-white/5">
+                <span className="w-20 shrink-0 tabular-nums text-zinc-500">{fmtAgo(a.at)}</span>
+                <span className="min-w-0 flex-1 truncate">{a.label?.startsWith(CHAT_STEP) ? a.label.slice(CHAT_STEP.length) : a.label || "Edit"}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
+    )}
+    </>
   );
 }

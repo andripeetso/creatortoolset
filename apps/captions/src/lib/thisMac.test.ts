@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { allowOtherDevices, chooseDownloadFolderOnMac, installInMacAi, onThisMac, pathOnMac } from "./thisMac";
+import { setCurrentWorkspace } from "./current-workspace";
+import { allowOtherDevices, chooseDownloadFolderOnMac, droppedOnMac, installInMacAi, onThisMac, pathOnMac } from "./thisMac";
 
 const bridgeWith = (postMessage: (m: string) => Promise<unknown>) => vi.stubGlobal("window", { webkit: { messageHandlers: { thisMac: { postMessage } } } });
 
@@ -138,4 +139,16 @@ it("asks this Mac for the download folder and answers its path, or null when can
   expect(await chooseDownloadFolderOnMac()).toBeNull();
   vi.stubGlobal("window", {});
   expect(await chooseDownloadFolderOnMac()).toBeUndefined();
+});
+
+it("a chat's drop tells the Mac app the workspace it was made in, so the AI Editor copies it in only for that workspace", async () => {
+  const asked: string[] = [];
+  bridgeWith(async (m) => (asked.push(m), m === "dropped" ? { items: [{ path: "/Users/tiny/Downloads/a.mp4", folder: false }] } : { kept: 1 }));
+  setCurrentWorkspace("ws_tiny");
+  expect(await droppedOnMac({ chosen: true })).toEqual([{ path: "/Users/tiny/Downloads/a.mp4", folder: false }]);
+  expect(asked).toEqual(["dropped", `import:chosen:${JSON.stringify({ workspace: "ws_tiny", paths: ["/Users/tiny/Downloads/a.mp4"] })}`]);
+  asked.length = 0;
+  await droppedOnMac();   // setup's folder or the Library's own drop: nothing for the AI Editor to copy
+  expect(asked).toEqual(["dropped"]);
+  setCurrentWorkspace(null);
 });

@@ -48,6 +48,14 @@ The app also bundles Node.js (its licence is `server/NODE-LICENSE` inside the ap
 
 `pnpm licenses list --prod` in `apps/captions` prints every package's licence.
 
+## Loudness maths from FilmCraft (MIT)
+
+The editor's loudness meter and Normalize (`apps/captions/src/lib/nle/loudness.ts`: BS.1770 K-weighting, gating and
+true-peak oversampling) are ported from FilmCraft's `crates/audio-dsp` (`loudness.rs`, `oversample.rs`),
+https://github.com/storytold/filmcraft. Copyright (c) 2026 ArtCraft Team and the FilmCraft contributors. FilmCraft is
+licensed under the MIT License or the Apache License 2.0; the port is used under the MIT License, whose terms are
+in this repository's [LICENSE](LICENSE) with that copyright line.
+
 ## Fonts
 
 `apps/captions/public/fonts/` bundles Google Fonts under the SIL Open Font License 1.1 (the text is in `OFL.txt`

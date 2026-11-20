@@ -183,9 +183,6 @@ export interface LibrarySettings {
   /** The same for a final (a file that goes into Finals, from a project's folder in the Finals folder): "all" when unset,
    *  so a phone can download the finished file to post it. */
   finalsUpload?: LibraryUpload;
-  /** How should imported media behave? copied into the first Source media folder, or used where they are. Absent: in place
-   *  (libraries from before setup); setup stores "copy" by default. */
-  importMode?: ImportMode;
   /** how the library is organized, chosen on its first run (absent: not chosen yet); api/library/organize.ts */
   organize?: Organize;
   /** how densely shots are described (LOOK_LEVELS); absent: "standard" */
@@ -320,8 +317,6 @@ export function levelOf(s: Partial<AnalysisFlags>): AnalysisLevel {
   if (s.timeline) n = Math.max(n, 3);
   return ANALYSIS_LEVELS[n]!.value;
 }
-/** in-place: the files stay where they are and are read there; copy: copied into the library's folder first, then read there */
-export type ImportMode = "in-place" | "copy";
 
 /** Organization: "ai" Smart folders (the default for new libraries), "own" Organize yourself. "default" is a stored value
  *  from before (Default folders), read as "own" by organizeOf. */
@@ -815,9 +810,6 @@ export interface WhereAnswer {
  */
 export const LIBRARY_WORDS = {
   notFootage: "Inside Source media: not imported as footage",
-  importTitle: "How should imported media behave?",
-  importCopy: { label: "Copy into Source media", tip: "Imported files are copied into your Source media folder. The file you imported stays where it was." },
-  importInPlace: { label: "Use files where they are", tip: "Imported files stay where you imported them from. Import from Downloads, and the clip keeps using that file." },
   foldersTitle: "Folders",
   setupTitle: "Let's set up the Media Library",
   analysisStep: "Analysis and organization",
@@ -947,8 +939,8 @@ export type ActionNeeded = ActionAsk & { title: string; line: string; missing?: 
  *  while the workspace's Media Library is not set up (ensureUseFolder). */
 export type FolderAsk = Extract<ActionNeeded, { kind: "projects" | "exports" | "setup" }>;
 /** The setup card's defaults (Quick setup), as the card shows them; POST /api/library/:id/setup/quick stores them. */
-export type QuickSetup = { base: string; importMode: "copy"; proxy: true; proxyQuality: "720p"; effort: "high"; organize: "smart"; hosted: HostedMix };
-export const quickSetup = (base: string): QuickSetup => ({ base, importMode: "copy", proxy: true, proxyQuality: "720p", effort: "high", organize: "smart", hosted: HOSTED_DEFAULT });
+export type QuickSetup = { base: string; proxy: true; proxyQuality: "720p"; effort: "high"; organize: "smart"; hosted: HostedMix };
+export const quickSetup = (base: string): QuickSetup => ({ base, proxy: true, proxyQuality: "720p", effort: "high", organize: "smart", hosted: HOSTED_DEFAULT });
 /** The line of a card whose computer the server can't find (`missing: "computer"`). */
 export const cantFind = (computer?: string) => `Can't find ${computer || "your computer"} right now: open Creator Toolset on it`;
 export const RETRY = "Retry";
