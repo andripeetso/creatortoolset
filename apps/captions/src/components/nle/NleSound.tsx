@@ -19,9 +19,14 @@ export interface SourceSound {
   error?: string;
 }
 
-/** How the editor asks for its sources' sound: the server's route by default; a page whose sources are not library clips sets its own. */
+/**
+ * How the editor asks for its sources' sound: the server's route for Media Library clips (source keys are their version
+ * ids) by default. A page whose sources are files somewhere else sets its own `ask`, answering the same shape: `blocks`
+ * as loudness.ts Measured keeps them (each 400 ms block's K-weighted energy, 10 a second from the file's start, a mono
+ * file as dual mono), `words` in source seconds, `line` while it measures, `error` when it can't.
+ */
 export const nleSound = {
-  ask: async (srcs: string[]): Promise<Record<string, SourceSound>> => {
+  ask: async (srcs: string[], _tl: NleTimeline): Promise<Record<string, SourceSound>> => {
     const r = await fetch("/api/editor/sound", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sources: srcs }) });
     if (!r.ok) throw new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error ?? `The server said ${r.status}`);
     return (await r.json()) as Record<string, SourceSound>;
@@ -38,11 +43,11 @@ const blocksOf = (b64: string) => {
  * Asks until every source in `srcs` is measured (or can't be), filling `measured` and `spoken`; `onLine` says what it
  * waits for. Returns the sources that could not be measured, with why.
  */
-export async function measure(srcs: string[], onLine: (l: string) => void, signal: AbortSignal): Promise<Record<string, string>> {
+export async function measure(tl: NleTimeline, srcs: string[], onLine: (l: string) => void, signal: AbortSignal): Promise<Record<string, string>> {
   const left = new Set(srcs.filter((s) => !measured.has(s)));
   const failed: Record<string, string> = {};
   while (left.size && !signal.aborted) {
-    const got = await nleSound.ask([...left]);
+    const got = await nleSound.ask([...left], tl);
     const lines: string[] = [];
     for (const s of [...left]) {
       const g = got[s];
@@ -64,12 +69,12 @@ function useMeasure() {
   const [line, setLine] = useState<string | null>(null);
   const ac = useRef<AbortController | null>(null);
   useEffect(() => () => ac.current?.abort(), []);
-  const run = async (srcs: string[], go: (failed: Record<string, string>) => void) => {
+  const run = async (tl: NleTimeline, srcs: string[], go: (failed: Record<string, string>) => void) => {
     ac.current?.abort();
     const a = (ac.current = new AbortController());
     setLine("Measuring the sound");
     try {
-      const failed = await measure(srcs, setLine, a.signal);
+      const failed = await measure(tl, srcs, setLine, a.signal);
       if (!a.signal.aborted) go(failed);
     } catch (e) {
       if (!a.signal.aborted) setLine((e as Error).message);
@@ -93,7 +98,7 @@ export function NormalizeDialog({ tl, keys, onCommit, onClose }: { tl: NleTimeli
   now.current = tl;
   const m = useMeasure();
   const go = () =>
-    m.run([...new Set(ks.map((k) => find(tl, k)!.item.src))], (failed) => {
+    m.run(tl, [...new Set(ks.map((k) => find(tl, k)!.item.src))], (failed) => {
       const next = normalize(now.current, ks, num(target, normTarget(first ?? "")), mode === "relative");
       const n = Object.keys(failed).length;
       if (next !== now.current) onCommit(next);
@@ -133,7 +138,7 @@ export function LowerUnderVoiceDialog({ tl, track, onCommit, onClose }: { tl: Nl
   const m = useMeasure();
   const voice = [...new Set((tl.tracks.A1?.items ?? []).map((i) => i.src))];
   const go = () =>
-    m.run(voice, () => {
+    m.run(tl, voice, () => {
       const spans = speechSpans(now.current);
       if (!spans.length) return setNote("No speech found on A1");
       const duck: Duck = { amount: -Math.abs(num(d.amount, DUCK.amount)), attackMs: Math.max(0, num(d.attack, DUCK.attackMs)), releaseMs: Math.max(0, num(d.release, DUCK.releaseMs)) };

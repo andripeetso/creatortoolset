@@ -101,7 +101,12 @@ export class LoudnessMeter {
   private hist: Float32Array;
   private histPos: Int32Array;
 
-  constructor(readonly sampleRate: number, readonly channels: number, o: { truePeak?: boolean } = {}) {
+  readonly sampleRate: number;
+  readonly channels: number;
+
+  constructor(sampleRate: number, channels: number, o: { truePeak?: boolean } = {}) {
+    this.sampleRate = sampleRate;
+    this.channels = channels;
     this.pre = kPre(sampleRate);
     this.rlb = kRlb(sampleRate);
     this.z = new Float64Array(channels * 4);
@@ -308,7 +313,7 @@ export function speechSpans(tl: NleTimeline, words = spoken, m = measured): [num
     const r = rateOf(tl, it);
     const sfps = tl.sources[it.src]?.fps || fps;
     // source seconds → timeline frames inside the clip
-    const at = (s: number) => Math.min(endOf(it), Math.max(it.rec, it.rec + (s * sfps - it.in) / r));
+    const at = (s: number) => Math.round(Math.min(endOf(it), Math.max(it.rec, it.rec + (s * sfps - it.in) / r)) * 1000) / 1000;
     const w = words.get(it.src);
     if (w) {
       for (const [s, e] of w) if (e > from && s < from + dur) spans.push([at(s), at(e)]);
