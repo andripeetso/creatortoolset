@@ -41,6 +41,8 @@ export interface AssistantMessage {
   /** A reply a usage limit stopped (status "error"): `until` is when the limit resets (absent: it didn't say), `resume`
    *  that the chat carries on by itself then ("Continue where you left off.", POST /chats/:id/limit). */
   limit?: { until?: number; resume?: true };
+  /** A user message the app sent for them: work the chat started failed, and the chat answers that by itself (api/assistant.ts wake). */
+  woke?: true;
   /** A reply that ended: how long it worked (ms), shown as "Worked for 1m 12s". */
   took?: number;
   /** What the reply did on the way, one line per tool it used ("Looking through Review"), shown as it works. */
