@@ -249,7 +249,7 @@ function MacComputer() {
 }
 
 /** The editor's render cache (a server whose editor keeps one answers RENDER_CACHE_API): the shots already rendered, in
- *  each workspace's Projects folder on the computers. */
+ *  each edit's own project folder on the computers. */
 export const RENDER_CACHE_API = "/api/editor/render-cache";
 export type RenderCacheView = { bytes: number; limit: number; folders: number; clearedAt?: number };
 
@@ -272,7 +272,7 @@ export function RenderCacheSection() {
       <Card>
         <Row
           title="Render cache"
-          tip={`Shots the editor already rendered, kept in each workspace's Projects folder, so a change renders only the shots it touches. Past ${capLabel(limit)} in a folder, the shots used longest ago are removed.`}
+          tip={`Shots the editor already rendered, kept in each edit's project folder, so a change renders only the shots it touches. Past ${capLabel(limit)} in a Projects folder, the shots used longest ago are removed.`}
           control={
             <>
               <span className="text-sm text-muted-foreground">{bytesLabel(bytes)}</span>
