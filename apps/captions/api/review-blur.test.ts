@@ -216,3 +216,23 @@ it("under Blur faces a teammate who may see the edit sees an as-filmed cut; a sh
     blurFaces(false);
   }
 });
+
+it("under Blur faces a share link serves no picture of a removed version that was not filed as blurred", async () => {
+  const id = await cut(STORE, false, undefined, false); // filed before Blur faces, with nothing said for it
+  await cut(STORE, false, id); // a blurred next version
+  const thumb = (n: number) => path.join(dataDir, "review", id, `v${n}`, "thumb.jpg");
+  for (const n of [1, 2]) {
+    mkdirSync(path.dirname(thumb(n)), { recursive: true });
+    writeFileSync(thumb(n), "jpeg");
+  }
+  const link = await json(app.request(`/assets/${id}`, send("PATCH", { share: { enabled: true } })));
+  expect((await app.request(`/assets/${id}/v/2/clear-earlier`, send("POST", {}))).status).toBe(200);
+  writeFileSync(thumb(1), "jpeg"); // a still left behind
+  blurFaces(true);
+  try {
+    expect((await app.request(`/s/${link.share.token}/v/2/thumb`, { headers: { "x-as": "ben" } })).status).toBe(200);
+    expect((await app.request(`/s/${link.share.token}/v/1/thumb`, { headers: { "x-as": "ben" } })).status).toBe(404);
+  } finally {
+    blurFaces(false);
+  }
+});

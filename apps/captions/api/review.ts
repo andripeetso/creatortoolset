@@ -2402,6 +2402,10 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const n = Number(c.req.param("n"));
     const version = v?.meta.versions.find((x) => x.n === n);
     if (!v || !version) return c.json({ error: "Not found" }, 404);
+    // under Blur faces nothing of a version a viewer may not see goes, a removed one's still included: on a share link a
+    // version not filed as blurred, for a teammate one neither blurred nor as filmed (viewer)
+    const seen = version.blurred || (c.req.param("token") === undefined && version.asFilmed);
+    if (!v.manage && !seen && (await blurFacesIn(v.meta.owner, v.meta.workspace))) return c.json({ error: "Not found" }, 404);
     const id = v.meta.id;
     const file = c.req.param("file");
     if (file === "thumb") return sendFile(c, thumbPath(id, n), "image/jpeg");

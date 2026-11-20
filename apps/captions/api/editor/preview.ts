@@ -344,7 +344,6 @@ export function editLeaves(editId: string, variant: string): { ok: true; mark: C
  * step's, a render's) may be in the cut, whatever its sources are switched to later.
  */
 export function markStart(editId: string, variant: string, mark: CutMark): void {
-  if (!variant) return;
   libraryDb()
     .prepare(
       `INSERT INTO render_marks (edit_id, variant, mark) VALUES (?, ?, ?)
