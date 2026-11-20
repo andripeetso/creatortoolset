@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
+import { glStage, type GlStage, type Look, type Painter } from "@/lib/nle/gl-stage";
+import { gradeOf, hasLook, lutOf } from "@/lib/nle/looks";
+import type { EdjCamera } from "@contracts/editor";
 import { readSound } from "@/lib/synced-sound";
 import { fadePoints, isSoundFile, nleAudio, nleOut, runningAudio, type NleClock } from "@/lib/nle/audio";
 import { lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
@@ -19,6 +22,9 @@ import { drawnAsShot, lookFilter, shotPlan, shotSource, shotTime, type Pic, type
 // its picture's opacity (black under V1) and its sound's gain; a transition plays both clips of its cut, each into its
 // handle and from its own element, mixed as the renderer mixes them (picture.ts seenAt), so never as the plain <video>. A clip whose file can't play here is a red Media Offline frame with its name and why, never an older render. A
 // picture not ready yet (a file opening, a move landing) keeps the frame drawn last on screen, never black.
+// The pictures are drawn on the graphics card (lib/nle/gl-stage.ts: a video frame there costs about 1 ms, on a 2D canvas
+// 8–31 ms), with each source's camera conversion and each clip's grade, and the scopes read from there; where WebGL 2
+// is missing or its context is lost, the same calls draw on a 2D canvas, without the colour changes or the scopes.
 
 type Media = {
   el: HTMLVideoElement | HTMLImageElement;
@@ -40,8 +46,10 @@ type Media = {
 
 /** A source's file as this browser plays it; `lead`: seconds into the file where the source's frame 0 is; `frame`: the
  *  file of picture n when the source is a numbered picture sequence (from 0). `why`, with no `url`: it doesn't play here,
- *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). */
-export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string;
+  *  and this is the line drawn on its frame ("<drive> isn't connected", "Needs your OK"). `log`: whether the file is in
+ *  its camera's log (the Media Library says so for a proxy or master); not said = it is, as an original is, so the
+ *  source's camera conversion applies. */
+export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string; log?: boolean;
   /** what it shows may be drawn into a design (Design on This Frame): a blurred copy, the person's own file, a design */
   grab?: true };
 
@@ -51,6 +59,9 @@ export async function whyNot(url: string): Promise<string | undefined> {
 }
 
 const SEQ_AHEAD = 8;
+/** the scopes' size in px (as GradePanel's) */
+export const SCOPE_W = 340;
+export const SCOPE_H = 170;
 /** 4K decoders open at once at most (a run of short clips used to open a dozen) */
 const MAX_VIDEOS = 6;
 /** elements per file: the one playing and the one waiting on the next clip's first frame */
@@ -70,7 +81,7 @@ const chainOf = (tl: NleTimeline) => {
 const readyToPlay = (m: Media | null, d: Drawable | null) =>
   !m || m.bad || (m.el instanceof HTMLVideoElement ? m.el.readyState >= 3 && !m.el.seeking : !!d);
 
-export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
+export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onScopes }: {
   tl: NleTimeline;
   /** the playhead (seconds on the timeline) and whether it runs */
   clock: NleClock;
@@ -82,12 +93,14 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
   className?: string;
   /** looping playback's part, seconds: the pictures where it wraps to are opened ahead, so the jump back shows at once */
   loop?: [number, number] | null;
+  /** when set, the scopes of each new picture (SCOPE_W × SCOPE_H): its waveform and vectorscope; nulls without WebGL 2 */
+  onScopes?: ((wave: ImageData | null, vector: ImageData | null) => void) | null;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const pool = useRef(new Map<string, Media>());
-  const now = useRef({ tl, clock, rate, urlOf, nameOf, loop });
-  now.current = { tl, clock, rate, urlOf, nameOf, loop };
+  const now = useRef({ tl, clock, rate, urlOf, nameOf, loop, onScopes });
+  now.current = { tl, clock, rate, urlOf, nameOf, loop, onScopes };
   const W = tl.timeline.width || 1080;
   const H = tl.timeline.height || 1920;
 
@@ -122,9 +135,20 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
     let px = 1;
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(([e]) => void (px = drawScale(e.contentRect.width, devicePixelRatio, W)));
     if (canvas.current) ro?.observe(canvas.current);
-    // a shot is composed here first, then its zoom drawn onto the viewer; a blurred fill is made small here
+    // a shot is composed here first, then its zoom drawn onto the viewer; a blurred fill is made small here (2D)
     const layer = document.createElement("canvas");
     const small = document.createElement("canvas");
+    // the Media Offline lines, drawn as text here and laid on the graphics stage
+    const note = document.createElement("canvas");
+    let stage: GlStage | null = glStage();
+    const toStage = (on: boolean) => {
+      if (stage && on) {
+        Object.assign(stage.canvas.style, { position: "absolute", inset: "0", width: "100%", height: "100%" });
+        host.current?.prepend(stage.canvas);
+      } else stage?.canvas.remove();
+      if (canvas.current) canvas.current.style.visibility = on && stage ? "hidden" : "";
+    };
+    toStage(true);
     const videos = () => [...pool.current.values()].filter((m) => m.el instanceof HTMLVideoElement);
     const make = (u: string, file: NleFile, el: Media["el"], owner: string): Media => {
       const m: Media = { el, url: u, lead: file.lead ?? 0, bad: false, used: tick, owner, frames: 0, vfc: false, ...(file.frame ? { seq: { frame: file.frame, got: new Map() } } : {}) };
@@ -141,7 +165,8 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         };
         v.requestVideoFrameCallback(seen);
       }
-      // read back from the viewer for Design on This Frame: the canvas it is drawn on stays readable
+      // read by the graphics stage and back from the viewer for Design on This Frame: a file from another origin only with
+      // CORS (the Mac app's files and the server's answer it, as for the sound)
       el.crossOrigin = "anonymous";
       el.src = file.frame ? file.frame(0) : u;
       return m;
@@ -150,6 +175,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
       const m = pool.current.get(k);
       if (!m) return;
       m.gone = true;
+      stage?.forget(m.el);
       if (m.el instanceof HTMLVideoElement) {
         if (m.el === shown) shown = null;
         m.el.remove();
@@ -235,6 +261,21 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
     // a picture with no file here: Resolve's red Media Offline frame where the picture would be (as if it were the
     // frame's size), with the clip's name and why
     const missing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string) => {
+      if (stage) {
+        // as text on a 2D canvas the frame's size, then laid on the stage as a picture
+        const [cw, ch] = [Math.max(1, Math.round(W * px)), Math.max(1, Math.round(H * px))];
+        if (note.width !== cw || note.height !== ch) Object.assign(note, { width: cw, height: ch });
+        const n = note.getContext("2d")!;
+        n.setTransform(px, 0, 0, px, 0, 0);
+        n.clearRect(0, 0, W, H);
+        drawMissing(n, it, track, name, why);
+        stage.screen.save();
+        stage.screen.setTransform(1, 0, 0, 1, 0, 0);
+        stage.screen.drawImage(note, 0, 0, cw, ch, 0, 0, cw, ch);
+        stage.screen.restore();
+      } else drawMissing(ctx, it, track, name, why);
+    };
+    const drawMissing = (ctx: CanvasRenderingContext2D, it: NleItem, track: string, name: string, why?: string) => {
       const p = placement(it, track, W, H, W, H);
       ctx.save();
       ctx.transform(...p.m);
@@ -253,8 +294,11 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
       ctx.restore();
     };
     /** A darkened blur of a picture behind a shot (the renderer's: an eighth of the size, blurred, darkened, scaled up). */
-    const blurred = (lc: CanvasRenderingContext2D, d: Drawable, op: ShotOp) => {
+    const blurred = (lc: Painter, d: Drawable, op: ShotOp) => {
       const { w, h, sigma, dim } = op.bg!;
+      // darker by a fixed amount, as the renderer's brightness: 1 − ((1 − x) + d)
+      const by = Math.round(dim * 327);
+      if (stage) return stage.layer.blurFill(d.el, op.src, w, h, sigma, by / 255, op.dst);
       small.width = w;
       small.height = h;
       const s = small.getContext("2d")!;
@@ -264,8 +308,6 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         s.drawImage(d.el, ...op.src, 0, 0, w, h);
         s.filter = "none";
       }
-      // darker by a fixed amount, as the renderer's brightness: 1 − ((1 − x) + d)
-      const by = Math.round(dim * 327);
       for (const [mode, fill] of [["difference", "#fff"], ["lighter", `rgb(${by},${by},${by})`], ["difference", "#fff"]] as const) {
         s.globalCompositeOperation = mode;
         s.fillStyle = fill;
@@ -274,13 +316,28 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
       s.globalCompositeOperation = "source-over";
       lc.drawImage(small, 0, 0, w, h, ...op.dst);
     };
+    // the colour change on a source's picture (looks.ts); a LUT still loading draws again once it is here
+    const lookOf = (t: NleTimeline, src: string, grade: unknown): Look | null => {
+      const file = now.current.urlOf(src);
+      const cam = t.sources[src]?.camera as EdjCamera | undefined;
+      if (!hasLook(cam, file?.log, grade)) return null;
+      return { lut: file?.log === false ? null : lutOf(cam, () => void (painted = false)), grade: gradeOf(grade) };
+    };
+    let sized = "";
     const frame = () => {
       raf = requestAnimationFrame(frame);
       tick++;
       claimed.clear();
-      const ctx = canvas.current?.getContext("2d");
-      if (!ctx) return;
-      const { tl: t, clock: c, rate: r, nameOf: name } = now.current;
+      if (stage?.lost) {
+        toStage(false);
+        stage = null;
+        painted = false;
+      }
+      const cv = canvas.current;
+      const ctx: Painter | null = stage ? stage.screen : (cv?.getContext("2d") ?? null);
+      if (!cv || !ctx) return;
+      const { tl: t, clock: c, rate: r, nameOf: name, onScopes } = now.current;
+      const scope = !!onScopes;
       const s = c.now();
       const run = c.state === "running";
       const fps = t.timeline.fps;
@@ -289,11 +346,14 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
       const chain = chainOf(t);
       const on = picturesAt(t, f);
       const forward = run && r > 0;
-      const cv = canvas.current!;
       const [cw, ch] = [Math.max(1, Math.round(W * px)), Math.max(1, Math.round(H * px))];
-      if (cv.width !== cw || cv.height !== ch) {
-        Object.assign(cv, { width: cw, height: ch });
-        Object.assign(layer, { width: cw, height: ch });
+      if (sized !== `${cw}x${ch}${!stage}`) {
+        sized = `${cw}x${ch}${!stage}`;
+        // the 2D canvases hold a picture only when they draw (no graphics stage)
+        if (!stage) {
+          Object.assign(cv, { width: cw, height: ch });
+          Object.assign(layer, { width: cw, height: ch });
+        }
         painted = false;
       }
       // what is on screen now: each picture's file and frame (a shot's other pictures too), before anything is drawn
@@ -302,7 +362,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         // its zoom, pan, tilt, rotation and opacity on this frame
         const item = keyed(t, raw, f);
         const k = f - item.rec;
-        if (item.fx === "flash") return { item, track, key, k, seen, under, m: null, d: null, got: null };
+        if (item.fx === "flash") return { item, track, key, k, seen, under, m: null, d: null, got: null, look: null };
         const v1 = track === "V1";
         // V1 plays a freeze held and a reversed shot backwards (seeked frame by frame); the other tracks as they are
         const still = v1 && (!!item.freeze || !!item.rev);
@@ -322,7 +382,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
             more += stamp(pm, pd);
           }
         }
-        return { item, track, key, k, seen, under, m, d, got, more };
+        return { item, track, key, k, seen, under, m, d, got, more, look: lookOf(t, item.src, item.grade) };
       });
       // Play waits until the pictures at the playhead can play on (or the clock's half second is up)
       if (c.state === "waiting" && pics.every((p) => p.item.fx === "flash" || readyToPlay(p.m, p.d))) c.ready();
@@ -331,12 +391,13 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
       // never black (a file that can't play errors, and is drawn as Media Offline)
       // keys and transitions change the picture every frame, whatever the videos do
       const told = run && pics.some((p) => p.d && p.m?.vfc) && !pics.some((p) => p.item.keys || p.under || p.seen < 1);
-      const sig = `${cw}x${ch}|${told ? "" : f}|${pics.map((p) => `${p.key}:${stamp(p.m, p.d)}${p.more ?? ""}`).join("|")}`;
+      const sig = `${cw}x${ch}|${told ? "" : f}|${scope}|${pics.map((p) => `${p.key}:${stamp(p.m, p.d)}${p.more ?? ""}`).join("|")}`;
       // one plain picture (picture.ts plainVideo) with its frame: its hardware-decoded <video> shown as it is, the canvas
       // not drawn; back to the canvas only once it has drawn the new picture, so a cut between the two never shows black
       const fit = plainVideo(on);
       const one = pics[0];
-      const direct = fit && one?.d && one.m && !one.m.seq && one.m.el instanceof HTMLVideoElement && !one.m.el.seeking ? one.m.el : null;
+      // a colour change or the scopes need the picture drawn
+      const direct = fit && !one?.look && !(stage && scope) && one?.d && one.m && !one.m.seq && one.m.el instanceof HTMLVideoElement && !one.m.el.seeking ? one.m.el : null;
       if (direct) {
         show(direct, fit!);
         painted = true;
@@ -346,13 +407,14 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
         drawn = sig;
         drawnTl = t;
         const flashes: number[] = [];
+        stage?.begin(cw, ch);
         ctx.setTransform(px, 0, 0, px, 0, 0);
         ctx.globalAlpha = 1;
         // a gap in the cut is black; past its last clip there is no picture, only the frame's edge on the pasteboard
         ctx.fillStyle = "#000";
         if (f < lengthOf(t)) ctx.fillRect(0, 0, W, H);
         else ctx.clearRect(0, 0, W, H);
-        for (const { item, track, k, m, d, got, seen: fade, under } of pics) {
+        for (const { item, track, k, m, d, got, seen: fade, under, look: colour } of pics) {
           // a dip's colour over the whole frame, under the earlier clip and the later one
           if (under) {
             ctx.fillStyle = under === "white" ? "#fff" : "#000";
@@ -366,13 +428,13 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
           }
           if (!m || m.bad) {
             const why = m?.why ?? now.current.urlOf(item.src)?.why;
-            missing(ctx, item, track, name(item.src), why ?? (m ? "This file won't play here" : undefined));
+            missing(ctx as CanvasRenderingContext2D, item, track, name(item.src), why ?? (m ? "This file won't play here" : undefined));
             continue;
           }
           if (!d || !got || !fade) continue;
           if (drawnAsShot(item, track, W, H)) {
             const plan = shotPlan(item, k, (pic) => (got[pic] ? [got[pic]!.w, got[pic]!.h] : null), W, H);
-            const lc = layer.getContext("2d")!;
+            const lc: Painter = stage ? stage.layer : layer.getContext("2d")!;
             lc.setTransform(px, 0, 0, px, 0, 0);
             lc.fillStyle = "#000";
             lc.fillRect(0, 0, W, H);
@@ -392,10 +454,12 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
             ctx.save();
             ctx.globalAlpha = fade;
             // the filter's blur is in the canvas's own px
-            const look = canFilter ? lookFilter(item, k, W * px) : "";
+            const look = canFilter || stage ? lookFilter(item, k, W * px) : "";
             if (look) ctx.filter = look;
+            // the camera conversion and the grade on the whole composed shot, as the renderer's _picture
+            if (stage) stage.screen.look = colour;
             const [vx, vy, vw, vh] = plan.view;
-            ctx.drawImage(layer, vx * px, vy * px, vw * px, vh * px, 0, 0, W, H);
+            ctx.drawImage(stage ? stage.layer.token : layer, vx * px, vy * px, vw * px, vh * px, 0, 0, W, H);
             ctx.restore();
             continue;
           }
@@ -404,6 +468,7 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
           ctx.save();
           ctx.globalAlpha = p.alpha * fade;
           ctx.transform(...p.m);
+          if (stage) stage.screen.look = colour;
           ctx.drawImage(d.el, ...p.crop, ...p.crop);
           ctx.restore();
         }
@@ -411,7 +476,9 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
           ctx.fillStyle = `rgba(255,255,255,${Math.min(1, Math.max(0, a))})`;
           ctx.fillRect(0, 0, W, H);
         }
+        stage?.present();
         unshow();
+        if (onScopes) onScopes(stage?.scope("wave", SCOPE_W, SCOPE_H) ?? null, stage?.scope("vector", SCOPE_W, SCOPE_H) ?? null);
       }
       // the next clip on each track: its file open in a free element of its file, waiting on its first frame (a clip
       // that plays on from this one needs none: its element plays across the cut)
@@ -454,6 +521,8 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop }: {
       cancelAnimationFrame(raf);
       ro?.disconnect();
       for (const k of [...all.keys()]) drop(k);
+      toStage(false);
+      stage?.dispose();
     };
   }, [W, H]);
 

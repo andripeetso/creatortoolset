@@ -1,26 +1,27 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { Grid2x2, Music } from "lucide-react";
+import { Activity, Grid2x2, Music } from "lucide-react";
 import { timecode, type NleTimeline } from "@/lib/nle/model";
 import type { NleClock } from "@/lib/nle/audio";
 import { peaks, wavePath } from "@/lib/waveform";
 import { cn } from "@/lib/utils";
 import { NlePlayer, type NleFile } from "./NlePlayer";
+import { useNleScopes } from "./NleScopes";
 
 // The viewer: the timeline's frame at its own size and shape on a grey pasteboard, edged, so a black picture, a gap or
 // the time past the last clip (no picture: the pasteboard shows through) still shows where the frame is. Under it: the clock, the play controls, the timeline's size and
-// rate, how large the frame is drawn (Fit, 50 %, 100 %) and the safe-area guides.
+// rate, how large the frame is drawn (Fit, 50 %, 100 %), the safe-area guides and the scopes (shown under the picture).
 
 type Zoom = "fit" | 0.5 | 1;
 const ZOOMS: [Zoom, string][] = [["fit", "Fit"], [0.5, "50%"], [1, "100%"]];
 const KEY = "ct-nle-viewer";
 const PAD = 16;
 
-const readPrefs = (): { zoom: Zoom; guides: boolean } => {
+const readPrefs = (): { zoom: Zoom; guides: boolean; scopes: boolean } => {
   try {
-    const got = JSON.parse(localStorage.getItem(KEY) ?? "null") as { zoom?: Zoom; guides?: boolean } | null;
-    return { zoom: ZOOMS.some(([z]) => z === got?.zoom) ? got!.zoom! : "fit", guides: !!got?.guides };
+    const got = JSON.parse(localStorage.getItem(KEY) ?? "null") as { zoom?: Zoom; guides?: boolean; scopes?: boolean } | null;
+    return { zoom: ZOOMS.some(([z]) => z === got?.zoom) ? got!.zoom! : "fit", guides: !!got?.guides, scopes: !!got?.scopes };
   } catch {
-    return { zoom: "fit", guides: false };
+    return { zoom: "fit", guides: false, scopes: false };
   }
 };
 
@@ -81,6 +82,8 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, onMenu, 
   const fit = Math.max(0.01, Math.min((room.w - 2 * PAD) / W, (room.h - 2 * PAD) / H));
   const scale = prefs.zoom === "fit" ? fit : prefs.zoom;
   const seg = (on: boolean) => cn("h-6 rounded-[3px] px-1.5 tabular-nums", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100");
+  const scopes = useNleScopes();
+  const toggle = (on: boolean) => cn("inline-flex size-6 shrink-0 items-center justify-center rounded", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
 
   return (
     <div className="flex min-h-0 flex-1 select-none flex-col">
@@ -89,7 +92,8 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, onMenu, 
         <div className="flex min-h-full min-w-full items-center justify-center" style={{ padding: PAD, width: prefs.zoom === "fit" ? undefined : W * scale + 2 * PAD, height: prefs.zoom === "fit" ? undefined : H * scale + 2 * PAD }}>
           <div data-frame className="relative shrink-0 shadow-[0_0_0_1px_rgb(255_255_255/0.28),0_4px_24px_rgb(0_0_0/0.45)]"
             style={{ width: W * scale, height: H * scale }} onClick={onClick} onContextMenu={onMenu} draggable={!!onDragStart} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-            <NlePlayer tl={tl} clock={playhead} rate={rate} urlOf={urlOf} nameOf={nameOf} loop={loop} className="block size-full" />
+            <NlePlayer tl={tl} clock={playhead} rate={rate} urlOf={urlOf} nameOf={nameOf} loop={loop} className="block size-full"
+              onScopes={prefs.scopes ? scopes.onScopes : null} />
             {over}
             {prefs.guides && (
               <div aria-hidden className="pointer-events-none absolute inset-0">
@@ -102,6 +106,7 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, onMenu, 
           </div>
         </div>
       </div>
+      {prefs.scopes && scopes.strip}
       {below}
       <div className="grid h-9 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-t border-black/60 bg-[#202024] px-2 text-[11px] text-zinc-400">
         <div className="min-w-0 truncate">{clock}</div>
@@ -115,8 +120,12 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, onMenu, 
             ))}
           </span>
           <button type="button" aria-pressed={prefs.guides} aria-label="Safe-area guides" title="Safe-area guides" onClick={() => keep({ guides: !prefs.guides })}
-            className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded", prefs.guides ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100")}>
+            className={toggle(prefs.guides)}>
             <Grid2x2 className="size-3.5" />
+          </button>
+          <button type="button" aria-pressed={prefs.scopes} aria-label="Scopes" title="Scopes: waveform and vectorscope" onClick={() => keep({ scopes: !prefs.scopes })}
+            className={toggle(prefs.scopes)}>
+            <Activity className="size-3.5" />
           </button>
         </div>
       </div>
