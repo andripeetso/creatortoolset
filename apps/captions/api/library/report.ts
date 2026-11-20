@@ -380,12 +380,14 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   const touched = new Set<string>();
   const keepOut = keptOut(st, dev.id);
   const settle = new Set<string>();
-  const copies = copyFilesOn([dev.id]);
+  const media = mediaOf(st);
+  // the copies' files only matter once a list can leave a file out
+  const copies = media.some((m) => m.leaveOut?.length) ? copyFilesOn([dev.id]) : new Set<string>();
   for (const r of folders) {
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
-    await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, mediaOf(st), settle, copies);
+    await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, media, settle, copies);
   }
   for (const id of settleLeft(settle, now, dev.name)) {
     const lib = db().prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;

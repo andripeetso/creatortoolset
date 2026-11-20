@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -101,6 +101,43 @@ describe("Folders left out over every watched folder of a library", () => {
     storage(["Private"], ["Private"]);
     await scan();
     expect(d.prepare("SELECT a.trashed_at IS NOT NULL AS trashed FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(v)).toEqual({ trashed: 1 });
+  });
+
+  it("a renamed folder is no move into a left-out folder: the clip stays and reads the new path", async () => {
+    const a = path.join(footage, "Day 1", "a.mp4");
+    put(a, "renamed");
+    utimesSync(a, 1_700_000_000, 1_700_000_000);
+    await scan();
+    // a Finder copy in a left-out folder, the same size and time
+    const copy = path.join(footage, "Private", "a.mp4");
+    put(copy, "renamed");
+    utimesSync(copy, 1_700_000_000, 1_700_000_000);
+    const id = clip(a)!.id;
+    renameSync(path.join(footage, "Day 1"), path.join(footage, "Day 1 final"));
+    const trashed = () => (d.prepare("SELECT trashed_at FROM assets WHERE id = ?").get(id) as { trashed_at: number | null }).trashed_at;
+    for (let i = 0; i < 3; i++) {
+      await scanWatchFolders((t += 10 * SETTLE_MS));
+      expect(trashed()).toBeNull();
+    }
+    expect(d.prepare("SELECT v.source_path FROM asset_versions v WHERE v.asset_id = ?").all(id)).toEqual([{ source_path: path.join(footage, "Day 1 final", "a.mp4") }]);
+  });
+
+  it("a renamed folder keeps its clip when a copy it already had is left out in the same pass", async () => {
+    const b = path.join(footage, "Day 2", "b.mp4");
+    const copy = path.join(footage, "Later", "b.mp4");
+    put(b, "renamed 2");
+    put(copy, "renamed 2");
+    utimesSync(b, 1_700_000_100, 1_700_000_100);
+    utimesSync(copy, 1_700_000_100, 1_700_000_100);
+    await scan();
+    // whichever of the two the watch took first, both are this one clip's files
+    const id = (d.prepare("SELECT v.asset_id FROM watch_seen w JOIN asset_versions v ON v.id = w.version_id WHERE w.path = ?").get(b) as { asset_id: string }).asset_id;
+    storage(["Private"], ["Private", "Later"]);
+    renameSync(path.join(footage, "Day 2"), path.join(footage, "Day 2 final"));
+    for (let i = 0; i < 3; i++) {
+      await scanWatchFolders((t += 10 * SETTLE_MS));
+      expect((d.prepare("SELECT trashed_at FROM assets WHERE id = ?").get(id) as { trashed_at: number | null }).trashed_at).toBeNull();
+    }
   });
 
   it("another computer's path to a folder never leaves out a file here", async () => {

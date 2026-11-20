@@ -605,11 +605,12 @@ export async function keepOutOf(user: string): Promise<string[]> {
 }
 
 /**
- * Media folders as this server's computer checks them (leftOutBy): one of "this-computer" is `host`'s (hostHere), so only
- * this computer's path of each folder weighs, never another computer's path to the same folder.
+ * Media folders as this server's computer checks them (leftOutBy): every one on this computer ("this-computer" or any
+ * account's device here, the owner's for a member's import) is `host`'s (hostHere), so only this computer's path of each
+ * folder weighs, never another computer's path to the same folder.
  */
-const listsHere = (media: StorageFolder[], host: string): StorageFolder[] =>
-  media.map((m) => (m.origin.host === THIS_COMPUTER ? { ...m, origin: { ...m.origin, host } } : m));
+export const listsHere = (media: StorageFolder[], host: string): StorageFolder[] =>
+  media.map((m) => (onThisComputer(m) ? { ...m, origin: { ...m.origin, host } } : m));
 
 /** `media`'s Folders left out are checked on computer `o.host` (none: every computer's path); `o.dropped`, when given, gets
  *  the files they kept out (leaveWatched's moved-in check); a file one of the library's copies wrote (`o.copies`) is never
@@ -751,11 +752,11 @@ async function leaveWatched(
   libraryId: string,
   media: StorageFolder[],
   host: string,
-  seen: { live: Set<string>; dropped: string[]; read: string[]; unread: string[] },
+  seen: { live: Set<string>; dropped: string[]; read: string[]; unread: string[]; unseen: Set<string> },
   copies: Set<string>,
   now: number,
 ): Promise<boolean> {
-  const { live, dropped, read, unread } = seen;
+  const { live, dropped, read, unread, unseen } = seen;
   if (!media.some((m) => m.leaveOut?.length)) return false;
   const rows = db()
     .prepare(
@@ -767,7 +768,10 @@ async function leaveWatched(
   const out = new Set(rows.filter((r) => leftOutBy(media, r.path, host) && !copies.has(r.path)).map((r) => r.path));
   // moved in: only while a version's own file just went from where it read it (never a copy that went, never one long gone)
   const inRead = (p: string) => read.some((root) => p.startsWith(root + path.sep));
-  const vanished = rows.filter((r) => r.source_path === r.path && !out.has(r.path) && !live.has(r.path) && r.state !== "missing" && inRead(r.path));
+  // a file gone from a folder read now whose size and time a file new to the watch has (`unseen`): renamed or moved
+  // there, so the watch takes it in at its new path (ingest points the version there); never moved into a left-out folder
+  const renamed = (r: { path: string; size: number; mtime: number }) => !live.has(r.path) && inRead(r.path) && unseen.has(`${r.size}:${r.mtime}`);
+  const vanished = rows.filter((r) => r.source_path === r.path && !out.has(r.path) && !live.has(r.path) && r.state !== "missing" && inRead(r.path) && !renamed(r));
   for (const p of vanished.length ? dropped : []) {
     const st = await stat(p).catch(() => null);
     for (const r of vanished) if (st && r.size === st.size && r.mtime === Math.floor(st.mtimeMs)) out.add(r.path);
@@ -781,7 +785,7 @@ async function leaveWatched(
   const inUnread = (p: string) => unread.some((root) => p.startsWith(root + path.sep));
   for (const r of rows) {
     if (out.has(r.path) || copies.has(r.path) || !assets.has(r.asset_id)) continue;
-    if (inUnread(r.path)) kept.add(r.asset_id);
+    if (inUnread(r.path) || renamed(r)) kept.add(r.asset_id);
     if (!live.has(r.path)) continue;
     kept.add(r.asset_id);
     if (!copyOf.has(r.version_id)) copyOf.set(r.version_id, r.path);
@@ -808,7 +812,7 @@ async function scanLibrary(libraryId: string, now: number, folders: WatchFolder[
 async function scanFolders(libraryId: string, now: number, folders: WatchFolder[]): Promise<number> {
   let took = 0;
   // the Folders left out, over every folder of the library at once (leaveWatched)
-  const pass = { live: new Set<string>(), dropped: [] as string[], read: [] as string[], unread: [] as string[] };
+  const pass = { live: new Set<string>(), dropped: [] as string[], read: [] as string[], unread: [] as string[], unseen: new Set<string>() };
   let media: StorageFolder[] = [];
   let host: string = THIS_COMPUTER;
   // the copies' files, read once a folder of the library has a list (nothing to tell apart before that)
@@ -851,6 +855,7 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
         | { size: number; mtime: number; version_id: string | null }
         | undefined;
       const key = `${libraryId}\0${file}`;
+      if (!seen) pass.unseen.add(`${size}:${mtime}`);
       if (seen && seen.size === size && seen.mtime === mtime) {
         pending.delete(key);
         stuck.delete(key);

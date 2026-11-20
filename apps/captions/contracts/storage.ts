@@ -314,33 +314,46 @@ export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Se
 }
 const nameKey = (n: string) => n.normalize("NFC").toLowerCase();
 
+/** Each list's names as compared and each folder's roots, made once per list or folder object (a pass reads thousands of paths). */
+const nameSets = new WeakMap<readonly string[], Set<string>>();
+const rootSets = new WeakMap<object, { own: string[]; reach: Record<string, string> }>();
+const rootKey = (r: string) => r.normalize("NFC").replace(/\/+$/, "");
+const rootsOf = (f: Pick<StorageFolder, "origin" | "reach" | "mountPath">) => {
+  let r = rootSets.get(f);
+  if (!r) {
+    r = {
+      own: [f.origin.path, f.mountPath].filter((x): x is string => !!x).map(rootKey),
+      reach: Object.fromEntries(Object.entries(f.reach ?? {}).map(([h, x]) => [h, rootKey(x.path)])),
+    };
+    rootSets.set(f, r);
+  }
+  return r;
+};
+
 /** Whether a file, by its path below a Media folder, is inside a folder named in `names` (StorageFolder.leaveOut), at any
  *  depth. A privacy list fails safe: any case, either Unicode form (a Mac disk ignores case and may hand back decomposed names). */
 export function inLeftOut(rel: string, names: readonly string[]): boolean {
   if (!names.length) return false;
-  const out = new Set(names.map(nameKey));
+  let out = nameSets.get(names);
+  if (!out) nameSets.set(names, (out = new Set(names.map(nameKey))));
   return rel.split(/[\\/]/).slice(0, -1).some((d) => out.has(nameKey(d)));
 }
 
 /**
  * Whether `file` (a full path) is inside a folder that one of `folders` (Media folders) leaves out (inLeftOut with its
- * leaveOut; the list only, never the other files notFootage leaves out). `host`: the computer the path is on, when it is known; only each folder's path there counts (the path it was
- * added at, inside its container, or where that computer found its marker), so a folder at the same path on another
- * computer never decides. No `host`: the path on any computer that found it counts. Every folder that holds the file
- * counts, so a Media folder inside another, kept apart for another workspace, leaves out what either list names: the
- * safer of the two, and one rule for every reader.
+ * leaveOut; the list only, never the other files notFootage leaves out). `host`: the computer the path is on, when it is
+ * known; only each folder's path there counts (the path it was added at, inside its container, or where that computer
+ * found its marker), so a folder at the same path on another computer never decides. No `host`: the path on any
+ * computer that found it counts. Every folder that holds the file counts, so a Media folder inside another, kept apart
+ * for another workspace, leaves out what either list names: the safer of the two, and one rule for every reader.
  */
 export function leftOutBy(folders: ReadonlyArray<Pick<StorageFolder, "origin" | "reach" | "mountPath" | "leaveOut">>, file: string, host?: string): boolean {
   const at = file.normalize("NFC");
   return folders.some((f) => {
     if (!f.leaveOut?.length) return false;
-    const own = host === undefined || f.origin.host === host ? [f.origin.path, f.mountPath] : [];
-    const found = host === undefined ? Object.values(f.reach ?? {}).map((r) => r.path) : [f.reach?.[host]?.path];
-    return [...new Set([...own, ...found])].some((root) => {
-      if (!root) return false;
-      const r = root.normalize("NFC").replace(/\/+$/, "");
-      return at.startsWith(`${r}/`) && inLeftOut(at.slice(r.length + 1), f.leaveOut!);
-    });
+    const r = rootsOf(f);
+    const roots = host === undefined ? [...r.own, ...Object.values(r.reach)] : [...(f.origin.host === host ? r.own : []), ...(r.reach[host] ? [r.reach[host]] : [])];
+    return roots.some((root) => at.startsWith(`${root}/`) && inLeftOut(at.slice(root.length + 1), f.leaveOut!));
   });
 }
 

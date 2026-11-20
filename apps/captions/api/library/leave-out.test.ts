@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,9 +19,9 @@ const { indexOnMac } = await import("./on-mac");
 const { recordVersion } = await import("./routes");
 const { locateApp } = await import("./locate");
 const { placesApp } = await import("./places");
-const { filesIn } = await import("./watch");
+const { filesIn, listsHere } = await import("./watch");
 const { changeStorage, storageApp } = await import("../devices-storage");
-const { pairDevice } = await import("../lib/devices");
+const { noteMachine, pairDevice } = await import("../lib/devices");
 const { inRequestWorkspace } = await import("../lib/workspace-scope");
 const { inLeftOut, leftOutBy, notFootage } = await import("../../contracts/storage");
 const leftOutOn = async (user: string, file: string, host?: string) => leftOutBy(await mediaFoldersOf(user), file, host);
@@ -314,6 +314,24 @@ describe("every way a left-out file could come in or stay", () => {
     const [lib] = await librariesOf("tia", row("fold_f1", F1) as never);
     expect(leftOutBy(await mediaForLibrary("bo", lib!.id), `${F1}/- NO SHARE/m.mov`)).toBe(true);
     expect(leftOutBy(await mediaFoldersOf("bo"), `${F1}/- NO SHARE/m.mov`)).toBe(false);
+    // on this server's own computer (a member's import): the owner's folder there, under the owner's device id, weighs too
+    const server = pairDevice("tia", "Tiny Server").device;
+    noteMachine(server.id, { host: hostname() } as never);
+    const HERE = "/Volumes/Tiny Footage/Here";
+    await changeStorage("tia", (st) => {
+      st.folders.push({ ...row("fold_here", HERE, ["Private"]), origin: { host: server.id, path: HERE } });
+    });
+    expect(leftOutBy(listsHere(await mediaForLibrary("bo", lib!.id), "this-computer"), `${HERE}/Private/m.mov`, "this-computer")).toBe(true);
+  });
+
+  it("a renamed folder's new path in the same listing keeps the clip a Finder copy in a left-out folder matches", async () => {
+    await listOf("fold_f2", []);
+    await indexForDevice(mac, "fold_f2", onMac(F2, "Day 3/r.mov", 640));
+    await listOf("fold_f2", ["Private"]);
+    await scan("fold_f2", F2, ["Private/r.mov", "Day 3 final/r.mov"], 640);
+    expect(asset(640).trashed_at).toBeNull();
+    const live = libraryDb().prepare("SELECT p.path FROM version_places p JOIN asset_versions v ON v.id = p.version_id WHERE v.quick = ? AND p.state IN ('verified','found')").all(quick(640));
+    expect(live).toEqual([{ path: `${F2}/Day 3 final/r.mov` }]);
   });
 });
 
