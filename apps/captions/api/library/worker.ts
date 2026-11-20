@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, isBlurred, keepsOnlyOriginals, LEAVES_SQL, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -413,8 +413,6 @@ export function startLibraryWorker(): () => void {
  * library in a bucket backfills only from its proxies: its originals would each be a download.
  * ponytail: one clip per idle turn of the lane, newest first; a new upload's probe waits for one strip at most
  */
-/** Blur faces in SQL (upload-gate.ts mayLeave): the version `v` of library `l` may have pictures cut of it. */
-const LEAVES = "(v.blurred_of IS NOT NULL OR json_extract(l.settings, '$.blurFaces') IS NOT 1)";
 
 export async function backfillSprite(): Promise<boolean> {
   const db = libraryDb();
@@ -425,7 +423,7 @@ export async function backfillSprite(): Promise<boolean> {
          AND (l.storage_kind = 'local' OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
          AND EXISTS (SELECT 1 FROM jobs f WHERE f.version_id = v.id AND f.kind = 'fingerprint')
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite')
-         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite') AND ${LEAVES}
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite') AND ${LEAVES_SQL}
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
     .get() as { id: string; library_id: string } | undefined;
@@ -456,7 +454,7 @@ async function backfillStrayStrip(): Promise<boolean> {
       `SELECT v.id, v.probe, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
          JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
        WHERE a.kind = 'video' AND a.trashed_at IS NULL AND v.state = 'ready'
-         AND ((l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%') OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy')) AND ${LEAVES}
+         AND ((l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%') OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy')) AND ${LEAVES_SQL}
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
     .get() as { id: string; probe: string | null; library_id: string } | undefined;
@@ -637,7 +635,7 @@ async function run(job: JobRow): Promise<void> {
   const out = (ext: string) => path.join(dir, `${job.kind}-${randomUUID()}.${ext}`);
   const keep = async (kind: "thumb" | "wave" | "proxy" | "sprite", file: string, key: string) => {
     // Blur faces: no picture or copy of a clip not blurred is kept (a held original from before it was on); its waveform is
-    if (kind !== "wave" && !mayLeave(v.library_id, { versionId: v.id }).ok) return;
+    if (kind !== "wave" && !mayLeave(v.library_id, { versionId: v.id }).ok) return void (await rm(file, { force: true })); // made, never kept
     const strip = kind === "sprite" ? await readFile(file) : null; // read before the put, which may move the file
     const { bytes } = await blobs.put(key, file);
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, kind, key, bytes);

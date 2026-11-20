@@ -131,6 +131,21 @@ it("under Blur faces a video filed before it with no word on its faces is neithe
   }
 });
 
+it("an AI card's signed link shows a version under Blur faces only when it was filed as blurred", async () => {
+  const { reviewVersionLeaves } = await import("./review");
+  const old = await cut(STORE, false, undefined, false);
+  const fine = await cut(STORE, false);
+  expect(await reviewVersionLeaves(old, 1)).toBe(true);
+  blurFaces(true);
+  try {
+    expect(await reviewVersionLeaves(old, 1)).toBe(false);
+    expect(await reviewVersionLeaves(fine, 1)).toBe(true);
+    expect(await reviewVersionLeaves(fine, 2)).toBe(false); // no such version
+  } finally {
+    blurFaces(false);
+  }
+});
+
 it("keeps only a cut its filer blurred under Blur faces: an unblurred one, one that says nothing and a browser's upload are refused", async () => {
   blurFaces(true);
   try {

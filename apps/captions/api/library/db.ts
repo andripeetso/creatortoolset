@@ -223,6 +223,8 @@ const finalsUploadStored = (libraryId: string): LibraryUpload => {
  */
 export const blursFaces = (libraryId: string): boolean =>
   (libraryDb().prepare("SELECT json_extract(settings, '$.blurFaces') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v === 1;
+/** mayLeave in SQL (upload-gate.ts): version `v` of library `l` may have pictures cut of it, kept or handed out. */
+export const LEAVES_SQL = "(v.blurred_of IS NOT NULL OR json_extract(l.settings, '$.blurFaces') IS NOT 1)";
 /** A version is a blurred render (asset_versions.blurred_of: the full SHA-256 of the original it was made from). */
 export const isBlurred = (versionId: string): boolean =>
   !!(libraryDb().prepare("SELECT blurred_of FROM asset_versions WHERE id = ?").get(versionId) as { blurred_of: string | null } | undefined)?.blurred_of;

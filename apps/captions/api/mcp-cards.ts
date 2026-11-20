@@ -4,6 +4,7 @@ import { env } from "./lib/env";
 import { innerCall, sessionOf } from "./auth";
 import { findUser } from "./users";
 import { hasProxy } from "./library/routes";
+import { reviewVersionLeaves } from "./review";
 import { libraryGatedByPlugin } from "./library/sources";
 import { CARD_HTML } from "./mcp-card-view";
 
@@ -135,6 +136,8 @@ export function cardApp(call: Call) {
     const live = !!user && [user.fullKeyHash, ...(user.aiKeys ?? []).map((x) => x.hash)].some((h) => !!h && h.startsWith(String(t.k)));
     const path = pathOf(t);
     if (!user || !live || !(t.e > Date.now()) || !path || libraryGatedByPlugin()) return gone();
+    // a link is not its owner in their own window: under Blur faces it shows a Review version only when filed as blurred
+    if ((t.m === "rt" || t.m === "rp") && !(await reviewVersionLeaves(t.i, t.n!))) return gone();
     // a player asks for a video in ranges: the range goes in, and the answer's own status and range headers come back out
     const range = c.req.header("range");
     const ask = (to: string) => innerCall.run(sessionOf(user), () => call(to, { headers: range ? { range } : {} }));

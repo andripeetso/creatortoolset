@@ -54,7 +54,10 @@ const { Readable } = await import("node:stream");
 createUser("tinyacrobatics", "secret-tiny-acrobatics");
 createUser("sam", "secret-sam-acrobatics");
 // the owner's own Mac: the only sender whose blurred render counts
-const MAC = pairDevice("tinyacrobatics", "Tiny Mac").device.id;
+const PAIRED = pairDevice("tinyacrobatics", "Tiny Mac");
+const MAC = PAIRED.device.id;
+/** The computer signs in as itself (its device token): the only way a blurred render is declared. */
+const SIGNED = { authorization: `Bearer ${PAIRED.token}` };
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
   rmSync(dir, { recursive: true, force: true });
@@ -89,8 +92,9 @@ const body = async (r: Response | Promise<Response>): Promise<any> => (await r).
 const vOf = (assetId: string) => (d.prepare("SELECT current_version_id AS v FROM assets WHERE id = ?").get(assetId) as { v: string }).v;
 const pictures = (versionId: string) => (d.prepare("SELECT kind FROM derivatives WHERE version_id = ? ORDER BY kind").all(versionId) as { kind: string }[]).map((r) => r.kind);
 /** A computer (`device`, the owner's Mac by default) sends its blurred render of the original with full SHA-256 `of`: start, bytes, finish. */
-async function sendBlurred(library: string, name: string, bytes: string, of: string, device = MAC): Promise<{ status: number; versionId?: string; assetId?: string; message?: string }> {
-  const r = await app.request(`/api/library/${library}/uploads`, json({ filename: name, size: bytes.length, fromPath: `/Volumes/Tiny Footage/- BLURRED/${name}`, fromDevice: device, blurredOf: of }));
+async function sendBlurred(library: string, name: string, bytes: string, of: string, device = MAC, signed: Record<string, string> = SIGNED): Promise<{ status: number; versionId?: string; assetId?: string; message?: string }> {
+  const start = json({ filename: name, size: bytes.length, fromPath: `/Volumes/Tiny Footage/- BLURRED/${name}`, fromDevice: device, blurredOf: of });
+  const r = await app.request(`/api/library/${library}/uploads`, { ...start, headers: { ...(start.headers as Record<string, string>), ...signed } });
   if (r.status !== 201) return { status: r.status, message: (await body(r)).message };
   const { id } = (await r.json()) as { id: string };
   expect((await app.request(`/api/library/uploads/${id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(bytes.length) }, body: bytes })).status).toBe(204);
@@ -251,6 +255,11 @@ describe("a blurred render is a computer's own, and never the original's bytes",
     expect(await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, "mac-made-up")).toMatchObject({ status: 409, message: REFUSED_BLUR });
     const r = await app.request("/api/library/lib_kids/uploads", json({ filename: "Lunge blurred.mp4", size: 4, blurredOf: OF }));
     expect((await body(r)).message).toBe(REFUSED_BLUR);
+    // the owner's own browser (or a key) naming the real computer, without that computer's own token
+    expect(await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, MAC, {})).toMatchObject({ status: 409, message: REFUSED_BLUR });
+    // another computer of the account signed in, naming this one
+    const second = pairDevice("tinyacrobatics", "Tiny Laptop");
+    expect((await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, MAC, { authorization: `Bearer ${second.token}` })).status).toBe(409);
     // another account's computer is not this account's either
     const other = pairDevice("sam", "Sam Mac").device.id;
     expect((await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, other)).status).toBe(409);
@@ -265,6 +274,32 @@ describe("a blurred render is a computer's own, and never the original's bytes",
     await onMac("lib_kids", "Other.mov", { sha256: sha(other) });
     expect(await sendBlurred("lib_kids", "Other blurred.mp4", other, sha("something else"))).toMatchObject({ status: 409, message: REFUSED_NOT_BLURRED });
     REFUSED_BYTES.push(original, other);
+  });
+});
+
+describe("saving into the library under Blur faces keeps nothing on the server", () => {
+  it("an export, a final and a chat's footage go to the owner's computer (or say why not), never into the server's store", async () => {
+    const { saveToLibrary } = await import("./routes");
+    const file = path.join(dir, "export.mp4");
+    writeFileSync(file, "an-export-of-unblurred-footage");
+    const plain = (await (await onMac("lib_kids", "Source.mov")).json()) as { versionId: string };
+    const before = (d.prepare("SELECT COUNT(*) AS n FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = 'lib_kids' AND v.source_key NOT LIKE 'mac:%'").get() as { n: number }).n;
+    // exports.ts (its sources), library/finals.ts (a final), the studio editor's footageToLibrary (a chat's footage)
+    for (const [sources, footage, opts] of [[[plain.versionId], false, {}], [[], false, { finals: true }], [[], true, {}]] as const) {
+      const r = await saveToLibrary("tinyacrobatics", file, "Export.mp4", [...sources], "lib_kids", footage, undefined, opts);
+      expect(r && "error" in r ? r.code : r, JSON.stringify(r)).toMatch(/^(no_folder|no_computer)$/);
+    }
+    REFUSED_BYTES.push("an-export-of-unblurred-footage");
+    expect((d.prepare("SELECT COUNT(*) AS n FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = 'lib_kids' AND v.source_key NOT LIKE 'mac:%'").get() as { n: number }).n).toBe(before);
+    rmSync(file);
+  });
+});
+
+describe("the public AI Editor under Blur faces", () => {
+  it("renders no preview for the server: it blurs no face", async () => {
+    const { previewStep } = await import("../editor/preview");
+    const edit = { id: "e_blur", workspaceId: "tinyacrobatics", createdBy: "tinyacrobatics", projectId: "ws_kids" } as never;
+    await expect(previewStep({ edit, job: {} as never, variant: "V1", signal: new AbortController().signal })).rejects.toThrow(REFUSED_BLUR);
   });
 });
 

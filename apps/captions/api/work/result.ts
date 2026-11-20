@@ -14,7 +14,7 @@ import { defer, enqueueJob, type JobRow, parkJob } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
 import { runEnded } from "../editor/ended";
 import { coreSteps } from "../editor/engine";
-import { fileInReview } from "../editor/preview";
+import { editLeaves, fileInReview } from "../editor/preview";
 import { editDir, readDraft, readEdit, readStep, saveDraft, saveStep, type DraftFile } from "../editor/store";
 import { doneForDevice, failForDevice } from "../editor/worker";
 import { CACHE_EXTS, keptPath, readKept, splitJob } from "./package";
@@ -60,6 +60,11 @@ export async function acceptUpload(jobId: number, deviceId: string, rel: string,
   if (!heldBy(jobId, deviceId)) return false;
   const ok = allowed(jobId, rel);
   if (!ok) return false;
+  // Blur faces: a preview of an edit there is not kept (this editor blurs no face; editor/preview.ts editLeaves)
+  if (rel.startsWith(`editor/${ok.editId}/previews/`)) {
+    const e = readEdit(ok.editId);
+    if (e && !(await editLeaves(e)).ok) return false;
+  }
   const out = path.join(incoming(ok.editId, jobId), rel);
   await mkdir(path.dirname(out), { recursive: true });
   let n = 0;

@@ -888,6 +888,13 @@ const realUser = (u: SessionUser | undefined) =>
   u && u.role !== "visitor" ? u.username : undefined;
 
 /** Who may see a Review version on an owner, share or public-page route (null = not theirs). For a plug-in's routes too. */
+/** Version `n` of Review video `id` may go out on a link (an AI card's): it was filed as blurred, or Blur faces is off. */
+export async function reviewVersionLeaves(id: string, n: number): Promise<boolean> {
+  const m = await readMeta(id);
+  const v = m?.versions.find((x) => x.n === n);
+  return !!m && !!v && (!!v.blurred || !(await blurFacesIn(m.owner, m.workspace)));
+}
+
 /**
  * Who may watch the video the request names, as viewerOf answers. Under Blur faces nobody but its owner (and the server's
  * admin) watches a video with a version not filed as blurred: a link or a teammate gets nothing of it. Its files stay.

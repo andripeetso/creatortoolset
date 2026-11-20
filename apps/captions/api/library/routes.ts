@@ -14,7 +14,7 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, blursFaces, finalsUpload, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
+import { blobs, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
@@ -43,7 +43,7 @@ import { fileRoll, rollFolder } from "./roll";
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { indexOnMac, noPicture, parseOnMac, putSprite, putThumb, strayStrips } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
-import { deviceOf, isOnline, listDevices } from "../lib/devices";
+import { deviceForToken, deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
 import { addFolder } from "../devices-storage";
 import { workspaceById } from "../lib/workspaces";
@@ -282,7 +282,14 @@ export async function saveToLibrary(
     return { error: "Not enough free disk space for this file", code: "disk_reserve" };
   }
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here
+  // (under Blur faces Upload reads none for anything not blurred, so it goes there too)
   if (serverKind() !== "local" && hostsNone(opts.finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after, opts.importName);
+  // kept here: under Blur faces only a file made wholly of blurred renders (a sound has no picture); the rule said once more
+  // where the routing above changes. This Mac keeps its own (the server is the owner's computer, as mayReceive reads it)
+  if (serverKind() !== "local" && kindOf(filename) !== "audio") {
+    const left = mayLeave(lib, { blurred: sources.length > 0 && sources.every((v) => isBlurred(v)) });
+    if (!left.ok) return { error: left.body.message, code: "failed" };
+  }
   const staged = path.join(stagingDir(), `save-${randomUUID()}`);
   try {
     await copyFile(file, staged);
@@ -698,8 +705,10 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const made = await parseMade(body);
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
   // a computer's blurred render of an original (its full SHA-256): under Blur faces the one file that may leave it
-  // only from a computer of the caller's own: a made-up device or a browser's word is no blurred render
-  const blurredOf = from && sender?.owner === user.username && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
+  // only from the computer itself, signed in with its own device token: never the body's word, never a browser or a key
+  // that names a computer of the account (a re-encode of an original would pass the hash check)
+  const computer = deviceForToken(c.req.header("authorization"));
+  const blurredOf = from && computer && computer.id === fromDevice && computer.owner === user.username && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
   const into = { id: libraryId, collectionId: collection, blurredOf };
   // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
   // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isPhoneSession), never a browser's or a Mac's

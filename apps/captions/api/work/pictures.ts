@@ -15,7 +15,8 @@ import { serverKind } from "./server-work";
 import { offOf } from "../lib/balance";
 import { deviceForToken, touchDevice } from "../lib/devices";
 import { libraryChanged } from "../library/access";
-import { blobs, libraryDb } from "../library/db";
+import { blobs, LEAVES_SQL, libraryDb } from "../library/db";
+import { mayLeave } from "../library/upload-gate";
 import { firstClips } from "../library/jobs";
 import { CARD_SEG, storePictures, storeShots } from "../library/pictures";
 import { keptSheets } from "../library/shots";
@@ -66,6 +67,8 @@ function todo(d: Device, now = Date.now()): Todo[] {
        FROM asset_versions v JOIN assets a ON a.current_version_id = v.id JOIN libraries l ON l.id = a.library_id
        WHERE v.created_by = ? AND a.trashed_at IS NULL AND a.kind IN ('video', 'image') AND COALESCE(json_extract(l.settings, '$.pictures'), 1)
          AND (v.source_key NOT LIKE 'mac:%' OR v.mac_device = ?)
+         -- Blur faces: a clip the server holds that is not blurred hands out no card picture or sheets (a Mac's are its own)
+         AND (v.source_key LIKE 'mac:%' OR ${LEAVES_SQL})
          AND ((EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'thumb' AND x.storage_key IS NOT NULL)
                AND NOT EXISTS (SELECT 1 FROM pictures p WHERE p.version_id = v.id AND p.model = ? AND p.seg = -1))
            OR (${shotsIn} AND NOT EXISTS (SELECT 1 FROM pictures p WHERE p.version_id = v.id AND p.model = ? AND p.seg >= 0)))
@@ -165,6 +168,9 @@ picturesWorkApp.get("/:id/input", async (c) => {
   const h = await seen(idOf(c), d.id);
   if (!h) return c.json({ error: "Not found" }, 404);
   const db = libraryDb();
+  // Blur faces: no stored picture of a clip not blurred (from before it was on) goes to a computer
+  const lib = (db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(h.versionId) as { library_id: string } | undefined)?.library_id;
+  if (!mayLeave(lib, { versionId: h.versionId }).ok) return c.json({} satisfies PictureInput);
   const thumb = h.card ? (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'thumb'").get(h.versionId) as { storage_key: string | null } | undefined) : undefined;
   const card = thumb?.storage_key ? await blobs.localCopy(thumb.storage_key).then((f) => readFile(f)).catch(() => null) : null;
   const sheets = h.sheets === "server" ? (await keptSheets(db, h.versionId))?.sheets : undefined;

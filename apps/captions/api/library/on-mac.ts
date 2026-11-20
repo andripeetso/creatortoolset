@@ -136,7 +136,10 @@ export const framesDir = (versionId: string) => path.join(env.dataDir, "library"
  * restart loses them; the clip is then described from its words. For the call they are written out (heldDir) and gone after.
  */
 const heldStills = new Map<string, { at: number; stills: Buffer[]; bytes: number }>();
-const heldDir = (versionId: string) => path.join(tmpdir(), "ct-held-stills", versionId);
+const HELD_DIR = path.join(tmpdir(), "ct-held-stills");
+const heldDir = (versionId: string) => path.join(HELD_DIR, versionId);
+/** At start: what a stopped server left there (its memory is gone with it). */
+export const clearHeldStills = () => rm(HELD_DIR, { recursive: true, force: true });
 /** At most this much held, and for this long: past either the oldest go first (described from its words then). */
 export const HELD_STILLS_BYTES = 256 * MB;
 export const HELD_STILLS_MS = 6 * 3600_000;
