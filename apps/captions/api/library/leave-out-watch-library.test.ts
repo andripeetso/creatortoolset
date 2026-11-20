@@ -24,10 +24,13 @@ const put = (file: string, body: string) => {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, body);
 };
-const storage = (archiveOut?: string[]) => {
+const storage = (archiveOut?: string[], footageOut?: string[], archiveReach: Record<string, { path: string; at: number }> = {}) => {
   mkdirSync(path.join(dir, "data", "storage"), { recursive: true });
   const row = (id: string, p: string, leaveOut?: string[]) => ({ id, role: "footage", name: path.basename(p), origin: { host: "this-computer", path: p }, make: true, createdAt: 0, reach: {}, ...(leaveOut ? { leaveOut } : {}) });
-  writeFileSync(path.join(dir, "data", "storage", `${USER}.json`), JSON.stringify({ schemaVersion: 3, folders: [row("f", footage), row("a", archive, archiveOut)] }));
+  writeFileSync(
+    path.join(dir, "data", "storage", `${USER}.json`),
+    JSON.stringify({ schemaVersion: 3, folders: [row("f", footage, footageOut), { ...row("a", archive, archiveOut), reach: archiveReach }] }),
+  );
 };
 const d = libraryDb();
 const clip = (file: string) =>
@@ -57,6 +60,18 @@ describe("Folders left out over every watched folder of a library", () => {
     expect(clip(path.join(footage, "x.mp4"))!.trashed_at).toBeNull();
   });
 
+  it("a folder that can't be read for a pass keeps its clips: away is unknown, never gone", async () => {
+    renameSync(footage, `${footage} away`);
+    try {
+      await scan();
+      expect(clip(path.join(footage, "x.mp4"))!.trashed_at).toBeNull();
+    } finally {
+      renameSync(`${footage} away`, footage);
+    }
+    await scan();
+    expect(clip(path.join(footage, "x.mp4"))!.trashed_at).toBeNull();
+  });
+
   it("a version left out reads only its own copy: never another version's file", async () => {
     const q = clip(path.join(footage, "q.mp4"))!;
     const p = path.join(archive, "Private", "p.mp4");
@@ -74,5 +89,25 @@ describe("Folders left out over every watched folder of a library", () => {
     renameSync(path.join(footage, "y.mp4"), path.join(archive, "Private", "y.mp4"));
     await scan();
     expect(clip(path.join(footage, "y.mp4"))!.trashed_at).not.toBeNull();
+  });
+
+  it("the library's own copy in a watched folder is no copy that keeps a left-out clip", async () => {
+    put(path.join(footage, "Private", "c.mp4"), "c");
+    put(path.join(footage, "Copies", "L", "c.mp4"), "c");
+    await scan();
+    const v = (d.prepare("SELECT version_id FROM watch_seen WHERE path = ?").get(path.join(footage, "Copies", "L", "c.mp4")) as { version_id: string }).version_id;
+    d.prepare("INSERT INTO library_copies (id, library_id, device, path, state, created_at) VALUES ('copy_l', 'lib_l', 'this-computer', ?, 'ok', 0)").run(path.join(footage, "Copies"));
+    d.prepare("INSERT INTO copy_files (copy_id, version_id, rel_path, size, copied_at) VALUES ('copy_l', ?, 'L/c.mp4', 1, 0)").run(v);
+    storage(["Private"], ["Private"]);
+    await scan();
+    expect(d.prepare("SELECT a.trashed_at IS NOT NULL AS trashed FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(v)).toEqual({ trashed: 1 });
+  });
+
+  it("another computer's path to a folder never leaves out a file here", async () => {
+    // on pc_2 Archive is found a level up, where "Archive" is a folder inside it: only this computer's path weighs here
+    storage(["Private", "Archive"], ["Private"], { pc_2: { path: dir, at: 0 } });
+    put(path.join(archive, "w.mp4"), "w");
+    await scan();
+    expect(clip(path.join(archive, "w.mp4"))?.trashed_at).toBeNull();
   });
 });

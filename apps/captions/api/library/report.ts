@@ -192,12 +192,12 @@ function leaveLibrary(dev: Device, folderId: string, inLibs: string, own: Readon
 /**
  * Moves each clip of `assets` into the trash unless it is held (trash.ts trashHeld) or another copy of it is still found
  * somewhere (a verified or found place of any of its versions, on any computer, that is not one of the library's own
- * copies, COPY_PLACE). Returns the ones it moved.
+ * copies, COPY_PLACE), or may be: one on a drive not read now (unchecked) is unknown, never gone. Returns the ones it moved.
  */
 export function settleLeft(assets: Iterable<string>, now: number, what: string): string[] {
   const live = db().prepare(
     `SELECT 1 FROM version_places p JOIN asset_versions v ON v.id = p.version_id
-      WHERE v.asset_id = ? AND p.kind = 'original' AND p.state IN ('verified','found') AND NOT ${COPY_PLACE} LIMIT 1`,
+      WHERE v.asset_id = ? AND p.kind = 'original' AND p.state IN ('verified','found','unchecked') AND NOT ${COPY_PLACE} LIMIT 1`,
   );
   const moved: string[] = [];
   for (const id of assets) {

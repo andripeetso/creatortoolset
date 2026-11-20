@@ -294,6 +294,22 @@ describe("every way a left-out file could come in or stay", () => {
     expect(asset(620).trashed_at).not.toBeNull();
   });
 
+  it("a clip whose original's drive is away stays when its other copy is left out, and after the drive is back", async () => {
+    const SSD = "/Volumes/Tiny SSD/A";
+    const MOV = "/Users/tia/Movies";
+    await changeStorage("tia", (st) => {
+      st.folders.push(row("fold_ssd", SSD), row("fold_mov", MOV));
+    });
+    await indexForDevice(mac, "fold_ssd", onMac(SSD, "x.mov", 630));
+    await scan("fold_mov", MOV, ["Private/x.mov"], 630);
+    await listOf("fold_mov", ["Private"]);
+    await applyReport(mac, [{ id: "fold_ssd", state: "disk_away", files: [], unreadable: [] }]);
+    await scan("fold_mov", MOV, ["Private/x.mov"], 630);
+    expect(asset(630).trashed_at).toBeNull();
+    await scan("fold_ssd", SSD, ["x.mov"], 630);
+    expect(asset(630).trashed_at).toBeNull();
+  });
+
   it("a member adding to the owner's library is checked against the owner's list as well as their own", async () => {
     const [lib] = await librariesOf("tia", row("fold_f1", F1) as never);
     expect(leftOutBy(await mediaForLibrary("bo", lib!.id), `${F1}/- NO SHARE/m.mov`)).toBe(true);

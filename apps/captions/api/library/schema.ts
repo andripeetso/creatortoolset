@@ -670,4 +670,6 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE collections ADD COLUMN shoot TEXT;`,
   // a strip's frame size (media/sprite.ts noteStrip): frames keep the clip's shape since 2026-11-19; none noted = an old 160 × 90 strip
   `ALTER TABLE derivatives ADD COLUMN cell_w INTEGER; ALTER TABLE derivatives ADD COLUMN cell_h INTEGER;`,
+  // a file by its size and fingerprint (report.ts: a scan's match, a file moved into a left-out folder)
+  `CREATE INDEX versions_quick ON asset_versions(quick);`,
 ];
