@@ -1,7 +1,7 @@
 import { DESIGN_LIMITS, INSTANCE_FIXED, INSTANCE_FROM_MAIN, type DesignInstance, type DesignPage, type GroupLayer, type Layer } from "../../../contracts/design";
 import { fitContents } from "./resize";
 import { retext } from "./runs";
-import { everyLayer, isGroup, mapLayers } from "./tree";
+import { everyLayer, isGroup, mapLayers, same, stable } from "./tree";
 
 /**
  * Components (contracts/design.ts GroupLayer `component`, `instance`): a badge, a handle pill or a slide number made once
@@ -19,9 +19,7 @@ export const isInstance = (l: Layer | null | undefined): l is Instance => isGrou
 /** Whether any frame has a main or an instance (else syncInstances has nothing to do). */
 export const usesComponents = (pages: readonly DesignPage[]): boolean => pages.some((p) => everyLayer(p.layers).some((l) => isGroup(l) && (l.component !== undefined || !!l.instance)));
 
-/** Two values alike, whatever order their fields were written in (a check writes them in its own order). */
-const stable = (v: unknown): string => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
-const same = (a: unknown, b: unknown) => a === b || stable(a) === stable(b);
+
 /** How many layers one pass may make: what a design can hold many times over, so a component placed inside itself through property values or a hostile write stops. */
 const BUDGET = 20_000;
 const FIXED = new Set(INSTANCE_FIXED);
@@ -217,7 +215,8 @@ function copiesOfMains<P extends DesignPage>(pages: readonly P[], was?: readonly
   for (const pass of [true, false])
     for (const p of pages) for (const l of everyLayer(p.layers)) if (isMain(l) && !keeper.has(l.component) && (!pass || before.has(`${p.id}/${l.id}/${l.component}`))) keeper.set(l.component, { at: `${p.id}/${l.id}`, main: l });
   // a copy (and one changed since it was copied) has the same layers in the same places, whatever their looks and ids
-  const skeleton = (m: GroupLayer) => stable([m.w, m.h, everyLayer(m.layers).map((k) => [k.type, k.name ?? "", k.x, k.y, k.w, k.h])]);
+  // (and all an instance never changes of a layer: a path's points, an auto layout, a mask…)
+  const skeleton = (m: GroupLayer) => stable([m.w, m.h, everyLayer(m.layers).map((k) => [k.name ?? "", Object.fromEntries(Object.entries(k).filter(([f]) => FIXED.has(f) && f !== "id" && f !== "layers"))])]);
   /** A copy of main `k` as an instance of it: what its layers look like that the main's do not, its overrides. */
   const asInstance = (l: Main, k: Main): Instance => {
     const theirs = everyLayer(k.layers);

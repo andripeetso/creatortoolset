@@ -384,6 +384,8 @@ export function safeSvg(svg: unknown): string | null {
 export interface PageRules {
   /** what each frame (by its id) had before this write: no layer gets an id another one had (tree.ts takeId) */
   before?: (frame: string) => IdsBefore | undefined;
+  /** the person's window's frames: an id it sends is its layer's (it never gives one twice), only a new one goes past `next` */
+  own?: boolean;
   /** a frame's size when it gives none of its own */
   w: number;
   h: number;
@@ -715,7 +717,7 @@ export function cleanPages(raw: unknown, r: PageRules): { pages: DesignPage[]; n
         held++;
         // an id in parts only under the group it starts with (an instance's, or one's that was): no other layer may take one
         const ok = (id: string) => LAYER_ID.test(id) && (!id.includes(".") || (!!owner && id.startsWith(`${owner}.`)));
-        const id = takeId(obj(l) ? l.id : undefined, ids, ok, before, held);
+        const id = takeId(obj(l) ? l.id : undefined, ids, ok, before, held, false, r.own);
         ids.add(id);
         fitSizing(clean, flowing, sayL);
         // in a flow a mask takes a place of its own, beside what it cuts (which is then cut away)

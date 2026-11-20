@@ -8,6 +8,16 @@ import { DESIGN_LIMITS, type DesignPage, type GroupLayer, type Layer } from "../
  * layer anywhere in it. No DOM here.
  */
 
+/** Two values alike, whatever order their fields were written in (the server, a check, write them in their own order). */
+export const stable = (v: unknown): string => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+export const same = (a: unknown, b: unknown): boolean => a === b || stable(a) === stable(b);
+
+/** An id's number (l<n>), or 0: one past what a frame can count to (a hand-typed l99999999999) is no number of its own. */
+const idNumber = (id: string): number => {
+  const n = Number(/^l(\d{1,6})$/.exec(id)?.[1] ?? 0);
+  return n < 1_000_000 ? n : 0;
+};
+
 export interface Rect {
   x: number;
   y: number;
@@ -280,7 +290,7 @@ export function unwrap(inner: readonly Layer[], ids: readonly string[]): Layer[]
  * The number a frame's next new layer id starts from (l<n>): past its `next` and every l<n> it has, so an id is never
  * given again once a layer had it (another window, an AI, an instance's override may still name it).
  */
-export const nextOf = (p: Pick<DesignPage, "layers" | "next">): number => Math.max(p.next ?? 0, ...everyLayer(p.layers).map((l) => Number(/^l(\d+)$/.exec(l.id)?.[1] ?? 0) + 1));
+export const nextOf = (p: Pick<DesignPage, "layers" | "next">): number => Math.max(Math.min(p.next ?? 0, 1_000_000), ...everyLayer(p.layers).map((l) => idNumber(l.id) + 1));
 
 /** Frames after a change, each that changed with `next` past every id it or its version before had (nextOf). The same list when none needs it. */
 export function keepNext<P extends DesignPage>(pages: P[], was: readonly DesignPage[]): P[] {
@@ -306,13 +316,15 @@ export const idsBefore = (p: DesignPage | undefined): IdsBefore | undefined => p
  * layer's before (`before`), else l<n> from `from` and past the frame's next. `added`: the layer is new, so an id the
  * frame had (one taken out in this same write too) is another layer's; else it may be its own, kept.
  */
-export function takeId(asked: unknown, taken: ReadonlySet<string>, ok: (id: string) => boolean, before?: IdsBefore, from = 1, added = false): string {
+export function takeId(asked: unknown, taken: ReadonlySet<string>, ok: (id: string) => boolean, before?: IdsBefore, from = 1, added = false, own = false): string {
+  // `own`: the layers are the person's window's, which never gives an id twice (keepNext): one below `next` is its own layer back (undone)
   const reused = (id: string) => {
-    const n = /^l(\d+)$/.exec(id)?.[1];
-    return !!before && ((added && before.ids.has(id)) || (n !== undefined && Number(n) < before.next && !before.ids.has(id)));
+    if (own) return false;
+    const n = idNumber(id);
+    return !!before && ((added && before.ids.has(id)) || (n > 0 && n < before.next && !before.ids.has(id)));
   };
   if (typeof asked === "string" && ok(asked) && !taken.has(asked) && !reused(asked)) return asked;
-  for (let n = Math.max(from, before?.next ?? 0); ; n++) if (!taken.has(`l${n}`)) return `l${n}`;
+  for (let n = Math.max(from, Math.min(before?.next ?? 0, 1_000_000)); ; n++) if (!taken.has(`l${n}`)) return `l${n}`;
 }
 
 /** Ids a frame does not use yet, however deep (nor any in `also`), from `floor` up (its nextOf): l1, l2 … */
@@ -321,7 +333,7 @@ export function freshLayerIds(layers: readonly Layer[], count: number, also: rea
   const taken = new Set([...all.map((l) => l.id), ...also]);
   const out: string[] = [];
   // past the highest l<n> it has, so one taken out in the middle is never given again (another window may still edit it)
-  const top = Math.max(all.length, floor - 1, ...[...taken].map((id) => Number(/^l(\d+)$/.exec(id)?.[1] ?? 0)));
+  const top = Math.max(all.length, Math.min(floor, 1_000_000) - 1, ...[...taken].map(idNumber));
   for (let n = top + 1; out.length < count; n++) if (!taken.has(`l${n}`)) out.push(`l${n}`);
   return out;
 }

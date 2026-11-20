@@ -309,6 +309,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const unsaved = useRef<Page[] | null>(null);
   /** The pages of the save on its way: the server may have them before this window hears so (mergeFrames `sent`). */
   const sent = useRef<Page[]>([]);
+  /** This window, as its saves name it (`by`). */
+  const by = useRef(`w${Math.random().toString(36).slice(2, 14)}`);
   /** What a save said: what the server left out, and what it changed that loses nothing. */
   const told = useCallback((d: Design & { notes?: string[]; changes?: string[] }, quiet = false) => {
     if (d.notes?.length) (quiet ? (n: string) => toast(n, { id: "design-not-saved" }) : setError)(`Not saved: ${d.notes.join("; ")}`);
@@ -326,7 +328,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       setSaved("saving");
       saving.current = saving.current.then(() => {
         sent.current = pages;
-        return saveDesign(id, { pages, since: server.current.at }).then(
+        return saveDesign(id, { pages, since: server.current.at, by: by.current }).then(
           (d) => {
             server.current = { pages, at: d.updatedAt };
             sent.current = [];
@@ -338,7 +340,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
             // changed somewhere else while this save was on its way (an AI's frames): nothing was written. This
             // window's changes are done again on the design as it is now, and that is saved: a moment later when
             // the canvas changed with it (as any change is), at once when it did not
-            if (e instanceof DesignChanged) return void (remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
+            // (refused: the server has none of it, so nothing it has is this window's own save come back)
+            if (e instanceof DesignChanged) return void ((sent.current = []), remote.current(e.design) || (JSON.stringify(latest.current) !== JSON.stringify(e.design.pages) && send(latest.current)));
             failed.current = true;
             unsaved.current ??= pages;
             setSaved("unsaved");
@@ -371,7 +374,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     // on the way out of the page: refused for a change made elsewhere, merged onto it and sent again (three times at
     // most); what the server kept less of, or never took, is said where it still shows, as a notice
     const leave = (pages: Page[], base: Page[], since: number, tries = 0): Promise<void> =>
-      saveDesign(id, { pages, since }).then(
+      saveDesign(id, { pages, since, by: by.current }).then(
         (d) => told(d, true),
         (e) => {
           if (e instanceof DesignChanged && tries < 3) return leave(onto(pages, base, e.design.pages), layoutPages(e.design.pages, measureWords), e.design.updatedAt, tries + 1);
@@ -386,7 +389,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         // the window closing: one the browser carries on with after the page is gone, with what this window knew of
         // the design, so it never writes over a change made since; refused, merged onto that and sent once more
         const put = (p: Page[], since: number) => {
-          const body = JSON.stringify({ pages: p, since });
+          const body = JSON.stringify({ pages: p, since, by: by.current });
           return fetch(`/api/designs/${id}`, { method: "PUT", keepalive: body.length < 60_000, headers: { "content-type": "application/json" }, body });
         };
         return void put(pages, server.current.at)
@@ -397,7 +400,9 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           })
           .catch(() => {});
       }
-      saving.current = saving.current.then(() => leave(pages, server.current.pages, server.current.at));
+      // what this window knew as it left: a change made since (after a save still on its way) is merged, never written over
+      const was = server.current;
+      saving.current = saving.current.then(() => leave(pages, was.pages, was.at));
     };
     const closing = () => flush(true);
     window.addEventListener("pagehide", closing);

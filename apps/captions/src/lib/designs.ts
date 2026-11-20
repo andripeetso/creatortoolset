@@ -30,7 +30,8 @@ export const createDesign = (d: NewDesign) => send<Design>("/api/designs", "POST
 export const getDesign = (id: string) => send<Design>(base(id));
 /** `since`: the design's last change this window knows of (its updatedAt). Changed after it: DesignChanged, and nothing was saved. */
 /** `notes`: what the server's check left out of what was sent (past a limit), each said. */
-export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number }) => send<Design & { notes?: string[] }>(base(id), "PUT", body);
+/** `by`: this window, so a save of its own on top of its own (one sent as it closed) is never refused (contracts Design `writer`). */
+export const saveDesign = (id: string, body: { name?: string; pages?: DesignPage[]; since?: number; by?: string }) => send<Design & { notes?: string[]; changes?: string[] }>(base(id), "PUT", body);
 export const deleteDesign = (id: string) => send<{ ok: true }>(base(id), "DELETE");
 export const pictureUrl = (id: string, picture: string) => `${base(id)}/pictures/${picture}`;
 

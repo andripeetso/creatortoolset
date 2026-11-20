@@ -298,3 +298,43 @@ describe("third review: keys", () => {
     expect([(at(out, "p2", "j") as GroupLayer).instance!.of, (at(out, "p2", "j2") as GroupLayer).instance!.of]).toEqual(["pill", renamed]);
   });
 });
+
+describe("fourth review", () => {
+  const g = (id: string, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x: 100, y: 100, w: 300, h: 100, layers, ...more });
+  const f = (layers: Layer[]) => page("p1", layers);
+  const merge1 = (mine: DesignPage, base: DesignPage, theirs: DesignPage, sent?: DesignPage) => mergeFrames([mine], [base], [theirs], sent ? [sent] : [])[0]!;
+  const find = (p: DesignPage, id: string) => findLayer(p.layers, id) as Layer & Record<string, unknown>;
+
+  it("keeps both groups and what they hold when each side moved one into the other", () => {
+    const base = f([g("g1", [shape("a")]), g("g2", [shape("b")], { x: 500 })]);
+    const mine = f([g("g1", [shape("a"), g("g2", [shape("b")], { x: 0 })])]);
+    const theirs = f([g("g2", [shape("b"), g("g1", [shape("a")], { x: 0 })], { x: 500 })]);
+    const out = merge1(mine, base, theirs);
+    expect(["g1", "g2", "a", "b"].map((id) => find(out, id)?.id)).toEqual(["g1", "g2", "a", "b"]);
+  });
+
+  it("keeps a group this window changed with what it holds when the server deleted it", () => {
+    const base = f([g("g", [shape("a", "#ff0000")])]);
+    const out = merge1(f([g("g", [shape("a", "#ff0000")], { x: 400 })]), base, f([]));
+    expect([find(out, "g")?.x, find(out, "a")?.fill]).toEqual([400, "#ff0000"]);
+  });
+
+  it("never takes a refused save's layer for the server's: a new layer of the server's under that id is another", () => {
+    const base = f([shape("l1")]);
+    const sent = f([shape("l1"), text("l9", "Mine")]);
+    const out = merge1(sent, base, f([shape("l1"), text("l9", "The AI's")]), sent);
+    expect(everyLayer(out.layers).filter((l) => l.type === "text").map((l) => (l as TextLayer).text).sort()).toEqual(["Mine", "The AI's"]);
+  });
+
+  it("lifts what came out of a deleted group to where the group lay", () => {
+    const base = f([shape("x"), g("g", [shape("a")]), shape("y")]);
+    const out = merge1(f([shape("x"), shape("y")]), base, f([shape("x"), g("g", [shape("a"), shape("c", "#00ff00")]), shape("y")]));
+    expect(out.layers.map((l) => l.id)).toEqual(["x", "c", "y"]);
+  });
+
+  it("makes a main copied with other points, layout or mask a main of its own, not an instance", () => {
+    const was = [page("p1", [pill()]), page("p2", [])];
+    const copy = { ...pill(), id: "k", layers: [shape("bg2", "#111111", { mask: "alpha" }), text("label2", "@tinyacrobatics", { bind: { text: "Handle" } })] };
+    expect(at(syncInstances([was[0]!, page("p2", [copy])], was), "p2", "k").component).toMatch(/^c\d+$/);
+  });
+});

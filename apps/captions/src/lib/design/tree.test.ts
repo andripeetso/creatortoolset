@@ -3,7 +3,7 @@ import type { DesignPage, GroupLayer, Layer } from "@contracts/design";
 import { boundsOf, freshIds, mergeFrames, resizeBox } from "./hands";
 import { fitContents } from "./resize";
 import { guessWidth, layoutLayers } from "./layout";
-import { idsBefore, keepNext, takeId, depthOf, dropInto, maskWithNext, seenBox, shapeBounds, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
+import { idsBefore, keepNext, nextOf, takeId, depthOf, dropInto, maskWithNext, seenBox, shapeBounds, everyLayer, freshLayerIds, hug, inFrame, inScope, moveInto, moveRow, reid, scopeLayers, scopeOf, unscope, unwrap, withScope, wrap } from "./tree";
 
 const rect = (id: string, x: number, y: number, w = 20, h = 10, more: object = {}): Layer => ({ id, type: "shape", shape: "rect", fill: "#ff0000", x, y, w, h, ...more }) as Layer;
 const group = (id: string, x: number, y: number, w: number, h: number, layers: Layer[], more: Partial<GroupLayer> = {}): GroupLayer => ({ id, type: "group", x, y, w, h, layers, ...more });
@@ -210,5 +210,17 @@ describe("ids given once", () => {
     const before: DesignPage = { id: "p", background: "#ffffff", layers: [r("l1"), r("l9")] };
     expect(keepNext([{ ...before, layers: [r("l1")] }], [before])[0]!.next).toBe(10);
     expect(takeId("l9", new Set(["l1"]), () => true, idsBefore(before) && { next: 10, ids: new Set(["l1"]) })).toBe("l10");
+  });
+});
+
+describe("ids a frame cannot count to", () => {
+  it("never loops or repeats on an id past a million", () => {
+    const r = (id: string): Layer => ({ id, type: "shape", shape: "rect", fill: "#000000", x: 0, y: 0, w: 1, h: 1 });
+    const huge = [r("l1"), r("l99999999999999999999999")];
+    expect(nextOf({ layers: huge })).toBe(2);
+    expect(freshLayerIds(huge, 2)).toEqual(["l3", "l4"]);
+    const taken = new Set(["l1"]);
+    const a = takeId(undefined, taken, () => true, { next: 1e23, ids: taken });
+    expect(a).toBe("l1000000");
   });
 });

@@ -2,7 +2,7 @@ import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer, type PathLayer 
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
-import { boundsOf, everyLayer, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, nextOf, outOf, parentOf, seenBox } from "./tree";
+import { boundsOf, everyLayer, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, nextOf, outOf, parentOf, same, seenBox } from "./tree";
 import { pathBounds } from "./path";
 
 /**
@@ -397,9 +397,7 @@ export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, their
   return next > (out.next ?? 0) && (mine.next !== undefined || theirs.next !== undefined) ? { ...out, next } : out;
 }
 
-/** Two values alike, whatever order their fields were written in (the server writes them in its own order). */
-const stable = (v: unknown): string => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
-const same = (a: unknown, b: unknown) => a === b || stable(a) === stable(b);
+
 type Rec = Record<string, unknown>;
 
 /** Objects changed on both sides, key by key (`depth` levels down): what this window changed is its own, the rest the server's. */
@@ -454,6 +452,11 @@ function indexed(layers: readonly Layer[]): Map<string, At> {
   walk(layers, ROOT, false);
   return out;
 }
+/** The containers a layer lies in on one side, innermost first. */
+function* ancestors(side: ReadonlyMap<string, At>, id: string): Generator<string> {
+  const seen = new Set<string>();
+  for (let p = side.get(id)?.parent; p !== undefined && p !== ROOT && !seen.has(p); p = side.get(p)?.parent) (seen.add(p), yield p);
+}
 /** A layer's own fields, as a change by a hand is told: without its layers, and without the place an auto layout gives it. */
 const ownOf = (a: At, flowing: boolean): Rec => {
   const { layers: _l, ...rest } = a.l as Layer & { layers?: Layer[] };
@@ -474,7 +477,9 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
   const T = indexed(theirs);
   const B = indexed(base);
   // what this window sent that the server has (a reply that never came): its base, not a new layer of its own
-  for (const [id, a] of indexed(sent)) if (!B.has(id) && T.has(id)) B.set(id, a);
+  // (only when the server has it as it was sent, but for the server's rounding: a layer the server gave that id is another)
+  const rounded = (l: Layer) => JSON.stringify(ownOf({ l } as At, false), (_, x) => (typeof x === "number" ? Math.round(x * 10) / 10 : x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+  for (const [id, a] of indexed(sent)) if (!B.has(id) && T.has(id) && rounded(a.l) === rounded(T.get(id)!.l)) B.set(id, a);
   const mine = apart(mine0, B, T, floor);
   const M = indexed(mine);
   const flows = (side: Map<string, At>, parent: string) => {
@@ -497,6 +502,9 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
     else if (m && !m.inInstance && changed(M, id)) kept.set(id, m.l);
     else if (t && !t.inInstance && changed(T, id)) kept.set(id, t.l);
   }
+  // a container kept from one side (changed there, taken out on the other) keeps its layers of that side: none is left empty
+  for (const [side, other] of [[M, T], [T, M]] as const)
+    for (const [id, a] of side) if (!kept.has(id) && !other.has(id) && B.has(id) && [...ancestors(side, id)].some((p) => kept.has(p) && !other.has(p))) kept.set(id, a.l);
   // each one's container: the side that moved it (this window first), else the server's; a layer of an instance only in it
   const home = new Map<string, { parent: string; side: Map<string, At> }>();
   for (const id of kept.keys()) {
@@ -506,6 +514,19 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
     const side = m && (!b || m.parent !== b.parent || !t) ? M : t ? T : M;
     home.set(id, { parent: side.get(id)!.parent, side });
   }
+  for (const id of home.keys()) {
+    const seen = new Set<string>();
+    for (let p = id; p !== ROOT && home.has(p); p = home.get(p)!.parent) {
+      if (seen.has(p)) {
+        // a loop: the layer of it this window moved goes where the server (or the base) has it
+        const fix = [...seen].find((x) => home.get(x)!.side === M && T.has(x)) ?? [...seen].find((x) => B.has(x));
+        if (fix) home.set(fix, T.has(fix) ? { parent: T.get(fix)!.parent, side: T } : { parent: B.get(fix)!.parent, side: B as Map<string, At> });
+        break;
+      }
+      seen.add(p);
+    }
+  }
+  const liftedFrom = new Map<string, string>();
   for (const [id, h] of home) {
     // the place in its container from the side it lies as
     const from = h.side.get(id)!.l as unknown as Rec;
@@ -522,6 +543,7 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
         break;
       }
       l = layerOut(c.l, l as unknown as Layer) as unknown as Rec;
+      liftedFrom.set(id, parent);
       parent = c.parent;
     }
     if (!l) kept.delete(id);
@@ -538,12 +560,14 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
       const before = mineOrder.slice(0, n).reverse().find((x) => order.includes(x));
       order.splice(before ? order.indexOf(before) + 1 : 0, 0, id);
     });
-    // what came up from a container taken away: where that container lay
+    // what came up from a container taken away: where that container lay, after what lay before it
     for (const id of ids)
       if (!order.includes(id)) {
-        const from = [...(M.get(id) ? [M] : []), T, B].map((s) => s.get(id)?.parent).find((p) => p !== undefined && p !== parent);
-        const at = from ? order.indexOf(from) : -1;
-        order.splice(at >= 0 ? at : order.length, 0, id);
+        const via = liftedFrom.get(id);
+        const side = [M, T, B].find((s) => via && s.get(via)?.parent === parent);
+        const siblings = side ? [...side.values()].filter((a) => a.parent === parent).sort((a, b) => a.n - b.n).map((a) => a.l.id) : [];
+        const before = siblings.slice(0, Math.max(0, siblings.indexOf(via!))).reverse().find((x) => order.includes(x));
+        order.splice(before ? order.indexOf(before) + 1 : via && side ? 0 : order.length, 0, id);
       }
     // reordered here: the layers all three have go in this window's order
     const common = (list: readonly string[]) => list.filter((id) => order.includes(id) && T.get(id)?.parent === parent && B.get(id)?.parent === parent && M.get(id)?.parent === parent);

@@ -560,6 +560,9 @@ export interface Design extends Omit<DesignSummary, "pages"> {
   /** the animation style whose brief and pictures the AI last designed it from (contracts/editor-styles.ts) */
   look?: string;
   createdAt: number;
+  /** the window that wrote its last changes (a save's `by`), and the version before its run of them began: a save of that window's on top of no one else's change is never refused (api/designs.ts PUT) */
+  writer?: string;
+  writerFrom?: number;
 }
 
 /**
