@@ -2,8 +2,18 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ffmpegCommand } from "../ffmpeg-runtime";
+
+// every AI call is counted: at Effort Off, Smart folders file with none
+vi.mock("../ai-vision", async (real) => {
+  const m = await real<typeof import("../ai-vision")>();
+  return { ...m, completeVisionWithFallback: vi.fn(m.completeVisionWithFallback) };
+});
+vi.mock("../ai-complete", async (real) => {
+  const m = await real<typeof import("../ai-complete")>();
+  return { ...m, completeWithFallback: vi.fn(m.completeWithFallback) };
+});
 
 // Smart folders by shoot (shoots.ts, MEDIA LIBRARY CEO 11-19): a vlog's clips go into the folder of the day and place
 // they were filmed, never a topic folder; topics stay tags; a camera photo is footage, only a graphic goes to Graphics;
@@ -21,6 +31,8 @@ const { organizeOnProbe, refileShoots } = await import("./organize");
 const { dayLabel, nameShoot, SHOOT_GAP_MS } = await import("./shoots");
 const { indexOnMac } = await import("./on-mac");
 const { tick } = await import("./worker");
+const { completeVisionWithFallback } = await import("../ai-vision");
+const { completeWithFallback } = await import("../ai-complete");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -231,6 +243,23 @@ describe("Smart folders by shoot", () => {
     // once: a second run files nothing and changes nothing
     expect(await refileShoots(d, "lib_old")).toBe(0);
     expect({ folders: foldersOf("lib_old"), drv0: inFolder("drv0"), drv2: inFolder("drv2"), drv3: inFolder("drv3"), photo: inFolder("old-photo"), logo: inFolder("old-logo") }).toEqual(after);
+  });
+
+  it("at Effort Off, Smart folders file a clip into its day with no AI call; a clip with no location is named by the day alone", async () => {
+    const d = libraryDb();
+    const off = { organize: "ai", describe: false, transcribe: false, look: false, timeline: false, embed: false };
+    d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at, settings) VALUES ('lib_off', 'local', 'Off', 'local', 0, ?)").run(JSON.stringify(off));
+    const file = path.join(dir, "off.mp4");
+    execFileSync(ffmpegCommand(), ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=10", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+      "-metadata", `creation_time=${YEAR}-11-12T12:00:00Z`, file]);
+    vi.mocked(completeVisionWithFallback).mockClear();
+    vi.mocked(completeWithFallback).mockClear();
+    await probed("lib_off", "off-clip", "video", file);
+    for (let i = 0; i < 20; i++) await tick();
+    expect(inFolder("off-clip")).toEqual([dayLabel(Date.UTC(YEAR, 10, 12, 12, 0))]);
+    expect(completeVisionWithFallback).not.toHaveBeenCalled();
+    expect(completeWithFallback).not.toHaveBeenCalled();
+    expect(d.prepare("SELECT kind FROM jobs WHERE version_id = 'v-off-clip' AND kind IN ('describe', 'transcribe', 'look', 'embed')").all()).toEqual([]);
   });
 
   it("a file indexed on a Mac is filed by the date and place the Mac read; an older Mac's JPEG is footage, its PNG a graphic", async () => {
