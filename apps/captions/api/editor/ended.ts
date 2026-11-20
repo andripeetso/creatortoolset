@@ -23,10 +23,14 @@ export function cutMedia(edit: EditMeta, variant: string): AssistantMedia | null
   if (!p) return null;
   const pass = nextPass(edit, variant);
   const api = `/api/review/assets/${p.assetId}/v/${p.n}`;
+  // "Handstand basics · v2": the edit and the Review version that plays, as the line says it; with several planned, the
+  // planned version's title between them
+  const plans = readStep(edit.id, "plan")?.plans ?? [];
+  const planned = plans.length > 1 ? ` · ${plans.find((x) => x.name === variant)?.title || variant}` : "";
   return {
     id: `review:${p.assetId}:${p.n}`,
     kind: "video",
-    title: `${edit.name} ${variant}${p.n > 1 ? ` · version ${p.n}` : ""}`,
+    title: `${edit.name}${planned} · v${p.n}`,
     src: `${api}/play`,
     poster: `${api}/thumb`,
     href: `/review/${p.assetId}?v=${p.n}`,

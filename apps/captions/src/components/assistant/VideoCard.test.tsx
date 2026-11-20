@@ -11,7 +11,7 @@ const confirmDialog = vi.fn();
 vi.mock("@/lib/dialogs", () => ({ confirmDialog: (...a: unknown[]) => confirmDialog(...a) }));
 const { AskChanges, VideoCards } = await import("./VideoCard");
 
-const cut: AssistantMedia = { id: "review:a1:2", kind: "video", title: "Tiny tumbles v1 · version 2", src: "/p", href: "/review/a1?v=2", cut: { asset: "a1", n: 2, next: "B-roll" } };
+const cut: AssistantMedia = { id: "review:a1:2", kind: "video", title: "Tiny tumbles · v2", src: "/p", href: "/review/a1?v=2", cut: { asset: "a1", n: 2, next: "B-roll" } };
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 const show = (media: AssistantMedia[], ask = vi.fn()) => {
@@ -33,7 +33,7 @@ describe("a ready cut in the chat", () => {
   it("plays with Review ›, Approve left (saying what it starts) and Request changes right; a plain video keeps Open and no buttons", () => {
     const el = show([cut, { ...cut, id: "v", cut: undefined }]);
     expect(buttons()).toEqual(["Approve · add B-roll", "Request changes"]);
-    expect([...el.querySelectorAll("a")].map((a) => a.textContent)).toEqual(["Tiny tumbles v1 · version 2", "Review ", "Tiny tumbles v1 · version 2", "Open "]);
+    expect([...el.querySelectorAll("a")].map((a) => a.textContent)).toEqual(["Tiny tumbles · v2", "Review ", "Tiny tumbles · v2", "Open "]);
   });
 
   it("Approve approves that version itself; an unblurred cut asks first, as Review does", async () => {

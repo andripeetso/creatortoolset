@@ -77,7 +77,7 @@ enum PhoneDemo {
     {"id":"c1","provider":"claude","aiName":"Claude","workspace":"tiny","sendNow":true,"videosLater":true,
      "messages":[{"id":"m1","role":"user","text":"Turn yesterday's beam clips into a 30 second reel","at":\(ago(20))},
                  {"id":"m2","role":"assistant","text":"v2 of “Handstand basics” is ready.","at":\(ago(18)),"status":"done",
-                  "media":[{"id":"review:r1:2","kind":"video","title":"Handstand basics v1 · version 2","src":"/api/review/assets/r1/v/2/play",
+                  "media":[{"id":"review:r1:2","kind":"video","title":"Handstand basics · v2","src":"/api/review/assets/r1/v/2/play",
                             "poster":"/demo/2","href":"/review/r1?v=2","duration":90,"cut":{"asset":"r1","n":2,"next":"B-roll"}}]}],
      "past":[{"id":"c2","title":"Captions for the cartwheel post","at":\(ago(300)),"count":6},
              {"id":"c3","title":"Open day poster for the gym","at":\(ago(400)),"count":3}]}

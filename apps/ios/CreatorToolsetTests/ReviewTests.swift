@@ -256,7 +256,7 @@ final class ReviewTests: XCTestCase {
     }
 
     func testAReadyCutInTheChatDecodes() throws {
-        let media = try JSONDecoder().decode(AssistantMedia.self, from: Data(#"{"id":"review:a1:2","kind":"video","title":"Tiny tumbles v1 · version 2","src":"/p","href":"/review/a1?v=2","cut":{"asset":"a1","n":2,"next":"cards"}}"#.utf8))
+        let media = try JSONDecoder().decode(AssistantMedia.self, from: Data(#"{"id":"review:a1:2","kind":"video","title":"Tiny tumbles · v2","src":"/p","href":"/review/a1?v=2","cut":{"asset":"a1","n":2,"next":"cards"}}"#.utf8))
         XCTAssertEqual(media.cut, AssistantMedia.Cut(asset: "a1", n: 2, next: "cards"))
     }
 }

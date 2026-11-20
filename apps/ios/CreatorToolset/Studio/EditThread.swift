@@ -617,7 +617,23 @@ struct EditThreadView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text("v\(Self.number(draft)) · \(clock(draft.durationS))").font(.subheadline.weight(.semibold))
-                Text(state).font(.subheadline).foregroundStyle(.secondary)
+                Text(state).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 8)
+                if let ref = draft.review {
+                    Button {
+                        AppNavigator.shared.open(.review(ref.asset, version: ref.n))
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("Review")
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color("AccentColor"))
+                }
             }
             CutCard(editId: id, draft: draft, api: model.api) { await model.sendToReview(draft) }
             if let ref = draft.review, status != .approved, model.running == nil, model.queued.isEmpty {
@@ -659,8 +675,8 @@ struct EditThreadView: View {
     }
 }
 
-/// A cut in the thread: its preview plays in place; under it its name, and at the right
-/// the way into Review.
+/// The newest cut's preview, playing in place (its name, state and Review › are the line above it); Send to Review
+/// under it while it is not there.
 private struct CutCard: View {
     let editId: String
     let draft: EditorProject.Draft
@@ -689,43 +705,19 @@ private struct CutCard: View {
                 }
                 .onDisappear { player?.pause() }
             }
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(draft.name).font(.subheadline.weight(.semibold))
-                    Text(clock(draft.durationS)).font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
-                if let review = draft.review {
-                    Button {
-                        AppNavigator.shared.open(.review(review.asset, version: review.n))
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text("In Review")
-                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+            if draft.review == nil, draft.preview == true {
+                Button {
+                    Task {
+                        busy = true
+                        await sendToReview()
+                        busy = false
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color("AccentColor"))
-                } else if draft.preview == true {
-                    Button {
-                        Task {
-                            busy = true
-                            await sendToReview()
-                            busy = false
-                        }
-                    } label: {
-                        Text("Send to Review").font(.subheadline.weight(.semibold)).frame(minHeight: 30)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(busy)
+                } label: {
+                    Text("Send to Review").font(.subheadline.weight(.semibold)).frame(minHeight: 30)
                 }
+                .buttonStyle(.bordered)
+                .disabled(busy)
             }
-            // as wide as the video, wider only for a long name
-            .frame(minWidth: 180)
-            .fixedSize(horizontal: true, vertical: false)
         }
     }
 }
