@@ -214,6 +214,49 @@ describe("designs: an AI that designs", () => {
     expect((await call("GET", `/api/designs/${d.id}/pages`, undefined, "robin")).status).toBe(404);
   });
 
+  it("resizes a frame with its pinned layers, copies frames into other sizes and fills a frame with rows of words", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true, pages: 2, name: "Sizes" })).body;
+    const layers = [
+      { type: "shape", shape: "rect", fill: "#222222", x: 0, y: 0, w: 1080, h: 1350, name: "Ground" },
+      { ...text, text: "First", name: "Headline", fit: "shrink" },
+      { type: "shape", shape: "ellipse", fill: "#ff6600", x: 900, y: 1170, w: 120, h: 120, name: "Badge", pin: { x: "right", y: "bottom", z: "no" } },
+    ];
+    expect((await write(d.id, { frames: [{ id: "p1", layers }] })).status).toBe(200);
+    // wider by 200 and taller by 100: the pinned badge goes with the bottom right corner, the rest stays
+    const wide = (await write(d.id, { frames: [{ id: "p1", w: 1280, h: 1450 }] })).body.design.pages[0]!;
+    expect(wide.layers.map((l) => [l.x, l.y, l.w])).toEqual([[0, 0, 1080], [90, 400, 900], [1100, 1270, 120]]);
+    expect(wide.layers[2]!.pin).toEqual({ x: "right", y: "bottom" });
+    await write(d.id, { frames: [{ id: "p1", w: 1080, h: 1350 }] });
+
+    // every frame in two sizes: a row a size under the frames, each copy under its frame, named for its size
+    const sized = await write(d.id, { sizes: { to: ["cover", { name: "Wide", w: 1600, h: 900 }, "huge"] } });
+    expect(sized.status).toBe(200);
+    expect(sized.body.notes[0]).toContain('A size that is neither a format');
+    const copies = sized.body.design.pages.filter((p) => sized.body.touched.includes(p.id));
+    expect(copies.map((p) => [p.name, p.x, p.y, p.w, p.h])).toEqual([
+      ["Frame 1 Vertical cover 9:16", 0, 1470, 1080, 1920],
+      ["Frame 2 Vertical cover 9:16", 1200, 1470, 1080, 1920],
+      ["Frame 1 Wide", 0, 3510, 1600, 900],
+      ["Frame 2 Wide", 1200, 3510, 1600, 900],
+    ]);
+    // the ground stretches over the cover, the badge keeps its corner, the words their size
+    expect(copies[0]!.layers.map((l) => [l.x, l.y, l.w, l.h])).toEqual([[0, 0, 1080, 1920], [90, (550 * 1920) / 1350 - 150, 900, 300], [900, 1740, 120, 120]].map((r) => r.map((n) => Math.round(n * 100) / 100)));
+
+    // one frame a row of words, in its own size, to the right of every frame
+    const filled = await write(d.id, { fill: { frame: "p1", rows: [{ name: "02 Proof", Headline: "Second" }, { headline: "Third", Badge: { visible: false }, Price: "9" }] } });
+    const rows = filled.body.design.pages.filter((p) => filled.body.touched.includes(p.id));
+    expect(rows.map((p) => [p.name, p.x, p.y, p.w, (p.layers[1] as { text: string }).text, !!p.layers[2]!.hidden])).toEqual([
+      ["02 Proof", 2920, 0, 1080, "Second", false],
+      ["Frame 1 2", 4120, 0, 1080, "Third", true],
+    ]);
+    expect(filled.body.notes).toEqual(['Frame 1 has no layer named "Price": give the layers to fill a "name"']);
+    // the design is full: the copies that fit are made, the rest named
+    const full = await write(d.id, { sizes: { frames: ["p1"], to: ["square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover", "tall", "thumbnail", "square", "cover"] } });
+    expect(full.body.touched).toHaveLength(12);
+    expect(full.body.notes.at(-1)).toContain("at most 20 frames");
+    expect((await write(d.id, { fill: { frame: "nope", rows: [{}] } })).status).toBe(400);
+  });
+
   it("replaces the frames it names, by id: a slide's words stay the slide's, the rest is as it was", async () => {
     const d = await fromPiece();
     const out = await write(d.id, {

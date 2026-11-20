@@ -3,6 +3,7 @@ import { DESIGN_LIMITS, type DesignPage, type DesignShape, type ImageLayer, type
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, fontOf, inLayer, keptOr, layerAt, lineHeightOf, measurer, setText, type Loaded } from "@/lib/design/draw";
 import { boundsOf, boxPick, frameOf, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
+import { placeLayers } from "@/lib/design/resize";
 import { dragHandle, fitPath, inPixels, pathHit, refit, svgPath, toBox, toFrame, toggleSmooth, type Anchor } from "@/lib/design/path";
 import { framePlan, keptScale, useView, type KeptFrame, type ViewStore } from "@/lib/design/view";
 import { cn } from "@/lib/utils";
@@ -750,7 +751,7 @@ export function Stage({
     );
   };
 
-  /** The picked frame resized by a handle. Its layers stay where they are on the canvas: pulled from its left or top, its corner moves under them. */
+  /** The picked frame resized by a handle. Its layers follow its edges as their pins say; an unpinned one stays where it is on the canvas: pulled from its left or top, its corner moves under it. */
   const resizeFrame = (e: React.PointerEvent, h: Handle) => {
     e.stopPropagation();
     if (e.button !== 0 || !page || !here) return;
@@ -762,7 +763,7 @@ export function Stage({
         const to = world(ev);
         const f = resizeBox(here, h, to.x - from.x, to.y - from.y, { keep: ev.shiftKey, center: ev.altKey, min: DESIGN_LIMITS.frameMin });
         if (f.w > DESIGN_LIMITS.frameMax || f.h > DESIGN_LIMITS.frameMax) return;
-        last = { ...page, x: f.x, y: f.y, w: f.w, h: f.h, layers: page.layers.map((l) => ({ ...l, x: l.x - (f.x - here.x), y: l.y - (f.y - here.y) })) };
+        last = { ...page, x: f.x, y: f.y, w: f.w, h: f.h, layers: placeLayers(page.layers, here, f, "stay") };
         onLive([last]);
       },
       () => {

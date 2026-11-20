@@ -2,8 +2,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono, type Context } from "hono";
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type SplitAnswer } from "../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_GAP, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_LIMITS, DESIGN_SHAPES, formatOf, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type SplitAnswer } from "../contracts/design";
 import { DESIGN_FONTS } from "../src/lib/design/fonts";
+import { fillRow, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
 import type { AuthVars } from "./auth";
 import type { AnimationStyle } from "../contracts/editor-styles";
 import { animationStyles, carouselApp, carouselStyles } from "./editor/animation-styles";
@@ -243,7 +244,7 @@ const frameLabel = (p: DesignPage, k: number) => `Frame ${k + 1}${p.name ? ` (${
 /* ---- an AI that designs (the assistant, a connected AI) ---- */
 
 /** How layers are written: what an AI that reads a design is told (GET /:id/pages). */
-export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "flipX" and "flipY" (mirrored), "opacity" (0 to 1), "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}), "blur" (pixels, up to 200: the layer drawn soft, for a glow, a haze, a cloud, something out of focus), "name" (what it is, in a word or two, like "Sun" or "Left palm": the user reads it in their list of layers, so name every layer), "group" (a short name of your choosing, like "palm trees": layers of a frame with the same group are picked and moved as one by the user and stand under that name in their list, so group what belongs together, like a badge and its words) and "blend" (how it mixes with what is under it: ${DESIGN_BLENDS.join(", ")}). Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. A "gradient" ({"to":"#rrggbb","angle":90}) on a text, a shape or a frame runs from its own colour to "to": angle 0 is left to right, 90 top to bottom; with "kind":"radial" it runs from the middle out to the corners (a spotlight), and "via":"#rrggbb" is a colour it passes through half-way. The kinds:
+export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "flipX" and "flipY" (mirrored), "opacity" (0 to 1), "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}), "blur" (pixels, up to 200: the layer drawn soft, for a glow, a haze, a cloud, something out of focus), "name" (what it is, in a word or two, like "Sun" or "Left palm": the user reads it in their list of layers, so name every layer), "group" (a short name of your choosing, like "palm trees": layers of a frame with the same group are picked and moved as one by the user and stand under that name in their list, so group what belongs together, like a badge and its words) "blend" (how it mixes with what is under it: ${DESIGN_BLENDS.join(", ")}) and "pin" (how it follows the frame's edges when the frame changes size: {"x":"${DESIGN_PINS_X.join("|")}","y":"${DESIGN_PINS_Y.join("|")}"}; "both" keeps it at both edges, so it stretches; "scale" keeps its share of the frame; a layer without a pin stays where it is when the frame grows, and keeps its share of the frame in a copy of another size: pin a handle in a corner, a footer to the bottom, a background to both). Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. A "gradient" ({"to":"#rrggbb","angle":90}) on a text, a shape or a frame runs from its own colour to "to": angle 0 is left to right, 90 top to bottom; with "kind":"radial" it runs from the middle out to the corners (a spotlight), and "via":"#rrggbb" is a colour it passes through half-way. The kinds:
 - {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"spacing":0,"upper":false,"outline":{"color":"#rrggbb","width":8},"gradient":{…}}: "spacing" is pixels between the letters; "fit":"shrink" makes "size" the most, and sets the words at the largest size up to it at which they fit the box (use it whenever you cannot be sure they fit; with a size larger than the box could hold, the words fill the box); "balance":true breaks each paragraph's lines about as long as each other (for headlines); "marks":[{"words":"the floor","color":"#f2b63c"}] lays a highlighter stroke behind those words of the layer, wherever they wrap (leave "words" out for a stroke behind every line), so never place a box behind words yourself. A stroke is flat ink with square ends and no shadow; with "low":true it sits low, over the small letters and a little under the line with the tall letters standing out of it, the way a marker is drawn through a line; the words wrap inside w, and "\\n" starts a new line (which still wraps when it is too long for w); size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting).
 - {"type":"shape","shape":"${DESIGN_SHAPES.join("|")}","fill":"#rrggbb","gradient":{…},"radius":0,"stroke":{"color":"#rrggbb","width":4,"dash":[12,8],"round":false,"side":"inside|outside"}}: a shape fills its box; "radius" rounds a rect's corners, all by one number or each by [top left, top right, bottom right, bottom left] (a picture's too); a stroke's "dash" is [dash, gap] in pixels ([0, gap] with "round" makes dots), and "side" keeps the line inside or outside the shape's edge (left out: half on each side); a triangle points up and an arrow to the right (turn them with "rotate"; "flipX" points the arrow left); a thin rect is a line.
 - {"type":"path","points":[{"x":0,"y":1},{"x":0.5,"y":0,"in":[-0.2,0],"out":[0.2,0]},{"x":1,"y":1}],"closed":false,"fill":"#rrggbb","gradient":{…},"stroke":{…}}: a line from point to point, which the user can reshape point by point. "x" and "y" are parts of the layer's box, from 0 to 1, not pixels (0,0 is the box's top left, 1,1 its bottom right); "in" and "out" are the ends of a point's two curve handles, as offsets from it in the same parts (left out: a corner, straight lines). "closed" joins the last point to the first; leave "fill" out for a line alone. A curve between two points: an "out" on the first and an "in" on the second. A marker arrow: one curved path for its shaft and a short V of three points for its head, with the same "group". For a whole illustration a "drawing" is easier.
@@ -262,6 +263,8 @@ To change a design, give either or both of:
 - "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id.
 - "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…}} (on top; with "at":"back", under the others). Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off.
 - A change {"frame":"<id>","layer":"<a picture layer's id>","cutout":true} takes the picture's background away (the user's own Mac cuts it out, which takes some seconds; the answer says so when no Mac of theirs is on). {"set":{"picture":"<its 'uncut' id>","uncut":null}} puts the background back.
+- "sizes": {"frames":["<frame id>",…],"to":["square","cover",{"name":"Feed","w":1080,"h":1350}]}: a copy of each frame (all of them without "frames") in each size, its layers placed by their pins and words set again to fit (a text with "fit":"shrink" fits itself). "to" takes ${DESIGN_FORMATS.map((f) => `"${f.id}" (${f.w} × ${f.h})`).join(", ")} or any {"w","h"}. The copies go under the frames, a row a size. One call turns a carousel into its feed, story and square sizes.
+- "fill": {"frame":"<frame id>","rows":[{"name":"02 Proof","Headline":"…","Badge":{"visible":false}},…],"sizes":[…as in "sizes"…]}: one copy of that frame a row, in a row to its right (with "sizes": one a size, under each other). Each key of a row names layers by their "name" and gives a text's words, or {"text":"…","visible":true|false,"color":"#rrggbb"}; "name" names the copy. Name the layers to fill first.
 - "picture": {"version":"<a library video's version id, as media_search gives it>","t":<seconds>}: that moment of the video is copied into the design's pictures, and the answer gives its id for an image layer in your next change. The user can also add pictures of their own in the designer.
 
 After a read or a change you are shown the frames as they are drawn, and told when words do not fit their box or are cut off at the frame's edge (nothing said: they fit).
@@ -469,7 +472,11 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const k = next.findIndex((p) => p.id === id);
     const was = next[k]!;
     const label = frameLabel(was, k);
-    const made = cleanPages([{ id, layers: t.layers, w: typeof t.more.w === "number" ? t.more.w : was.w, h: typeof t.more.h === "number" ? t.more.h : was.h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, name: t.more.name ?? was.name }], {
+    const size = (v: unknown, or: number | undefined) => (typeof v === "number" && Number.isFinite(v) ? Math.min(DESIGN_LIMITS.frameMax, Math.max(DESIGN_LIMITS.frameMin, Math.round(v))) : or);
+    const [w, h] = [size(t.more.w, was.w), size(t.more.h, was.h)];
+    // a new size without the layers given whole: they follow the frame's edges as their pins say
+    if (!t.whole && was.w && was.h && w && h && (w !== was.w || h !== was.h)) t.layers = placeLayers(t.layers.filter(raw) as Placed[], { w: was.w, h: was.h }, { w, h }, "stay");
+    const made = cleanPages([{ id, layers: t.layers, w, h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, name: t.more.name ?? was.name }], {
       w: d.width,
       h: d.height,
       pictures: d.pictures,
@@ -504,6 +511,107 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     d.height,
   );
   return { design: await save({ ...now, pages, updatedAt: stamp(now) }), notes, touched, wrote };
+}
+
+/** The sizes an AI asks copies in: a format's id ("cover") or {name?, w, h}; anything else is named in a note. */
+function sizesOf(v: unknown, notes: string[]): { name: string; w: number; h: number }[] {
+  const out: { name: string; w: number; h: number }[] = [];
+  for (const s of Array.isArray(v) ? v : []) {
+    const f = formatOf(s) ?? (typeof s === "string" ? DESIGN_FORMATS.find((x) => x.name.toLowerCase() === s.toLowerCase()) : null);
+    const r = raw(s);
+    const fits = (n: unknown) => typeof n === "number" && n >= DESIGN_LIMITS.frameMin && n <= DESIGN_LIMITS.frameMax;
+    if (f) out.push({ name: f.name, w: f.w, h: f.h });
+    else if (r && fits(r.w) && fits(r.h)) out.push({ name: typeof r.name === "string" && r.name.trim() ? r.name.trim().slice(0, 40) : `${Math.round(r.w as number)} × ${Math.round(r.h as number)}`, w: Math.round(r.w as number), h: Math.round(r.h as number) });
+    else notes.push(`A size that is neither a format (${DESIGN_FORMATS.map((x) => x.id).join(", ")}) nor {"w","h"} from ${DESIGN_LIMITS.frameMin} to ${DESIGN_LIMITS.frameMax}: ${JSON.stringify(s).slice(0, 60)}`);
+  }
+  return out;
+}
+
+/**
+ * An AI's copies (`sizes`: frames copied into other sizes; `fill`: one frame copied a row of data each, in sizes or its
+ * own), made in one save. Each copy goes through the same check as any frame; it draws no slide of its own, so its
+ * words are its own. `sizes` lays each size's copies in a row under every frame, each under its own frame; `fill` lays
+ * a row's copies to the right of every frame, a size under the other, from the frame's own top.
+ */
+async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw): Promise<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }> {
+  const notes: string[] = [];
+  const { pages } = await framesForAi(user, d);
+  const frames = pages.filter((p) => !p.loose);
+  const now = (await read(d.owner, d.id)) ?? d;
+  const there = now.pages.filter((p) => !p.loose);
+  const label = (p: DesignPage) => p.name ?? `Frame ${frames.indexOf(p) + 1}`;
+  // shortcut: copies are laid below or right of every frame without looking for free room between frames; fine while designs are a few rows of frames
+  const bottom = Math.max(0, ...there.map((p) => (p.y ?? 0) + (p.h ?? d.height)));
+  let right = Math.max(0, ...there.map((p) => (p.x ?? 0) + (p.w ?? d.width)));
+  const made: DesignPage[] = [];
+  let room = DESIGN_LIMITS.pages - there.length;
+  const ids = new Set(now.pages.map((p) => p.id));
+  const fresh = () => {
+    let id = "";
+    for (let n = made.length; !id || ids.has(id); n++) id = `c${Date.now().toString(36)}${n}`;
+    ids.add(id);
+    return id;
+  };
+  const add = (p: DesignPage) => {
+    if (room <= 0) return false;
+    room--;
+    made.push(p);
+    return true;
+  };
+  let full = false;
+
+  const sizes = raw(body.sizes);
+  if (sizes) {
+    const asked = Array.isArray(sizes.frames) ? sizes.frames.map(String) : null;
+    const from = asked ? asked.flatMap((id) => frames.find((p) => p.id === id) ?? (notes.push(`There is no frame ${id}: this design's are ${frames.map((p) => p.id).join(", ")}`), [])) : frames;
+    let y = bottom + DESIGN_GAP;
+    for (const size of sizesOf(sizes.to, notes)) {
+      for (const p of from) if (!full) full = !add({ ...sizedCopy(p, size, fresh(), `${label(p)} ${size.name}`.slice(0, DESIGN_LIMITS.layerName)), x: p.x, y });
+      y += size.h + DESIGN_GAP;
+    }
+    if (!from.length || !sizes.to) notes.push('"sizes" takes "to": the sizes, and "frames": the frames to copy (all without it)');
+  }
+
+  const fill = raw(body.fill);
+  if (fill) {
+    const p = frames.find((x) => x.id === fill.frame);
+    const rows = (Array.isArray(fill.rows) ? fill.rows.map(raw) : []).filter((r): r is Raw => !!r);
+    if (!p) notes.push(`"fill" names no frame of this design (${String(fill.frame)}): its frames are ${frames.map((x) => x.id).join(", ")}`);
+    else if (!rows.length) notes.push('"fill" takes "rows": one object a copy');
+    else {
+      const gap = typeof fill.gap === "number" && fill.gap >= 0 ? Math.min(fill.gap, 2000) : DESIGN_GAP;
+      const asked = fill.sizes === undefined ? [{ name: "", w: p.w ?? d.width, h: p.h ?? d.height }] : sizesOf(fill.sizes, notes);
+      const missing = new Set<string>();
+      for (const [n, row] of rows.entries()) {
+        const { page: filled, missing: none } = fillRow(p, row);
+        none.forEach((k) => missing.add(k));
+        const name = filled.name && filled.name !== p.name ? filled.name : `${label(p)} ${n + 1}`;
+        const x = right + gap;
+        let y = p.y ?? 0;
+        for (const size of asked) {
+          if (full) break;
+          full = !add({ ...sizedCopy(filled, size, fresh(), `${name}${size.name ? ` ${size.name}` : ""}`.slice(0, DESIGN_LIMITS.layerName)), x, y });
+          y += size.h + gap;
+        }
+        right = x + Math.max(...asked.map((s) => s.w));
+      }
+      if (missing.size) notes.push(`${label(p)} has no layer named ${[...missing].map((k) => `"${k}"`).join(", ")}: give the layers to fill a "name"`);
+    }
+  }
+  if (full) notes.push(`A design holds at most ${DESIGN_LIMITS.pages} frames: the copies after the first ${made.length} were not made`);
+  if (!sizes && !fill) throw new DesignError('Give "sizes" or "fill": design_get says how each is written');
+
+  // each copy checked as any frame is, its notes under its own name
+  const fonts = await fontsFor(d);
+  const kept: DesignPage[] = [];
+  for (const c of made) {
+    const out = cleanPages([c], { w: d.width, h: d.height, pictures: d.pictures, fonts });
+    notes.push(...out.notes.map((note) => note.replace(/^Page 1:/, `${c.name}:`)));
+    if (out.pages[0]) kept.push({ ...out.pages[0], id: c.id });
+  }
+  if (!kept.length) throw new DesignError(`No copy was made${notes.length ? `: ${notes.slice(0, 4).join("; ")}` : ""}`);
+  const all = withFrames([...now.pages.filter((p) => !p.loose), ...kept, ...now.pages.filter((p) => p.loose)], d.width, d.height);
+  return { design: await save({ ...now, pages: all, updatedAt: stamp(now) }), notes, touched: kept.map((p) => p.id), wrote: kept.map((p) => ({ frame: p.id, isNew: true, layers: p.layers.map((l) => l.id) })) };
 }
 
 /* ---- routes ---- */
@@ -696,7 +804,16 @@ designsApp.delete("/:id", (c) =>
 
 // an AI that designs: what it reads (?look=<a look's name> adds that look's pictures), and what it writes
 designsApp.get("/:id/pages", (c) => answer(c, async () => forAi(c.get("user"), await mine(c), c.req.query("look")?.trim() || undefined)));
-designsApp.post("/:id/pages", (c) => answer(c, async () => writeForAi(c.get("user"), await mine(c), await body(c))));
+designsApp.post("/:id/pages", (c) =>
+  answer(c, async () => {
+    const b = await body(c);
+    if (b.sizes === undefined && b.fill === undefined) return writeForAi(c.get("user"), await mine(c), b);
+    // copies: after the frames and changes of the same call, so a frame designed in it is copied as it now is
+    const first = b.frames !== undefined || b.changes !== undefined ? await writeForAi(c.get("user"), await mine(c), b) : null;
+    const more = await copiesForAi(c.get("user"), first?.design ?? (await mine(c)), b);
+    return first ? { ...more, notes: [...first.notes, ...more.notes], touched: [...first.touched, ...more.touched], wrote: [...first.wrote, ...more.wrote] } : more;
+  }),
+);
 // what it made, to look at: the frames named in ?frames=<id>,<id> (else the first ones) as small pictures, with the words that do not fit
 designsApp.get("/:id/look", (c) =>
   answer(c, async () => {

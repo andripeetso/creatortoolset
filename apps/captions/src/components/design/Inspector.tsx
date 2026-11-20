@@ -34,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import type { Design, DesignPage, Gradient, Layer, Stroke } from "@contracts/design";
+import type { Design, DesignPage, Gradient, Layer, Pin, Stroke } from "@contracts/design";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_FORMATS, DESIGN_LIMITS, DESIGN_SHAPES } from "@contracts/design";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -44,6 +44,8 @@ import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
 import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
+import { resized } from "@/lib/design/resize";
+import { CopySizes } from "./CopySizes";
 import { ColourPicker } from "./ColourPicker";
 import { Tip } from "./Tip";
 import { cn } from "@/lib/utils";
@@ -342,6 +344,11 @@ function PickOne<V extends string>({ label, value, options, onPick }: { label: s
   );
 }
 
+const PINS = {
+  x: [["left", "Left"], ["right", "Right"], ["both", "Both"], ["center", "Centre"], ["scale", "Scale"]],
+  y: [["top", "Top"], ["bottom", "Bottom"], ["both", "Both"], ["center", "Centre"], ["scale", "Scale"]],
+} as const;
+
 const ALIGNS: [Align, string, typeof AlignLeft][] = [
   ["left", "Align left", AlignStartVertical],
   ["center", "Align horizontal centres", AlignCenterVertical],
@@ -376,6 +383,7 @@ export function Inspector({
   onUngroup,
   colours,
   onDropper,
+  onCopySize,
 }: {
   design: Design;
   page: DesignPage;
@@ -416,6 +424,8 @@ export function Inspector({
   colours: readonly string[];
   /** the next press on the canvas gives its colour to `take` */
   onDropper: (take: (hex: string) => void) => void;
+  /** a copy of the frame in another size, its layers placed by their pins */
+  onCopySize: (size: { w: number; h: number; name: string }) => void;
 }) {
   const [ratio, setRatio] = useState(false);
   /** Each corner's radius shown by itself. */
@@ -526,8 +536,8 @@ export function Inspector({
             <div className="grid grid-cols-2 gap-2">
               {fnum("X", "X", frame.x, (n) => ({ x: n, y: frame.y }), far)}
               {fnum("Y", "Y", frame.y, (n) => ({ x: frame.x, y: n }), far)}
-              {fnum("W", "Width", frame.w, (n) => ({ w: n, h: frame.h }), big)}
-              {fnum("H", "Height", frame.h, (n) => ({ w: frame.w, h: n }), big)}
+              {fnum("W", "Width", frame.w, (n) => resized(page, { w: n, h: frame.h }), big)}
+              {fnum("H", "Height", frame.h, (n) => resized(page, { w: frame.w, h: n }), big)}
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger aria-label="Frame size" className={cn(FIELD, "w-full justify-between outline-none")}>
@@ -536,7 +546,7 @@ export function Inspector({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
                 {DESIGN_FORMATS.map((f) => (
-                  <DropdownMenuItem key={f.id} onSelect={() => onPage({ ...page, w: f.w, h: f.h })} className="flex justify-between gap-4">
+                  <DropdownMenuItem key={f.id} onSelect={() => onPage(resized(page, { w: f.w, h: f.h }))} className="flex justify-between gap-4">
                     {f.name}
                     <span className={DIM}>
                       {f.w} × {f.h}
@@ -545,6 +555,17 @@ export function Inspector({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            {!page.loose && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex h-7 items-center justify-center gap-1 rounded-[5px] border border-[#e6e6e6] outline-none hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
+                  Copy in another size
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-60">
+                  <CopySizes Item={DropdownMenuItem} from={frame} onCopy={onCopySize} />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </Section>
           <Section title="Fill" action={addOrRemove(!!page.gradient, "gradient", () => onPage({ ...page, gradient: GRADIENT }), () => onPage({ ...page, gradient: undefined }))}>
             <div className="flex">
@@ -609,6 +630,19 @@ export function Inspector({
               </Tap>
             </div>
           </Section>
+          {/* how the picked layers follow the frame's edges when it changes size; the pressed one again takes the pin off */}
+          {!page.loose && (
+            <Section title="Pin to the frame">
+              {(["x", "y"] as const).map((axis) => {
+                const now = same((l) => l.pin?.[axis]);
+                const set = (v: string) => (l: Layer): Layer => {
+                  const pin: Pin = { ...l.pin, [axis]: now === v ? undefined : v };
+                  return { ...l, pin: pin.x || pin.y ? pin : undefined };
+                };
+                return <Choice key={axis} label={axis === "x" ? "Pinned side to side" : "Pinned up and down"} value={now} options={PINS[axis]} onPick={(v) => onPatch(set(v))} />;
+              })}
+            </Section>
+          )}
           <Section title="Appearance">
             <div className="grid grid-cols-2 gap-2">
               {num(
