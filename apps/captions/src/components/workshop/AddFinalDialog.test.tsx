@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ pathOnMac: vi.fn(), importCopy: vi.fn() }));
+const m = vi.hoisted(() => ({ pathOnMac: vi.fn(), importCopy: vi.fn(), rows: vi.fn(async () => [] as string[]) }));
+vi.mock("@/pages/library/Import", () => ({ sourceRowsHere: m.rows }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), pathOnMac: m.pathOnMac, importCopy: m.importCopy, importProgress: vi.fn(async () => ({ bytes: 0, of: 0 })), importCancel: vi.fn(async () => ({})) }));
 const { copyIn } = await import("./AddFinalDialog");
 
@@ -19,6 +20,14 @@ describe("a final dropped from this Mac (copyIn)", () => {
     m.pathOnMac.mockResolvedValue(at);
     m.importCopy.mockResolvedValue({ copied: [], failed: [{ from: at, error: "Not a file from a drop or a pick in this window." }] });
     await expect(copyIn(file, "/Volumes/Tiny/Projects/Reel", new AbortController().signal, () => {})).rejects.toThrow("Not a file from a drop");
+  });
+
+  it("a final in this workspace's own Media folder: null, it goes up from where it is (no copy asked)", async () => {
+    m.importCopy.mockClear();
+    m.rows.mockResolvedValueOnce(["/Volumes/Tiny/Media"]);
+    m.pathOnMac.mockResolvedValue("/Volumes/Tiny/Media/Finals/final.mp4");
+    expect(await copyIn(file, "/Volumes/Tiny/Projects/Reel", new AbortController().signal, () => {})).toBeNull();
+    expect(m.importCopy).not.toHaveBeenCalled();
   });
 
   it("a folder the Mac app doesn't copy into: null, so the file is uploaded as before", async () => {

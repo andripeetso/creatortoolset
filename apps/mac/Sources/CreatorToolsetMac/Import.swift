@@ -174,7 +174,7 @@ final class Imports: @unchecked Sendable {
         defer { lock.lock(); jobs[id] = nil; lock.unlock() }
         let size = { (p: String) in ((try? FileManager.default.attributesOfItem(atPath: p))?[.size] as? NSNumber)?.int64Value }
         // only what this window was given counts: a page learns nothing of other files from the total
-        _ = with(id) { $0.of = files.filter { Self.inside($0.from, sources) != nil }.compactMap { size($0.from) }.reduce(0, +) }
+        _ = with(id) { $0.of = files.filter { Self.inside($0.from, sources) != nil && Self.inside($0.from, media) == nil }.compactMap { size($0.from) }.reduce(0, +) }
         var copied: [[String: String]] = []
         var failed: [[String: String]] = []
         var stopped = false
