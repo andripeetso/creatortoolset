@@ -98,23 +98,27 @@ export function combine(ctx: Ctx, box: Area, op: DesignBoolean, shapes: readonly
   if (!filled) return false;
   fill(filled.g);
   lay(filled.g, cover.canvas, "destination-in");
-  put(ctx, s, filled.canvas);
-  if (!lines.length) return true;
+  // every line made before anything is laid on ctx: one that cannot be made leaves ctx as it was for the caller
   const t = ctx.getTransform();
   const k = Math.hypot(t.a, t.b);
-  let whole = true;
-  paint((line) => {
+  const bands = new Map<Stroke, Canvas>();
+  for (const line of lines) {
     const band = lineOf(ctx, s, cover.canvas, line.width * k, line.side);
-    if (!band) return void (whole = false);
+    if (!band) return false;
     band.g.save();
     band.g.setTransform(1, 0, 0, 1, 0, 0);
     band.g.globalCompositeOperation = "source-in";
     band.g.fillStyle = line.color;
     band.g.fillRect(0, 0, s.w, s.h);
     band.g.restore();
-    put(ctx, s, band.canvas);
+    bands.set(line, band.canvas);
+  }
+  put(ctx, s, filled.canvas);
+  paint((line) => {
+    const band = bands.get(line);
+    if (band) put(ctx, s, band);
   });
-  return whole;
+  return true;
 }
 
 /**

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Design, DesignAnswer, DesignListed, DesignSummary, GroupLayer, SplitAnswer } from "../contracts/design";
+import type { Design, DesignAnswer, DesignListed, DesignSummary, GroupLayer, Layer, SplitAnswer } from "../contracts/design";
 import { everyLayer } from "../src/lib/design/tree";
 
 const dataDir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "designs-"));
@@ -269,6 +269,26 @@ describe("designs: an AI that designs", () => {
     const first = (await write(d.id, { frames: [{ id: d.pages[0]!.id, layers: [badge] }] })).body.design;
     const second = (await write(d.id, { changes: [{ frame: d.pages[0]!.id, layer: "badge", set: { h: 200 } }] })).body.design;
     expect([at(second, "badge").h, at(second, "tag").y]).toEqual([at(first, "badge").h, at(first, "tag").y]);
+  });
+
+  it("a hugging box on the canvas, named apart from another's, takes its own size back when an AI gives it a height", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const word = { type: "text", id: "w", font: "Inter", size: 40, color: "#ffffff", align: "left", x: 0, y: 0, w: 10, h: 10, sizing: { w: "hug", h: "hug" }, text: "NEW" };
+    const tag = { type: "shape", shape: "rect", id: "tag", fill: "#ff0000", x: 0, y: 40, w: 20, h: 6, absolute: true, pin: { y: "bottom" } };
+    const badge = { type: "group", box: true, id: "badge", x: 0, y: 0, w: 10, h: 10, layout: { dir: "row", pad: 10 }, sizing: { w: "hug", h: "hug" }, layers: [word, tag] };
+    // two pieces on the canvas, each with a layer "badge": the second is "c1" to an AI
+    const piece = (id: string, y: number) => ({ id, loose: true, x: 2000, y, background: "#ffffff", layers: [badge] });
+    await call("PUT", `/api/designs/${d.id}`, { pages: [d.pages[0], piece("k1", 0), piece("k2", 600)] });
+    const read = (await call<{ canvas?: { id: string; y: number }[] }>("GET", `/api/designs/${d.id}/pages`)).body;
+    expect(read.canvas!.map((l) => l.id)).toEqual(["badge", "c1"]);
+    const box = (ps: Design["pages"]) => ps.find((p) => p.id === "k2")!.layers[0] as GroupLayer;
+    // how far the tag's bottom lies from the box's bottom (it is pinned to it)
+    const gap = (g: GroupLayer) => g.h - (g.layers.find((l) => l.id === "tag") as Layer).y - 6;
+    const first = box((await call<Design>("GET", `/api/designs/${d.id}`)).body.pages);
+    const after = box((await write(d.id, { changes: [{ frame: "canvas", layer: "c1", set: { h: 200 } }] })).body.design.pages);
+    // laid out at its size before: it hugs its words again and its tag goes back with its bottom
+    expect(after.h).toBeLessThan(200);
+    expect(gap(after)).toBeCloseTo(gap(first), 1);
   });
 
   it("a saved box the server stretches with its frame keeps its layer pinned to its bottom on it", async () => {

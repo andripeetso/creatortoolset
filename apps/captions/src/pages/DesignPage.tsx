@@ -657,7 +657,7 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const useAsMask = () => {
     const one = mine.length === 1 ? mine[0]! : null;
     const above = one && base ? base.layers[base.layers.findIndex((l) => l.id === one.id) + 1] : undefined;
-    if (one && !one.mask && above && top && flows(parentOf(top.layers, one.id))) return group(false, undefined, (inner, id) => maskWithNext(inner, one.id, id), [one, above]);
+    if (one && !one.mask && above && !above.mask && top && flows(parentOf(top.layers, one.id))) return group(false, undefined, (inner, id) => maskWithNext(inner, one.id, id), [one, above]);
     if (one) return patch((l) => ({ ...l, mask: l.mask ? undefined : "alpha" }) as Layer);
     group(false, (g) => ({ ...g, name: "Mask group", layers: g.layers.map((l, n) => (n ? l : ({ ...l, mask: "alpha" } as Layer))) }));
   };

@@ -600,6 +600,9 @@ function place(ctx: Ctx, l: Layer) {
  * A container's layers (or a frame's), bottom first, but those not shown (hidden; a reference one in a saved picture).
  * A mask is not drawn: the layers above it, up to the next mask, are cut to it (a hidden one masks nothing).
  */
+/** An area that holds nothing back (finite: its right edge is summed). */
+const ANYWHERE: Area = { x: -1e9, y: -1e9, w: 2e9, h: 2e9 };
+
 /** Whether a layer is drawn: not hidden, and a reference one only on the designer's canvas. */
 const shown = (k: Layer) => !k.hidden && (drawing.designing || !k.reference);
 
@@ -625,17 +628,20 @@ function drawLayers(ctx: Ctx, layers: readonly Layer[], loaded: Loaded, frame: s
   runs(layers, (k) => draw(ctx, k, area), (m, run) => {
     const plain = (g: Ctx) => run.forEach((k) => draw(g, k, area));
     // shortcut: the masked layers are drawn together on a sheet of their own, so a blend or a background blur among them mixes only with what is cut with them; lay them on the canvas one by one if that is ever missed
-    const cut = (g: Ctx) =>
-      masked(g, paintedBox(m), m.mask!, (h) => (m.mask === "vector" ? shapeOf(h, m, loaded, frame, exact) : draw(h, { ...m, mask: undefined }, area)), (h, s) => {
+    const cut = (g: Ctx) => {
+      // the frame's area is in ctx's pixels; a kept piece has none of its own to keep to (it is cut where it is laid)
+      const base = g === ctx ? area : ANYWHERE;
+      return masked(g, paintedBox(m), m.mask!, (h) => (m.mask === "vector" ? shapeOf(h, m, loaded, frame, exact) : draw(h, { ...m, mask: undefined }, base)), (h, s) => {
         // a background blur in the masked layers reads what is under it on their own sheet
         const was = drawing.area;
-        drawing.area = { ...area, x: area.x - s.x, y: area.y - s.y };
+        drawing.area = { ...base, x: base.x - s.x, y: base.y - s.y };
         try {
           for (const k of run) draw(h, k, drawing.area);
         } finally {
           drawing.area = was;
         }
       });
+    };
     // no canvas to cut them on (out of memory): drawn whole rather than not at all
     if (!keptPaint(ctx, `${frame}/${m.id}/mask`, [m, run, readyOf(ctx, loaded, [m, ...run])], paintedBox(m), exact, loaded, cut)) plain(ctx);
   });
@@ -687,7 +693,9 @@ function combined(ctx: Ctx, l: GroupLayer, loaded: Loaded, cast: boolean, frame:
 
 /** Whether the pictures and fonts of these layers (and of every layer in them) have arrived: a kept drawing of them is made again when one does. */
 function readyOf(ctx: Ctx, loaded: Loaded, layers: readonly Layer[]): unknown[] {
-  return everyLayer(layers).map((k) => [sourceOf(k) ? !!loaded.get(sourceOf(k)!)?.width : "", k.type === "text" ? fontsOfText(k).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", fillsOf(k).map((p) => (p.type === "image" ? !!loaded.get(p.picture)?.width : ""))]);
+  // a picture's size, not only whether it is there: one put in the place of another under the same id is drawn again
+  const size = (id: string) => `${loaded.get(id)?.width ?? 0}x${loaded.get(id)?.height ?? 0}`;
+  return everyLayer(layers).map((k) => [sourceOf(k) ? size(sourceOf(k)!) : "", k.type === "text" ? fontsOfText(k).map((f) => measureOn(ctx)(f, "Hamburg 1")) : "", fillsOf(k).map((p) => (p.type === "image" ? size(p.picture) : ""))]);
 }
 
 /** Combined shapes and masked layers kept, a piece a layer of a frame for each set of loaded pictures. */
@@ -1082,6 +1090,33 @@ const seen = (cut: ReadonlyMap<string, Layer>, l: Layer, px: number, py: number,
  * container is where one of its layers is, and a box anywhere in its box too (nowhere past it when it cuts its layers);
  * a layer a mask cuts only where the mask is too, a boolean group where its shape is (by its layers as they are hit).
  */
+/**
+ * Whether a point (in the pixels a layer lies in) is in a combined shape's part as it is drawn there: an ellipse, a
+ * triangle, a star or an arrow by its outline, a path by its fill or line, a group by its layers' (and a box's own
+ * box); a rectangle, words, a picture or a drawing by their box.
+ */
+function inShape(k: Layer, px: number, py: number, near: number): boolean {
+  if (isGroup(k) && !k.boolean) {
+    if (k.box && inLayer(k, px, py).inside) return true;
+    const p = into(k, { x: px, y: py });
+    return k.layers.some((c) => !c.hidden && inShape(c, p.x, p.y, near));
+  }
+  if (k.type !== "shape" || k.shape === "rect") return hits(k, px, py, near);
+  const q = inLayer(k, px, py);
+  const x = k.flipX ? k.w - q.x : q.x;
+  const y = k.flipY ? k.h - q.y : q.y;
+  if (k.shape === "ellipse") return ((x - k.w / 2) / (k.w / 2)) ** 2 + ((y - k.h / 2) / (k.h / 2)) ** 2 <= 1;
+  // even-odd: in when a ray to the right crosses its outline an odd number of times
+  const pts = shapePoints(k.shape, k.w, k.h);
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i]!;
+    const [xj, yj] = pts[j]!;
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 export function hits(l: Layer, px: number, py: number, near = 8): boolean {
   if (l.type === "path") return onPath(l, px, py, near);
   if (!isGroup(l)) return inLayer(l, px, py).inside;
@@ -1090,7 +1125,7 @@ export function hits(l: Layer, px: number, py: number, near = 8): boolean {
   const p = into(l, { x: px, y: py });
   if (l.boolean) {
     // where the combined shape is: in any part, in the bottom one and no other, in every part, in an odd number of them
-    const on = l.layers.filter((k) => !k.hidden).map((k) => hits(k, p.x, p.y, near));
+    const on = l.layers.filter((k) => !k.hidden).map((k) => inShape(k, p.x, p.y, near));
     const n = on.filter(Boolean).length;
     return l.boolean === "union" ? n > 0 : l.boolean === "subtract" ? !!on[0] && n === 1 : l.boolean === "intersect" ? n > 0 && n === on.length : n % 2 === 1;
   }

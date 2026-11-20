@@ -447,7 +447,12 @@ export function Stage({
     return inner ? innermost(inner, q) : g;
   };
   // inside an open container its layers are hit first, then what lies on the frame round it
-  const hitAt = (k: number, p: Point) => (k >= 0 ? (layerAt(pages[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) ?? (pages[k] !== real[k] ? layerAt(real[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null)) : null);
+  // the layers of an open combined shape are each their own shape: no mask among them cuts the others
+  const openShape = (k: number) => {
+    const c = pages[k] !== real[k] && scope ? findLayer(real[k]!.layers, scope) : undefined;
+    return isGroup(c) && c.boolean ? { layers: pages[k]!.layers, boolean: c.boolean } : pages[k]!;
+  };
+  const hitAt = (k: number, p: Point) => (k >= 0 ? (layerAt(openShape(k), p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) ?? (pages[k] !== real[k] ? layerAt(real[k]!, p.x - fr[k]!.x, p.y - fr[k]!.y, 6 / live.current.z) : null)) : null);
   /**
    * What a press at a point is on: the topmost layer drawn there and its frame, else the frame under it (-1: empty
    * canvas). A frame that clips hides its layers past its edges, and its ground covers what lies under it.
