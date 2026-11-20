@@ -186,11 +186,11 @@ struct ReviewAssetView: View {
         if count > 1 {
             Menu {
                 Picker("Version", selection: Binding(get: { version }, set: { show($0) })) {
-                    ForEach((asset?.versions ?? []).reversed()) { v in Text(["v\(v.n)", v.blurTag].compactMap { $0 }.joined(separator: " · ")).tag(v.n) }
+                    ForEach((asset?.versions ?? []).reversed()) { v in Text([asset?.label(v.n) ?? "v\(v.n)", v.blurTag].compactMap { $0 }.joined(separator: " · ")).tag(v.n) }
                 }
             } label: {
                 HStack(spacing: 3) {
-                    Text("v\(version) of \(asset?.latest?.n ?? count)")
+                    Text("\(asset?.label(version) ?? "v\(version)") of \(asset?.latest?.n ?? count)")
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold))
                 }
                 .font(.caption.weight(.semibold))
@@ -198,7 +198,7 @@ struct ReviewAssetView: View {
             }
             .accessibilityLabel("Version \(version) of \(asset?.latest?.n ?? count)")
         } else {
-            Text("v\(version)").font(.caption).foregroundStyle(.secondary)
+            Text(asset?.label(version) ?? "v\(version)").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -273,7 +273,7 @@ struct ReviewAssetView: View {
         let notes = before.map { n in comments.filter { $0.version == n && $0.parentId == nil } } ?? []
         if let before, !notes.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Notes on v\(before) · \(notes.count)").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                Text("Notes on \(asset.label(before)) · \(notes.count)").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(notes) { note in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         if let time = note.timeLabel { TimeChip(text: time, on: false) }
@@ -380,7 +380,7 @@ struct ReviewAssetView: View {
                 .chatSurface(cornerRadius: 22)
                 .padding(.horizontal, 12)
             }
-            ChatComposer(text: $draft, placeholder: asking ? "What should change in v\(version)?" : "Comment", sending: sending,
+            ChatComposer(text: $draft, placeholder: asking ? "What should change in \(asset?.label(version) ?? "v\(version)")?" : "Comment", sending: sending,
                          autofocus: focus > 0,
                          mic: ComposerMic(phase: voice.phase) {
                              // the video waits, and the note stays at this moment while it is spoken
@@ -605,7 +605,7 @@ struct ReviewAssetView: View {
         defer { preparing = false }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
-            let file = try await api.download(asset.media(v, "play"), filename: "\(asset.title) v\(v.n).mp4", into: folder)
+            let file = try await api.download(asset.media(v, "play"), filename: "\(asset.title) \(asset.label(v.n)).mp4", into: folder)
             writeError = nil
             saved = file
             sharing = [file]

@@ -1,4 +1,5 @@
 import type { AssistantMedia } from "../../contracts/assistant";
+import { draftName } from "../../contracts/editor";
 import { workEnded } from "../assistant";
 import { libraryDb } from "../library/db";
 import { emitEvent } from "../lib/events";
@@ -23,20 +24,29 @@ export function cutMedia(edit: EditMeta, variant: string): AssistantMedia | null
   if (!p) return null;
   const pass = nextPass(edit, variant);
   const api = `/api/review/assets/${p.assetId}/v/${p.n}`;
-  // "Handstand basics · v2": the edit and the Review version that plays, as the line says it; with several planned, the
-  // planned version's title between them
-  const plans = readStep(edit.id, "plan")?.plans ?? [];
-  const planned = plans.length > 1 ? ` · ${plans.find((x) => x.name === variant)?.title || variant}` : "";
   return {
     id: `review:${p.assetId}:${p.n}`,
     kind: "video",
-    title: `${edit.name}${planned} · v${p.n}`,
+    // "Handstand basics · Draft 2", as the line says it
+    title: `${edit.name} · ${cutName(edit, variant)}`,
     src: `${api}/play`,
     poster: `${api}/thumb`,
     href: `/review/${p.assetId}?v=${p.n}`,
     cut: { asset: p.assetId, n: p.n, ...(pass ? { next: PASS_WORD[pass] } : {}) },
   };
 }
+/**
+ * A version's newest cut by its name (draftName): its Review version is the draft, and with several planned its letter
+ * is the Version (a moment of a long recording goes by its title instead).
+ */
+export function cutName(edit: EditMeta, variant: string): string {
+  const n = readStep(edit.id, "review")?.[variant]?.n ?? 1;
+  const plans = readStep(edit.id, "plan")?.plans ?? [];
+  const i = plans.findIndex((x) => x.name === variant);
+  if (edit.moments) return `${plans[i]?.title ? `${plans[i]!.title} · ` : ""}${draftName(n)}`;
+  return draftName(n, plans.length > 1 && i >= 0 ? String.fromCharCode(65 + i) : undefined);
+}
+
 /** The cuts a line plays (workEnded keeps this many). */
 const MAX_CUTS = 4;
 const cutsOf = (edit: EditMeta, variants: string[]) => variants.slice(0, MAX_CUTS).flatMap((v) => cutMedia(edit, v) ?? []);
@@ -59,7 +69,7 @@ export function runEnded(job: JobRow): void {
     // a draft someone sent to Review: its own card ends when its preview is there, whatever else still runs
     const filed =
       row.kind === "file" && row.state === "done" &&
-      workEnded(who, `edit:${edit.id}:review:${variant}`, { status: "done", detail: "In Review", say: `“${edit.name} ${variant}” is in Review.`, media: cutsOf(edit, [variant]) });
+      workEnded(who, `edit:${edit.id}:review:${variant}`, { status: "done", detail: "In Review", say: `${cutName(edit, variant)} of “${edit.name}” is in Review.`, media: cutsOf(edit, [variant]) });
     if (rows.some((r) => r.state === "queued" || r.state === "running")) return;
 
     let end: Parameters<typeof workEnded>[2] = { status: "done", detail: "Done" };
@@ -79,7 +89,7 @@ export function runEnded(job: JobRow): void {
       const left = ready.map((v) => {
         const d = readDraft(edit.id, v);
         const w = d ? saidWords(saidOf(d)) : "";
-        return w && n > 1 ? `${v}: ${w}` : w;
+        return w && n > 1 ? `${cutName(edit, v)}: ${w}` : w;
       }).filter(Boolean).join(" ");
       const all = planned.length;
       const name = `“${edit.name}”`;
@@ -88,7 +98,7 @@ export function runEnded(job: JobRow): void {
         end = {
           status: "done",
           detail: n === all ? "Done" : `${n} of ${all} versions done`,
-          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `The first draft of ${name} is ready.` : `${n} versions of ${name} are ready.`) + (left ? ` ${left}` : "") + (n > MAX_CUTS ? ` The chat plays ${MAX_CUTS}; the other ${n - MAX_CUTS} are in Review.` : ""),
+          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `${cutName(edit, ready[0]!)} of ${name} is ready.` : `${draftName(Math.max(...ready.map((v) => readStep(edit.id, "review")?.[v]?.n ?? 1)))} of ${name} is ready in ${n} versions.`) + (left ? ` ${left}` : "") + (n > MAX_CUTS ? ` The chat plays ${MAX_CUTS}; the other ${n - MAX_CUTS} are in Review.` : ""),
           media: cutsOf(edit, ready),
         };
     }

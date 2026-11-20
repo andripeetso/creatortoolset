@@ -61,11 +61,13 @@ struct ReviewListItem: Decodable {
     /// Its newest version: its number and length in seconds ("v2 is ready · 1:30").
     var newest: Int?
     var duration: Double?
+    /// Its newest cut was made by an edit: its versions are drafts ("Draft 2 is ready").
+    var fromEdit = false
 
     /// "v2 is ready · 1:30": the line of a video that waits for review.
     var ready: String {
         let n = newest ?? max(versions, 1)
-        return "v\(n) is ready" + ((duration ?? 0) > 0 ? " · \(clock(duration ?? 0))" : "")
+        return "\(fromEdit ? ReviewAsset.draftName(n) : "v\(n)") is ready" + ((duration ?? 0) > 0 ? " · \(clock(duration ?? 0))" : "")
     }
 
     private enum Keys: String, CodingKey { case id, name, approval, versions, newComments, updatedAt, createdAt }
@@ -78,9 +80,10 @@ struct ReviewListItem: Decodable {
         var createdAt: Double?
         var duration: Double?
         var source: Source?
+        var made = false
         struct Source: Decodable { var href: String? }
 
-        private enum Keys: String, CodingKey { case n, status, removed, createdAt, duration, source }
+        private enum Keys: String, CodingKey { case n, status, removed, createdAt, duration, source, draft, edit }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: Keys.self)
@@ -89,6 +92,7 @@ struct ReviewListItem: Decodable {
             removed = try? c.decode(Bool.self, forKey: .removed)
             createdAt = try? c.decode(Double.self, forKey: .createdAt)
             duration = try? c.decode(Double.self, forKey: .duration)
+            made = c.contains(.draft) || c.contains(.edit)
             source = try? c.decode(Source.self, forKey: .source)
         }
     }
@@ -103,6 +107,7 @@ struct ReviewListItem: Decodable {
         source = all.last?.source?.href
         newest = all.last?.n
         duration = all.last?.duration
+        fromEdit = all.last?.made == true
         // the same address Review's own screen asks (`ReviewAsset.media`)
         if let ready = all.last(where: { $0.status == "ready" && $0.removed != true }), let n = ready.n {
             picture = "/api/review/assets/\(id)/v/\(n)/thumb?c=\(Int(ready.createdAt ?? 0))"

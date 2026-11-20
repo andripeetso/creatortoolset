@@ -501,7 +501,7 @@ struct EditThreadView: View {
                     if let newest = page.newest { newestCut(newest) }
                     ForEach(page.talk) { item in row(item) }
                     if !page.earlier.isEmpty {
-                        ShelfHeader(title: "Earlier versions", count: page.earlier.count, open: $earlierOpen)
+                        ShelfHeader(title: "Earlier drafts", count: page.earlier.count, open: $earlierOpen)
                         if earlierOpen {
                             ForEach(page.earlier, id: \.draft.name) { earlier in earlierCut(earlier.draft, note: earlier.note) }
                         }
@@ -586,7 +586,7 @@ struct EditThreadView: View {
                 WorkingCapsule(label: turn.claimed ? "Answering" : "Waiting for the Mac", since: turn.at.map { date(ms: $0) })
             }
             if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 20) }
-            ChatComposer(text: $text, placeholder: model.edit?.drafts.last.map { "Notes for v\(Self.number($0))" } ?? "Say what to change",
+            ChatComposer(text: $text, placeholder: model.edit?.drafts.last.map { "Notes for \(name($0))" } ?? "Say what to change",
                          working: model.turn != nil, sending: model.sending || model.busy, autofocus: focus > 0,
                          mic: ComposerMic(phase: voice.phase) {
                              // the cut waits, and the note says the moment it was spoken at
@@ -605,6 +605,12 @@ struct EditThreadView: View {
     /// The version number he sees: the cut's version in Review, else its own.
     static func number(_ draft: EditorProject.Draft) -> Int { draft.review?.n ?? draft.n }
 
+    /// "Draft 2", with "· Version B" when the edit's rounds have several versions (the variant's last letter).
+    private func name(_ draft: EditorProject.Draft) -> String {
+        let several = Set(model.edit?.drafts.map(\.variant) ?? []).count > 1
+        return ReviewAsset.draftName(Self.number(draft), version: several ? draft.variant.last.map(String.init) : nil)
+    }
+
     /// The newest cut on top: its state in words, the two buttons (Approve left, Request changes right), and its checks
     /// once, in plain words.
     private func newestCut(_ draft: EditorProject.Draft) -> some View {
@@ -616,7 +622,7 @@ struct EditThreadView: View {
             : status == .approved ? "Approved" : status == .changes ? "Changes asked" : "Waiting for your review")
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text("v\(Self.number(draft)) · \(clock(draft.durationS))").font(.subheadline.weight(.semibold))
+                Text("\(name(draft)) · \(clock(draft.durationS))").font(.subheadline.weight(.semibold))
                 Text(state).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 8)
                 if let ref = draft.review {
@@ -650,13 +656,13 @@ struct EditThreadView: View {
         }
     }
 
-    /// An older cut, folded under Earlier versions: its number, length and the note it got; a tap opens it in Review.
+    /// An older cut, folded under Earlier drafts: its number, length and the note it got; a tap opens it in Review.
     private func earlierCut(_ draft: EditorProject.Draft, note: String?) -> some View {
         Button {
             if let ref = draft.review { AppNavigator.shared.open(.review(ref.asset, version: ref.n)) }
         } label: {
             VStack(alignment: .leading, spacing: 2) {
-                Text("v\(Self.number(draft)) · \(clock(draft.durationS))").font(.subheadline.weight(.semibold))
+                Text("\(name(draft)) · \(clock(draft.durationS))").font(.subheadline.weight(.semibold))
                 if let note { Text("Changes asked · “\(note)”").font(.footnote).foregroundStyle(.secondary).lineLimit(2) }
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)

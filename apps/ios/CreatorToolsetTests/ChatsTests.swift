@@ -36,7 +36,7 @@ final class ChatsTests: XCTestCase {
         let rows = ChatList.arrange(rows: ChatList.merge(videos: try decode(Self.reviews), others: []))
         XCTAssertEqual(rows.map(\.title), ["V1A-1", "V1A-2", "Hanging basics teaser v2"])
         XCTAssertEqual(rows[0].status, .review)
-        XCTAssertEqual(rows[0].detail, "v1 is ready · 0:10")
+        XCTAssertEqual(rows[0].detail, "Draft 1 is ready · 0:10")
         XCTAssertEqual(rows[1].detail, "Changes requested")
         XCTAssertFalse(rows[1].status.waitsOnYou)
         XCTAssertEqual(rows[2].shelf, .done)

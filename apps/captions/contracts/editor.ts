@@ -50,6 +50,13 @@ export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
 
 export const MAX_VERSIONS = 5;
+
+/**
+ * A cut's name (owner, 2026-11-20): each round of an edit is the next draft (its Review version number, as every
+ * send-back files the next version), and the alternatives inside one round are Version A, B, C; `version` only when a
+ * round has several. "Draft 2", "Draft 2 · Version B".
+ */
+export const draftName = (n: number, version?: string) => `Draft ${n}${version ? ` · Version ${version}` : ""}`;
 /** The most short videos one long recording is cut into (EditBrief.moments). */
 export const MAX_MOMENTS = 20;
 

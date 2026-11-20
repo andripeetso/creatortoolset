@@ -85,6 +85,15 @@ struct ReviewAsset: Codable, Hashable, Identifiable {
         return name
     }
 
+    /// A cut's name (owner, 2026-11-20): each round of an edit is the next draft (its Review version number), the
+    /// alternatives in one round Version A, B…; `version` only when a round has several. "Draft 2 · Version B".
+    static func draftName(_ n: Int, version: String? = nil) -> String {
+        "Draft \(n)" + (version.map { " · Version \($0)" } ?? "")
+    }
+
+    /// What a version is called here: "Draft 2" for a cut an edit made, "v2" for a video uploaded as it is.
+    func label(_ n: Int) -> String { latest?.editId != nil ? Self.draftName(n) : "v\(n)" }
+
     /// Approve's words: what approving the newest cut starts, when it starts something.
     static func approveTitle(_ next: String?) -> String {
         guard let next, !next.isEmpty else { return "Approve" }

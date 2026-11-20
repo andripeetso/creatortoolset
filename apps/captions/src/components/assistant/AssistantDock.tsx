@@ -55,6 +55,7 @@ import { ScrollToEnd } from "@/components/chat/ScrollToEnd";
 import { CiteButton, SelectionPill, citeAt } from "@/components/workshop/SelectionPill";
 import { CopyButton } from "@/components/workshop/CopyButton";
 import { AskChanges, VideoCards } from "./VideoCard";
+import { draftName } from "@contracts/editor";
 import { ApprovalCards } from "./ApprovalCards";
 import { LimitBanner } from "./LimitBanner";
 import { FeedbackBar, FeedbackSlot } from "./FeedbackBar";
@@ -1015,7 +1016,7 @@ export function AssistantDock() {
           <AskChanges.Provider
             value={(m) => {
               // the message says which cut it is about: a line can carry several (lib/assistant quote → the turn's context)
-              setAsk({ text: `What should change in v${m.cut!.n}?` });
+              setAsk({ text: `What should change in ${draftName(m.cut!.n)}?` });
               setQuote(`Request changes on “${m.title}” (Review ${m.href})`);
             }}
           >

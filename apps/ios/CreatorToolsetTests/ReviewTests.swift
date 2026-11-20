@@ -246,6 +246,9 @@ final class ReviewTests: XCTestCase {
         XCTAssertEqual(ReviewAsset.approveTitle(nil), "Approve")
         let list = try JSONDecoder().decode([ReviewAsset].self, from: Data(listJSON.utf8))
         XCTAssertEqual(list[0].title, "Hanging basics teaser v2")
+        // an edit's cuts are drafts; an uploaded video's versions keep their number
+        XCTAssertEqual([own.label(2), list[0].label(2)], ["Draft 2", "v2"])
+        XCTAssertEqual(ReviewAsset.draftName(2, version: "B"), "Draft 2 · Version B")
     }
 
     func testApproveNamesTheVersionItIsAbout() async throws {

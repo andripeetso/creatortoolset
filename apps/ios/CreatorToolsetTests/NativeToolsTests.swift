@@ -338,11 +338,11 @@ final class NativeToolsTests: XCTestCase {
     }
 
     func testAToReviewRowOpensTheCutAndSaysWhichVersion() throws {
-        let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser_V2A_D1","approval":{"status":"needs_review"},"versions":[{"n":1,"duration":80},{"n":2,"duration":90,"source":{"href":"/editor/e1"}}]}"#.utf8))
-        XCTAssertEqual(ChatList.row(video).detail, "v2 is ready · 1:30")
+        let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser_V2A_D1","approval":{"status":"needs_review"},"versions":[{"n":1,"duration":80},{"n":2,"duration":90,"edit":{"project":"e1","draft":"Teaser_V2A_D1"},"source":{"href":"/editor/e1"}}]}"#.utf8))
+        XCTAssertEqual(ChatList.row(video).detail, "Draft 2 is ready · 1:30")
         let edit = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Teaser", detail: "Teaser_V2A_D1 is in Review", status: .review, at: .now)
         let row = ChatList.merge(videos: [video], others: [edit])
-        XCTAssertEqual(row.map(\.detail), ["v2 is ready · 1:30"])
+        XCTAssertEqual(row.map(\.detail), ["Draft 2 is ready · 1:30"])
         XCTAssertEqual(row.map(\.review), ["r1"])
     }
 

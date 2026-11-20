@@ -256,7 +256,7 @@ struct AssistantVideoCard: View {
                         WideButton(title: "Request changes", kind: .plain) {
                             let draft = AssistantModel.shared.draft
                             draft.about = "Request changes on “\(media.title)” (Review \(media.href))"
-                            draft.ask = "What should change in v\(cut.n)?"
+                            draft.ask = "What should change in \(ReviewAsset.draftName(cut.n))?"
                         }
                     }
                     if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }

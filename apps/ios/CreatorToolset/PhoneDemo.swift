@@ -56,7 +56,7 @@ enum PhoneDemo {
     static func edits() -> (videos: [ReviewListItem], others: [ChatRow], spaces: [String: String]) {
         let json = """
         [{"id":"r1","name":"Handstand basics, cut 2","approval":{"status":"needs_review"},"updatedAt":\(ago(10)),
-          "versions":[{"n":1,"status":"ready","createdAt":1,"duration":87},{"n":2,"status":"ready","createdAt":2,"duration":90}]}]
+          "versions":[{"n":1,"status":"ready","createdAt":1,"duration":87,"draft":{"edit":"e5","name":"v1"}},{"n":2,"status":"ready","createdAt":2,"duration":90,"draft":{"edit":"e5","name":"v1"}}]}]
         """
         let videos = (try? JSONDecoder().decode([ReviewListItem].self, from: Data(json.utf8))) ?? []
         let date = { (m: Double) in Date(timeIntervalSince1970: ago(m) / 1000) }
@@ -76,8 +76,8 @@ enum PhoneDemo {
     static let assistant = """
     {"id":"c1","provider":"claude","aiName":"Claude","workspace":"tiny","sendNow":true,"videosLater":true,
      "messages":[{"id":"m1","role":"user","text":"Turn yesterday's beam clips into a 30 second reel","at":\(ago(20))},
-                 {"id":"m2","role":"assistant","text":"v2 of “Handstand basics” is ready.","at":\(ago(18)),"status":"done",
-                  "media":[{"id":"review:r1:2","kind":"video","title":"Handstand basics · v2","src":"/api/review/assets/r1/v/2/play",
+                 {"id":"m2","role":"assistant","text":"Draft 2 of “Handstand basics” is ready.","at":\(ago(18)),"status":"done",
+                  "media":[{"id":"review:r1:2","kind":"video","title":"Handstand basics · Draft 2","src":"/api/review/assets/r1/v/2/play",
                             "poster":"/demo/2","href":"/review/r1?v=2","duration":90,"cut":{"asset":"r1","n":2,"next":"B-roll"}}]}],
      "past":[{"id":"c2","title":"Captions for the cartwheel post","at":\(ago(300)),"count":6},
              {"id":"c3","title":"Open day poster for the gym","at":\(ago(400)),"count":3}]}
