@@ -85,3 +85,18 @@ describe("Workshop piece pictures", () => {
     expect(await res.text()).toBe("---\nchange: 2026-11-05\ndetails:\nselector.Status: 🎥 Filming\nselector.Media: 🎞️ Reel\n---\nJust words, no picture.\n");
   });
 });
+
+describe("Workshop pictures under Blur faces", () => {
+  // the account's Media Library with Blur faces on: a picture sent here is not known to be blurred (upload-gate.ts mayLeave)
+  // (a picture sent with a message asks the same picturesLeave; that route needs an AI provider before it reads pictures)
+  it("keeps no piece picture while it is on; with it off it is kept", async () => {
+    const { libraryDb } = await import("./library/db");
+    const { REFUSED_BLUR } = await import("./library/upload-gate");
+    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_alex', 'alex', 'Library', 'local', ?, 0)").run(JSON.stringify({ upload: "none", blurFaces: true }));
+    const r = await call("POST", `/api/workshop/sessions/${session}/media`, { name: "Cartwheel on the mat.png", type: "image/png", data: PNG });
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { message: string }).message).toBe(REFUSED_BLUR);
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.blurFaces', json('false')) WHERE id = 'lib_alex'").run();
+    expect((await call("POST", `/api/workshop/sessions/${session}/media`, { name: "Cartwheel on the mat.png", type: "image/png", data: PNG })).status).toBe(201);
+  });
+});

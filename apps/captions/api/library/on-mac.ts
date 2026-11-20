@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, libraryDb, libraryUpload, librarySetting } from "./db";
+import { blobs, blursFaces, libraryDb, libraryUpload, librarySetting } from "./db";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
 import { wantsProxy } from "./media/proxy";
@@ -19,6 +20,7 @@ import { noteStrip, strayStrip, watchedAspect, OLD_CELL } from "./media/sprite";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
 import { hostsNone } from "../../contracts/library";
+import { mayLeave } from "./upload-gate";
 
 /**
  * A file indexed where it is on the person's Mac, for a server that is not on that Mac (the Mac app's Media Library
@@ -34,6 +36,8 @@ export interface OnMacIndex {
   size: number;
   /** size + first and last MiB, hashed on the Mac: the duplicate check without reading gigabytes */
   quick: string;
+  /** the whole file's SHA-256, read on the Mac where Blur faces is on: the key its blurred render links on */
+  sha256?: string;
   device?: string;
   duration?: number;
   width?: number;
@@ -82,6 +86,7 @@ export function parseOnMac(body: unknown): OnMacIndex | string {
     path: at,
     size,
     quick: b.quick,
+    ...(typeof b.sha256 === "string" && /^[0-9a-f]{64}$/.test(b.sha256) ? { sha256: b.sha256 } : {}),
     ...(typeof b.device === "string" && b.device ? { device: b.device.slice(0, 100) } : {}),
     ...(num(b.duration, 864_000) ? { duration: b.duration as number } : {}),
     ...(num(b.width, 20_000) && num(b.height, 20_000) ? { width: Math.round(b.width as number), height: Math.round(b.height as number) } : {}),
@@ -126,13 +131,50 @@ export async function patchFilmed(d: ReturnType<typeof libraryDb>, versionId: st
 /** Where the describe stills wait for the describe job (deleted once it has run). */
 export const framesDir = (versionId: string) => path.join(env.dataDir, "library", "mac-frames", versionId);
 
+/**
+ * Blur faces: the stills of a clip not blurred yet, held in memory until its description and never kept here (P2.4). A
+ * restart loses them; the clip is then described from its words. For the call they are written out (heldDir) and gone after.
+ */
+const heldStills = new Map<string, { at: number; stills: Buffer[]; bytes: number }>();
+const HELD_DIR = path.join(tmpdir(), "ct-held-stills");
+const heldDir = (versionId: string) => path.join(HELD_DIR, versionId);
+/** At start: what a stopped server left there (its memory is gone with it). */
+export const clearHeldStills = () => rm(HELD_DIR, { recursive: true, force: true });
+/** At most this much held, and for this long: past either the oldest go first (described from its words then). */
+export const HELD_STILLS_BYTES = 256 * MB;
+export const HELD_STILLS_MS = 6 * 3600_000;
+
+/** Holds `stills` for `versionId`, dropping the expired and then the oldest past HELD_STILLS_BYTES. */
+export function holdStills(versionId: string, stills: Buffer[], now = Date.now()): void {
+  heldStills.delete(versionId);
+  heldStills.set(versionId, { at: now, stills, bytes: stills.reduce((n, b) => n + b.length, 0) });
+  let total = [...heldStills.values()].reduce((n, h) => n + h.bytes, 0);
+  for (const [id, h] of heldStills) {
+    if (now - h.at <= HELD_STILLS_MS && total <= HELD_STILLS_BYTES) break; // the rest are newer (Map keeps the order they came in)
+    heldStills.delete(id);
+    total -= h.bytes;
+  }
+}
+
 /** The stills kept for `versionId`, in order; [] when there are none. */
 export async function macFrames(versionId: string): Promise<string[]> {
-  const dir = framesDir(versionId);
+  const h = heldStills.get(versionId);
+  if (h && Date.now() - h.at > HELD_STILLS_MS) heldStills.delete(versionId);
+  const held = heldStills.get(versionId)?.stills;
+  const dir = held ? heldDir(versionId) : framesDir(versionId);
+  if (held) {
+    await mkdir(dir, { recursive: true });
+    await Promise.all(held.map((b, i) => writeFile(path.join(dir, `${i}.jpg`), b)));
+  }
   const names = await readdir(dir).catch(() => [] as string[]);
   return names.filter((n) => n.endsWith(".jpg")).sort().map((n) => path.join(dir, n));
 }
-export const dropMacFrames = (versionId: string) => rm(framesDir(versionId), { recursive: true, force: true });
+/** After a description's call, whatever it did: held stills written out for it are gone again (they stay in memory for a retry). */
+export const dropHeldCopy = (versionId: string) => rm(heldDir(versionId), { recursive: true, force: true });
+export const dropMacFrames = async (versionId: string) => {
+  heldStills.delete(versionId);
+  await Promise.all([rm(framesDir(versionId), { recursive: true, force: true }), dropHeldCopy(versionId)]);
+};
 
 /**
  * Records `x` in `libraryId` as `by`: { duplicateOf } when the library has it already ({ duplicate } with no id when `by`
@@ -148,10 +190,10 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   const dup = d
     .prepare(
       `SELECT a.id, v.id AS version, a.trashed_at FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (v.mac_path = ? AND v.bytes = ?))
+       WHERE a.library_id = ? AND (v.sha256 = ? OR v.sha256 = ? OR v.full_sha256 = ? OR (v.quick = ? AND v.bytes = ?) OR (v.mac_path = ? AND v.bytes = ?))
        ORDER BY a.trashed_at IS NOT NULL LIMIT 1`,
     )
-    .get(libraryId, `mac:${x.quick}`, x.quick, x.size, x.path, x.size) as { id: string; version: string; trashed_at: number | null } | undefined;
+    .get(libraryId, `mac:${x.quick}`, x.sha256 ?? "-", x.sha256 ?? "-", x.quick, x.size, x.path, x.size) as { id: string; version: string; trashed_at: number | null } | undefined;
   // in the trash: it stays there (Restore brings it back), never a new clip, and its id is not shown
   if (dup?.trashed_at) return { duplicate: true };
   if (dup) {
@@ -173,9 +215,17 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     ...(x.camera !== undefined ? { camera: x.camera } : {}),
   };
   let assetId = "";
+  // the original of a blurred render the library has (the same full SHA-256): an older version of that clip, which stays current
+  const blurred = x.sha256
+    ? (d.prepare("SELECT v.id, v.asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.blurred_of = ? AND a.trashed_at IS NULL LIMIT 1").get(libraryId, x.sha256) as
+        | { id: string; asset_id: string }
+        | undefined)
+    : undefined;
   d.exec("BEGIN IMMEDIATE");
   try {
-    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId });
+    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId, ...(blurred ? { assetId: blurred.asset_id } : {}) });
+    if (blurred) d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(blurred.id, assetId);
+    if (x.sha256) d.prepare("UPDATE asset_versions SET full_sha256 = ? WHERE id = ?").run(x.sha256, versionId);
     // the Mac probed it: no probe here (it would read a file this server does not have)
     d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
     d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = ?, probe = ?, quick = ?, root = ?, root_rel = ? WHERE id = ?")
@@ -194,8 +244,10 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   const base = `libraries/${libraryId}/v/${versionId}`;
   const scratch = path.join(env.dataDir, "library", "staging");
   await mkdir(scratch, { recursive: true });
+  // Blur faces: a card picture or strip cut from a clip not blurred is never kept here (P2.3); the card shows none
+  const pictures = mayLeave(libraryId, { versionId }).ok;
   for (const [k, b64] of [["thumb", x.thumb], ["sprite", x.sprite]] as const) {
-    if (!b64) continue;
+    if (!b64 || !pictures) continue;
     const file = path.join(scratch, `${versionId}-${k}.jpg`);
     await writeFile(file, Buffer.from(b64, "base64"));
     const { bytes } = await blobs.put(`${base}/${k}.jpg`, file);
@@ -218,6 +270,11 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   if (kind === "video" && mine && hostsNone(libraryUpload(libraryId)) && wantsProxy(probe as ProbeSummary, { cloud: false, on: !!librarySetting(libraryId, "proxy") }))
     enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
+    if (!pictures) {
+      holdStills(versionId, x.frames.map((f) => Buffer.from(f, "base64")));
+      enqueueJob(d, libraryId, versionId, "describe", by);
+      return { assetId, versionId };
+    }
     const dir = framesDir(versionId);
     await mkdir(dir, { recursive: true });
     await Promise.all(x.frames.map((f, i) => writeFile(path.join(dir, `${i}.jpg`), Buffer.from(f, "base64"))));
@@ -238,6 +295,7 @@ export function noPicture(libraryId: string, device: string, limit = 500): { ver
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
         WHERE a.library_id = ? AND a.kind = 'image' AND a.trashed_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
+          ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no picture of a photo not blurred is kept (putThumb) */ : ""}
         ORDER BY a.created_at DESC LIMIT ?`,
     )
     .all(device, device, libraryId, limit) as { versionId: string; path: string | null }[];
@@ -246,7 +304,7 @@ export function noPicture(libraryId: string, device: string, limit = 500): { ver
 
 /** A picture's thumbnail handed in for a version of `libraryId` (a JPEG under 1 MB): false when it isn't one or the version isn't the library's. */
 export async function putThumb(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
-  if (!jpeg(b64, MB)) return false;
+  if (!jpeg(b64, MB) || !mayLeave(libraryId, { versionId }).ok) return false;
   const d = libraryDb();
   const own = d.prepare("SELECT v.mime, v.mac_path, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ?").get(versionId, libraryId) as
     | { mime: string | null; mac_path: string | null; source_path: string | null }
@@ -287,6 +345,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
         WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL
+          ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no strip of a clip not blurred is made again here (putSprite) */ : ""}
         ORDER BY a.created_at DESC LIMIT 500`,
     )
     .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null }[];
@@ -300,7 +359,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
 
 /** A video's strip made on the computer that has it (a JPEG under 2 MB), for a version of `libraryId`: false when it isn't one. */
 export async function putSprite(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
-  if (!jpeg(b64, 2 * MB)) return false;
+  if (!jpeg(b64, 2 * MB) || !mayLeave(libraryId, { versionId }).ok) return false;
   const own = libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.kind = 'video'").get(versionId, libraryId);
   if (!own) return false;
   await keepJpeg(libraryId, versionId, "sprite", b64 as string);

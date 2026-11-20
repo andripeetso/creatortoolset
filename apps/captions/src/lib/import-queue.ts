@@ -17,6 +17,8 @@ export interface QueueItem extends Upload {
   libraryId: string;
   /** indexed where it is on this Mac (the Mac app, a server elsewhere, uploading off), never uploaded */
   mac: boolean;
+  /** the library has Blur faces on (lib/onMac.ts indexOnMac) */
+  blur?: boolean;
 }
 
 interface Queue {
@@ -55,6 +57,7 @@ export interface AddOptions {
   /** copied here first (the library's Source media on this Mac) */
   copies?: Map<File, string>;
   mac: boolean;
+  blur?: boolean;
   /** ask what the batch costs (false at Effort Off: no cost is shown) */
   cost: boolean;
 }
@@ -65,6 +68,7 @@ export function addImports(files: File[], o: AddOptions): void {
     key: ++lastKey,
     libraryId: o.libraryId,
     mac: o.mac,
+    ...(o.blur ? { blur: true } : {}),
     file,
     sent: 0,
     folderId: o.folderId,
@@ -140,7 +144,7 @@ async function send(u: QueueItem, retry = false): Promise<void> {
     const r = await gates.index(() => {
       ctl.signal.throwIfAborted();
       patch(u.key, { status: "uploading", sent: 0, error: undefined });
-      return uploadFile(lib, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: u.mac });
+      return uploadFile(lib, u.file, (sent, inPlace) => patch(u.key, { sent, inPlace }), u.folderId, at, { signal: ctl.signal, onMac: u.mac, blur: u.blur });
     });
     patch(u.key, r.duplicateOf || r.duplicate ? { status: "duplicate", sent: u.file.size } : { status: "added", sent: u.file.size, assetId: r.assetId });
     for (const fn of landed) fn(lib, u.folderId);

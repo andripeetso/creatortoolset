@@ -1,5 +1,5 @@
 import { hostsOriginals, hostsProxies, PICTURE_FILE, SPRITE_FRAMES, SPRITE_SIDE, type LibraryUpload } from "@contracts/library";
-import { importThumb, macMediaUrl, thisMacBridge } from "@/lib/thisMac";
+import { importHash, importThumb, macMediaUrl, thisMacBridge } from "@/lib/thisMac";
 
 /**
  * A file indexed where it is on this Mac, for a server that is not on it (api/library/on-mac.ts). The Mac app's window
@@ -209,14 +209,24 @@ export async function readIndex(file: File | MacFile, signal?: AbortSignal, path
 /** The Mac app's own id on this server, when it is paired, so the server knows which Mac holds the file. */
 export const deviceHere = async () => ((await thisMacBridge()?.postMessage("state").catch(() => null))?.device ?? undefined);
 
-/** Indexes `file` (at `path` on this Mac) into `libraryId`: { assetId } or { duplicateOf }. Nothing of the video is sent. */
-export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal): Promise<{ assetId?: string; duplicateOf?: string; duplicate?: true }> {
-  const [quick, index, device] = await Promise.all([file instanceof File ? quickPrint(file) : file.quick, readIndex(file, signal, path), deviceHere()]);
+/**
+ * Indexes `file` (at `path` on this Mac) into `libraryId`: { assetId } or { duplicateOf }. Nothing of the video is sent.
+ * `blur`: the library has Blur faces on: the whole file's SHA-256 goes with it (the key its blurred render links on) and
+ * no card picture or strip (the server keeps none of a clip not blurred).
+ */
+export async function indexOnMac(libraryId: string, file: File | MacFile, path: string, collectionId?: string, signal?: AbortSignal, blur = false): Promise<{ assetId?: string; duplicateOf?: string; duplicate?: true }> {
+  const [quick, read, device, sha256] = await Promise.all([
+    file instanceof File ? quickPrint(file) : file.quick,
+    readIndex(file, signal, path),
+    deviceHere(),
+    blur ? importHash([path]).then((h) => h[path]) : undefined,
+  ]);
   signal?.throwIfAborted();
+  const index = blur ? { ...read, thumb: undefined, sprite: undefined } : read;
   const r = await fetch(`/api/library/${libraryId}/on-mac`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index }),
+    body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index, ...(sha256 ? { sha256 } : {}) }),
     signal,
   });
   const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; duplicate?: true; error?: string };

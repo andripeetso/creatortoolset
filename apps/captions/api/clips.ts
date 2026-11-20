@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -26,6 +26,7 @@ import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
 import { env } from "./lib/env";
 import { FILE_HEADERS, servedType } from "./lib/send-file";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { mayLeave, workspaceLibrary } from "./library/upload-gate";
 import { videoLanguages } from "./lib/video-languages";
 import { workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { isWithin, sharedFolder } from "./folders";
@@ -999,7 +1000,19 @@ clipsApp.get("/f/:token", async (c) => {
   return c.json(out, 200, { "Cache-Control": "no-store" });
 });
 
+/**
+ * Blur faces in the workspace the recording goes to (upload-gate.ts mayLeave): a recording is not known to be blurred, so
+ * it is not taken there. The refusal's answer, else null.
+ */
+async function recordingRefused(c: Context<{ Variables: AuthVars }>): Promise<Response | null> {
+  const user = c.get("user");
+  const left = mayLeave(await workspaceLibrary(user.username, await currentWorkspaceId(user)), {});
+  return left.ok ? null : c.json(left.body, left.status);
+}
+
 clipsApp.post("/init", async (c) => {
+  const refused = await recordingRefused(c);
+  if (refused) return refused;
   const body = (await c.req.json().catch(() => null)) as {
     name?: unknown;
     mime?: unknown;
@@ -1069,6 +1082,8 @@ clipsApp.post("/:id/complete", async (c) => {
 });
 
 clipsApp.post("/", async (c) => {
+  const refused = await recordingRefused(c);
+  if (refused) return refused;
   const name = (c.req.query("name") || "Untitled recording").slice(0, 120);
   const mime = (c.req.query("mime") || "video/webm").slice(0, 80);
   const id = randomUUID();

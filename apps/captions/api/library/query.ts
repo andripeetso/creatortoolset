@@ -118,6 +118,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
 
 export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at, v.bytes AS bytes,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
+  (v.blurred_of IS NULL AND (SELECT json_extract(l.settings, '$.blurFaces') FROM libraries l WHERE l.id = a.library_id) = 1) AS not_blurred,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
   (SELECT d.cell_w || 'x' || d.cell_h FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS sprite_cell,
@@ -132,6 +133,8 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
 export interface CardRow {
   id: string;
   library_id: string;
+  /** Blur faces is on and this version is not a blurred render */
+  not_blurred?: number;
   kind: AssetKind;
   title: string;
   created_at: number;
@@ -289,6 +292,8 @@ export function toCard(r: CardRow): AssetCard {
   const turn = asTurn(p.turn);
   // the shape as it is watched: the file's own rotation tag (a phone filmed or recorded on its side), then the turn
   const side = (((p.rotation ?? 0) + turn) / 90) % 2 === 1;
+  // Blur faces: a clip with no blurred render shows no picture to anyone (serveGate refuses it too)
+  const notBlurred = !!r.not_blurred;
   return {
     id: r.id,
     libraryId: r.library_id,
@@ -300,9 +305,10 @@ export function toCard(r: CardRow): AssetCard {
     ...(p.width ? (side ? { width: p.height, height: p.width } : { width: p.width, height: p.height }) : {}),
     ...(turn ? { turn } : {}),
     // a turned clip's pictures were made again: a new address, so no window shows the one it kept
-    ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${turn ? `?t=${turn}` : ""}` } : {}),
+    ...(notBlurred ? { notBlurred: true as const } : {}),
+    ...(r.has_thumb && !notBlurred ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${turn ? `?t=${turn}` : ""}` } : {}),
     // a strip made again in the clip's shape has a new address too (its frame size), so no window keeps the old one
-    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined })}` } : {}),
+    ...(r.has_sprite && !notBlurred ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined })}` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),

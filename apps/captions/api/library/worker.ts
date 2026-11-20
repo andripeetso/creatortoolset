@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, isBlurred, keepsOnlyOriginals, LEAVES_SQL, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -29,7 +29,8 @@ import { macSheetsWaiting, onTheirMac, takeMacSheets, takeWatchCopy } from "./ma
 import { askedWatch, storeTimeline, sweepWatch, wantsWatch, watchAfter } from "./timeline";
 import { picturesHere, sheetPictures, startPictureCatchUp, wakePictures } from "./pictures";
 import { organizeOnProbe, refileAllShoots } from "./organize";
-import { dropMacFrames, macFrames } from "./on-mac";
+import { dropHeldCopy, dropMacFrames, macFrames } from "./on-mac";
+import { mayLeave } from "./upload-gate";
 import { backfillQuick, fillQuick } from "./locate";
 import { draining } from "../server-update";
 import { backfillRoots } from "./places";
@@ -412,6 +413,7 @@ export function startLibraryWorker(): () => void {
  * library in a bucket backfills only from its proxies: its originals would each be a download.
  * ponytail: one clip per idle turn of the lane, newest first; a new upload's probe waits for one strip at most
  */
+
 export async function backfillSprite(): Promise<boolean> {
   const db = libraryDb();
   const v = db
@@ -421,7 +423,7 @@ export async function backfillSprite(): Promise<boolean> {
          AND (l.storage_kind = 'local' OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
          AND EXISTS (SELECT 1 FROM jobs f WHERE f.version_id = v.id AND f.kind = 'fingerprint')
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite')
-         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite')
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite') AND ${LEAVES_SQL}
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
     .get() as { id: string; library_id: string } | undefined;
@@ -452,7 +454,7 @@ async function backfillStrayStrip(): Promise<boolean> {
       `SELECT v.id, v.probe, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
          JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
        WHERE a.kind = 'video' AND a.trashed_at IS NULL AND v.state = 'ready'
-         AND ((l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%') OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
+         AND ((l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%') OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy')) AND ${LEAVES_SQL}
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
     .get() as { id: string; probe: string | null; library_id: string } | undefined;
@@ -548,7 +550,8 @@ export async function afterProbe(
   const onlyProxy = v.kind === "video" && hostsProxies(vu) && !hostsOriginals(vu);
   // Originals only keeps no proxy on the server, not even one in a bucket (UNIFIED-PRD §4.2)
   const originalsOnly = keepsOnlyOriginals(v.library_id);
-  if (v.kind !== "image" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
+  // a blurred render is its clip's proxy (Blur faces): kept as it is, never a smaller copy made and the render dropped
+  if (v.kind !== "image" && !isBlurred(v.id) && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && librarySetting(v.library_id, "proxy") })) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
@@ -597,15 +600,19 @@ async function run(job: JobRow): Promise<void> {
     if (job.kind === "look") return lookOnMac(db, v, job);
     if (job.kind !== "describe") throw new Error(`The file is on a Mac (${v.mac_path}), not on this server`);
     const p = JSON.parse(v.probe ?? "null") as ProbeSummary | null;
-    const frames = await macFrames(v.id);
-    // its stills went with its first description: described again, it is written from its words (its shot
-    // descriptions, else the description it has and what is said)
-    if (!frames.length) {
-      if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac were not found: add the file again in the Mac app");
-      if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
-    } else {
-      await describeFromStills(db, v.library_id, v.id, job.actor, frames, p?.duration);
-      await dropMacFrames(v.id);
+    try {
+      const frames = await macFrames(v.id);
+      // its stills went with its first description: described again, it is written from its words (its shot
+      // descriptions, else the description it has and what is said)
+      if (!frames.length) {
+        if (!(await describeFromLines(db, v.id, job.actor))) throw new Error("The stills from the Mac were not found: add the file again in the Mac app");
+        if (librarySetting(v.library_id, "embed") && canEmbed(job.actor)) enqueueJob(db, v.library_id, v.id, "embed", job.actor, true);
+      } else {
+        await describeFromStills(db, v.library_id, v.id, job.actor, frames, p?.duration);
+        await dropMacFrames(v.id);
+      }
+    } finally {
+      await dropHeldCopy(v.id); // Blur faces: stills held in memory are on disk only for the call, whatever it did
     }
     return;
   }
@@ -627,6 +634,8 @@ async function run(job: JobRow): Promise<void> {
   await mkdir(dir, { recursive: true });
   const out = (ext: string) => path.join(dir, `${job.kind}-${randomUUID()}.${ext}`);
   const keep = async (kind: "thumb" | "wave" | "proxy" | "sprite", file: string, key: string) => {
+    // Blur faces: no picture or copy of a clip not blurred is kept (a held original from before it was on); its waveform is
+    if (kind !== "wave" && !mayLeave(v.library_id, { versionId: v.id }).ok) return void (await rm(file, { force: true })); // made, never kept
     const strip = kind === "sprite" ? await readFile(file) : null; // read before the put, which may move the file
     const { bytes } = await blobs.put(key, file);
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, ?)").run(v.id, kind, key, bytes);

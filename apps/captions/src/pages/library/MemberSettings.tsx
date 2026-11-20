@@ -18,7 +18,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** Hosted media in words: what the owner's Upload to server sends up ("Final exports and proxies"), or Off. */
 export function hostedWords(s: LibrarySummary["settings"]): string {
   const m = hostedOf(s);
-  const on = ([m.finals && LIBRARY_WORDS.finalExportsUpload.label, m.proxies && LIBRARY_WORDS.proxies, m.originals && LIBRARY_WORDS.originals] as (string | false)[]).filter((w): w is string => !!w);
+  const on = ([m.finals && LIBRARY_WORDS.finalExportsUpload.label, m.proxies && (s.blurFaces ? LIBRARY_WORDS.blurred : LIBRARY_WORDS.proxies), m.originals && LIBRARY_WORDS.originals] as (string | false)[]).filter((w): w is string => !!w);
   if (!on.length) return "Off";
   const words = on.map((w, i) => (i ? w.toLowerCase() : w));
   return words.length === 1 ? words[0]! : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
@@ -122,6 +122,7 @@ export function MemberSettings({ library }: { library: LibrarySummary }) {
         <Card className="border-primary/30 bg-primary/5">
           {view?.serverName && <Row title="Server" control={view.serverName} />}
           <Row title="Hosted media" control={hostedWords(library.settings)} />
+          {library.settings.blurFaces && <Row title={LIBRARY_WORDS.blurFaces.label} tip={LIBRARY_WORDS.blurFaces.tip} control="On" />}
           {view?.workspace && (
             <Row
               title="Server rendering"

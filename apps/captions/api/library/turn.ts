@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { libraryChanged } from "./access";
 import { enqueueJob } from "./jobs";
+import { mayLeave } from "./upload-gate";
 
 /**
  * A clip's own turn: the clockwise degrees (0, 90, 180, 270) the library turns its picture to show it upright, on top
@@ -36,7 +37,10 @@ export async function turnVersion(db: DatabaseSync, versionId: string, turn: num
   db.prepare("DELETE FROM derivatives WHERE version_id = ? AND kind = 'sprite'").run(versionId);
   // the picture and the strip are made again, upright, from the clip: a library job (DECODES), so on a computer unless
   // the server's video work is on; the old picture shows until then
-  enqueueJob(db, v.library_id, versionId, "thumb", v.created_by, true);
-  if (!v.source_key.startsWith("mac:")) enqueueJob(db, v.library_id, versionId, "sprite", v.created_by, true);
+  // Blur faces: a clip not blurred has no picture here to make again (upload-gate.ts mayLeave)
+  if (mayLeave(v.library_id, { versionId }).ok) {
+    enqueueJob(db, v.library_id, versionId, "thumb", v.created_by, true);
+    if (!v.source_key.startsWith("mac:")) enqueueJob(db, v.library_id, versionId, "sprite", v.created_by, true);
+  }
   libraryChanged(v.library_id);
 }

@@ -41,6 +41,8 @@ enum ImportAsk: Equatable {
     case cancel(String)
     case scan(String)
     case print([String])
+    /// the whole files' SHA-256 (Blur faces: the key a blurred render links to its original on), by path
+    case hash([String])
     case locate(folder: String?, files: [LocateFile])
     case make(in: String, names: [String])
     case thumb(path: String, max: Int)
@@ -65,6 +67,7 @@ func importAsk(_ ask: String) -> ImportAsk? {
         return files.count == list.count ? .copy(id: id, files: files) : nil
     case "scan": return (json["path"] as? String).map(ImportAsk.scan)
     case "print": return (json["paths"] as? [String]).map { ImportAsk.print(Array($0.prefix(5000))) }
+    case "hash": return (json["paths"] as? [String]).map { ImportAsk.hash(Array($0.prefix(100))) }
     case "make":
         guard let folder = json["in"] as? String, let names = json["names"] as? [String], names.count <= 10 else { return nil }
         return .make(in: (folder as NSString).expandingTildeInPath, names: names)
@@ -148,6 +151,15 @@ final class Imports: @unchecked Sendable {
                 // a file on a network disk that doesn't answer gets no print (Places.swift)
                 for p in paths where Places.shared.reachable(p) && Self.inside(p, granted) != nil { prints[p] = Self.quickPrint(p) }
                 main(["prints": prints])
+            }
+        case .hash(let paths)?:
+            DispatchQueue.global(qos: .utility).async {
+                let granted = MediaFiles.granted
+                var hashes: [String: String] = [:]
+                for p in paths where Places.shared.reachable(p) && Self.inside(p, granted) != nil {
+                    hashes[p] = try? LibraryCopyJob.sha256(of: URL(fileURLWithPath: p))
+                }
+                main(["hashes": hashes])
             }
         case .locate(let folder, let files)?:
             DispatchQueue.global(qos: .userInitiated).async { main(Locate.answer(folder: folder, files: files, allowed: MediaFiles.granted + Self.destinations)) }

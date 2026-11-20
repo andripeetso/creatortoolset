@@ -295,7 +295,8 @@ export interface ReportV2 {
  *  (POST /api/devices/relay/index) and the next report finds them. */
 export interface ReportAnswer {
   ok: true;
-  index: Array<{ folder: string; path: string }>;
+  /** blur: a library of the folder has Blur faces on: the agent sends the file's full SHA-256 and no card picture or strip */
+  index: Array<{ folder: string; path: string; blur?: true }>;
   /** known files whose filming date and place were never read (to a computer that says `filmed`): it reads each once
    *  and sends it (POST /api/devices/relay/filmed {folder, path, size, capturedAt?, tz?, location?, camera, alpha?}) */
   filmed?: Array<{ folder: string; path: string }>;

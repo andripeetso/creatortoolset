@@ -11,6 +11,7 @@ import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { mayRead } from "../work/offline";
 import { stampOf } from "../lib/workshop/context";
 import { blobs, libraryLookBudget, libraryLookLevel, librarySetting } from "./db";
+import { mayLeave } from "./upload-gate";
 import { DESCRIBE_LABEL, libraryWorkspaceId, whoFor, workspaceOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
 import { CUTS_BY_MODEL } from "./cuts";
@@ -306,6 +307,8 @@ async function readAndKeep(db: DatabaseSync, versionId: string, file: string, p:
     const json = path.join(dir, "sheets.json");
     await writeFile(json, JSON.stringify(kept));
     const { library_id } = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string };
+    // Blur faces: the sheets of a clip not blurred are held for this call only, never kept (upload-gate.ts mayLeave)
+    if (!mayLeave(library_id, { versionId }).ok) return kept;
     const key = `libraries/${library_id}/v/${versionId}/looksheets.json`;
     const { bytes } = await blobs.put(key, json);
     db.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'looksheets', ?, ?)").run(versionId, key, bytes);

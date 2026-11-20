@@ -24,6 +24,7 @@ import { blobs, libraryDb } from "./library/db";
 import { ownedProjects, resolveProjectId } from "./lib/workshop/workspace";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { ownedSession, readDoc } from "./workshop";
+import { mayLeave, REFUSED_BLUR } from "./library/upload-gate";
 
 /**
  * Designs (contracts/design.ts): a canvas of frames, each a picture made of layers, that the person's AI designs and
@@ -182,8 +183,10 @@ async function addPicture(d: Design, bytes: Buffer, ext: string, given?: unknown
 async function videoFrame(owner: string, version: string, t: number): Promise<{ frame: Buffer; title: string }> {
   const ws = sourcesWorkspace(owner, [version]);
   if (!ws) throw new DesignError("Not found", 404);
-  const row = libraryDb().prepare("SELECT v.source_key, v.mac_path, v.mac_device, a.title FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; mac_path: string | null; mac_device: string | null; title: string } | undefined;
+  const row = libraryDb().prepare("SELECT v.source_key, v.mac_path, v.mac_device, a.title, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; mac_path: string | null; mac_device: string | null; title: string; library_id: string } | undefined;
   if (!row) throw new DesignError("Not found", 404);
+  // Blur faces: a design keeps the frame, so only one of a blurred render (upload-gate.ts mayLeave)
+  if (!mayLeave(row.library_id, { versionId: version }).ok) throw new DesignError(REFUSED_BLUR, 409);
   const ms = Math.round(t * 1000);
   const frames = path.join(dirOf(owner), ".frames");
   let got: Awaited<ReturnType<typeof frameAt>>;

@@ -74,6 +74,7 @@ interface Answers {
   budget: number | null;
   organize: "ai" | "own";
   hosted: HostedMix;
+  blurFaces?: boolean;
 }
 
 const START: Answers = {
@@ -359,7 +360,7 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
         defaultFolders: defaultsOf(a),
         setupAt: new Date().toISOString(),
         // a library on This Mac has no server to upload to, so the hosted answers stay as they are
-        ...(kind === "mac" ? {} : hostedSettings(a.hosted)),
+        ...(kind === "mac" ? {} : { ...hostedSettings(a.hosted), ...(a.blurFaces ? { blurFaces: true } : {}) }),
       };
       const saved = await updateLibrary(library.id, { settings });
       // a reply without setupAt leaves this page on the setup: say so rather than do nothing
@@ -591,7 +592,7 @@ export function LibrarySetup({ library, watchAllowed, inline = false, onDone, on
     // hosted: only on a server or Cloud
     return (
       <Card>
-        <HostedSwitches value={a.hosted} onChange={(m) => set({ hosted: m })} />
+        <HostedSwitches value={a.hosted} onChange={(m) => set({ hosted: m })} blurFaces={a.blurFaces} onBlurFaces={(on, m) => set({ blurFaces: on, hosted: m })} />
       </Card>
     );
   };

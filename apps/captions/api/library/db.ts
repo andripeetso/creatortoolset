@@ -207,13 +207,27 @@ export const newLibrarySettings = (extra: Record<string, unknown> = {}): string 
 
 /** What a file added from a computer the server is not on sends here (contracts LibrarySettings.upload); old true/false read as all/none. */
 export const uploadOf = (v: unknown): LibraryUpload => (v === true || v === 1 ? "all" : LIBRARY_UPLOADS.includes(v as LibraryUpload) ? (v as LibraryUpload) : "none");
-export const libraryUpload = (libraryId: string): LibraryUpload =>
+export const libraryUpload = (libraryId: string): LibraryUpload => (blursFaces(libraryId) ? "none" : libraryUploadStored(libraryId));
+/** The Upload the owner chose, Blur faces or not: under Blur faces it is what a blurred render follows ("proxies" = Blurred). */
+export const libraryUploadStored = (libraryId: string): LibraryUpload =>
   uploadOf((libraryDb().prepare("SELECT json_extract(settings, '$.upload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v);
-/** What a final sends from a computer (contracts LibrarySettings.finalsUpload): "all" when it was never set. */
-export const finalsUpload = (libraryId: string): LibraryUpload => {
+/** What a final sends from a computer (contracts LibrarySettings.finalsUpload): "all" when it was never set; under Blur faces none. */
+export const finalsUpload = (libraryId: string): LibraryUpload => (blursFaces(libraryId) ? "none" : finalsUploadStored(libraryId));
+const finalsUploadStored = (libraryId: string): LibraryUpload => {
   const v = (libraryDb().prepare("SELECT json_extract(settings, '$.finalsUpload') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v;
   return v === null || v === undefined ? "all" : uploadOf(v);
 };
+/**
+ * Blur faces (contracts LibrarySettings.blurFaces): only a blurred render leaves the owner's computers. Every other clip
+ * of the library reads Upload as none (libraryUpload, versionUpload), whatever was chosen; upload-gate.ts mayLeave is the rule.
+ */
+export const blursFaces = (libraryId: string): boolean =>
+  (libraryDb().prepare("SELECT json_extract(settings, '$.blurFaces') AS v FROM libraries WHERE id = ?").get(libraryId) as { v: unknown } | undefined)?.v === 1;
+/** mayLeave in SQL (upload-gate.ts): version `v` of library `l` may have pictures cut of it, kept or handed out. */
+export const LEAVES_SQL = "(v.blurred_of IS NOT NULL OR json_extract(l.settings, '$.blurFaces') IS NOT 1)";
+/** A version is a blurred render (asset_versions.blurred_of: the full SHA-256 of the original it was made from). */
+export const isBlurred = (versionId: string): boolean =>
+  !!(libraryDb().prepare("SELECT blurred_of FROM asset_versions WHERE id = ?").get(versionId) as { blurred_of: string | null } | undefined)?.blurred_of;
 /** Whether a collection is its library's Finals (finals.ts finalsCollectionId). */
 export const isFinalsCollection = (collectionId: string): boolean =>
   !!libraryDb().prepare("SELECT 1 FROM collections WHERE id = ? AND parent_id IS NULL AND kind = 'manual' AND name = 'Finals'").get(collectionId);
@@ -226,6 +240,8 @@ export function versionUpload(versionId: string): LibraryUpload {
        FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?`,
     )
     .get(versionId) as { lib: string; fin: number } | undefined;
+  // a blurred render follows what the owner chose; under Blur faces any other clip reads none
+  if (r && blursFaces(r.lib) && isBlurred(versionId)) return r.fin ? finalsUploadStored(r.lib) : libraryUploadStored(r.lib);
   return !r ? "none" : r.fin ? finalsUpload(r.lib) : libraryUpload(r.lib);
 }
 

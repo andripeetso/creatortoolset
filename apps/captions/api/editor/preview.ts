@@ -22,6 +22,7 @@ import { sayFor } from "./progress";
 import { followPicked, HELD_NOTE } from "./subject";
 import { renderPlanPreview, sfxMix } from "./plan-render";
 import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readStep, saveDraft, saveFiled, saveStep } from "./store";
+import { mayLeave, workspaceLibrary } from "../library/upload-gate";
 import type { StepContext } from "./worker";
 
 /**
@@ -239,7 +240,20 @@ export const previewFile = (editId: string, variant: string) => path.join(editDi
  * The preview step (one version): render, then into Review as the next version of the draft's Review video. A planned
  * cut the AI made waits for its look (critique.ts), which files it.
  */
+/**
+ * Blur faces for an edit: its workspace's Media Library's rule (upload-gate.ts mayLeave). This editor blurs no face, so a
+ * cut of it is never rendered for the server nor kept there where Blur faces is on: the refusal, else ok.
+ */
+export async function editLeaves(edit: Pick<EditMeta, "createdBy" | "projectId"> & { workspaceId?: string }) {
+  return mayLeave(await workspaceLibrary(ownerOf(edit), edit.projectId), {});
+}
+
 export async function previewStep({ edit, job, variant, signal }: StepContext): Promise<void> {
+  // on the server only: a computer's render is refused where its files arrive (work/result.ts)
+  if (!onComputer.on) {
+    const left = await editLeaves(edit);
+    if (!left.ok) throw new Error(left.body.message);
+  }
   let d = readDraft(edit.id, variant);
   if (!d) throw new Error(`Draft ${variant || "the versions"} first`);
   // a preview from an older run's copies would be filed in Review as this cut (faces unblurred, say)
