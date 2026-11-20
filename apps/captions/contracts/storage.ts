@@ -13,9 +13,9 @@ import type { FolderState } from "./places";
  */
 
 export const STORAGE_ROLES = [{ value: "footage", label: "Source media" }] as const;
-/** The Projects folder's name, made next to a workspace's first Media folder (ensureUseFolder, api/devices-storage.ts). */
+/** The Projects folder's name: setup's and the card's default (libraryBase/<name>). */
 export const PROJECTS_NAME = "Project files";
-/** The Exports folder's name, made next to a workspace's first Media folder when the workspace has none (ensureUseFolder). */
+/** The Exports folder's name: setup's and the card's default (libraryBase/<name>). */
 export const EXPORTS_NAME = "Final exports";
 /** The three uses (owner, 2026-11-18): "footage" is Media (many per workspace), "projects" is the workspace's Projects folder
  *  (AI Editor working files, one), "library" is its Exports folder (finals and deliverables, one; Finals reads it). "finals"

@@ -16,10 +16,14 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const { storageApp, ensureUseFolder, storageOf } = await import("./devices-storage");
 const { pairDevice } = await import("./lib/devices");
 const { inRequestWorkspace } = await import("./lib/workspace-scope");
+const { libraryDb } = await import("./library/db");
 
 mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
 for (const [id, name] of [["ws-tiny", "Tiny Acrobatics"], ["ws-other", "Other"]])
   writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: "ana", name, updatedAt: 1 }));
+// both Media Libraries are set up: a folder is what the job waits for (not set up: the setup card, use-folder.test)
+for (const id of ["ws-tiny", "ws-other"])
+  libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'ana', 'Library', 'local', ?, 0)").run(`lib_${id.replace("-", "_")}`, JSON.stringify({ projectId: id, setupAt: "2026-11-19T08:00:00.000Z" }));
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use(async (c, next) => {

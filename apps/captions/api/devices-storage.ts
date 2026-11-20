@@ -3,13 +3,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { EVERY_WORKSPACE, EXPORTS_NAME, FOLDER_LABELS, PROJECTS_NAME, libraryBase, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
+import { EVERY_WORKSPACE, FOLDER_LABELS, libraryBase, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { actionCard, type FolderAsk } from "../contracts/library";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { inside, localDisks, mediaFolders, migrateStorage, mountOf, onInternalDisk, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { inside, localDisks, mediaFolders, migrateStorage, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
 import { mergeStudio, replacedIds, studioRows, type HostLookup } from "./lib/studio-folders";
 import { resolveDevice } from "./library/whereis";
 import { keptApp } from "./kept";
@@ -18,7 +18,8 @@ import { repointFolders } from "./library/place-rows";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf, projectOf } from "./lib/project-of";
 import { ownedProjects, sharedProjects } from "./lib/workshop/workspace";
-import { ensureLibrary } from "./library/access";
+import { ensureLibrary, setupNeeded } from "./library/access";
+import { workspaceById } from "./lib/workspaces";
 import { actionDone } from "./lib/action-done";
 
 /**
@@ -122,11 +123,11 @@ function folderMade(user: string, role: string, workspace: string | undefined, h
 
 /**
  * The workspace's Projects or Exports folder for work on computer `device` (AI Editor working files; finished videos):
- * the one it has, else one made next to its first Media folder on that computer, written as a record. Never on the
- * Mac's internal disk by itself: with no Media folder off it, a named workspace's folder is a pause (`wait`): the chat's
- * card offers the workspace's default (~/Movies/Creator Toolset/<workspace>/Project files) or Choose…, and the job goes
- * on once the row is there. A `device` that is no known computer (a worker's host name nothing matched) is a card that
- * says so (`missing: "computer"`), never a folder to choose.
+ * the one it has. None is ever made here: a folder is made only when the person picks or confirms one (setup, Settings
+ * → Folders, a card's tap; owner, 2026-11-19). Without one, a named workspace's job pauses (`wait`) on a card: the
+ * setup card while its Media Library is not set up, else the folder card (the workspace's default
+ * ~/Movies/Creator Toolset/<workspace>/Project files, or Choose…), and the job goes on once the row is there. A `device`
+ * that is no known computer (a worker's host name nothing matched) is a card that says so (`missing: "computer"`).
  */
 export async function ensureUseFolder(user: string, workspace: string | undefined, role: "projects" | "library", device: string): Promise<StorageFolder | { error: string } | { wait: FolderAsk }> {
   // no workspace named: the account's only workspace; with several, the answer says what to choose. With none, only the
@@ -134,33 +135,16 @@ export async function ensureUseFolder(user: string, workspace: string | undefine
   const owned = await ownedProjects(user);
   const ws = workspace ?? (owned.length === 1 ? owned[0]!.id : undefined);
   const label = FOLDER_LABELS[role];
-  const ask = (dev: string | null, deviceName: string | undefined): { wait: FolderAsk } | { error: string } => {
-    if (!ws) return { error: `Choose a ${label} folder in Settings → Media Library.` };
-    const name = owned.find((x) => x.id === ws)?.name || ws;
-    return { wait: actionCard({ kind: role === "projects" ? "projects" : "exports", workspace: ws, workspaceName: name, device: dev, ...(deviceName ? { deviceName } : {}), path: `${libraryBase(name)}/${label}` }) as FolderAsk };
-  };
   if (!workspace && owned.length > 1) return { error: `Choose a ${label} folder in Settings → Media Library.` };
-  const inWs = (w?: string) => w === ws;
-  const st = await readStorage(user);
-  const has = st.folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, inWs));
+  const has = (await readStorage(user)).folders.find((f) => f.role === role && f.origin.host === device && folderIn(f, (w) => w === ws));
   if (has) return has;
-  const media = st.folders.find((f) => f.role === "footage" && f.origin.host === device && folderIn(f, inWs));
+  if (!ws) return { error: `Choose a ${label} folder in Settings → Media Library.` };
+  // a Media Library not set up goes to its setup first (a member's card says the owner sets it up)
+  const setup = await setupNeeded(user, ws);
+  if (setup) return { wait: setup as FolderAsk };
   const computer = deviceOf(device);
-  const disks = computer?.report?.machine?.disks ?? [];
-  const parent = media ? media.origin.path.replace(/\/[^/]*$/, "") : "";
-  const p = `${parent}/${role === "projects" ? PROJECTS_NAME : EXPORTS_NAME}`;
-  // shortcut: a Media folder at a volume's root has no room beside it on that volume (its parent is /Volumes), so it is refused
-  if (!media || !parent || /^\/(Volumes|media|mnt|run\/media)$/.test(parent) || onInternalDisk(p, disks)) return computer ? ask(device, computer.name) : ask(null, device);
-  return chained(user, async () => {
-    const cur = await readStorage(user);
-    const had = cur.folders.find((f) => f.role === role && f.origin.host === device && f.origin.path === p && folderIn(f, inWs));
-    if (had) return had;
-    const f: StorageFolder = { id: randomUUID(), role, name: p.split("/").pop() ?? p, origin: { host: device, path: p }, make: true, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) };
-    cur.folders.push(f);
-    await writeStorage(user, cur);
-    folderMade(user, role, ws, device);
-    return f;
-  });
+  const name = owned.find((x) => x.id === ws)?.name || workspaceById(ws)?.name || ws;
+  return { wait: actionCard({ kind: role === "projects" ? "projects" : "exports", workspace: ws, workspaceName: name, device: computer ? device : null, deviceName: computer?.name ?? device, path: `${libraryBase(name)}/${label}` }) as FolderAsk };
 }
 
 /**

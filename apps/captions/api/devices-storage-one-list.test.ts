@@ -119,37 +119,21 @@ describe("the plug-in's storage.json, imported once (A12)", () => {
   });
 });
 
-describe("Projects and Exports are made beside the workspace's first Media folder (decision 3)", () => {
+describe("Projects and Exports are never made beside the Media folder by themselves (owner, 2026-11-19)", () => {
   const listFile = (folders: StorageFolder[]) => writeFileSync(path.join(dir, "data", "storage", `${USER}.json`), JSON.stringify({ schemaVersion: 3, folders }));
 
-  it("makes Projects next to the Media folder on that computer, once, and keeps it as a record", async () => {
+  it("a Media folder on a drive gets no Projects or Exports row from a claim: the answer says what to choose", async () => {
     const dev = "dev-studio-1";
     listFile([folder("m1", dev, "/Volumes/Tiny/Shoots")]);
-    const made = await ensureUseFolder(USER, undefined, "projects", dev);
-    expect(made).toMatchObject({ role: "projects", origin: { host: dev, path: "/Volumes/Tiny/Project files" }, make: true });
-    const again = await ensureUseFolder(USER, undefined, "projects", dev);
-    expect(again).toEqual(made);
-    expect((await storageOf(USER)).folders.filter((f) => f.role === "projects")).toHaveLength(1);
-  });
-
-  it("a second computer in the same workspace gets its own Projects folder, never the first computer's path", async () => {
-    listFile([folder("m1", "dev-a", "/Volumes/Tiny/Shoots"), folder("m5", "dev-b", "/mnt/tiny/Shoots")]);
-    expect(await ensureUseFolder(USER, undefined, "projects", "dev-a")).toMatchObject({ origin: { host: "dev-a", path: "/Volumes/Tiny/Project files" } });
-    expect(await ensureUseFolder(USER, undefined, "projects", "dev-b")).toMatchObject({ origin: { host: "dev-b", path: "/mnt/tiny/Project files" } });
-  });
-
-  it("never makes one on the internal disk: with only a home-folder Media folder it says what to choose", async () => {
-    const dev = "dev-studio-2";
-    listFile([folder("m2", dev, "~/Movies/Shoots")]);
-    const r = await ensureUseFolder(USER, undefined, "library", dev);
-    expect(r).toEqual({ error: "Choose a Final exports folder in Settings → Media Library." });
-    expect((await storageOf(USER)).folders.some((f) => f.role === "library")).toBe(false);
-  });
-
-  it("refuses a Media folder at a volume's root: Projects would land beside the volumes, not on it", async () => {
-    const dev = "dev-studio-3";
-    listFile([folder("m3", dev, "/Volumes/MONOLITH")]);
     expect(await ensureUseFolder(USER, undefined, "projects", dev)).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
-    expect((await storageOf(USER)).folders.filter((f) => f.role === "projects")).toHaveLength(0);
+    expect(await ensureUseFolder(USER, undefined, "library", dev)).toEqual({ error: "Choose a Final exports folder in Settings → Media Library." });
+    expect((await storageOf(USER)).folders.map((f) => f.role)).toEqual(["footage"]);
+  });
+
+  it("a row the person made is the one a claim gets, on its own computer only", async () => {
+    const pj = { ...folder("p1", "dev-a", "/Volumes/Tiny/Project files", "projects"), make: true };
+    listFile([folder("m1", "dev-a", "/Volumes/Tiny/Shoots"), pj]);
+    expect(await ensureUseFolder(USER, undefined, "projects", "dev-a")).toEqual(pj);
+    expect(await ensureUseFolder(USER, undefined, "projects", "dev-b")).toEqual({ error: "Choose a Project files folder in Settings → Media Library." });
   });
 });
