@@ -2,6 +2,7 @@ import { Canvas, DOMMatrix } from "@napi-rs/canvas";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { DesignPage, Layer } from "@contracts/design";
 import { drawPage, type Loaded } from "./draw";
+import { syncInstances } from "./components";
 
 /**
  * drawPage on a real canvas, read back pixel by pixel: what a layer's fills, lines and effects come out as. The
@@ -234,5 +235,18 @@ describe("a container drawn on a canvas", () => {
     expect(draw([holder(kept)]).at(15, 15)).toEqual([255, 255, 255, 255]);
     expect(draw([holder(kept)], {}, true).at(15, 15)).toEqual([255, 0, 0, 255]);
     expect(draw([holder(kept)], {}, true).at(35, 15)).toEqual([255, 255, 255, 255]);
+  });
+
+  it("draws an instance as its main, pixel for pixel, and with its own words where it overrides them", () => {
+    const words = { id: "t", type: "text", text: "W", font: "Inter", size: 30, color: "#ffffff", align: "center", x: 0, y: 0, w: 60, h: 40, bind: { text: "Label" } } as Layer;
+    const main = { id: "m", type: "group", box: true, component: "chip", x: 10, y: 10, w: 60, h: 40, fills: [{ type: "solid", color: "#2255ff" }], layers: [words] } as Layer;
+    const made = (props?: Record<string, string>) => syncInstances([{ id: "a", background: "#ffffff", layers: [{ ...main, x: -500 }] }, { id: "b", background: "#ffffff", layers: [{ id: "i", type: "group", x: 10, y: 10, w: 1, h: 1, layers: [], instance: { of: "chip", ...(props ? { props } : {}) } } as Layer] }] as DesignPage[])[1]!.layers;
+    const asMain = draw([main]);
+    const plain = draw(made());
+    expect(Buffer.from(plain.data).equals(Buffer.from(asMain.data))).toBe(true);
+    const other = draw(made({ Label: "." }));
+    // the box is the main's, the words are its own
+    expect(other.at(12, 12)).toEqual(asMain.at(12, 12));
+    expect(Buffer.from(other.data).equals(Buffer.from(asMain.data))).toBe(false);
   });
 });

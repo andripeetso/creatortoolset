@@ -4,6 +4,7 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { drawPage, inLayer, keptOr, layerAt, textSize, type Loaded } from "@/lib/design/draw";
 import { dropInto, everyLayer, findLayer, inFrame, inScope, into, isGroup, moveInto, reid, scopeOf, seenBox, withScope } from "@/lib/design/tree";
 import { solidGround } from "@/lib/design/paint";
+import { isInstance, isMain } from "@/lib/design/components";
 import { boundsOf, boxPick, dropTarget, frameOf, hovers, withoutTyped, shownArea, freshIds, groupOf, pageName, regroup, withGroups, resizeAll, resizeBox, snapMove, snapSpacing, zoomAt, type Gap, type Handle, type Rect, type View } from "@/lib/design/hands";
 import { placeLayers } from "@/lib/design/resize";
 import { dropSlot, fixedBy, flowInsert, flows } from "@/lib/design/layout";
@@ -60,6 +61,8 @@ const SNAP = SNAP_PX;
 /** No layer is resized smaller than this, in design pixels. */
 const MIN = 8;
 const BLUE = "#0d99ff";
+/** A main component or an instance: outlined in purple, as the layers list marks them. */
+const isComponent = (l: Layer) => isMain(l) || isInstance(l);
 /** The device pixels all the kept pictures of frames may have together (about 96 MB), and how long nothing has to move before the frames are made exact again, in ms. */
 const KEPT_PIXELS = 24_000_000;
 const SETTLE = 120;
@@ -1128,7 +1131,9 @@ export function Stage({
           )}
           {/* several frames picked: each is outlined, none has handles (they move, they are not resized together) */}
           {framedIds.length > 1 && pages.map((p, n) => framedIds.includes(p.id) && <div key={p.id} data-frame-selection className="pointer-events-none absolute outline outline-2 outline-[#0d99ff]" style={onScreen(fr[n]!)} />)}
-          {outlined.map((l, n) => l && <div key={n} className={cn("pointer-events-none absolute outline outline-[#0d99ff]", n === 2 ? "outline-1 outline-dashed" : "outline-2")} style={place(n === 0 ? hover!.k : at, l)} />)}
+          {outlined.map((l, n) => l && <div key={n} className={cn("pointer-events-none absolute outline", isComponent(l) ? "outline-[#9747ff]" : "outline-[#0d99ff]", n === 2 ? "outline-1 outline-dashed" : "outline-2")} style={place(n === 0 ? hover!.k : at, l)} />)}
+          {/* an instance with nothing to draw (its main is not in the design): its place, dashed, so it can be found and taken out */}
+          {real.map((p, n) => everyLayer(p.layers).filter((l) => isInstance(l) && !l.layers.length).map((l) => <div key={`${p.id}/${l.id}`} data-empty-instance className="pointer-events-none absolute outline-dashed outline-1 outline-[#9747ff]" style={place(n, inFrame(p.layers, l.id)!)} />))}
           {guides?.x !== undefined && <div className="pointer-events-none absolute w-px bg-[#ff3b30]" style={{ left: view.x + guides.x * view.z, top: view.y + guides.span.y * view.z, height: guides.span.h * view.z }} />}
           {guides?.y !== undefined && <div className="pointer-events-none absolute h-px bg-[#ff3b30]" style={{ left: view.x + guides.span.x * view.z, top: view.y + guides.y * view.z, width: guides.span.w * view.z }} />}
           {/* where the dragged layers go in the auto layout's flow */}
@@ -1208,7 +1213,7 @@ export function Stage({
           )}
           {!typed && !cropped && !shaped && around && here && (
             <>
-              <div data-selection className="pointer-events-none absolute outline outline-1 outline-[#0d99ff]" style={place(at, one ?? around)}>
+              <div data-selection className={cn("pointer-events-none absolute outline outline-1", one && isComponent(one) ? "outline-[#9747ff]" : "outline-[#0d99ff]")} style={place(at, one ?? around)}>
                 {/* just outside each corner: turning (one layer only) */}
                 {one &&
                   (["nw", "ne", "se", "sw"] as const).map((h) => (

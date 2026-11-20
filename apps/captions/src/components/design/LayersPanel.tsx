@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, ChevronDown, ChevronRight, Circle, Contrast, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Star, Triangle, Type } from "lucide-react";
+import { ArrowRight, Component, Diamond, ChevronDown, ChevronRight, Circle, Contrast, Eye, EyeOff, Frame, Group, Image, Lock, LockOpen, PenTool, Plus, Spline, Square, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Star, Triangle, Type } from "lucide-react";
 import type { DesignPage, Layer } from "@contracts/design";
 import { groupName, layerName, pageName } from "@/lib/design/hands";
+import { isInstance, isMain, type Instance } from "@/lib/design/components";
 import { isGroup, mapLayers, masksOf, moveRow, parentOf, pathTo } from "@/lib/design/tree";
 import { cn } from "@/lib/utils";
 import { Tip } from "./Tip";
@@ -59,12 +60,15 @@ export function LayersPanel({
   onZoomTo: (at: number, id?: string) => void;
 }) {
   const [shut, setShut] = useState<string[]>([]);
+  // an instance is one row until it is opened (its layers are its main's)
+  const [openInst, setOpenInst] = useState<string[]>([]);
   // a layer picked on the canvas inside a closed container: its containers (and its frame) open, so its row shows
   const pickedIn = pages[at] && selected[0] ? (pathTo(pages[at]!.layers, selected[0]) ?? []).map((g) => `${pages[at]!.id}/${g.id}`) : [];
   const opening = [...pickedIn, ...(pickedIn.length || selected.length ? [pages[at]?.id ?? ""] : [])].join("|");
   useEffect(() => {
     const open = opening.split("|");
     setShut((s) => (s.some((x) => open.includes(x)) ? s.filter((x) => !open.includes(x)) : s));
+    setOpenInst((s) => (open.some((x) => !s.includes(x)) ? [...new Set([...s, ...open])] : s));
   }, [opening]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
@@ -160,7 +164,8 @@ export function LayersPanel({
   const line = (key: string) => drop?.key === key && (drop.into ? <span className="pointer-events-none absolute inset-0 rounded-sm border-2 border-[#0d99ff]" /> : <span className={cn("pointer-events-none absolute inset-x-2 h-0.5 bg-[#0d99ff]", drop.after ? "bottom-0" : "top-0")} />);
 
   /** The rows of `list` (layers of frame `k`, or of a container in it), front first, each container's own under it. */
-  const rows = (p: DesignPage, k: number, list: readonly Layer[], depth: number, combined = false) => {
+  /** `owner`: the instance these layers are of: they move with its main, only what it overrides is its own. */
+  const rows = (p: DesignPage, k: number, list: readonly Layer[], depth: number, combined = false, owner?: Instance) => {
     const layerKey = `l:${p.id}:`;
     const shown = [...list].reverse();
     const cut = masksOf(list, combined);
@@ -173,10 +178,11 @@ export function LayersPanel({
       const heads = grouped && shown[n - 1]?.group !== l.group;
       const allOn = k === at && members.length > 0 && members.every((id) => selected.includes(id));
       const on = k === at && selected.includes(l.id);
-      const Icon = l.mask && !combined ? Contrast : l.type === "shape" ? SHAPE[l.shape] : l.type === "group" && l.box ? Frame : l.type === "group" && l.boolean ? BOOLEAN[l.boolean] : KIND[l.type];
+      const Icon = isMain(l) ? Component : isInstance(l) ? Diamond : l.mask && !combined ? Contrast : l.type === "shape" ? SHAPE[l.shape] : l.type === "group" && l.box ? Frame : l.type === "group" && l.boolean ? BOOLEAN[l.boolean] : KIND[l.type];
       const set = (patch: Partial<Layer>) => onPage({ ...p, layers: mapLayers(p.layers, (x) => (x.id === l.id ? ({ ...x, ...patch } as Layer) : x)) });
       const shutKey = `${p.id}/${l.id}`;
-      const inner = isGroup(l) && !shut.includes(shutKey);
+      const inner = isGroup(l) && (isInstance(l) ? openInst.includes(shutKey) : !shut.includes(shutKey));
+      const own = !owner || !!owner.instance.overrides?.[l.id.slice(owner.id.length + 1)];
       // a layer a mask cuts sits in under it
       const indent = { paddingLeft: (p.loose ? 16 + depth * 14 : 36 + depth * 14 + (grouped ? 20 : 0)) + (cut.has(l.id) ? 12 : 0) };
       return (
@@ -195,6 +201,7 @@ export function LayersPanel({
             aria-label={layerName(l)}
             aria-selected={on}
             onPointerDown={(e) =>
+              !owner &&
               dragRow(
                 e,
                 (other) => other.startsWith(layerKey) && other !== key,
@@ -215,17 +222,17 @@ export function LayersPanel({
               const mine = k === at && selected.length && parentOf(p.layers, selected[0]!)?.id === parentOf(p.layers, l.id)?.id ? selected : [];
               onPick(k, e.shiftKey || e.metaKey || e.ctrlKey ? (mine.includes(l.id) ? mine.filter((id) => id !== l.id) : [...mine, l.id]) : [l.id]);
             }}
-            onDoubleClick={() => setRenaming(key)}
-            className={cn(ROW, on ? ON : "hover:bg-zinc-500/10", l.hidden && "text-zinc-500")}
+            onDoubleClick={() => !owner && setRenaming(key)}
+            className={cn(ROW, on ? ON : "hover:bg-zinc-500/10", (l.hidden || !own) && "text-zinc-500")}
             style={indent}
           >
             {isGroup(l) && (
-              <button type="button" aria-label={inner ? "Close" : "Open"} onClick={(e) => (e.stopPropagation(), setShut((s) => (inner ? [...s, shutKey] : s.filter((x) => x !== shutKey))))} className="-ml-4 flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 dark:text-[#b3b3b3]">
+              <button type="button" aria-label={inner ? "Close" : "Open"} onClick={(e) => (e.stopPropagation(), isInstance(l) ? setOpenInst((s) => (inner ? s.filter((x) => x !== shutKey) : [...s, shutKey])) : setShut((s) => (inner ? [...s, shutKey] : s.filter((x) => x !== shutKey))))} className="-ml-4 flex h-4 w-4 shrink-0 items-center justify-center text-zinc-500 dark:text-[#b3b3b3]">
                 {inner ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               </button>
             )}
             <span data-icon onDoubleClick={zoomOn(k, l.id)} className="flex shrink-0" {...(l.mask && !combined ? { title: "Mask" } : cut.has(l.id) ? { "data-masked": "" } : {})}>
-              <Icon className="h-3 w-3 shrink-0 text-zinc-500 dark:text-[#b3b3b3]" />
+              <Icon className={cn("h-3 w-3 shrink-0", isMain(l) || isInstance(l) ? "text-[#9747ff]" : "text-zinc-500 dark:text-[#b3b3b3]")} />
             </span>
             {renaming === key ? rename(layerName(l), (name) => set({ name: name || undefined })) : <span className="min-w-0 flex-1 truncate">{layerName(l)}</span>}
             {/* shown while designing only: never in a saved picture, a thumbnail or a video */}
@@ -238,7 +245,7 @@ export function LayersPanel({
             </button>
             {line(key)}
           </div>
-          {inner && <div role="group">{rows(p, k, l.layers, depth + 1, !!l.boolean)}</div>}
+          {inner && <div role="group">{rows(p, k, l.layers, depth + 1, !!l.boolean, isInstance(l) ? l : owner)}</div>}
         </div>
       );
     });

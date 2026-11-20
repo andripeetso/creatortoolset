@@ -101,7 +101,7 @@ function make(inst: Instance, c: Made): Instance {
   const flowing = (g: Layer) => isGroup(g) && !!g.box && !!g.layout;
   const copy = (l: Layer, inFlow: boolean): Layer => {
     let n = { ...l, id: pre + l.id } as Layer;
-    for (const f of MAIN_ONLY) delete (n as Rec)[f];
+    for (const f of MAIN_ONLY) delete (n as unknown as Rec)[f];
     n = laidOut(overridden(withProps(n, props), o[l.id], (f) => !FIXED.has(f)), had.get(pre + l.id), inFlow);
     // a nested instance shown as another main (a swap, a property) is made from that one
     if (isInstance(n) && isInstance(l) && !same(n.instance, l.instance)) return overridden(make({ ...n, layers: [] }, c), o[l.id], (f) => !FIXED.has(f) && f !== "instance");
@@ -109,7 +109,7 @@ function make(inst: Instance, c: Made): Instance {
   };
   const root: Rec = {};
   for (const [f, v] of Object.entries(inst)) if (!FROM_MAIN.has(f) && !MAIN_ONLY.includes(f)) root[f] = v;
-  for (const f of FROM_MAIN) if ((m as Rec)[f] !== undefined) root[f] = (m as Rec)[f];
+  for (const f of FROM_MAIN) if ((m as unknown as Rec)[f] !== undefined) root[f] = (m as unknown as Rec)[f];
   const out = overridden({ ...root, type: "group", layers: m.layers.map((k) => copy(k, flowing(m))) } as unknown as Instance, o[""], (f) => FROM_MAIN.has(f));
   // given a size of its own, its layers follow the main's pins to it
   if (o[""] && ("w" in o[""] || "h" in o[""])) return fitContents(m, out);

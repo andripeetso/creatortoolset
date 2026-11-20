@@ -20,6 +20,8 @@ import { fillsOf, paintPictures, strokesOf } from "@/lib/design/paint";
 import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
+import { detached, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
+import { ComponentSection } from "@/components/design/ComponentSection";
 import { depthOf, everyLayer, findLayer, inFrame, inScope, isGroup, mapLayers, maskWithNext, parentOf, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
@@ -699,7 +701,44 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       const { box: _b, fills: _f, strokes: _s, radius: _r, smooth: _m, clip: _c, ...plain } = withoutLayout(l);
       return plain;
     });
-  /** Up a level: the container the picked layers lie in, picked. */
+  /**
+   * The picked layers made a main component (⌥⌘K, lib/design/components.ts): one plain group or box in place, else they
+   * are grouped first. Several mains picked: combined as variants of one set.
+   */
+  const makeComponent = () => {
+    if (!base || !top || !mine.length || instanceAround(pathTo(top.layers, mine[0]!.id) ?? [])) return;
+    if (mine.length > 1 && mine.every(isMain)) return combineVariants();
+    const key = freshKey(pages);
+    const one = mine.length === 1 ? mine[0]! : null;
+    if (one && isGroup(one) && !one.instance && one.component === undefined) return patch((l) => (isGroup(l) ? { ...l, component: key, name: l.name ?? "Component" } : l));
+    if (one && (isMain(one) || isInstance(one))) return;
+    group(false, (g) => ({ ...g, component: key, name: "Component" }));
+  };
+  /** Picked mains made variants of one set: each its value of the set's property from its name ("Size=4:5, Theme=Dark", or the name itself). */
+  const combineVariants = () => {
+    const set = mine[0]?.name ?? "Component";
+    const variantOf = (n: string): Record<string, string> => {
+      const pairs = n.split(",").map((p) => p.split("=").map((x) => x.trim()));
+      return pairs.every((p) => p.length === 2 && p[0] && p[1]) ? Object.fromEntries(pairs) : { "Property 1": n };
+    };
+    patch((l) => (isMain(l) ? { ...l, set, variant: variantOf(l.name ?? l.component) } : l));
+  };
+  /** A layer of the picked frame (however deep, by its id) through `fn`. */
+  const onLayer = (id: string, fn: (l: Layer) => Layer) => top && setPage({ ...top, layers: mapLayers(top.layers, (l) => (l.id === id ? fn(l) : l)) });
+  /** An instance of main `key` placed in the middle of the picked frame, picked. */
+  const placeInstance = (key: string) => {
+    const m = mainsOf(pages).get(key)?.main;
+    const f = top && !top.loose ? frameOf(top, k, design?.width ?? 0, design?.height ?? 0) : null;
+    if (!m || !f) return;
+    put(k, 1, ([id]) => [{ type: "group", id: id!, x: Math.round((f.w - m.w) / 2), y: Math.round((f.h - m.h) / 2), w: m.w, h: m.h, layers: [], instance: { of: key } }]);
+  };
+  /** The main component an instance shows, picked on its frame. */
+  const goToMain = (key: string) => {
+    const at = mainsOf(pages).get(key);
+    const n = at ? pages.findIndex((p) => p.id === at.page) : -1;
+    if (at && n >= 0) pick(n, [at.main.id]);
+  };
+
   const outward = () => scope && pick(k, [scope]);
   const toggle = (flag: "hidden" | "locked") => {
     const all = mine.every((l) => l[flag]);
@@ -1006,6 +1045,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         else if (c === "Digit0") run(() => zoom(1));
         else if (c === "KeyD") run(duplicate);
         else if (e.altKey && c === "KeyT") run(tidyUp);
+        else if (e.altKey && c === "KeyK" && has) run(makeComponent);
+        else if (e.altKey && c === "KeyB" && has) run(() => patch((l) => (isInstance(l) ? detached(l) : l)));
         else if (e.altKey && BOOLEAN_KEYS[c] && has) run(() => combineShapes(BOOLEAN_KEYS[c]!));
         // ⌃⌘M; Ctrl+Alt+M where there is no ⌘ (the Windows key is not the page's)
         else if (c === "KeyM" && has && (ON_A_MAC ? e.ctrlKey && e.metaKey : e.ctrlKey && e.altKey)) run(useAsMask);
@@ -1368,6 +1409,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
                     <ContextMenuSubContent className="w-48">{DESIGN_BOOLEANS.map((op) => item(BOOLEAN_NAMES[op], BOOLEAN_KEY_NAMES[op], () => combineShapes(op), false))}</ContextMenuSubContent>
                   </ContextMenuSub>
                   {item(mine.length === 1 && mine[0]!.mask ? "Stop using as mask" : "Use as mask", ON_A_MAC ? "⌃⌘M" : "Ctrl+Alt+M", useAsMask, none)}
+                  {item(mine.length > 1 && mine.every(isMain) ? "Combine as variants" : "Create component", "⌥⌘K", makeComponent, none || (mine.length === 1 && (isMain(mine[0]) || isInstance(mine[0]))))}
+                  {mine.length === 1 && isInstance(mine[0]) && item("Detach instance", "⌥⌘B", () => patch((l) => (isInstance(l) ? detached(l) : l)), false)}
                   {item("Ungroup", "⇧⌘G", ungroup, !mine.some((l) => isGroup(l) || (l.group && (base?.layers ?? []).filter((x) => x.group === l.group).length > 1)))}
                   {mine.some(isGroup) && (mine.filter(isGroup).every((l) => l.box) ? item("Convert to group", "", () => convert(false), false) : item("Convert to frame", "", () => convert(true), false))}
                   <ContextMenuSeparator />
@@ -1469,6 +1512,19 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
           onUngroup={ungroup}
           onAutoLayout={autoLayout}
           onCombine={combineShapes}
+          components={
+            top && (
+              <ComponentSection
+                pages={pages}
+                picked={mine}
+                path={mine[0] ? (pathTo(top.layers, mine[0].id) ?? []) : []}
+                onLayer={onLayer}
+                onMake={makeComponent}
+                onPlace={placeInstance}
+                onGoToMain={goToMain}
+              />
+            )
+          }
           flow={(() => {
             const c = top && scope ? findLayer(top.layers, scope) : null;
             return flows(c) ? c.layout : null;

@@ -825,6 +825,7 @@ export function Inspector({
   onUngroup,
   onAutoLayout,
   onCombine,
+  components,
   flow,
   colours,
   onDropper,
@@ -871,6 +872,8 @@ export function Inspector({
   onAutoLayout: () => void;
   /** the picked shapes combined into one (a boolean group), or a picked boolean group combined another way */
   onCombine: (op: DesignBoolean) => void;
+  /** the picked layers' component section (ComponentSection): what they are made of or show, and its properties */
+  components?: ReactNode;
   /** the auto layout of the box the picked layers lie in; null: they lie in none */
   flow: AutoLayout | null;
   /** the colours the design already uses, for the picker */
@@ -1028,6 +1031,7 @@ export function Inspector({
         </>
       )}
 
+      {components}
       {box && (
         <>
           <Section title="Position" action={tidyTap}>
@@ -1772,4 +1776,4 @@ function StrokeMore({ s, box, open, max, set }: { s: Stroke; box?: boolean; open
   );
 }
 
-export { Choice, Colour, Num, Section, Tap };
+export { Choice, Colour, DIM, FIELD, Num, PickOne, Section, Tap };
