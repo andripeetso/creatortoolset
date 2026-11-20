@@ -300,6 +300,37 @@ describe("library: a file added where it is (picked in the Mac app on its own se
     }
   });
 
+  it("refuses a file inside a folder one of the person's Media folders leaves out: picked, sent or indexed from a Mac alike", async () => {
+    const { changeStorage } = await import("../devices-storage");
+    const hidden = path.join(footage, "Day 1", "- No Share", "x.mp4");
+    mkdirSync(path.dirname(hidden), { recursive: true });
+    writeFileSync(hidden, clip(700, 34));
+    // a Media folder of another computer that holds the same path: no computer named is no way around its list
+    await changeStorage("owner-a", (st) => {
+      st.folders.push({ id: "m_lo", role: "footage", name: "Footage", origin: { host: "mac_elsewhere", path: footage }, make: false, createdAt: 0, reach: {}, leaveOut: ["- NO SHARE"] });
+    });
+    try {
+      const words = "Inside Source media: not imported as footage";
+      const picked = await add({ path: hidden, size: 700 });
+      expect(picked.status).toBe(400);
+      expect(await read(picked)).toMatchObject({ error: words });
+      const sent = await create("owner-a", 700, { fromPath: hidden, fromDevice: "mac_elsewhere" });
+      expect(sent.status).toBe(400);
+      expect(await read(sent)).toMatchObject({ error: words });
+      const indexed = await app.request("/api/library/lib_a/on-mac", {
+        method: "POST",
+        headers: { ...who("owner-a"), "content-type": "application/json" },
+        body: JSON.stringify({ name: "x.mp4", path: hidden, size: 700, quick: "c".repeat(64), frames: [] }),
+      });
+      expect(indexed.status).toBe(400);
+      expect(await read(indexed)).toMatchObject({ error: words });
+    } finally {
+      await changeStorage("owner-a", (st) => {
+        st.folders = st.folders.filter((f) => f.id !== "m_lo");
+      });
+    }
+  });
+
   it("turns missing while its drive is away, deletes nothing, comes back with it, and says when it is in the trash", async () => {
     const { scanWatchFolders } = await import("./watch");
     const moved = path.join(footage, "Away.MP4");

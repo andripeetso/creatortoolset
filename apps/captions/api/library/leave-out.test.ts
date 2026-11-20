@@ -20,6 +20,7 @@ const { changeStorage, storageApp } = await import("../devices-storage");
 const { pairDevice } = await import("../lib/devices");
 const { inRequestWorkspace } = await import("../lib/workspace-scope");
 const { notFootage } = await import("../../contracts/storage");
+const { libraryDb } = await import("./db");
 createUser("tia", "password1", { role: "admin" });
 createUser("bo", "password1", { role: "admin" });
 
@@ -47,6 +48,13 @@ describe("a Media folder's Folders left out", () => {
     expect(notFootage("- NO SHARE/x/clip.mov")).toBe(false);
   });
 
+  it("notFootage: a name matches in any case and in either Unicode form", () => {
+    expect(notFootage("- no share/clip.mov", undefined, ["- NO SHARE"])).toBe(true);
+    expect(notFootage("Day 1/- No Share/clip.mov", undefined, ["- no share"])).toBe(true);
+    expect(notFootage("Cafe\u0301 shoot/clip.mov", undefined, ["Caf\u00e9 shoot"])).toBe(true);
+    expect(notFootage("Caf\u00e9 shoot/clip.mov", undefined, ["Cafe\u0301 SHOOT"])).toBe(true);
+  });
+
   it("a scan answers only the files outside them for indexing, and an index call for one inside is refused", async () => {
     const answer = await report("fold_left", LEFT, ["- NO SHARE/x/clip.mov", "Day 1/- ORIGINAL ARCHIVE/deep/b.mov", "Day 1/a.mov"]);
     expect(answer.index.map((i) => i.path)).toEqual([`${LEFT}/Day 1/a.mov`]);
@@ -61,10 +69,16 @@ describe("a Media folder's Folders left out", () => {
   });
 
   it("the Mac app's Look for new files: a path inside a left-out folder of the caller's own Media folder is left out", async () => {
-    expect(await leftOutOn("tia", mac.id, `${LEFT}/a/- NO SHARE/c.mov`)).toBe(true);
-    expect(await leftOutOn("tia", mac.id, `${LEFT}/a/c.mov`)).toBe(false);
-    expect(await leftOutOn("tia", mac.id, `${PLAIN}/- NO SHARE/c.mov`)).toBe(false);
-    expect(await leftOutOn("tia", "another-mac", `${LEFT}/- NO SHARE/c.mov`)).toBe(false);
+    expect(await leftOutOn("tia", `${LEFT}/a/- NO SHARE/c.mov`)).toBe(true);
+    expect(await leftOutOn("tia", `${LEFT}/a/c.mov`)).toBe(false);
+    expect(await leftOutOn("tia", `${PLAIN}/- NO SHARE/c.mov`)).toBe(false);
+    expect(await leftOutOn("tia", `/Volumes/Elsewhere/- NO SHARE/c.mov`)).toBe(false);
+    // the folder's path on another computer that found it counts too: no computer named is no way around the list
+    await changeStorage("tia", (st) => {
+      st.folders.find((f) => f.id === "fold_left")!.reach = { pc_2: { path: "/mnt/footage", at: 0 } };
+    });
+    expect(await leftOutOn("bo", `/mnt/footage/- NO SHARE/c.mov`)).toBe(false);
+    expect(await leftOutOn("tia", `/mnt/footage/- NO SHARE/c.mov`)).toBe(true);
   });
 
   it("this server's own watch reads none of their files", async () => {
@@ -72,8 +86,56 @@ describe("a Media folder's Folders left out", () => {
     mkdirSync(path.join(media, "Day 1", "- NO SHARE", "x"), { recursive: true });
     writeFileSync(path.join(media, "Day 1", "a.mp4"), "x");
     writeFileSync(path.join(media, "Day 1", "- NO SHARE", "x", "b.mp4"), "x");
-    expect((await filesIn(media, [], ["- NO SHARE"])).map((p) => path.relative(media, p))).toEqual([path.join("Day 1", "a.mp4")]);
+    const row = { origin: { host: "this-computer", path: media }, reach: {}, leaveOut: ["- NO SHARE"] };
+    expect((await filesIn(media, [], [row as never])).map((p) => path.relative(media, p))).toEqual([path.join("Day 1", "a.mp4")]);
     expect((await filesIn(media)).length).toBe(2);
+  });
+});
+
+describe("a clip indexed before its folder was left out", () => {
+  const ARCH = "/Volumes/Tiny Footage/Archive";
+  const DAYS = "/Volumes/Tiny Footage/Days";
+  const listOf = (id: string, leaveOut: string[]) =>
+    changeStorage("tia", (st) => {
+      st.folders.find((f) => f.id === id)!.leaveOut = leaveOut;
+    });
+  const trashed = (q: number) =>
+    (libraryDb().prepare("SELECT a.trashed_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(q)) as { trashed_at: number | null }).trashed_at !== null;
+  const one = (folder: string, root: string, rel: string, q: number, scan = `t${++n}`, complete = true) =>
+    applyReport(mac, [{ id: folder, state: "ok", scan, complete, files: [{ path: `${root}/${rel}`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(q) }], unreadable: [] }]);
+  const index = async (folder: string, root: string, rel: string, q: number) =>
+    expect(((await indexForDevice(mac, folder, onMac(root, rel, q))) as { versions: { versionId?: string }[] }).versions[0]?.versionId).toBeTruthy();
+
+  it("goes to the trash at the next scan, and stays there once the name is off the list", async () => {
+    await changeStorage("tia", (st) => {
+      st.folders.push(row("fold_arch", ARCH), row("fold_days", DAYS));
+    });
+    await index("fold_arch", ARCH, "- ORIGINAL ARCHIVE/x.mov", 500);
+    await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/x.mov", 500);
+    expect(trashed(500)).toBe(false);
+    await listOf("fold_arch", ["- ORIGINAL ARCHIVE"]);
+    await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/x.mov", 500);
+    expect(trashed(500)).toBe(true);
+    await listOf("fold_arch", []);
+    expect((await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/x.mov", 500)).index).toEqual([]);
+    expect(trashed(500)).toBe(true);
+  });
+
+  it("stays when a copy of it is found in another Media folder", async () => {
+    await index("fold_days", DAYS, "Day 1/y.mov", 501);
+    await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/y.mov", 501);
+    await listOf("fold_arch", ["- ORIGINAL ARCHIVE"]);
+    await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/y.mov", 501);
+    expect(trashed(501)).toBe(false);
+  });
+
+  it("stays when a copy of it is in the same Media folder, on a later page of the same listing", async () => {
+    await listOf("fold_arch", []);
+    await index("fold_arch", ARCH, "- ORIGINAL ARCHIVE/z.mov", 502);
+    await listOf("fold_arch", ["- ORIGINAL ARCHIVE"]);
+    await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/z.mov", 502, "paged", false);
+    await one("fold_arch", ARCH, "Day 9/z.mov", 502, "paged", true);
+    expect(trashed(502)).toBe(false);
   });
 });
 
@@ -93,7 +155,7 @@ describe("PUT /api/devices/storage/folders/:id/leave-out", () => {
     const r = await put("fold_plain", [" - CLIP CATALOG ", "- CLIP CATALOG", "Tiny Archive"]);
     expect(r.status).toBe(200);
     expect((await listed())?.leaveOut).toEqual(["- CLIP CATALOG", "Tiny Archive"]);
-    expect(await leftOutOn("tia", mac.id, `${PLAIN}/Tiny Archive/c.mov`)).toBe(true);
+    expect(await leftOutOn("tia", `${PLAIN}/Tiny Archive/c.mov`)).toBe(true);
     expect((await put("fold_plain", [])).status).toBe(200);
     expect((await listed())?.leaveOut).toBeUndefined();
   });

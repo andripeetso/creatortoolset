@@ -12,13 +12,13 @@ import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
-import { librariesOf } from "./report";
+import { librariesOf, settleLeft } from "./report";
 import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
 import { changeStorage } from "../devices-storage";
-import { editorDirsOf, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
+import { editorDirsOf, leftOutBy, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 
 // a watched folder is a Source media row read where it is (UNIFIED-PRD §4.3); copying is for drops, and the migration
 // turned the old copy watches into rows read in place (§4.6 item 1)
@@ -94,7 +94,7 @@ async function footageOf(username: string, make: boolean): Promise<Map<string, W
     if (f.role !== "footage" || !onThisComputer(f)) continue;
     for (const lib of await librariesOf(username, f, make)) {
       if (lib.locate) continue;
-      out.set(lib.id, [...(out.get(lib.id) ?? []), { path: expandHome(f.origin.path), mode: "reference", addedBy: username, ...(f.leaveOut?.length ? { leaveOut: f.leaveOut } : {}) }]);
+      out.set(lib.id, [...(out.get(lib.id) ?? []), { path: expandHome(f.origin.path), mode: "reference", addedBy: username }]);
     }
   }
   return out;
@@ -240,7 +240,7 @@ watchApp.get("/:id/watch/size", async (c) => {
   if (!watchAllowed(user.username)) return c.json({ error: "This server cannot read your folders", code: "forbidden" }, 403);
   const f = await checkFolder(libraryId, { path: expandHome(c.req.query("path") ?? ""), mode: "reference" }, user.username);
   if (typeof f === "string") return c.json({ error: f, code: "invalid" }, 400);
-  const files = await filesIn(f.path, await keepOutOf(user.username));
+  const files = await filesIn(f.path, await keepOutOf(user.username), await mediaOfUser(user.username));
   let bytes = 0;
   let audio = 0;
   let audioBytes = 0;
@@ -400,7 +400,8 @@ watchApp.post("/import-folder", async (c) => {
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(f.path, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(f.path, p)));
-  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !keep.some((k) => inside(p, k)));
+  const sources = await mediaOfUser(user.username);
+  const files = seen.filter((p) => !notFootage(path.relative(f.path, p), editorDirs) && !leftOutBy(sources, p) && !keep.some((k) => inside(p, k)));
   const fresh: { file: string; size: number; mtime: number; changed: number }[] = [];
   for (const file of files) {
     const s = await stat(file).catch(() => null);
@@ -600,14 +601,20 @@ export async function keepOutOf(user: string): Promise<string[]> {
   return st.folders.filter((f) => f.role !== "footage" && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))).map((f) => f.origin.path);
 }
 
-export async function filesIn(root: string, keepOut: string[] = [], leaveOut: readonly string[] = []): Promise<string[]> {
+/** This account's Media folders, with "~/" read as this computer's home: whose leave-out lists the watch applies (leftOutBy). */
+export async function mediaOfUser(user: string): Promise<StorageFolder[]> {
+  const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, user), "utf-8").catch(() => "{}"));
+  return st.folders.filter((f) => f.role === "footage").map((f) => ({ ...f, origin: { ...f.origin, path: expandHome(f.origin.path) } }));
+}
+
+export async function filesIn(root: string, keepOut: string[] = [], media: StorageFolder[] = []): Promise<string[]> {
   const all = await readdir(root, { recursive: true, withFileTypes: true });
   const seen = all
     .filter((e) => e.isFile() && kindOf(e.name) !== "doc" && !RAW_FILE.test(e.name))
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
-  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs, leaveOut) && !keepOut.some((k) => inside(p, k)));
+  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !leftOutBy(media, p) && !keepOut.some((k) => inside(p, k)));
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
@@ -719,6 +726,29 @@ export async function copyInto(root: string, copyTo: string, file: string, size:
   }
 }
 
+/**
+ * Clips this watch took in from files under `root` that a Media folder now leaves out (`media`, leftOutBy): into the trash
+ * as a computer's scan does (report.ts settleLeft), unless a copy of the clip is still read here (`live`: this pass's files)
+ * or found elsewhere. Their files are no copy any more. True when one moved.
+ */
+function leaveWatched(libraryId: string, root: string, media: StorageFolder[], live: Set<string>, now: number): boolean {
+  if (!media.some((m) => m.leaveOut?.length)) return false;
+  const rows = db()
+    .prepare(
+      `SELECT w.path, v.asset_id FROM watch_seen w JOIN asset_versions v ON v.id = w.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE w.library_id = ? AND substr(w.path, 1, ?) = ? AND a.trashed_at IS NULL`,
+    )
+    .all(libraryId, root.length + 1, root + path.sep) as { path: string; asset_id: string }[];
+  const left = rows.filter((r) => leftOutBy(media, r.path));
+  if (!left.length) return false;
+  const out = new Set(left.map((r) => r.path));
+  const assets = new Set(left.map((r) => r.asset_id));
+  for (const r of rows) if (!out.has(r.path) && live.has(r.path)) assets.delete(r.asset_id);
+  const gone = db().prepare("UPDATE version_places SET state = 'gone', gone_at = ? WHERE source = 'server-disk' AND path = ? AND state <> 'gone'");
+  for (const p of out) gone.run(now, p);
+  return settleLeft(assets, now, "watch").length > 0;
+}
+
 /** One pass over a library's watch folders. Returns how many files it took in (new versions or known duplicates). */
 async function scanLibrary(libraryId: string, now: number, folders: WatchFolder[]): Promise<number> {
   try {
@@ -737,7 +767,9 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
     const folderKey = `${libraryId}\0${f.path}`;
     try {
       // a Finals folder (f.projects) is read in its projects' subfolders, which may sit in an Exports folder: nothing is kept out there
-      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), f.leaveOut);
+      const media = f.projects ? [] : await mediaOfUser(f.addedBy);
+      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), media);
+      if (leaveWatched(libraryId, f.path, media, new Set(files), now)) libraryChanged(libraryId);
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {

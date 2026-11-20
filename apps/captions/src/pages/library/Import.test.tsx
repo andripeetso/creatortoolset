@@ -28,10 +28,10 @@ afterEach(() => {
 });
 
 /** This computer's Source media rows, as the storage list has them (another computer's row is left out). */
-function storage(rows: { path: string; host?: string; role?: string }[]) {
+function storage(rows: { path: string; host?: string; role?: string; leaveOut?: string[] }[]) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ folders: rows.map((r) => ({ id: r.path, role: r.role ?? "footage", origin: { host: r.host ?? "mac_1", path: r.path } })) }))),
+    vi.fn(async () => new Response(JSON.stringify({ folders: rows.map((r) => ({ id: r.path, role: r.role ?? "footage", origin: { host: r.host ?? "mac_1", path: r.path }, reach: {}, ...(r.leaveOut ? { leaveOut: r.leaveOut } : {}) })) }))),
   );
 }
 
@@ -117,6 +117,24 @@ describe("Look for new files", () => {
     expect(await lookForNew(library, () => undefined)).toEqual({ added: 0, reconnected: 1, refused: ["/Volumes/Tiny/Footage"] });
     expect(m.importScan).toHaveBeenCalledTimes(2); // the folder, then only the granted folder inside it
     expect(m.reportPlaces).toHaveBeenCalledWith("lib", { device: "mac_1", confirmed: [{ versionId: "v_flip", path: `${inside}/flip.mov`, quick: "q-flip" }], gone: [] });
+  });
+
+  it("a file in a folder the row leaves out is never fingerprinted, checked, indexed or counted", async () => {
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage", leaveOut: ["- No Share"] }]);
+    vi.clearAllMocks();
+    const at = (n: string) => `/Volumes/Tiny/Footage/${n}`;
+    m.importScan.mockResolvedValue([at("Day 1/a.mov"), at("Day 1/- NO SHARE/x/b.mov")].map((p, i) => ({ path: p, size: i + 1, mtime: 0 })));
+    m.importPrint.mockImplementation(async (paths: string[]) => Object.fromEntries(paths.map((p) => [p, `q-${p.split("/").pop()}`])));
+    m.checkUpload.mockResolvedValue({});
+    m.indexOnMac.mockResolvedValue({ assetId: "a_new" });
+    const steps: string[] = [];
+    const library = { id: "lib", name: "Tiny Acrobatics", settings: {} } as unknown as LibrarySummary;
+    expect(await lookForNew(library, (s) => steps.push(s))).toEqual({ added: 1, reconnected: 0, refused: [] });
+    expect(m.importPrint.mock.calls.flatMap((c) => c[0] as string[])).toEqual([at("Day 1/a.mov")]);
+    expect(m.checkUpload).toHaveBeenCalledTimes(1);
+    expect(m.indexOnMac).toHaveBeenCalledTimes(1);
+    expect(steps).toContain("Adding 1 of 1 from Footage");
   });
 
   it("a granted folder that can't be read says why, as before", async () => {

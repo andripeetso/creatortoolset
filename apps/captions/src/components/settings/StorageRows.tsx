@@ -361,7 +361,7 @@ function LeaveOutDialog({ folder: f, onClose, onChanged }: { folder: StorageFold
       open
       onOpenChange={(o) => !o && onClose()}
       title={`Folders left out of ${f.name}`}
-      description={`Files in folders with these names are not imported, at any depth inside ${f.name}. One name a line, at most ${LEAVE_OUT_MAX}. Nothing on disk is moved.`}
+      description={`Files in folders with these names are not imported, at any depth inside ${f.name}, in any case. One name a line, at most ${LEAVE_OUT_MAX}. Clips already added from them go to the trash; taking a name off the list doesn't bring them back (Restore does). Nothing on disk is moved.`}
       submitLabel="Save"
       onSubmit={save}
       busy={busy}

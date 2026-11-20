@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { LibrarySummary } from "@contracts/library";
 import { folderName } from "@/components/LibraryProcessing";
-import type { StorageFolder, StorageView } from "@contracts/storage";
+import { leftOutBy, type StorageFolder, type StorageView } from "@contracts/storage";
 import { PLACES_MAX } from "@contracts/places";
 import { Button } from "@/components/ui/button";
 import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
@@ -33,10 +33,15 @@ export const copyInto = (row: string, file: File): string => `${row.replace(/\/+
 
 /** The Source media folders on this computer, in the order the folder list has them. */
 export async function sourceRowsHere(): Promise<string[]> {
+  return (await sourceFoldersHere()).map((f) => f.origin.path);
+}
+
+/** The same rows whole: their Folders left out too (leftOutBy). */
+async function sourceFoldersHere(): Promise<StorageFolder[]> {
   const me = thisMacDevice();
   const r = me ? await fetch("/api/devices/storage").catch(() => null) : null;
   const view = r?.ok ? ((await r.json()) as StorageView) : null;
-  return (view?.folders ?? []).filter((f) => f.role === "footage" && f.origin.host === me).map((f) => f.origin.path);
+  return (view?.folders ?? []).filter((f) => f.role === "footage" && f.origin.host === me);
 }
 
 /** Runs `fn` on each item, `n` at a time. */
@@ -89,7 +94,8 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
   const known: Known[] = [];
   const seen = new Set<string>();
   const refused: string[] = [];
-  for (const place of await sourceRowsHere()) {
+  const rows = await sourceFoldersHere();
+  for (const place of rows.map((f) => f.origin.path)) {
     onStep(`Looking in ${folderName(place)}`);
     let files: Awaited<ReturnType<typeof importScan>>;
     try {
@@ -101,6 +107,8 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
       const inside = granted.filter((g) => allGranted([g], [place]));
       files = (await Promise.all(inside.map((g) => importScan(g).catch(() => [])))).flat();
     }
+    // a folder a row leaves out is never fingerprinted, checked or counted (the server refuses its files too)
+    files = files.filter((f) => !leftOutBy(rows, f.path));
     for (const f of files) seen.add(f.path.normalize("NFC"));
     const prints: Record<string, string> = {};
     for (let i = 0; i < files.length; i += 500) Object.assign(prints, await importPrint(files.slice(i, i + 500).map((f) => f.path)));

@@ -652,6 +652,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   const from = typeof body?.fromPath === "string" && body.fromPath.startsWith("/") && body.fromPath.length <= 2048 && !body.fromPath.split("/").includes("..") ? body.fromPath : null;
   const fromDevice = from && typeof body?.fromDevice === "string" && body.fromDevice ? body.fromDevice.slice(0, 100) : null;
   const sender = fromDevice ? deviceOf(fromDevice) : undefined;
+  // a file from a folder one of the person's Media folders leaves out is not sent either: the list keeps it private
+  if (from && (await leftOut(user.username, from))) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (
     body?.send === true && from && !replaces && sender?.owner === user.username && (sender.work?.v ?? 0) >= WORK_MIN &&
     typeof body.quick === "string" && /^[0-9a-f]{64}$/.test(body.quick) && sendsFromComputer(libraryId, filename, collection)
@@ -710,6 +712,9 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
 }
 
+/** Whether one of `user`'s Media folders leaves out the file at `file` (report.ts leftOutOn; loaded late: report.ts loads this file). */
+const leftOut = async (user: string, file: string) => (await import("./report")).leftOutOn(user, file);
+
 /**
  * POST /api/library/:id/in-place { path, size, collectionId?, again? } → { assetId, versionId } | { duplicateOf } |
  * 202 { working } (still hashing after IMPORT_WAIT_MS: ask again with `again`). A file the person picked on their own
@@ -731,6 +736,7 @@ libraryApp.post("/:id/in-place", async (c) => {
   const real = await realpath(given).catch(() => null);
   const s = real ? await stat(real).catch(() => null) : null;
   if (!real || !s?.isFile()) return refuse(`File not found on this computer: ${given}`);
+  if ((await leftOut(user.username, given)) || (await leftOut(user.username, real))) return refuse(LIBRARY_WORDS.notFootage);
   if (s.size !== Number(body.size)) return refuse("The file changed since it was picked");
   if (kindOf(real) === "doc") return refuse("Only videos, sound and pictures are added in place");
   if (RAW_FILE.test(real)) return refuse(RAW_FROM_COMPUTER);
@@ -789,7 +795,7 @@ libraryApp.post("/:id/on-mac", async (c) => {
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
   // inside a folder one of the caller's Media folders leaves out: never indexed, a scan's file or a drop alike
-  if (x.device && deviceOf(x.device)?.owner === user.username && (await (await import("./report")).leftOutOn(user.username, x.device, x.path))) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
+  if (await leftOut(user.username, x.path)) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (x.collectionId) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(x.collectionId, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);

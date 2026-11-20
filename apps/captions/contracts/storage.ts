@@ -285,7 +285,27 @@ export const PHONE_UPLOADS_DIR = "Phone uploads";
 export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set(), leaveOut: readonly string[] = []): boolean {
   const parts = rel.split(/[\\/]/);
   const dirs = parts.slice(0, -1);
-  return dirs.some((d) => d === PHONE_UPLOADS_DIR || leaveOut.includes(d.normalize("NFC"))) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+  // a privacy list fails safe: any case, either Unicode form (a Mac disk ignores case and may hand back decomposed names)
+  const out = new Set(leaveOut.map(nameKey));
+  return dirs.some((d) => d === PHONE_UPLOADS_DIR || out.has(nameKey(d))) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+}
+const nameKey = (n: string) => n.normalize("NFC").toLowerCase();
+
+/**
+ * Whether `file` (a full path) is inside a folder that one of `folders` (Media folders) leaves out: each that holds it,
+ * at its path on any computer that found it, counts (notFootage with its leaveOut). A Media folder inside another, kept
+ * apart for another workspace, so leaves out what either list names: the safer of the two, and one rule for every reader.
+ */
+export function leftOutBy(folders: ReadonlyArray<Pick<StorageFolder, "origin" | "reach" | "mountPath" | "leaveOut">>, file: string): boolean {
+  const at = file.normalize("NFC");
+  return folders.some((f) => {
+    if (!f.leaveOut?.length) return false;
+    const roots = new Set([f.origin.path, f.mountPath, ...Object.values(f.reach ?? {}).map((r) => r.path)].filter((r): r is string => !!r));
+    return [...roots].some((root) => {
+      const r = root.normalize("NFC").replace(/\/+$/, "");
+      return at.startsWith(`${r}/`) && notFootage(at.slice(r.length + 1), undefined, f.leaveOut);
+    });
+  });
 }
 
 /** At most this many names in a Media folder's leaveOut. */

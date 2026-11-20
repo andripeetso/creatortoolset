@@ -490,8 +490,9 @@ storageApp.patch("/folders/:id", async (c) => {
 /**
  * PUT /api/devices/storage/folders/:id/leave-out {leaveOut: string[]}: the names of folders inside a Media folder, at any
  * depth, whose files the Media Library leaves out (contracts/storage.ts notFootage); [] leaves out nothing more. The
- * account's own folder only. Nothing on disk changes: its computer's next scan applies it, and a clip indexed from there
- * before leaves through the trash (library/report.ts applyFolder). Returns the folder list like the other routes here.
+ * account's own folder only. Nothing on disk changes: its computer's next scan applies it (or this server's own watch),
+ * and a clip indexed from there before leaves through the trash unless a copy of it is found elsewhere (library/report.ts
+ * settleLeft); taking a name off brings none back. Returns the folder list like the other routes here.
  */
 storageApp.put("/folders/:id/leave-out", async (c) => {
   const user = c.get("user").username;
