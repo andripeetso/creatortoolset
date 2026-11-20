@@ -147,7 +147,7 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
       signal?.throwIfAborted();
       onStep(`Adding ${added + 1} of ${fresh.length} from ${folderName(place)}`);
       const name = f.path.split("/").pop() ?? f.path;
-      const r = await indexOnMac(library.id, { url: macMediaUrl(f.path), name, size: f.size, quick: prints[f.path]! }, f.path, undefined, signal).catch(() => ({}));
+      const r = await indexOnMac(library.id, { url: macMediaUrl(f.path), name, size: f.size, quick: prints[f.path]! }, f.path, undefined, signal, !!library.settings.blurFaces).catch(() => ({}));
       if ("assetId" in r && r.assetId) added++;
     }
   }

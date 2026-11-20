@@ -12,7 +12,7 @@ import { inside } from "../lib/storage";
 import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
 import { accountOf, ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
-import { libraryDb } from "./db";
+import { blursFaces, libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
@@ -339,7 +339,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         }
         for (const x of found) upsert(x.id, device, folder.id, f, x.state, "scan", now);
         if (found.length) touched.add(lib);
-        else if (!locate.has(lib) && !index.some((i) => i.folder === folder.id && i.path === f.path)) index.push({ folder: folder.id, path: f.path });
+        else if (!locate.has(lib) && !index.some((i) => i.folder === folder.id && i.path === f.path)) index.push({ folder: folder.id, path: f.path, ...(libs.some(blursFaces) ? { blur: true as const } : {}) });
       }
     }
     for (const dir of r.unreadable ?? []) {

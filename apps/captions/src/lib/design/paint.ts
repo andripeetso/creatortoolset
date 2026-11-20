@@ -33,6 +33,9 @@ export function fillsOf(o: Painted): Paint[] {
   return [];
 }
 
+/** A frame whose ground hides everything under it: a solid fill of full colour (no see-through part, mixed with nothing). Else it is see-through somewhere. */
+export const solidGround = (p: DesignPage): boolean => fillsOf(p).some((f) => !f.hidden && !f.blend && (f.opacity ?? 1) === 1 && f.type === "solid" && !/^#[0-9a-f]{6}(?!ff)[0-9a-f]{2}$/i.test(f.color));
+
 export function strokesOf(o: Painted): Stroke[] {
   if (isPage(o)) return o.strokes ?? [];
   if (o.type === "text") return o.strokes ?? (o.outline ? [{ ...o.outline }] : []);

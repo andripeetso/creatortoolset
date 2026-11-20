@@ -204,7 +204,7 @@ export async function listMemory(user: SessionUser, scope?: "here" | "all"): Pro
   const ws = facts.some((f) => f.project) ? await getWorkspace(user) : null;
   const projects = ws?.projects ?? [];
   // Settings → Memory: a rule kept for a deleted workspace is the first brand's (project-of.ts), in the list and by name
-  // imported when used: project-of.ts reads the Analyzer, which this small store must not load with it
+  // imported when used: the workspace modules are not loaded with this small store
   const scoped = !!ws && scope !== "here";
   const inWs = scoped && scope !== "all" ? await (await import("./workspace-scope")).inCurrentWorkspace(user) : null;
   const of = scoped ? await (await import("./project-of")).projectOf(user) : null;

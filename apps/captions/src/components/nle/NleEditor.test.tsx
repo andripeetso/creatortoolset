@@ -2,7 +2,9 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_WORK_PREFS } from "@contracts/work-prefs";
 import type { NleAsk } from "@/lib/editor";
+import { useWorkPrefs } from "@/lib/setup";
 import { lengthOf, withKeys, type NleTimeline } from "@/lib/nle/model";
 import { setAutosaveStore, type Ring } from "@/lib/nle/autosave";
 import type { NleControl } from "./NleEditor";
@@ -66,6 +68,7 @@ async function mount(initial = tl, more: Partial<Parameters<typeof NleEditor>[0]
 }
 
 beforeEach(() => {
+  useWorkPrefs.setState({ prefs: { ...DEFAULT_WORK_PREFS } });
   bridge.queue.length = 0;
   bridge.replies.length = 0;
   window.history.pushState({}, "", "/editor/e1/v2");
@@ -329,6 +332,29 @@ describe("autosaves", () => {
     expect(p.length()).toBe(150);
     await key("z", { metaKey: true, code: "KeyZ" });
     expect(p.length()).toBe(125);
+    p.done();
+  });
+});
+
+describe("the person's own keys (Keyboard Customization)", () => {
+  it("a key changed there runs its command, the old one runs nothing, and the clip's menu shows the new key", async () => {
+    useWorkPrefs.setState({ prefs: { ...DEFAULT_WORK_PREFS, keys: { "⌘A": "", G: "selectAll", R: "delete", Backspace: "" } } });
+    const p = await mount();
+    await key("a", { metaKey: true, code: "KeyA" });
+    await key("r", { code: "KeyR" });
+    expect(p.length()).toBe(75);
+    await key("g", { code: "KeyG" });
+    await key("Backspace", { code: "Backspace" });
+    expect(p.length()).toBe(75);
+    await key("r", { code: "KeyR" });
+    expect(p.length()).toBe(0);
+    await key("z", { metaKey: true, code: "KeyZ" });
+    await rightClick(p.host.querySelector('[data-clip][aria-label^="V1"]')!);
+    expect(menuItem("Delete").textContent).toBe("DeleteR");
+    expect(menuItem("Cut").textContent).toBe("Cut⌘X");
+    // ⌥⌘K opens Keyboard Customization
+    await key("˚", { metaKey: true, altKey: true, code: "KeyK" });
+    expect(document.body.textContent).toContain("Keyboard Customization");
     p.done();
   });
 });

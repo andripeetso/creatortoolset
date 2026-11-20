@@ -7,17 +7,21 @@
  * 720p copy, which every library takes; a computer's proxy must hash to the SHA-256 it declared, and from every sender a proxy
  * no smaller than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
  */
-import { finalsUpload, isFinalsCollection, libraryDb, libraryUpload, versionUpload } from "./db";
-import { hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
+import { blursFaces, finalsUpload, isBlurred, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
+import { hostsNone, hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
 import type { Device } from "../../contracts/providers";
-import { accountOf } from "./access";
+import { accountOf, librariesHere } from "./access";
 import { workspaceOf } from "../lib/workspaces";
 import { projectOf } from "../lib/project-of";
 import type { SessionUser } from "../users";
 import { serverKind } from "../work/server-work";
 
-/** original: the file itself; proxy: a smaller copy made of it; derivative: a picture, sheet or text the Library shows; serving: bytes the server made. */
-export type ReceiveKind = "original" | "proxy" | "derivative" | "serving";
+/**
+ * original: the file itself; proxy: a smaller copy made of it; derivative: a picture or sheet the Library shows; serving:
+ * bytes the server made; data: numbers made of the file, never a picture (a waveform); held: pictures kept only for one AI
+ * call and deleted after it (a description's stills).
+ */
+export type ReceiveKind = "original" | "proxy" | "derivative" | "serving" | "data" | "held";
 /**
  * person: someone chose to send it from a browser; computer: a computer sends a file it holds, nobody sent it by hand;
  * phone: the iPhone app sends the person's own file to their computers (`x-ct-origin: phone`, stored on the upload). A
@@ -30,6 +34,9 @@ export const REFUSED_COMPUTER_OFF = "Upload is off for this workspace, so files 
 export const REFUSED_PROXIES = "This library takes proxies only. Your computer makes the proxy and sends that.";
 export const REFUSED_NO_PROXY = "This library keeps no proxies on the server.";
 export const REFUSED_PROOF = "These bytes are not the proxy your computer declared. Nothing was kept.";
+export const REFUSED_BLUR = "Blur faces is on for this workspace: only blurred videos leave your computer.";
+export const BLUR_UPLOADS = "With Blur faces on, Upload is Off or Blurred.";
+export const REFUSED_NOT_BLURRED = "These bytes are the original, not its blurred video. Nothing was kept.";
 
 export type Received = { ok: true } | { ok: false; status: 409; body: { error: string; code: "upload_refused"; message: string } };
 
@@ -51,14 +58,19 @@ export interface ProxyProof {
  */
 export const provesProxies = (sender: Pick<Device, "work"> | undefined | null): boolean => !!sender?.work?.proof;
 
-/** Where bytes go: a library, the collection they are sent into, or the version they belong to. */
-export type ReceiveInto = { id: string; collectionId?: string | null; versionId?: string };
+/**
+ * Where bytes go: a library, the collection they are sent into, or the version they belong to. `blurredOf`: a new file a
+ * computer declares a blurred render of the original with that full SHA-256 (asset_versions.blurred_of).
+ */
+export type ReceiveInto = { id: string; collectionId?: string | null; versionId?: string; blurredOf?: string | null };
 
 /** The setting a file sent into `library` follows: a final the Finals one, anything else the library's Upload. */
 export const uploadFor = (library: ReceiveInto): LibraryUpload =>
   library.versionId
     ? versionUpload(library.versionId)
-    : library.collectionId && isFinalsCollection(library.collectionId)
+    : library.blurredOf && blursFaces(library.id)
+      ? libraryUploadStored(library.id)
+      : library.collectionId && isFinalsCollection(library.collectionId)
       ? finalsUpload(library.id)
       : libraryUpload(library.id);
 
@@ -82,14 +94,43 @@ const HEX = /^[0-9a-f]{64}$/;
 /** A proxy no smaller than its original is not kept, from every sender (UNIFIED-PRD §4.1 rule 4). */
 export const proxyTooBig = (bytes: number, original: number | undefined): boolean => original !== undefined && bytes >= original;
 
+/**
+ * Blur faces, the one rule for a workspace (contracts LibrarySettings.blurFaces): whether a file of `libraryId` may be
+ * stored on or served by this server. Off: always. On: only a blurred render and what is cut from it, by its version
+ * (asset_versions.blurred_of), or a new file declared one (`blurredOf`, a computer's; `blurred`, an editor that blurred
+ * its own render). An original, its proxy, and a thumbnail, strip or still cut from it never leave the owner's computers.
+ * Asked by every route that takes or hands out a clip's bytes or pictures, the plug-ins' too (upload-gate.test.ts).
+ */
+export function mayLeave(libraryId: string | null | undefined, file: { versionId?: string; blurredOf?: string | null; blurred?: boolean }): Received {
+  if (!libraryId || !blursFaces(libraryId)) return { ok: true };
+  const blurred = file.versionId ? isBlurred(file.versionId) : !!file.blurred || (!!file.blurredOf && HEX.test(file.blurredOf));
+  return blurred ? { ok: true } : refuse(REFUSED_BLUR);
+}
+
+/**
+ * The library of `owner`'s workspace `workspace` (none made) that mayLeave asks for a file filed by workspace (Review, a
+ * plug-in's): one with Blur faces on when the workspace has any, so a second library never lets its files past the rule.
+ */
+export async function workspaceLibrary(owner: string, workspace?: string): Promise<string | null> {
+  const libs = await librariesHere(owner, workspace).catch(() => []);
+  return (libs.find((l) => blursFaces(l.id)) ?? libs[0])?.id ?? null;
+}
+
 export function mayReceive(
   kind: ReceiveKind,
   library: ReceiveInto,
   origin: ReceiveOrigin,
   opts: { sender?: Pick<Device, "work"> | null; proof?: ProxyProof } = {},
 ): Received {
-  if (kind === "derivative" || kind === "serving" || serverKind() === "local") return { ok: true };
+  // This Mac: the server is the owner's computer, so nothing leaves it
+  if (kind === "data" || kind === "held" || serverKind() === "local") return { ok: true };
+  // a blurred render is a computer's own (the job that blurred it), never a person's or a phone's declaration
+  const left = mayLeave(library.id, { ...(library.versionId ? { versionId: library.versionId } : {}), blurredOf: origin === "computer" ? library.blurredOf : null });
+  if (!left.ok) return left;
+  if (kind === "derivative" || kind === "serving") return { ok: true };
   const upload = uploadFor(library);
+  // under Blur faces what passed is a blurred render: it is the clip's proxy, kept under Blurred (stored "proxies")
+  if (blursFaces(library.id)) return hostsNone(upload) ? refuse(origin === "computer" ? REFUSED_COMPUTER_OFF : REFUSED_NONE) : { ok: true };
   // a person's own file is refused under proxies too (UNIFIED-PRD §4.2): nothing drops it yet, so the server would keep it
   if (kind === "original") {
     // a person's own file (browser or phone) is theirs to send under proxies too: the server keeps its proxy (UNIFIED-PRD §4.2)
@@ -119,8 +160,12 @@ export async function mayServe(
   /** the owner's computer asks (its edit's media, the worker's files): an original no computer holds yet is its to take */
   opts: { toComputer?: boolean } = {},
 ): Promise<Received> {
+  // under Blur faces only a blurred render is handed out, on This Mac too (its owner sees the blurred one in the app)
+  const left = mayLeave(version.id, { versionId: version.versionId });
+  if (!left.ok) return left;
   if (serverKind() === "local") return { ok: true };
   const upload = uploadFor(version);
+  if (blursFaces(version.id)) return hostsNone(upload) ? refuse(REFUSED_NONE) : { ok: true };
   if (what === "original" ? hostsOriginals(upload) : hostsProxies(upload)) return { ok: true };
   // held until a computer has it (PLAN-final decision 1): the server hands it to a computer of the owner, and only until then
   // only the iPhone app's own file (asset_versions.origin): any other original under none is refused, held or not

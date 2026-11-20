@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COMMANDS, clipOfRef, commandLines, runAll, stateView, type NleState } from "./commands";
-import { commandOfKey, KEYS, type KeyAction } from "./keys";
+import { commandOf, KEYS, RESOLVE_KEYS, type KeyAction } from "./keys";
 import { blade, clipsFrom, closeGap, copyOf, endOf, find, lengthOf, move, NO_MARKS, paste, remove, rippleToPlayhead, setItems, setMark, setTrack, toSaved, withKeys, type NleTimeline } from "./model";
 
 // A reel: two talking shots on V1 with their voice on A1 (linked), a B-roll clip on V2 and a song on A2.
@@ -18,7 +18,7 @@ const reel = (): NleTimeline =>
 const key = (tl: NleTimeline, track: string, rec: number) => tl.tracks[track].items.find((i) => i.rec === rec)!._k!;
 const stateOf = (tl: NleTimeline, o: Partial<NleState> = {}): NleState => ({ tl, sel: [], playhead: 0, marks: NO_MARKS, ...o });
 const press = (a: KeyAction, s: NleState) => {
-  const k = commandOfKey(a);
+  const k = commandOf(a);
   return COMMANDS[k.id].run(s, k.params);
 };
 
@@ -30,13 +30,13 @@ const ACTIONS: Record<Exclude<KeyAction, `lock:${string}`>, true> = {
   linkedSelection: true, nudgeBack: true, nudgeBack5: true, nudgeOn: true, nudgeOn5: true, frameBack: true, frameOn: true, secondBack: true,
   secondOn: true, prevEdit: true, nextEdit: true, start: true, end: true, zoomIn: true, zoomOut: true, zoomFit: true, mediaPool: true,
   inspector: true, clearIn: true, clearOut: true, insertEdit: true, overwriteEdit: true, loop: true,
-  addMarker: true, prevMarker: true, nextMarker: true, addDissolve: true,
+  addMarker: true, prevMarker: true, nextMarker: true, addDissolve: true, keyboard: true,
 };
 
 describe("nle commands", () => {
   it("has a command for every key", () => {
-    for (const a of [...Object.keys(ACTIONS), ...Object.values(KEYS)] as KeyAction[]) expect(COMMANDS[commandOfKey(a).id], a).toBeDefined();
-    expect(commandOfKey("lock:V3")).toEqual({ id: "lock", params: { track: 3 } });
+    for (const a of [...Object.keys(ACTIONS), ...Object.values(KEYS), ...Object.values(RESOLVE_KEYS)] as KeyAction[]) expect(COMMANDS[commandOf(a).id], a).toBeDefined();
+    expect(commandOf("lock:V3")).toEqual({ id: "lock", params: { track: 3 } });
   });
 
   it("runs each key as the editor did", () => {

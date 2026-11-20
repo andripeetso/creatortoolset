@@ -150,7 +150,12 @@ function Hosted({ library, watch, save }: { library: LibrarySummary; watch: Watc
       {noServer ? (
         <Row title={LIBRARY_WORDS.uploadToServer} status={<Status>{LIBRARY_WORDS.noServer}</Status>} />
       ) : (
-        <HostedSwitches value={hostedOf(library.settings)} onChange={(m) => void save(hostedSettings(m, library.settings.finalsUpload))} />
+        <HostedSwitches
+          value={hostedOf(library.settings)}
+          onChange={(m) => void save(hostedSettings(m, library.settings.finalsUpload))}
+          blurFaces={!!library.settings.blurFaces}
+          onBlurFaces={(on, m) => void save({ blurFaces: on, ...hostedSettings(m, library.settings.finalsUpload) })}
+        />
       )}
     </Card>
   );

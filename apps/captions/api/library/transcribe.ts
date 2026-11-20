@@ -14,6 +14,7 @@ import { isAdminActor, keyFor } from "../my-keys";
 import { findUser } from "../users";
 import { accountOf } from "./access";
 import { libraryDb } from "./db";
+import { mayLeave } from "./upload-gate";
 import { ffmpegTo } from "./media/run";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
 
@@ -241,6 +242,8 @@ export function ownSound(versionId: string, actor: string | null): Own | undefin
   // an original uploaded from a computer is still on that computer, where it was sent from (work/library-package.ts)
   const row = r.mac_path || !r.from_path ? r : { ...r, mac_path: r.from_path, mac_device: r.from_device };
   const seconds = Number((JSON.parse(r.probe ?? "{}") as { duration?: number }).duration) || 0;
+  // Blur faces: the server's proxy of a clip not blurred (from before it was on) is not handed to a computer
+  if (r.proxy && !mayLeave(r.library_id, { versionId: r.id }).ok) r.proxy = null;
   return {
     seconds,
     proxy: r.proxy,

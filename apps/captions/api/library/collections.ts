@@ -12,7 +12,7 @@ import { storedZip } from "../lib/workshop/deliveries";
 import { notifyLibraryChanges } from "../lib/events";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
-import { mayServe, type Received } from "./upload-gate";
+import { mayLeave, mayServe, type Received } from "./upload-gate";
 import { blobs, libraryDb } from "./db";
 import { frameAt, frameWaits, whenFramed, type FrameInput } from "../lib/clip-frame";
 import { externalCanSee, externalRefById } from "./refs";
@@ -870,6 +870,9 @@ collectionApp.post("/:id/pieces/:pid/cover", async (c) => {
     )
     .get(piece.id, versionId) as { source_key: string; mac_path: string | null; mac_device: string | null; kind: AssetKind; proxy: string | null } | undefined;
   if (!v) return notFound(c);
+  // Blur faces: a cover is a picture of the clip, kept and shown on the Finals list and its links
+  const left = mayLeave(libraryId, { versionId });
+  if (!left.ok) return c.json(left.body, left.status);
   const dir = path.join(process.env.LIBRARY_SCRATCH_DIR || path.join(env.dataDir, "library", "scratch"));
   await mkdir(dir, { recursive: true });
   const out = path.join(dir, `cover-${randomUUID()}.jpg`);
@@ -925,6 +928,9 @@ collectionApp.get("/:id/pieces/:pid/cover", async (c) => {
     .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL")
     .get(row.cover_version_id) as { asset_id: string } | undefined;
   if (!v || !(await canSee(viewer, assetRef(libraryId, v.asset_id, row.cover_version_id)))) return notFound(c);
+  // Blur faces: a cover cut from a clip not blurred (picked before it was on) stays stored and is not shown
+  const left = mayLeave(libraryId, { versionId: row.cover_version_id });
+  if (!left.ok) return c.json(left.body, left.status);
   try {
     const at = await blobs.locate(row.cover_key, 900, { contentType: "image/jpeg" });
     return at.kind === "url" ? c.redirect(at.url, 302) : await sendFile(c, at.path, "image/jpeg");

@@ -503,6 +503,9 @@ export const importThumb = (path: string, max = 480) =>
   );
 export const importPrint = (paths: string[]) =>
   importAsk<{ prints?: Record<string, string> }>(`import:print:${JSON.stringify({ paths })}`).then((r) => r.prints ?? {});
+/** The whole files' SHA-256 (Import.swift hash), by path; a file this app may not read or that can't be read has none. */
+export const importHash = (paths: string[]) =>
+  importAsk<{ hashes?: Record<string, string> }>(`import:hash:${JSON.stringify({ paths })}`).then((r) => r.hashes ?? {}, () => ({}) as Record<string, string>);
 /** Locate… (apps/mac Locate.swift): which of `files` are gone from their path here, and the files in `folder` of their sizes with fingerprints. */
 export const importLocate = (files: { id: string; path: string; bytes: number }[], folder?: string) =>
   importAsk<{ gone?: string[]; files?: { path: string; size: number; quick: string }[] }>(`import:locate:${JSON.stringify({ folder, files })}`).then((r) => ({

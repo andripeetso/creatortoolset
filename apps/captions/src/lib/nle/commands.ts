@@ -178,6 +178,7 @@ const LIST: NleCommand[] = [
   pageOnly("zoomFit", "Zoom to fit"),
   pageOnly("mediaPool", "Media Pool"),
   pageOnly("inspector", "Inspector"),
+  pageOnly("keyboard", "Keyboard Customization"),
   cmd("lock", "Lock / unlock a video track", any, (s, p) => {
     const id = `V${p.track}`;
     const t = s.tl.tracks[id];

@@ -7,18 +7,18 @@ import type { DatabaseSync } from "node:sqlite";
 import { isPhoneSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
-import { hasMembers, mayReceive, mayServe, REFUSED_COMPUTER_OFF, uploadFor, type Received } from "./upload-gate";
+import { BLUR_UPLOADS, hasMembers, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
-import { ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
+import { accountOf, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, finalsUpload, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
+import { blobs, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { BLURRED_UPLOADS, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -43,7 +43,7 @@ import { fileRoll, rollFolder } from "./roll";
 import { IMPORT_WAIT_MS, takeFile, watchAllowed } from "./watch";
 import { indexOnMac, noPicture, parseOnMac, putSprite, putThumb, strayStrips } from "./on-mac";
 import { type Made, parseMade, recordMade, sendLater, sendsFromComputer, UPLOAD_TAKES } from "./derived";
-import { deviceOf, isOnline, listDevices } from "../lib/devices";
+import { deviceForToken, deviceOf, isOnline, listDevices } from "../lib/devices";
 import { actionDone, goOnFor } from "../lib/action-done";
 import { addFolder } from "../devices-storage";
 import { workspaceById } from "../lib/workspaces";
@@ -140,13 +140,14 @@ export function unproxied(libraryId: string, versionId?: string, hosted = false)
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
-      `SELECT v.id, v.created_by, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+      `SELECT v.id, v.created_by, v.probe, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        WHERE a.library_id = ? AND (? IS NULL OR v.id = ?) AND v.probe IS NOT NULL AND v.state != 'missing' AND a.kind != 'image'
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'proxy')
          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed'))`,
     )
-    .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string }[];
-  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want));
+    .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string; source_key: string }[];
+  // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there
+  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
 }
 
 /** The name an original downloads as: the file's own name when it is read where it is, else its title with its type's extension. */
@@ -182,11 +183,14 @@ export function recordVersion(
     fromDevice?: string | null;
     /** the upload's origin (uploads.origin): "phone" for the iPhone app's own file */
     origin?: string | null;
+    /** a blurred render: its original's full SHA-256. It becomes a version of that original's clip, and its current one */
+    blurredOf?: string | null;
   },
 ): string {
   const now = Date.now();
-  const assetId = o.assetId ?? randomUUID();
-  if (!o.assetId) {
+  const linked = !o.assetId && o.blurredOf ? originalClipOf(d, o.libraryId, o.blurredOf) : undefined;
+  const assetId = o.assetId ?? linked ?? randomUUID();
+  if (!o.assetId && !linked) {
     d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)").run(
       assetId,
       o.libraryId,
@@ -201,6 +205,7 @@ export function recordVersion(
     `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device, origin)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?)`,
   ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null, o.origin ?? null);
+  if (o.blurredOf) d.prepare("UPDATE asset_versions SET blurred_of = ? WHERE id = ?").run(o.blurredOf, o.versionId);
   d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(o.versionId, assetId);
   if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(o.collectionId, o.libraryId)) {
     d.prepare(
@@ -218,6 +223,21 @@ export function recordVersion(
   // the library's copies take it as soon as the caller's transaction is in (copies.ts)
   setImmediate(() => copiesWake(o.versionId));
   return assetId;
+}
+
+/**
+ * The clip in `libraryId` whose original has the full SHA-256 `sha256` (read whole on a computer, asset_versions
+ * full_sha256, or an upload's own sha256): where a blurred render of it is filed, as its newest version (P2.5's match key).
+ */
+export function originalClipOf(d: DatabaseSync, libraryId: string, sha256: string): string | undefined {
+  return (
+    d
+      .prepare(
+        `SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+          WHERE a.library_id = ? AND (v.full_sha256 = ? OR v.sha256 = ?) AND v.blurred_of IS NULL AND a.trashed_at IS NULL LIMIT 1`,
+      )
+      .get(libraryId, sha256, sha256) as { id: string } | undefined
+  )?.id;
 }
 
 /**
@@ -262,7 +282,14 @@ export async function saveToLibrary(
     return { error: "Not enough free disk space for this file", code: "disk_reserve" };
   }
   // Upload none: the file goes to the asker's computer and is indexed there, never kept here
+  // (under Blur faces Upload reads none for anything not blurred, so it goes there too)
   if (serverKind() !== "local" && hostsNone(opts.finals ? finalsUpload(lib) : libraryUpload(lib))) return saveOnComputer(username, lib, file, filename, sources, footage, sound, opts.after, opts.importName);
+  // kept here: under Blur faces only a file made wholly of blurred renders (a sound has no picture); the rule said once more
+  // where the routing above changes. This Mac keeps its own (the server is the owner's computer, as mayReceive reads it)
+  if (serverKind() !== "local" && kindOf(filename) !== "audio") {
+    const left = mayLeave(lib, { blurred: sources.length > 0 && sources.every((v) => isBlurred(v)) });
+    if (!left.ok) return { error: left.body.message, code: "failed" };
+  }
   const staged = path.join(stagingDir(), `save-${randomUUID()}`);
   try {
     await copyFile(file, staged);
@@ -406,6 +433,8 @@ interface UploadRow {
   made: string | null;
   /** "phone" when the iPhone app sent it to the person's computers (x-ct-origin); null otherwise */
   origin: string | null;
+  /** a computer's blurred render: its original's full SHA-256 (asset_versions.blurred_of) */
+  blurred_of: string | null;
 }
 
 const db = () => libraryDb();
@@ -458,12 +487,28 @@ const IN_REVIEW = { error: "This video is in Review: change it there", code: "co
 const receives = (row: UploadRow, got?: string) => {
   const made = madeOf(row)?.proxy;
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
-  const into = { id: row.library_id, collectionId: row.collection_id };
+  // a blurred render is declared only by a computer of the uploader's own (startUpload checks it too)
+  const blurredOf = sender?.owner === row.created_by && sender.owner === libraryAccount(row.library_id) ? row.blurred_of : null;
+  const into = { id: row.library_id, collectionId: row.collection_id, blurredOf };
   const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
+  // at the finish: bytes that are the original itself, or any clip of the library not blurred, are not its blurred render
+  if (blurredOf && got && (got === blurredOf || unblurredBytes(row.library_id, got))) return refuse(REFUSED_NOT_BLURRED);
   if (!made) return mayReceive("original", into, origin, { sender });
   // the size check runs for every sender, a computer without the proof included (UNIFIED-PRD §4.1 rule 4)
   return mayReceive("proxy", into, origin, { sender, proof: { ...(made.sha256 ? { sha256: made.sha256 } : {}), ...(got ? { got } : {}), bytes: row.size, original: made.size } });
 };
+
+/** The account a library is (libraries.workspace_id read back as its account, access.ts accountOf). */
+const libraryAccount = (libraryId: string): string | null => {
+  const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
+  return row ? accountOf(row.workspace_id) : null;
+};
+
+/** Whether `sha256` is the bytes of a clip of `libraryId` that is not a blurred render (its upload's or its full SHA-256). */
+const unblurredBytes = (libraryId: string, sha256: string): boolean =>
+  !!db()
+    .prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND v.blurred_of IS NULL AND (v.sha256 = ? OR v.full_sha256 = ?) LIMIT 1")
+    .get(libraryId, sha256, sha256);
 
 /** The caller's upload, if they started it and still may use its library; otherwise null (404). */
 
@@ -562,6 +607,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       fromPath: row.from_path,
       fromDevice: row.from_device,
       origin: row.origin,
+      blurredOf: row.blurred_of,
     });
     if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
     d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -666,7 +712,13 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   // what the phone made of the file itself (derived.ts Made): only to a library this server files it for
   const made = await parseMade(body);
   if (typeof made === "string") return c.json({ error: made, code: "invalid" }, 400);
-  const into = { id: libraryId, collectionId: collection };
+  // a computer's blurred render of an original (its full SHA-256): under Blur faces the one file that may leave it
+  // only from the computer itself, signed in with its own device token: never the body's word, never a browser or a key
+  // that names a computer of the account (a re-encode of an original would pass the hash check)
+  const computer = deviceForToken(c.req.header("authorization"));
+  // and only the library's own account's computer: a member's computer is not where the originals are kept
+  const blurredOf = from && computer && computer.id === fromDevice && computer.owner === user.username && computer.owner === libraryAccount(libraryId) && typeof body?.blurredOf === "string" && /^[0-9a-f]{64}$/.test(body.blurredOf) ? body.blurredOf : null;
+  const into = { id: libraryId, collectionId: collection, blurredOf };
   // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
   // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isPhoneSession), never a browser's or a Mac's
   const phone = !from && c.req.header("x-ct-origin") === "phone" && isPhoneSession(c, user.username);
@@ -691,8 +743,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin, blurred_of)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -709,6 +761,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
       fromDevice,
       made ? JSON.stringify(made) : null,
       phone ? "phone" : null,
+      blurredOf,
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -956,6 +1009,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         fromPath: row.from_path,
         fromDevice: row.from_device,
         origin: row.origin,
+        blurredOf: row.blurred_of,
       });
       if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -1018,6 +1072,7 @@ export const settingsOf = (json: string): LibrarySettings => {
     ...(typeof s.setupAt === "string" ? { setupAt: s.setupAt } : {}),
     ...(typeof s.defaultFolders === "boolean" ? { defaultFolders: s.defaultFolders } : {}),
     upload: uploadOf(s.upload),
+    ...(s.blurFaces === true ? { blurFaces: true } : {}),
     finalsUpload: s.finalsUpload === undefined || s.finalsUpload === null ? "all" : uploadOf(s.finalsUpload),
     ...(s.organize ? { organize: s.organize } : {}),
     lookLevel: lookLevelOf(s.lookLevel),
@@ -1073,6 +1128,12 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const s = b?.settings ?? {};
   // true/false: the upload switch's older values (db.ts uploadOf), kept so a stored boolean still maps the same way
   const upload = s.upload === true ? "all" : s.upload === false ? "none" : s.upload;
+  // Blur faces: Upload is Off or Blurred then, never Originals (contracts BLURRED_UPLOADS); checked before anything is written
+  const blurs = typeof s.blurFaces === "boolean" ? s.blurFaces : blursFaces(libraryId);
+  if (blurs && !BLURRED_UPLOADS.includes(LIBRARY_UPLOADS.includes(upload as LibraryUpload) ? (upload as LibraryUpload) : libraryUploadStored(libraryId))) {
+    return c.json({ error: BLUR_UPLOADS, code: "invalid" }, 400);
+  }
+  if (typeof s.blurFaces === "boolean") put("blurFaces", s.blurFaces);
   if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
   if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
@@ -1288,10 +1349,13 @@ export function mediaFile(versionId: string, kind: string): { key?: string; type
  * with the source). Pictures pass. Review, Finals and team proxies are mayServe's own exceptions.
  */
 export async function serveGate(versionId: string, kind: string, file: { key?: string; what?: "original" | "proxy" }): Promise<Received> {
-  if (!["play", "proxy", "source"].includes(kind) || !file.key) return { ok: true };
   const v = db().prepare("SELECT a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
     | { asset_id: string; library_id: string }
     | undefined;
+  // Blur faces: no byte or picture of a clip that is not a blurred render, to anyone (upload-gate.ts mayLeave)
+  const left = mayLeave(v?.library_id, { versionId });
+  if (!left.ok) return left;
+  if (!["play", "proxy", "source"].includes(kind) || !file.key) return { ok: true };
   if (!v || inReview(v.asset_id)) return { ok: true }; // a Review video is Review's, served by it (R2)
   return mayServe({ id: v.library_id, versionId }, file.what ?? (kind === "proxy" ? "proxy" : "original"));
 }

@@ -1,4 +1,5 @@
 import type { SessionUser } from "../users";
+import { mineAccountId } from "./instagram/accounts";
 import { ownedProjects, sharedProjects } from "./workshop/workspace";
 
 /**
@@ -12,8 +13,9 @@ async function projectsOf(user: SessionUser): Promise<{ of: (own?: string) => st
   // a workspace given to them (Settings → Team) holds what they make there too; their unfiled things stay their own first brand's
   const projects = own.length ? own : shared;
   if (!projects.length) return null;
-  // read when asked: the Analyzer is a big module, and everything that keeps workspaces apart reaches this file
-  const mine = await import("../instagram").then((m) => m.mineAccountId(user)).catch(() => undefined);
+  // the stored accounts only (lib/instagram/accounts.ts): everything that keeps workspaces apart reaches this file, and
+  // loading the whole Analyzer here took ~7 s on a busy test run (11-19)
+  const mine = await mineAccountId(user).catch(() => undefined);
   const first = (projects.find((p) => mine && p.accountId === mine) ?? [...projects].sort((a, b) => a.createdAt - b.createdAt)[0])!.id;
   const ids = new Set([...own, ...shared].map((p) => p.id));
   return { of: (own) => (own && ids.has(own) ? own : first), ids };

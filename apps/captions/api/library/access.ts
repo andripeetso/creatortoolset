@@ -9,6 +9,7 @@ import { ownedProject, sharedHere, sharedProjects, workspaceScope } from "../lib
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb, newLibrarySettings } from "./db";
+import { mayLeave } from "./upload-gate";
 import { workspaceById } from "../lib/workspaces";
 import { actionCard, LIBRARY_WORDS, quickSetup, type ActionNeeded } from "../../contracts/library";
 import { libraryBase, THIS_COMPUTER } from "../../contracts/storage";
@@ -177,6 +178,8 @@ export async function versionSource(username: string, versionId: string): Promis
     .get(versionId) as { asset_id: string; library_id: string; source_key: string } | undefined;
   const role = v ? libraryRole(username, v.library_id) : null;
   if (!v || !role || !(await canSee({ username, role }, assetRef(v.library_id, v.asset_id, versionId)))) return null;
+  // Blur faces: a held copy of a clip not blurred (kept from before it was on) is not handed to Caption Studio
+  if (!mayLeave(v.library_id, { versionId }).ok) return null;
   return blobs.localCopy(v.source_key).catch(() => null);
 }
 

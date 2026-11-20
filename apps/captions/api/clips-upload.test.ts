@@ -81,3 +81,20 @@ describe("a clip's stored type", () => {
     expect(down.headers.get("x-content-type-options")).toBe("nosniff");
   });
 });
+
+describe("Video Notes under Blur faces", () => {
+  // the account's Media Library with Blur faces on: a recording is not known to be blurred (upload-gate.ts mayLeave)
+  it("takes no recording while it is on, in parts or whole; with it off it does", async () => {
+    const { libraryDb } = await import("./library/db");
+    const { REFUSED_BLUR } = await import("./library/upload-gate");
+    libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_bea', 'bea', 'Library', 'local', ?, 0)").run(JSON.stringify({ upload: "none", blurFaces: true }));
+    const start = await app.request("/api/clips/init", json({ name: "Handstand.webm", mime: "video/webm", size }, "bea"));
+    expect(start.status).toBe(409);
+    expect(((await start.json()) as { message: string }).message).toBe(REFUSED_BLUR);
+    const whole = await app.request("/api/clips?name=Handstand.webm&mime=video/webm", { method: "POST", headers: { "x-as": "bea", "content-type": "video/webm" }, body: "webm-bytes" });
+    expect(whole.status).toBe(409);
+    libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.blurFaces', json('false')) WHERE id = 'lib_bea'").run();
+    const again = await app.request("/api/clips/init", json({ name: "Handstand.webm", mime: "video/webm", size }, "bea"));
+    expect(again.status).toBe(200);
+  });
+});

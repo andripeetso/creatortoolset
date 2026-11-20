@@ -670,6 +670,10 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE collections ADD COLUMN shoot TEXT;`,
   // a strip's frame size (media/sprite.ts noteStrip): frames keep the clip's shape since 2026-11-19; none noted = an old 160 × 90 strip
   `ALTER TABLE derivatives ADD COLUMN cell_w INTEGER; ALTER TABLE derivatives ADD COLUMN cell_h INTEGER;`,
+  // Blur faces: a version that is a blurred render names its original by full SHA-256 (the key a blurred master and its
+  // original link on, upload-gate.ts mayLeave); an upload declares it at its start
+  `ALTER TABLE asset_versions ADD COLUMN blurred_of TEXT;
+  ALTER TABLE uploads ADD COLUMN blurred_of TEXT;`,
   // a file by its size and fingerprint (report.ts: a scan's match, a file moved into a left-out folder)
   `CREATE INDEX versions_quick ON asset_versions(quick);`,
 ];

@@ -27,3 +27,20 @@ describe("what she wants to do first (job)", () => {
     expect(readWorkPrefs("older")).toMatchObject({ talk: "both", job: null });
   });
 });
+
+describe("the editor's keys (keyPreset, keys)", () => {
+  it("are kept per account and read back, the other fields left as they were", () => {
+    writeWorkPrefs("tiny", { talk: "both" });
+    expect(writeWorkPrefs("tiny", { keyPreset: "resolve", keys: { X: "cut", W: "" } })).toMatchObject({ talk: "both", keyPreset: "resolve" });
+    expect(readWorkPrefs("tiny")).toMatchObject({ keyPreset: "resolve", keys: { X: "cut", W: "" } });
+    expect(readWorkPrefs("someone-else").keys).toBeUndefined();
+  });
+
+  it("refuses an unknown preset and keys that are not chord → command id", () => {
+    expect(writeWorkPrefs("tiny", { keyPreset: "premiere" })).toMatch(/^keyPreset is one of/);
+    expect(writeWorkPrefs("tiny", { keys: ["X"] })).toBe("keys is chord → command id");
+    expect(writeWorkPrefs("tiny", { keys: { X: 3 } })).toBe("keys is chord → command id");
+    expect(writeWorkPrefs("tiny", { keys: { X: "<script>" } })).toBe("keys is chord → command id");
+    expect(readWorkPrefs("tiny").keys).toEqual({ X: "cut", W: "" });
+  });
+});

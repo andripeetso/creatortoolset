@@ -40,17 +40,17 @@ import {
   LayoutGrid,
 } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
-import type { Design, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke } from "@contracts/design";
+import type { Design, DesignPage, Effect, GradientStop, Layer, Paint, PaintLook, Pin, Stroke, TextLayer } from "@contracts/design";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_EFFECTS, DESIGN_FORMATS, DESIGN_GRADIENTS, DESIGN_HEADS, DESIGN_LIMITS, DESIGN_PICTURE_MODES, DESIGN_SHAPES, EFFECT_PRESETS, EFFECTS_MAX } from "@contracts/design";
 import { effectsOf, withEffects } from "@/lib/design/effects";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { alphaOf, typedHex, withAlpha } from "@/lib/design/colour";
-import { colourAt, fillsOf, moved, strokesOf, takesFills, takesStrokes, withFills, withStrokes } from "@/lib/design/paint";
+import { colourAt, fillsOf, moved, solidGround, strokesOf, takesFills, takesStrokes, withFills, withStrokes } from "@/lib/design/paint";
 import { pictureUrl } from "@/lib/designs";
 import { boundsOf, frameOf, groupName, pageName, resizeAll, SHAPE_NAMES, type Align } from "@/lib/design/hands";
 import { DESIGN_FONTS, designWeight, faceOf, WEIGHT_NAMES, weightsOf } from "@/lib/design/fonts";
-import { caseOf } from "@/lib/design/runs";
+import { caseOf, diffText, editRuns, retext } from "@/lib/design/runs";
 import { addOwnFont, removeOwnFont, useOwnFonts } from "@/lib/design/own-fonts";
 import { confirmDialog } from "@/lib/dialogs";
 import { useZoom, type ViewStore } from "@/lib/design/view";
@@ -385,6 +385,293 @@ const ALIGNS: [Align, string, typeof AlignLeft][] = [
   ["bottom", "Align bottom", AlignEndHorizontal],
 ];
 
+
+/** What every picked layer has in common: one value (null when they differ, or one has none), every one passing a test, one list of fills or lines (null: they differ). */
+function common(picked: readonly Layer[]) {
+  const same = <V,>(of: (l: Layer) => V | undefined): V | null => {
+    const first = picked[0] ? of(picked[0]) : undefined;
+    return first !== undefined && picked.every((l) => of(l) === first) ? first : null;
+  };
+  const every = (is: (l: Layer) => boolean) => picked.length > 0 && picked.every(is);
+  const sameList = <T,>(of: (l: Layer) => T[]): T[] | null => {
+    const first = picked[0] ? JSON.stringify(of(picked[0])) : "";
+    return picked[0] && picked.every((l) => JSON.stringify(of(l)) === first) ? of(picked[0]) : null;
+  };
+  return { same, every, sameList };
+}
+
+/** The picked layers' number fields, sliders and colours: `to` gives each layer with the value set, shown while dragged and one step when let go. */
+function fieldsFor(onPreview: (fn: ((l: Layer) => Layer) | null) => void, onPatch: (fn: (l: Layer) => Layer, merge?: string) => void, colours: readonly string[], onDropper?: (take: (hex: string) => void) => void) {
+  const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number; rate?: number } = {}) => (
+    <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
+  );
+  const slide = (label: string, value: number | null, to: (n: number) => (l: Layer) => Layer, min: number, max: number) => (
+    <Slide key={label} label={label} value={value} min={min} max={max} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
+  );
+  const colour = (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => <Colour title={title} value={value} colours={colours} onDropper={onDropper} onSet={(c, merge) => onPatch(to(c), merge)} />;
+  return { num, slide, colour };
+}
+
+/** A + or − beside a section's name, for the one thing the section can add. */
+const addOrRemove = (has: boolean, what: string, add: () => void, remove: () => void) =>
+  has ? (
+    <Tap label={`Remove the ${what}`} onClick={remove}>
+      <Minus className="h-3.5 w-3.5" />
+    </Tap>
+  ) : (
+    <Tap label={`Add a ${what}`} onClick={add}>
+      <Plus className="h-3.5 w-3.5" />
+    </Tap>
+  );
+
+/**
+ * The picked texts' own sections: fill (colour, gradient), outline, typography (font, size, align, case…), highlighter
+ * and effects (shadows). The one text panel: the Inspector shows it for picked texts, and TextSection for one text
+ * layer anywhere else (a text clip in the video editor).
+ */
+function TextStyles({ picked, design, colours, onPatch, onPreview, onDropper }: { picked: Layer[]; design: Design; colours: readonly string[]; onPatch: (fn: (l: Layer) => Layer, merge?: string) => void; onPreview: (fn: ((l: Layer) => Layer) | null) => void; onDropper?: (take: (hex: string) => void) => void }) {
+  const { same, sameList } = common(picked);
+  const { num, slide, colour } = fieldsFor(onPreview, onPatch, colours, onDropper);
+  const one = picked.length === 1 ? picked[0]! : null;
+  /** The font every picked text is set in (null: they differ), and the person's own fonts beside the app's. */
+  const fontNow = same((l) => (l.type === "text" ? l.font : undefined));
+  const ownFonts = useOwnFonts();
+  const fontFile = useRef<HTMLInputElement>(null);
+  const [fontSaid, setFontSaid] = useState("");
+  return (
+    <>
+      <FillList fills={sameList(fillsOf)} design={design} colours={colours} onDropper={onDropper} base="#d9d9d9" onSet={(f, merge) => onPatch((l) => withFills(l, f), merge)} onLive={(f) => onPreview(f ? (l) => withFills(l, f) : null)} />
+      <StrokeList strokes={sameList(strokesOf)} colours={colours} onDropper={onDropper} max={60} text onSet={(st, merge) => onPatch((l) => withStrokes(l, st), merge)} onLive={(st) => onPreview(st ? (l) => withStrokes(l, st) : null)} />
+
+      <Section title="Typography">
+        <DropdownMenu>
+          <DropdownMenuTrigger aria-label="Font" className={cn(FIELD, "w-full justify-between outline-none")}>
+            {/* one of the person's own (or one they took away since) is shown by its own name */}
+            <span className="truncate">{DESIGN_FONTS.find((f) => f.family === fontNow)?.label ?? fontNow ?? "Mixed"}</span>
+            <ChevronDown className="h-3 w-3 shrink-0" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-96 w-56 overflow-y-auto">
+            {DESIGN_FONTS.map((f) => (
+              <DropdownMenuItem key={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
+                <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}"`, fontWeight: designWeight(f.family) }}>
+                  {f.label}
+                </span>
+                {fontNow === f.family && <Check className="h-3.5 w-3.5 shrink-0" />}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            {ownFonts.map((f) => (
+              <DropdownMenuItem key={f.id} data-own-font={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
+                <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}", "Inter"`, fontWeight: 400 }}>
+                  {f.family}
+                </span>
+                <span className="flex shrink-0 items-center gap-1">
+                  {fontNow === f.family && <Check className="h-3.5 w-3.5" />}
+                  <span
+                    role="button"
+                    aria-label={`Remove ${f.family}`}
+                    className={cn("flex h-5 w-5 items-center justify-center rounded-[4px] hover:bg-zinc-500/20", DIM)}
+                    onClick={(e) => {
+                      // the row itself picks the font: this takes it away
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void confirmDialog({ title: `Remove ${f.family} from your fonts?`, body: "Texts set in it keep its name and are drawn in the default font until it is added again.", ok: "Remove", danger: true }).then(
+                        (yes) => void (yes && removeOwnFont(f.id).then(() => setFontSaid(""), (err: unknown) => setFontSaid(err instanceof Error ? err.message : String(err)))),
+                      );
+                    }}
+                  >
+                    <X className="h-3 w-3" />
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuItem onSelect={() => fontFile.current?.click()}>Add a font…</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {/* a font file from this computer (.ttf, .otf, or a collection): every face in it becomes one of the person's fonts */}
+        <input
+          ref={fontFile}
+          type="file"
+          accept=".ttf,.otf,.ttc,font/ttf,font/otf,font/collection"
+          multiple
+          aria-label="Add a font file"
+          className="hidden"
+          onChange={(e) => {
+            const files = [...(e.currentTarget.files ?? [])];
+            e.currentTarget.value = "";
+            void (async () => {
+              const said: string[] = [];
+              const added: string[] = [];
+              for (const file of files) {
+                try {
+                  const out = await addOwnFont(file);
+                  added.push(...out.added.map((f) => f.family));
+                  said.push(...out.notes);
+                } catch (err) {
+                  said.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              }
+              // several faces at once (a collection holds a family): said by name, and the picked words stay as they are
+              if (added.length > 1) said.unshift(`Added ${added.join(", ")}`);
+              setFontSaid(said.join(". "));
+              // one face added: the picked words are set in it at once
+              if (added.length === 1) onPatch((l) => (l.type === "text" ? { ...l, font: added[0]! } : l));
+            })();
+          }}
+        />
+        {fontSaid && <p className={cn("text-[11px] leading-4", DIM)}>{fontSaid}</p>}
+        {/* the weights the font's family has a face for, and the slant and lines over the letters */}
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            {(() => {
+              const weight = same((l) => (l.type === "text" ? faceOf(l.font, l.weight, l.italic).weight : undefined));
+              return (
+                <PickOne
+                  label="Weight"
+                  value={weight === null ? "Mixed" : (WEIGHT_NAMES[weight] ?? String(weight))}
+                  options={(fontNow ? weightsOf(fontNow) : []).map((w) => [String(w), WEIGHT_NAMES[w] ?? String(w)] as const)}
+                  onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, weight: Number(v) } : l))}
+                />
+              );
+            })()}
+          </div>
+          {(
+            [
+              ["italic", "Italic", Italic],
+              ["underline", "Underline", Underline],
+              ["strike", "Strikethrough", Strikethrough],
+            ] as const
+          ).map(([k, label, Icon]) => (
+            <Tap key={k} label={label} on={same((l) => (l.type === "text" ? !!l[k] : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? ({ ...l, [k]: l[k] ? undefined : true } as Layer) : l))}>
+              <Icon className="h-3.5 w-3.5" />
+            </Tap>
+          ))}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {num("Aa", "Font size", same((l) => (l.type === "text" ? l.size : undefined)), (n) => (l) => (l.type === "text" ? { ...l, size: n } : l), { min: 8, max: 600 })}
+          {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}
+          {num("↔", "Letter spacing in pixels", same((l) => (l.type === "text" ? (l.spacing ?? 0) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, spacing: n || undefined } : l), { min: -20, max: 200 })}
+        </div>
+        <Choice
+          label="Text fit"
+          value={same((l) => (l.type === "text" ? (l.lines ? "lines" : (l.fit ?? "fixed")) : undefined))}
+          options={[["fixed", "Fixed size"], ["shrink", "Shrink to fit"], ["lines", "Lines"]] as const}
+          onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, fit: v === "shrink" ? "shrink" : undefined, lines: v === "lines" ? (l.lines ?? 2) : undefined } : l))}
+        />
+        {same((l) => (l.type === "text" ? !!l.lines : undefined)) === true && num("≡", "At most this many lines, with no word alone on the last one", same((l) => (l.type === "text" ? (l.lines ?? 2) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lines: n } : l), { min: 1, max: 12 })}
+        <div className="flex justify-between">
+          {(
+            [
+              ["left", "Text align left", AlignLeft],
+              ["center", "Text align centre", AlignCenter],
+              ["right", "Text align right", AlignRight],
+            ] as const
+          ).map(([v, label, Icon]) => (
+            <Tap key={v} label={label} on={same((l) => (l.type === "text" ? l.align : undefined)) === v} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, align: v } : l))}>
+              <Icon className="h-3.5 w-3.5" />
+            </Tap>
+          ))}
+          {(
+            [
+              ["top", "Align to the top of the box", AlignVerticalJustifyStart],
+              ["middle", "Align to the middle of the box", AlignVerticalJustifyCenter],
+              ["bottom", "Align to the bottom of the box", AlignVerticalJustifyEnd],
+            ] as const
+          ).map(([v, label, Icon]) => (
+            <Tap key={v} label={label} on={same((l) => (l.type === "text" ? (l.valign ?? "top") : undefined)) === v} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, valign: v === "top" ? undefined : v } : l))}>
+              <Icon className="h-3.5 w-3.5" />
+            </Tap>
+          ))}
+          <Tap label="Even out the lines" on={same((l) => (l.type === "text" ? !!l.balance : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, balance: l.balance ? undefined : true } : l))}>
+            <WrapText className="h-3.5 w-3.5" />
+          </Tap>
+        </div>
+        {(() => {
+          const CASES = [["typed", "As typed"], ["upper", "Upper case"], ["lower", "Lower case"], ["title", "Title case"], ["small", "Small capitals"]] as const;
+          const now = same((l) => (l.type === "text" ? (caseOf(l) ?? "typed") : undefined));
+          return (
+            <PickOne
+              label="Case"
+              value={CASES.find(([v]) => v === now)?.[1] ?? "Mixed"}
+              options={CASES}
+              onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, upper: undefined, case: v === "typed" ? undefined : v } : l))}
+            />
+          );
+        })()}
+      </Section>
+      <Section
+        title="Highlight"
+        action={addOrRemove(
+          picked.some((l) => l.type === "text" && !!l.marks?.length),
+          "highlight",
+          () => onPatch((l) => (l.type === "text" ? { ...l, marks: [{ color: "#f2b63c" }] } : l)),
+          () => onPatch((l) => (l.type === "text" ? { ...l, marks: undefined } : l)),
+        )}
+      >
+        {/* ponytail: the panel edits a text's first stroke; an AI may give it up to six, and those are kept as they are */}
+        {one?.type === "text" && one.marks?.[0] && (
+          <>
+            <div className="flex">{colour("The highlighter's colour", one.marks[0].color, (c) => (l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, color: c }, ...l.marks.slice(1)] } : l))}</div>
+            <input
+              key={`${one.id}:${one.marks[0].words ?? ""}`}
+              aria-label="Highlighted words"
+              placeholder="Every line"
+              defaultValue={one.marks[0].words ?? ""}
+              maxLength={200}
+              onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
+              onBlur={(e) => {
+                const words = e.currentTarget.value.replace(/\s+/g, " ").trim();
+                if (words !== (one.marks?.[0]?.words ?? "")) onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, words: words || undefined }, ...l.marks.slice(1)] } : l));
+              }}
+              className={cn(FIELD, "w-full text-[11px] outline-none placeholder:text-zinc-400")}
+            />
+            <Choice
+              label="Highlight position"
+              value={one.marks[0].low ? "low" : "full"}
+              options={[["full", "Behind the letters"], ["low", "Sitting low"]] as const}
+              onPick={(v) => onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, low: v === "low" ? true : undefined }, ...l.marks.slice(1)] } : l))}
+            />
+          </>
+        )}
+      </Section>
+      <Effects picked={picked} onPatch={onPatch} num={num} slide={slide} colour={colour} />
+    </>
+  );
+}
+
+/**
+ * Design's text panel on one text layer, for a page that is not the Designer (the video editor's Inspector on a text
+ * clip): its words, then the same sections as the Designer's. `onChange` gets the layer as changed (`merge`: a change
+ * that follows one of the same name joins it, a colour dragged about being one step); `onPreview` the layer as shown
+ * while a number or a colour is dragged (null: back to `layer`). `design`: the design the layer is in (its pictures
+ * and colours).
+ */
+export function TextSection({ layer, design, onChange, onPreview, colours = [], onDropper }: { layer: TextLayer; design: Design; onChange: (layer: TextLayer, merge?: string) => void; onPreview?: (layer: TextLayer | null) => void; colours?: readonly string[]; onDropper?: (take: (hex: string) => void) => void }) {
+  const through = (fn: (l: Layer) => Layer) => fn(layer) as TextLayer;
+  return (
+    <div className="flex flex-col text-[11px] text-zinc-50">
+      <Section title="Words">
+        <textarea
+          aria-label="Words"
+          value={layer.text}
+          maxLength={DESIGN_LIMITS.text}
+          rows={3}
+          // the keys are the words', not the page's (play, delete a clip)
+          onKeyDown={(e) => e.stopPropagation()}
+          // the runs follow each change; the ends are trimmed once the field is left (a space typed at the end stays while typing)
+          onChange={(e) => {
+            const d = diffText(layer.text, e.currentTarget.value, e.currentTarget.selectionStart);
+            onChange(editRuns(layer, d.at, d.removed, d.inserted), "words");
+          }}
+          onBlur={() => layer.text !== layer.text.trim() && onChange(retext(layer, layer.text))}
+          className={cn(FIELD, "h-auto resize-none py-1 outline-none")}
+        />
+      </Section>
+      <TextStyles picked={[layer]} design={design} colours={colours} onDropper={onDropper} onPatch={(fn, merge) => onChange(through(fn), merge)} onPreview={(fn) => onPreview?.(fn ? through(fn) : null)} />
+    </div>
+  );
+}
+
 export function Inspector({
   design,
   page,
@@ -463,37 +750,14 @@ export function Inspector({
   const [as, setAs] = useState<ExportAs>({ jpeg: false, scale: 1 });
   const one = picked.length === 1 ? picked[0]! : null;
   const box = one ?? (picked.length ? boundsOf(picked) : null);
-  /** What every picked layer has in common, or null when they differ (or one has none). */
-  const same = <V,>(of: (l: Layer) => V | undefined): V | null => {
-    const first = picked[0] ? of(picked[0]) : undefined;
-    return first !== undefined && picked.every((l) => of(l) === first) ? first : null;
-  };
-  const every = (is: (l: Layer) => boolean) => picked.length > 0 && picked.every(is);
-  /** A number field for the picked layers: `to` gives each layer with the number set. */
-  const num = (label: ReactNode, title: string, value: number | null, to: (n: number) => (l: Layer) => Layer, more: { min?: number; max?: number; step?: number; rate?: number } = {}) => (
-    <Num label={label} title={title} value={value} {...more} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
-  );
-  /** A slider for the picked layers, like `num`. */
-  const slide = (label: string, value: number | null, to: (n: number) => (l: Layer) => Layer, min: number, max: number) => (
-    <Slide key={label} label={label} value={value} min={min} max={max} onLive={(n) => onPreview(n === null ? null : to(n))} onCommit={(n) => onPatch(to(n))} />
-  );
-  const colour = (title: string, value: string | null, to: (c: string) => (l: Layer) => Layer) => <Colour title={title} value={value} colours={colours} onDropper={onDropper} onSet={(c, merge) => onPatch(to(c), merge)} />;
+  const { same, every, sameList } = common(picked);
+  const { num, slide, colour } = fieldsFor(onPreview, onPatch, colours, onDropper);
   /** The picked layers resized so the box round them is `w` × `h` (one layer: that layer; with the lock, in its shape). */
   const sized = (w: number, h: number) => (l: Layer) => (box ? resizeAll([l], box, { x: box.x, y: box.y, w, h })[0]! : l);
 
   const text = every((l) => l.type === "text");
-  /** The font every picked text is set in (null: they differ), and the person's own fonts beside the app's. */
-  const fontNow = same((l) => (l.type === "text" ? l.font : undefined));
-  const ownFonts = useOwnFonts();
-  const fontFile = useRef<HTMLInputElement>(null);
-  const [fontSaid, setFontSaid] = useState("");
   const shape = every((l) => l.type === "shape");
   const image = every((l) => l.type === "image");
-  /** The fills or lines every picked layer has, when they are the same list (null: they differ). */
-  const sameList = <T,>(of: (l: Layer) => T[]): T[] | null => {
-    const first = picked[0] ? JSON.stringify(of(picked[0])) : "";
-    return picked[0] && picked.every((l) => JSON.stringify(of(l)) === first) ? of(picked[0]) : null;
-  };
   /** A corner's radius of a picture or a rectangle (0: top left, then round the box), and that corner set. */
   const cornerOf = (l: Layer, n: number): number | undefined => (l.type === "image" || l.type === "shape" ? (typeof l.radius === "object" ? l.radius[n]! : (l.radius ?? 0)) : undefined);
   const setCorner = (n: number, v: number) => (l: Layer): Layer => {
@@ -501,17 +765,6 @@ export function Inspector({
     const r = [0, 1, 2, 3].map((k) => (k === n ? v : (cornerOf(l, k) ?? 0))) as [number, number, number, number];
     return { ...l, radius: r.every((x) => x === r[0]) ? r[0] || undefined : r };
   };
-  /** A + or − beside a section's name, for the one thing the section can add. */
-  const addOrRemove = (has: boolean, what: string, add: () => void, remove: () => void) =>
-    has ? (
-      <Tap label={`Remove the ${what}`} onClick={remove}>
-        <Minus className="h-3.5 w-3.5" />
-      </Tap>
-    ) : (
-      <Tap label={`Add a ${what}`} onClick={add}>
-        <Plus className="h-3.5 w-3.5" />
-      </Tap>
-    );
   const frame = frameOf(page, at, design.width, design.height);
   /** A number field of the frame itself. */
   const fnum = (label: string, title: string, value: number, set: (n: number) => Partial<DesignPage>, more: { min: number; max: number }) => (
@@ -607,6 +860,13 @@ export function Inspector({
               <Checkbox checked={page.clip !== false} onCheckedChange={(on) => onPage({ ...page, clip: on === true ? undefined : false })} />
               Clip content
             </label>
+            {/* no fill: a checkerboard here, nothing in a PNG (a title over a video), white in a JPG */}
+            {!page.loose && (
+              <label className="flex items-center gap-2 text-xs">
+                <Checkbox checked={!fillsOf(page).some((f) => !f.hidden)} onCheckedChange={(on) => onPage(withFills(page, on === true ? [] : [{ type: "solid", color: "#ffffff" }]))} />
+                Transparent background
+              </label>
+            )}
             {!page.loose && (
               <DropdownMenu>
                 <DropdownMenuTrigger className="flex h-7 items-center justify-center gap-1 rounded-[5px] border border-[#e6e6e6] outline-none hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
@@ -728,218 +988,29 @@ export function Inspector({
               />
             )}
           </Section>
-          {every(takesFills) && (
-            <FillList fills={sameList(fillsOf)} design={design} colours={colours} onDropper={onDropper} base="#d9d9d9" onSet={(f, merge) => onPatch((l) => withFills(l, f), merge)} onLive={(f) => onPreview(f ? (l) => withFills(l, f) : null)} />
-          )}
-          {every(takesStrokes) && (
-            <StrokeList
-              strokes={sameList(strokesOf)}
-              colours={colours}
-              onDropper={onDropper}
-              max={text ? 60 : 200}
-              text={text}
-              box={every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect"))}
-              open={every((l) => l.type === "path" && !l.closed)}
-              onSet={(st, merge) => onPatch((l) => withStrokes(l, st), merge)}
-              onLive={(st) => onPreview(st ? (l) => withStrokes(l, st) : null)}
-            />
-          )}
-          {text && (
-            <Section title="Typography">
-              <DropdownMenu>
-                <DropdownMenuTrigger aria-label="Font" className={cn(FIELD, "w-full justify-between outline-none")}>
-                  {/* one of the person's own (or one they took away since) is shown by its own name */}
-                  <span className="truncate">{DESIGN_FONTS.find((f) => f.family === fontNow)?.label ?? fontNow ?? "Mixed"}</span>
-                  <ChevronDown className="h-3 w-3 shrink-0" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="max-h-96 w-56 overflow-y-auto">
-                  {DESIGN_FONTS.map((f) => (
-                    <DropdownMenuItem key={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
-                      <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}"`, fontWeight: designWeight(f.family) }}>
-                        {f.label}
-                      </span>
-                      {fontNow === f.family && <Check className="h-3.5 w-3.5 shrink-0" />}
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                  {ownFonts.map((f) => (
-                    <DropdownMenuItem key={f.id} data-own-font={f.family} onSelect={() => onPatch((l) => (l.type === "text" ? { ...l, font: f.family, weight: undefined } : l))} className="flex items-center justify-between gap-2">
-                      <span className="truncate text-[15px] leading-6" style={{ fontFamily: `"${f.family}", "Inter"`, fontWeight: 400 }}>
-                        {f.family}
-                      </span>
-                      <span className="flex shrink-0 items-center gap-1">
-                        {fontNow === f.family && <Check className="h-3.5 w-3.5" />}
-                        <span
-                          role="button"
-                          aria-label={`Remove ${f.family}`}
-                          className={cn("flex h-5 w-5 items-center justify-center rounded-[4px] hover:bg-zinc-500/20", DIM)}
-                          onClick={(e) => {
-                            // the row itself picks the font: this takes it away
-                            e.preventDefault();
-                            e.stopPropagation();
-                            void confirmDialog({ title: `Remove ${f.family} from your fonts?`, body: "Texts set in it keep its name and are drawn in the default font until it is added again.", ok: "Remove", danger: true }).then(
-                              (yes) => void (yes && removeOwnFont(f.id).then(() => setFontSaid(""), (err: unknown) => setFontSaid(err instanceof Error ? err.message : String(err)))),
-                            );
-                          }}
-                        >
-                          <X className="h-3 w-3" />
-                        </span>
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuItem onSelect={() => fontFile.current?.click()}>Add a font…</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              {/* a font file from this computer (.ttf, .otf, or a collection): every face in it becomes one of the person's fonts */}
-              <input
-                ref={fontFile}
-                type="file"
-                accept=".ttf,.otf,.ttc,font/ttf,font/otf,font/collection"
-                multiple
-                aria-label="Add a font file"
-                className="hidden"
-                onChange={(e) => {
-                  const files = [...(e.currentTarget.files ?? [])];
-                  e.currentTarget.value = "";
-                  void (async () => {
-                    const said: string[] = [];
-                    const added: string[] = [];
-                    for (const file of files) {
-                      try {
-                        const out = await addOwnFont(file);
-                        added.push(...out.added.map((f) => f.family));
-                        said.push(...out.notes);
-                      } catch (err) {
-                        said.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
-                      }
-                    }
-                    // several faces at once (a collection holds a family): said by name, and the picked words stay as they are
-                    if (added.length > 1) said.unshift(`Added ${added.join(", ")}`);
-                    setFontSaid(said.join(". "));
-                    // one face added: the picked words are set in it at once
-                    if (added.length === 1) onPatch((l) => (l.type === "text" ? { ...l, font: added[0]! } : l));
-                  })();
-                }}
+          {text ? (
+            <TextStyles picked={picked} design={design} colours={colours} onPatch={onPatch} onPreview={onPreview} onDropper={onDropper} />
+          ) : (
+            <>
+            {every(takesFills) && (
+              <FillList fills={sameList(fillsOf)} design={design} colours={colours} onDropper={onDropper} base="#d9d9d9" onSet={(f, merge) => onPatch((l) => withFills(l, f), merge)} onLive={(f) => onPreview(f ? (l) => withFills(l, f) : null)} />
+            )}
+            {every(takesStrokes) && (
+              <StrokeList
+                strokes={sameList(strokesOf)}
+                colours={colours}
+                onDropper={onDropper}
+                max={text ? 60 : 200}
+                text={text}
+                box={every((l) => l.type === "image" || (l.type === "shape" && l.shape === "rect"))}
+                open={every((l) => l.type === "path" && !l.closed)}
+                onSet={(st, merge) => onPatch((l) => withStrokes(l, st), merge)}
+                onLive={(st) => onPreview(st ? (l) => withStrokes(l, st) : null)}
               />
-              {fontSaid && <p className={cn("text-[11px] leading-4", DIM)}>{fontSaid}</p>}
-              {/* the weights the font's family has a face for, and the slant and lines over the letters */}
-              <div className="flex items-center gap-1">
-                <div className="min-w-0 flex-1">
-                  {(() => {
-                    const weight = same((l) => (l.type === "text" ? faceOf(l.font, l.weight, l.italic).weight : undefined));
-                    return (
-                      <PickOne
-                        label="Weight"
-                        value={weight === null ? "Mixed" : (WEIGHT_NAMES[weight] ?? String(weight))}
-                        options={(fontNow ? weightsOf(fontNow) : []).map((w) => [String(w), WEIGHT_NAMES[w] ?? String(w)] as const)}
-                        onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, weight: Number(v) } : l))}
-                      />
-                    );
-                  })()}
-                </div>
-                {(
-                  [
-                    ["italic", "Italic", Italic],
-                    ["underline", "Underline", Underline],
-                    ["strike", "Strikethrough", Strikethrough],
-                  ] as const
-                ).map(([k, label, Icon]) => (
-                  <Tap key={k} label={label} on={same((l) => (l.type === "text" ? !!l[k] : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? ({ ...l, [k]: l[k] ? undefined : true } as Layer) : l))}>
-                    <Icon className="h-3.5 w-3.5" />
-                  </Tap>
-                ))}
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {num("Aa", "Font size", same((l) => (l.type === "text" ? l.size : undefined)), (n) => (l) => (l.type === "text" ? { ...l, size: n } : l), { min: 8, max: 600 })}
-                {num("↕", "Line height, as a multiple of the size", same((l) => (l.type === "text" ? (l.lineHeight ?? 1.15) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lineHeight: n } : l), { min: 0.8, max: 3, step: 0.05 })}
-                {num("↔", "Letter spacing in pixels", same((l) => (l.type === "text" ? (l.spacing ?? 0) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, spacing: n || undefined } : l), { min: -20, max: 200 })}
-              </div>
-              <Choice
-                label="Text fit"
-                value={same((l) => (l.type === "text" ? (l.lines ? "lines" : (l.fit ?? "fixed")) : undefined))}
-                options={[["fixed", "Fixed size"], ["shrink", "Shrink to fit"], ["lines", "Lines"]] as const}
-                onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, fit: v === "shrink" ? "shrink" : undefined, lines: v === "lines" ? (l.lines ?? 2) : undefined } : l))}
-              />
-              {same((l) => (l.type === "text" ? !!l.lines : undefined)) === true && num("≡", "At most this many lines, with no word alone on the last one", same((l) => (l.type === "text" ? (l.lines ?? 2) : undefined)), (n) => (l) => (l.type === "text" ? { ...l, lines: n } : l), { min: 1, max: 12 })}
-              <div className="flex justify-between">
-                {(
-                  [
-                    ["left", "Text align left", AlignLeft],
-                    ["center", "Text align centre", AlignCenter],
-                    ["right", "Text align right", AlignRight],
-                  ] as const
-                ).map(([v, label, Icon]) => (
-                  <Tap key={v} label={label} on={same((l) => (l.type === "text" ? l.align : undefined)) === v} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, align: v } : l))}>
-                    <Icon className="h-3.5 w-3.5" />
-                  </Tap>
-                ))}
-                {(
-                  [
-                    ["top", "Align to the top of the box", AlignVerticalJustifyStart],
-                    ["middle", "Align to the middle of the box", AlignVerticalJustifyCenter],
-                    ["bottom", "Align to the bottom of the box", AlignVerticalJustifyEnd],
-                  ] as const
-                ).map(([v, label, Icon]) => (
-                  <Tap key={v} label={label} on={same((l) => (l.type === "text" ? (l.valign ?? "top") : undefined)) === v} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, valign: v === "top" ? undefined : v } : l))}>
-                    <Icon className="h-3.5 w-3.5" />
-                  </Tap>
-                ))}
-                <Tap label="Even out the lines" on={same((l) => (l.type === "text" ? !!l.balance : undefined)) === true} onClick={() => onPatch((l) => (l.type === "text" ? { ...l, balance: l.balance ? undefined : true } : l))}>
-                  <WrapText className="h-3.5 w-3.5" />
-                </Tap>
-              </div>
-              {(() => {
-                const CASES = [["typed", "As typed"], ["upper", "Upper case"], ["lower", "Lower case"], ["title", "Title case"], ["small", "Small capitals"]] as const;
-                const now = same((l) => (l.type === "text" ? (caseOf(l) ?? "typed") : undefined));
-                return (
-                  <PickOne
-                    label="Case"
-                    value={CASES.find(([v]) => v === now)?.[1] ?? "Mixed"}
-                    options={CASES}
-                    onPick={(v) => onPatch((l) => (l.type === "text" ? { ...l, upper: undefined, case: v === "typed" ? undefined : v } : l))}
-                  />
-                );
-              })()}
-            </Section>
+            )}
+              <Effects picked={picked} onPatch={onPatch} num={num} slide={slide} colour={colour} />
+            </>
           )}
-          {text && (
-            <Section
-              title="Highlight"
-              action={addOrRemove(
-                picked.some((l) => l.type === "text" && !!l.marks?.length),
-                "highlight",
-                () => onPatch((l) => (l.type === "text" ? { ...l, marks: [{ color: "#f2b63c" }] } : l)),
-                () => onPatch((l) => (l.type === "text" ? { ...l, marks: undefined } : l)),
-              )}
-            >
-              {/* ponytail: the panel edits a text's first stroke; an AI may give it up to six, and those are kept as they are */}
-              {one?.type === "text" && one.marks?.[0] && (
-                <>
-                  <div className="flex">{colour("The highlighter's colour", one.marks[0].color, (c) => (l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, color: c }, ...l.marks.slice(1)] } : l))}</div>
-                  <input
-                    key={`${one.id}:${one.marks[0].words ?? ""}`}
-                    aria-label="Highlighted words"
-                    placeholder="Every line"
-                    defaultValue={one.marks[0].words ?? ""}
-                    maxLength={200}
-                    onKeyDown={(e) => (e.stopPropagation(), e.key === "Enter" && e.currentTarget.blur())}
-                    onBlur={(e) => {
-                      const words = e.currentTarget.value.replace(/\s+/g, " ").trim();
-                      if (words !== (one.marks?.[0]?.words ?? "")) onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, words: words || undefined }, ...l.marks.slice(1)] } : l));
-                    }}
-                    className={cn(FIELD, "w-full text-[11px] outline-none placeholder:text-zinc-400")}
-                  />
-                  <Choice
-                    label="Highlight position"
-                    value={one.marks[0].low ? "low" : "full"}
-                    options={[["full", "Behind the letters"], ["low", "Sitting low"]] as const}
-                    onPick={(v) => onPatch((l) => (l.type === "text" && l.marks?.length ? { ...l, marks: [{ ...l.marks[0]!, low: v === "low" ? true : undefined }, ...l.marks.slice(1)] } : l))}
-                  />
-                </>
-              )}
-            </Section>
-          )}
-          <Effects picked={picked} onPatch={onPatch} num={num} slide={slide} colour={colour} />
           {image && (
             <Section
               title="Picture"
@@ -1026,6 +1097,7 @@ export function Inspector({
           <Choice label="File type" value={as.jpeg ? "jpeg" : "png"} options={[["png", "PNG"], ["jpeg", "JPG"]] as const} onPick={(t) => setAs({ ...as, jpeg: t === "jpeg" })} />
           <Choice label="Size" value={as.scale} options={[[1, "1×"], [2, "2×"]] as const} onPick={(scale) => setAs({ ...as, scale })} />
         </div>
+        {as.jpeg && !solidGround(page) && <p className={cn("text-[11px] leading-4", DIM)}>A JPG has no transparent parts: they are white</p>}
         <button type="button" onClick={() => onExport(framesPicked.length > 1 ? framesPicked : at, as)} className="flex h-7 items-center justify-center rounded-[5px] border border-[#e6e6e6] hover:bg-zinc-500/10 dark:border-[#4d4d4d]">
           {framesPicked.length > 1 ? `Export the ${framesPicked.length} picked frames` : `Export ${pageName(page, at)}`}
         </button>

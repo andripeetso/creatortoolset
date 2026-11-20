@@ -18,6 +18,7 @@ import { MAC_WAITS, SHEET_FORMAT, type LookSheet } from "./shots";
 import { parseSignal, storeStretches, stretchLevelOf, takeSignal } from "./stretches";
 import { WATCH_LEVELS, wantsWatch } from "./timeline";
 import { resolveDevice } from "./whereis";
+import { mayLeave } from "./upload-gate";
 import { env } from "../lib/env";
 import type { LookLevel } from "../../contracts/library";
 
@@ -225,7 +226,8 @@ export const macLookJob: DeviceJobSlot = {
     // stretches found at another level than the library's are found again: the Mac reads the picture (none sent)
     const level = libraryLookLevel(r.library_id);
     if (stretchLevelOf(db, r.version_id) !== level) storeStretches(db, r.version_id, [], level);
-    const watch = wantsWatch(db, r.version_id, r.actor);
+    // Blur faces: no copy of a clip not blurred is sent here, not even for the timeline's one call (upload-gate.ts mayLeave)
+    const watch = wantsWatch(db, r.version_id, r.actor) && mayLeave(r.library_id, { versionId: r.version_id }).ok;
     lastTaken.set(d.id, { id: r.id, at: Date.now() });
     held.set(r.id, { device: d.id, versionId: r.version_id, libraryId: r.library_id, duration, level, sheets: [], bytes: 0, watch });
     libraryChanged(r.library_id);

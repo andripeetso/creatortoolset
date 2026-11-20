@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "./lib/env";
 import type { AuthVars } from "./auth";
-import { CHECK, DEFAULT_WORK_PREFS, EDITORS, JOBS, MAKES, TALK, type WorkPrefs } from "../contracts/work-prefs";
+import { CHECK, DEFAULT_WORK_PREFS, EDITORS, JOBS, KEY_PRESETS, MAKES, TALK, type WorkPrefs } from "../contracts/work-prefs";
 
 /** One record per account: $DATA_DIR/work-prefs/<user>.json (contracts/work-prefs.ts). */
 const fileOf = (username: string) => path.join(env.dataDir, "work-prefs", `${username}.json`);
@@ -47,6 +47,17 @@ export function writeWorkPrefs(username: string, b: Record<string, unknown>): Wo
     if (b[k] === undefined) continue;
     if (typeof b[k] !== "boolean") return `${k} is true or false`;
     next[k] = b[k];
+  }
+  if (b.keyPreset !== undefined) {
+    if (!KEY_PRESETS.includes(b.keyPreset as never)) return `keyPreset is one of ${KEY_PRESETS.join(", ")}`;
+    next.keyPreset = b.keyPreset as WorkPrefs["keyPreset"];
+  }
+  if (b.keys !== undefined) {
+    const k = b.keys as Record<string, unknown>;
+    const ok = !!k && typeof k === "object" && !Array.isArray(k) && Object.keys(k).length <= 500
+      && Object.entries(k).every(([c, id]) => c.length > 0 && c.length <= 32 && typeof id === "string" && /^[\w:]{0,40}$/.test(id));
+    if (!ok) return "keys is chord → command id";
+    next.keys = k as Record<string, string>;
   }
   const file = fileOf(username);
   mkdirSync(path.dirname(file), { recursive: true });

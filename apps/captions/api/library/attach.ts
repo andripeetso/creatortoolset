@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { ExternalClipLink, ExternalLibraryRef, LibraryRef } from "../lib/workshop/types";
 import { homeOf, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
+import { mayLeave } from "./upload-gate";
 import { externalCanSee, externalRefById, externalRefFor } from "./refs";
 import { assetRef, canSee } from "./sources";
 import { segmentsOf } from "./transcribe";
@@ -89,9 +90,11 @@ export async function clipContext(username: string, ref: Pick<LibraryRef, "asset
     .prepare("SELECT text, source FROM descriptions WHERE version_id = ? ORDER BY source = 'user' DESC LIMIT 1")
     .get(ref.versionId) as ClipContext["description"] | undefined;
   const segments = segmentsOf(db, ref.versionId);
-  const key = (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'thumb'").get(ref.versionId) as
-    | { storage_key: string | null }
-    | undefined)?.storage_key;
+  // Blur faces: a picture of a clip not blurred, kept from before it was on, goes into no AI call
+  const shown = mayLeave((libraryDb().prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(ref.versionId) as { library_id: string } | undefined)?.library_id, { versionId: ref.versionId }).ok;
+  const key = shown
+    ? (db.prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'thumb'").get(ref.versionId) as { storage_key: string | null } | undefined)?.storage_key
+    : undefined;
   const thumb = key ? await blobs.localCopy(key).then((f) => readFile(f), () => null) : null;
   return {
     title: row.title,
