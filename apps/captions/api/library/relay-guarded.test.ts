@@ -18,7 +18,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const OWNER = "tinyacrobatics";
 mkdirSync(path.join(dir, "workshop", "projects"), { recursive: true });
-for (const [id, name] of [["ws_blur", "Tiny Classes"], ["ws_plain", "Tiny Vlogs"], ["ws_catalog", "Tiny Catalog"]] as const)
+for (const [id, name] of [["ws_blur", "Tiny Classes"], ["ws_plain", "Tiny Vlogs"], ["ws_catalog", "Tiny Catalog"], ["ws_broken", "Tiny Broken"]] as const)
   writeFileSync(path.join(dir, "workshop", "projects", `${id}.json`), JSON.stringify({ id, owner: OWNER, name, createdAt: 0, updatedAt: 0 }));
 
 const { libraryDb } = await import("./db");
@@ -28,7 +28,11 @@ const { mountPlugins } = await import("../lib/plugin");
 const { Hono } = await import("hono");
 // a plug-in that keeps the "ws_catalog" workspace's footage (a footage catalog), whichever workspace is open
 // and for an account with no workspace at all ("": all of its media), as a footage catalog's plug-in answers
-mountPlugins(new Hono(), [{ id: "catalog", keepsBlurred: (u: string, ws: string) => ws === "ws_catalog" || (u === "tinysolo" && ws === "") } as never]);
+// "ws_broken": the plug-in fails to answer, which counts as guarded
+mountPlugins(new Hono(), [{ id: "catalog", keepsBlurred: (u: string, ws: string) => {
+  if (ws === "ws_broken") throw new Error("catalog away");
+  return ws === "ws_catalog" || (u === "tinysolo" && ws === "");
+} } as never]);
 
 const lib = (id: string, settings: Record<string, unknown>) =>
   libraryDb().prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, ?, 'L', 'local', ?, 0)").run(id, OWNER, JSON.stringify(settings));
@@ -42,10 +46,10 @@ describe("the computer's folder list names the Blur faces workspaces of each Med
   it("a Blur faces workspace's folder by its name, a normal one none, one for every workspace the Blur faces ones, never for Exports", async () => {
     await changeStorage(OWNER, (st) => {
       st.folders.push(row("m_blur", "/Volumes/Tiny/FOOTAGE", "ws_blur"), row("m_plain", "/Volumes/Tiny/Vlogs", "ws_plain"), row("m_all", "/Volumes/Tiny/Shared", "*"),
-        row("x_blur", "/Volumes/Tiny/EXPORTS", "ws_blur", "library"), row("m_catalog", "/Volumes/Tiny/Catalog", "ws_catalog"));
+        row("x_blur", "/Volumes/Tiny/EXPORTS", "ws_blur", "library"), row("m_catalog", "/Volumes/Tiny/Catalog", "ws_catalog"), row("m_broken", "/Volumes/Tiny/Broken", "ws_broken"));
     });
     const got = Object.fromEntries((await relayFolders({ id: "mac_1", owner: OWNER } as never)).map((f) => [f.id, f.guarded]));
-    expect(got).toEqual({ m_blur: ["Tiny Classes"], m_plain: [], m_all: ["Tiny Classes", "Tiny Catalog"], x_blur: undefined, m_catalog: ["Tiny Catalog"] });
+    expect(got).toEqual({ m_blur: ["Tiny Classes"], m_plain: [], m_all: ["Tiny Classes", "Tiny Catalog", "Tiny Broken"], x_blur: undefined, m_catalog: ["Tiny Catalog"], m_broken: ["Tiny Broken"] });
   });
 
   it("a member's folder in the owner's Blur faces workspace is judged by the owner's library", async () => {

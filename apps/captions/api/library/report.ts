@@ -10,8 +10,8 @@ import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
 import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { blursFaces, libraryDb } from "./db";
-import { workspaceLibrary } from "./upload-gate";
-import { pluginKeepsBlurred } from "../lib/plugin";
+import { pluginKeepsBlurred, pluginUploadsTo } from "../lib/plugin";
+import { workspaceScope } from "../lib/workshop/workspace";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
 import { setTrashedAt, trashHeld } from "./trash";
@@ -61,9 +61,13 @@ export async function relayFolders(d: Device): Promise<RelayFolder[]> {
   const guarded = (id: string) => {
     const owner = ownerOf.get(id) ?? d.owner;
     const ws = id || undefined;   // "": an account with no workspace, all of its media in one
-    // Blur faces on, a plug-in serving its media now, or one keeping it blurred whatever is open (its catalog); a failure: guarded
-    if (!blurs.has(id))
-      blurs.set(id, workspaceLibrary(owner, ws).then(async (lib) => (!!lib && blursFaces(lib)) || (await servedByPlugin(owner, ws)) || pluginKeepsBlurred(owner, id)).catch(() => true));
+    // Blur faces on, a plug-in serving its media now, or one keeping it blurred whatever is open (its catalog). Asked
+    // without the helpers' own catches (workspaceLibrary, servedByPlugin answer no on a failure): a failure here is guarded
+    const blurred = async () =>
+      (await librariesHere(owner, ws)).some((l) => blursFaces(l.id)) ||
+      !!(await (ws ? workspaceScope.run({ id: ws }, () => pluginUploadsTo(owner)) : pluginUploadsTo(owner))) ||
+      (await pluginKeepsBlurred(owner, id));
+    if (!blurs.has(id)) blurs.set(id, blurred().catch(() => true));
     return blurs.get(id)!;
   };
   return Promise.all(

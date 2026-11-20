@@ -322,7 +322,8 @@ export interface RelayFolder {
   /** workspace ids, or "*" for every workspace */
   workspaces: string[] | "*";
   use: "media" | "projects" | "exports";
-  /** a Media folder's workspaces whose footage leaves only blurred (Blur faces on, or a plug-in serves its media), by
+  /** a Media folder's workspaces whose footage leaves only blurred (Blur faces on, a plug-in serves its media, or one keeps
+   *  it blurred whichever workspace is open: ServerPlugin.keepsBlurred), by
    *  name: the Mac app refuses a drag of a file in it onto another server's page. Always sent ([] for none); a server
    *  that sends nothing is read as all of them (the Mac app fails closed). */
   guarded?: string[];
