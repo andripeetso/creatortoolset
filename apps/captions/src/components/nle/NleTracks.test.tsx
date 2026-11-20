@@ -248,3 +248,97 @@ describe("transitions, markers, gaps and the new tools on the timeline", () => {
     act(() => r.root.unmount());
   });
 });
+
+describe("keyframes and the volume line on the timeline", () => {
+  // a Tiny Acrobatics cut: the shot plays at double speed with two zoom keys, the next shot has one, the voice has its gain
+  const keyed = withKeys({
+    timeline: { fps: 25 },
+    sources: { a: { path: "/m/a.mp4" }, b: { path: "/m/b.mp4" }, v: { path: "/m/voice.wav" } },
+    tracks: {
+      V1: { items: [
+        { src: "a", rec: 0, len: 100, in: 0, speed: 2, keys: { zoom: [[20, 1, "linear"], [120, 1.5, "ease"]] } },
+        { src: "b", rec: 100, len: 50, in: 0, keys: { zoom: [[10, 2, "linear"]] } },
+      ] },
+      A1: { items: [{ src: "v", rec: 0, len: 100, in: 0 }] },
+    },
+  } as unknown as NleTimeline);
+  const [shot, next] = keyed.tracks.V1.items.map((i) => i._k!);
+
+  it("the picked clip alone shows a ◆ at each key's timeline frame; a click puts the playhead there", async () => {
+    const onSeek = vi.fn();
+    const { host, root, pointer } = await mount({ tl: keyed, selected: [shot], onSeek });
+    const pps = ppsOf(host.querySelector("[data-clip]")!, 100);
+    const marks = [...host.querySelectorAll("[data-keyframe]")] as HTMLElement[];
+    // source frames 20 and 120 at double speed: timeline frames 10 and 60
+    expect(marks.map((m) => Number(m.dataset.keyframe))).toEqual([10, 60]);
+    expect(parseFloat(marks[1].style.left)).toBeCloseTo((60 / 25) * pps - 5);
+    await pointer(marks[1], "pointerdown", 300);
+    await pointer(marks[1], "pointerup", 300);
+    expect(onSeek).toHaveBeenCalledWith(60 / 25);
+    act(() => root.unmount());
+  });
+
+  it("a ◆ dragged a second on moves its key 25 timeline frames, 50 source frames at double speed, in one step", async () => {
+    const { host, root, onLive, onCommit, pointer } = await mount({ tl: keyed, selected: [shot, next] });
+    const pps = ppsOf(host.querySelector("[data-clip]")!, 100);
+    expect(host.querySelectorAll("[data-keyframe]")).toHaveLength(3);
+    const m = host.querySelector('[data-keyframe="10"]')!;
+    await pointer(m, "pointerdown", 300);
+    await pointer(m, "pointermove", 300 + pps / 2);
+    await pointer(m, "pointermove", 300 + pps);
+    expect(onLive).toHaveBeenCalled();
+    await pointer(m, "pointerup", 300 + pps);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.V1.items[0].keys!.zoom).toEqual([[70, 1, "linear"], [120, 1.5, "ease"]]);
+    act(() => root.unmount());
+  });
+
+  it("a right-click on a ◆ sets its ease or deletes it, through the Inspector's commands", async () => {
+    const { host, root, onCommit } = await mount({ tl: keyed, selected: [shot] });
+    const open = () => act(() => void host.querySelector('[data-keyframe="60"]')!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 10 })));
+    const item = (name: string) => [...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]')].find((b) => b.textContent === name) as HTMLElement;
+    await open();
+    await act(() => item("Hold").click());
+    expect(onCommit.mock.calls[0]).toEqual([expect.anything(), "Keyframe"]);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.V1.items[0].keys!.zoom).toEqual([[20, 1, "linear"], [120, 1.5, "hold"]]);
+    await open();
+    await act(() => item("Delete").click());
+    expect((onCommit.mock.calls[1][0] as NleTimeline).tracks.V1.items[0].keys!.zoom).toEqual([[20, 1, "linear"]]);
+    act(() => root.unmount());
+  });
+
+  it("the volume line drags the gain, showing the dB, one step when let go", async () => {
+    const { host, root, onLive, onCommit, pointer } = await mount({ tl: keyed });
+    const line = host.querySelector("[data-volume]")!;
+    await pointer(line, "pointerdown", 300, false, { clientY: 20 });
+    await pointer(line, "pointermove", 300, false, { clientY: 19 });
+    await pointer(line, "pointermove", 300, false, { clientY: 18 });
+    // the line's body is 23 px for 84 dB: 2 px up = +7.3 dB
+    expect(host.textContent).toContain("+7.3 dB");
+    expect(onLive).toHaveBeenCalledTimes(2);
+    await pointer(line, "pointerup", 300, false, { clientY: 18 });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onCommit.mock.calls[0]).toEqual([expect.anything(), "Volume"]);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.A1.items[0].gain_db).toBe(7.3);
+    expect(host.textContent).not.toContain("dB");
+    act(() => root.unmount());
+  });
+
+  it("⌥-click on the volume line adds a key there; then a drag moves the key nearest the pointer", async () => {
+    const first = await mount({ tl: keyed });
+    const pps = ppsOf(first.host.querySelector("[data-clip]")!, 100);
+    await first.pointer(first.host.querySelector("[data-volume]")!, "pointerdown", 152 + 2 * pps, true);
+    const added = first.onCommit.mock.calls[0][0] as NleTimeline;
+    expect(added.tracks.A1.items[0].keys!.gain_db).toEqual([[50, 0, "linear"]]);
+    act(() => first.root.unmount());
+
+    const { host, root, onCommit, pointer } = await mount({ tl: added });
+    const line = host.querySelector("[data-volume]")!;
+    await pointer(line, "pointerdown", 152 + 3 * pps, false, { clientY: 20 });
+    await pointer(line, "pointermove", 152 + 3 * pps, false, { clientY: 22 });
+    await pointer(line, "pointerup", 152 + 3 * pps, false, { clientY: 22 });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect((onCommit.mock.calls[0][0] as NleTimeline).tracks.A1.items[0].keys!.gain_db).toEqual([[50, -7.3, "linear"]]);
+    act(() => root.unmount());
+  });
+});
