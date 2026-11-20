@@ -41,7 +41,7 @@ const file = (folder: string, name: string, q: number) => ({ path: `/Volumes/Tin
 let n = 0;
 const report = (folder: string, files: ReturnType<typeof file>[]) => applyReport(mac, [{ id: folder, state: "ok", scan: `s${++n}`, complete: true, files, unreadable: [] }]);
 const onMac = (folder: string, name: string, q: number) => ({ name, path: `/Volumes/Tiny/${folder}/${name}`, size: 10, quick: quick(q), frames: [] });
-const count = (sql: string, ...args: unknown[]) => (d.prepare(sql).get(...args) as { n: number }).n;
+const count = (sql: string, ...args: string[]) => (d.prepare(sql).get(...args) as { n: number }).n;
 const counts = () => ({ libraries: count("SELECT COUNT(*) AS n FROM libraries"), places: count("SELECT COUNT(*) AS n FROM version_places"), assets: count("SELECT COUNT(*) AS n FROM assets") });
 const libOf = (ws: string) => (d.prepare("SELECT id FROM libraries WHERE json_extract(settings, '$.projectId') = ?").get(ws) as { id: string } | undefined)?.id;
 
