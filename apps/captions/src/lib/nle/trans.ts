@@ -17,8 +17,9 @@ export const transSpan = (t: Pick<EdjTrans, "len" | "at">) => {
   return { pre, post: t.len - pre };
 };
 
-/** The most colour a dip shows, at its middle: Resolve 21.2's Dip To Color Dissolve rendered about this (fitted to
- *  its frames within 0.04), so about a fifth of the picture still shows. */
+/** The most colour a dip shows, at its middle: Resolve 21.2's Dip To Color Dissolve rendered about this (fitted to one
+ *  measured dip to black within 0.04; white ≈ 0.06 off, from a single frame), so about a fifth of the picture still
+ *  shows. shortcut: one measurement; a second (grey clips, 20-frame dips, every frame) would confirm it. */
 export const DIP_PEAK = 0.82;
 
 /** How each side shows `u` (0–1) through it: dissolve the later clip's alpha over the earlier at full; a dip the earlier
