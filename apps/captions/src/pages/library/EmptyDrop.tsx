@@ -2,7 +2,7 @@ import { LIBRARY_WORDS } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 
 /**
- * The empty Media Library (11-19 sign-off C1): a small dashed box near the top, with a drawing of what the Library holds
+ * The empty Media Library (11-19 sign-off C1): a small dashed box in the middle of the page, with a drawing of what the Library holds
  * (a photo, a video, sound) in the workspace colour, "Drop media here" and Choose files. A drop anywhere on the page adds
  * the files (the page's own drop, LibraryDrop.tsx, as New footage says: copied into Source media or used where they are);
  * Choose files opens the file window (`onChoose`, the page's picker: the Mac app's own panel in the Mac app). Someone who
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 export function EmptyDrop({ canAdd, onChoose }: { canAdd: boolean; onChoose: () => void }) {
   if (!canAdd) return <p className="py-16 text-center text-sm text-zinc-500">{LIBRARY_WORDS.noClipsYet}</p>;
   return (
-    <div className="mx-auto mt-10 flex w-full max-w-md flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-zinc-500/30 bg-background px-6 py-7 text-center">
+    <div className="m-auto flex w-full max-w-md flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-zinc-500/30 bg-background px-6 py-7 text-center">
       <MediaDrawing />
       <span className="text-base font-medium">{LIBRARY_WORDS.dropMedia}</span>
       <Button size="sm" variant="outline" className="mt-1" onClick={onChoose}>
