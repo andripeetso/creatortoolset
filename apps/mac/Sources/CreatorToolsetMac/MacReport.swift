@@ -482,6 +482,6 @@ func machineReport() -> [String: Any] {
     var load = [Double](repeating: 0, count: 3)
     if getloadavg(&load, 3) > 0 { out["load"] = min(1, (load[0] / Double(max(1, info.processorCount)) * 1000).rounded() / 1000) }
     out["disks"] = DiskCache.shared.current()
-    out["cacheFolder"] = CacheFolder.path() ?? ""   // "" (none): the server forgets one whose disk went
+    out.merge(CacheFolder.reportFields()) { $1 }   // cacheFolder "" (none): the server forgets the last one
     return out
 }

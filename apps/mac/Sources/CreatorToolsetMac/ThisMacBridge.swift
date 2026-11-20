@@ -189,9 +189,11 @@ extension Shell {
         case "download:location": return ["path": downloadRoot().path]
         case "download:choose": return chooseDownloadFolder()
         case "download:show": return reveal(downloadRoot())
-        case "cache:location": return CacheFolder.path().map { ["path": $0] } ?? ["path": NSNull()]
+        // the folder the editor worker is told (the pick even while its disk is away)
+        case "cache:location": let p = CacheFolder.reported(); return ["path": p.isEmpty ? NSNull() : p]
         case "cache:choose": return chooseCacheFolder()
-        case "cache:show": return CacheFolder.path().map { reveal(URL(fileURLWithPath: $0)) } ?? ["ok": false]
+        // the row's folder, only while its disk is there (reveal makes the folder: never one under /Volumes for a disk away)
+        case "cache:show": let p = CacheFolder.reported(); return !p.isEmpty && CacheFolder.connected(p, mountPaths()) ? reveal(URL(fileURLWithPath: p)) : ["ok": false]
         default: return nil
         }
     }

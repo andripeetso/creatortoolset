@@ -81,8 +81,9 @@ enum DownloadLocation {
 /// The Cache folder (Settings → Storage › This computer): where this Mac keeps disposable working files every workspace
 /// shares, reported to the server (contracts/providers.ts Machine.cacheFolder) for the AI Editor worker's work folder.
 /// The person's pick, else a folder on the largest external disk that holds a folder this app already reads (so macOS
-/// asks nobody about a new disk), else nil: the internal disk's own defaults. A pick whose disk is not connected falls
-/// back the same way, so nothing is ever written under /Volumes on the internal disk. Changing it moves nothing.
+/// asks nobody about a new disk), else nil: the internal disk's own defaults. `path()` (what this Mac uses) falls back the
+/// same way for a pick whose disk is not connected; `reported()` (the device report and the Settings row) keeps the pick,
+/// so the editor worker waits for its disk instead of moving elsewhere. Changing it moves nothing.
 enum CacheFolder {
     static let key = "cacheFolder"
     static let folderName = "Creator Toolset Cache"
@@ -104,6 +105,18 @@ enum CacheFolder {
                      mounted: [String]? = nil) -> String? {
         if let p = chosen(defaults), connected(p, mounted ?? mountPaths()) { return p }
         return largest(volumes(), used: used).map { ($0.path as NSString).appendingPathComponent(folderName) }
+    }
+
+    /// What the device report says (Machine.cacheFolder): the pick even while its disk is away (a missing disk is not "no
+    /// choice": the editor worker waits for it rather than moving onto another disk), else the default, else "" (none).
+    static func reported(_ defaults: UserDefaults = .standard, volumes: () -> [Volume] = volumes, used: [String] = MediaFiles.usedFolders) -> String {
+        chosen(defaults) ?? path(defaults, volumes: volumes, used: used, mounted: []) ?? ""
+    }
+
+    /// The device report's fields: the folder (reported) and whether the person picked it in Settings. The editor worker
+    /// follows only a pick: the automatic default moves by itself as disks come and go.
+    static func reportFields(_ defaults: UserDefaults = .standard, volumes: () -> [Volume] = volumes, used: [String] = MediaFiles.usedFolders) -> [String: Any] {
+        ["cacheFolder": reported(defaults, volumes: volumes, used: used), "cacheFolderPicked": chosen(defaults) != nil]
     }
 
     /// The largest external disk holding one of `used` (folders this app already reads).

@@ -72,6 +72,10 @@ describe("saveReport disks", () => {
     expect(reportOf(device.id)?.machine?.cacheFolder).toBe("/Volumes/SSD/Creator Toolset Cache");
     saveReport(device.id, report(3, "/Volumes/Other/cache"));
     expect(reportOf(device.id)?.machine?.cacheFolder).toBe("/Volumes/Other/cache");
+    // picked or the automatic default: kept with the folder through the editor worker's report
+    saveReport(device.id, { at: 3, drivers: [], homes: [], machine: { cpus: 8, memGb: 16, cacheFolder: "/Volumes/Other/cache", cacheFolderPicked: true } });
+    saveReport(device.id, report(3));
+    expect(reportOf(device.id)?.machine).toMatchObject({ cacheFolder: "/Volumes/Other/cache", cacheFolderPicked: true });
     // its disk unplugged: the Mac app says none, and the server forgets it
     saveReport(device.id, { at: 4, drivers: [], homes: [], machine: { cpus: 8, memGb: 16, cacheFolder: "" } });
     saveReport(device.id, report(5));
@@ -89,6 +93,8 @@ describe("forViewer", () => {
     const c = { ...d, report: { ...d.report!, machine: { ...d.report!.machine!, disks: undefined, cacheFolder: "/Volumes/SSD/cache" } } } as Device;
     expect(forViewer("tinyacrobatics", c).report?.machine?.cacheFolder).toBe("/Volumes/SSD/cache");
     expect(forViewer("someadmin", c).report?.machine?.cacheFolder).toBeUndefined();
+    const p = { ...c, report: { ...c.report!, machine: { ...c.report!.machine!, cacheFolderPicked: true } } } as Device;
+    expect(forViewer("someadmin", p).report?.machine?.cacheFolderPicked).toBeUndefined();
   });
   it("keeps the team's AI worker's disks for the admins who are sent it", () => {
     const w = { id: "w", owner: "workspace", report: { at: 1, drivers: [], homes: [], machine: { os: "mac", host: "h", cpus: 1, disks: [{ name: "footage", path: "/Volumes/footage", freeGb: 3 }] } } } as unknown as Device;
