@@ -1,4 +1,4 @@
-import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_SHAPES, type DesignPage, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke } from "../../contracts/design";
+import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_GAP, DESIGN_LIMITS, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_SHAPES, type DesignPage, type Pin, type Gradient, type ImageLayer, type Layer, type Radius, type Stroke } from "../../contracts/design";
 import { splitSlideAreas } from "../../src/lib/carousel-visualize";
 import { DESIGN_FONTS } from "../../src/lib/design/fonts";
 import { PICTURE_TOKEN } from "../../src/lib/workshop-markdown";
@@ -59,6 +59,14 @@ function marks(v: unknown): { marks?: { color: string; words?: string; low?: tru
       return { color: sixDigits(color(m.color, "#f2b63c")), ...(words ? { words } : {}), ...(m.low === true ? { low: true as const } : {}) };
     });
   return list.length ? { marks: list } : {};
+}
+
+/** A layer's pin as it may be saved: each side one of its own words, and none when neither is. */
+function pin(v: unknown): { pin?: Pin } {
+  if (!obj(v)) return {};
+  const x = DESIGN_PINS_X.find((p) => p === v.x);
+  const y = DESIGN_PINS_Y.find((p) => p === v.y);
+  return x || y ? { pin: { ...(x ? { x } : {}), ...(y ? { y } : {}) } } : {};
 }
 
 /** A frame's finish as it may be saved: a whole number each in its range, and none when it is 0. */
@@ -209,6 +217,7 @@ function cleanLayer(raw: unknown, r: PageRules, say: (why: string) => void, own:
     ...(named(raw.name) ? { name: named(raw.name) } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),
     ...(raw.locked === true ? { locked: true } : {}),
+    ...pin(raw.pin),
   };
   const line = (v: unknown, max: number) => (obj(v) && num(v.width, 0, max, 0) > 0 ? { color: color(v.color, "#000000"), width: round(num(v.width, 0, max, 0)) } : null);
   if (raw.type === "text") {

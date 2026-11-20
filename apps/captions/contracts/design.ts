@@ -72,6 +72,18 @@ export interface Stroke {
 /** A corner radius in pixels: one for every corner, or one each for the top left, top right, bottom right and bottom left. */
 export type Radius = number | [number, number, number, number];
 
+/** How a layer follows its frame's edges when the frame changes size, side to side and up and down (src/lib/design/resize.ts). */
+export const DESIGN_PINS_X = ["left", "right", "both", "center", "scale"] as const;
+export const DESIGN_PINS_Y = ["top", "bottom", "both", "center", "scale"] as const;
+/**
+ * left/top: keeps its distance to that edge; right/bottom: to the other one; both: to both edges, so it stretches;
+ * center: keeps its distance to the middle; scale: its place and size keep their share of the frame.
+ */
+export interface Pin {
+  x?: (typeof DESIGN_PINS_X)[number];
+  y?: (typeof DESIGN_PINS_Y)[number];
+}
+
 /** A layer's place: its top left corner and size in the design's pixels; `rotate` in degrees about its middle. */
 interface Box {
   id: string;
@@ -99,6 +111,8 @@ interface Box {
   hidden?: boolean;
   /** drawn, but a press on the page goes through it: it is picked in the layers list only */
   locked?: boolean;
+  /** how it follows the frame's edges when the frame changes size; absent = it stays where it is on the canvas (a copy in another size places it by its share of the frame) */
+  pin?: Pin;
 }
 
 export interface TextLayer extends Box {

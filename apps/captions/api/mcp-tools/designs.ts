@@ -55,8 +55,8 @@ export const designTools: ToolModule = {
     },
     {
       name: "design_update",
-      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). The answer shows the changed frames as pictures and says what was left out or does not fit.",
-      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, picture: { type: "object" }, name: str }, required: ["id"] },
+      description: "Change a design, as design_get says: frames replaces whole frames or adds new ones of any size, changes sets, adds, removes or reorders single layers, sizes copies frames into other sizes, fill copies a frame once per row of words, picture copies a library video's moment in, name renames it (one still Untitled gets a name in the call that designs it). The answer shows the changed frames as pictures and says what was left out or does not fit.",
+      inputSchema: { type: "object", properties: { id: str, frames: { type: "array", items: { type: "object" } }, changes: { type: "array", items: { type: "object" } }, sizes: { type: "object" }, fill: { type: "object" }, picture: { type: "object" }, name: str }, required: ["id"] },
     },
     {
       name: "carousel_style_save",
@@ -112,8 +112,9 @@ export const designTools: ToolModule = {
       // a picture first: it is in the design before the frames that may show it are checked
       const picture = a.picture ? (await ctx.json<{ id: string }>(`${at}/pictures`, "POST", a.picture)).id : "";
       const added = picture ? { picture_added: picture } : {};
-      if (picture && !a.frames && !a.changes) return { id: a.id, ...added };
-      if (named && !a.frames && !a.changes) return about(ctx.origin, named, named.pages.filter((p) => !p.loose).length);
+      const copies = !!a.sizes || !!a.fill;
+      if (picture && !a.frames && !a.changes && !copies) return { id: a.id, ...added };
+      if (named && !a.frames && !a.changes && !copies) return about(ctx.origin, named, named.pages.filter((p) => !p.loose).length);
       // a change that asks for a cut-out: the picture is cut first (a new picture of the design), and the change becomes
       // a plain one that shows it and remembers the picture it was cut from
       const changes = Array.isArray(a.changes) ? (a.changes as Args[]) : undefined;
@@ -133,7 +134,7 @@ export const designTools: ToolModule = {
           delete c.cutout;
         }
       }
-      const { design, notes, touched, wrote } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes });
+      const { design, notes, touched, wrote } = await ctx.json<DesignAnswer & { touched: string[]; wrote: { frame: string; isNew: boolean; layers: string[] }[] }>(`${at}/pages`, "POST", { frames: a.frames, changes: changes ?? a.changes, sizes: a.sizes, fill: a.fill });
       // the layers lying loose on the canvas are no frame
       const frames = design.pages.flatMap((p, k) => (p.loose ? [] : [{ id: p.id, n: k + 1 }]));
       const drawn = await seen(ctx, at, frames, touched);

@@ -18,6 +18,8 @@ import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, sourceOf, type Loaded } from "@/lib/design/draw";
 import { alignLayers, besideFrames, boundsOf, rehome, distribute, fitView, frameOf, freshGroup, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
+import { resized } from "@/lib/design/resize";
+import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
@@ -448,6 +450,8 @@ function DesignPage({ id }: { id: string }) {
     else if (!rect && room) view.glide({ ...v, x: room.w / 2 - (r.x + r.w / 2) * v.z, y: room.h / 2 - (r.y + r.h / 2) * v.z });
     return fresh;
   };
+  /** A copy of the current frame in another size beside the frames, its layers placed by their pins and their share of it. */
+  const copySize = (size: { w: number; h: number; name: string }) => base && !base.loose && addFrame({ ...resized(base, size, "share"), name: `${pageName(base, k)} ${size.name}`.slice(0, 60) }, undefined, size);
   /** A box drawn with the frame tool: a click makes a frame the size of the current one (the first frame of a canvas: the design's own size), a drag the size drawn. */
   const makeFrame = (r: Rect, dragged: boolean) => {
     setTool("move");
@@ -1144,6 +1148,10 @@ function DesignPage({ id }: { id: string }) {
                   )}
                   <ContextMenuSeparator />
                   <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={!base || !!base.loose || !here} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Copy in another size</ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-60">{here && <CopySizes Item={ContextMenuItem} from={here} onCopy={copySize} />}</ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSub>
                     <ContextMenuSubTrigger disabled={!base} className="data-[disabled]:pointer-events-none data-[disabled]:opacity-50">Add to a carousel style</ContextMenuSubTrigger>
                     <ContextMenuSubContent className="w-56">
                       {(carouselStyles.data?.styles ?? []).map((s) => (
@@ -1220,6 +1228,7 @@ function DesignPage({ id }: { id: string }) {
           cutting={cutting}
           colours={colours}
           onDropper={(take) => setDropper({ take })}
+          onCopySize={copySize}
         />
         )}
       </div>
