@@ -168,10 +168,13 @@ enum ReviewApproval {
                      session: URLSession = API.session) async throws -> Answer {
         var body: [String: Any] = ["status": status.rawValue]
         if asFilmed { body["asFilmed"] = true }
+        let request = api.request("/api/review/assets/\(id)/approval", method: "POST", json: body)
         do {
-            return .done(try await api.data(api.request("/api/review/assets/\(id)/approval", method: "POST", json: body), session: session))
+            return .done(try await api.data(request, session: session, coded: true))
+        } catch let refusal as CodedRefusal where refusal.code == "not_blurred" && status == .approved && !asFilmed {
+            return .ask(refusal.line)
         } catch APIError.server(409, let line) where status == .approved && !asFilmed {
-            return .ask(line)
+            return .ask(line)   // a server from before the codes (no `code`): its only 409 here is that question
         }
     }
 }
