@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -107,6 +107,20 @@ describe("a workspace a plug-in serves itself (its catalog)", () => {
     expect((await mediaReady("ana", "ws_plain")).ready).toBe(false);
     expect(await setupNeeded("ana", "ws_plain")).toMatchObject({ kind: "setup" });
     expect(setupAt("lib_plain")).toBeNull();
+  });
+
+  it("a workspace known only as a Workshop project gets its name on the setup card; one known nowhere says this workspace", async () => {
+    // the card read "the Media Library of  to be set up" for a workspace that is only a Workshop file (11-19)
+    const projects = path.join(dir, "workshop", "projects");
+    mkdirSync(projects, { recursive: true });
+    writeFileSync(path.join(projects, "tiny-workshop.json"), JSON.stringify({ id: "tiny-workshop", owner: "ana", name: "Tiny Workshop", audience: "", voice: "", cta: "", notes: "", createdAt: 0, updatedAt: 0 }));
+    add("lib_wsh", "tiny-workshop");
+    expect(await setupNeeded("ana", "tiny-workshop")).toMatchObject({ kind: "setup", workspaceName: "Tiny Workshop" });
+    add("lib_nowhere", "nobody-knows");
+    const card = await setupNeeded("ana", "nobody-knows");
+    expect(card).toMatchObject({ kind: "setup", workspaceName: "this workspace", title: "Set up the Media Library for this workspace first" });
+    // the default folders keep the plain fallback: no folder is ever named "this workspace"
+    expect(JSON.stringify((card as { defaults: unknown }).defaults)).not.toContain("this workspace");
   });
 
   it("the migration sets it up once and leaves its upload alone though it has members; a plain shared one gets proxies", async () => {

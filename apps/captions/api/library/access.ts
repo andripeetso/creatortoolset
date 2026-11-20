@@ -10,7 +10,7 @@ import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb, newLibrarySettings } from "./db";
 import { workspaceById } from "../lib/workspaces";
-import { actionCard, quickSetup, type ActionNeeded } from "../../contracts/library";
+import { actionCard, LIBRARY_WORDS, quickSetup, type ActionNeeded } from "../../contracts/library";
 import { libraryBase, THIS_COMPUTER } from "../../contracts/storage";
 import { isOnline, listDevices } from "../lib/devices";
 import type { LibrarySource } from "../../contracts/library-source";
@@ -270,13 +270,20 @@ export async function mainSourceFor(username: string, projectId?: string): Promi
 export async function setupNeeded(username: string, projectId?: string): Promise<ActionNeeded | null> {
   const m = await mediaReady(username, projectId);
   if (m.ready) return null;
-  const ws = projectId === undefined ? undefined : workspaceById(projectId);
-  const name = ws?.name ?? "";
+  // the workspace's name from wherever it is known: Settings → Team, else its Workshop project (own or given); never an
+  // empty slot in the card ("the Media Library of  to be set up", 11-19)
+  const name =
+    projectId === undefined
+      ? ""
+      : workspaceById(projectId)?.name ||
+        (await ownedProject(projectId, { username } as SessionUser))?.name ||
+        (await sharedProjects(username)).find((p) => p.id === projectId)?.name ||
+        "";
   const libraryId = (m.owner && (m.libraryId ?? (await ensureLibrary(username, projectId)))) || m.libraryId || "";
   const d = listDevices((x) => x.owner === username).sort((a, b) => Number(isOnline(b.id)) - Number(isOnline(a.id)) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0];
   const device = d?.id ?? ((await import("./watch")).watchAllowed(username) ? THIS_COMPUTER : null);
   return actionCard({
-    kind: "setup", workspace: projectId ?? "", workspaceName: name, owner: m.owner, href: "/library?setup=1", libraryId, device,
+    kind: "setup", workspace: projectId ?? "", workspaceName: name || LIBRARY_WORDS.thisWorkspace, owner: m.owner, href: "/library?setup=1", libraryId, device,
     ...(d ? { deviceName: d.name } : device ? { deviceName: "this computer" } : {}),
     defaults: quickSetup(libraryBase(name || "Media Library")),
   });
