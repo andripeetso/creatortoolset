@@ -166,3 +166,73 @@ describe("what only the designer's canvas shows", () => {
     expect(at(20, 20)).toEqual([255, 0, 0, 255]);
   });
 });
+
+describe("a container drawn on a canvas", () => {
+  const blue = (more: object = {}): Layer => ({ id: "b", type: "shape", shape: "rect", fill: "#0000ff", x: 10, y: 0, w: 20, h: 20, ...more }) as Layer;
+  const holder = (layers: Layer[], more: object = {}): Layer => ({ id: "g", type: "group", x: 10, y: 10, w: 30, h: 20, layers, ...more }) as Layer;
+
+  it("cuts its layers at its edges when it clips them, and shows them past it when it does not", () => {
+    // a red bar in the box's own pixels, running 30 pixels past its right edge (40 on the page)
+    const bar = rect({ x: 0, y: 0, w: 60, h: 20 });
+    expect(draw([holder([bar], { box: true, clip: true })]).at(55, 15)).toEqual([255, 255, 255, 255]);
+    expect(draw([holder([bar], { box: true, clip: true })]).at(20, 15)).toEqual([255, 0, 0, 255]);
+    expect(draw([holder([bar], { box: true })]).at(55, 15)).toEqual([255, 0, 0, 255]);
+    // its fill under its layers, its lines over them
+    const boxed = draw([holder([rect({ x: 10, y: 5, w: 5, h: 5 })], { box: true, fills: [{ type: "solid", color: "#00ff00" }] })]);
+    expect(boxed.at(12, 12)).toEqual([0, 255, 0, 255]);
+    expect(boxed.at(22, 17)).toEqual([255, 0, 0, 255]);
+  });
+
+  it("fades its layers once, as one: where they overlap, the one under does not show through", () => {
+    // red under blue, overlapping from x 20 to 30 on the page
+    const faded = draw([holder([rect({ x: 0, y: 0, w: 20, h: 20 }), blue()], { opacity: 0.5 })]);
+    const [r, g, b] = faded.at(25, 15);
+    expect(r).toBeGreaterThan(120);
+    expect(r).toBeLessThan(135);
+    expect(Math.abs(r! - g!)).toBeLessThanOrEqual(2);
+    expect(b).toBe(255);
+    // each layer alone at half would let the red through under the blue
+    const each = draw([holder([rect({ x: 0, y: 0, w: 20, h: 20, opacity: 0.5 }), blue({ opacity: 0.5 })])]);
+    expect(each.at(25, 15)[1]).toBeLessThan(g! - 20);
+  });
+
+  it("throws one shadow from all its layers together: as strong where they overlap as where one lies alone", () => {
+    const shade = { type: "shadow", color: "#000000", opacity: 0.5, blur: 0, x: 0, y: 25 } as const;
+    // red at 10 to 30 on the page, blue at 20 to 40; their shadow 25 lower, read on a see-through page
+    const d = draw([holder([rect({ x: 0, y: 0, w: 20, h: 20 }), blue()], { effects: [shade] })], { fills: [] });
+    expect(d.at(25, 45)[3]).toBeGreaterThan(100);
+    expect(Math.abs(d.at(25, 45)[3]! - d.at(15, 45)[3]!)).toBeLessThanOrEqual(2);
+  });
+
+  it("works a faded container on the canvas at the canvas's own detail, never at a saved file's", () => {
+    const made: number[] = [];
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class extends Canvas {
+        constructor(w: number, h: number) {
+          super(w, h);
+          made.push(w * h);
+        }
+      },
+    );
+    const canvas = new Canvas(W, H);
+    const ctx = canvas.getContext("2d");
+    // zoomed in three times on a big faded card: its own picture would be 2400 pixels a side
+    ctx.scale(3, 3);
+    drawPage(ctx as unknown as CanvasRenderingContext2D, { id: "z", background: "#ffffff", layers: [holder([rect({ x: 0, y: 0, w: 800, h: 800 })], { w: 800, h: 800, opacity: 0.5 })] } as DesignPage, W, H, new Map() as Loaded, false);
+    vi.stubGlobal("OffscreenCanvas", Canvas);
+    expect(made.length).toBeGreaterThan(0);
+    expect(Math.max(...made)).toBeLessThanOrEqual(3_000_000 * 1.01);
+  });
+
+  it("turns and moves its layers with it, and leaves out a hidden or reference layer of its own where a frame does", () => {
+    const turned = draw([holder([rect({ x: 0, y: 0, w: 10, h: 20 })], { rotate: 180 })]);
+    // turned half round its middle (25, 20): the bar at its left is at its right now
+    expect(turned.at(35, 15)).toEqual([255, 0, 0, 255]);
+    expect(turned.at(15, 15)).toEqual([255, 255, 255, 255]);
+    const kept = [rect({ x: 0, y: 0, w: 10, h: 20, reference: true }), rect({ id: "h", x: 20, y: 0, w: 10, h: 20, hidden: true })];
+    expect(draw([holder(kept)]).at(15, 15)).toEqual([255, 255, 255, 255]);
+    expect(draw([holder(kept)], {}, true).at(15, 15)).toEqual([255, 0, 0, 255]);
+    expect(draw([holder(kept)], {}, true).at(35, 15)).toEqual([255, 255, 255, 255]);
+  });
+});

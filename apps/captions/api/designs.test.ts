@@ -334,6 +334,83 @@ describe("designs: an AI that designs", () => {
     expect(held.notes).toEqual(["changes[0], frame p3 (Frame 3), layer l1: “Buy now” is not in its own words: left out"]);
   });
 
+  it("changes layers inside groups by their ids: adds one into a group, moves one out where it is on the frame, takes a group apart", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const pill = { type: "group", box: true, name: "Badge", x: 100, y: 200, w: 300, h: 80, radius: 40, fills: [{ type: "solid", color: "#111111" }], layers: [{ id: "word", type: "text", text: "NEW", font: "Anton", size: 40, color: "#ffffff", align: "center", x: 0, y: 0, w: 300, h: 80 }] };
+    const made = (await write(d.id, { changes: [{ frame: "p1", add: pill, as: "badge" }, { frame: "p1", add: { type: "shape", shape: "star", fill: "#ffcc00", x: 10, y: 10, w: 40, h: 40 }, in: "badge", as: "star" }] })).body;
+    expect(made.notes).toEqual([]);
+    const g = made.design.pages[0]!.layers[0]!;
+    expect(g).toMatchObject({ type: "group", box: true, x: 100, y: 200, radius: 40 });
+    expect(g.type === "group" && g.layers.map((l) => [l.id, l.type, l.x, l.y])).toEqual([["word", "text", 0, 0], ["star", "shape", 10, 10]]);
+    // a group added with layers of its own: they get ids the frame does not use, so the layers there keep theirs
+    const more = (await write(d.id, { changes: [{ frame: "p1", at: "back", add: { type: "group", layers: [{ id: "word", type: "shape", shape: "rect", fill: "#00ff00", x: 0, y: 0, w: 10, h: 10 }, { type: "shape", shape: "rect", fill: "#00ff00", x: 20, y: 0, w: 10, h: 10 }] }, as: "spare" }] })).body;
+    const spare = more.design.pages[0]!.layers[0]!;
+    const ids = more.design.pages[0]!.layers.flatMap((l) => [l.id, ...(l.type === "group" ? l.layers.map((x) => x.id) : [])]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(more.design.pages[0]!.layers[1]).toMatchObject({ id: "badge" });
+    expect(spare.type === "group" && spare.layers.every((x) => x.id !== "word")).toBe(true);
+    await write(d.id, { changes: [{ frame: "p1", layer: "spare", remove: true }] });
+    // a layer inside is named by its id as any other, and moved out it stays where it is on the frame
+    const out = (await write(d.id, { changes: [{ frame: "p1", layer: "word", set: { color: "#ff0000" } }, { frame: "p1", layer: "star", in: "frame" }] })).body;
+    expect(out.notes).toEqual([]);
+    const [box, star] = out.design.pages[0]!.layers;
+    expect(star).toMatchObject({ id: "star", x: 110, y: 210 });
+    expect(box!.type === "group" && box!.layers.map((l) => [l.id, l.type === "text" && l.color])).toEqual([["word", "#ff0000"]]);
+    // a group of two plain layers taken apart: they stay where they were
+    const grouped = (await write(d.id, { changes: [{ frame: "p1", add: { type: "group", x: 0, y: 0, w: 1, h: 1, layers: [] }, as: "pair" }, { frame: "p1", layer: "star", in: "pair" }, { frame: "p1", layer: g.id, in: "pair" }] })).body;
+    expect(grouped.notes).toEqual([]);
+    const pair = grouped.design.pages[0]!.layers[0]!;
+    expect(pair).toMatchObject({ type: "group", x: 100, y: 200, w: 300, h: 80 });
+    const apart = (await write(d.id, { changes: [{ frame: "p1", layer: pair.id, ungroup: true }, { frame: "p1", layer: "nope", in: "frame" }, { frame: "p1", layer: "star", in: "star" }] })).body;
+    expect(apart.design.pages[0]!.layers.map((l) => [l.id, l.x, l.y])).toEqual([["star", 110, 210], [g.id, 100, 200]]);
+    expect(apart.notes).toEqual(["changes[1], frame p1 (Frame 1): there is no layer nope: its layers are star, " + g.id + ", word", 'changes[2], frame p1 (Frame 1): "in" names no group of this frame (star): give a group layer\'s id, or "frame" for the frame\'s own layers']);
+  });
+
+  it("never lets layers added into groups push a frame past its limit, rename a layer there, or a deep answer break the call", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const sq = (id: string | undefined, x = 0) => ({ ...(id ? { id } : {}), type: "shape", shape: "rect", fill: "#ff0000", x, y: 0, w: 10, h: 10 });
+    const ids = Array.from({ length: 35 }, (_, n) => `r${n + 1}`);
+    await write(d.id, { frames: [{ id: "p1", layers: [{ id: "g", type: "group", layers: [sq("x")] }, ...ids.slice(1).map((id, n) => sq(id, n))] }] });
+    // a group of ten at the back of a frame of 35: refused whole, the frontmost layers kept
+    const back = (await write(d.id, { changes: [{ frame: "p1", at: "back", add: { type: "group", layers: Array.from({ length: 10 }, () => sq(undefined)) } }] })).body;
+    expect(back.notes).toEqual(["changes[0], frame p1 (Frame 1): a frame holds at most 40 layers, counting those inside groups: a layer was not added"]);
+    expect(back.design.pages[0]!.layers.at(-1)!.id).toBe("r35");
+    // a group's layers given whole: an id the frame uses already is not taken (that layer keeps its own), and no more than there is room for
+    const set = (await write(d.id, { changes: [{ frame: "p1", layer: "g", set: { layers: [sq("r35"), sq("x", 20)] } }] })).body;
+    expect(set.notes).toEqual([]);
+    const g = set.design.pages[0]!.layers[0]!;
+    expect(g.type === "group" && g.layers.map((l) => l.id)).toEqual([expect.not.stringMatching(/^r35$/), "x"]);
+    expect(set.design.pages[0]!.layers.at(-1)!.id).toBe("r35");
+    const full = (await write(d.id, { changes: [{ frame: "p1", layer: "g", set: { layers: Array.from({ length: 8 }, () => sq(undefined)) } }] })).body;
+    expect(full.notes).toEqual(["changes[0], frame p1 (Frame 1), layer g: a frame holds at most 40 layers, counting those inside groups: its layers were not changed"]);
+    expect(full.design.pages[0]!.layers[0]!.type === "group" && (full.design.pages[0]!.layers[0] as { layers: unknown[] }).layers).toHaveLength(2);
+    // a group nested far deeper than groups go: a note, never a broken call
+    let deep: object = sq("bottom");
+    for (let n = 0; n < 2000; n++) deep = { type: "group", layers: [deep] };
+    const blank = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const res = await write(blank.id, { changes: [{ frame: "p1", add: deep }] });
+    expect(res.status).toBe(200);
+    expect(res.body.notes.some((n) => n.endsWith("groups go at most 4 deep: one deeper left out"))).toBe(true);
+  });
+
+  it("takes a hidden or locked group apart with its layers kept hidden or locked", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const sq = (id: string, x: number) => ({ id, type: "shape", shape: "rect", fill: "#ff0000", x, y: 0, w: 10, h: 10 });
+    await write(d.id, { changes: [{ frame: "p1", add: { id: "g", type: "group", hidden: true, locked: true, opacity: 0.5, layers: [sq("a", 0), sq("b", 20)] } }] });
+    const out = (await write(d.id, { changes: [{ frame: "p1", layer: "g", ungroup: true }] })).body;
+    expect(out.design.pages[0]!.layers.map((l) => [l.id, l.hidden, l.locked, l.opacity])).toEqual([["a", true, true, 0.5], ["b", true, true, 0.5]]);
+  });
+
+  it("says what a save by hand could not keep, past a frame's limit, beside the design it saved", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
+    const many = Array.from({ length: 41 }, (_, n) => ({ type: "shape", shape: "rect", fill: "#ff0000", x: n, y: 0, w: 10, h: 10 }));
+    const res = await call<Design & { notes?: string[] }>("PUT", `/api/designs/${d.id}`, { pages: [{ ...d.pages[0], layers: many }] });
+    expect(res.body.pages[0]!.layers).toHaveLength(40);
+    expect(res.body.notes).toEqual(["Page 1: a frame holds at most 40 layers, counting those inside groups: the rest left out"]);
+    const fine = await call<Design & { notes?: string[] }>("PUT", `/api/designs/${d.id}`, { pages: res.body.pages });
+    expect(fine.body).not.toHaveProperty("notes");
+  });
+
   it("names a new frame or layer with as for the changes after it in the same call, and leads each note with the change it is about", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "square", blank: true })).body;
     const rect = { type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 100 };
@@ -356,7 +433,7 @@ describe("designs: an AI that designs", () => {
     expect(out.named).toEqual({ two, Badge: "l1", badge: "l2" });
     // the second "badge" of p1 took another id; a change naming "badge" changes the layer whose id it is, never the new one
     expect(one!.layers).toMatchObject([{ id: "badge", fill: "#0000ff" }, { id: "l2", fill: "#ff0000" }]);
-    expect(out.notes).toEqual([`changes[3], frame ${two} (Frame 2): a layer of no type that can be drawn ("rect"): left out; the types are text, shape, path, image and drawing`]);
+    expect(out.notes).toEqual([`changes[3], frame ${two} (Frame 2): a layer of no type that can be drawn ("rect"): left out; the types are text, shape, path, image, drawing and group`]);
     // the same in one call with a move onto the canvas and copies: a moved layer is found where it went by its name,
     // and "fill" copies a frame the call made, by its "as"
     const more = (await write(d.id, {
@@ -366,7 +443,7 @@ describe("designs: an AI that designs", () => {
     })).body as Wrote & { named: Record<string, string> };
     expect(more.design.pages.filter((p) => !p.loose).map((p) => p.name)).toEqual([undefined, "Story", "Card", "Card copy"]);
     expect((await read(d.id)).canvas).toEqual([expect.objectContaining({ id: "badge", fill: "#123456" })]);
-    expect(more.notes).toEqual([`changes[2], frame ${more.named.card} (Frame 3): a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image and drawing`]);
+    expect(more.notes).toEqual([`changes[2], frame ${more.named.card} (Frame 3): a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image, drawing and group`]);
   });
 
   it("a layer moved into a frame that has its id takes another: a later change naming that id changes the frame's own layer", async () => {

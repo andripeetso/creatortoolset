@@ -1,6 +1,8 @@
 import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer } from "@contracts/design";
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
+import { fitContents } from "./resize";
+import { boundsOf, freshLayerIds, isGroup, layerOut } from "./tree";
 
 /**
  * What the hands on the canvas work out, as plain functions: where the frames lie, the view (pan and zoom), a layer's
@@ -49,23 +51,7 @@ export function fitView(box: Rect, room: { w: number; h: number }, pad: number |
   return { z, x: (room.w - box.w * z) / 2 - box.x * z, y: p.top + (tall - box.h * z) / 2 - box.y * z };
 }
 
-/** The upright box round every layer given, each through its own rotation. */
-export function boundsOf(layers: readonly Turned[]): Rect {
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const l of layers) {
-    const a = ((l.rotate ?? 0) * Math.PI) / 180;
-    const hw = (Math.abs(Math.cos(a)) * l.w + Math.abs(Math.sin(a)) * l.h) / 2;
-    const hh = (Math.abs(Math.sin(a)) * l.w + Math.abs(Math.cos(a)) * l.h) / 2;
-    x0 = Math.min(x0, l.x + l.w / 2 - hw);
-    y0 = Math.min(y0, l.y + l.h / 2 - hh);
-    x1 = Math.max(x1, l.x + l.w / 2 + hw);
-    y1 = Math.max(y1, l.y + l.h / 2 + hh);
-  }
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-}
+export { boundsOf };
 
 export const intersects = (a: Rect, b: Rect): boolean => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
 
@@ -99,14 +85,16 @@ export function resizeBox<T extends Turned>(l: T, handle: Handle, dx: number, dy
   const at = (hw: number, hh: number) => ({ x: ax * hw * cos - ay * hh * sin, y: ax * hw * sin + ay * hh * cos });
   const was = at(l.w / 2, l.h / 2);
   const now = at(w / 2, h / 2);
-  return { ...l, x: whole(l.x + l.w / 2 + was.x - now.x - w / 2), y: whole(l.y + l.h / 2 + was.y - now.y - h / 2), w, h };
+  return withContents(l, { ...l, x: whole(l.x + l.w / 2 + was.x - now.x - w / 2), y: whole(l.y + l.h / 2 + was.y - now.y - h / 2), w, h });
 }
+/** A container's layers following its new size (resize.ts fitContents); anything else as it is. */
+const withContents = <T extends Turned>(was: T, now: T): T => ("type" in now && now.type === "group" ? (fitContents(was as unknown as Layer, now as unknown as Layer) as unknown as T) : now);
 
 /** Several layers resized together: each keeps its place and share inside the box round them, as that box goes `from` → `to`. */
 export function resizeAll<T extends Turned>(layers: readonly T[], from: Rect, to: Rect): T[] {
   const kx = to.w / (from.w || 1);
   const ky = to.h / (from.h || 1);
-  return layers.map((l) => ({ ...l, x: Math.round(to.x + (l.x - from.x) * kx), y: Math.round(to.y + (l.y - from.y) * ky), w: Math.max(1, Math.round(l.w * kx)), h: Math.max(1, Math.round(l.h * ky)) }));
+  return layers.map((l) => withContents(l, { ...l, x: Math.round(to.x + (l.x - from.x) * kx), y: Math.round(to.y + (l.y - from.y) * ky), w: Math.max(1, Math.round(l.w * kx)), h: Math.max(1, Math.round(l.h * ky)) }));
 }
 
 /**
@@ -172,9 +160,9 @@ export function snapSpacing(box: Rect, others: readonly Rect[], near: number, ax
   return best ? { d: best.to - box[axis], gaps: best.gaps } : null;
 }
 
-/** Layers lined up: one layer with its page, several with the box round them. */
-export function alignLayers<T extends Turned>(layers: readonly T[], how: Align, page: { w: number; h: number }): T[] {
-  const to = layers.length > 1 ? boundsOf(layers) : { x: 0, y: 0, w: page.w, h: page.h };
+/** Layers lined up: one layer with its page (or the box it lies in, `x`/`y` given), several with the box round them. */
+export function alignLayers<T extends Turned>(layers: readonly T[], how: Align, page: { x?: number; y?: number; w: number; h: number }): T[] {
+  const to = layers.length > 1 ? boundsOf(layers) : { x: page.x ?? 0, y: page.y ?? 0, w: page.w, h: page.h };
   return layers.map((l) => {
     const b = boundsOf([l]);
     const dx = how === "left" ? to.x - b.x : how === "center" ? to.x + to.w / 2 - b.x - b.w / 2 : how === "right" ? to.x + to.w - b.x - b.w : 0;
@@ -201,15 +189,13 @@ export function distribute<T extends Turned>(layers: readonly T[], axis: "x" | "
 }
 
 /** `count` layer ids the page does not have yet. */
-export function freshIds(page: DesignPage, count: number): string[] {
-  const taken = new Set(page.layers.map((l) => l.id));
-  const out: string[] = [];
-  for (let n = page.layers.length + 1; out.length < count; n++) if (!taken.has(`l${n}`)) out.push(`l${n}`);
-  return out;
-}
+export const freshIds = (page: DesignPage, count: number): string[] => freshLayerIds(page.layers, count);
 
 /** The layers picked with a layer: every layer of its group, or itself alone. */
-export const groupOf = (layers: readonly Layer[], l: Layer): string[] => (l.group ? layers.filter((x) => x.group === l.group).map((x) => x.id) : [l.id]);
+export const groupOf = (layers: readonly Layer[], l: Layer): string[] => {
+  const all = l.group ? layers.filter((x) => x.group === l.group).map((x) => x.id) : [];
+  return all.length ? all : [l.id];
+};
 
 /** Ids widened to whole groups: with every layer that shares a group with one of them. */
 /**
@@ -269,7 +255,7 @@ export function regroup<T extends Layer>(coming: readonly T[], there: readonly L
 
 export const SHAPE_NAMES = { rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle", star: "Star", arrow: "Arrow" } as const;
 /** What the layers list calls a layer: its own name, or what it is. */
-export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : SHAPE_NAMES[l.shape]);
+export const layerName = (l: Layer): string => l.name ?? (l.type === "text" ? l.text.replace(/\s+/g, " ").slice(0, 40) : l.type === "image" ? "Picture" : l.type === "drawing" ? "Drawing" : l.type === "path" ? "Path" : l.type === "group" ? (l.box ? "Frame" : "Group") : SHAPE_NAMES[l.shape]);
 export const pageName = (p: DesignPage, k: number): string => p.name ?? `Frame ${k + 1}`;
 
 /**
@@ -334,7 +320,8 @@ export const rehome = <L extends { x: number; y: number }>(layers: readonly L[],
  * many cost nothing, one too few cuts a shadow off in a square.
  */
 export function paintedBox(l: Layer): Rect {
-  const b = boundsOf([l]);
+  // a container paints its layers too (through its turn), past its box unless it cuts them there
+  const b = isGroup(l) && !l.clip && l.layers.some((k) => !k.hidden) ? boundsOf([l, ...l.layers.filter((k) => !k.hidden).map((k) => layerOut(l, paintedBox(k)))]) : boundsOf([l]);
   const fx = effectsOf(l).filter((e) => !e.hidden);
   const lines = Math.max(0, ...strokesOf(l).map((s) => Math.max(s.width, ...(s.sides ?? [])) * (s.join === "miter" ? 5 : 1) + (s.start || s.end ? Math.max(s.width, 2) * 5 : 0)));
   // words may run a little past their box, and sticker letters by their outline

@@ -7,7 +7,7 @@ import { installExportBrowser, rendererUrl } from "../../caption-frames";
 import { FETCHING, NO_BROWSER, type DesignPagesInput, type Look, type PagePicture } from "../../lib/design-picture";
 import { ffmpeg } from "../../library/media/run";
 import { taskKind } from "../tasks";
-import { paintPictures } from "../../../src/lib/design/paint";
+import { drawnPictures } from "../../../src/lib/design/paint";
 
 /**
  * A design's pages drawn in a headless browser (lib/design-picture.ts asks for them): on the person's Mac, which has
@@ -30,7 +30,7 @@ type RendererWindow = { designRenderer?: { draw(spec: PictureSpec): Promise<Omit
 async function smallPictures(page: DesignPage, dir: string, file: (name: string) => Promise<string>, most = SMALL): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   // the image layers' pictures and the pictures that fill shapes, words and the frame (a reference's never: it is not drawn)
-  for (const picture of new Set([...page.layers.flatMap((l) => (l.type === "image" && !l.hidden && !l.reference ? [l.picture] : [])), ...paintPictures({ ...page, layers: page.layers.filter((l) => !l.reference) })])) {
+  for (const picture of drawnPictures(page)) {
     if (out[picture]) continue;
     // a JPEG stays a JPEG; a PNG or a WebP becomes a PNG, which keeps what is see-through
     const jpeg = picture.endsWith(".jpg");

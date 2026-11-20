@@ -41,7 +41,7 @@ export const DESIGN_GAP = 120;
 export const DESIGN_ADJUST = ["exposure", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"] as const;
 export type DesignAdjust = (typeof DESIGN_ADJUST)[number];
 
-export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16 } as const;
+export const DESIGN_LIMITS = { designs: 300, pages: 20, loose: 200, frameMin: 16, frameMax: 4096, canvas: 100_000, layers: 40, depth: 4, text: 2000, svg: 20_000, name: 120, layerName: 60, notes: 2000, points: 200, marks: 6, pictures: 60, pictureBytes: 8_000_000, fonts: 40, fontBytes: 16_000_000, paints: 8, stops: 16 } as const;
 
 /** The ways a layer can mix with what is under it, beside lying over it. */
 export const DESIGN_BLENDS = ["multiply", "screen", "overlay", "darken", "lighten", "soft-light"] as const;
@@ -325,7 +325,33 @@ export interface PathLayer extends Box {
   strokes?: Stroke[];
 }
 
-export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer;
+/**
+ * A layer that holds layers (src/lib/design/tree.ts): a badge, a card, a button made one thing. Its layers lie in its
+ * own pixels: their x and y are counted from its top left corner, before its rotation and mirroring, and they turn,
+ * mirror, fade and blend with it as one (its opacity is put on them once, as a whole). A plain group (no `box`) is
+ * only what holds them: its box is always the box round its layers, and it has no fill, no line and no clip. With
+ * `box` it is a box of its own, like a frame: its size is its own (its layers may lie past it), it may have fills,
+ * lines, corners and Clip content, and a layer in it follows its edges by its pin when it changes size (a plain
+ * group's layers grow and shrink with it). Layer ids are unique in a frame, however deep a layer lies; a frame holds
+ * at most DESIGN_LIMITS.layers layers counting every one inside a container, and containers go at most
+ * DESIGN_LIMITS.depth deep.
+ */
+export interface GroupLayer extends Box {
+  type: "group";
+  /** bottom first, in its own pixels */
+  layers: Layer[];
+  /** a box of its own (a frame-like container); absent = a plain group, its box the box round its layers */
+  box?: true;
+  /** a box's fills and lines, bottom first: its fills under its layers, its lines over them */
+  fills?: Paint[];
+  strokes?: Stroke[];
+  radius?: Radius;
+  smooth?: number;
+  /** a box: its layers are cut at its edges (and its corners) */
+  clip?: true;
+}
+
+export type Layer = TextLayer | ImageLayer | ShapeLayer | DrawingLayer | PathLayer | GroupLayer;
 
 /**
  * A ruler guide of a frame: a line across it, `at` pixels from its left edge (axis "x": an up-and-down line) or from

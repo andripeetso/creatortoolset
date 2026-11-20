@@ -4,8 +4,9 @@ import path from "node:path";
 import { Hono, type Context } from "hono";
 import { DESIGN_ADJUST, DESIGN_BLENDS, DESIGN_HEADS, DESIGN_FORMATS, DESIGN_GAP, DESIGN_PINS_X, DESIGN_PINS_Y, DESIGN_LIMITS, DESIGN_SAFE, DESIGN_SHAPES, formatOf, PICTURE_SIDE_MAX, type Design, type DesignAnswer, type DesignFont, type DesignListed, type DesignPage, type DesignSummary, type Layer, type SplitAnswer, type TextLayer } from "../contracts/design";
 import { DESIGN_FONTS, weightsOf } from "../src/lib/design/fonts";
-import { fillRow, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
+import { fillRow, fitContents, placeLayers, sizedCopy, type Placed } from "../src/lib/design/resize";
 import { retext } from "../src/lib/design/runs";
+import { everyLayer, layerIn, layerOut, unwrap } from "../src/lib/design/tree";
 import type { AuthVars } from "./auth";
 import type { AnimationStyle } from "../contracts/editor-styles";
 import { animationStyles, carouselApp, carouselStyles } from "./editor/animation-styles";
@@ -105,7 +106,7 @@ function inTurn<T>(owner: string, run: () => Promise<T>): Promise<T> {
  * while a name an AI makes up is still turned into a face that is there.
  */
 async function fontsFor(d: Design): Promise<string[]> {
-  return [...new Set([...(await fontsOf(d.owner)).map((f) => f.family), ...d.pages.flatMap((p) => p.layers.flatMap((l) => (l.type === "text" ? [l.font] : [])))])];
+  return [...new Set([...(await fontsOf(d.owner)).map((f) => f.family), ...d.pages.flatMap((p) => everyLayer(p.layers).flatMap((l) => (l.type === "text" ? [l.font] : [])))])];
 }
 
 /** A design as it is kept, every frame with its place and size (one saved before frames had them gets them in a row). */
@@ -267,12 +268,13 @@ const pieceOf = (d: Design): { session: string; doc: string } | null => (d.from 
 /* ---- an AI that designs (the assistant, a connected AI) ---- */
 
 /** How layers are written: what an AI that reads a design is told (GET /:id/pages). */
-export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "flipX" and "flipY" (mirrored), "opacity" (0 to 1), "effects" (a list, bottom first; "hidden":true keeps one without drawing it): {"type":"shadow","color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8,"spread":0} falls under it ("spread" in pixels grows it, below 0 shrinks it; several make depth: a long soft one at low opacity over a tight dark one; "blur":0 with a "spread" and an offset is a hard sticker shadow), {"type":"inner-shadow",…the same} lies inside its edges (a pressed button, an inset), {"type":"blur","blur":24} draws it soft (pixels, up to 200: a glow, a haze, a cloud, something out of focus), {"type":"progressive-blur","blur":40,"from":0.5,"to":1,"angle":90} leaves it sharp up to "from" and fully blurred from "to" (parts of its box along the angle: 90 is top to bottom), its edges kept (a photo going soft where words sit), {"type":"background-blur","blur":30} blurs what lies under it, inside its shape (frosted glass: a light or dark shape at opacity 0.2 to 0.5 over a photo, words on it), {"type":"noise","amount":12,"size":2} grain on the layer itself (1 to 100, grains "size" pixels across). With "effects" given, the old "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}) and "blur" (pixels, up to 200) of a layer are not read: they still work alone. "name" (what it is, in a word or two, like "Sun" or "Left palm": the user reads it in their list of layers, so name every layer), "group" (a short name of your choosing, like "palm trees": layers of a frame with the same group are picked and moved as one by the user and stand under that name in their list, so group what belongs together, like a badge and its words) "blend" (how it mixes with what is under it: ${DESIGN_BLENDS.join(", ")}) and "pin" (how it follows the frame's edges when the frame changes size: {"x":"${DESIGN_PINS_X.join("|")}","y":"${DESIGN_PINS_Y.join("|")}"}; "both" keeps it at both edges, so it stretches; "scale" keeps its share of the frame; a layer without a pin stays where it is when the frame grows, and keeps its share of the frame in a copy of another size: pin a handle in a corner, a footer to the bottom, a background to both). A layer with "reference":true is something to design over (a video's frame under its titles): the user sees it on their canvas, and it is in no PNG, no picture you are shown and no video; design the other layers over it, leave it as it is, and set it only on what is there to design over. Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. A "gradient" ({"to":"#rrggbb","angle":90}) on a text, a shape or a frame runs from its own colour to "to": angle 0 is left to right, 90 top to bottom; with "kind":"radial" it runs from the middle out to the corners (a spotlight), and "via":"#rrggbb" is a colour it passes through half-way. Colours are "#rrggbb", or "#rrggbbaa" where the last two digits say how solid it is ("#00000099" is a 60 % black scrim). For more than one fill or line, a text, a shape, a path or a frame takes "fills" in place of its colour and "gradient", and a text, a shape, a path, a picture or a frame takes "strokes" in place of "stroke" (a text's in place of "outline"), each a list drawn bottom first: a fill is {"type":"solid","color":"#rrggbbaa"}, {"type":"gradient","kind":"linear|radial|angular|diamond","angle":90,"stops":[{"at":0,"color":"#rrggbb"},{"at":0.6,"color":"#rrggbb"},{"at":1,"color":"#rrggbb00"}]} (any number of stops, "at" 0 to 1; angular turns round the middle from "angle", diamond and radial run from the middle out to the corners) or {"type":"image","picture":"<id>","mode":"fill|fit|crop|tile","crop":{"x":0.1,"y":0,"w":0.5,"h":0.5},"scale":0.25} (a picture under "pictures" inside a shape or the letters of a text; "crop" is the part of the picture shown, in parts of it; "scale" is one tile's width as a part of the layer's); a stroke is a "stroke" as below, also with "cap":"butt|round|square", "join":"miter|round|bevel", "sides":[top,right,bottom,left] (widths a side, on a rect, a picture or a frame: [0,0,6,0] is a bar under it), and on an open path "start"/"end":"${DESIGN_HEADS.join("|")}" (an arrow line). Every fill and stroke may have "opacity" (0 to 1), "blend" and "hidden":true. A frame with "fills":[] is see-through: its PNG keeps only its layers (a title laid over a video; a JPG of it is white there). A double outline (sticker letters) is two strokes, the wider under the narrower. A rect or a picture may have "smooth" (0 to 1): its rounded corners run softly into the sides. The kinds:
+export const DESIGN_LAYERS = `Every layer has "x", "y", "w", "h" in pixels from its frame's top left corner, and may have "rotate" (degrees about its middle), "flipX" and "flipY" (mirrored), "opacity" (0 to 1), "effects" (a list, bottom first; "hidden":true keeps one without drawing it): {"type":"shadow","color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8,"spread":0} falls under it ("spread" in pixels grows it, below 0 shrinks it; several make depth: a long soft one at low opacity over a tight dark one; "blur":0 with a "spread" and an offset is a hard sticker shadow), {"type":"inner-shadow",…the same} lies inside its edges (a pressed button, an inset), {"type":"blur","blur":24} draws it soft (pixels, up to 200: a glow, a haze, a cloud, something out of focus), {"type":"progressive-blur","blur":40,"from":0.5,"to":1,"angle":90} leaves it sharp up to "from" and fully blurred from "to" (parts of its box along the angle: 90 is top to bottom), its edges kept (a photo going soft where words sit), {"type":"background-blur","blur":30} blurs what lies under it, inside its shape (frosted glass: a light or dark shape at opacity 0.2 to 0.5 over a photo, words on it), {"type":"noise","amount":12,"size":2} grain on the layer itself (1 to 100, grains "size" pixels across). With "effects" given, the old "shadow" ({"color":"#rrggbb","opacity":0.35,"blur":24,"x":0,"y":8}) and "blur" (pixels, up to 200) of a layer are not read: they still work alone. "name" (what it is, in a word or two, like "Sun" or "Left palm": the user reads it in their list of layers, so name every layer), "group" (an older way to tie layers together by a shared name, still read; put what belongs together in a group layer instead, below) "blend" (how it mixes with what is under it: ${DESIGN_BLENDS.join(", ")}) and "pin" (how it follows the frame's edges when the frame changes size: {"x":"${DESIGN_PINS_X.join("|")}","y":"${DESIGN_PINS_Y.join("|")}"}; "both" keeps it at both edges, so it stretches; "scale" keeps its share of the frame; a layer without a pin stays where it is when the frame grows, and keeps its share of the frame in a copy of another size: pin a handle in a corner, a footer to the bottom, a background to both). A layer with "reference":true is something to design over (a video's frame under its titles): the user sees it on their canvas, and it is in no PNG, no picture you are shown and no video; design the other layers over it, leave it as it is, and set it only on what is there to design over. Layers are drawn in order, a later one over an earlier one, and are cut at the frame's edges. A "gradient" ({"to":"#rrggbb","angle":90}) on a text, a shape or a frame runs from its own colour to "to": angle 0 is left to right, 90 top to bottom; with "kind":"radial" it runs from the middle out to the corners (a spotlight), and "via":"#rrggbb" is a colour it passes through half-way. Colours are "#rrggbb", or "#rrggbbaa" where the last two digits say how solid it is ("#00000099" is a 60 % black scrim). For more than one fill or line, a text, a shape, a path or a frame takes "fills" in place of its colour and "gradient", and a text, a shape, a path, a picture or a frame takes "strokes" in place of "stroke" (a text's in place of "outline"), each a list drawn bottom first: a fill is {"type":"solid","color":"#rrggbbaa"}, {"type":"gradient","kind":"linear|radial|angular|diamond","angle":90,"stops":[{"at":0,"color":"#rrggbb"},{"at":0.6,"color":"#rrggbb"},{"at":1,"color":"#rrggbb00"}]} (any number of stops, "at" 0 to 1; angular turns round the middle from "angle", diamond and radial run from the middle out to the corners) or {"type":"image","picture":"<id>","mode":"fill|fit|crop|tile","crop":{"x":0.1,"y":0,"w":0.5,"h":0.5},"scale":0.25} (a picture under "pictures" inside a shape or the letters of a text; "crop" is the part of the picture shown, in parts of it; "scale" is one tile's width as a part of the layer's); a stroke is a "stroke" as below, also with "cap":"butt|round|square", "join":"miter|round|bevel", "sides":[top,right,bottom,left] (widths a side, on a rect, a picture or a frame: [0,0,6,0] is a bar under it), and on an open path "start"/"end":"${DESIGN_HEADS.join("|")}" (an arrow line). Every fill and stroke may have "opacity" (0 to 1), "blend" and "hidden":true. A frame with "fills":[] is see-through: its PNG keeps only its layers (a title laid over a video; a JPG of it is white there). A double outline (sticker letters) is two strokes, the wider under the narrower. A rect or a picture may have "smooth" (0 to 1): its rounded corners run softly into the sides. The kinds:
 - {"type":"text","text":"…","font":"…","size":64,"color":"#rrggbb","align":"left|center|right","valign":"top|middle|bottom","lineHeight":1.15,"spacing":0,"upper":false,"outline":{"color":"#rrggbb","width":8},"gradient":{…}}: "spacing" is pixels between the letters; "fit":"shrink" makes "size" the most, and sets the words at the largest size up to it at which they fit the box (use it whenever you cannot be sure they fit; with a size larger than the box could hold, the words fill the box); "lines":2 does the same and also keeps them to at most that many lines, with no word left alone on a last line (for headlines, titles and any short text that must not end on one word); "balance":true breaks each paragraph's lines about as long as each other (for headlines); "marks":[{"words":"the floor","color":"#f2b63c"}] lays a highlighter stroke behind those words of the layer, wherever they wrap (leave "words" out for a stroke behind every line), so never place a box behind words yourself. A stroke is flat ink with square ends and no shadow; with "low":true it sits low, over the small letters and a little under the line with the tall letters standing out of it, the way a marker is drawn through a line; the words wrap inside w, and "\\n" starts a new line (which still wraps when it is too long for w); size is the font size in pixels. "font" is one of "fonts": each is a bold or display face for headlines, except "Poppins Regular" (longer text), "DM Serif Display" (a serif) and "Caveat" (handwriting). "weight" (100–900) sets it in another weight of its family: the ones it has are in "weights" (a font not there has only its own). "italic":true slants it, "underline":true and "strike":true draw a line under or through it, "case":"upper|lower|title|small" sets the letters' case (small: small capitals). "runs" sets part of the words apart without another layer: [{"words":"€49","strike":true,"color":"#888888"},{"start":0,"end":4,"weight":800,"size":120}], each with "words" (every place that phrase is in the text) or "start"/"end" (letters of "text", the end not included), and any of "font", "weight", "italic", "size", "color", "underline", "strike", "spacing"; what a run leaves out is the layer's. A highlighter's "marks" work across runs.
 - {"type":"shape","shape":"${DESIGN_SHAPES.join("|")}","fill":"#rrggbb","gradient":{…},"radius":0,"stroke":{"color":"#rrggbb","width":4,"dash":[12,8],"round":false,"side":"inside|outside"}}: a shape fills its box; "radius" rounds a rect's corners, all by one number or each by [top left, top right, bottom right, bottom left] (a picture's too); a stroke's "dash" is [dash, gap] in pixels ([0, gap] with "round" makes dots), and "side" keeps the line inside or outside the shape's edge (left out: half on each side); a triangle points up and an arrow to the right (turn them with "rotate"; "flipX" points the arrow left); a thin rect is a line.
 - {"type":"path","points":[{"x":0,"y":1},{"x":0.5,"y":0,"in":[-0.2,0],"out":[0.2,0]},{"x":1,"y":1}],"closed":false,"fill":"#rrggbb","gradient":{…},"stroke":{…}}: a line from point to point, which the user can reshape point by point. "x" and "y" are parts of the layer's box, from 0 to 1, not pixels (0,0 is the box's top left, 1,1 its bottom right); "in" and "out" are the ends of a point's two curve handles, as offsets from it in the same parts (left out: a corner, straight lines). "closed" joins the last point to the first; leave "fill" out for a line alone. A curve between two points: an "out" on the first and an "in" on the second. A marker arrow: one curved path for its shaft and a short V of three points for its head, with the same "group". For a whole illustration a "drawing" is easier.
 - {"type":"image","picture":"<id>","fit":"cover|contain","zoom":1,"focus":{"x":0.5,"y":0.5},"radius":0}: only a picture listed under "pictures" (how one gets there is below). "cover" fills the box and cuts the rest off: "focus" says which part stays (0 = the picture's left or top edge, 1 = its right or bottom), "zoom" (1 to 8) goes closer. Its colours: "adjust":{${DESIGN_ADJUST.map((k) => `"${k}":0`).join(",")}} (each -100 to 100), "duotone":{"dark":"#rrggbb","light":"#rrggbb"} (two colours in place of its own; black and white for a black and white picture), "vignette" (1 to 100 darkens the corners, -1 to -100 lightens them), "grain" (0 to 100), "blur" (pixels; a blurred photo behind words keeps them readable). They are settings of the layer, not a changed picture: 0 or null puts one back.
-- {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes only: path, rect, circle, ellipse, line, polyline, polygon and g, and defs with linearGradient, radialGradient, stop, clipPath and mask, with plain attributes. No text, image, link, script, style element or filter.`;
+- {"type":"drawing","svg":"<svg viewBox=\\"0 0 100 100\\">…</svg>"}: an illustration of your own, as SVG shapes only: path, rect, circle, ellipse, line, polyline, polygon and g, and defs with linearGradient, radialGradient, stop, clipPath and mask, with plain attributes. No text, image, link, script, style element or filter.
+- {"type":"group","name":"Badge","x":80,"y":1180,"w":360,"h":96,"layers":[…layers…]}: a layer that holds layers, so a badge, a card, a button or a chip is one thing the user picks, moves and resizes whole. Its layers' "x" and "y" are counted from the group's own top left corner (not the frame's), and they turn, mirror and fade with it. A plain group is only what holds them: its box is always the box round its layers, whatever "x", "y", "w", "h" you give. With "box":true it is a box of its own: its own "w" and "h", "fills" (under its layers), "strokes" (over them), "radius", "smooth", "effects" (a shadow falls from the whole box) and "clip":true (its layers cut at its edges and corners); a layer in a box follows its edges by its "pin" when the box changes size. A pill badge: {"type":"group","box":true,"name":"Badge","x":80,"y":80,"w":300,"h":88,"radius":44,"fills":[{"type":"solid","color":"#111111"}],"layers":[{"type":"text","text":"NEW","x":0,"y":0,"w":300,"h":88,"align":"center","valign":"middle",…}]}. Groups go at most ${DESIGN_LIMITS.depth} deep, and a frame holds at most ${DESIGN_LIMITS.layers} layers counting every layer inside its groups. Every layer of a frame, however deep, has an id of its own in that frame.`;
 
 const HOW = `A design is a canvas of frames. A frame is one still picture (a carousel slide, a cover, a thumbnail, a post; nothing in it moves, and animation and video are not made here): it has an id, a size (w, h) and layers. The user sees every frame side by side, moves and edits any layer by hand, and exports each frame as a PNG of exactly its size.
 
@@ -285,7 +287,7 @@ A frame that has "words" draws a slide of the user's carousel: those words are t
 To change a design, give either or both of:
 - "frames": [{"id":"<frame id>","background":"#rrggbb","gradient":{…},"layers":[…]}]: that frame's layers are replaced whole (leave "layers" out to change only its background, "gradient", "grain", "vignette", "name", "w" or "h"; "grain" (0 to 100) lays a film grain over the whole frame and "vignette" darkens its edges (1 to 100) or lightens them (-1 to -100): a little of both, with soft shadows and a blurred shape or two, is what gives a flat picture depth; light falling across it from one side is a big blurred ellipse of a warm light colour off that side). Without an "id" it is a new frame of any size: give its "w", "h" and "name" (usual sizes: ${DESIGN_FORMATS.map((f) => `${f.name} ${f.w} × ${f.h}`).join(", ")}). It is laid beside the others (the user moves frames, you do not), and the answer names it with its new id; give it "as":"<a name of yours>" and the changes in the same call use that name as its "frame".
 - A frame's aids, set like its background (shown to the user on the canvas, never in the PNG): "guides":[{"axis":"x|y","at":<pixels from the frame's left (x: an up-and-down line) or top (y)>}], "grids":[{"kind":"columns|rows","count":4,"gutter":24,"margin":80,"color":"#ff0000"} or {"kind":"grid","size":8,"color":"#ff0000"}] (layout grids) and "safe":[${DESIGN_SAFE.map((z) => `"${z.id}"`).join(",")}] (where Instagram cuts or covers the frame: ${DESIGN_SAFE.map((z) => `${z.id} = ${z.name.toLowerCase()}`).join(", ")}). Layers the user moves catch on guides and grids. Keep words and faces out of a frame's covered parts; [] takes a list off.
-- "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…},"as":"<a name of yours>"} (on top; with "at":"back", under the others; a later change in the same call names it by "as" as its "layer", and "named" in the answer gives the id a name became when it is another). The layers already there keep their ids whatever is added, removed or reordered. Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off. A list ("effects", "marks", "points") is replaced whole.
+- "changes": for one layer at a time, without sending the rest: {"frame":"<id>","layer":"<layer id>","set":{…the fields to change…}}, {"frame":"<id>","layer":"<layer id>","remove":true}, {"frame":"<id>","layer":"<layer id>","order":"front|back"}, or {"frame":"<id>","add":{…a new layer…},"as":"<a name of yours>"} (on top; with "at":"back", under the others; a later change in the same call names it by "as" as its "layer", and "named" in the answer gives the id a name became when it is another). A layer inside a group is named by its id as any other ("layer" finds it however deep). An "add" with "in":"<group id>" goes into that group, its "x" and "y" then counted from the group's top left corner. {"frame":"<id>","layer":"<layer id>","in":"<group id>"} moves a layer into a group and "in":"frame" out to the frame's own layers, staying where it is on the frame (a "set" in the same change then places it in its new home's pixels). {"frame":"<id>","layer":"<group id>","ungroup":true} takes a group apart: its layers stay where they are on the frame. A plain group left with no layer is gone. The layers already there keep their ids whatever is added, removed or reordered. Whatever a change does not name stays as it is, inside "adjust", "shadow" and the like too: {"set":{"adjust":{"warmth":20}}} leaves the other adjustments, and null takes a field off. A list ("effects", "marks", "points") is replaced whole.
 - "canvas" (in this answer when there is any): layers lying on the canvas outside every frame, where the user keeps things aside. Their "x" and "y" are in the canvas's own pixels, as each frame's "x" and "y" are; they are in no PNG and in no picture of a frame you are shown. A change with "frame":"canvas" sets, adds (give "x", "y", "w" and "h"), removes or reorders one of them as on a frame. {"frame":"<a frame's id or canvas>","layer":"<layer id>","to":"<another frame's id or canvas>"} moves that layer there, staying where it is on the canvas (it leaves its group); a "set" in the same change then places it, its "x" and "y" counted from that frame's top left corner (on the canvas: in the canvas's pixels). A frame with "clip":false shows the parts of its layers past its edges on the canvas (never in its PNG); without it they are hidden.
 - A change {"frame":"<id>","layer":"<a picture layer's id>","cutout":true} takes the picture's background away (the user's own Mac cuts it out, which takes some seconds; the answer says so when no Mac of theirs is on). {"set":{"picture":"<its 'uncut' id>","uncut":null}} puts the background back.
 - "sizes": {"frames":["<frame id>",…],"to":["square","cover",{"name":"Feed","w":1080,"h":1350}]}: a copy of each frame (all of them without "frames") in each size, its layers placed by their pins and words set again to fit (a text with "fit":"shrink" fits itself). "to" takes ${DESIGN_FORMATS.map((f) => `"${f.id}" (${f.w} × ${f.h})`).join(", ")} or any {"w","h"}. The copies go under the frames, a row a size. One call turns a carousel into its feed, story and square sizes.
@@ -435,7 +437,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
   const notes: string[] = [];
   /** each touched frame as it will be checked: its raw layers, and what else of it was given */
   const todo = new Map<string, { layers: unknown[]; more: Raw; isNew: boolean; gave: boolean; whole: boolean; set: string[] }>();
-  const open = (p: DesignPage) => todo.get(p.id) ?? todo.set(p.id, { layers: [...p.layers], more: {}, isNew: false, gave: false, whole: false, set: [] }).get(p.id)!;
+  // a copy of its own, containers too: a layer inside one is changed in place
+  const open = (p: DesignPage) => todo.get(p.id) ?? todo.set(p.id, { layers: structuredClone(p.layers), more: {}, isNew: false, gave: false, whole: false, set: [] }).get(p.id)!;
   /** where each layer of this call was given ("changes[2]"), and the last place that touched each frame */
   const givenAt = new Map<unknown, string>();
   const frameAt = new Map<string, string>();
@@ -508,20 +511,61 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     if (typeof s.text === "string" && !("runs" in s) && was.type === "text" && typeof was.text === "string" && Array.isArray(was.runs)) changed.runs = retext(was as unknown as TextLayer, s.text).runs;
     return changed;
   };
-  /** An id no layer in `list` has: the one asked for, else l1, l2… */
+  /** Every layer of a list, however deep in its containers. */
+  // what an AI sends may nest without end: these walks stop a level past the deepest a group may go (the check then
+  // leaves the deeper ones out with a note), so a deep answer is a note, never a crash
+  const DEEP = DESIGN_LIMITS.depth + 1;
+  const allRaw = (list: readonly unknown[], d = 0): Raw[] => (d > DEEP ? [] : list.flatMap((l) => (raw(l) ? [raw(l)!, ...(Array.isArray(raw(l)!.layers) ? allRaw(raw(l)!.layers as unknown[], d + 1) : [])] : [])));
+  /** Where layer `id` lies in a frame's layers: the list holding it, its place there, and the containers round it, outermost first. */
+  const findRaw = (list: unknown[], id: unknown, path: Raw[] = []): { list: unknown[]; k: number; path: Raw[] } | null => {
+    const k = list.findIndex((l) => raw(l)?.id === id);
+    if (k >= 0) return { list, k, path };
+    if (path.length > DEEP) return null;
+    for (const l of list) {
+      const g = raw(l);
+      const hit = g?.type === "group" && Array.isArray(g.layers) ? findRaw(g.layers as unknown[], id, [...path, g]) : null;
+      if (hit) return hit;
+    }
+    return null;
+  };
+  /** A layer's place as numbers, for the sums that carry it into and out of containers. */
+  const placed = (l: Raw): Raw & { x: number; y: number; w: number; h: number } => ({ ...l, x: num(l.x), y: num(l.y), w: num(l.w), h: num(l.h), rotate: num(l.rotate) || undefined, flipX: l.flipX === true || undefined, flipY: l.flipY === true || undefined });
+  /** A layer inside the containers `path` as it lies in the frame, and back. */
+  const outOfPath = (l: Raw, path: readonly Raw[]): Raw => [...path].reverse().reduce((m, g) => layerOut(placed(g), placed(m)), l);
+  const intoPath = (l: Raw, path: readonly Raw[]): Raw => path.reduce((m, g) => layerIn(placed(g), placed(m)), l);
+  /** An id no layer in `list` has, however deep: the one asked for, else l1, l2… */
   const freeId = (list: readonly unknown[], asked: unknown) => {
-    const ids = new Set(list.map((l) => String(raw(l)?.id)));
+    const all = allRaw(list);
+    const ids = new Set(all.map((l) => String(l.id)));
     let id = typeof asked === "string" && LAYER_ID.test(asked) && !ids.has(asked) ? asked : "";
-    for (let n = list.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
+    for (let n = all.length + 1; !id; n++) if (!ids.has(`l${n}`)) id = `l${n}`;
     return id;
   };
-  /** A layer into a frame, on top (or at the back), under an id of its own there: the layer as it is placed. */
-  const into = (page: DesignPage, layer: Raw, back: boolean): Raw => {
+  /**
+   * Layers coming into a frame inside a group (added, or a group's layers given whole), each with an id of its own in
+   * the frame (the one asked for when `taken` does not have it): an id given out here never takes one a layer of the
+   * frame has, so the layers there keep theirs.
+   */
+  const ownIds = (list: unknown, taken: Set<string>, d = 0): unknown[] =>
+    (Array.isArray(list) ? list : []).map((x) => {
+      const r = raw(x);
+      if (!r || d > DEEP) return x;
+      let id = typeof r.id === "string" && LAYER_ID.test(r.id) && !taken.has(r.id) ? r.id : "";
+      for (let n = taken.size + 1; !id; n++) if (!taken.has(`l${n}`)) id = `l${n}`;
+      taken.add(id);
+      return { ...r, id, ...(Array.isArray(r.layers) ? { layers: ownIds(r.layers, taken, d + 1) } : {}) };
+    });
+  /** A layer into a frame (or into its container `inside`), on top (or at the back), under an id of its own there: the layer as it is placed. */
+  const into = (page: DesignPage, layer: Raw, back: boolean, inside?: Raw): Raw => {
     const t = open(page);
-    const placed = { ...layer, id: freeId(t.layers, layer.id) };
-    t.layers = back ? [placed, ...t.layers] : [...t.layers, placed];
-    t.set.push(placed.id);
-    return placed;
+    const done: Raw & { id: string } = { ...layer, id: freeId(t.layers, layer.id) };
+    // every layer inside it an id of its own in the frame too
+    if (Array.isArray(done.layers)) done.layers = ownIds(done.layers, new Set([...allRaw(t.layers).map((l) => String(l.id)), done.id]));
+    const list = inside ? (inside.layers as unknown[]) : t.layers;
+    if (back) list.unshift(done);
+    else list.push(done);
+    t.set.push(done.id);
+    return done;
   };
   /** A layer onto the canvas, a loose piece of its own, on top (or at the back). */
   const ontoCanvas = (layer: Raw, back: boolean): Raw => {
@@ -552,12 +596,22 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     }
     const back = c.at === "back" || c.order === "back";
     const add = raw(c.add);
+    /** "in": a group of the frame the layer goes into ("frame" or null: the frame's own layers); undefined when not given */
+    const inId = !("in" in c) ? undefined : c.in === null || c.in === "frame" ? null : typeof c.in === "string" ? (page && !findRaw(open(page).layers, c.in) ? (named.get(`${home}\0${c.in}`) ?? c.in) : c.in) : c.in;
+    const inHit = page && typeof inId === "string" ? findRaw(open(page).layers, inId) : null;
+    const box = inHit ? raw(inHit.list[inHit.k]) : null;
+    if (inId !== undefined && (onCanvas || (inId !== null && (box?.type !== "group" || !Array.isArray(box.layers))))) {
+      notes.push(`${here}: "in" names no group of this frame (${String(c.in)}): give a group layer's id, or "frame" for the frame's own layers`);
+      continue;
+    }
     if (add) {
       // a name given to it ("as", or an id that is taken or cannot be one) is what later changes call it
       const name = typeof c.as === "string" && c.as ? c.as : typeof add.id === "string" ? add.id : "";
       const asked = { ...add, id: name || add.id };
       let placed: Raw | null = null;
-      if (!onCanvas) placed = into(page!, asked, c.at === "back");
+      // counting every layer it holds: a group added at the back must not push the frame's frontmost layers past the limit
+      if (!onCanvas && allRaw(open(page!).layers).length + allRaw([add]).length > DESIGN_LIMITS.layers) notes.push(`${here}: a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: a layer was not added`);
+      else if (!onCanvas) placed = into(page!, asked, c.at === "back", box ?? undefined);
       else if (room()) placed = ontoCanvas(asked, c.at === "back");
       else notes.push(`${here}: ${full}: a layer was not added`);
       if (placed) {
@@ -567,12 +621,53 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       }
       continue;
     }
-    const list = page ? open(page).layers : canvas.map((x) => x.layer);
+    // a frame's layer is found however deep in its groups (ids are unique in a frame); the canvas's lie loose, none in a group
+    const top = page ? open(page).layers : canvas.map((x) => x.layer);
+    const has = (id: unknown) => (page ? !!findRaw(top, id) : top.some((l) => raw(l)?.id === id));
     // a layer that has that id is the one meant: a name given in this call never stands for another layer
-    const lid = typeof c.layer === "string" && !list.some((l) => raw(l)?.id === c.layer) ? (named.get(`${home}\0${c.layer}`) ?? c.layer) : c.layer;
-    const k = list.findIndex((l) => raw(l)?.id === lid);
-    if (k < 0) {
-      notes.push(`${here}: there is no layer ${String(c.layer)}: its layers are ${list.map((l) => String(raw(l)?.id)).join(", ") || "none"}`);
+    const lid = typeof c.layer === "string" && !has(c.layer) ? (named.get(`${home}\0${c.layer}`) ?? c.layer) : c.layer;
+    const found = page ? findRaw(top, lid) : top.some((l) => raw(l)?.id === lid) ? { list: top, k: top.findIndex((l) => raw(l)?.id === lid), path: [] as Raw[] } : null;
+    if (!found) {
+      notes.push(`${here}: there is no layer ${String(c.layer)}: its layers are ${(page ? allRaw(top) : top.map(raw)).map((l) => String(l?.id)).join(", ") || "none"}`);
+      continue;
+    }
+    const { list, k, path } = found;
+    // a group taken apart: its layers lie where it was, where they are, in its place among its neighbours
+    if (c.ungroup === true && page) {
+      const g = raw(list[k]);
+      if (g?.type !== "group" || !Array.isArray(g.layers)) {
+        notes.push(`${here}, layer ${String(lid)}: "ungroup" takes apart a group, and this is no group`);
+        continue;
+      }
+      // taken apart as by hand (tree.ts unwrap): its layers where they are, its fade, hiding, lock and blend kept by them
+      const shell = { ...placed(g), layers: (g.layers as unknown[]).flatMap((l) => (raw(l) ? [placed(raw(l)!)] : [])) } as unknown as Layer;
+      const inner = unwrap([shell], [String(g.id)]) as unknown as Raw[];
+      list.splice(k, 1, ...inner);
+      open(page).set.push(...inner.map((l) => String(l.id)));
+      continue;
+    }
+    // "in": into one of the frame's groups or out to its own layers, staying where it is on the frame; "set" then in its new home's pixels
+    if (inId !== undefined && page && c.remove !== true) {
+      const target = inId === null ? null : findRaw(top, inId);
+      const g = target ? raw(target.list[target.k])! : null;
+      const moving = raw(list[k])!;
+      if (g && (g === moving || allRaw([moving]).includes(g))) {
+        notes.push(`${here}, layer ${String(lid)}: a group cannot go into itself`);
+        continue;
+      }
+      const depthOf = (l: Raw, d = 0): number => (d > DEEP ? d : Array.isArray(l.layers) ? 1 + Math.max(0, ...(l.layers as unknown[]).map((x) => (raw(x) ? depthOf(raw(x)!, d + 1) : 0))) : 0);
+      const into_ = target ? [...target.path, g!] : [];
+      if (into_.length + depthOf(moving) > DESIGN_LIMITS.depth) {
+        notes.push(`${here}, layer ${String(lid)}: groups go at most ${DESIGN_LIMITS.depth} deep: it stays where it is`);
+        continue;
+      }
+      list.splice(k, 1);
+      const moved = setOn(intoPath(outOfPath(moving, path), into_), c.set);
+      const dest = g ? (g.layers as unknown[]) : top;
+      if (back) dest.unshift(moved);
+      else dest.push(moved);
+      open(page).set.push(String(lid));
+      givenAt.set(moved, at);
       continue;
     }
     const goes = dest && dest !== page && !(dest === "canvas" && onCanvas) ? dest : null;
@@ -580,7 +675,7 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       notes.push(`${here}, layer ${String(lid)}: ${full}: it stays where it is`);
       continue;
     }
-    if (goes && goes !== "canvas" && open(goes).layers.length >= DESIGN_LIMITS.layers) {
+    if (goes && goes !== "canvas" && allRaw(open(goes).layers).length + allRaw([list[k]]).length > DESIGN_LIMITS.layers) {
       notes.push(`${here}, layer ${String(lid)}: a frame holds at most ${DESIGN_LIMITS.layers} layers: it stays where it is`);
       continue;
     }
@@ -592,7 +687,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     }
     let layer: Raw;
     let was: (typeof canvas)[number] | undefined;
-    if (page) layer = open(page).layers.splice(k, 1)[0] as Raw;
+    // from inside a group: as it lies on the frame
+    if (page) layer = outOfPath(list.splice(k, 1)[0] as Raw, goes ? path : []);
     else {
       was = canvas.splice(k, 1)[0]!;
       dirty.add(was.home);
@@ -608,14 +704,26 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
       named.set(`${goes === "canvas" ? "canvas" : goes.id}\0${String(c.layer)}`, String(placed.id));
       continue;
     }
-    const changed = setOn(layer, c.set);
+    let changed = setOn(layer, c.set);
+    // a group's layers given whole: ids of their own in the frame (one it uses already would rename that layer), and
+    // no more of them than the frame has room for
+    const given = raw(c.set)?.layers;
+    if (page && changed.type === "group" && Array.isArray(given)) {
+      changed = { ...changed, layers: ownIds(given, new Set([...allRaw(top).map((l) => String(l.id)), String(layer.id)])) };
+      if (allRaw(top).length + allRaw([changed]).length > DESIGN_LIMITS.layers) {
+        notes.push(`${here}, layer ${String(lid)}: a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: its layers were not changed`);
+        list.splice(k, 0, layer);
+        continue;
+      }
+    }
+    // a group given a new size (its layers not given whole): they follow it, as when it is resized by hand
+    if (changed.type === "group" && Array.isArray(changed.layers) && !raw(c.set)?.layers) changed = fitContents(placed(layer), placed(changed)) as unknown as Raw;
     givenAt.set(changed, at);
     if (page) {
-      const t = open(page);
-      t.set.push(String(lid));
-      if (c.order === "front") t.layers.push(changed);
-      else if (c.order === "back") t.layers.unshift(changed);
-      else t.layers.splice(k, 0, changed);
+      open(page).set.push(String(lid));
+      if (c.order === "front") list.push(changed);
+      else if (c.order === "back") list.unshift(changed);
+      else list.splice(k, 0, changed);
       continue;
     }
     // on the canvas, to the front or the back is a piece of its own there
@@ -657,8 +765,8 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     next[k] = { ...page, ...(was.x !== undefined ? { x: was.x, y: was.y } : {}), ...(was.block ? { block: was.block } : {}) };
     touched.push(id);
     // the layers this wrote: all of a frame given whole, else the ones set and the ones added
-    const had = new Set(was.layers.map((l) => l.id));
-    wrote.push({ frame: id, isNew: t.isNew, layers: page.layers.filter((l) => t.whole || t.isNew || t.set.includes(l.id) || !had.has(l.id)).map((l) => l.id) });
+    const had = new Set(everyLayer(was.layers).map((l) => l.id));
+    wrote.push({ frame: id, isNew: t.isNew, layers: everyLayer(page.layers).filter((l) => t.whole || t.isNew || t.set.includes(l.id) || !had.has(l.id)).map((l) => l.id) });
   }
   // the canvas: each loose piece that changed written again round its layers and checked like a frame; one left empty is gone
   if (dirty.size) {
@@ -1005,11 +1113,14 @@ designsApp.put("/:id", (c) =>
     const piece = pieceOf(d);
     // a design made before frames knew their slides: each frame is its slide's by the order the design was in
     const was = piece && !d.pages.some((p) => p.block) ? matched(d.pages, await slidesOf(c.get("user"), piece.session, piece.doc).then((s) => s.slides, () => [])) : d.pages;
-    const pages = withFrames(cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d) }).pages, d.width, d.height, was);
+    const checked = cleanPages(b.pages, { w: d.width, h: d.height, pictures: d.pictures, fonts: await fontsFor(d) });
+    const pages = withFrames(checked.pages, d.width, d.height, was);
     // no frames sent is the person's own doing (the last frame deleted: an empty canvas); frames sent of which none
     // could be kept is not, and nothing is saved over what is there
     if (!pages.length && !(Array.isArray(b.pages) && !b.pages.length)) throw new DesignError("None of the frames sent could be kept");
-    return save({ ...d, name, pages, updatedAt: stamp(d) });
+    const saved = await save({ ...d, name, pages, updatedAt: stamp(d) });
+    // what the check left out (past a limit, a picture the design does not have) is said, never dropped in silence
+    return checked.notes.length ? { ...saved, notes: checked.notes } : saved;
   }),
 );
 

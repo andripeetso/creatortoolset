@@ -1,6 +1,7 @@
 import type { DesignPage } from "@contracts/design";
 import { effectsOf } from "./effects";
 import { fillsOf, strokesOf, takesFills, takesStrokes } from "./paint";
+import { everyLayer } from "./tree";
 
 /**
  * A colour as the picker works on it: a hue (0 to 360), how strong it is and how light (0 to 1 each), and back to
@@ -56,7 +57,7 @@ export function coloursOn(pages: readonly DesignPage[], most = 16): string[] {
     if (hex) count.set(hex, (count.get(hex) ?? 0) + 1);
   };
   for (const p of pages)
-    for (const o of [p, ...p.layers]) {
+    for (const o of [p, ...everyLayer(p.layers)]) {
       for (const f of takesFills(o) ? fillsOf(o) : []) {
         if (f.type === "solid") add(f.color);
         if (f.type === "gradient") f.stops.forEach((s) => add(s.color));

@@ -229,3 +229,21 @@ describe("a text's highlighter strokes", () => {
     expect(boxes([{ color: "#f2b63c" }], lines, centred).map((b) => [b[0], b[2]])).toEqual([[37.2, 225.6], [52.2, 195.6], [97.2, 105.6]]);
   });
 });
+
+describe("a press on a container", () => {
+  const part = (id: string, x: number): Layer => ({ id, type: "shape", shape: "rect", fill: "#ff0000", x, y: 0, w: 20, h: 20 }) as Layer;
+  const at = (g: object) => ({ layers: [{ id: "g", type: "group", x: 100, y: 100, w: 100, h: 40, layers: [part("a", 0), part("b", 80)], ...g } as Layer] });
+
+  it("is on a plain group where one of its layers is, and on a box anywhere in its box; never past a box that cuts its layers", () => {
+    expect(layerAt(at({}), 110, 110)?.id).toBe("g");
+    expect(layerAt(at({}), 150, 110)).toBeNull();
+    expect(layerAt(at({ box: true }), 150, 110)?.id).toBe("g");
+    // a layer running past a clipping box is not pressed out there
+    const wide = { layers: [{ id: "g", type: "group", x: 100, y: 100, w: 50, h: 40, box: true, clip: true, layers: [part("a", 40)] } as Layer] };
+    expect(layerAt(wide, 160, 110)).toBeNull();
+    expect(layerAt({ layers: [{ ...wide.layers[0]!, clip: undefined } as Layer] }, 160, 110)?.id).toBe("g");
+    // turned: its layers are where they are drawn
+    expect(layerAt(at({ rotate: 180 }), 110, 130)?.id).toBe("g");
+    expect(layerAt(at({ rotate: 180, layers: [part("a", 0)] }), 110, 130)).toBeNull();
+  });
+});

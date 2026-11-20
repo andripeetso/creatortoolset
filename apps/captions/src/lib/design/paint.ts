@@ -1,4 +1,5 @@
 import type { DesignPage, Gradient, GradientStop, Layer, Paint, PaintLook, Stroke } from "../../../contracts/design";
+import { everyLayer, mapLayers } from "./tree";
 
 /**
  * A layer's or a frame's fills and lines as lists (contracts/design.ts `fills`, `strokes`, bottom first). A design
@@ -21,7 +22,7 @@ export const gradientPaint = (from: string, g: Gradient): Paint => ({
 const oldFill = (color: string, g: Gradient | undefined): Paint => (g ? gradientPaint(color, g) : { type: "solid", color });
 
 /** What can have fills: a frame, a text, a shape, a path. */
-export const takesFills = (o: Painted): boolean => isPage(o) || o.type === "text" || o.type === "shape" || o.type === "path";
+export const takesFills = (o: Painted): boolean => isPage(o) || o.type === "text" || o.type === "shape" || o.type === "path" || (o.type === "group" && !!o.box);
 /** What can have lines: those and a picture. */
 export const takesStrokes = (o: Painted): boolean => takesFills(o) || (!isPage(o) && o.type === "image");
 
@@ -30,6 +31,7 @@ export function fillsOf(o: Painted): Paint[] {
   if (o.type === "text") return o.fills ?? [oldFill(o.color, o.gradient)];
   if (o.type === "shape") return o.fills ?? [oldFill(o.fill, o.gradient)];
   if (o.type === "path") return o.fills ?? (o.fill ? [oldFill(o.fill, o.gradient)] : []);
+  if (o.type === "group" && o.box) return o.fills ?? [];
   return [];
 }
 
@@ -40,7 +42,7 @@ export function strokesOf(o: Painted): Stroke[] {
   if (isPage(o)) return o.strokes ?? [];
   if (o.type === "text") return o.strokes ?? (o.outline ? [{ ...o.outline }] : []);
   if (o.type === "shape" || o.type === "path") return o.strokes ?? (o.stroke ? [o.stroke] : []);
-  if (o.type === "image") return o.strokes ?? [];
+  if (o.type === "image" || (o.type === "group" && o.box)) return o.strokes ?? [];
   return [];
 }
 
@@ -62,6 +64,8 @@ export function withFills<T extends Painted>(o: T, fills: Paint[]): T {
     const { fill: _p, ...line } = rest as Omit<Extract<Layer, { type: "path" }>, "fills" | "gradient">;
     return { ...line, ...(colour ? { fill: colour } : {}), ...(one || !fills.length ? {} : { fills }) } as T;
   }
+  // a box keeps its list as it is: it has no old one-colour field
+  if (o.type === "group") return { ...rest, ...(fills.length ? { fills } : {}) } as T;
   return o;
 }
 
@@ -73,7 +77,7 @@ export function withStrokes<T extends Painted>(o: T, strokes: Stroke[]): T {
   const one = strokes.length === 1 && oldLine(strokes[0]!) ? strokes[0]! : null;
   const { strokes: _s, ...rest } = o as Painted & { strokes?: Stroke[] };
   const list = strokes.length ? { strokes } : {};
-  if (isPage(o) || o.type === "image") return { ...rest, ...list } as T;
+  if (isPage(o) || o.type === "image" || o.type === "group") return { ...rest, ...list } as T;
   if (o.type === "text") {
     const { outline: _o, ...r } = rest as Omit<Extract<Layer, { type: "text" }>, "strokes">;
     return { ...r, ...(one && !one.dash && !one.round && !one.side ? { outline: { color: one.color, width: one.width } } : list) } as T;
@@ -121,8 +125,16 @@ export function colourAt(stops: readonly GradientStop[], at: number): string {
 }
 
 /** The pictures a frame's fills and its layers' fills show (an image layer's own picture is its `picture`, not here). */
+/**
+ * Every picture a page draws: its picture layers' and the pictures that fill it and its layers, however deep in
+ * containers; never a hidden or reference layer's, nor anything inside one (what the server's drawing browser is given).
+ */
+export function drawnPictures(page: DesignPage): string[] {
+  const shown = mapLayers(page.layers, (l) => (l.hidden || l.reference ? null : l));
+  return [...new Set([...everyLayer(shown).flatMap((l) => (l.type === "image" ? [l.picture] : [])), ...paintPictures({ ...page, layers: shown })])];
+}
 export const paintPictures = (page: DesignPage): string[] => [
   ...new Set(
-    [page, ...page.layers.filter((l) => !l.hidden)].flatMap((o) => (takesFills(o) ? fillsOf(o) : []).flatMap((p) => (p.type === "image" && !p.hidden ? [p.picture] : []))),
+    [page, ...everyLayer(page.layers).filter((l) => !l.hidden)].flatMap((o) => (takesFills(o) ? fillsOf(o) : []).flatMap((p) => (p.type === "image" && !p.hidden ? [p.picture] : []))),
   ),
 ];

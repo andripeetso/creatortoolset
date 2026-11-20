@@ -36,7 +36,7 @@ describe("a design's pages, checked", () => {
     expect(notes).toEqual([
       "Page 1: a picture that is not in this design: left out",
       "Page 1: a drawing that is not plain shapes: left out",
-      'Page 1: a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image and drawing',
+      'Page 1: a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image, drawing and group',
       "Page 1: a text with no words: left out",
       "Page 1: a layer that is not an object: left out",
     ]);
@@ -539,5 +539,45 @@ describe("fills and lines as lists", () => {
     const { notes } = cleanPages([{ layers: [], fills: [{ type: "gradient", stops: [{ at: 0, color: "#000000" }] }] }], { ...rules, say: (_, why) => told.push(why) });
     expect(told).toEqual(["a gradient fill with fewer than two colours: left out"]);
     expect(notes).toEqual([]);
+  });
+});
+
+describe("a design's containers, checked", () => {
+  const rect = (more: object = {}) => ({ type: "shape", shape: "rect", fill: "#ff0000", x: 0, y: 0, w: 100, h: 50, ...more });
+  const group = (layers: unknown[], more: object = {}) => ({ type: "group", x: 0, y: 0, w: 10, h: 10, layers, ...more });
+
+  it("checks every layer inside a container as a frame's own, gives each an id unique in the frame, and keeps a plain group to its layers", () => {
+    const { pages, notes } = cleanPages([{ layers: [rect({ id: "a" }), group([rect({ id: "a", x: 20, y: 30 }), { type: "video" }, rect({ x: 60, y: 40, fill: "nope" })], { id: "badge", x: 200, y: 300, w: 999, h: 999, fills: [{ type: "solid", color: "#000000" }], clip: true })] }], rules);
+    expect(notes).toEqual(['Page 1: a layer of no type that can be drawn ("video"): left out; the types are text, shape, path, image, drawing and group']);
+    const g = pages[0]!.layers[1]!;
+    // a plain group has no fill or clip of its own, and its box is the box round its layers (they stay where they are on the frame)
+    expect(g).toMatchObject({ id: "badge", type: "group", x: 220, y: 330, w: 140, h: 60 });
+    expect(g).not.toHaveProperty("fills");
+    expect(g).not.toHaveProperty("clip");
+    expect(g.type === "group" && g.layers.map((l) => [l.id, l.x, l.y, l.type === "shape" && l.fill])).toEqual([["l3", 0, 0, "#ff0000"], ["l4", 40, 10, "#dddddd"]]);
+  });
+
+  it("keeps a box's own fills, lines, corners and clip, and an empty box; an empty plain group is gone", () => {
+    const { pages, notes } = cleanPages([{ layers: [group([], { box: true, x: 5, y: 6, w: 300, h: 80, radius: 40, fills: [{ type: "solid", color: "#111111" }], strokes: [{ color: "#ffffff", width: 2 }], clip: true }), group([])] }], rules);
+    expect(pages[0]!.layers).toEqual([{ id: "l1", type: "group", x: 5, y: 6, w: 300, h: 80, layers: [], box: true, fills: [{ type: "solid", color: "#111111" }], strokes: [{ color: "#ffffff", width: 2 }], radius: 40, clip: true }]);
+    expect(notes).toEqual(["Page 1: a group with no layers in it: left out"]);
+  });
+
+  it("holds containers to their depth and a frame to its count of layers, counting those inside containers", () => {
+    let deep: object = rect();
+    for (let n = 0; n <= DESIGN_LIMITS.depth; n++) deep = group([deep], { box: true });
+    const { pages, notes } = cleanPages([{ layers: [deep] }], rules);
+    let depth = 0;
+    for (let l = pages[0]!.layers[0]; l?.type === "group"; l = l.layers[0]) depth++;
+    expect(depth).toBe(DESIGN_LIMITS.depth);
+    expect(notes).toEqual([`Page 1: groups go at most ${DESIGN_LIMITS.depth} deep: one deeper left out`]);
+    const many = cleanPages([{ layers: [group(Array.from({ length: DESIGN_LIMITS.layers }, (_, n) => rect({ x: n }))), rect()] }], rules);
+    expect(many.pages[0]!.layers).toHaveLength(1);
+    expect(many.notes).toEqual([`Page 1: a frame holds at most ${DESIGN_LIMITS.layers} layers, counting those inside groups: the rest left out`]);
+  });
+
+  it("keeps an older design's shared group names as they are", () => {
+    const { pages } = cleanPages([{ layers: [rect({ group: "Hero Badge" }), rect({ group: "hero-badge" })] }], rules);
+    expect(pages[0]!.layers.map((l) => [l.type, l.group])).toEqual([["shape", "hero-badge"], ["shape", "hero-badge"]]);
   });
 });

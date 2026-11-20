@@ -6,6 +6,7 @@ import { facesOf } from "../../src/lib/design/fonts";
 import { textFonts } from "../../src/lib/design/runs";
 import { startTask } from "../work/tasks";
 import { paintPictures } from "../../src/lib/design/paint";
+import { everyLayer } from "../../src/lib/design/tree";
 
 /**
  * A design's pages as small pictures, for the AI that designed them to look at (GET /api/designs/:id/look). They are
@@ -65,7 +66,7 @@ export async function pagePictures(d: Design, pages: DesignPage[], which: number
   for (const { page } of asked)
     for (const pic of paintPictures(page)) files[`pic-${pic}`] = path.join(dir, pic);
   for (const { page } of asked)
-    for (const l of page.layers) {
+    for (const l of everyLayer(page.layers)) {
       if (l.type === "image" && !l.hidden && !l.reference) files[`pic-${l.picture}`] = path.join(dir, l.picture);
       // the text's own font and its runs', with every face of their families: a weight or a slant is one of those
       if (l.type === "text")

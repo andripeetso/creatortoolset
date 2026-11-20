@@ -1,4 +1,5 @@
 import { PICTURE_SIDE_MAX, type PictureSpec } from "@contracts/design";
+import { everyLayer } from "./tree";
 import { drawingUrl, drawPage, fontsOfText, sourceOf, textBlock, type Loaded } from "./draw";
 import { setOwnFamilies } from "./fonts";
 import { paintPictures } from "./paint";
@@ -12,7 +13,7 @@ import { paintPictures } from "./paint";
  */
 export async function pagePicture(spec: PictureSpec): Promise<{ jpeg?: string; png?: string; spills: string[]; drawn: string[] }> {
   if (!(spec.scale > 0) || Math.round(spec.width * spec.scale) > PICTURE_SIDE_MAX || Math.round(spec.height * spec.scale) > PICTURE_SIDE_MAX) throw new Error(`A page's picture is at most ${PICTURE_SIDE_MAX} pixels a side`);
-  const layers = spec.page.layers.filter((l) => !l.hidden && !l.reference);
+  const layers = everyLayer(spec.page.layers).filter((l) => !l.hidden && !l.reference);
   // the person's own fonts first: each from its file, once (one that cannot be read is drawn in the fallback face)
   await Promise.all(
     Object.entries(spec.fonts ?? {}).map(async ([family, address]) => {
