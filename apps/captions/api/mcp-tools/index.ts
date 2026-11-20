@@ -8,6 +8,7 @@ import { finalsTools } from "./finals";
 import { foldersTools } from "./folders";
 import { libraryTools } from "./library";
 import { memoryTools } from "./memory";
+import { nleTools } from "./nle";
 import { notesTools } from "./notes";
 import { reviewTools } from "./review";
 import { skillsTools } from "./skills";
@@ -15,4 +16,4 @@ import type { ToolModule } from "./types";
 import { workshopTools } from "./workshop";
 
 /** The tools kept in their own files, in the order the AI lists them (after api/mcp.ts's own). */
-export const MODULES: ToolModule[] = [workshopTools, analyzerTools, channelsTools, libraryTools, foldersTools, editorTools, designTools, reviewTools, finalsTools, captionsTools, notesTools, memoryTools, skillsTools, chatsTools];
+export const MODULES: ToolModule[] = [workshopTools, analyzerTools, channelsTools, libraryTools, foldersTools, editorTools, designTools, reviewTools, finalsTools, captionsTools, notesTools, memoryTools, skillsTools, chatsTools, nleTools];

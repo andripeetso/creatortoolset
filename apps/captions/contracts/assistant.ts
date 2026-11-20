@@ -174,6 +174,8 @@ export interface AssistantContext {
   timezone?: string;
   /** Sent from the Mac app, whose own open panel can choose a folder (ask_folder). */
   mac?: boolean;
+  /** The window's own id (lib/sync.ts clientId): the editor commands run on the timeline open in it (api/editor/nle-bridge.ts). */
+  client?: string;
 }
 
 /** POST /api/assistant/turn's body. */

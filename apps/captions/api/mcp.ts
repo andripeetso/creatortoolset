@@ -25,6 +25,8 @@ import { editorTools, hasStyle } from "./mcp-tools/editor";
 import { one } from "./mcp-tools/editor-styles";
 import type { EditingStylesView } from "../contracts/editor-styles";
 import { finalsTools } from "./mcp-tools/finals";
+import { NLE_TOOLS } from "./mcp-tools/nle";
+import { nleHere } from "./editor/nle-bridge";
 import { mainSourceFor } from "./library/access";
 import { setupNeeded } from "./library/access";
 import { ACTION_NEEDED, actionCard, SOUNDS, type ActionNeeded, type AssetCard } from "../contracts/library";
@@ -1630,8 +1632,10 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
       // skill_read (mcp-tools/skills.ts): only while the account has a skill on, in a reply someone is there for
       const finalsOff = !!(await mainSourceFor(user.username));
       const skills = dock && !unattended(user.username, jobTurn(auth.get("authorization") ?? undefined) ?? "") && (await dockSkills(user.username)).length > 0;
+      // the editor commands (mcp-tools/nle.ts): only on a turn sent from a timeline page, so no other chat carries them
+      const nle = dock && nleHere(auth.get("authorization") ?? undefined);
       // dockOnly says who gets a tool; it is not part of the listing
-      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name, finalsOff) && (skills || t.name !== "skill_read") && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
+      return ok({ tools: [...listed.filter((t) => !plugged.replaced.has(t.name) && !notHere(t.name, finalsOff) && (skills || t.name !== "skill_read") && (nle || !NLE_TOOLS.has(t.name)) && (t.name !== "editor_style_use" || hasStyle(user.username))), ...plugged.defs].map(({ name, description, inputSchema }) =>
           // the labels are for an AI app outside (it asks before a tool that can remove); the dock's list stays as it was
           dock ? { name, description, inputSchema } : { name, title: annotationsOf(name).title, description, inputSchema, annotations: annotationsOf(name), ...(cardToolMeta(name) && !plugged.handlers.has(name) ? { _meta: cardToolMeta(name) } : {}) },
         ) });

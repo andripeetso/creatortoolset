@@ -81,6 +81,7 @@ You act in the app only through its tools (the creator-toolset MCP server):
 - navigate opens a page of the app for the user, given as a relative path such as /workshop. It can put these dialogs up for them to fill in: /settings/providers?add=1 (add an AI), /settings/connectors?add=<instagram|facebook|youtube|tiktok|x> (add a social account), /settings/devices?add=1 (add a computer) or ?phone=1 (a phone), /?setup=helper (in the app on the computer that should help: set it up to help with heavy work, its shared drives and a test run), /settings/automations?add=1 (a new scheduled task), /projects?add=1 (a new workspace), /settings/team?add=1 (invite someone, on a team's server).
 - A name in your reply opens its page when it is a markdown link to a path of this app: [its title](/review/<id>?v=<n>), [its name](/editor/<id>), [its title](/workshop/sessions/<id>), and a piece in a session [its title](/workshop/sessions/<id>?doc=<piece id>), so the session opens on that piece. When you list reviews, edits, Workshop projects or pieces the user can open, link each that way (a tool's link or href ends in that path).
 - show_video plays a Review video (or an Editor draft's preview) inside the chat, with a link to its page.
+- Editor commands (nle_state, nle_run) edit the timeline the user has open, and come only with a message sent from a draft's timeline page: to use them, navigate to the draft first.
 - use_file sends a video or recording (dropped in the chat, or by its path on this computer when the server runs here) to Video Notes (transcript, summary, takeaways, an action plan, chapters), Review (a video page with comments and a share link), Caption Studio (captions on the video) or the Media Library (footage to keep, sorted into A-roll and B-roll; several dropped files in one call; a folder on this computer goes in with media_import_folder). notes_get follows a Video Note until it's ready and reads what it found. With version_of (a Review video's link) the file becomes that video's next version instead of a new video. notes_list lists the user's Video Notes; notes_get with add writes the takeaways, the action plan or the quotes a note does not have yet. After use_file to captions the captions are made in the background and the chat says when they are ready; the project (/captions?project=<id>) can be opened meanwhile. Read them with captions_get, find projects with captions_list. captions_export renders the video with its captions burned in by itself, and the chat says when the file is ready.
 - offer_choices puts 2 to 4 short answers under your reply as buttons; a press sends that answer as the user's next message. When they write something else instead (a question, "what happened"), answer that in words first; offer buttons again only if a choice is still open, never as the whole reply.
 - When they say something is there (a file, a song, a folder), look with your tools before asking what it is called or saying you can't see it. When a tool can't make what they asked, say plainly what it can't do yet; never offer doing the job by hand (record something, cut it yourself, a shot list) as the way out unless they ask.
@@ -406,6 +407,7 @@ function parseTurn(raw: unknown): TurnInput {
         visible: capped(c.visible, CONTEXT_CAPS.visible),
         ...(typeof c.timezone === "string" && validTimezone(c.timezone) ? { timezone: c.timezone } : {}),
         ...(c.mac === true ? { mac: true } : {}),
+        ...(typeof c.client === "string" && /^[\w-]{1,64}$/.test(c.client) ? { client: c.client } : {}),
       }
     : undefined;
   const ai = b.ai === null ? null : b.ai === undefined ? undefined : readSelection(b.ai);
@@ -1273,6 +1275,9 @@ const running = new Map<string, Map<string, AbortController>>();
 const runsOf = (username: string) => running.get(username) ?? running.set(username, new Map()).get(username)!;
 /** Replies sent from the Mac app (their page context said so) while they are written: their open panel can choose a folder (askFolder). */
 const fromMac = new Set<string>();
+/** The page each reply being written was asked from, for the editor commands (api/editor/nle-bridge.ts). */
+const pages = new Map<string, AssistantContext>();
+export const pageOfTurn = (turn: string | null): AssistantContext | undefined => (turn ? pages.get(turn) : undefined);
 /**
  * The long texts pasted with the message a reply answers, while that reply is being written (pastedInChat).
  * ponytail: kept in this process only, so a reply that carries on after a restart has none (a style's words are then
@@ -1391,6 +1396,7 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     sayLater(username, replyId);
     runsOf(username).delete(replyId);
     fromMac.delete(replyId);
+    pages.delete(replyId);
     pastedFor.delete(replyId);
     places.delete(replyId);
     const t = pendingSave.get(username);
@@ -1664,6 +1670,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   const uploading = (asked.files ?? []).filter((f) => f.uploading).map(({ id, name }) => ({ id, name }));
   const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
   if (h.context?.mac) fromMac.add(reply.id);
+  if (h.context) pages.set(reply.id, h.context);
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
   const knows = turnKnows(username, reply.id);
   const chat = list.slice(0, i + 1);

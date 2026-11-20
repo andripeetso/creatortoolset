@@ -47,3 +47,7 @@ export const KEYS: Record<string, KeyAction> = {
 };
 
 export const keyAction = (e: KeyLike): KeyAction | null => KEYS[chordOf(e)] ?? null;
+
+/** The command (commands.ts) a key runs, with its params. */
+export const commandOfKey = (a: KeyAction): { id: string; params: Record<string, number> } =>
+  a.startsWith("lock:V") ? { id: "lock", params: { track: Number(a.slice(6)) } } : { id: a, params: {} };

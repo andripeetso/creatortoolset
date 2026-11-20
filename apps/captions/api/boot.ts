@@ -29,6 +29,7 @@ import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
 import { storageApp } from "./library/usage";
 import { editorApp } from "./editor/routes";
+import { nleBridgeApp } from "./editor/nle-bridge";
 import { editStepsApp } from "./editor/steps";
 import { foldersApp } from "./folders";
 import { editorStepsAtRisk, releaseRunningSteps, startEditorWorker } from "./editor/worker";
@@ -557,6 +558,8 @@ app.route("/api/library", watchApp);
 app.route("/api/library", storageApp);
 app.route("/api/library", grantsApp);
 app.route("/api/library", bulkApp);
+// the chat's editor commands, on whichever editor answers below (editor/nle-bridge.ts)
+app.route("/api/editor/nle", nleBridgeApp);
 // a plug-in that replaces the AI Editor answers its root paths first (the old URLs the Mac worker posts to)
 mountReplacedRoutes(app, serverPlugins);
 app.route("/api/editor", editorApp);
