@@ -9,5 +9,6 @@ import "./tasks/enhance";
 import "./tasks/export";
 import "./tasks/frames";
 import "./tasks/library-save";
+import "./tasks/loudness";
 import "./tasks/review";
 import "./tasks/social-prints";

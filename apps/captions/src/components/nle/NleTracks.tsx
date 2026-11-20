@@ -92,7 +92,7 @@ type Drag = {
 };
 
 export const NleTracks = memo(function NleTracks({
-  tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
+  tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onLowerUnderVoice, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
 }: {
   tl: NleTimeline;
   /** the playhead at rest (a pause, a seek): a new one draws the timeline again */
@@ -111,6 +111,8 @@ export const NleTracks = memo(function NleTracks({
   onDrop?: (dt: DataTransfer, at: { track: string; frame: number }) => void;
   onMenu: (at: { x: number; y: number }, key: string) => void;
   onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
+  /** a sound track menu's Lower Under Voice… (NleSound.tsx) */
+  onLowerUnderVoice?: (track: string) => void;
   nameOf: (it: NleItem) => string;
   /** the timeline's zoom keys (= - \), for the editor's key handler */
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
@@ -600,7 +602,7 @@ export const NleTracks = memo(function NleTracks({
         <div key={i} ref={g} data-ghost className="pointer-events-none absolute z-[16] hidden truncate rounded-[3px] border border-white/70 bg-white/20 px-1 text-[10px] leading-4 text-white" />
       ))}
     </TimelineFrame>
-    {trackMenu && <TrackMenu tl={tl} {...trackMenu} onClose={() => setTrackMenu(null)} onCommit={onCommit} onTrack={onTrack}
+    {trackMenu && <TrackMenu tl={tl} {...trackMenu} onClose={() => setTrackMenu(null)} onCommit={onCommit} onTrack={onTrack} onLowerUnderVoice={onLowerUnderVoice}
       onSwap={(a, b) => setHeights((all) => {
         // a moved track takes its height with it
         const next = { ...all };
@@ -618,13 +620,14 @@ const MENU = "rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl";
 const MENU_ROW = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
 
 /** Resolve's track menu: add a track (above or below this one, or at the ends of its kind), move, delete, lock, hide or mute. */
-function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap }: {
+function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap, onLowerUnderVoice }: {
   tl: NleTimeline; x: number; y: number;
   /** the track right-clicked, null: the empty part of the header column */
   id: string | null;
   onClose: () => void; onCommit: (tl: NleTimeline) => void; onTrack: (id: string, patch: Partial<Omit<NleTrack, "items">>) => void;
   /** two tracks that traded numbers (Move Track): their heights trade too */
   onSwap: (a: string, b: string) => void;
+  onLowerUnderVoice?: (track: string) => void;
 }) {
   const t = id ? tl.tracks[id] : null;
   // a track keeps its number (the AI Editor reads tracks by number): a new one goes on top / at the bottom, or right
@@ -659,6 +662,7 @@ function TrackMenu({ tl, x, y, id, onClose, onCommit, onTrack, onSwap }: {
     [t?.locked ? "Unlock Track" : "Lock Track", id ? () => onTrack(id, { locked: t!.locked ? undefined : true }) : null],
     v ? [t!.hidden ? "Enable Video Track" : "Disable Video Track", () => onTrack(id!, { hidden: t!.hidden ? undefined : true })]
       : [t?.mute ? "Unmute Track" : "Mute Track", id ? () => onTrack(id, { mute: t!.mute ? undefined : true }) : null],
+    ...(onLowerUnderVoice && id?.startsWith("A") && id !== "A1" ? [null, ["Lower Under Voice…", () => onLowerUnderVoice(id)] as [string, () => void]] : []),
   ];
   const run = (fn: () => void) => () => {
     onClose();

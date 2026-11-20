@@ -19,6 +19,9 @@ import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
 import { NleLayout, Panel } from "./NleLayout";
+import { NleMeter } from "./NleMeter";
+import { LowerUnderVoiceDialog, NormalizeDialog } from "./NleSound";
+import { soundKeys } from "@/lib/nle/loudness";
 import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
 import { NleViewer, SoundCard, SourceStrip, Timecode } from "./NleViewer";
 
@@ -186,6 +189,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
     }
   });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [sound, setSound] = useState<{ normalize: string[] } | { duck: string } | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
@@ -547,6 +551,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
             onMenu={(at) => setMenu(at)}
             onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
+            onLowerUnderVoice={readOnly ? undefined : (duck) => setSound({ duck })}
             onDrop={readOnly ? undefined : dropOn}
             tools={
               <>
@@ -569,9 +574,12 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               </>
             }
             end={<span className="flex min-w-0 items-center gap-2 truncate">{status}</span>} />
+          <NleMeter clock={tln.clock} />
           </div>
         } />
 
+      {sound && "normalize" in sound && <NormalizeDialog tl={tl} keys={sound.normalize} onCommit={commit} onClose={() => setSound(null)} />}
+      {sound && "duck" in sound && <LowerUnderVoiceDialog tl={tl} track={sound.duck} onCommit={commit} onClose={() => setSound(null)} />}
       {menu && (
         <div className="fixed inset-0 z-50" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
           <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 300) }}
@@ -584,6 +592,7 @@ export function NleEditor({ initial, resetKey, urlOf, onSave, saving, bin, readD
               ["Delete", "⌫", () => run("delete"), false],
               ["Ripple delete", "S", () => run("rippleDelete"), false],
               [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), !linked && sel.length < 2],
+              ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !soundKeys(tl, sel).length],
             ] as const).map(([l, key, fn, off]) => (
               <button key={l} type="button" role="menuitem" disabled={off} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
                 <span>{l}</span><span className="text-zinc-500">{key}</span>

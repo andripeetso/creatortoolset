@@ -2,6 +2,7 @@ import {
   blade, clipAt, clipsFrom, closeGap, copyOf, duplicate, endOf, find, lengthOf, lengthTo, move, paste, remove, rippleToPlayhead, setItems,
   setMark, setTrack, type Gap, type Marks, type NleItem, type NleTimeline, type PlaceMode,
 } from "./model";
+import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans } from "./loudness";
 
 // Every edit that can be made to an open timeline, by id: the keys (keys.ts), the menus and the chat's nle_run all run
 // these (keys.ts commandOfKey), so a key and the chat do the same thing. A command is pure: the editor's state in, the state after it out.
@@ -140,6 +141,26 @@ const LIST: NleCommand[] = [
   cmd("move", "Move the picked clips (and their linked clips) later, or earlier with a minus", picked, (s, p) => ({ ...s, tl: move(s.tl, s.sel, framesOf(s, p)) }), {
     frames: { type: "number", about: "frames later (minus: earlier)", optional: true },
     seconds: seconds("or seconds", true),
+  }),
+  // sound (loudness.ts): from what the page has measured (its menus measure first); a clip not measured is left as it is
+  cmd("normalize", "Normalize Audio Levels: the picked sound clips to a loudness", (s) => soundKeys(s.tl, s.sel).some((k) => measured.has(find(s.tl, k)!.item.src)),
+    (s, p) => ({ ...s, tl: normalize(s.tl, s.sel, p.target ?? normTarget(find(s.tl, soundKeys(s.tl, s.sel)[0]!)!.track), p.relative === 1) }), {
+      target: { type: "number", about: "LUFS (A1 -15, A4 -30, else -14)", optional: true },
+      relative: { type: "number", about: "1: one gain for all, kept level with each other", optional: true },
+    }),
+  cmd("lowerUnderVoice", "Lower Under Voice: a sound track's clips come down where A1 speaks, as volume keys", any, (s, p) => {
+    const track = `A${p.track}`;
+    if (track === "A1") throw new Error("A1 is the voice: lower another sound track under it");
+    if (!s.tl.tracks[track]?.items.length) throw new Error(`${track} has no clips`);
+    const spans = speechSpans(s.tl);
+    // the speech is read by the track menu's Lower Under Voice…, which measures first; the chat never writes keys without it
+    if (!spans.length) throw new Error("No speech on A1 is known yet: use Lower Under Voice… on the track's menu, which reads it first");
+    return { ...s, tl: lowerUnderVoice(s.tl, track, spans, { amount: -Math.abs(p.amount ?? DUCK.amount), attackMs: p.attack ?? DUCK.attackMs, releaseMs: p.release ?? DUCK.releaseMs }) };
+  }, {
+    track: { type: "number", about: "the sound track's number (4 = A4)" },
+    amount: { type: "number", about: "dB down (12)", optional: true },
+    attack: { type: "number", about: "ms to come down (150)", optional: true },
+    release: { type: "number", about: "ms to come back up (400)", optional: true },
   }),
   cmd("setLength", "Set the timeline's length: V1's last shot and its voice run on to it, or everything past it is cut", any,
     (s, p) => ({ ...s, tl: lengthTo(s.tl, Math.max(1, Math.round(p.seconds * fpsOf(s)))) }), { seconds: seconds("the new length in seconds") }),

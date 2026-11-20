@@ -577,6 +577,14 @@ editorApp.post("/:id/drafts/:name/clips", async (c) => {
   return c.json({ view: draftView(tl, wordsFor(tl)), key: `${track}:${rec}` }, 201);
 });
 
+/** The editor's sources' sound for Normalize and Lower Under Voice (sound.ts): `sources` are library version ids. */
+editorApp.post("/sound", async (c) => {
+  const b = await body(c);
+  const ids = Array.isArray(b.sources) ? b.sources.filter((x): x is string => typeof x === "string") : [];
+  if (!ids.length) return c.json({ error: "sources is a list of clip ids", code: "invalid" }, 400);
+  return c.json(await (await import("./sound")).soundOf(c.get("user").username, ids));
+});
+
 /**
  * A version's draft with its checks, run against the edit's other drafts as they are now; `view`, the draft as an editable
  * timeline (what /cut's edits name without a Review version), and `filed`, the Review version that is exactly this draft.

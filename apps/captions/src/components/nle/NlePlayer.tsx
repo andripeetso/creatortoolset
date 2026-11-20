@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { readSound } from "@/lib/synced-sound";
-import { fadePoints, isSoundFile, nleAudio, runningAudio, type NleClock } from "@/lib/nle/audio";
+import { fadePoints, isSoundFile, nleAudio, nleOut, runningAudio, type NleClock } from "@/lib/nle/audio";
 import { lengthOf, type NleItem, type NleTimeline } from "@/lib/nle/model";
 import { chains, drawScale, envPoints, keyed, keyOf, pickSlot, picturesAt, picturesSoon, placement, plainVideo, soundPieces, sourceTime, spanOf, steer, type SoundPiece } from "@/lib/nle/picture";
 import { localFileState, pathLine } from "@/lib/local-files";
@@ -561,7 +561,7 @@ function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => N
           src.playbackRate.value = p.speed * clock.rate;
           const g = ctx.createGain();
           ramp(g, p, clock.engineTimeOf(p.at), late);
-          src.connect(g).connect(ctx.destination);
+          src.connect(g).connect(nleOut(ctx));
           src.start(Math.max(ctx.currentTime, clock.engineTimeOf(p.at + late)), offset, Math.min(dur, buf.duration - offset));
           nodes.push({ stop: () => src.stop(), disconnect: () => (src.disconnect(), g.disconnect()) });
         }, () => {});
@@ -586,7 +586,7 @@ function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => N
         const el = Object.assign(new Audio(), { crossOrigin: "anonymous", preload: "auto", preservesPitch: true });
         el.src = p.url;
         const gain = ctx.createGain();
-        ctx.createMediaElementSource(el).connect(gain).connect(ctx.destination);
+        ctx.createMediaElementSource(el).connect(gain).connect(nleOut(ctx));
         voices.push((v = { el, url: p.url, owner: p.owner, used: tick, gain, piece: "", laid: -1 }));
       } else return null;
       if (v.owner !== p.owner) Object.assign(v, { owner: p.owner, piece: "" });
