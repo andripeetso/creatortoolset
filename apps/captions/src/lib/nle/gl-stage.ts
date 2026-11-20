@@ -257,7 +257,9 @@ export type GlPainter = Painter & {
 /** The stage, or null where WebGL 2 is not to be had. */
 export function glStage(): GlStage | null {
   const canvas = document.createElement("canvas");
-  const gl = canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
+  // the drawn frame is kept between draws, so a read later (Design on This Frame copies the viewer's canvas) gets the
+  // picture, not a blank: the canvas is only the viewer's size, so keeping it costs about nothing
+  const gl = canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true });
   // (a test's stand-in context is not one)
   if (!gl || typeof WebGL2RenderingContext === "undefined" || !(gl instanceof WebGL2RenderingContext)) return null;
   const compile = (vs: string, fs: string) => {
