@@ -213,6 +213,21 @@ export function Stage({
   const here = fr[at];
   const picked = page ? page.layers.filter((l) => selected.includes(l.id)) : [];
   const typed = page?.layers.find((l): l is TextLayer => l.id === editing && l.type === "text");
+  // Escape with the words being typed and focus on the style panel ends the typing through the words' own finish (saved,
+  // or the layer gone when they were taken out whole); the text stays picked. Ahead of the page's canvas keys, which would
+  // pick nothing. Escape in the words themselves, a field, a menu or a dialog is theirs.
+  const typedId = typed?.id;
+  useEffect(() => {
+    if (!typedId) return;
+    const end = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || (e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable],[role="menu"],[role="dialog"]'))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      typing.current?.end();
+    };
+    window.addEventListener("keydown", end, true);
+    return () => window.removeEventListener("keydown", end, true);
+  }, [typedId]);
   // the words being typed are set at the size they are drawn at (their own, or the one they shrank to)
   const typedAs = typed ? { ...typed, size: textSize(typed) } : typed;
   const cropped = page?.layers.find((l): l is ImageLayer => l.id === cropping && l.type === "image");

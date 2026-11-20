@@ -359,6 +359,10 @@ function DesignPage({ id }: { id: string }) {
     setShaping((s) => (s && ids.length === 1 && ids[0] === s.id ? s : null));
     setError(null);
   }, []);
+  // the words being typed taken away (by the assistant, another window, ⌘Z): the typing ends, so its keys are the canvas's again
+  useEffect(() => {
+    if (editing && !base?.layers.some((l) => l.id === editing)) setEditing(null);
+  }, [editing, base]);
   // the picked frame by its id: a change that takes it away (a loose piece left empty, ⌘Z, a write from elsewhere) never
   // lets `at` and the picked ids land on another frame's layers (new loose layers are l1… like a frame's first ones)
   const pickedOn = useRef<{ at: number; selected: string[]; id?: string }>({ at, selected });
