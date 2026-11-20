@@ -234,10 +234,10 @@ describe("designs: an AI that designs", () => {
     expect(sized.body.notes[0]).toContain('A size that is neither a format');
     const copies = sized.body.design.pages.filter((p) => sized.body.touched.includes(p.id));
     expect(copies.map((p) => [p.name, p.x, p.y, p.w, p.h])).toEqual([
-      ["Frame 1 Vertical cover 9:16", 0, 1470, 1080, 1920],
-      ["Frame 2 Vertical cover 9:16", 1200, 1470, 1080, 1920],
-      ["Frame 1 Wide", 0, 3510, 1600, 900],
-      ["Frame 2 Wide", 1200, 3510, 1600, 900],
+      ["Frame 1 Vertical cover 9:16", 0, 1590, 1080, 1920],
+      ["Frame 2 Vertical cover 9:16", 1200, 1590, 1080, 1920],
+      ["Frame 1 Wide", 0, 3750, 1600, 900],
+      ["Frame 2 Wide", 1200, 3750, 1600, 900],
     ]);
     // the ground stretches over the cover, the badge keeps its corner, the words their size
     expect(copies[0]!.layers.map((l) => [l.x, l.y, l.w, l.h])).toEqual([[0, 0, 1080, 1920], [90, (550 * 1920) / 1350 - 150, 900, 300], [900, 1740, 120, 120]].map((r) => r.map((n) => Math.round(n * 100) / 100)));

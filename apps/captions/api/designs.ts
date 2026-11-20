@@ -545,6 +545,8 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw): Promis
   let right = Math.max(0, ...there.map((p) => (p.x ?? 0) + (p.w ?? d.width)));
   const made: DesignPage[] = [];
   let room = DESIGN_LIMITS.pages - there.length;
+  // copies under each other are twice as far apart as side by side: each frame's name sits above it
+  const below = 2 * DESIGN_GAP;
   const ids = new Set(now.pages.map((p) => p.id));
   const fresh = () => {
     let id = "";
@@ -564,10 +566,10 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw): Promis
   if (sizes) {
     const asked = Array.isArray(sizes.frames) ? sizes.frames.map(String) : null;
     const from = asked ? asked.flatMap((id) => frames.find((p) => p.id === id) ?? (notes.push(`There is no frame ${id}: this design's are ${frames.map((p) => p.id).join(", ")}`), [])) : frames;
-    let y = bottom + DESIGN_GAP;
+    let y = bottom + below;
     for (const size of sizesOf(sizes.to, notes)) {
       for (const p of from) if (!full) full = !add({ ...sizedCopy(p, size, fresh(), `${label(p)} ${size.name}`.slice(0, DESIGN_LIMITS.layerName)), x: p.x, y });
-      y += size.h + DESIGN_GAP;
+      y += size.h + below;
     }
     if (!from.length || !sizes.to) notes.push('"sizes" takes "to": the sizes, and "frames": the frames to copy (all without it)');
   }
@@ -591,7 +593,7 @@ async function copiesForAi(user: AuthVars["user"], d: Design, body: Raw): Promis
         for (const size of asked) {
           if (full) break;
           full = !add({ ...sizedCopy(filled, size, fresh(), `${name}${size.name ? ` ${size.name}` : ""}`.slice(0, DESIGN_LIMITS.layerName)), x, y });
-          y += size.h + gap;
+          y += size.h + 2 * gap;
         }
         right = x + Math.max(...asked.map((s) => s.w));
       }
