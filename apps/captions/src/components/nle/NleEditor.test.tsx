@@ -7,7 +7,8 @@ import type { NleAsk } from "@/lib/editor";
 import { useWorkPrefs } from "@/lib/setup";
 import { lengthOf, withKeys, type NleTimeline } from "@/lib/nle/model";
 import { setAutosaveStore, type Ring } from "@/lib/nle/autosave";
-import type { NleControl } from "./NleEditor";
+import type { NleControl, NleFoot } from "./NleEditor";
+import { useChatMode } from "@/lib/chat-mode";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -131,6 +132,65 @@ describe("the chat's editor commands on the page", () => {
     expect(p.length()).toBe(0);
     await key("z", { metaKey: true, code: "KeyZ" });
     expect(p.length()).toBe(75);
+    p.done();
+  });
+});
+
+describe("beside the chats (chat mode)", () => {
+  // the shot with an empty V2 and A2 above and below it
+  const spare = withKeys({ ...tl, tracks: { ...tl.tracks, V2: { items: [] }, A2: { items: [] } } } as unknown as NleTimeline);
+  const heads = (host: Element) => [...host.querySelectorAll("[data-head] span.font-mono")].map((e) => e.textContent);
+  const shows = (host: Element, label: string) => !host.querySelector(`section[aria-label="${label}"]`)!.parentElement!.className.includes("hidden");
+  afterEach(() => {
+    useChatMode.setState({ on: false, shown: false });
+    localStorage.clear();
+  });
+
+  it("gives the viewer the room: panels hidden, empty tracks and rarer tools left out, the page's bar and foot; All editing tools brings them, kept apart from outside chat mode", async () => {
+    localStorage.setItem("ct-nle-panels", JSON.stringify({ media: true, inspector: false }));
+    useChatMode.setState({ on: true, shown: true });
+    const foots: NleFoot[] = [];
+    const p = await mount(spare, { bin: <div />, bar: <span>Draft 2</span>, foot: (f) => (foots.push(f), <p>{f.changes} by you</p>) });
+    expect(p.host.querySelector('[role="toolbar"][aria-label="Editor"]')?.textContent).toContain("Draft 2");
+    expect(shows(p.host, "Inspector")).toBe(false);
+    expect(heads(p.host)).toEqual(["V1", "A1"]);
+    expect(p.host.querySelector('[aria-label="Trim"]')).toBeNull();
+    expect(p.host.textContent).toContain("0 by you");
+    await key("a", { metaKey: true, code: "KeyA" });
+    await key("Backspace", { code: "Backspace" });
+    expect(foots.at(-1)).toMatchObject({ changes: 1, dirty: true });
+
+    const all = [...p.host.querySelectorAll("button")].find((b) => b.textContent === "All editing tools")!;
+    expect(all.getAttribute("aria-pressed")).toBe("false");
+    act(() => all.click());
+    expect(all.getAttribute("aria-pressed")).toBe("true");
+    expect(shows(p.host, "Inspector")).toBe(true);
+    expect(heads(p.host)).toEqual(["V2", "V1", "A1", "A2"]);
+    expect(p.host.querySelector('[aria-label="Trim"]')).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem("ct-nle-panels-chat")!)).toEqual({ media: true, inspector: true });
+    // outside chat mode as it was: its own panels, no foot
+    act(() => useChatMode.setState({ on: false, shown: false }));
+    await flush();
+    expect(JSON.parse(localStorage.getItem("ct-nle-panels")!)).toEqual({ media: true, inspector: false });
+    expect(shows(p.host, "Inspector")).toBe(false);
+    expect(p.host.textContent).not.toContain("by you");
+    p.done();
+  });
+
+  it("the foot's save keeps the timeline and says so; with nothing changed it is done at once", async () => {
+    useChatMode.setState({ on: true, shown: true });
+    const onSave = vi.fn(async () => {});
+    let last: NleFoot | null = null;
+    const p = await mount(tl, { onSave, foot: (f) => ((last = f), null) });
+    expect(await last!.save()).toBe(true);
+    expect(onSave).not.toHaveBeenCalled();
+    await key("a", { metaKey: true, code: "KeyA" });
+    await key("Backspace", { code: "Backspace" });
+    let ok = false;
+    await act(async () => void (ok = await last!.save()));
+    expect(ok).toBe(true);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(last!.dirty).toBe(false);
     p.done();
   });
 });

@@ -21,6 +21,11 @@ export const belowHd = (w?: number, h?: number) =>
     ? `This video is ${w}×${h}, below 1080p: not sent. Caption a full-size file.`
     : null;
 
+/** A finished cut's name in Finals: the draft mark goes, the version letter stays ("Talk_B_D2.mp4" → "Talk_B.mp4",
+ *  "Talk_D3" → "Talk"). Names from before that rule ("Talk_V2A_D1") are kept as they are. */
+export const finalsItemName = (name: string) =>
+  /_V\d+[A-Z]_D\d+(\.\w+)?$/.test(name) ? name : name.replace(/_D\d+(\.\w+)?$/, "$1");
+
 /** What a plug-in's guard is asked: the account, the library, the piece, the version and its size. */
 export interface FinalsAdd {
   owner: string;

@@ -39,7 +39,9 @@ export type Tool = "select" | "trim" | "blade" | "slide" | "stretch";
 /** what a right-click opened the editor's menu on: a clip (`cut`: the clip after the cut it was at), a gap, the ruler */
 export type MenuAt = { x: number; y: number; on?: "clip" | "gap" | "ruler" | "lane" | "viewer"; cut?: string | null };
 
-const LABEL_W = 152;
+const LABEL_FULL = 152;
+/** the smaller timeline's track heads: the track's name only */
+const LABEL_COMPACT = 44;
 const RULER_H = 30;
 const HEIGHT_KEY = "ct-nle-track-height";
 const LINKED_KEY = "ct-nle-linked-selection";
@@ -157,7 +159,7 @@ type Drag = {
 
 export const NleTracks = memo(function NleTracks({
   tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, onLowerUnderVoice, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
-  trans = null, onTrans, onMarker, lane, cached,
+  trans = null, onTrans, onMarker, lane, cached, compact = false,
 }: {
   tl: NleTimeline;
   /** the playhead at rest (a pause, a seek): a new one draws the timeline again */
@@ -201,7 +203,11 @@ export const NleTracks = memo(function NleTracks({
   lane?: { head: ReactNode; body: (pps: number) => ReactNode };
   /** the render bar: the V1 ranges [rec, len] a render takes from the render cache (lib/nle/cache.ts), green under the ruler */
   cached?: readonly (readonly [number, number])[];
+  /** smaller (the editor beside the chats): only the tracks with clips on them, slim heads with the track's name only,
+   *  no track height; every edit by mouse works as on the full one */
+  compact?: boolean;
 }) {
+  const LABEL_W = compact ? LABEL_COMPACT : LABEL_FULL;
   const gate = useContext(NleGate);
   const fps = tl.timeline.fps;
   const content = lengthOf(tl) / fps;
@@ -279,7 +285,11 @@ export const NleTracks = memo(function NleTracks({
   useEffect(() => keep(HEIGHTS_KEY, heights), [heights]);
   // the middle button drags the view, left and right and up and down
   const pan = useRef<{ x0: number; y0: number; left0: number; top0: number } | null>(null);
-  const order = trackOrder(tl);
+  const every = trackOrder(tl);
+  // a track a drag is emptying stays until the drop: the rows under the pointer never move mid-drag
+  const held = drag.current?.base ?? tl;
+  const used = every.filter((id) => tl.tracks[id].items.length || held.tracks[id]?.items.length);
+  const order = compact && used.length ? used : every;
   const picked = new Set(selected);
 
   const frameAt = (clientX: number) => {
@@ -650,10 +660,10 @@ export const NleTracks = memo(function NleTracks({
         <div className="ml-auto flex min-w-0 items-center gap-2">
           {end}
           <span className="h-4 w-px shrink-0 bg-zinc-700/70" />
-          <label className="flex shrink-0 items-center gap-1" title="Track height">
+          {!compact && <label className="flex shrink-0 items-center gap-1" title="Track height">
             <Rows3 className="size-3.5" />
             <input type="range" aria-label="Track height" min={0.7} max={2.5} step={0.05} value={scale} onChange={(e) => keepHeight(Number(e.target.value))} className={slider} />
-          </label>
+          </label>}
           <label className="flex shrink-0 items-center gap-1" title="Zoom (= and -, \ fits the clips)">
             <ZoomIn className="size-3.5" />
             <input type="range" aria-label="Timeline zoom" min={0} max={1000} step={1}
@@ -669,7 +679,7 @@ export const NleTracks = memo(function NleTracks({
         onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && scrubTo(e.clientX), className: "cursor-ew-resize",
         onContextMenu: (e) => { e.preventDefault(); onMenu({ x: e.clientX, y: e.clientY, on: "ruler" }, ""); },
       }}
-      rulerLabel={<span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead"><Timecode clock={clock} fps={fps} /></span>}
+      rulerLabel={compact ? null : <span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead"><Timecode clock={clock} fps={fps} /></span>}
       rulerChildren={
         <>
           {ticks.map((k) => (
@@ -734,10 +744,11 @@ export const NleTracks = memo(function NleTracks({
               <div className="flex items-center gap-0.5">
                 <span className="shrink-0 rounded-[3px] border border-[#b04848] bg-[#7a2c2c] px-1 font-mono text-[10px] leading-[14px] font-semibold text-white">{id}</span>
                 <span className="flex-1" />
-                {canDeleteTrack(tl, id) && (
+                {!compact && canDeleteTrack(tl, id) && (
                   <button type="button" aria-label={`Remove ${id}`} title={`Remove ${id} and its clips`} onClick={() => onCommit(deleteTrack(tl, id))}
                     className="hidden rounded p-0.5 text-zinc-500 group-hover/h:block hover:bg-zinc-800 hover:text-zinc-200"><X className="size-3" /></button>
                 )}
+                {!compact && (<>
                 <button type="button" aria-pressed={!!t.locked} aria-label={t.locked ? `Unlock ${id}` : `Lock ${id}`} title={t.locked ? "Locked" : "Unlocked"}
                   onClick={() => onTrack(id, { locked: t.locked ? undefined : true })}
                   className={cn("rounded p-0.5 hover:bg-zinc-800", t.locked ? "text-amber-400" : "text-zinc-500")}>
@@ -750,9 +761,10 @@ export const NleTracks = memo(function NleTracks({
                   className={cn("rounded p-0.5 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent", off ? "text-amber-400" : "text-zinc-500")}>
                   {v ? (off ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />) : off ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
                 </button>
+                </>)}
               </div>
-              {h >= 36 && <span className="truncate leading-3.5 text-zinc-300" title={t.name ?? id}>{t.name && t.name !== id ? t.name : `${v ? "Video" : "Audio"} ${trackNo(id)}`}</span>}
-              {h >= 52 && <span className="leading-3.5 text-zinc-500">{n} {n === 1 ? "Clip" : "Clips"}</span>}
+              {!compact && h >= 36 && <span className="truncate leading-3.5 text-zinc-300" title={t.name ?? id}>{t.name && t.name !== id ? t.name : `${v ? "Video" : "Audio"} ${trackNo(id)}`}</span>}
+              {!compact && h >= 52 && <span className="leading-3.5 text-zinc-500">{n} {n === 1 ? "Clip" : "Clips"}</span>}
               <span role="separator" aria-orientation="horizontal" aria-label={`${id} height`} title="Drag: this track's height · double click: back to the usual"
                 className="absolute inset-x-0 -bottom-px z-10 h-1.5 cursor-row-resize hover:bg-violet-400/60"
                 onPointerDown={(e) => {

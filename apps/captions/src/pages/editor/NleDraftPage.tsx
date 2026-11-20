@@ -149,6 +149,7 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
       <div className="flex min-h-0 flex-1 flex-col">
         {initial && draft ? (
           <NleEditor initial={initial} resetKey={`${id}/${name}`} urlOf={urlOf} onSave={save} control={control}
+            bar={<span className="truncate text-[13px] font-medium text-zinc-200">{title}</span>}
             renders={draft.renders ?? OLD_SERVER}
             rendered={filed ? { url: `/api/review/assets/${filed.assetId}/v/${filed.n}/play`, first: !!draft.timeline.plan } : null}
             readOnly={!editable}
