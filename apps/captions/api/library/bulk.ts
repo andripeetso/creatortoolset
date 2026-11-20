@@ -93,8 +93,8 @@ bulkApp.post("/:id/jobs", async (c) => {
   const asked = Array.isArray(b?.assetIds) ? b.assetIds.filter((x): x is string => typeof x === "string").slice(0, MAX_IDS) : null;
   const rows = (
     asked
-      ? asked.map((id) => db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(id, libraryId))
-      : db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE library_id = ? AND trashed_at IS NULL").all(libraryId)
+      ? asked.map((id) => db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").get(id, libraryId))
+      : db().prepare("SELECT id, kind, current_version_id AS v FROM assets WHERE library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NULL").all(libraryId)
   ).filter(Boolean) as { id: string; kind: string; v: string | null }[];
   // described again: what the person's own tags mean is learned first, so this pass already knows (learn.ts)
   if (b?.count !== true && kinds.includes("describe")) await learnAll(db(), libraryId, user.username).catch(() => 0);

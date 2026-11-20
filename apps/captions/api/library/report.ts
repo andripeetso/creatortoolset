@@ -15,7 +15,7 @@ import { accountOf, ensureLibrary, librariesHere, libraryChanged, servedByPlugin
 import { blursFaces, libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
-import { setTrashedAt, trashHeld } from "./trash";
+import { setTrashedAt, showHidden, trashHeld } from "./trash";
 import { indexOnMac, patchFilmed, type Filmed, type OnMacIndex } from "./on-mac";
 import { organizeOf } from "./organize";
 import { reshoot } from "./shoots";
@@ -127,6 +127,7 @@ export function parseReportFolders(v: unknown): ReportFolder[] {
       ...(typeof o.disk === "string" ? { disk: o.disk.slice(0, 200) } : {}),
       ...(typeof o.scan === "string" ? { scan: o.scan.slice(0, 80) } : {}),
       ...(o.complete === true ? { complete: true } : {}),
+      ...(Number.isSafeInteger(o.page) && (o.page as number) >= 0 ? { page: o.page as number } : {}),
       files,
       unreadable: (Array.isArray(o.unreadable) ? o.unreadable : []).filter(okFolderPath).slice(0, 200).map(nfc),
     });
@@ -137,8 +138,17 @@ export function parseReportFolders(v: unknown): ReportFolder[] {
 /** When each running listing started on this server, by computer, folder and scan id (listing_starts, schema.ts: kept
  *  through a restart): its last page marks the rows it did not name gone only when its first page was seen here. */
 const scanStart = {
-  begin: (key: string, now: number) => db().prepare("INSERT OR IGNORE INTO listing_starts (key, at) VALUES (?, ?)").run(key, now),
+  /** a page came: the listing's start (its first page here) and, when numbered, which pages came */
+  begin: (key: string, now: number, page?: number) => {
+    db().prepare("INSERT OR IGNORE INTO listing_starts (key, at) VALUES (?, ?)").run(key, now);
+    if (page !== undefined) db().prepare("UPDATE listing_starts SET pages = json_insert(pages, '$[#]', ?) WHERE key = ?").run(page, key);
+  },
   of: (key: string) => (db().prepare("SELECT at FROM listing_starts WHERE key = ?").get(key) as { at: number } | undefined)?.at,
+  /** every page from 0 to `last` came */
+  whole: (key: string, last: number) => {
+    const got = new Set(JSON.parse((db().prepare("SELECT pages FROM listing_starts WHERE key = ?").get(key) as { pages: string } | undefined)?.pages ?? "[]") as number[]);
+    return Array.from({ length: last + 1 }, (_, i) => i).every((i) => got.has(i));
+  },
   // done, and any listing never finished a week on
   end: (key: string, now: number) => db().prepare("DELETE FROM listing_starts WHERE key = ? OR at < ?").run(key, now - 7 * 86_400_000),
 };
@@ -239,7 +249,7 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string, 
 const heldSaid = new Set<string>();
 
 /** A clip kept: shown again where it was hidden while it waited (left_hidden_at, schema.ts). */
-export const showLeft = (id: string) => db().prepare("UPDATE assets SET left_hidden_at = NULL, left_hidden_on = NULL WHERE id = ? AND left_hidden_at IS NOT NULL").run(id);
+export const showLeft = showHidden;
 
 /**
  * The clips waiting on computer `device` (leftWaiting) after a report. Computers no longer paired drop theirs. A clip
@@ -268,11 +278,13 @@ export const SILENT_MS = 14 * 86_400_000;
 /**
  * Clips hidden while they waited on a computer that has sent no report for SILENT_MS (its last seen time; one no longer
  * paired from when it was first missed here, left_gone_computers): settled as gone, into the trash (never deleted; the
- * Library status names the computer, left_trashed_from), unless held in Review or by a share link (shown again). Run
- * from every report and every watch pass. Returns the libraries changed.
+ * Library status names the computer, left_trashed_from), unless a copy of it is known elsewhere (placesThatCount, `media`
+ * the lists) or it is held in Review or by a share link: shown again. Run from every report and every watch pass.
+ * Returns the libraries changed.
  */
-export function settleSilent(now: number): string[] {
+export function settleSilent(now: number, media: StorageFolder[] = []): string[] {
   const d = db();
+  const known = placesThatCount(["verified", "found"]);
   const hidden = d
     .prepare("SELECT id, library_id, left_hidden_on AS device FROM assets WHERE left_hidden_at IS NOT NULL AND trashed_at IS NULL AND left_hidden_on IS NOT NULL")
     .all() as { id: string; library_id: string; device: string }[];
@@ -280,10 +292,12 @@ export function settleSilent(now: number): string[] {
   for (const h of hidden) {
     const dev = deviceOf(h.device);
     if (!dev) d.prepare("INSERT OR IGNORE INTO left_gone_computers (device, since) VALUES (?, ?)").run(h.device, now);
+    else d.prepare("DELETE FROM left_gone_computers WHERE device = ?").run(h.device);
     const since = dev ? (dev.lastSeen ?? dev.createdAt) : (d.prepare("SELECT since FROM left_gone_computers WHERE device = ?").get(h.device) as { since: number }).since;
     if (now - since < SILENT_MS) continue;
     for (const w of leftWaiting.values()) w.delete(h.id);
-    if (trashHeld(h.id, now)) showLeft(h.id);
+    // a copy known elsewhere (another computer, an upload found again): shown, never trashed
+    if (known(h.id, media) || trashHeld(h.id, now)) showLeft(h.id);
     else {
       setTrashedAt(h.id, now);
       d.prepare("UPDATE assets SET left_trashed_from = ? WHERE id = ?").run(dev?.name ?? "a computer no longer paired", h.id);
@@ -306,10 +320,14 @@ function hideLeft(device: string, now: number, media: StorageFolder[]): string[]
   const show = d.prepare("UPDATE assets SET left_hidden_at = NULL, left_hidden_on = NULL WHERE id = ? AND left_hidden_at IS NOT NULL");
   const libOf = d.prepare("SELECT library_id FROM assets WHERE id = ?");
   const changed: string[] = [];
-  for (const id of leftWaiting.get(device)?.keys() ?? []) {
-    const r = known(id, media) ? show.run(id) : hide.run(now, device, id);
+  const note = (id: string, r: { changes: number | bigint }) => {
     if (Number(r.changes)) changed.push((libOf.get(id) as { library_id: string }).library_id);
-  }
+  };
+  const waiting = leftWaiting.get(device);
+  for (const id of waiting?.keys() ?? []) note(id, known(id, media) ? show.run(id) : hide.run(now, device, id));
+  // every other clip hidden (on another computer, by the watch): a copy known now, verified anywhere, shows it at once
+  for (const { id } of d.prepare("SELECT id FROM assets WHERE left_hidden_at IS NOT NULL AND trashed_at IS NULL").all() as { id: string }[])
+    if (!waiting?.has(id) && known(id, media)) note(id, show.run(id));
   return changed;
 }
 
@@ -380,7 +398,7 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
     libs.forEach((l) => touched.add(l));
   } else {
     const key = `${device}|${folder.id}|${r.scan ?? ""}`;
-    if (r.scan) scanStart.begin(key, now);
+    if (r.scan) scanStart.begin(key, now, r.page);
     // only files inside the folder (its own path on this computer, or inside its container)
     const placed = (r.files ?? []).flatMap((f) => {
       const rel = inside(f.path, folder.origin.path) ?? (folder.mountPath ? inside(f.path, folder.mountPath) : null);
@@ -466,8 +484,11 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         .run(now, device, folder.id, dir, dir, dir);
     }
     const start = r.scan ? scanStart.of(key) : undefined;
+    // whole: a report of no listing, or a numbered listing all of whose pages came. A listing with a page lost marks
+    // nothing gone (what was on that page was not looked at); one from a computer that numbers no pages marks as before
+    const whole = !r.scan || (r.complete === true && start !== undefined && r.page !== undefined && scanStart.whole(key, r.page));
     if (r.complete) editorSeen.delete(key);
-    if (r.complete && start !== undefined) {
+    if (r.complete && start !== undefined && (r.page === undefined || whole)) {
       const gone = d
         // only in the libraries the folder fills now: a row of a library it no longer fills was not looked for, not gone
         .prepare(
@@ -477,8 +498,8 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
         )
         .run(now, device, folder.id, start, inLibs);
       if (Number(gone.changes)) libs.forEach((l) => touched.add(l));
-      scanStart.end(key, now);
     }
+    if (r.complete && start !== undefined) scanStart.end(key, now);
     // a page of no listing, or the last page of one: its clips found only where they are not footage leave once the whole
     // report is read (applyReport), so a copy in a later folder of it keeps the clip; one waiting for the computer's
     // folders (moved in) leaves only from there
@@ -486,8 +507,9 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       const waiting = leftWaiting.get(device);
       for (const a of left) if (!waiting?.has(a)) settle.add(a);
       leftSeen.delete(key);
-      // a paged listing whose first page this server never saw (a restart in between) is no whole listing
-      listed.set(`${device}|${folder.id}`, start ?? (r.scan ? -1 : now));
+      // only a whole listing reads the folder for Folders left out: one with a page lost, or from a computer that
+      // numbers no pages, never settles a clip waiting on it
+      if (whole) listed.set(`${device}|${folder.id}`, start ?? now);
     } else if (left.size) leftSeen.set(key, left);
   }
   const was = folder.folderState;
@@ -533,7 +555,7 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     if (lib) touched.add(lib.library_id);
   }
   for (const l of hideLeft(dev.id, now, media)) touched.add(l);
-  for (const l of settleSilent(now)) touched.add(l);
+  for (const l of settleSilent(now, media)) touched.add(l);
   for (const l of touched) libraryChanged(l);
   return { ok: true, index, ...(filmed?.length ? { filmed } : {}) };
 }

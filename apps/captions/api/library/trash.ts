@@ -39,6 +39,11 @@ export function trashHeld(assetId: string, now = Date.now()): string | null {
   return shared ? "behind a share link" : null;
 }
 
+/** A clip found again outside a folder left out (the same file added, uploaded or read where it is): shown again where it
+ *  was hidden while it waited (report.ts hideLeft). */
+export const showHidden = (assetId: string) =>
+  libraryDb().prepare("UPDATE assets SET left_hidden_at = NULL, left_hidden_on = NULL WHERE id = ? AND left_hidden_at IS NOT NULL").run(assetId);
+
 /** Moves an asset into the library's trash (`at` a time) or back out (null): the one writer of assets.trashed_at
  *  besides Empty trash. */
 export function setTrashedAt(assetId: string, at: number | null): void {

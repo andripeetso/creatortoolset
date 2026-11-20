@@ -483,6 +483,8 @@ export interface LibraryStatus {
   stages: (Omit<LibraryStage, "now"> & { open: number })[];
   /** clips from a folder left out that went to the trash because the computer they waited on stopped reporting */
   leftOut?: { computer: string; clips: number }[];
+  /** clips from a folder left out hidden while a folder on that computer is unread (they wait to be kept or trashed) */
+  hidden?: { computer: string; clips: number }[];
 }
 
 export interface LibrarySummary {

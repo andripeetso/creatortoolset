@@ -14,7 +14,8 @@ delete process.env.CT_LOCAL;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const { createUser } = await import("../users");
-const { applyReport, forgetOnRestart, indexForDevice, librariesOf, MOVED_IN } = await import("./report");
+const { applyReport, forgetOnRestart, indexForDevice, librariesOf, MOVED_IN, settleSilent } = await import("./report");
+const { indexOnMac } = await import("./on-mac");
 const { searchApp } = await import("./search");
 const { libraryDb } = await import("./db");
 const { buildAssetQuery, indexAsset } = await import("./query");
@@ -43,10 +44,15 @@ function computer(name: string) {
   const ids = { A: `${name}-a`, B: `${name}-b`, C: `${name}-c` };
   const roots = { A: `${root}/A`, B: `${root}/B`, C: `${root}/C` };
   const list = (at: keyof typeof ids, files: File[]) =>
-    applyReport(mac, [{ id: ids[at], state: "ok", scan: `s${++n}`, complete: true, files: files.map((f) => ({ path: `${roots[at]}/${f.rel}`, bytes: 10, mtime: 1, quick: quick(f.q) })), unreadable: [] }], (t += 1000));
+    applyReport(mac, [{ id: ids[at], state: "ok", scan: `s${++n}`, complete: true, page: 0, files: files.map((f) => ({ path: `${roots[at]}/${f.rel}`, bytes: 10, mtime: 1, quick: quick(f.q) })), unreadable: [] }], (t += 1000));
   const away = (at: keyof typeof ids) => applyReport(mac, [{ id: ids[at], state: "disk_away", files: [], unreadable: [] }], (t += 1000));
-  const page = (at: keyof typeof ids, scan: string, complete: boolean, files: File[]) =>
-    applyReport(mac, [{ id: ids[at], state: "ok", scan, complete, files: files.map((f) => ({ path: `${roots[at]}/${f.rel}`, bytes: 10, mtime: 1, quick: quick(f.q) })), unreadable: [] }], (t += 1000));
+  /** one page of a listing: `num` its number (none: a computer that numbers no pages), `unreadable` what it could not read */
+  const page = (at: keyof typeof ids, scan: string, complete: boolean, files: File[], num?: number, unreadable: string[] = []) =>
+    applyReport(
+      mac,
+      [{ id: ids[at], state: "ok", scan, complete, ...(num !== undefined ? { page: num } : {}), files: files.map((f) => ({ path: `${roots[at]}/${f.rel}`, bytes: 10, mtime: 1, quick: quick(f.q) })), unreadable: unreadable.map((u) => `${roots[at]}/${u}`) }],
+      (t += 1000),
+    );
   const index = async (at: keyof typeof ids, rel: string, q: number) =>
     ((await indexForDevice(mac, ids[at], onMac(roots[at], rel, q))) as { versions: { library: string; versionId: string }[] }).versions[0]!;
   const setUp = () =>
@@ -216,11 +222,11 @@ describe("a paged listing cut by a restart", () => {
 
   it("never counts as a whole listing of its folder", async () => {
     await m.index("C", "x.mov", 750);
-    await m.page("B", "pg", false, [{ rel: "early/other.mov", q: 751 }]);
+    await m.page("B", "pg", false, [{ rel: "early/other.mov", q: 751 }], 0);
     forgetOnRestart();
     // the original moved into the part of B already read, a copy into A's Private
     await m.list("A", [{ rel: "Private/x.mov", q: 750 }]);
-    await m.page("B", "pg", true, [{ rel: "late/other.mov", q: 752 }]);
+    await m.page("B", "pg", true, [{ rel: "late/other.mov", q: 752 }], 1);
     await m.list("C", []);
     expect(trashed(750)).toBe(false);
   });
@@ -318,5 +324,112 @@ describe("a computer that stops reporting (silent for 14 days: treated as gone)"
     await u.list("B", [{ rel: "u.mov", q: 791 }]);
     expect([trashed(791), hidden(791)]).toEqual([false, false]);
     expect(libraryStatus(clip(791).library_id).leftOut?.find((x) => x.computer === "Tiny Mac U")).toBeUndefined();
+  });
+});
+
+describe("a listing with a page lost never counts as whole", () => {
+  // x in A/Day with a copy in A/Private: it waits; a later listing of A loses a page, then B and C are read
+  const run = async (name: string, q: number, second: (m: ReturnType<typeof computer>) => Promise<unknown>) => {
+    const m = computer(name);
+    await m.setUp();
+    await m.index("A", "Day/x.mov", q);
+    await m.list("A", [{ rel: "Day/x.mov", q }, { rel: "Private/x.mov", q }]);
+    await m.list("B", []);
+    await m.list("C", []);
+    expect(trashed(q)).toBe(false);
+    await second(m);
+    await m.list("B", []);
+    await m.list("C", []);
+    expect(trashed(q)).toBe(false);
+    // the next whole listing finds the file where it was
+    await m.list("A", [{ rel: "Day/x.mov", q }, { rel: "Private/x.mov", q }]);
+    await m.list("B", []);
+    await m.list("C", []);
+    expect([trashed(q), hidden(q)]).toEqual([false, false]);
+  };
+
+  it("a lost middle page: the clip is never trashed", async () => {
+    await run("Tiny Mac L1", 800, async (m) => {
+      await m.page("A", "lost-mid", false, [{ rel: "Private/x.mov", q: 800 }], 0);
+      // page 1, which held Day/x.mov, never came
+      await m.page("A", "lost-mid", true, [{ rel: "Zed/z.mov", q: 801 }], 2);
+    });
+  });
+
+  it("a lost first page carrying what could not be read: the clip is never trashed", async () => {
+    await run("Tiny Mac L2", 802, async (m) => {
+      // page 0 (Day/x.mov, and the folders it could not read) never came
+      await m.page("A", "lost-first", true, [{ rel: "Private/x.mov", q: 802 }], 1);
+    });
+  });
+
+  it("a computer that numbers no pages: its clips wait, never trashed", async () => {
+    await run("Tiny Mac L3", 803, async (m) => {
+      await m.page("A", "old-1", false, [{ rel: "Private/x.mov", q: 803 }]);
+      await m.page("A", "old-1", true, [{ rel: "Zed/z.mov", q: 804 }]);
+    });
+  });
+});
+
+describe("a hidden clip with a copy known elsewhere", () => {
+  const x = computer("Tiny Mac X2");
+  const y = computer("Tiny Mac Y2");
+  beforeAll(async () => {
+    await x.setUp();
+    await y.setUp();
+  });
+
+  it("is shown at once when another computer finds its copy, and never trashed when its own computer goes silent", async () => {
+    await x.index("A", "Day/z.mov", 810);
+    await x.away("B");
+    await x.list("A", [{ rel: "Private/z.mov", q: 810 }]);
+    expect(hidden(810)).toBe(true);
+    await y.list("B", [{ rel: "z.mov", q: 810 }]);
+    expect(hidden(810)).toBe(false);
+    await applyReport(y.mac, [], t + 15 * DAY);
+    expect([trashed(810), hidden(810)]).toEqual([false, false]);
+  });
+
+  it("a silent computer's hidden clip with a copy known elsewhere is shown, never trashed", async () => {
+    await x.index("A", "Day/k.mov", 811);
+    await x.away("B");
+    await x.list("A", [{ rel: "Private/k.mov", q: 811 }]);
+    expect(hidden(811)).toBe(true);
+    // a copy found without a report of its own (another computer's place, written directly)
+    d.prepare("INSERT INTO version_places (version_id, device, folder_id, path, bytes, confirmed_at, checked_at, state, source) VALUES (?, ?, ?, ?, 10, 0, 0, 'verified', 'scan')").run(
+      clip(811).version, y.mac.id, y.ids.C, `${y.roots.C}/k.mov`,
+    );
+    settleSilent(t + 15 * DAY);
+    expect([trashed(811), hidden(811)]).toEqual([false, false]);
+  });
+
+  it("the same file added again is the hidden clip, shown again: no 404", async () => {
+    const at = await x.index("A", "Day/dup.mov", 812);
+    await x.away("B");
+    await x.list("A", [{ rel: "Private/dup.mov", q: 812 }]);
+    expect(hidden(812)).toBe(true);
+    const c = clip(812);
+    expect((await app.request(`/api/library/${at.library}/assets/${c.id}`)).status).toBe(404);
+    const r = await indexOnMac(at.library, "tia", { ...onMac("/Users/tia/Desktop", "dup.mov", 812), device: x.mac.id });
+    expect(r).toEqual({ duplicateOf: c.id });
+    expect(hidden(812)).toBe(false);
+    expect((await app.request(`/api/library/${at.library}/assets/${c.id}`)).status).toBe(200);
+  });
+});
+
+describe("Library status: clips hidden while a folder is unread", () => {
+  it("names the computer and the count, no paths", async () => {
+    const h = computer("Tiny Mac H2");
+    await h.setUp();
+    await h.index("A", "Day/h1.mov", 820);
+    await h.index("A", "Day/h2.mov", 821);
+    await h.away("B");
+    await h.list("A", [{ rel: "Private/h1.mov", q: 820 }, { rel: "Private/h2.mov", q: 821 }]);
+    expect(libraryStatus(clip(820).library_id).hidden?.find((x) => x.computer === "Tiny Mac H2")).toEqual({ computer: "Tiny Mac H2", clips: 2 });
+    // the watch hides with no computer: under this server's name
+    d.prepare("UPDATE assets SET left_hidden_on = NULL WHERE id = ?").run(clip(821).id);
+    const lines = libraryStatus(clip(820).library_id).hidden ?? [];
+    expect(lines.find((x) => x.computer === "Tiny Mac H2")?.clips).toBe(1);
+    expect(lines.some((x) => x.computer === "this server" && x.clips >= 1)).toBe(true);
   });
 });

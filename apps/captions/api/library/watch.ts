@@ -14,6 +14,7 @@ import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
 import { copyFilesOn, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, settleSilent, showLeft } from "./report";
 import { pointSource } from "./locate";
+import { showHidden } from "./trash";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
@@ -652,10 +653,13 @@ async function ingest(libraryId: string, f: WatchFolder, file: string, size: num
     }
     const dup = db()
       .prepare(
-        `SELECT v.id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+        `SELECT v.id, v.asset_id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
          WHERE a.library_id = ? AND v.sha256 = ? ORDER BY a.trashed_at IS NOT NULL, v.state = 'missing' DESC, v.created_at LIMIT 1`,
       )
-      .get(libraryId, sha256) as { id: string; state: string; source_key: string; source_path: string | null } | undefined;
+      .get(libraryId, sha256) as { id: string; asset_id: string; state: string; source_key: string; source_path: string | null } | undefined;
+    // the same file read where it is (outside a left-out folder: filesIn and in-place keep those out): one hidden while it
+    // waited is here after all
+    if (dup) showHidden(dup.asset_id);
     // a referenced file gone from its path, here now (moved or renamed): it reads it here, and refreshMissing brings it back
     if (dup?.state === "missing" && dup.source_path && f.mode === "reference") await pointSource(dup.id, dup.source_key, file);
     // already in the library (a browser upload of it, the same file in another folder), or in its trash: it stays there

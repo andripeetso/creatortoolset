@@ -40,7 +40,7 @@ await changeStorage("tia", (st) => {
 const quick = (n: number) => n.toString(16).padStart(64, "0");
 let n = 0;
 const report = (folder: string, root: string, rels: string[]) =>
-  applyReport(mac, [{ id: folder, state: "ok", scan: `s${++n}`, complete: true, files: rels.map((rel, i) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(n * 100 + i) })), unreadable: [] }]);
+  applyReport(mac, [{ id: folder, state: "ok", scan: `s${++n}`, complete: true, page: 0, files: rels.map((rel, i) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(n * 100 + i) })), unreadable: [] }]);
 const onMac = (root: string, rel: string, q: number) => ({ name: path.basename(rel), path: `${root}/${rel}`, size: 10, quick: quick(q), frames: [] });
 
 describe("a Media folder's Folders left out", () => {
@@ -161,7 +161,7 @@ describe("every way a left-out file could come in or stay", () => {
   const asset = (q: number) =>
     libraryDb().prepare("SELECT a.id, a.library_id, a.trashed_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(q)) as { id: string; library_id: string; trashed_at: number | null };
   const scan = (folder: string, root: string, rels: string[], q: number) =>
-    applyReport(mac, [{ id: folder, state: "ok", scan: `r${++n}`, complete: true, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(q) })), unreadable: [] }]);
+    applyReport(mac, [{ id: folder, state: "ok", scan: `r${++n}`, complete: true, page: 0, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(q) })), unreadable: [] }]);
   const F1 = "/Volumes/Tiny Footage/F1";
   const F2 = "/Volumes/Tiny Footage/F2";
   const MB = pairDevice("tia", "Tiny Mac B").device;
@@ -269,9 +269,9 @@ describe("every way a left-out file could come in or stay", () => {
     await listOf("fold_f2", []);
     const t0 = Date.now();
     await indexForDevice(mac, "fold_f2", onMac(F2, "Day 1/a.mov", 612));
-    await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv1", complete: true, files: [{ path: `${F2}/Day 1/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 1000);
+    await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv1", complete: true, page: 0, files: [{ path: `${F2}/Day 1/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 1000);
     await listOf("fold_f2", ["Private"]);
-    await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv2", complete: true, files: [{ path: `${F2}/Day 1/Private/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 2000);
+    await applyReport(mac, [{ id: "fold_f2", state: "ok", scan: "mv2", complete: true, page: 0, files: [{ path: `${F2}/Day 1/Private/a.mov`, bytes: 10, mtime: 1, quick: quick(612) }], unreadable: [] }], t0 + 2000);
     // its old place went in that same listing: it waits for the computer's other Media folders to be read
     expect(asset(612).trashed_at).toBeNull();
     await listRest(t0 + 3000);
@@ -295,7 +295,7 @@ describe("every way a left-out file could come in or stay", () => {
     const t0 = Date.now();
     await indexForDevice(mac, "fold_f2", onMac(F2, "Day/mx.mov", 620));
     const list = (id: string, root: string, rels: string[], scan: string, at: number) =>
-      applyReport(mac, [{ id, state: "ok", scan, complete: true, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1, quick: quick(620) })), unreadable: [] }], at);
+      applyReport(mac, [{ id, state: "ok", scan, complete: true, page: 0, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1, quick: quick(620) })), unreadable: [] }], at);
     await list("fold_f2", F2, [], "mx-a", t0 + 1000);
     await list("fold_f1", F1, ["- NO SHARE/mx.mov"], "mx-b", t0 + 2000);
     // matched in a left-out folder: it waits for every Media folder of the Mac, hidden meanwhile
@@ -363,7 +363,7 @@ describe("a move between a computer's Media folders, read in separate reports", 
   const FB = "/Volumes/Tiny M/B";
   const at = (id: string, p: string, leaveOut?: string[]) => ({ ...row(id, p, leaveOut), origin: { host: MM.id, path: p } });
   const rep = (id: string, root: string, rels: string[], q: number, when: number) =>
-    applyReport(MM, [{ id, state: "ok", scan: `m${++n}`, complete: true, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1, quick: quick(q) })), unreadable: [] }], when);
+    applyReport(MM, [{ id, state: "ok", scan: `m${++n}`, complete: true, page: 0, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1, quick: quick(q) })), unreadable: [] }], when);
   const trashed = (q: number) =>
     (libraryDb().prepare("SELECT a.trashed_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(q)) as { trashed_at: number | null }).trashed_at !== null;
 

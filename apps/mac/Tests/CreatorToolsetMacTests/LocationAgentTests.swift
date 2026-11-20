@@ -68,6 +68,8 @@ final class LocationAgentTests: XCTestCase {
         XCTAssertEqual(pages.map { ($0["files"] as? [Any])?.count }, [2000, 2000, 500])
         XCTAssertEqual(pages.map { $0["scan"] as? String }, ["s1", "s1", "s1"])
         XCTAssertEqual(pages.map { $0["complete"] as? Bool }, [nil, nil, true])
+        // numbered from 0: the server counts a listing whole only when every page came
+        XCTAssertEqual(pages.map { $0["page"] as? Int }, [0, 1, 2])
         // an empty folder is one complete page: everything the server had there is gone
         let empty = LocationAgent.pages(id: "f1", files: [], unreadable: [], scan: "s2")
         XCTAssertEqual(empty.count, 1)

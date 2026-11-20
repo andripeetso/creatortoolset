@@ -688,4 +688,8 @@ export const MIGRATIONS: string[] = [
   // Library status line; and when each computer no longer paired was first missed (its silence starts then)
   `ALTER TABLE assets ADD COLUMN left_trashed_from TEXT;
   CREATE TABLE left_gone_computers (device TEXT PRIMARY KEY, since INTEGER NOT NULL);`,
+  // the pages of each running listing that came (report.ts), so one with a page lost never counts as whole; and the
+  // clips hidden while they wait, found fast (few)
+  `ALTER TABLE listing_starts ADD COLUMN pages TEXT NOT NULL DEFAULT '[]';
+  CREATE INDEX IF NOT EXISTS assets_left_hidden ON assets(left_hidden_at) WHERE left_hidden_at IS NOT NULL;`,
 ];

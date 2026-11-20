@@ -31,7 +31,7 @@ import { locateApp } from "./locate";
 import { folderStatesFor, placesApp } from "./places";
 import { whereIsMany } from "./whereis";
 import { PLACES_MAX, placeWordOf } from "../../contracts/places";
-import { emptyTrash, inReview, setTrashedAt } from "./trash";
+import { emptyTrash, inReview, setTrashedAt, showHidden } from "./trash";
 import { copiesWake } from "./copies";
 import { similar } from "./similar";
 import { assetRef, canSee, sourceById, SourceRefusal, sourcesVisibleTo } from "./sources";
@@ -396,7 +396,11 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const dup = db()
     .prepare("SELECT a.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND ((v.quick = ? AND v.bytes = ?) OR v.sha256 = ?) LIMIT 1")
     .get(lib, quick, size, `mac:${quick}`) as { id: string } | undefined;
-  if (dup) return { duplicateOf: dup.id };
+  // the same file again: one hidden while it waited on Folders left out is here after all (trash.ts showHidden)
+  if (dup) {
+    showHidden(dup.id);
+    return { duplicateOf: dup.id };
+  }
   // held here only until a computer has fetched it (the task removes it)
   const staged = path.join(stagingDir(), `computer-${lib}-${quick}`);
   await copyFile(file, staged);
@@ -409,7 +413,10 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
   const got = db()
     .prepare("SELECT a.id AS assetId, v.id AS versionId FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.quick = ? AND v.bytes = ? LIMIT 1")
     .get(lib, quick, size) as { assetId: string; versionId: string } | undefined;
-  if (got) return got;
+  if (got) {
+    showHidden(got.assetId);
+    return got;
+  }
   // a computer has it but is not done yet: it lands there in a moment
   const held = started.state === "queued" ? taskOf(started.id)?.held_by : null;
   const on = held && folders[held] ? held : first[0];
@@ -445,12 +452,15 @@ const madeOf = (row: UploadRow): Made | null => (row.made ? (JSON.parse(row.made
 function duplicateOf(row: UploadRow, sha256: string): { id: string; current: string | null } | undefined {
   if (row.replaces_asset_id) return undefined;
   const made = madeOf(row);
-  return db()
+  const dup = db()
     .prepare(
       `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        WHERE a.library_id = ? AND a.trashed_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
     )
     .get(row.library_id, sha256, made?.quick ?? null, made?.proxy?.size ?? row.size) as { id: string; current: string | null } | undefined;
+  // uploaded again: one hidden while it waited on Folders left out is here after all (trash.ts showHidden)
+  if (dup) showHidden(dup.id);
+  return dup;
 }
 
 /**

@@ -11,7 +11,7 @@ import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
 import { stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
 import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
-import { deviceOf } from "../lib/devices";
+import { deviceOf, isThisMachine, listDevices } from "../lib/devices";
 import { ownerKeeps } from "../../src/lib/wording";
 
 /**
@@ -377,7 +377,14 @@ export function libraryStatus(libraryId: string): LibraryStatus {
   const leftOut = db
     .prepare("SELECT left_trashed_from AS computer, COUNT(*) AS clips FROM assets WHERE library_id = ? AND trashed_at IS NOT NULL AND left_trashed_from IS NOT NULL GROUP BY left_trashed_from ORDER BY computer")
     .all(libraryId) as { computer: string; clips: number }[];
-  return { ...head, stages, ...(leftOut.length ? { leftOut } : {}) };
+  // clips hidden while they wait on a folder not read (report.ts hideLeft; the watch's on this server), by computer
+  const here = listDevices((x) => isThisMachine(x.id))[0]?.name ?? "this server";
+  const hidden = (
+    db
+      .prepare("SELECT left_hidden_on AS device, COUNT(*) AS clips FROM assets WHERE library_id = ? AND trashed_at IS NULL AND left_hidden_at IS NOT NULL GROUP BY left_hidden_on")
+      .all(libraryId) as { device: string | null; clips: number }[]
+  ).map((r) => ({ computer: r.device ? (deviceOf(r.device)?.name ?? "a computer no longer paired") : here, clips: r.clips }));
+  return { ...head, stages, ...(leftOut.length ? { leftOut } : {}), ...(hidden.length ? { hidden } : {}) };
 }
 
 /**

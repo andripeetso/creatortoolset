@@ -21,6 +21,7 @@ import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
 import { hostsNone } from "../../contracts/library";
 import { mayLeave } from "./upload-gate";
+import { showHidden } from "./trash";
 
 /**
  * A file indexed where it is on the person's Mac, for a server that is not on that Mac (the Mac app's Media Library
@@ -201,6 +202,8 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     const viewer = await readerOf(by, libraryId);
     if (!viewer || !(await canSee(viewer, assetRef(libraryId, dup.id, dup.version)))) return { duplicate: true };
     if (mine) await confirmPlaces(libraryId, viewer, mine, [{ versionId: dup.version, path: x.path, quick: x.quick }]);
+    // a file outside the folders left out (route and indexForDevice refuse those): one hidden while it waited is here after all
+    showHidden(dup.id);
     return { duplicateOf: dup.id };
   }
   const at = mine && rootAt(x.path, mine.report?.machine?.disks);
