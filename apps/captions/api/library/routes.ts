@@ -18,7 +18,7 @@ import { blobs, finalsUpload, keepsOnlyOriginals, libraryDb, librarySetting, lib
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { notifyLibraryChanges } from "../lib/events";
-import { cantFind, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -788,6 +788,8 @@ libraryApp.post("/:id/on-mac", async (c) => {
   }
   const x = parseOnMac(await c.req.json().catch(() => null));
   if (typeof x === "string") return c.json({ error: x, code: "invalid" }, 400);
+  // inside a folder one of the caller's Media folders leaves out: never indexed, a scan's file or a drop alike
+  if (x.device && deviceOf(x.device)?.owner === user.username && (await (await import("./report")).leftOutOn(user.username, x.device, x.path))) return c.json({ error: LIBRARY_WORDS.notFootage, code: "invalid" }, 400);
   if (x.collectionId) {
     const col = db().prepare("SELECT kind FROM collections WHERE id = ? AND library_id = ?").get(x.collectionId, libraryId) as { kind: string } | undefined;
     if (!col) return c.json({ error: "Not found", code: "not_found" }, 404);

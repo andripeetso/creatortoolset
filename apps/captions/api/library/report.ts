@@ -218,8 +218,8 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       leaveLibrary(dev, folder.id, inOwn, libs, touched, now, "(p.path = ? OR substr(p.path, 1, length(?) + 1) = ? || '/')", [full, full, full], full);
     }
     for (const { f, rel } of placed) {
-      // not footage: an AI Editor folder, a half-written file, or anything inside a Projects or Exports folder
-      if (notFootage(rel, editorDirs) || keepOut.some((k) => inside(f.path, k) !== null)) {
+      // not footage: an AI Editor folder, a folder this one leaves out, a half-written file, or anything inside a Projects or Exports folder
+      if (notFootage(rel, editorDirs, folder.leaveOut) || keepOut.some((k) => inside(f.path, k) !== null)) {
         // indexed here before this rule: the clip leaves the library through the trash (never while in Review or shared);
         // the file on the computer stays
         // a locate-only library is never trashed into (leaveLibrary: held clips stay, as before)
@@ -337,6 +337,20 @@ export async function filmedForDevice(dev: Device, folderId: string, x: { path: 
 }
 
 /**
+ * Whether a Media folder of `owner`'s on computer `device` leaves out the file at `file` there (notFootage with the folder's
+ * leaveOut): POST /api/library/:id/on-mac, the Mac app's Look for new files, which names no folder. Its AI Editor folders
+ * are known only to a whole scan (applyFolder).
+ */
+export async function leftOutOn(owner: string, device: string, file: string): Promise<boolean> {
+  const at = nfc(file);
+  return (await storageOf(owner)).folders.some((f) => {
+    if (useOf(f) !== "media" || f.origin.host !== device) return false;
+    const rel = inside(at, f.origin.path) ?? (f.mountPath ? inside(at, f.mountPath) : null);
+    return rel !== null && notFootage(rel, undefined, f.leaveOut);
+  });
+}
+
+/**
  * POST /api/devices/relay/index: one file of a folder of computer `dev`, indexed where it is in each library the folder
  * fills (on-mac.ts indexOnMac: what the computer made of it, never its bytes). The folder must be that computer's, and the
  * path inside it.
@@ -350,7 +364,7 @@ export async function indexForDevice(dev: Device, folderId: string, x: OnMacInde
   // a file of a Projects or Exports folder is never footage, even when a computer sends it (applyFolder keeps them out too)
   if (keptOut(st, dev.id).some((k) => inside(nfc(x.path), k) !== null)) return LIBRARY_WORDS.notFootage;
   const rel = inside(nfc(x.path), folder.origin.path) ?? (folder.mountPath ? inside(nfc(x.path), folder.mountPath) : null);
-  if (rel !== null && notFootage(rel)) return LIBRARY_WORDS.notFootage;
+  if (rel !== null && notFootage(rel, undefined, folder.leaveOut)) return LIBRARY_WORDS.notFootage;
   const versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> = [];
   for (const { id: library, locate } of await librariesOf(dev.owner, folder)) {
     // a member's workspace is only located, never indexed into (applyFolder answers no file for it)

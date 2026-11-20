@@ -94,7 +94,7 @@ async function footageOf(username: string, make: boolean): Promise<Map<string, W
     if (f.role !== "footage" || !onThisComputer(f)) continue;
     for (const lib of await librariesOf(username, f, make)) {
       if (lib.locate) continue;
-      out.set(lib.id, [...(out.get(lib.id) ?? []), { path: expandHome(f.origin.path), mode: "reference", addedBy: username }]);
+      out.set(lib.id, [...(out.get(lib.id) ?? []), { path: expandHome(f.origin.path), mode: "reference", addedBy: username, ...(f.leaveOut?.length ? { leaveOut: f.leaveOut } : {}) }]);
     }
   }
   return out;
@@ -600,14 +600,14 @@ export async function keepOutOf(user: string): Promise<string[]> {
   return st.folders.filter((f) => f.role !== "footage" && (f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host))).map((f) => f.origin.path);
 }
 
-export async function filesIn(root: string, keepOut: string[] = []): Promise<string[]> {
+export async function filesIn(root: string, keepOut: string[] = [], leaveOut: readonly string[] = []): Promise<string[]> {
   const all = await readdir(root, { recursive: true, withFileTypes: true });
   const seen = all
     .filter((e) => e.isFile() && kindOf(e.name) !== "doc" && !RAW_FILE.test(e.name))
     .map((e) => path.join(e.parentPath, e.name))
     .filter((p) => !path.relative(root, p).split(path.sep).some((s) => s.startsWith(".")));
   const editorDirs = editorDirsOf(seen.map((p) => path.relative(root, p)));
-  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs) && !keepOut.some((k) => inside(p, k)));
+  return seen.filter((p) => !notFootage(path.relative(root, p), editorDirs, leaveOut) && !keepOut.some((k) => inside(p, k)));
 }
 
 /** A file of a copied folder: copied into place first, then read in place there like any referenced file. */
@@ -737,7 +737,7 @@ async function scanFolders(libraryId: string, now: number, folders: WatchFolder[
     const folderKey = `${libraryId}\0${f.path}`;
     try {
       // a Finals folder (f.projects) is read in its projects' subfolders, which may sit in an Exports folder: nothing is kept out there
-      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy));
+      files = await filesIn(f.path, f.projects ? [] : await keepOutOf(f.addedBy), f.leaveOut);
       // a Finals folder: only the files in its projects' subfolders (renders and downloads beside them are not finals)
       if (f.projects) files = files.filter((p) => !!finalsProjectIn(f, p));
     } catch {

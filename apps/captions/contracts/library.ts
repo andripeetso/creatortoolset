@@ -611,6 +611,8 @@ export interface WatchFolder {
   addedBy: string; // the owner who added it; imports are theirs
   /** a Finals folder: only these subfolders are read, each a Workshop project's (folder name → project id) */
   projects?: Record<string, string>;
+  /** a Media folder's leaveOut (contracts/storage.ts StorageFolder): folders inside it, by name, never read */
+  leaveOut?: string[];
 }
 
 /** GET /api/library/:id/watch. `allowed` is false on a hosted server: it cannot see the folders on your computer. */

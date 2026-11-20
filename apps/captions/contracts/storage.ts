@@ -113,6 +113,9 @@ export interface StorageFolder {
   checkedAt?: number;
   /** a Media folder that is also a destination for the library's copies */
   copyTo?: true;
+  /** a Media folder: the names of folders inside it, at any depth, whose files are left out of the Media Library (Settings →
+   *  Folders, Folders left out; notFootage). None: only what notFootage always leaves out. Nothing on disk is moved */
+  leaveOut?: string[];
   /** set by the page's view only, never stored: this folder's computer is not one of the account's ("Computer not found") */
   missing?: true;
 }
@@ -275,13 +278,25 @@ export const PHONE_UPLOADS_DIR = "Phone uploads";
 
 /**
  * A file under a Media folder that is not footage, by its path below the folder: inside one of `editorDirs` (see
- * editorDirsOf; apps/editor skips the same folders), inside a PHONE_UPLOADS_DIR folder, or a half-written file (".tmp", ".part": "clip.part.mp4" and
+ * editorDirsOf; apps/editor skips the same folders), inside a PHONE_UPLOADS_DIR folder or a folder named in the Media
+ * folder's `leaveOut` (StorageFolder), at any depth, or a half-written file (".tmp", ".part": "clip.part.mp4" and
  * "clip.tmp" are; "party.mp4" and "clip.partial.mov" are not). Every scan leaves these out of the Media Library.
  */
-export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set()): boolean {
+export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Set(), leaveOut: readonly string[] = []): boolean {
   const parts = rel.split(/[\\/]/);
   const dirs = parts.slice(0, -1);
-  return dirs.includes(PHONE_UPLOADS_DIR) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+  return dirs.some((d) => d === PHONE_UPLOADS_DIR || leaveOut.includes(d.normalize("NFC"))) || dirs.some((_, i) => editorDirs.has(dirs.slice(0, i + 1).join("/"))) || /\.(tmp|part)(\.\w+)?$/i.test(parts[parts.length - 1] ?? "");
+}
+
+/** At most this many names in a Media folder's leaveOut. */
+export const LEAVE_OUT_MAX = 50;
+
+/** A leaveOut list as sent (one folder name each, trimmed, no path), or null when it is not one; [] leaves nothing out. */
+export function parseLeaveOut(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length > LEAVE_OUT_MAX) return null;
+  const names = v.map((n) => (typeof n === "string" ? n.trim().normalize("NFC") : ""));
+  if (names.some((n) => !n || n.length > 255 || n === "." || n === ".." || /[\\/\0]/.test(n))) return null;
+  return [...new Set(names)];
 }
 
 /**
