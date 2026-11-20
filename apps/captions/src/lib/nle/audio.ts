@@ -14,6 +14,54 @@ export function nleAudio(): AudioContext | null {
 /** The sound engine if one was made. */
 export const runningAudio = () => shared;
 
+/** What the loudness meter reads every 100 ms: Momentary, Short-term, Integrated (LUFS), True Peak (dBTP), sample peaks L/R (linear). */
+export interface MeterRead {
+  m: number;
+  s: number;
+  i: number;
+  tp: number;
+  pk: [number, number];
+}
+
+let bus: GainNode | null = null;
+let meter: AudioWorkletNode | null = null;
+const reads = new Set<(r: MeterRead) => void>();
+
+/**
+ * The editor's master bus: whatever the player plays connects here, not to `ctx.destination`, so the loudness meter
+ * hears the mix as it goes out. The meter is an AudioWorklet (meter-worklet.ts) on the bus; where worklets can't load,
+ * the sound still plays and the meter stays empty.
+ */
+export function nleOut(ctx: AudioContext): AudioNode {
+  if (bus?.context === ctx) return bus;
+  const b = (bus = ctx.createGain());
+  b.connect(ctx.destination);
+  void (async () => {
+    try {
+      const { default: url } = await import("./meter-worklet.ts?worker&url");
+      await ctx.audioWorklet.addModule(url);
+      // stereo always (a mono clip counts in both ears, as it plays and as ebur128 reads the render); its silent
+      // output goes to the speakers only so every engine pulls it
+      const n = new AudioWorkletNode(ctx, "nle-meter", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit", channelInterpretation: "speakers" });
+      n.port.onmessage = (e: MessageEvent<MeterRead>) => reads.forEach((f) => f(e.data));
+      b.connect(n).connect(ctx.destination);
+      meter = n;
+    } catch {
+      // no worklets here: no meter
+    }
+  })();
+  return b;
+}
+
+/** Hears the meter every 100 ms while sound plays; returns the unsubscribe. */
+export function onMeter(f: (r: MeterRead) => void): () => void {
+  reads.add(f);
+  return () => void reads.delete(f);
+}
+
+/** The meter's Integrated and True Peak start over (Play from a new place). */
+export const resetMeter = () => meter?.port.postMessage("reset");
+
 /** A file that is sound only (laid from its decoded samples); anything else is a video file, heard through its element. */
 export const isSoundFile = (url: string) => /\.(wav|aiff?|m4a|mp3|flac|caf|aac|ogg|opus)(\?|#|$)/i.test(url);
 
