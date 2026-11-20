@@ -1,0 +1,352 @@
+{
+  "about": [
+    "Made by src/lib/nle/edj.test.ts from the formulas below; compare values within 1e-6.",
+    "Keys: source frame s = in + (f - rec) * speed * sfps / fps for timeline frame f = floor(t * fps). No keys: the item's own value, else zoom 1, pan 0, tilt 0, rot 0, opacity 1, gain_db 0. s at or before the first key: its value; at or after the last: its value. Between keys k and k+1: u = (s - s_k) / (s_k+1 - s_k); key k's ease decides: hold = v_k, linear = lerp(u), ease = lerp(E(u)), E(u) = 16u^5 below 0.5, else 1 - (2 - 2u)^5 / 2.",
+    "Transitions sit on the later clip at cut = its rec. Frames before the cut: start 0, end len, center floor(len / 2). start = cut - that; u = (f - start) / len for f in [start, start + len).",
+    "dissolve: the later clip at alpha u over the earlier one at full opacity. dip: weights of earlier clip a, colour, later clip b: u < 0.5: a = 1 - 2u, color = 2u, b = 0; else a = 0, color = 2 - 2u, b = 2u - 1. crossfade: gains a = cos(u * pi / 2), b = sin(u * pi / 2).",
+    "Handles in source frames: tail of the earlier clip past its last frame = post * speed * sfps / fps; head of the later clip before its in = pre * speed * sfps / fps (pre / post = timeline frames before / after the cut)."
+  ],
+  "keys": [
+    {
+      "name": "static value, no keys",
+      "fps": 25,
+      "sfps": 25,
+      "prop": "zoom",
+      "item": {
+        "src": "s",
+        "rec": 0,
+        "len": 10,
+        "in": 0,
+        "zoom": 1.2
+      },
+      "frames": [0, 5, 9],
+      "values": [1.2, 1.2, 1.2]
+    },
+    {
+      "name": "no keys and no value: the default",
+      "fps": 25,
+      "sfps": 25,
+      "prop": "opacity",
+      "item": {
+        "src": "s",
+        "rec": 0,
+        "len": 10,
+        "in": 0
+      },
+      "frames": [0, 9],
+      "values": [1, 1]
+    },
+    {
+      "name": "ease, same fps",
+      "fps": 25,
+      "sfps": 25,
+      "prop": "zoom",
+      "item": {
+        "src": "s",
+        "rec": 10,
+        "len": 60,
+        "in": 100,
+        "keys": {
+          "zoom": [
+            [100, 1, "ease"],
+            [150, 2, "ease"]
+          ]
+        }
+      },
+      "frames": [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70],
+      "values": [1, 1.00016, 1.00512, 1.03888, 1.16384, 1.5, 1.83616, 1.96112, 1.99488, 1.99984, 2, 2, 2]
+    },
+    {
+      "name": "linear, source at 50 on a 25 timeline",
+      "fps": 25,
+      "sfps": 50,
+      "prop": "pan",
+      "item": {
+        "src": "s",
+        "rec": 0,
+        "len": 60,
+        "in": 0,
+        "keys": {
+          "pan": [
+            [0, 0, "linear"],
+            [100, 50, "linear"]
+          ]
+        }
+      },
+      "frames": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60],
+      "values": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 50, 50]
+    },
+    {
+      "name": "hold, then linear",
+      "fps": 25,
+      "sfps": 25,
+      "prop": "tilt",
+      "item": {
+        "src": "s",
+        "rec": 0,
+        "len": 80,
+        "in": 0,
+        "keys": {
+          "tilt": [
+            [0, 0, "hold"],
+            [20, -30, "hold"],
+            [40, 10, "linear"],
+            [60, 0, "linear"]
+          ]
+        }
+      },
+      "frames": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70],
+      "values": [0, 0, 0, 0, -30, -30, -30, -30, 10, 7.5, 5, 2.5, 0, 0, 0]
+    },
+    {
+      "name": "keys either side of the visible range, speed 2, 60 on 30",
+      "fps": 30,
+      "sfps": 60,
+      "prop": "zoom",
+      "item": {
+        "src": "s",
+        "rec": 100,
+        "len": 20,
+        "in": 50,
+        "speed": 2,
+        "keys": {
+          "zoom": [
+            [0, 1, "linear"],
+            [200, 1.5, "linear"]
+          ]
+        }
+      },
+      "frames": [100, 103, 106, 109, 112, 115, 118],
+      "values": [1.125, 1.155, 1.185, 1.215, 1.245, 1.275, 1.305]
+    },
+    {
+      "name": "all keys before the visible range: clamps to the last",
+      "fps": 30,
+      "sfps": 60,
+      "prop": "zoom",
+      "item": {
+        "src": "s",
+        "rec": 100,
+        "len": 20,
+        "in": 50,
+        "speed": 2,
+        "zoom": 3,
+        "keys": {
+          "zoom": [
+            [10, 1.2, "ease"],
+            [30, 1.8, "ease"]
+          ]
+        }
+      },
+      "frames": [100, 110, 119],
+      "values": [1.8, 1.8, 1.8]
+    },
+    {
+      "name": "all keys after the visible range: clamps to the first",
+      "fps": 25,
+      "sfps": 25,
+      "prop": "rot",
+      "item": {
+        "src": "s",
+        "rec": 0,
+        "len": 10,
+        "in": 0,
+        "keys": {
+          "rot": [
+            [50, -5, "linear"],
+            [60, 5, "linear"]
+          ]
+        }
+      },
+      "frames": [0, 9],
+      "values": [-5, -5]
+    },
+    {
+      "name": "slow motion 0.5: half source frames",
+      "fps": 25,
+      "sfps": 25,
+      "prop": "opacity",
+      "item": {
+        "src": "s",
+        "rec": 40,
+        "len": 30,
+        "in": 10,
+        "speed": 0.5,
+        "keys": {
+          "opacity": [
+            [10, 0, "ease"],
+            [20, 1, "linear"]
+          ]
+        }
+      },
+      "frames": [40, 43, 46, 49, 52, 55, 58, 61, 64],
+      "values": [0, 0.001215, 0.03888, 0.295245, 0.83616, 0.984375, 0.99984, 1, 1]
+    },
+    {
+      "name": "gain, 24 fps source on a 30 timeline",
+      "fps": 30,
+      "sfps": 24,
+      "prop": "gain_db",
+      "item": {
+        "src": "s",
+        "rec": 0,
+        "len": 90,
+        "in": 0,
+        "gain_db": -6,
+        "keys": {
+          "gain_db": [
+            [0, -40, "ease"],
+            [24, -6, "hold"],
+            [48, -12, "linear"],
+            [72, -6, "linear"]
+          ]
+        }
+      },
+      "frames": [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90],
+      "values": [-40, -39.82592, -34.42944, -11.57056, -6.17408, -6, -6, -6, -6, -6, -12, -10.8, -9.6, -8.4, -7.2, -6]
+    }
+  ],
+  "trans": [
+    {
+      "name": "dissolve, centred",
+      "type": "dissolve",
+      "len": 12,
+      "at": "center",
+      "cut": 125,
+      "start": 119,
+      "frames": [119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130],
+      "alpha": [0, 0.083333, 0.166667, 0.25, 0.333333, 0.416667, 0.5, 0.583333, 0.666667, 0.75, 0.833333, 0.916667]
+    },
+    {
+      "name": "dissolve, centred, odd length",
+      "type": "dissolve",
+      "len": 5,
+      "at": "center",
+      "cut": 50,
+      "start": 48,
+      "frames": [48, 49, 50, 51, 52],
+      "alpha": [0, 0.2, 0.4, 0.6, 0.8]
+    },
+    {
+      "name": "dip to black, starting at the cut",
+      "type": "dip_black",
+      "len": 10,
+      "at": "start",
+      "cut": 90,
+      "start": 90,
+      "frames": [90, 91, 92, 93, 94, 95, 96, 97, 98, 99],
+      "a": [1, 0.8, 0.6, 0.4, 0.2, 0, 0, 0, 0, 0],
+      "color": [0, 0.2, 0.4, 0.6, 0.8, 1, 0.8, 0.6, 0.4, 0.2],
+      "b": [0, 0, 0, 0, 0, 0, 0.2, 0.4, 0.6, 0.8]
+    },
+    {
+      "name": "dip to white, ending at the cut",
+      "type": "dip_white",
+      "len": 8,
+      "at": "end",
+      "cut": 120,
+      "start": 112,
+      "frames": [112, 113, 114, 115, 116, 117, 118, 119],
+      "a": [1, 0.75, 0.5, 0.25, 0, 0, 0, 0],
+      "color": [0, 0.25, 0.5, 0.75, 1, 0.75, 0.5, 0.25],
+      "b": [0, 0, 0, 0, 0, 0.25, 0.5, 0.75]
+    },
+    {
+      "name": "dip to black, centred, odd length",
+      "type": "dip_black",
+      "len": 7,
+      "at": "center",
+      "cut": 30,
+      "start": 27,
+      "frames": [27, 28, 29, 30, 31, 32, 33],
+      "a": [1, 0.714286, 0.428571, 0.142857, 0, 0, 0],
+      "color": [0, 0.285714, 0.571429, 0.857143, 0.857143, 0.571429, 0.285714],
+      "b": [0, 0, 0, 0, 0.142857, 0.428571, 0.714286]
+    },
+    {
+      "name": "sound crossfade, centred",
+      "type": "crossfade",
+      "len": 12,
+      "at": "center",
+      "cut": 125,
+      "start": 119,
+      "frames": [119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130],
+      "a": [1, 0.991445, 0.965926, 0.92388, 0.866025, 0.793353, 0.707107, 0.608761, 0.5, 0.382683, 0.258819, 0.130526],
+      "b": [0, 0.130526, 0.258819, 0.382683, 0.5, 0.608761, 0.707107, 0.793353, 0.866025, 0.92388, 0.965926, 0.991445]
+    }
+  ],
+  "handles": [
+    {
+      "name": "centred, 50 fps sources, later at 1.5",
+      "at": "center",
+      "len": 12,
+      "fps": 25,
+      "earlier": {
+        "speed": 1,
+        "sfps": 50
+      },
+      "later": {
+        "speed": 1.5,
+        "sfps": 50
+      },
+      "pre": 6,
+      "post": 6,
+      "tail": 12,
+      "head": 18
+    },
+    {
+      "name": "centred, odd, 30 fps later source",
+      "at": "center",
+      "len": 7,
+      "fps": 25,
+      "earlier": {
+        "speed": 1,
+        "sfps": 25
+      },
+      "later": {
+        "speed": 1,
+        "sfps": 30
+      },
+      "pre": 3,
+      "post": 4,
+      "tail": 4,
+      "head": 3.6
+    },
+    {
+      "name": "starting at the cut",
+      "at": "start",
+      "len": 10,
+      "fps": 25,
+      "earlier": {
+        "speed": 1,
+        "sfps": 25
+      },
+      "later": {
+        "speed": 1,
+        "sfps": 25
+      },
+      "pre": 0,
+      "post": 10,
+      "tail": 10,
+      "head": 0
+    },
+    {
+      "name": "ending at the cut, mixed speeds and rates",
+      "at": "end",
+      "len": 8,
+      "fps": 30,
+      "earlier": {
+        "speed": 2,
+        "sfps": 60
+      },
+      "later": {
+        "speed": 0.5,
+        "sfps": 24
+      },
+      "pre": 8,
+      "post": 0,
+      "tail": 0,
+      "head": 3.2
+    }
+  ]
+}

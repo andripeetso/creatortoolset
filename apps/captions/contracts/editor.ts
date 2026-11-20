@@ -43,6 +43,7 @@
 import type { EditStyleCopy, WorkingSize } from "./editor-styles";
 import type { Coverage, Focus, PlanEffect, PlanFrame, PlanText } from "./edit-plan";
 import type { TimelineView } from "./edit-timeline";
+import type { Grade } from "./grade";
 
 export const EDIT_STEPS = ["analyze", "script", "draft", "broll"] as const;
 export type EditStep = (typeof EDIT_STEPS)[number];
@@ -374,6 +375,96 @@ export interface Timeline {
   /** a planned edit (api/editor/plan.ts): the kind it is, in the brief's words, and its texts (seconds on the timeline). Absent: cut around speech */
   plan?: { kind: string; texts?: PlanText[] };
 }
+
+/*
+ * The edit's own timeline file (EDJ) as the studio engine and the editor (src/lib/nle/model.ts) save it: snake_case,
+ * frames, fields nobody here knows kept as they are. Version 2 adds the fields below; `edjVersion` says which one a
+ * file needs, and a worker never renders a file newer than the version it understands. Shared with the engine's tests
+ * through contracts/edj.fixture.json (every field) and contracts/edj-golden.json (the keyframe and transition maths).
+ */
+
+/** the highest `edj_version` this code reads and writes */
+export const EDJ_VERSION = 2;
+
+/** marker colours as Resolve names them → OTIO's names: the 8 that survive a round trip through Resolve */
+export const MARKER_COLORS = { Red: "RED", Yellow: "YELLOW", Green: "GREEN", Cyan: "CYAN", Blue: "BLUE", Purple: "PURPLE", Pink: "PINK", Lavender: "MAGENTA" } as const;
+export type MarkerColor = keyof typeof MARKER_COLORS;
+/** a timeline marker: `frame` on the timeline, `dur` frames long (1 when absent) */
+export interface EdjMarker { frame: number; name: string; color: MarkerColor; note?: string; dur?: number }
+
+/** the props a clip can key */
+export const KEY_PROPS = ["zoom", "pan", "tilt", "rot", "opacity", "gain_db"] as const;
+export type KeyProp = (typeof KEY_PROPS)[number];
+/** how the value goes from this key to the next: the shot list's eased curve (src/lib/nle/shot.ts `ease`), a straight line, or held until the next key */
+export const KEY_EASES = ["ease", "linear", "hold"] as const;
+export type KeyEase = (typeof KEY_EASES)[number];
+/** [source frame, value, ease]: keyed in the SOURCE's frames, so trims, slips, splits and pastes never move them; sorted, one per frame */
+export type Key = [frame: number, value: number, ease: KeyEase];
+
+export const TRANS_TYPES = ["dissolve", "dip_black", "dip_white", "crossfade"] as const;
+export type TransType = (typeof TRANS_TYPES)[number];
+/** a transition on the LATER clip of a cut on its track, `len` timeline frames centred on the cut, starting at it or ending at it */
+export interface EdjTrans { type: TransType; len: number; at: "center" | "start" | "end" }
+
+/** a camera conversion, per source, before the grade: a log curve (the Colour step's profiles) or an added LUT; `from: "file"` = what the file says */
+export interface EdjCamera { curve?: string; lut?: string; from?: "file"; on: boolean }
+export interface EdjSource { path?: string; fps?: number; dur?: number; w?: number; h?: number; camera?: EdjCamera; [k: string]: unknown }
+/** a Design frame as a clip: `path` is a content-hashed PNG with alpha (a new render is a new path) */
+export interface EdjDesignSource { kind: "design"; design: string; frame: string; path: string; w: number; h: number; [k: string]: unknown }
+
+export interface EdjItem {
+  src: string;
+  rec: number;
+  len: number;
+  in: number;
+  speed?: number;
+  /** a prop's value when it has no keys */
+  zoom?: number;
+  pan?: number;
+  tilt?: number;
+  rot?: number;
+  opacity?: number;
+  gain_db?: number;
+  keys?: Partial<Record<KeyProp, Key[]>>;
+  trans?: EdjTrans;
+  /** dB that Normalize added, on top of gain_db (or its keys) and fades */
+  norm_db?: number;
+  grade?: Grade;
+  [k: string]: unknown;
+}
+
+/** captions made in Caption Studio from these A1 clips: [rec, len, src, in] each; a cut whose A1 differs has older captions */
+export interface EdjCaptions { project: string; clip: string; burn: boolean; from: [rec: number, len: number, src: string, src_in: number][] }
+
+export interface Edj {
+  edj_version?: number;
+  timeline: { fps: number; width?: number; height?: number; [k: string]: unknown };
+  sources: Record<string, EdjSource | EdjDesignSource>;
+  tracks: Record<string, { items: EdjItem[]; [k: string]: unknown }>;
+  markers?: EdjMarker[];
+  captions?: EdjCaptions;
+  [k: string]: unknown;
+}
+
+/** 2 when the file uses any version-2 field, else 1 (markers and grades were already in version 1). */
+export function edjVersion(edj: Edj): 1 | 2 {
+  if (edj.captions) return 2;
+  if (Object.values(edj.sources ?? {}).some((s) => s.camera || s.kind === "design")) return 2;
+  const v2 = (it: EdjItem) => it.keys !== undefined || it.trans !== undefined || it.norm_db !== undefined;
+  return Object.values(edj.tracks ?? {}).some((t) => t.items.some(v2)) ? 2 : 1;
+}
+
+const OTIO_TO_COLOR = Object.fromEntries(Object.entries(MARKER_COLORS).map(([k, v]) => [v, k])) as Record<string, MarkerColor>;
+type PublicMarker = Timeline["markers"][number];
+/** EDJ marker → this app's Timeline marker (`dur` has nowhere to go there) */
+export const markerToPublic = (m: EdjMarker): PublicMarker => ({ rec: m.frame, name: m.name, color: MARKER_COLORS[m.color] ?? String(m.color).toUpperCase(), note: m.note ?? "" });
+/** this app's Timeline marker → EDJ marker; an unknown colour is title-cased as the studio engine's OTIO reader does */
+export const markerToEdj = (m: PublicMarker): EdjMarker => ({
+  frame: m.rec,
+  name: m.name,
+  color: OTIO_TO_COLOR[m.color] ?? ((m.color[0] ?? "").toUpperCase() + m.color.slice(1).toLowerCase()) as MarkerColor,
+  ...(m.note ? { note: m.note } : {}),
+});
 
 /** What the checks found on a draft; failures are notes, never a block. */
 export interface QaReport {

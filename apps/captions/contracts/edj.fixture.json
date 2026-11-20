@@ -1,0 +1,57 @@
+{
+  "edj_version": 2,
+  "project": "Tiny Acrobatics",
+  "draft": "v2",
+  "timeline": { "name": "Tiny Acrobatics reel", "fps": 25, "width": 1080, "height": 1920, "start": 90000, "duration": 250 },
+  "sources": {
+    "cam": { "path": "/m/cam.mp4", "fps": 50, "dur": 3000, "w": 3840, "h": 2160, "camera": { "curve": "slog3", "from": "file", "on": true } },
+    "roll": { "path": "/m/roll.mp4", "fps": 25, "dur": 600, "w": 1920, "h": 1080, "camera": { "lut": "lut_ab12", "on": false } },
+    "title": { "kind": "design", "design": "d_tiny01", "frame": "f1", "path": "designs/owner/d_tiny01/f1-3a9c0e.png", "w": 2160, "h": 3840 },
+    "song": { "path": "/m/song.m4a", "fps": 25 }
+  },
+  "tracks": {
+    "V1": {
+      "name": "TALENT",
+      "items": [
+        { "src": "cam", "rec": 0, "len": 125, "in": 200, "link": 1, "line": "L01", "why": "the hook",
+          "zoom": 1, "keys": { "zoom": [[200, 1, "ease"], [400, 1.3, "linear"]], "pan": [[250, 0, "linear"], [350, 40, "hold"]], "tilt": [[200, 0, "hold"], [300, -20, "ease"]] },
+          "grade": { "lift": [0.01, 0, 0], "gamma": [0, 0.02, 0], "gain": [1.05, 1, 0.98], "offset": [0, 0, 0], "contrast": 1.1, "pivot": 0.435, "sat": 1.05 } },
+        { "src": "cam", "rec": 125, "len": 125, "in": 900, "link": 2, "speed": 1.5, "trans": { "type": "dissolve", "len": 12, "at": "center" } }
+      ]
+    },
+    "V2": {
+      "name": "B-ROLL",
+      "items": [
+        { "src": "roll", "rec": 40, "len": 50, "in": 100, "rot": 0, "keys": { "rot": [[100, 0, "linear"], [149, 5, "linear"]] } },
+        { "src": "roll", "rec": 90, "len": 30, "in": 300, "trans": { "type": "dip_black", "len": 10, "at": "start" } },
+        { "src": "roll", "rec": 120, "len": 30, "in": 400, "trans": { "type": "dip_white", "len": 8, "at": "end" } }
+      ]
+    },
+    "V3": {
+      "name": "MOTION GRAPHICS",
+      "items": [
+        { "src": "title", "rec": 10, "len": 125, "in": 0, "keys": { "opacity": [[0, 0, "ease"], [12, 1, "hold"], [113, 1, "ease"], [125, 0, "linear"]] } }
+      ]
+    },
+    "A1": {
+      "name": "VO",
+      "items": [
+        { "src": "cam", "rec": 0, "len": 125, "in": 200, "link": 1, "norm_db": -3.2 },
+        { "src": "cam", "rec": 125, "len": 125, "in": 900, "link": 2, "speed": 1.5, "norm_db": -2.5, "trans": { "type": "crossfade", "len": 12, "at": "center" } }
+      ]
+    },
+    "A4": {
+      "name": "MUSIC",
+      "items": [
+        { "src": "song", "rec": 0, "len": 250, "in": 0, "gain_db": -18, "keys": { "gain_db": [[0, -30, "linear"], [25, -18, "hold"], [200, -18, "linear"], [250, -40, "linear"]] } }
+      ]
+    }
+  },
+  "markers": [
+    { "frame": 0, "name": "L01 Hook", "color": "Blue" },
+    { "frame": 125, "name": "L02", "color": "Lavender", "note": "the roll lands here", "dur": 25 },
+    { "frame": 200, "name": "CTA", "color": "Red", "note": "" }
+  ],
+  "captions": { "project": "cp_tiny01", "clip": "clip_01", "burn": true, "from": [[0, 125, "cam", 200], [125, 125, "cam", 900]] },
+  "words": []
+}
