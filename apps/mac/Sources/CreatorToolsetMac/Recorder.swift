@@ -588,6 +588,16 @@ final class Recorder: ObservableObject {
                            onFolder: { [weak self] in self?.pickFolder() },
                            onShowFolder: { [weak self] in self?.showFolder() })
         cameraPreview(on: screen)
+        setup.workspaces = []
+        setup.workspace = nil
+        let opened = UUID()
+        toolbarOpened = opened
+        Task { [weak self] in
+            // this toolbar's answer only (one opened since has its own); it may land during the count-in or the take
+            guard let got = await self?.workspaces?(), let self, self.toolbarOpened == opened else { return }
+            self.setup.workspaces = got.list
+            if self.setup.workspace == nil { self.setup.workspace = got.list.contains { $0.id == got.current } ? got.current : got.list.first?.id }
+        }
         // the bubble follows the camera choice only: any other change of the toolbar leaves the open camera alone
         cameraWatch = setup.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
@@ -598,6 +608,8 @@ final class Recorder: ObservableObject {
     }
 
     private var cameraWatch: AnyCancellable?
+    /// The toolbar the workspace list being fetched is for.
+    private var toolbarOpened = UUID()
     /// The camera choice the bubble shows ("none" for none).
     private var previewing: String?
 
@@ -955,9 +967,11 @@ final class Recorder: ObservableObject {
 
     private func showPreview(_ project: LocalProject, on screen: NSScreen, near recorded: CGRect?) {
         RecordingPreview.show(project, on: screen, near: recorded, actions: .init(
-            edit: { [weak self] in
+            edit: { [weak self] workspace in
                 RecordingPreview.close()
-                self?.openPage?("/record/\(project.id)")
+                // the editor opens in the picked workspace, so its Share sends there (src/lib/workspace.ts openedIn)
+                let ws = workspace?.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(.init(charactersIn: "-_")))
+                self?.openPage?("/record/\(project.id)" + (ws.map { "?ws=\($0)" } ?? ""))
             },
             save: { [weak self] in self?.save(project) },
             copy: {
@@ -967,6 +981,8 @@ final class Recorder: ObservableObject {
             share: { [weak self] destination, workspace in Task { await self?.share(project, to: destination, in: workspace) } },
             reveal: { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) },
             discard: { [weak self] in self?.delete(project) }))
+        // the toolbar's pick, shown again; asked afresh only when the toolbar never got the list
+        if setup.workspace != nil { return RecordingPreview.setWorkspaces(setup.workspaces, chosen: setup.workspace, for: project.id) }
         Task { [weak self] in
             guard let got = await self?.workspaces?() else { return }
             RecordingPreview.setWorkspaces(got.list, chosen: got.current, for: project.id)
