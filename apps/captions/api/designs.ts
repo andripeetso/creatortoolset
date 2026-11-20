@@ -1432,10 +1432,10 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
     try {
       const made = await fromMac(splitPicture(d.owner, await forMac(d, c.req.param("pid"), tmp)));
       // made small enough to keep outside the turn (ffmpeg takes a while): the biggest pieces there may be room for
-      const bySize = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h).slice(0, Math.max(0, DESIGN_LIMITS.pictures - 1 - d.pictures.length));
+      const bySize = made.layout.pieces.map((b, n) => ({ ...b, n })).sort((a, b) => b.w * b.h - a.w * a.h);
       const behind = await keepable(made.background, tmp, "The picture behind");
       const kept: Buffer[] = [];
-      for (const { n } of bySize) kept[n] = await keepable(made.pieces[n]!, tmp, "A piece");
+      for (const { n } of bySize.slice(0, Math.max(0, DESIGN_LIMITS.pictures - 1 - d.pictures.length))) kept[n] = await keepable(made.pieces[n]!, tmp, "A piece");
       // onto the design as it is now, in its turn (the Mac's work stays outside it)
       return await designTurn(c)(async (): Promise<SplitAnswer> => {
         const now = await read(d.owner, d.id);
@@ -1446,7 +1446,8 @@ designsApp.post("/:id/pictures/:pid/split", (c) =>
         const room = DESIGN_LIMITS.pictures - now.pictures.length;
         const biggest = bySize.slice(0, room).sort((a, b) => a.n - b.n);
         const pieces: SplitAnswer["pieces"] = [];
-        for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, kept[n]!, "png") });
+        // (room made meanwhile: those pieces are made small enough here, in the turn; rare)
+        for (const { n, ...box } of biggest) pieces.push({ ...box, picture: await addPicture(now, (kept[n] ??= await keepable(made.pieces[n]!, tmp, "A piece")), "png") });
         await save({ ...now, updatedAt: stamp(now) });
         return { background, pieces, lines: made.layout.lines };
       });

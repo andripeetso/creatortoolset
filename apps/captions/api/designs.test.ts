@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -1217,6 +1217,29 @@ describe("designs: a picture split into layers", () => {
     }
     expect((await call<Design>("GET", `/api/designs/${d.id}`)).body.pictures).toHaveLength(4);
   }, 60_000);
+  it("keeps as many pieces as there is room for when the design has room made meanwhile", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
+    const small = png(8, 8);
+    const first = (await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "slide", type: "image/png", data: small.toString("base64") })).body.id;
+    for (let n = 1; n < 58; n++) await call("POST", `/api/designs/${d.id}/pictures`, { name: "p", type: "image/png", data: small.toString("base64") });
+    const mac = pairDevice("jordan", "Jordan's roomy Mac").device;
+    setDeviceKinds(mac.id, [CUTOUT_KIND, SPLIT_KIND]);
+    touchDevice(mac.id);
+    // 58 pictures as it is asked: room for the picture behind and one piece
+    const asked = call<SplitAnswer>("POST", `/api/designs/${d.id}/pictures/${first}/split`, {});
+    let job = null as ReturnType<typeof claimCutout>;
+    for (let n = 0; n < 200 && !(job = claimCutout(mac, [CUTOUT_KIND, SPLIT_KIND])); n++) await new Promise((r) => setTimeout(r, 10));
+    // meanwhile ten of its pictures go (written by another hand straight into the design)
+    const file = path.join(dataDir, "designs", "jordan", `${d.id}.json`);
+    const kept = JSON.parse(readFileSync(file, "utf8")) as Design;
+    writeFileSync(file, JSON.stringify({ ...kept, pictures: kept.pictures.slice(0, 48) }));
+    const box = { x: 0.1, y: 0.1, w: 0.2, h: 0.2 };
+    void cutoutSent(mac.id, job!.id, { layout: JSON.stringify({ lines: [], pieces: [box, box, box] }), background: small, piece0: small, piece1: small, piece2: small });
+    const made = await asked;
+    expect(made.status).toBe(200);
+    expect(made.body.pieces).toHaveLength(3);
+  }, 120_000);
+
   it("makes what the Mac sent small enough before the design's turn, so a write meanwhile is not held by it", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true })).body;
     const first = (await call<{ id: string }>("POST", `/api/designs/${d.id}/pictures`, { name: "slide", type: "image/png", data: png(108, 135).toString("base64") })).body.id;
@@ -1438,6 +1461,12 @@ describe("designs: styles", () => {
     const full = await write(d.id, { styles: { colors: many } });
     expect(Object.keys(full.body.design.styles!.colors!)).toHaveLength(60);
     expect(full.body.notes).toContain("a design has at most 60 colour styles: the rest left out");
+    // thousands of bad styles: a few notes, the rest counted
+    const junk = Object.fromEntries(Array.from({ length: 3000 }, (_, n) => [`Bad ${n}`, { name: "X", color: "#000000" }]));
+    const loud = await write(d.id, { styles: { text: junk, effects: { fine: { name: "Fine", effects: [{ type: "blur", blur: 4 }] } } } });
+    expect(loud.status).toBe(200);
+    expect(loud.body.notes.filter((n) => n.startsWith("styles.text."))).toHaveLength(8);
+    expect(loud.body.notes).toContain("and 2992 more about styles");
   });
 
   it("a headline's text style made bigger grows the auto layout pill it is in", async () => {

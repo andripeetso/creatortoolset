@@ -899,5 +899,7 @@ export function cleanStyles(raw: unknown, fonts: readonly string[] = []): { styl
     }
     if (Object.keys(kept).length) (out as Record<string, unknown>)[kind] = kept;
   }
-  return { styles: out, notes };
+  // a few said one by one, the rest counted: a write of thousands of bad styles is not thousands of notes
+  return { styles: out, notes: notes.length > STYLE_NOTES ? [...notes.slice(0, STYLE_NOTES), `and ${notes.length - STYLE_NOTES} more about styles`] : notes };
 }
+const STYLE_NOTES = 8;

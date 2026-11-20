@@ -430,6 +430,15 @@ describe("saves on their way, kept and settled (last gate)", () => {
     expect((out[0]!.layers[1] as TextLayer).text).toBe("Hello wor");
   });
 
+  it("takes a new layer the server rounded at a half or held inside the frame's reach as the one sent, never a second", () => {
+    const base = [f([shape("l1")])];
+    for (const [sentX, keptX] of [[10.4951, 10.5], [5000, 2160]] as const) {
+      const sent = [f([shape("l1"), shape("l2", "#ff0000", { x: sentX })])];
+      const theirs = [f([shape("l1"), shape("l2", "#ff0000", { x: keptX })])];
+      expect(xs(mergeFrames(sent, base, theirs, [{ pages: sent, base }]))).toEqual(["l1@0", `l2@${keptX}`]);
+    }
+  });
+
   it("never takes another writer's new layer of the same kind elsewhere for the one sent", () => {
     const base = [f([shape("l1")])];
     const sent = [f([shape("l1"), shape("l3", "#ff0000", { x: 50 })])];

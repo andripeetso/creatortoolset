@@ -195,3 +195,29 @@ describe("found in review", () => {
     expect((at(out, "p1", "t") as unknown as TextLayer).runs).toEqual([{ start: 0, end: 1, size: 50 }]);
   });
 });
+
+describe("a style changed here while the other side changed a layer naming it", () => {
+  it("keeps the other side's colour of its own on that layer, and a layer nobody touched takes this window's new colour", async () => {
+    const { mergeDesign } = await import("./hands");
+    const red = { colors: { accent: { name: "Accent", color: "#ff0000" } } };
+    const blue = withStyle(red, "colors", "accent", { name: "Accent", color: "#0000ff" });
+    const base = styled([page("p1", [rect("l1", { colorStyle: "accent" }), rect("l2", { colorStyle: "accent" })])], red);
+    // this window: Accent made blue (its layers follow); the AI meanwhile gave l1 a green of its own
+    const mine = styled(base, blue);
+    const theirs = base.map((p) => ({ ...p, layers: p.layers.map((l) => (l.id === "l1" ? ({ ...(l as ShapeLayer), fill: "#00ff00", colorStyle: undefined } as Layer) : l)) }));
+    const out = mergeDesign({ pages: mine, styles: blue }, { pages: base, styles: red }, { pages: theirs, styles: red });
+    expect([at(out.pages, "p1", "l1").fill, at(out.pages, "p1", "l1").colorStyle, at(out.pages, "p1", "l2").fill, at(out.pages, "p1", "l2").colorStyle]).toEqual(["#00ff00", undefined, "#0000ff", "accent"]);
+    expect(out.styles).toEqual(blue);
+  });
+
+  it("keeps a size the other side set on a text on top of its style while this window changed the style's size", async () => {
+    const { mergeDesign } = await import("./hands");
+    const small = { text: { h: { name: "H", font: "Inter", size: 40 } } };
+    const big = withStyle(small, "text", "h", { name: "H", font: "Inter", size: 80 });
+    const base = styled([page("p1", [text("t", "Hi", { textStyle: "h" }), text("u", "Yo", { textStyle: "h" })])], small);
+    const mine = styled(base, big);
+    const theirs = base.map((p) => ({ ...p, layers: p.layers.map((l) => (l.id === "t" ? ({ ...l, size: 60, styleOwn: ["size"] } as Layer) : l)) }));
+    const out = mergeDesign({ pages: mine, styles: big }, { pages: base, styles: small }, { pages: theirs, styles: small });
+    expect([at(out.pages, "p1", "t").size, at(out.pages, "p1", "t").styleOwn, at(out.pages, "p1", "u").size]).toEqual([60, ["size"], 80]);
+  });
+});

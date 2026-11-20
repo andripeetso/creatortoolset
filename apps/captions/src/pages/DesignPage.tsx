@@ -17,7 +17,7 @@ import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuS
 import { Tip } from "@/components/design/Tip";
 import { drawingUrl, drawPage, measureWords, sourceOf, type Loaded } from "@/lib/design/draw";
 import { fillsOf, paintPictures, strokesOf } from "@/lib/design/paint";
-import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, mergeFrames, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
+import { alignLayers, besideFrames, BOOLEAN_NAMES, boundsOf, rehome, distribute, fitView, frameOf, freshIds, hugLoose, intersects, layerName, pageName, regroup, zoomAt, ZOOM, type Align, type Rect } from "@/lib/design/hands";
 import { dupStep, FIT_PAD, PAN_STEP, tidy, turnTo } from "@/lib/design/feel";
 import { resized } from "@/lib/design/resize";
 import { detached, plainOf, freshKey, instanceAround, isInstance, isMain, mainsOf, syncInstances } from "@/lib/design/components";
@@ -28,7 +28,7 @@ import { viewStore, zoomStop } from "@/lib/design/view";
 import { useAidPrefs } from "@/lib/design/aids";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
-import { settles, withSent, type SentSave } from "@/lib/design/hands";
+import { mergeDesign, settles, withSent, type SentSave } from "@/lib/design/hands";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture, type SendError } from "@/lib/designs";
 import { splitLayers } from "@/lib/design/split";
 import { onThisMac } from "@/lib/thisMac";
@@ -43,7 +43,7 @@ import { DESIGN_FONTS, designWeight } from "@/lib/design/fonts";
 import { patchRange, viewRange } from "@/lib/design/runs";
 import { useOwnFonts } from "@/lib/design/own-fonts";
 import { cn } from "@/lib/utils";
-import { lookOf, mergeStyles, styled, unlinked, withLook, type Look } from "@/lib/design/styles";
+import { lookOf, styled, unlinked, withLook, type Look } from "@/lib/design/styles";
 import { DesignStylesContext } from "@/components/design/StylesSection";
 
 /**
@@ -397,10 +397,12 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     /** This window's pages put onto the design as the server has it now (`theirs`), from what it had as `base`. */
     // (and this window's styles onto the server's: each style by its id, each field from the side that changed it)
     const onto = (pages: Page[], base: Page[], theirs: Design) => {
-      stylesNow.current = mergeStyles(stylesNow.current, server.current.styles, theirs.styles);
+      const lay = (p: Page[]) => layoutPages(p, measureWords);
+      const merged = mergeDesign({ pages, styles: stylesNow.current }, { pages: base, styles: server.current.styles }, { pages: lay(theirs.pages), styles: theirs.styles }, sent.current, lay);
+      stylesNow.current = merged.styles;
       // what the server has now is the base of the next try (a second refusal merges against it, not the first one's)
       server.current = { ...server.current, styles: theirs.styles ?? {} };
-      return styled(syncInstances(mergeFrames(pages, base, layoutPages(theirs.pages, measureWords), sent.current)), stylesNow.current);
+      return merged.pages;
     };
     // on the way out of the page: refused for a change made elsewhere, merged onto it and sent again (three times at
     // most); what the server kept less of, or never took, is said where it still shows, as a notice
@@ -545,8 +547,10 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
       // instances made again: a main changed on one side reaches the instances the other side changed; the styles merged
       // style by style, and put on the frames again
       const hadStyles = stylesNow.current;
-      const mergedStyles = mergeStyles(hadStyles, server.current.styles, d.styles);
-      const merged = layoutPages(styled(syncInstances(mergeFrames(had, server.current.pages, theirs, sent.current)), mergedStyles), measureWords);
+      const lay = (p: Page[]) => layoutPages(p, measureWords);
+      const both = mergeDesign({ pages: had, styles: hadStyles }, { pages: server.current.pages, styles: server.current.styles }, { pages: theirs, styles: d.styles }, sent.current, lay);
+      const mergedStyles = both.styles;
+      const merged = lay(both.pages);
       server.current = { pages: theirs, styles: d.styles ?? {}, at: d.updatedAt };
       setDesign(d);
       // (styles told apart whatever order their fields were written in: the server writes its own)

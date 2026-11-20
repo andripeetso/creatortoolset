@@ -1,9 +1,11 @@
-import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type Layer, type PathLayer } from "@contracts/design";
+import { DESIGN_GAP, DESIGN_LIMITS, type DesignPage, type DesignStyles, type Layer, type PathLayer } from "@contracts/design";
 import { effectsOf, reachOf } from "./effects";
 import { strokesOf } from "./paint";
 import { fitContents } from "./resize";
 import { boundsOf, everyLayer, findLayer, freshLayerIds, isGroup, layerOut, mapLayers, nextOf, outOf, parentOf, same, seenBox, stable } from "./tree";
 import { pathBounds } from "./path";
+import { syncInstances } from "./components";
+import { mergeStyles, styled } from "./styles";
 
 /**
  * What the hands on the canvas work out, as plain functions: where the frames lie, the view (pan and zoom), a layer's
@@ -433,7 +435,7 @@ export function mergeFrame(mine: DesignPage, base: DesignPage | undefined, their
   // ids go on from the higher of the two: none is given again (tree.ts nextOf)
   const next = Math.max(nextOf(mine), nextOf(theirs));
   const saves = sent.map((s) => ({ layers: s.page?.layers, base: s.base?.layers }));
-  out.layers = !sent.length && same(theirs.layers, was.layers) ? mine.layers : !sent.length && same(mine.layers, was.layers) ? theirs.layers : mergeTree(mine.layers, was.layers, theirs.layers, saves, next);
+  out.layers = !sent.length && same(theirs.layers, was.layers) ? mine.layers : !sent.length && same(mine.layers, was.layers) ? theirs.layers : mergeTree(mine.layers, was.layers, theirs.layers, saves, next, theirs);
   return next > (out.next ?? 0) && (mine.next !== undefined || theirs.next !== undefined) ? { ...out, next } : out;
 }
 
@@ -496,13 +498,15 @@ function indexed(layers: readonly Layer[]): Map<string, At> {
 }
 /**
  * What a layer is and where, beside how it looks: told apart from another layer whatever the server cleaned of it (words
- * and names trimmed as design-check keeps them). `flowing`: in an auto layout, where its place is the box's, not its own.
+ * and names trimmed as design-check keeps them; its place held to its frame's and rounded to hundredths as design-check
+ * keeps it, `size` the frame's). `flowing`: in an auto layout, where its place is the box's, not its own.
  */
-const whatItIs = (l: Layer, flowing: boolean): string => {
+const placeOf = (v: number, side: number | undefined): number => Math.round(Math.round((side ? Math.min(2 * side, Math.max(-side, v)) : v) * 100) / 100);
+const whatItIs = (l: Layer, flowing: boolean, size?: { w?: number; h?: number }): string => {
   const r = l as unknown as Rec;
   const words = typeof r.text === "string" ? r.text.replace(/\r\n/g, "\n").trim() : r.text;
   const name = typeof l.name === "string" ? l.name.replace(/\s+/g, " ").trim() : l.name;
-  return stable([l.type, words, r.picture, r.shape, r.svg, name, r.component, (r.instance as { of?: string } | undefined)?.of, ...(flowing ? [] : [Math.round(l.x), Math.round(l.y)])]);
+  return stable([l.type, words, r.picture, r.shape, r.svg, name, r.component, (r.instance as { of?: string } | undefined)?.of, ...(flowing ? [] : [placeOf(l.x, size?.w), placeOf(l.y, size?.h)])]);
 };
 /** The containers a layer lies in on one side, innermost first. */
 function* ancestors(side: ReadonlyMap<string, At>, id: string): Generator<string> {
@@ -525,7 +529,7 @@ const ownOf = (a: At, flowing: boolean): Rec => {
  * one both added under the same id but different is this window's under an id of its own. A layer inside an instance
  * goes with its instance (its layers are its main's: lib/design/components.ts).
  */
-function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[], sent: readonly { layers?: readonly Layer[]; base?: readonly Layer[] }[], floor = 0): Layer[] {
+function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: readonly Layer[], sent: readonly { layers?: readonly Layer[]; base?: readonly Layer[] }[], floor = 0, size?: { w?: number; h?: number }): Layer[] {
   const T = indexed(theirs);
   const B = indexed(base);
   // each layer a save on its way left as the server has it (sent so, or taken out of what it was sent on): that is its
@@ -540,7 +544,7 @@ function mergeTree(mine0: readonly Layer[], base: readonly Layer[], theirs: read
       // (a layer new to the base is the one sent by what it is — its kind, words, picture, shape, drawing, name, main — not
       // by values the server may have cleaned, a weight snapped or a size held in; another's new layer under that id differs)
       const fresh = !B.has(id);
-      const a = agreed(saves.map((s) => says(s.sent.get(id), s.was.has(id))), T.get(id), (x, y) => x.parent === y.parent && (fresh ? whatItIs(x.l, flowsIn(x.parent)) === whatItIs(y.l, flowsIn(x.parent)) : rounded(ownOf(x, false)) === rounded(ownOf(y, false))));
+      const a = agreed(saves.map((s) => says(s.sent.get(id), s.was.has(id))), T.get(id), (x, y) => x.parent === y.parent && (fresh ? whatItIs(x.l, flowsIn(x.parent), size) === whatItIs(y.l, flowsIn(x.parent), size) : rounded(ownOf(x, false)) === rounded(ownOf(y, false))));
       if (a) "gone" in a ? B.delete(id) : B.set(id, a.has);
     }
   }
@@ -705,3 +709,17 @@ export function mergeFrames(mine: readonly DesignPage[], base0: readonly DesignP
   let n = 0;
   return all.map((p) => (order.includes(p.id) ? byId.get(order[n++]!)! : p));
 }
+
+/**
+ * A design as this window has it (`mine`, changed from `base`) put onto the server's (`theirs`): the styles style by
+ * style (mergeStyles), the frames layer by layer (mergeFrames), every style's value put on again. The frames are told
+ * apart from a base with this window's own styles on it: a value one of its styles put on a layer is no change of its
+ * own, so a colour or size the other side gave that layer (taking it off the style, or as its own) stays.
+ * `lay`: the base laid out as this window lays out (its widths of the words).
+ */
+export function mergeDesign<P extends DesignPage>(mine: { pages: readonly P[]; styles: DesignStyles }, base: { pages: readonly P[]; styles: DesignStyles }, theirs: { pages: readonly P[]; styles?: DesignStyles }, sent: readonly SentSave[] = [], lay: (pages: P[]) => P[] = (p) => p): { pages: P[]; styles: DesignStyles } {
+  const styles = mergeStyles(mine.styles, base.styles, theirs.styles);
+  const ownBase = lay(styled(base.pages, mine.styles));
+  return { pages: styled(syncInstances(mergeFrames(mine.pages, ownBase, theirs.pages, sent) as P[]), styles), styles };
+}
+
