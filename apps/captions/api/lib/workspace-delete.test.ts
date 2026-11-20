@@ -125,8 +125,9 @@ beforeAll(async () => {
   rule("frameworks", "f-a", [A]);
   // the person's own footage folder, read in place by B's Media Library through a link
   put(take, "the person's own video");
-  const folder = (fid: string, ws: string) => ({ id: fid, role: "footage", name: "My footage", origin: { host: "mac", path: own }, make: false, createdAt: 1, reach: {}, workspace: ws });
-  put(at("storage", "alex.json"), { folders: [folder("sa", A), folder("sb", B)] });
+  // each workspace's own row: one folder two workspaces share is one row in both (lib/storage.ts oneRowPerFolder)
+  const folder = (fid: string, ws: string, p: string) => ({ id: fid, role: "footage", name: path.basename(p), origin: { host: "mac", path: p }, make: false, createdAt: 1, reach: {}, workspace: ws });
+  put(at("storage", "alex.json"), { folders: [folder("sa", A, own), folder("sb", B, `${own} B`)] });
   for (const [ws, l] of [[A, lib.a], [B, lib.b]] as const) {
     libraryDb().exec(`
       INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('${l}', 'team-1', 'Library', 'local', '{"projectId":"${ws}"}', 0);

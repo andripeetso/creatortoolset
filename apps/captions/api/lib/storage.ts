@@ -82,11 +82,43 @@ export function mediaFolders(folders: StorageFolder[], places = placesOf): Stora
 }
 
 /**
+ * One row per folder: two or more rows of one use (Media, Projects, Exports) for the same path on the same computer, each
+ * in its own workspaces, become one row in all of them. A computer marks a folder with one row's id, so the other rows were
+ * never found there (2026-11-20). The row kept is the one a computer found (`folderState` ok, or a `reach`), else the oldest; its id, so
+ * its marker stays right. Folders left out are joined (more is left out, never less). Rows for every workspace or from
+ * before workspaces are left as they are. A file found under a row that went moves to the kept one at the next boot
+ * (library/place-rows.ts fixPlaceRows: the folder that holds its path).
+ */
+export function oneRowPerFolder(folders: StorageFolder[]): StorageFolder[] {
+  const groups = new Map<string, StorageFolder[]>();
+  for (const f of folders) {
+    const ws = f && ["footage", "projects", "library"].includes(f.role) ? placesOf(f) : null;
+    if (!ws || ws.includes("")) continue;
+    const key = JSON.stringify([f.role, f.origin.host, f.origin.path]);
+    groups.set(key, [...(groups.get(key) ?? []), f]);
+  }
+  const into = new Map<StorageFolder, StorageFolder>();
+  const gone = new Set<StorageFolder>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    // what its computer reported for it (report.ts folderState), or a reach of its own
+    const found = (f: StorageFolder) => f.folderState === "ok" || Object.keys(f.reach ?? {}).length > 0;
+    const keep = [...group].sort((a, b) => Number(found(b)) - Number(found(a)) || (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]!;
+    const workspaces = [...new Set(group.flatMap((f) => placesOf(f)!))];
+    const leaveOut = [...new Set(group.flatMap((f) => f.leaveOut ?? []))];
+    const { workspaces: _w, ...rest } = keep;
+    into.set(keep, { ...rest, workspace: workspaces[0], ...(workspaces.length > 1 ? { workspaces } : {}), ...(leaveOut.length ? { leaveOut } : {}) });
+    for (const f of group) if (f !== keep) gone.add(f);
+  }
+  return folders.filter((f) => !gone.has(f)).map((f) => into.get(f) ?? f);
+}
+
+/**
  * A storage list moved to the current schema (contracts/storage.ts STORAGE_SCHEMA; 3's Footage is parseStorageFile's): every computer is a device id now, the
  * "this-computer" folders the computer the server runs on (`thisDevice`; kept as they were when it has none: a server with
  * no paired computer of its own reads them itself) and ids of computers paired again resolved
- * (`resolve`, whereis.ts resolveDevice). Two entries for one path in two workspaces stay two (a folder in several
- * workspaces is one entry with `workspaces` from Settings on). `changed` says whether the file needs writing.
+ * (`resolve`, whereis.ts resolveDevice), and two rows for one folder in two workspaces made one (oneRowPerFolder).
+ * `changed` says whether the file needs writing.
  */
 export function migrateStorage(st: StorageState, thisDevice: string | undefined, resolve: (id: string) => string = (id) => id): { st: StorageState; changed: boolean } {
   const host = (h: string) => (h === THIS_COMPUTER ? (thisDevice ?? h) : resolve(h));
@@ -99,7 +131,8 @@ export function migrateStorage(st: StorageState, thisDevice: string | undefined,
     if (g !== f) changed = true;
     out.push(g);
   }
-  return { st: { ...st, schemaVersion: STORAGE_SCHEMA, folders: out }, changed };
+  const one = oneRowPerFolder(out);
+  return { st: { ...st, schemaVersion: STORAGE_SCHEMA, folders: one }, changed: changed || one.length !== out.length };
 }
 
 /** The disk a path is on, read by the server (statfs). A path that does not exist yet (a Library not made) is read at its

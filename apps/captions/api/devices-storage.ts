@@ -224,8 +224,18 @@ export async function workspaceStorageFolders(user: string, has: (ws?: string) =
 }
 
 /** The workspaces a folder is in, by id (`of`: project-of.ts projectOf, for one from before), or null for every workspace. */
-const placesOf = (f: StorageFolder, of: (own?: string) => string): string[] | null =>
+export const placesOf = (f: StorageFolder, of: (own?: string) => string): string[] | null =>
   f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? [of(f.workspace)]);
+
+/** Workspace `ws` leaves the rows `leaving` names: a row it shares with other workspaces stays theirs; one left with none,
+ *  one for every workspace, one it is not in, or any with no workspace to leave goes. */
+export const leaveRows = (folders: StorageFolder[], leaving: (f: StorageFolder) => boolean, ws: string | undefined, of: ((own?: string) => string) | null): StorageFolder[] =>
+  folders.flatMap((f) => {
+    if (!leaving(f)) return [f];
+    const was = ws && of ? placesOf(f, of) : null;
+    const rest = ws && was?.includes(ws) ? was.filter((w) => w !== ws) : undefined;
+    return rest?.length ? [placedIn(f, rest)] : [];
+  });
 /**
  * Exports is one folder per workspace: the workspaces folder `keep` is given (`to`, null = every workspace) come off every
  * other Exports folder, and one left with none is forgotten (its files stay). One for every workspace stays when another is
@@ -427,9 +437,20 @@ export async function addFolder(c: C, b: Record<string, unknown> | null): Promis
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     if (st.folders.some((f) => here(f) && f.role === role && f.origin.host === host && f.origin.path === p)) return null;
+    // the same folder on this computer is already another workspace's (Media or Projects): it serves this one too, one row
+    // and one marker, so the computer finds it for both (two rows for one folder: the marker names one, the other is never found)
+    const twin = workspace && of && role !== "library" ? st.folders.find((f) => !here(f) && f.role === role && f.origin.host === host && f.origin.path === p) : undefined;
+    const twinIn = twin && of ? placesOf(twin, of) : null;
+    if (twin && twinIn && workspace) {
+      if (role === "projects") st.folders = leaveRows(st.folders, (f) => here(f) && f.role === "projects" && f.origin.host === host, workspace, of);
+      st.folders = st.folders.map((f) => (f.id === twin.id ? placedIn(f, [...twinIn, workspace]) : f));
+      await writeStorage(user, st);
+      return st;
+    }
     // one Projects folder per workspace on each computer: the one this computer had is replaced (its files stay); another
     // computer's is never touched (a helper's folder card once took the Mac's own, 2026-11-20)
-    if (role === "projects") st.folders = st.folders.filter((f) => !(here(f) && f.role === "projects" && f.origin.host === host));
+    // (a row it shares with other workspaces stays theirs)
+    if (role === "projects") st.folders = leaveRows(st.folders, (f) => here(f) && f.role === "projects" && f.origin.host === host, workspace, of);
     // the workspace's Exports comes off the folder that had it; with no workspaces there is one Exports folder. One per
     // workspace across computers: Finals and the chat read the workspace's one (exportsOf)
     if (role === "library") {
@@ -579,18 +600,19 @@ storageApp.post("/folders/:id/re-point", async (c) => {
   return c.json(shown(out, here, user, named));
 });
 
-/** Forget a folder, whatever workspace it is in (its marker files stay where they are). */
+/** Forget a folder (its marker files stay where they are). One other workspaces share stays theirs: this one leaves it. */
 storageApp.delete("/folders/:id", async (c) => {
   const u = c.get("user");
   const user = u.username;
   const id = c.req.param("id");
-  const { mine: here, named } = await scopeOf(c);
+  const { mine: here, named, workspace } = await scopeOf(c);
+  const of = workspace ? await projectOf(u) : null;
   const out = await chained(user, async () => {
     const st = await readStorage(user);
     const gone = st.folders.find((f) => f.id === id);
     if (!gone) return null;
     const before = st.folders;
-    st.folders = st.folders.filter((f) => f !== gone);
+    st.folders = leaveRows(st.folders, (f) => f === gone, workspace, of);
     await writeStorage(user, st);
     return { st, gone, before };
   });

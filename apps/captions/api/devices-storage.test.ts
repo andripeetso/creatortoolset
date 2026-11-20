@@ -460,4 +460,75 @@ describe("each workspace", () => {
     expect((await addIn(mac, path.join(dir, "WS Mac Projects 2"), "projects")).status).toBe(200);
     expect(await rows("projects")).toEqual(["helper:Projects", "mac:WS Mac Projects 2"]);
   });
+
+  // 2026-11-20: two workspaces each had their own row for one folder; its marker named one, so the other was never found
+  it("one folder added in two workspaces is one row in both, so its computer finds it for both", async () => {
+    const mac = pairDevice(USER, "Tiny Shared Mac").device.id;
+    const addIn = (ws: string, role: string, p: string) =>
+      app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json", "x-ct-workspace": ws }, body: JSON.stringify({ role, host: mac, path: p }) });
+    type View = { folders: { id: string; role: string; origin: { host: string; path: string } }[] };
+    const list = async (ws: string, role: string) =>
+      ((await (await app.request("/api/devices/storage", { headers: { "x-ct-workspace": ws } })).json()) as View).folders.filter((f) => f.origin.host === mac && f.role === role).map((f) => f.id);
+    for (const [role, p] of [["footage", "/Volumes/Tiny Share/CREATOR TOOLSET/Source media"], ["projects", "/Volumes/Tiny Share/CREATOR TOOLSET/Project files"]] as const) {
+      expect((await addIn("ws-a", role, p)).status).toBe(200);
+      expect((await addIn("ws-b", role, p)).status).toBe(200);
+      const inA = await list("ws-a", role);
+      expect(inA).toHaveLength(1);
+      expect(await list("ws-b", role)).toEqual(inA);
+    }
+    // the computer's own list: each folder once, in both workspaces (the one id its marker carries)
+    const { relayFolders } = await import("./library/report");
+    const theirs = await relayFolders(deviceOf(mac)!);
+    expect(theirs).toHaveLength(2);
+    for (const f of theirs) expect([...(f.workspaces as string[])].sort()).toEqual(["ws-a", "ws-b"]);
+    // one workspace picking another Projects folder there leaves the shared one to the other
+    const projectsShared = (await list("ws-b", "projects"))[0];
+    expect((await addIn("ws-a", "projects", "/Volumes/Tiny Share/Other projects")).status).toBe(200);
+    expect(await list("ws-b", "projects")).toEqual([projectsShared]);
+    expect(await list("ws-a", "projects")).not.toContain(projectsShared);
+    // Remove in one workspace: the folder stays the other's
+    const mediaShared = (await list("ws-a", "footage"))[0]!;
+    const removed = await app.request(`/api/devices/storage/folders/${encodeURIComponent(mediaShared)}`, { method: "DELETE", headers: { "x-ct-workspace": "ws-a" } });
+    expect(removed.status).toBe(200);
+    expect(await list("ws-a", "footage")).toEqual([]);
+    expect(await list("ws-b", "footage")).toEqual([mediaShared]);
+  });
+
+  // a Library page adds and removes folders through its watch list: the same one-row rule as Settings → Folders
+  it("a Library adding a folder another workspace has joins its row; taking it off leaves the row to the other", async () => {
+    const libOf = (ws: string) =>
+      (libraryDb().prepare("SELECT id, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE workspace_id = ?").all(USER) as { id: string; ws: string | null }[]).find((r) => (r.ws ?? "ws-a") === ws)!.id;
+    const watched = async (ws: string) => ((await (await app.request(`/api/library/${libOf(ws)}/watch`)).json()) as { folders: { path: string; mode?: string }[] }).folders;
+    const save = (ws: string, folders: { path: string; mode?: string }[]) =>
+      app.request(`/api/library/${libOf(ws)}/watch`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ folders }) });
+    const shoot = path.join(dir, "Shared shoot");
+    mkdirSync(shoot, { recursive: true });
+    writeFileSync(path.join(shoot, "take.mp4"), Buffer.alloc(1024, 4));
+    type View = { folders: { id: string; role: string; origin: { path: string } }[] };
+    const rows = async (ws: string) =>
+      ((await (await app.request("/api/devices/storage", { headers: { "x-ct-workspace": ws } })).json()) as View).folders.filter((f) => f.role === "footage" && f.origin.path === shoot).map((f) => f.id);
+    const first = await save("ws-a", [...(await watched("ws-a")), { path: shoot, mode: "reference" }]);
+    expect(first.status, await first.clone().text()).toBe(200);
+    const second = await save("ws-b", [...(await watched("ws-b")), { path: shoot, mode: "reference" }]);
+    expect(second.status, await second.clone().text()).toBe(200);
+    const one = await rows("ws-a");
+    expect(one).toHaveLength(1);
+    expect(await rows("ws-b")).toEqual(one); // joined, not a second row
+    // ws-a takes it off its Library: ws-b keeps the folder, ws-a no longer reads it
+    expect((await save("ws-a", (await watched("ws-a")).filter((f) => f.path !== shoot))).status).toBe(200);
+    expect(await rows("ws-a")).toEqual([]);
+    expect(await rows("ws-b")).toEqual(one);
+    expect((await watched("ws-a")).map((f) => f.path)).not.toContain(shoot);
+    expect((await watched("ws-b")).map((f) => f.path)).toContain(shoot);
+    // the other order: the first workspace's Library (no workspace id of its own) joins the other's row too
+    const later = path.join(dir, "Shared later");
+    mkdirSync(later, { recursive: true });
+    writeFileSync(path.join(later, "take.mp4"), Buffer.alloc(1024, 6));
+    const at = async (ws: string) =>
+      ((await (await app.request("/api/devices/storage", { headers: { "x-ct-workspace": ws } })).json()) as View).folders.filter((f) => f.role === "footage" && f.origin.path === later).map((f) => f.id);
+    expect((await save("ws-b", [...(await watched("ws-b")), { path: later, mode: "reference" }])).status).toBe(200);
+    expect((await save("ws-a", [...(await watched("ws-a")), { path: later, mode: "reference" }])).status).toBe(200);
+    expect(await at("ws-a")).toHaveLength(1);
+    expect(await at("ws-b")).toEqual(await at("ws-a"));
+  });
 });

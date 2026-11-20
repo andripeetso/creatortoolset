@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { connectFor, finalsDirName, finalsFolderOf, sourcesOf, type Disk, type StorageFolder } from "../../contracts/storage";
-import { canReach, folderFor, hostPath, isInside, mountOf, withMounts, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
+import { canReach, folderFor, hostPath, isInside, migrateStorage, mountOf, withMounts, localDisks, parseStorageFile, parseStorageReport, storageFilePath, uploadRelayView } from "./storage";
 
 // Two fake volumes: "/" (100 GB free of 200) and an external drive at /Volumes/EXT (5 of 20). Other paths do not exist.
 vi.mock("node:fs/promises", async (orig) => {
@@ -253,5 +253,52 @@ describe("a second computer connects the same share", () => {
     expect(connectFor({ fs: "nfs", server: "nas", share: "volume1/rushes", sub: "" }, "linux")).toEqual({ line: "sudo mkdir -p /mnt/rushes && sudo mount -t nfs 'nas.local:/volume1/rushes' /mnt/rushes" });
     expect(connectFor({ fs: "nfs", server: "nas", share: "volume1/rushes", sub: "" }, "windows")).toBeNull();
     expect(connectFor({ ...m, share: "a'b" }, "linux")).toBeNull();
+  });
+});
+
+// 2026-11-20: two workspaces each with their own Source media and Project files rows for the same folders on one computer;
+// the folders' marker carried the second workspace's ids, so the first workspace's rows were never found
+describe("one row per folder", () => {
+  const row = (id: string, role: StorageFolder["role"], p: string, workspace: string, found: boolean, extra: Partial<StorageFolder> = {}): StorageFolder =>
+    ({ id, role, name: path.basename(p), origin: { host: "dev_mac", path: p }, make: true, createdAt: Number(id.slice(-1)), workspace, reach: found ? { dev_mac: { path: p, at: 1 } } : {}, ...extra }) as StorageFolder;
+  const media = "/Volumes/home/CREATOR TOOLSET/Source media", projects = "/Volumes/home/CREATOR TOOLSET/Project files";
+
+  it("merges a folder's rows of one use into the one its computer found, in all their workspaces", () => {
+    const { st, changed } = migrateStorage({ schemaVersion: 3, folders: [
+      row("ws1-media-1", "footage", media, "ws-one", false, { leaveOut: ["Private"] }),
+      row("ws1-projects-2", "projects", projects, "ws-one", false),
+      row("ws2-media-3", "footage", media, "ws-two", true, { leaveOut: ["Drafts"] }),
+      row("ws2-projects-4", "projects", projects, "ws-two", true),
+      row("other-5", "footage", "/Volumes/home/Other", "ws-one", false),
+    ] }, "dev_mac");
+    expect(changed).toBe(true);
+    const by = Object.fromEntries(st.folders.map((f) => [f.id, f]));
+    expect(Object.keys(by).sort()).toEqual(["other-5", "ws2-media-3", "ws2-projects-4"]);
+    expect(by["ws2-media-3"]).toMatchObject({ workspaces: ["ws-one", "ws-two"], reach: { dev_mac: { path: media } } });
+    expect(by["ws2-media-3"]!.leaveOut).toEqual(["Private", "Drafts"]); // more left out, never less
+    expect(by["ws2-projects-4"]!.workspaces).toEqual(["ws-one", "ws-two"]);
+    // once: the merged list has nothing left to merge
+    expect(migrateStorage(st, "dev_mac").changed).toBe(false);
+  });
+
+  it("keeps the row its computer reported found, even with no reach of its own, over an older one", () => {
+    const { st } = migrateStorage({ schemaVersion: 3, folders: [
+      row("old-1", "footage", media, "ws-one", false, { folderState: "disk_away" }),
+      row("new-2", "footage", media, "ws-two", false, { folderState: "ok" }),
+    ] }, "dev_mac");
+    expect(st.folders.map((f) => [f.id, f.workspaces])).toEqual([["new-2", ["ws-one", "ws-two"]]]);
+  });
+
+  it("leaves rows of another use, another computer, every workspace or from before workspaces as they are", () => {
+    const folders = [
+      row("a-1", "footage", media, "ws-one", false),
+      row("b-2", "projects", media, "ws-two", false),
+      { ...row("c-3", "footage", media, "ws-two", false), origin: { host: "dev_other", path: media } },
+      row("d-4", "footage", projects, "*", false),
+      { ...row("e-5", "footage", projects, "ws-one", false), workspace: undefined },
+    ] as StorageFolder[];
+    const { st, changed } = migrateStorage({ schemaVersion: 3, folders }, "dev_mac");
+    expect(changed).toBe(false);
+    expect(st.folders.map((f) => f.id)).toEqual(["a-1", "b-2", "c-3", "d-4", "e-5"]);
   });
 });

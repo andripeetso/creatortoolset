@@ -15,11 +15,12 @@ import { kindOf, recordVersion } from "./routes";
 import { copyFilesOn, knownCopy, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, settleSilent } from "./report";
 import { pointSource } from "./locate";
 import { showHidden } from "./trash";
-import { findUser } from "../users";
+import { findUser, type SessionUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
-import { changeStorage } from "../devices-storage";
-import { editorDirsOf, leftOutBy, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
+import { changeStorage, leaveRows, placedIn, placesOf } from "../devices-storage";
+import { projectOf } from "../lib/project-of";
+import { editorDirsOf, folderIn, leftOutBy, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 
 // a watched folder is a Source media row read where it is (UNIFIED-PRD §4.3); copying is for drops, and the migration
 // turned the old copy watches into rows read in place (§4.6 item 1)
@@ -299,7 +300,7 @@ watchApp.put("/:id/watch", async (c) => {
     if (!want.some((g) => g.path === f.path)) want.push(f);
   }
   for (const g of want) if (!current.some((o) => o.path === g.path)) await addSourceRow(user.username, g.path, libraryId);
-  await dropRows(user.username, current.filter((g) => !want.some((w) => w.path === g.path)).map((g) => g.path), (ids) => ids.some((id) => id !== libraryId));
+  await dropRows(user.username, current.filter((g) => !want.some((w) => w.path === g.path)).map((g) => g.path), (ids) => ids.some((id) => id !== libraryId), libraryId);
   scanSoon();
   return c.json(await withFound(await status(libraryId, user.username)));
 });
@@ -464,14 +465,29 @@ export async function wholeDisk(real: string, drive = false): Promise<boolean> {
 
 /**
  * Adds a folder to this account's Source media rows on this computer, in the library's workspace (the one folder list the
- * scan reads). A row already there for that workspace is kept as it is; the same folder in another workspace is its own row.
+ * scan reads). A row already there for that workspace is kept as it is; the same folder in another workspace's row gets this
+ * workspace too (one row per folder: its computer marks it with one id).
  */
+/** A library's workspace (its settings' projectId), and the account's mapping for rows from before workspaces. */
+const workspaceOf = (libraryId: string): string | undefined =>
+  (db().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined)?.ws ?? undefined;
+const ofUser = (username: string) => projectOf({ username } as SessionUser);
+
 async function addSourceRow(username: string, folderPath: string, libraryId: string): Promise<void> {
   // the path as the storage routes keep it (not resolved): Projects and Exports rows are compared with it
   const real = expandHome(folderPath).replace(/(.)\/+$/, "$1");
-  const ws = (db().prepare("SELECT json_extract(settings, '$.projectId') AS ws FROM libraries WHERE id = ?").get(libraryId) as { ws: string | null } | undefined)?.ws ?? undefined;
+  const of = await ofUser(username);
+  // a library with no workspace of its own is the first brand's, as a row with none is (project-of.ts)
+  const ws = workspaceOf(libraryId) ?? of?.(undefined);
   await changeStorage(username, (st) => {
-    if (st.folders.some((g) => g.role === "footage" && onThisComputer(g) && g.origin.path === real && g.workspace === ws)) return "keep";
+    const same = st.folders.filter((g) => g.role === "footage" && onThisComputer(g) && g.origin.path === real);
+    if (same.some((g) => folderIn(g, (w) => (of ? of(w) : w) === ws))) return "keep";
+    // another workspace's row for this folder (one from before workspaces is the first brand's): this one joins it
+    const shared = ws && of ? same.find((g) => placesOf(g, of) !== null) : undefined;
+    if (shared && ws && of) {
+      st.folders = st.folders.map((g) => (g === shared ? placedIn(g, [...placesOf(g, of)!, ws]) : g));
+      return;
+    }
     st.folders.push({ id: randomUUID(), role: "footage", name: path.basename(real), origin: { host: hostHere(username), path: real }, make: false, createdAt: Date.now(), reach: {}, ...(ws ? { workspace: ws } : {}) });
   });
 }
@@ -480,16 +496,22 @@ async function addSourceRow(username: string, folderPath: string, libraryId: str
  * Takes this account's Source media rows on this computer at `paths` out of storage, unless `keepRow` says a library the
  * row fills still needs it (a row fills the libraries of its workspace, so it goes only when none of them keeps it).
  */
-async function dropRows(username: string, paths: string[], keepRow: (libraryIds: string[]) => boolean): Promise<void> {
+async function dropRows(username: string, paths: string[], keepRow: (libraryIds: string[]) => boolean, libraryId?: string): Promise<void> {
   const st = parseStorageFile(await readFile(storageFilePath(env.dataDir, username), "utf-8").catch(() => "{}"));
   const gone = new Set<string>();
+  // a row this library's workspace shares with others: that workspace leaves it, the others keep it
+  const leave = new Set<string>();
   for (const f of st.folders) {
     if (f.role !== "footage" || !onThisComputer(f) || !paths.includes(expandHome(f.origin.path))) continue;
     if (!keepRow((await librariesOf(username, f, false)).map((l) => l.id))) gone.add(f.id);
+    else if (libraryId) leave.add(f.id);
   }
-  if (gone.size) {
+  const of = leave.size ? await ofUser(username) : null;
+  // a library with no workspace of its own is the first brand's (project-of.ts)
+  const ws = libraryId && of ? (workspaceOf(libraryId) ?? of(undefined)) : undefined;
+  if (gone.size || (leave.size && ws && of)) {
     await changeStorage(username, (s) => {
-      s.folders = s.folders.filter((f) => !gone.has(f.id));
+      s.folders = leaveRows(s.folders.filter((f) => !gone.has(f.id)), (f) => leave.has(f.id) && !!placesOf(f, of!)?.includes(ws!), ws, of);
     });
   }
 }
