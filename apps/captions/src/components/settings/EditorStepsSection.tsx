@@ -1,5 +1,6 @@
 import type { StepRow } from "@contracts/editor-steps";
 import { Switch } from "@/components/ui/switch";
+import { CameraLuts } from "./CameraLuts";
 import { Row, SettingsSelect, TextField } from "./ui";
 
 /**
@@ -24,6 +25,8 @@ export function StepRowView({ step: s, onChange }: { step: StepRow; onChange: (c
           </div>
         ),
       )}
+      {/* the Colour step's own: the LUTs added to the workspace */}
+      {s.id === "colour" && s.pluginId === "editor-colour" && <CameraLuts />}
     </Row>
   );
 }

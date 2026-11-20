@@ -25,7 +25,7 @@ never converts by itself.
 
 ## The conversion
 
-A 33-point `.cube` 3D LUT is made in code at run time (`cube`, `convert`), written next to the copy and applied with
+A 33-point `.cube` 3D LUT is made in code at run time (`cube`, `convert`, in `contracts/camera.ts`, which the page uses too), written next to the copy and applied with
 ffmpeg's `lut3d` (tetrahedral) on 16-bit RGB:
 
 1. **Code values.** The file's YCbCr goes to RGB with its own matrix: BT.709, or BT.2020 when the file says so. Apple

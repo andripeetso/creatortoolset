@@ -1,3 +1,4 @@
+import type { CameraLut } from "@contracts/camera";
 import type { StepsView } from "@contracts/editor-steps";
 import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
 import type { ItemEdit } from "@contracts/edit-timeline";
@@ -43,6 +44,18 @@ export const getEditSteps = () => send<StepsView>("/api/edit-steps");
 export const setEditStep = (id: string, change: { use?: boolean; values?: Record<string, string> }) => send<StepsView>(`/api/edit-steps/${id}`, "PUT", change);
 /** Puts a step that comes with the app into the plug-ins folder; the Mac app's own alert then switches it on. */
 export const addEditStep = (folder: string) => send<{ folder: string }>(`/api/edit-steps/add/${encodeURIComponent(folder)}`, "POST");
+/** The LUTs added under Colour, the window's workspace's (api/editor/luts.ts). */
+export const listLuts = () => send<CameraLut[]>("/api/edit-steps/luts");
+export const renameLut = (id: string, name: string) => send<CameraLut[]>(`/api/edit-steps/luts/${id}`, "PUT", { name });
+export const deleteLut = (id: string) => send<CameraLut[]>(`/api/edit-steps/luts/${id}`, "DELETE");
+export async function addLut(file: File): Promise<CameraLut[]> {
+  const form = new FormData();
+  form.append("file", file);
+  const r = await fetch("/api/edit-steps/luts", { method: "POST", body: form });
+  const out = (await r.json().catch(() => ({}))) as CameraLut[] & { error?: string };
+  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  return out;
+}
 /** The person's editing styles (contracts/editor-styles.ts). `fromEdit` copies an edit's choices into a new one. */
 export const listStyles = () => send<EditingStylesView>("/api/editor/styles");
 /** `first`: New edit's "How do you like to work?" made it (it becomes the one New edit opens on, and that screen is answered). */
