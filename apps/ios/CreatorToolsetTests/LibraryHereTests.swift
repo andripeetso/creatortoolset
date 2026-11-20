@@ -5,10 +5,15 @@ import XCTest
 private final class LibraryServer: URLProtocol {
     struct Asked: Equatable {
         let method: String
+        let host: String?
         let path: String
         let query: String?
         let workspace: String?
         let origin: String?
+        var body: [String: Any] = [:]
+        static func == (a: Asked, b: Asked) -> Bool {
+            (a.method, a.path, a.query, a.workspace, a.origin) == (b.method, b.path, b.query, b.workspace, b.origin)
+        }
     }
     nonisolated(unsafe) static var asked: [Asked] = []
     nonisolated(unsafe) static var answer: (URLRequest) -> (Int, [String: String], String) = { _ in (404, [:], "{}") }
@@ -23,9 +28,9 @@ private final class LibraryServer: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let url = request.url!
-        Self.asked.append(Asked(method: request.httpMethod ?? "GET", path: url.path, query: url.query,
+        Self.asked.append(Asked(method: request.httpMethod ?? "GET", host: url.host, path: url.path, query: url.query,
                                 workspace: request.value(forHTTPHeaderField: WorkspacePick.header),
-                                origin: request.value(forHTTPHeaderField: "x-ct-origin")))
+                                origin: request.value(forHTTPHeaderField: "x-ct-origin"), body: Self.json(request)))
         let (status, headers, body) = Self.answer(request)
         var all = headers
         all["Content-Type"] = "application/json"
@@ -35,6 +40,22 @@ private final class LibraryServer: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+
+    /// A JSON body as sent: the loading system hands it over as a stream.
+    private static func json(_ request: URLRequest) -> [String: Any] {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let n = stream.read(&buffer, maxLength: buffer.count)
+                if n <= 0 { break }
+                data.append(buffer, count: n)
+            }
+        }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
 }
 
 /// The phone's uploads go to the workspace each clip was queued in, through POST /api/library/here/uploads.
@@ -134,6 +155,79 @@ final class LibraryHereUploadTests: XCTestCase {
         await engine.reconcile()
         try await wait("all three landed") { ids.allSatisfy { engine.store.item($0)?.state == .done } }
         try assertAllInA(ids, engine)
+    }
+
+    /// Blur faces turned off on the Upload tab sends `blur: false` with each start of that server's clips, not with a
+    /// clip queued on another server (its switch was never on screen); left on, the field is not sent.
+    func testBlurOffIsSentOnlyWhenTurnedOff() async throws {
+        let engine = engine()
+        let other = Server(url: URL(string: "https://here-uploads-other.example.test/")!, username: "sam")
+        Servers.shared.add(other, cookie: nil)
+        defer { Servers.shared.remove(other.id) }
+        let entry = try XCTUnwrap(Connections.shared.entry(key: other.id))
+        Connections.shared.connected(entry.serverId, route: entry.routes[0])
+        let elsewhere = UUID()
+        made.append(elsewhere)
+        try Data("tinyacrobatics".utf8).write(to: AppFiles.upload(elsewhere))
+        engine.add(id: elsewhere, filename: "elsewhere.mov", size: 14, server: other)
+        engine.store.update(elsewhere) { $0.route = .library }
+
+        let off = try queue(engine, in: "ws-a")
+        engine.uploadAll(blur: false, server: server.id)
+        await engine.reconcile()
+        try await wait("the four landed") { (off + [elsewhere]).allSatisfy { engine.store.item($0)?.state == .done } }
+        let away = LibraryServer.asked.filter { $0.path == "/api/library/here/uploads" && $0.host == other.url.host }
+        XCTAssertEqual(away.count, 1)
+        XCTAssertNil(away.first?.body["blur"], "the other server's clip goes with its server's default")
+        LibraryServer.asked.removeAll { $0.host == other.url.host }
+        let on = try queue(engine, in: "ws-a")
+        engine.uploadAll()
+        await engine.reconcile()
+        try await wait("the next three landed") { on.allSatisfy { engine.store.item($0)?.state == .done } }
+
+        let starts = LibraryServer.asked.filter { $0.path == "/api/library/here/uploads" }
+        XCTAssertEqual(starts.count, 6)
+        XCTAssertEqual(starts.prefix(3).map { $0.body["blur"] as? Bool }, [false, false, false])
+        XCTAssertTrue(starts.suffix(3).allSatisfy { $0.body["blur"] == nil }, "left on: the server's default")
+        XCTAssertEqual(starts.first?.body["filename"] as? String, "clip0.mov")
+    }
+
+    /// The switch shows where uploads are blurred and the server lets this account keep files as filmed; an older
+    /// server (no `mayKeepAsFilmed`) falls back to admins and an account not known yet.
+    func testBlurSwitchShowsByTheServersAnswer() {
+        let admin = ToolsetAccess.Me(username: "a", role: "admin", off: nil)
+        let member = ToolsetAccess.Me(username: "m", role: "member", off: nil)
+        typealias S = UploadEngine.BlurSwitch
+        XCTAssertFalse(S(blurs: false, mayKeepAsFilmed: true).shows(me: admin), "nothing to turn off")
+        XCTAssertTrue(S(blurs: true, mayKeepAsFilmed: true).shows(me: member), "the server's yes wins over the role")
+        XCTAssertFalse(S(blurs: true, mayKeepAsFilmed: false).shows(me: admin), "the server's no wins over the role")
+        XCTAssertTrue(S(blurs: true).shows(me: admin))
+        XCTAssertTrue(S(blurs: true).shows(me: nil))
+        XCTAssertFalse(S(blurs: true).shows(me: member))
+    }
+
+    /// The start body by itself: false only, never true; what the phone made stays in it.
+    func testStartBodyCarriesBlurOnlyWhenOff() {
+        var item = UploadItem(id: UUID(), filename: "a.mov", size: 5, server: "s")
+        XCTAssertNil(UploadEngine.startBody(item, made: ["quick": "q"])["blur"])
+        item.blur = false
+        let body = UploadEngine.startBody(item, made: ["quick": "q"])
+        XCTAssertEqual(body["blur"] as? Bool, false)
+        XCTAssertEqual(body["quick"] as? String, "q")
+        XCTAssertEqual(body["size"] as? Int64, 5)
+    }
+
+    /// Where the Blur faces switch shows: a library with Blur faces on (an older server's answer reads as off).
+    func testBlurFacesIsReadFromTheLibrarysSettings() throws {
+        func read(_ json: String) throws -> Bool? {
+            try JSONDecoder().decode(UploadEngine.Libraries.self, from: Data(json.utf8)).libraries.first?.settings?.blurFaces
+        }
+        XCTAssertEqual(try read(#"{"libraries":[{"id":"l","settings":{"upload":"none","blurFaces":true}}]}"#), true)
+        XCTAssertNil(try read(#"{"libraries":[{"id":"l","settings":{"upload":"all"}}]}"#))
+        XCTAssertNil(try read(#"{"libraries":[{"id":"l","settings":{"upload":true}}]}"#))
+        let keep = { (json: String) in try JSONDecoder().decode(UploadEngine.Libraries.self, from: Data(json.utf8)).libraries.first?.mayKeepAsFilmed }
+        XCTAssertEqual(try keep(#"{"libraries":[{"id":"l","mayKeepAsFilmed":true}]}"#), true)
+        XCTAssertNil(try keep(#"{"libraries":[{"id":"l"}]}"#), "an older server")
     }
 
     func testARelaunchKeepsEachClipsWorkspace() async throws {

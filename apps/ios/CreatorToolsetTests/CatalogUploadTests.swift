@@ -113,6 +113,15 @@ final class CatalogRulesTests: XCTestCase {
         XCTAssertFalse(TransferStep(itemId: UUID(), kind: .patch).catalog)
     }
 
+    /// The studio's upload start carries `blur: false` only when Blur faces was turned off.
+    func testCreateBodyCarriesBlurOnlyWhenOff() {
+        var item = UploadItem(id: UUID(), filename: "a.mov", size: 5, server: "s")
+        XCTAssertNil(CatalogAPI.createBody(item)["blur"])
+        item.blur = false
+        XCTAssertEqual(CatalogAPI.createBody(item)["blur"] as? Bool, false)
+        XCTAssertEqual(CatalogAPI.createBody(item)["filename"] as? String, "a.mov")
+    }
+
     /// Only a server whose Media Library is the plug-in's catalog shows it (where clips go is the server's answer).
     @MainActor
     func testTheCatalogIsUsedOnlyWhenItIsTheMediaLibrary() {

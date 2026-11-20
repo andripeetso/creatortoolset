@@ -222,6 +222,7 @@ struct UploadView: View {
     @State private var showingActivity = debugArg("UploadShow") == "activity"
     @State private var importing = false
     @State private var problem: String?
+    @State private var blur = true
     /// Screenshots, screen recordings and images saved from other apps stay out of the way unless asked for.
     @AppStorage("upload.cameraOnly") private var cameraOnly = true
 
@@ -437,16 +438,19 @@ struct UploadView: View {
     /// Floats above the tab bar while there is something to pick or to send.
     @ViewBuilder private func bar(_ selectAll: UploadSums.SelectAll?, count: Int) -> some View {
         if selectAll != nil || count > 0 {
-            HStack(spacing: 10) {
-                switch selectAll {
-                case .pick(let ids): pill("Select all \(ids.count)") { picked.formUnion(ids) }
-                case .clear: pill("Clear") { picked.removeAll() }
-                case nil: EmptyView()
-                }
-                if count > 0 {
-                    WideButton(title: "Upload \(count)", systemImage: "arrow.up") { upload() }
-                } else {
-                    Spacer(minLength: 0)
+            VStack(spacing: 8) {
+                if count > 0 { BlurFacesToggle(on: $blur, pill: true) }
+                HStack(spacing: 10) {
+                    switch selectAll {
+                    case .pick(let ids): pill("Select all \(ids.count)") { picked.formUnion(ids) }
+                    case .clear: pill("Clear") { picked.removeAll() }
+                    case nil: EmptyView()
+                    }
+                    if count > 0 {
+                        WideButton(title: "Upload \(count)", systemImage: "arrow.up") { upload() }
+                    } else {
+                        Spacer(minLength: 0)
+                    }
                 }
             }
             .padding(.horizontal, 16)
@@ -487,8 +491,9 @@ struct UploadView: View {
         // the picks can mix videos and photos: fetched by id
         PHAsset.fetchAssets(withLocalIdentifiers: toSend().fresh, options: nil).enumerateObjects { asset, _, _ in chosen.append(asset) }
         engine.add(chosen, server: server)
-        engine.uploadAll()
+        engine.uploadAll(blur: blur ? nil : false, server: server)
         picked.removeAll()
+        blur = true
     }
 
     /// A file from Files is copied into the app at once and waits for Upload with the clips.
@@ -718,5 +723,48 @@ struct PickedFile: Transferable {
             try FileManager.default.copyItem(at: file, to: dest)
         }
         return PickedFile(url: dest, name: file.lastPathComponent)
+    }
+}
+
+/// Blur faces for the uploads about to start, where it applies (`UploadEngine.BlurSwitch`). Turning it off asks first.
+/// `on` is false only while the switch is on screen: another server or workspace, or the switch hidden, turns it back on.
+struct BlurFacesToggle: View {
+    @Binding var on: Bool
+    var edit = false
+    /// In a capsule, for the Upload tab's floating bar.
+    var pill = false
+    @EnvironmentObject private var servers: Servers
+    @EnvironmentObject private var engine: UploadEngine
+    @ObservedObject private var access = ToolsetAccess.shared
+    @State private var known = UploadEngine.BlurSwitch()
+    @State private var asking = false
+
+    private var shown: Bool { known.shows(me: access.me) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if shown {
+                let toggle = Toggle("Blur faces", isOn: Binding(get: { on }, set: { if $0 { on = true } else { asking = true } }))
+                if pill {
+                    toggle.font(.subheadline.weight(.semibold)).padding(.horizontal, 16).frame(height: 44).chatSurface(cornerRadius: 22)
+                } else {
+                    toggle
+                }
+            }
+        }
+        .task(id: "\(servers.currentId ?? "") \(servers.api?.workspace ?? "")") {
+            on = true
+            known = UploadEngine.BlurSwitch()
+            guard let server = servers.currentId else { return }
+            let answer = await engine.blurSwitch(server: server, edit: edit)
+            if !Task.isCancelled { known = answer }   // another server or workspace picked meanwhile: its own task answers
+        }
+        .onChange(of: shown) { _, shown in if !shown { on = true } }
+        .alert("Turn off Blur faces?", isPresented: $asking) {
+            Button("Turn off", role: .destructive) { on = false }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("These won't be blurred. Faces will show in previews and to your team.")
+        }
     }
 }

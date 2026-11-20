@@ -258,6 +258,7 @@ struct NewEditView: View {
     @State private var copying = 0
     @State private var started = false
     @State private var problem: String?
+    @State private var blur = true
 
     var body: some View {
         NavigationStack {
@@ -288,12 +289,15 @@ struct NewEditView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 if !clips.isEmpty {
-                    Button(action: start) { Text("Start").frame(maxWidth: .infinity) }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(copying > 0)
-                        .padding()
-                        .background(.bar)
+                    VStack(spacing: 12) {
+                        BlurFacesToggle(on: $blur, edit: true)
+                        Button(action: start) { Text("Start").frame(maxWidth: .infinity) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(copying > 0)
+                    }
+                    .padding()
+                    .background(.bar)
                 }
             }
             .navigationTitle("New edit")
@@ -362,7 +366,7 @@ struct NewEditView: View {
     private func start() {
         guard let server = servers.current else { return }
         let id = UUID()
-        for clip in clips { engine.add(id: clip.id, filename: clip.name, size: clip.size, server: server, edit: id) }
+        for clip in clips { engine.add(id: clip.id, filename: clip.name, size: clip.size, server: server, edit: id, blur: blur ? nil : false) }
         let name = "Phone edit, " + Date().formatted(date: .abbreviated, time: .shortened)
         edits.add(PhoneEdit(id: id, server: server.id, name: name, clips: clips.map(\.id), made: Date(),
                             workspace: WorkspacePick.get(server: server.id, username: server.username)))
