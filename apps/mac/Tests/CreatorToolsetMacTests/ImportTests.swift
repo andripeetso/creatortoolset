@@ -140,6 +140,35 @@ final class ImportTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("Gone")))
     }
 
+    /// Another workspace's (or server's) footage is never copied into a library: a file inside any listed Media folder,
+    /// by its real path (a link to it too), is refused. And a Media folder not allowed here yet says so.
+    func testNeverCopiesFromAMediaFolderAndSaysWhenOneIsNotAllowed() throws {
+        let suite = "import-tests-\(UUID().uuidString)"
+        let was = MediaFiles.defaults
+        MediaFiles.defaults = UserDefaults(suiteName: suite)!
+        defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
+        let mine = at("Tiny Footage"), other = at("Movies/Creator Toolset/Other/Media"), waiting = at("Waiting")
+        for d in [mine, waiting] { try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true) }
+        let clip = try write("Movies/Creator Toolset/Other/Media/clip.mov")
+        try FileManager.default.createSymbolicLink(atPath: at("Movies/alias"), withDestinationPath: other)
+        MediaFiles.setServerFolders([.init(id: "f1", path: mine, workspaces: ["a"], use: "media"), .init(id: "f3", path: waiting, workspaces: ["a"], use: "media")], server: "s")
+        MediaFiles.setServerFolders([.init(id: "f2", path: other, workspaces: ["b"], use: "media")], server: "t")
+        MediaFiles.allow(mine, server: "s")
+        XCTAssertEqual(Set(MediaFiles.allMediaFolders), [mine, other, waiting])
+        let a = try write("Downloads/A001.mov")
+        let pairs = [ImportPair(from: clip, to: mine + "/Imports/x/clip.mov"), ImportPair(from: at("Movies/alias/clip.mov"), to: mine + "/Imports/x/clip 2.mov"),
+                     ImportPair(from: a, to: waiting + "/Imports/x/A001.mov")]
+        let reply = Imports().copy(id: "g1", pairs, sources: [at("Movies"), at("Downloads")], destinations: Imports.copyDestinations(server: "s"),
+                                   waiting: MediaFiles.importsFolders(server: "s", allowed: false), media: MediaFiles.allMediaFolders) { _ in }
+        XCTAssertEqual((reply["copied"] as? [[String: String]])?.count, 0)
+        XCTAssertEqual((reply["failed"] as? [[String: String]])?.map { $0["error"] ?? "" }, [
+            "\(clip) is in the Media folder \(other): drop the folder with the footage itself",
+            "\(at("Movies/alias/clip.mov")) is in the Media folder \(other): drop the folder with the footage itself",
+            "Allow Waiting on this Mac in Settings → Folders first.",
+        ])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mine + "/Imports"))
+    }
+
     func testScanFindsMediaOnlyInGrantedFolders() throws {
         try write("Footage/A001.MOV")
         try write("Footage/Day 2/song.mp3")
