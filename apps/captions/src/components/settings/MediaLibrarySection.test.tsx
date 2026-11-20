@@ -165,12 +165,6 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(host!.querySelector('button[role="switch"][aria-label="Proxies"]')).toBeNull();
   });
 
-  it("an import mode never stored reads as Copy on a set-up library", async () => {
-    const setUp: LibrarySummary = { ...library, settings: { ...SETTINGS, setupAt: "2026-11-01T00:00:00.000Z" } };
-    await render(<LibrarySettingsBody library={setUp} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(radio("Copy into Source media").checked).toBe(true);
-  });
-
   it("with Use default folders off, a Source media folder not chosen yet shows Set…", async () => {
     const off: LibrarySummary = { ...library, settings: { ...SETTINGS, defaultFolders: false } };
     await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);

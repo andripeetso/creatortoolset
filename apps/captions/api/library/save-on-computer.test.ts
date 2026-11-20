@@ -274,19 +274,19 @@ describe("the one import rule: a chat's file goes into Imports/<chat>, once", ()
   it("lands once in the first Media folder's Imports/<chat name>; the same file again is not copied again", async () => {
     const ivy = await account("ivy", "none");
     ivy.online();
-    const src = drop("ivy", "00000000-0000-4000-8000-0000000001a1", "Tuck.mp4", "tiny acrobatics tuck");
+    const src = drop("ivy", "00000000-0000-4000-8000-0000000001a1", "Tuck.mp4", "tiny acrobatics straddle");
     const [saved] = await Promise.all([useFile(findUser("ivy") as never, "00000000-0000-4000-8000-0000000001a1", "library", undefined, undefined, undefined, "Summer reel: part 1"), ivy.takes()]);
     const at = path.join(ivy.media, "Imports", "Summer reel part 1", "Tuck.mp4");
-    expect(readFileSync(at, "utf8")).toBe("tiny acrobatics tuck");
+    expect(readFileSync(at, "utf8")).toBe("tiny acrobatics straddle");
     expect(inPlace(saved.versionId!)).toMatchObject({ mac_path: at, place: { folder_id: "ivy-media", state: "verified" } });
     // the same file dropped again, in another chat: the library has it, so no task and no second copy
-    drop("ivy", "00000000-0000-4000-8000-0000000001a2", "Tuck again.mp4", "tiny acrobatics tuck");
+    drop("ivy", "00000000-0000-4000-8000-0000000001a2", "Tuck again.mp4", "tiny acrobatics straddle");
     const again = await useFile(findUser("ivy") as never, "00000000-0000-4000-8000-0000000001a2", "library", undefined, undefined, undefined, "Other chat");
     expect(again).toMatchObject({ note: "Already in the Media Library" });
     expect(existsSync(path.join(ivy.media, "Imports", "Other chat"))).toBe(false);
     expect(readdirSync(path.join(ivy.media, "Imports", "Summer reel part 1"))).toEqual(["Tuck.mp4"]);
     expect(d.prepare("SELECT COUNT(*) AS n FROM computer_tasks WHERE actor = 'ivy'").get()).toEqual({ n: 1 });
-    expect(serverCopies("tiny acrobatics tuck", [src, path.join(dataDir, "assistant", "files", "ivy", "00000000-0000-4000-8000-0000000001a2", "file")])).toEqual([]);
+    expect(serverCopies("tiny acrobatics straddle", [src, path.join(dataDir, "assistant", "files", "ivy", "00000000-0000-4000-8000-0000000001a2", "file")])).toEqual([]);
   });
 
   it("the Media folder's drive away: the save waits (no try used up), writes nothing anywhere, and lands once it is back", async () => {
