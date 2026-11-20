@@ -146,21 +146,35 @@ export function blurPixels(data: Uint8ClampedArray, w: number, h: number, radius
 }
 
 /** How many times smaller each way a blur of `radius` is worked (below 2: at full size). */
-const smallerFor = (radius: number) => Math.min(8, Math.floor(radius / 4));
+export const smallerFor = (radius: number) => Math.min(8, Math.floor(radius / 4));
 
 /**
  * `data` blurred by `radius` (as blurPixels), handed out a row at a time: `row(y, out, at)` writes row y's RGBA bytes
  * into `out` from `at`. A wide blur is held on its copy `k` times smaller each way (colours weighed by how see-through
  * they are both ways, as in the blur itself) and each row brought back up when asked for, so what it keeps is a
- * fraction of the picture; a narrow one is a blurred copy. Made from `data` as it is now: writing to `data` after
- * changes nothing here.
+ * fraction of the picture; one too narrow for that (smallerFor under 2) is worked a band of rows at a time, with the
+ * rows its three passes reach past the band, which comes out as the whole picture blurred at once. A wide blur is
+ * made from `data` as it is now; a narrow one reads `data` as rows are asked for, so `data` must stay as it is.
  */
 export function blurredRows(data: Uint8ClampedArray, w: number, h: number, radius: number): (y: number, out: Uint8ClampedArray, at: number) => void {
   const k = smallerFor(radius);
   if (k < 2) {
-    const copy = data.slice();
-    blurPixels(copy, w, h, radius);
-    return (y, out, at) => out.set(copy.subarray(y * w * 4, (y + 1) * w * 4), at);
+    // each of the three passes down reaches r rows (blurPixels' own r)
+    const pad = 3 * Math.max(1, Math.round(radius / 2));
+    const BAND = 64;
+    let b0 = -1;
+    let s0 = 0;
+    let band = new Uint8ClampedArray(0);
+    return (y, out, at) => {
+      if (b0 < 0 || y < b0 || y >= b0 + BAND) {
+        b0 = y - (y % BAND);
+        s0 = Math.max(0, b0 - pad);
+        const s1 = Math.min(h, b0 + BAND + pad);
+        band = data.slice(s0 * w * 4, s1 * w * 4);
+        blurPixels(band, w, s1 - s0, radius);
+      }
+      out.set(band.subarray((y - s0) * w * 4, (y - s0 + 1) * w * 4), at);
+    };
   }
   const sw = Math.ceil(w / k);
   const sh = Math.ceil(h / k);

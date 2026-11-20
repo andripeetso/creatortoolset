@@ -597,12 +597,13 @@ function drawLayer(ctx: Ctx, l: Layer, loaded: Loaded, frame: string, exact: boo
   ctx.translate(-l.w / 2, -l.h / 2);
   ctx.globalAlpha = l.opacity ?? 1;
   const fx = effectsOf(l).filter((e) => !e.hidden);
-  const own = worksPixels(fx) || fx.some((e) => e.type === "shadow" && e.spread) ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
+  // a shadow is thrown by the layer drawn whole in a box of its own: its fills and lines cast one shadow together, not one each
+  const own = worksPixels(fx) || fx.some((e) => e.type === "shadow") ? workedLayer(ctx, l, fx, loaded, frame, exact) : null;
   const lay = (g: Ctx, p: Piece) => g.drawImage(p.canvas as CanvasImageSource, -p.m, -p.m, p.bw, p.bh);
   const paint = (g: Ctx, cast: boolean) => (own?.body ? lay(g, own.body) : paintLayer(g, l, loaded, cast, frame, exact));
   for (const e of fx) {
     if (e.type !== "shadow") continue;
-    const grown = e.spread ? own?.spread(e.spread) : null;
+    const grown = own?.spread(e.spread ?? 0);
     castShadow(ctx, e, (g) => (grown ? lay(g, grown) : paint(g, true)));
   }
   const glass = fx.find((e): e is Effect & { blur: number } => e.type === "background-blur" && e.blur > 0);
@@ -645,7 +646,7 @@ type Worked = { body: Piece | null; spread: (n: number) => Piece | null };
 const workedKept = new WeakMap<Loaded, Map<string, { key: string; size: number; made: Worked }>>();
 
 /** A w × h box (with `m` design pixels of room round it) drawn at `scale` by `draw`, its pixels then changed by `work`. Null when no canvas can be made. */
-function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) => void, work: (px: Uint8ClampedArray, w: number, h: number) => void): Piece | null {
+function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) => void, work?: (px: Uint8ClampedArray, w: number, h: number) => void): Piece | null {
   const bw = w + 2 * m;
   const bh = h + 2 * m;
   const pw = Math.max(1, Math.ceil(bw * scale));
@@ -655,10 +656,38 @@ function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) 
   if (!canvas || !g) return null;
   g.setTransform(scale, 0, 0, scale, m * scale, m * scale);
   draw(g);
+  // nothing to work (a shadow with no spread): its pixels are not read back
+  if (!work) return { canvas, m, bw, bh };
   const pixels = g.getImageData(0, 0, pw, ph);
   work(pixels.data, pw, ph);
   g.putImageData(pixels, 0, 0);
   return { canvas, m, bw, bh };
+}
+
+/**
+ * How far past its box a layer may be drawn, in design pixels: its lines (outside the edge, a sharp corner's point, an
+ * arrow's head) and, for a text, words that run over the box and letters that reach past their line.
+ */
+function inkOf(ctx: Ctx, l: Layer): number {
+  // a line reaches its width past the edge at most (outside, or round letters), half again at a square corner; a
+  // corner set to a point reaches up to the canvas's miter limit (10) times half its width
+  const lines = Math.max(0, ...strokesOf(l).filter((s) => !s.hidden).map((s) => Math.max(s.width * (s.join === "miter" ? 10 : 1.5), ...(s.sides ?? [0])) + (s.start || s.end ? Math.max(s.width * 4, 8) + s.width : 0)));
+  if (l.type !== "text") return lines;
+  let wide: number[];
+  let tall: number;
+  if (usesRuns(l)) {
+    const set = setRunsOnce(l, measureOn(ctx));
+    wide = set.lines.map((r) => r.width);
+    tall = set.lines.reduce((n, r) => n + r.height, 0);
+  } else {
+    ctx.font = fontOf(l);
+    const set = setTextOnce(l, (s) => ctx.measureText(s).width);
+    const drawn = { ...l, size: set.size };
+    ctx.font = fontOf(drawn);
+    wide = set.lines.map((s) => textWidth(drawn, s, (t) => ctx.measureText(t).width));
+    tall = set.lines.length * lineHeightOf(drawn);
+  }
+  return lines + Math.max(0, tall - l.h, ...wide.map((w) => w - l.w)) + l.size * 0.5;
 }
 
 /**
@@ -669,7 +698,8 @@ function pieceOf(w: number, h: number, m: number, scale: number, draw: (g: Ctx) 
  */
 function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: string, exact: boolean): Worked {
   const t = ctx.getTransform();
-  const reach = reachOf(fx);
+  // room round the box for what its blur spreads and for what is drawn past it (its lines, words that run over)
+  const reach = reachOf(fx) + Math.ceil(inkOf(ctx, l));
   const grow = Math.max(0, ...fx.map((e) => (e.type === "shadow" ? (e.spread ?? 0) : 0)));
   const bw = l.w + 2 * (reach + grow);
   const bh = l.h + 2 * (reach + grow);
@@ -678,7 +708,8 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
   if (bw * bh * scale * scale > room) scale = Math.sqrt(room / (bw * bh));
   // a picture or a drawing that has not loaded yet is a grey box: it is worked again once it is there
   const src = sourceOf(l);
-  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : ""]);
+  // words are drawn again once a font arrives (their width changes with it)
+  const key = JSON.stringify([{ ...l, x: 0, y: 0 }, scale, src ? !!loaded.get(src)?.width : "", l.type === "text" ? fontsOfText(l).map((f) => measureOn(ctx)(f, "Hamburg 1")) : ""]);
   let mine = workedKept.get(loaded);
   if (!mine) workedKept.set(loaded, (mine = new Map()));
   return keptOr(mine, `${frame}/${l.id}`, key, Math.ceil(bw * bh * scale * scale), KEPT_WORK, () => {
@@ -704,7 +735,7 @@ function workedLayer(ctx: Ctx, l: Layer, fx: Effect[], loaded: Loaded, frame: st
     const spreads = new Map<number, Piece | null>();
     const spread = (n: number) => {
       if (!spreads.has(n))
-        spreads.set(n, pieceOf(l.w, l.h, reach + Math.max(0, n), scale, (g) => (body ? g.drawImage(body.canvas as CanvasImageSource, -body.m, -body.m, body.bw, body.bh) : paintLayer(g, l, loaded, true, frame, exact)), (px, w, h) => spreadAlpha(px, w, h, (n * w) / (l.w + 2 * (reach + Math.max(0, n))))));
+        spreads.set(n, pieceOf(l.w, l.h, reach + Math.max(0, n), scale, (g) => (body ? g.drawImage(body.canvas as CanvasImageSource, -body.m, -body.m, body.bw, body.bh) : paintLayer(g, l, loaded, true, frame, exact)), n ? (px, w, h) => spreadAlpha(px, w, h, (n * w) / (l.w + 2 * (reach + Math.max(0, n)))) : undefined));
       return spreads.get(n)!;
     };
     return { body, spread };

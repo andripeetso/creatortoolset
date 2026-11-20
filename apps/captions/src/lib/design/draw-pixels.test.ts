@@ -44,6 +44,32 @@ describe("a layer drawn on a canvas", () => {
     expect(two.at(20, 20)).toEqual([0, 0, 255, 255]);
   });
 
+  it("throws one shadow for its fills and lines together, however many lines it has", () => {
+    const page = { fills: [] } as Partial<DesignPage>;
+    const line = { color: "#00ff00", width: 4 };
+    const one = draw([rect({ fills: [red], strokes: [line], effects: [shadow] })], page);
+    const two = draw([rect({ fills: [red], strokes: [line, { ...line, color: "#0000ff" }], effects: [shadow] })], page);
+    // (40, 45) is under the shadow of the line along the layer's left edge, (55, 45) under its middle
+    expect(two.at(40, 45)).toEqual(one.at(40, 45));
+    expect(one.at(40, 45)).toEqual(one.at(55, 45));
+    expect(one.at(55, 45)[3]).toBeGreaterThan(80);
+    // the top line is drawn over the bottom one, on the layer itself
+    expect(two.at(10, 20)).toEqual([0, 0, 255, 255]);
+  });
+
+  it("a line outside a layer's edge throws its shadow too, and is drawn whole on a layer worked for its effects", () => {
+    const page = { fills: [] } as Partial<DesignPage>;
+    const outside = { color: "#00ff00", width: 6, side: "outside" as const };
+    // the line runs 4 to 10 and 40 to 46 across: its shadow falls 34 to 40 and 70 to 76
+    const cast = draw([rect({ fills: [red], strokes: [outside], effects: [shadow] })], page);
+    expect(cast.at(36, 45)[3]).toBeGreaterThan(80);
+    expect(cast.at(73, 45)[3]).toBeGreaterThan(80);
+    // grain on it: worked in a box of its own, with room for the line
+    const worked = draw([rect({ fills: [red], strokes: [outside], effects: [{ type: "noise", amount: 1 }] })], page);
+    expect(worked.at(7, 20)[1]).toBeGreaterThan(200);
+    expect(worked.at(43, 20)[1]).toBeGreaterThan(200);
+  });
+
   it("a blur, or a background blur, of 0 draws the layer as sharp as with none", () => {
     const plain = draw([rect()]);
     expect(draw([rect({ effects: [{ type: "blur", blur: 0 }] })]).data).toEqual(plain.data);
