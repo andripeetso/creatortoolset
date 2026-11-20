@@ -157,6 +157,8 @@ interface Version {
   blurred?: true;
   /** Its owner approved it with the faces as filmed. */
   approvedAsFilmed?: { by: string; at: number };
+  /** What approving it starts, in a word ("B-roll", "cards"): an edit in passes sets it on each pass's cut but the last. */
+  next?: string;
   /** When its video files were deleted to save space (a later version went on
    *  to Caption Studio); its comments and thumbnail stay. */
   removed?: number;
@@ -189,6 +191,7 @@ const blurFacesIn = async (owner: string, workspace?: string) => {
 const takesCut = async (owner: string, workspace: string | undefined, blurred: boolean) => mayLeave(await workspaceLibrary(owner, workspace), { blurred });
 const AS_FILMED_ASK = "The faces in this cut aren't blurred. Approve it as filmed?";
 const AS_FILMED_OWNER = "Only the owner can approve a cut whose faces aren't blurred";
+const NOT_NEWEST = "A newer version is in Review: open it there";
 
 /** A version's link back to what made it: a plug-in's own page (href), shown to managers. */
 export type VersionSource = { kind: string; id: string; label: string; href: string };
@@ -996,6 +999,7 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred ? { blurred: true } : {}),
       ...(v.approvedAsFilmed ? { approvedAsFilmed: v.approvedAsFilmed } : {}),
+      ...(v.next ? { next: v.next } : {}),
       ...(manage && v.screen && !v.removed ? { screen: true } : {}),
       bytes: v.bytes,
       removed: !!v.removed,
@@ -1126,7 +1130,7 @@ export async function fileVideo(id: string, projectId: string): Promise<Meta | n
 
 export async function addVersion(
   assetId: string | undefined,
-  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean; blurred?: boolean },
+  v: { owner: string; name: string; mime: string; bytes: number; projectId?: string; workspace?: string; edit?: { project: string; draft: string; fails?: Critique["fails"] }; draft?: { edit: string; name: string; by?: string; fails?: Critique["fails"] }; source?: VersionSource; local?: string; notBlurred?: boolean; blurred?: boolean; next?: string },
   place: (dest: string) => Promise<void>,
   options: { relay?: { id: string; vid: string } } = {},
 ): Promise<{ meta: Meta; n: number } | null> {
@@ -1175,6 +1179,7 @@ export async function addVersion(
       ...(v.local && path.isAbsolute(v.local) ? { local: v.local } : {}),
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred && !v.notBlurred ? { blurred: true as const } : {}),
+      ...(v.next ? { next: v.next } : {}),
       createdAt: now,
     });
   });
@@ -1800,8 +1805,9 @@ export async function workspaceFolders(owner: string, has: (ws?: string) => bool
 const processing = (m: Meta) =>
   m.versions.some((x) => x.status === "processing");
 
-/** Two assets' locks, always in id order so crossing moves can't deadlock. */
-function withLocks<T>(a: string, b: string, fn: () => Promise<T>): Promise<T> {
+/** Two assets' locks, always in id order so crossing moves can't deadlock. Plug-ins use it to move versions between two videos.
+ *  Not re-entrant: inside `fn`, never call what takes one of these locks again (updateMeta, addVersion, trashAsset…). */
+export function withReviewLocks<T>(a: string, b: string, fn: () => Promise<T>): Promise<T> {
   const [x, y] = [a, b].sort();
   return withLock(x, () => withLock(y, fn));
 }
@@ -1830,7 +1836,7 @@ reviewApp.post("/assets/:id/stack", async (c) => {
   if (!v || !UUID.test(fromId) || fromId === v.meta.id) return c.json({ error: "Not found" }, 404);
   const toId = v.meta.id;
   // Both locks are held: read and write the files directly, never updateMeta.
-  const result = await withLocks(toId, fromId, async () => {
+  const result = await withReviewLocks(toId, fromId, async () => {
     const [to, from] = await Promise.all([readMeta(toId), readMeta(fromId)]);
     if (!to || !from || from.owner !== to.owner) return 404 as const;
     if (processing(to) || processing(from)) return 409 as const;
@@ -2615,7 +2621,12 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     // a person's own choice, so any status from any other: APPROVAL_MOVES holds back only what the app sets by itself (setApproval);
     // a cut with unblurred faces is approved only by its owner, as filmed (asFilmed: the page asked AS_FILMED_ASK)
     let refused: [string, 403 | 409, string] | undefined;
+    // `version`: the one the press was about (a chat's ready line); an approval is the newest version's, so an older one is refused
+    const asked = typeof body?.version === "number" ? body.version : undefined;
+    let n = 0;
     const meta = await updateMeta(v.meta.id, (m) => {
+      n = m.versions.at(-1)?.n ?? 0;
+      if (asked !== undefined && asked !== n) return void (refused = [NOT_NEWEST, 409, "not_newest"]);
       if (status === "approved" && waitsOnBlur(m)) {
         if (!v.user || v.user !== m.owner) return void (refused = [AS_FILMED_OWNER, 403, "owner_only"]);
         if (body?.asFilmed !== true) return void (refused = [AS_FILMED_ASK, 409, "not_blurred"]);
@@ -2629,6 +2640,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       const turn = jobTurn(c.req.header("authorization"));
       const words = typeof body?.words === "string" ? body.words : "";
       emitEvent("review.finished", { asset: meta.id, owner: meta.owner, by: v.user ?? "", key: !!c.req.header("authorization"), ...(turn && words ? { turn, words } : {}) });
+      emitEvent("review.approved", { asset: meta.id, owner: meta.owner, by: v.user ?? "", n });
     }
     if (status === "changes") emitEvent("review.changes", { asset: meta.id, owner: meta.owner, by });
     if (status === "approved" || status === "changes") {

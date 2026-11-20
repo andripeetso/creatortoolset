@@ -115,19 +115,23 @@ const failing = (why: string): Step => async () => {
 };
 
 describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", () => {
-  it("its last step done: the card ends and the chat says the first draft is ready, once, with the two answers; the same edit run from its page later says nothing", async () => {
+  it("its last step done: the card ends and the chat says the first draft is ready, once, playing the cut with its own buttons (no answers for the AI); the same edit run from its page later says nothing", async () => {
     standIn();
     const { id, from } = await started("Tiny tumbles");
     await drain();
     expect((await editOf(id)).jobs.map((j) => `${j.kind}:${j.variant} ${j.state}`)).toEqual(["analyze: done", "script: done", "draft: done", "draft:v1 done", "broll:v1 done", "post:v1 done", "preview:v1 done", "file:v1 done"]);
     expect(await cardOf(`edit:${id}:new`)).toEqual({ id: `edit:${id}:new`, kind: "edit", title: "Tiny tumbles", href: `/editor/${id}`, status: "done", detail: "Done" });
     const last = (await chat()).at(-1)!;
-    expect(last).toMatchObject({ role: "assistant", status: "done", text: "The first draft of “Tiny tumbles” is ready.", choices: ["Show me", "Open in Review"] });
-    expect(await saidSince(from)).toEqual(["The first draft of “Tiny tumbles” is ready."]);
+    expect(last).toMatchObject({ role: "assistant", status: "done", text: "Draft 1 of “Tiny tumbles” is ready." });
+    expect(last.choices).toBeUndefined();
+    // the cut plays in the chat, with Approve and Request changes acting on that Review video and version
+    const asset = "11111111-2222-4333-8444-555555555555";
+    expect(last.media).toEqual([{ id: `review:${asset}:1`, kind: "video", title: "Tiny tumbles · Draft 1", src: `/api/review/assets/${asset}/v/1/play`, poster: `/api/review/assets/${asset}/v/1/thumb`, href: `/review/${asset}?v=1`, cut: { asset, n: 1 } }]);
+    expect(await saidSince(from)).toEqual(["Draft 1 of “Tiny tumbles” is ready."]);
 
-    // a press on "Show me" is the person's next message: the AI gets the line and the edit's page with it
+    // a typed "Show me" is the person's next message: the AI gets the line and the edit's page with it
     const next = await turn("Show me");
-    expect(next.sent).toContain("Assistant: The first draft of “Tiny tumbles” is ready.");
+    expect(next.sent).toContain("Assistant: Draft 1 of “Tiny tumbles” is ready.");
     expect(next.sent).toContain(`[made: Tiny tumbles → /editor/${id}]`);
     await next.end();
 
@@ -152,7 +156,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     standIn(2);
     const both = await started("Tiny rolls", { versions: 2 });
     await drain();
-    expect(await saidSince(both.from)).toEqual(["2 versions of “Tiny rolls” are ready."]);
+    expect(await saidSince(both.from)).toEqual(["Draft 1 of “Tiny rolls” is ready in 2 versions."]);
     expect(await cardOf(`edit:${both.id}:new`)).toMatchObject({ status: "done", detail: "Done" });
 
     // v2's draft fails for good while v1 goes on: the run ends when v1 is filed
@@ -161,7 +165,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     await drain();
     expect((await editOf(one.id)).jobs.filter((j) => j.variant === "v2").map((j) => `${j.kind} ${j.state}`)).toEqual(["draft failed"]);
     expect(await saidSince(one.from)).toEqual(["1 of 2 versions of “Tiny spins” is ready."]);
-    expect((await chat()).at(-1)!.choices).toEqual(["Show me", "Open in Review"]);
+    expect((await chat()).at(-1)!.media?.map((m) => m.title)).toEqual(["Tiny spins · Draft 1 · Version A"]);
     expect(await cardOf(`edit:${one.id}:new`)).toMatchObject({ status: "done", detail: "1 of 2 versions done" });
   });
 
@@ -177,7 +181,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     expect((await editOf(id)).jobs.at(-1)).toMatchObject({ kind: "script", state: "failed", attempts: 3 });
     expect(await cardOf(`edit:${id}:new`)).toMatchObject({ status: "failed", detail: "The AI's answer has no lines" });
     expect(await saidSince(from)).toEqual(["“Tiny falls” did not finish: The AI's answer has no lines"]);
-    expect((await chat()).at(-1)!.choices).toEqual(["Show me"]);
+    expect((await chat()).at(-1)!.choices).toBeUndefined();
     // nothing more is said for an ending already said
     await drain();
     expect(await saidSince(from)).toHaveLength(1);
@@ -198,7 +202,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     await drain();
     expect(await cardOf(`edit:${id}:new`)).toMatchObject({ status: "failed", detail: "Add your Anthropic key in Settings → API keys" });
     expect(await saidSince(from)).toEqual(["“Tiny keys” needs setup: Add your Anthropic key in Settings → API keys"]);
-    expect((await chat()).at(-1)!.choices).toEqual(["Show me"]);
+    expect((await chat()).at(-1)!.choices).toBeUndefined();
 
     standIn();
     const t = await turn("I added the key, try again");
@@ -211,7 +215,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     const mark = (await chat()).length;
     await drain();
     expect(await cardOf(`edit:${id}:retry`)).toMatchObject({ status: "done", detail: "Done" });
-    expect(await saidSince(mark)).toEqual(["The first draft of “Tiny keys” is ready."]);
+    expect(await saidSince(mark)).toEqual(["Draft 1 of “Tiny keys” is ready."]);
   });
 
   it("Stop: editor_stop ends the waiting steps and the card, and nothing is said; a Stop on the page while a step runs is as quiet", async () => {
@@ -258,8 +262,8 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     await drain();
     expect((await editOf(id)).previews.v1!.n).toBe(2);
     expect(await cardOf(`edit:${id}:review:v1`)).toMatchObject({ status: "done", detail: "In Review" });
-    expect(await saidSince(from)).toEqual(["“Tiny cartwheel v1” is in Review."]);
-    expect((await chat()).at(-1)!.choices).toEqual(["Show me", "Open in Review"]);
+    expect(await saidSince(from)).toEqual(["Draft 2 of “Tiny cartwheel” is in Review."]);
+    expect((await chat()).at(-1)!.media?.map((m) => [m.title, m.cut])).toEqual([["Tiny cartwheel · Draft 2", { asset: "11111111-2222-4333-8444-555555555555", n: 2 }]]);
   });
 });
 

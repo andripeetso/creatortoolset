@@ -19,6 +19,7 @@ import { onEvent } from "../lib/events";
 import { workspaceOf } from "../lib/workshop/context";
 import { tfidf } from "../lib/workshop/posted";
 import { typedIn } from "./own-words";
+import { nextPass } from "./passes";
 import { allEdits, ownerOf, readDraft, readEdit, readStep, saveStep, type EditMeta } from "./store";
 import { change, findStyle } from "./styles";
 import { ask, onComputer } from "../work/on-computer";
@@ -192,6 +193,8 @@ onEvent("review.finished", ({ asset, owner, by, key, words, turn }) => {
     if (ownerOf(e) !== owner || e.trashedAt) continue;
     const variant = Object.entries(readStep(e.id, "review") ?? {}).find(([, p]) => p.assetId === asset)?.[0];
     if (!variant) continue;
+    // a cut with a pass still to come (passes.ts): its Approve is the go for that pass, not a finished cut
+    if (nextPass(e, variant)) return;
     if (!tool) keepFinished(e, variant);
     return keepLearned(e, variant);
   }

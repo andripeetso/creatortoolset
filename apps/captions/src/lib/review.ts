@@ -61,6 +61,8 @@ export interface ReviewVersion {
   notBlurred?: boolean;
   /** Its owner approved it with the faces as filmed. */
   approvedAsFilmed?: { by: string; at: number };
+  /** What approving it starts ("B-roll", "cards"): an AI Editor edit in passes. */
+  next?: string;
   createdAt: number;
 }
 

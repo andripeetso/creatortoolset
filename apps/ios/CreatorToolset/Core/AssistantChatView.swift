@@ -224,8 +224,9 @@ struct AssistantChatView: View {
             }
             // while a reply is being written the round button is a red Stop as long as the box is empty
             // (owner, 2026-11-11: he could find no way to stop, typed "Stop", and it went as a message)
-            ChatComposer(text: $draft.text, working: thinking != nil, sending: draft.reading, hasAttachment: draft.hasAttachment,
-                         autofocus: autofocus,
+            ChatComposer(text: $draft.text, placeholder: draft.ask ?? "Message", working: thinking != nil, sending: draft.reading,
+                         hasAttachment: draft.hasAttachment,
+                         autofocus: autofocus || draft.ask != nil,
                          attachments: draft.hasAttachment ? AnyView(AssistantAttachmentChips(draft: draft)) : nil,
                          mic: ComposerMic(phase: voice.phase) { [draft] in
                              voice.toggle { draft.text = VoiceInput.appended($0, to: draft.text) }
@@ -243,6 +244,8 @@ struct AssistantChatView: View {
                 .tint(.secondary)
                 .accessibilityLabel("Add pictures or videos")
             }
+            // Request changes under a cut: a new box with the keyboard up and its question
+            .id(draft.ask)
             .disabled(!connected)
         }
     }

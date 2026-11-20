@@ -164,6 +164,78 @@ enum EditFeed {
             .map(\.element.item)
     }
 
+    /// The project page, newest first: a still-live error on top, the newest cut, what was said since it, the older cuts
+    /// with the note each got, and History (finished steps, errors a later run fixed, what was said before).
+    struct Page: Equatable {
+        var live: [Item] = []
+        var newest: EditorProject.Draft?
+        var earlier: [(draft: EditorProject.Draft, note: String?)] = []
+        var talk: [Item] = []
+        var history: [Item] = []
+
+        static func == (a: Page, b: Page) -> Bool {
+            a.live == b.live && a.newest == b.newest && a.talk == b.talk && a.history == b.history
+                && a.earlier.map(\.draft) == b.earlier.map(\.draft) && a.earlier.map(\.note) == b.earlier.map(\.note)
+        }
+    }
+
+    static func page(_ edit: EditorProject, chat: [EditorChat.Message]) -> Page {
+        let all = items(edit, chat: chat)
+        var page = Page()
+        let cuts = all.enumerated().compactMap { index, item -> (Int, EditorProject.Draft)? in
+            if case .cut(let draft) = item { return (index, draft) }
+            return nil
+        }
+        let newestAt = cuts.last?.0 ?? -1
+        page.newest = cuts.last?.1
+        // each older cut, newest first, with the first note said after it and before the next cut of its own variant
+        // (a cut of another variant is another version, not the answer to its note)
+        for (k, (index, draft)) in cuts.dropLast().enumerated().reversed() {
+            let next = cuts[(k + 1)...].first { $0.1.variant == draft.variant }?.0
+            let note = next.flatMap { next in
+                all[(index + 1)..<next].compactMap { item -> String? in
+                    if case .said(_, let text) = item { return text }
+                    return nil
+                }.first
+            }
+            page.earlier.append((draft, note))
+        }
+        for (index, item) in all.enumerated() {
+            switch item {
+            case .cut: continue
+            case .failed(let job, _) where !fixed(job, in: edit): page.live.append(item)
+            case .said, .reply: if index > newestAt { page.talk.append(item) } else { page.history.append(item) }
+            default: page.history.append(item)
+            }
+        }
+        page.history.reverse()
+        return page
+    }
+
+    /// A failure the same step ran again after (put right, or failed anew and that one is on top): it goes to History.
+    static func fixed(_ job: EditorProject.Job, in edit: EditorProject) -> Bool {
+        edit.jobs.contains { $0.createdAt > job.createdAt && $0.kind == job.kind && $0.variant == job.variant && $0.draft == job.draft }
+    }
+
+    /// The checks a cut failed, in plain words, once: "2 checks need a look: your voice is out of sync, you look away."
+    static func checks(_ failed: [String]?) -> String? {
+        let words = (failed ?? []).map { checkWords[$0] ?? $0.replacingOccurrences(of: "_", with: " ") }
+        guard let first = words.first else { return nil }
+        return words.count == 1 ? "1 check needs a look: \(first)." : "\(words.count) checks need a look: \(words.joined(separator: ", "))."
+    }
+
+    /// The editor's check ids in words (the worker's QA names them); an id not here is said as it is.
+    static let checkWords: [String: String] = [
+        "vo_linked": "your voice is out of sync", "look_away": "you look away", "cut_frames": "a cut is off by a frame",
+        "on_screen": "something sits off the screen", "edges": "a shot shows its edges", "layers_visible": "a layer shows through",
+        "restarts": "a sentence starts twice", "framing": "the framing is off", "short_visible_shots": "a shot is too short",
+        "face_gaps": "your face leaves the frame", "broll_sources": "a B-roll clip is missing", "length": "the length is off",
+        "frozen": "the picture freezes", "tail": "the end runs on", "dead_air": "there is a silence", "lanes": "clips overlap",
+        "framing_axis": "the framing jumps", "loudness": "the sound is too loud or too quiet", "resolution": "the picture is low resolution",
+        "flash_frames": "a flash frame", "still_cards": "a card stands still", "words": "the words on screen are off",
+        "black_end": "it ends on black", "odd_frames": "an odd frame",
+    ]
+
     /// "Sorted the footage · 3m": what a finished job did and how long it took.
     static func line(_ job: EditorProject.Job) -> String {
         guard let start = job.startedAt, let end = job.finishedAt, end - start >= 1000 else { return EditorWords.did(job.kind) }
@@ -183,6 +255,8 @@ final class EditThreadModel: ObservableObject {
     /// The server's words when it refused something he pressed.
     @Published var notice: String?
     @Published private(set) var sending = false
+    /// The Review video of the newest cut: its approval and what approving starts.
+    @Published private(set) var review: ReviewAsset?
     /// Sent from this screen to a server that doesn't say which edit a message is about.
     private var mine: Set<String> = []
     private var loading = false
@@ -225,7 +299,7 @@ final class EditThreadModel: ObservableObject {
     /// Something moves by itself: the screen reads again every few seconds.
     var active: Bool { running != nil || !queued.isEmpty || turn != nil }
 
-    var feed: [EditFeed.Item] { edit.map { EditFeed.items($0, chat: messages) } ?? [] }
+    var page: EditFeed.Page { edit.map { EditFeed.page($0, chat: messages) } ?? EditFeed.Page() }
 
     func load() async {
         guard !loading else {
@@ -236,6 +310,13 @@ final class EditThreadModel: ObservableObject {
             error = "Not signed in"
             return
         }
+        #if DEBUG
+        if PhoneDemo.on {
+            edit = PhoneDemo.project
+            review = PhoneDemo.review?.asset
+            return
+        }
+        #endif
         loading = true
         defer { loading = false }
         repeat {
@@ -245,6 +326,9 @@ final class EditThreadModel: ObservableObject {
                 async let talk: EditorChat? = try? api.get("/api/editor/chat?edit=\(id)")
                 let fresh: EditorProject = try await api.get("/api/editor/\(id)")
                 if fresh != edit { edit = fresh }
+                if let ref = fresh.drafts.last?.review, let detail: ReviewDetail = try? await api.get("/api/review/assets/\(ref.asset)") {
+                    if detail.asset != review { review = detail.asset }
+                }
                 if let said = await talk, before == sends, said != chat { chat = said }
                 error = nil
             } catch {
@@ -275,6 +359,20 @@ final class EditThreadModel: ObservableObject {
     /// His go on a waiting job; `language` answers analyze's question (the clips are listened to again in it).
     func go(_ job: EditorProject.Job, language: String? = nil) async {
         await act { try await $0.send("/api/editor/\(self.id)/jobs/\(job.id)/go", json: language.map { ["language": $0] as [String: Any] } ?? [:]) }
+    }
+
+    /// Approve on the newest cut's Review video (that version only). Nil when it went, else the server's question
+    /// before its owner approves a cut whose faces aren't blurred.
+    @discardableResult
+    func approve(_ ref: EditorProject.Draft.ReviewRef, asFilmed: Bool = false) async -> String? {
+        guard let api else { return nil }
+        var asked: String?
+        await act { api in
+            if case .ask(let line) = try await ReviewApproval.send(api, asset: ref.asset, .approved, asFilmed: asFilmed, version: ref.n) {
+                asked = line
+            }
+        }
+        return asked
     }
 
     func sendToReview(_ draft: EditorProject.Draft) async {
@@ -323,6 +421,13 @@ struct EditThreadView: View {
     @StateObject private var model: EditThreadModel
     @State private var text = ""
     @State private var askResolve = false
+    /// The server's question before approving a cut with unblurred faces, and the cut it asked about.
+    @State private var asFilmedAsk: (line: String, ref: EditorProject.Draft.ReviewRef)?
+    @State private var earlierOpen = false
+    @State private var historyOpen = false
+    /// Request changes: the box takes the keyboard.
+    @State private var focus = 0
+    @StateObject private var voice = VoiceInput()
 
     init(id: String) {
         self.id = id
@@ -357,6 +462,13 @@ struct EditThreadView: View {
             .confirmationDialog("Open \(model.edit?.drafts.last?.name ?? "the cut") in Resolve on the Mac?", isPresented: $askResolve, titleVisibility: .visible) {
                 Button("Open in Resolve") { Task { await model.openInResolve() } }
             }
+            .alert(asFilmedAsk?.line ?? "", isPresented: Binding(get: { asFilmedAsk != nil }, set: { if !$0 { asFilmedAsk = nil } })) {
+                Button("Approve as filmed") {
+                    if let ref = asFilmedAsk?.ref { Task { await model.approve(ref, asFilmed: true) } }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .onDisappear { voice.cancel() }
             .task {
                 ChatsModel.shared.watch()
                 await model.load()
@@ -374,20 +486,34 @@ struct EditThreadView: View {
     @ViewBuilder private var content: some View {
         if model.edit != nil {
             ScrollView {
+                let page = model.page
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(model.feed) { item in row(item) }
+                    // only an error that is still a problem, with its one action; fixed ones are in History
+                    ForEach(page.live) { item in row(item) }
+                    // a question only he can answer; a pass waits for Approve on its cut, not for a go here
                     ForEach(model.waiting) { job in
                         if job.ask == "language" {
                             LanguageCard(job: job) { await model.go(job, language: $0) }
-                        } else {
+                        } else if job.sheet != nil {
                             GoCard(editId: id, job: job, api: model.api) { await model.go(job) }
                         }
+                    }
+                    if let newest = page.newest { newestCut(newest) }
+                    ForEach(page.talk) { item in row(item) }
+                    if !page.earlier.isEmpty {
+                        ShelfHeader(title: "Earlier drafts", count: page.earlier.count, open: $earlierOpen)
+                        if earlierOpen {
+                            ForEach(page.earlier, id: \.draft.name) { earlier in earlierCut(earlier.draft, note: earlier.note) }
+                        }
+                    }
+                    if !page.history.isEmpty {
+                        ShelfHeader(title: "History", count: page.history.count, open: $historyOpen)
+                        if historyOpen { ForEach(page.history) { item in row(item) } }
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
-            .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await model.load() }
         } else if let error = model.error {
@@ -411,7 +537,7 @@ struct EditThreadView: View {
                 Text("\(EditorWords.doing(job.kind)) failed").font(.subheadline.weight(.semibold))
                 Text(job.error ?? "").font(.subheadline)
                 if canRetry {
-                    Button("Try again") { Task { await model.retry(job) } }
+                    Button("Retry") { Task { await model.retry(job) } }
                         .buttonStyle(.bordered)
                         .tint(.red)
                         .frame(minHeight: 44)
@@ -459,9 +585,91 @@ struct EditThreadView: View {
                 }
                 WorkingCapsule(label: turn.claimed ? "Answering" : "Waiting for the Mac", since: turn.at.map { date(ms: $0) })
             }
-            ChatComposer(text: $text, placeholder: "Say what to change", working: model.turn != nil,
-                         sending: model.sending || model.busy, onSend: send)
+            if let notice = voice.notice { QuietNotice(text: notice).padding(.horizontal, 20) }
+            ChatComposer(text: $text, placeholder: model.edit?.drafts.last.map { "Notes for \(name($0))" } ?? "Say what to change",
+                         working: model.turn != nil, sending: model.sending || model.busy, autofocus: focus > 0,
+                         mic: ComposerMic(phase: voice.phase) {
+                             // the cut waits, and the note says the moment it was spoken at
+                             let at = CutCard.playing.flatMap { player -> Double? in
+                                 player.pause()
+                                 let t = player.currentTime().seconds
+                                 return t.isFinite && t > 0 ? t : nil
+                             }
+                             voice.toggle { words in text = VoiceInput.appended(at.map { "At \(clock($0)): \(words)" } ?? words, to: text) }
+                         },
+                         onSend: send) { EmptyView() }
+                .id(focus)
         }
+    }
+
+    /// The version number he sees: the cut's version in Review, else its own.
+    static func number(_ draft: EditorProject.Draft) -> Int { draft.review?.n ?? draft.n }
+
+    /// "Draft 2", with "· Version B" when the edit's rounds have several versions (the variant's last letter).
+    private func name(_ draft: EditorProject.Draft) -> String {
+        let several = Set(model.edit?.drafts.map(\.variant) ?? []).count > 1
+        return ReviewAsset.draftName(Self.number(draft), version: several ? draft.variant.last.map(String.init) : nil)
+    }
+
+    /// The newest cut on top: its state in words, the two buttons (Approve left, Request changes right), and its checks
+    /// once, in plain words.
+    private func newestCut(_ draft: EditorProject.Draft) -> some View {
+        // the Review video's approval is about its newest version: this cut's only while it is that one
+        let status = model.review.flatMap { $0.latest?.n == draft.review?.n ? ReviewStatus(rawValue: $0.approval.status) : nil }
+        let state = model.running.map { "Being cut · \(EditorWords.doing($0.kind))" }
+            ?? (!model.queued.isEmpty ? "Being cut"
+            : draft.review == nil ? "Not in Review yet"
+            : status == .approved ? "Approved" : status == .changes ? "Changes asked" : "Waiting for your review")
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("\(name(draft)) · \(clock(draft.durationS))").font(.subheadline.weight(.semibold))
+                Text(state).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 8)
+                if let ref = draft.review {
+                    Button {
+                        AppNavigator.shared.open(.review(ref.asset, version: ref.n))
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("Review")
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color("AccentColor"))
+                }
+            }
+            CutCard(editId: id, draft: draft, api: model.api) { await model.sendToReview(draft) }
+            if let ref = draft.review, status != .approved, model.running == nil, model.queued.isEmpty {
+                HStack(spacing: 10) {
+                    WideButton(title: ReviewAsset.approveTitle(model.review?.latest?.next), systemImage: "checkmark") {
+                        Task { asFilmedAsk = await model.approve(ref).map { ($0, ref) } }
+                    }
+                    WideButton(title: "Request changes", kind: .plain) { focus += 1 }
+                }
+            }
+            if let checks = EditFeed.checks(draft.failed) {
+                Text(checks).font(.footnote).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    /// An older cut, folded under Earlier drafts: its number, length and the note it got; a tap opens it in Review.
+    private func earlierCut(_ draft: EditorProject.Draft, note: String?) -> some View {
+        Button {
+            if let ref = draft.review { AppNavigator.shared.open(.review(ref.asset, version: ref.n)) }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(name(draft)) · \(clock(draft.durationS))").font(.subheadline.weight(.semibold))
+                if let note { Text("Changes asked · “\(note)”").font(.footnote).foregroundStyle(.secondary).lineLimit(2) }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(draft.review == nil)
     }
 
     private func send() {
@@ -473,8 +681,8 @@ struct EditThreadView: View {
     }
 }
 
-/// A cut in the thread: its preview plays in place; under it its name, and at the right
-/// the way into Review.
+/// The newest cut's preview, playing in place (its name, state and Review › are the line above it); Send to Review
+/// under it while it is not there.
 private struct CutCard: View {
     let editId: String
     let draft: EditorProject.Draft
@@ -482,6 +690,9 @@ private struct CutCard: View {
     let sendToReview: () async -> Void
     @State private var player: AVPlayer?
     @State private var busy = false
+    /// The cut on the page: the note box's mic pauses it.
+    /// shortcut: one cut plays on the page (the newest); a list of players needs one per card
+    static weak var playing: AVPlayer?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -496,50 +707,22 @@ private struct CutCard: View {
                     if player == nil, let api {
                         player = api.player("/api/editor/\(editId)/drafts/\(pathPiece(draft.name))/preview")
                     }
+                    Self.playing = player
                 }
                 .onDisappear { player?.pause() }
             }
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(draft.name).font(.subheadline.weight(.semibold))
-                    Text(clock(draft.durationS)).font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 12)
-                if let review = draft.review {
-                    Button {
-                        AppNavigator.shared.open(.review(review.asset, version: review.n))
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text("In Review")
-                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+            if draft.review == nil, draft.preview == true {
+                Button {
+                    Task {
+                        busy = true
+                        await sendToReview()
+                        busy = false
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color("AccentColor"))
-                } else if draft.preview == true {
-                    Button {
-                        Task {
-                            busy = true
-                            await sendToReview()
-                            busy = false
-                        }
-                    } label: {
-                        Text("Send to Review").font(.subheadline.weight(.semibold)).frame(minHeight: 30)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(busy)
+                } label: {
+                    Text("Send to Review").font(.subheadline.weight(.semibold)).frame(minHeight: 30)
                 }
-            }
-            // as wide as the video, wider only for a long name
-            .frame(minWidth: 180)
-            .fixedSize(horizontal: true, vertical: false)
-            if let failed = draft.failed, !failed.isEmpty {
-                Text("Checks failed: \(failed.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: ", "))")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
+                .buttonStyle(.bordered)
+                .disabled(busy)
             }
         }
     }

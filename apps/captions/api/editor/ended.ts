@@ -1,9 +1,12 @@
+import type { AssistantMedia } from "../../contracts/assistant";
+import { draftName } from "../../contracts/editor";
 import { workEnded } from "../assistant";
 import { libraryDb } from "../library/db";
 import { emitEvent } from "../lib/events";
 import type { JobRow } from "../library/jobs";
+import { nextPass, PASS_WORD } from "./passes";
 import { saidOf, saidWords } from "./preview";
-import { readDraft, readEdit, readStep } from "./store";
+import { readDraft, readEdit, readStep, type EditMeta } from "./store";
 
 /**
  * An edit's run has ended, for the chat it was started from. The worker calls runEnded each time a step moves
@@ -12,8 +15,44 @@ import { readDraft, readEdit, readStep } from "./store";
  * own page tells nobody). A step that will be tried again is still queued, so only a failure for good ends a run.
  */
 
-/** The answers under "ready". The run has filed each draft's preview in Review already, so the second one opens it there (the page's own button). */
-export const READY_CHOICES = ["Show me", "Open in Review"];
+/** Several versions ready at once: "Draft 2 of “X”" when they are all that draft; each version is its own Review video with its own numbering, so mixed drafts name none. */
+const headline = (drafts: number[], name: string) => (new Set(drafts).size === 1 ? `${draftName(drafts[0]!)} of ${name}` : name);
+
+/**
+ * A draft's cut in Review, as the ready line plays it in the chat with Approve and Request changes under it (AssistantMedia
+ * `cut`): no AI turn to watch it. `next`: the pass approving it starts (passes.ts), as filing named it on the version.
+ */
+export function cutMedia(edit: EditMeta, variant: string): AssistantMedia | null {
+  const p = readStep(edit.id, "review")?.[variant];
+  if (!p) return null;
+  const pass = nextPass(edit, variant);
+  const api = `/api/review/assets/${p.assetId}/v/${p.n}`;
+  return {
+    id: `review:${p.assetId}:${p.n}`,
+    kind: "video",
+    // "Handstand basics · Draft 2", as the line says it
+    title: `${edit.name} · ${cutName(edit, variant)}`,
+    src: `${api}/play`,
+    poster: `${api}/thumb`,
+    href: `/review/${p.assetId}?v=${p.n}`,
+    cut: { asset: p.assetId, n: p.n, ...(pass ? { next: PASS_WORD[pass] } : {}) },
+  };
+}
+/**
+ * A version's newest cut by its name (draftName): its Review version is the draft, and with several planned its letter
+ * is the Version (a moment of a long recording goes by its title instead).
+ */
+export function cutName(edit: EditMeta, variant: string): string {
+  const n = readStep(edit.id, "review")?.[variant]?.n ?? 1;
+  const plans = readStep(edit.id, "plan")?.plans ?? [];
+  const i = plans.findIndex((x) => x.name === variant);
+  if (edit.moments) return `${plans[i]?.title ? `${plans[i]!.title} · ` : ""}${draftName(n)}`;
+  return draftName(n, plans.length > 1 && i >= 0 ? String.fromCharCode(65 + i) : undefined);
+}
+
+/** The cuts a line plays (workEnded keeps this many). */
+const MAX_CUTS = 4;
+const cutsOf = (edit: EditMeta, variants: string[]) => variants.slice(0, MAX_CUTS).flatMap((v) => cutMedia(edit, v) ?? []);
 
 type Row = Pick<JobRow, "id" | "kind" | "state" | "error"> & { version_id: string };
 const bad = (r: Row) => r.state === "failed" || r.state === "needs_key";
@@ -33,7 +72,7 @@ export function runEnded(job: JobRow): void {
     // a draft someone sent to Review: its own card ends when its preview is there, whatever else still runs
     const filed =
       row.kind === "file" && row.state === "done" &&
-      workEnded(who, `edit:${edit.id}:review:${variant}`, { status: "done", detail: "In Review", say: `“${edit.name} ${variant}” is in Review.`, choices: READY_CHOICES });
+      workEnded(who, `edit:${edit.id}:review:${variant}`, { status: "done", detail: "In Review", say: `${cutName(edit, variant)} of “${edit.name}” is in Review.`, media: cutsOf(edit, [variant]) });
     if (rows.some((r) => r.state === "queued" || r.state === "running")) return;
 
     let end: Parameters<typeof workEnded>[2] = { status: "done", detail: "Done" };
@@ -41,7 +80,7 @@ export function runEnded(job: JobRow): void {
     if (bad(row)) {
       const why = (row.error ?? "failed").replace(/\s+/g, " ").trim().slice(0, 200);
       const what = `“${variant ? `${edit.name} ${variant}` : edit.name}”`;
-      end = { status: "failed", detail: why, say: `${what} ${row.state === "needs_key" ? "needs setup" : "did not finish"}: ${why}`, choices: ["Show me"] };
+      end = { status: "failed", detail: why, say: `${what} ${row.state === "needs_key" ? "needs setup" : "did not finish"}: ${why}` };
       waits = `${row.state === "needs_key" ? "Needs setup" : "Did not finish"}: ${why}`;
     } else if (row.kind === "file") {
       // ready = a planned version whose preview is filed and none of whose own steps failed (a file step done before a
@@ -53,7 +92,7 @@ export function runEnded(job: JobRow): void {
       const left = ready.map((v) => {
         const d = readDraft(edit.id, v);
         const w = d ? saidWords(saidOf(d)) : "";
-        return w && n > 1 ? `${v}: ${w}` : w;
+        return w && n > 1 ? `${cutName(edit, v)}: ${w}` : w;
       }).filter(Boolean).join(" ");
       const all = planned.length;
       const name = `“${edit.name}”`;
@@ -62,8 +101,8 @@ export function runEnded(job: JobRow): void {
         end = {
           status: "done",
           detail: n === all ? "Done" : `${n} of ${all} versions done`,
-          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `The first draft of ${name} is ready.` : `${n} versions of ${name} are ready.`) + (left ? ` ${left}` : ""),
-          choices: READY_CHOICES,
+          say: (n < all ? `${n} of ${all} versions of ${name} ${n === 1 ? "is" : "are"} ready.` : n === 1 ? `${cutName(edit, ready[0]!)} of ${name} is ready.` : `${headline(ready.map((v) => readStep(edit.id, "review")?.[v]?.n ?? 1), name)} is ready in ${n} versions.`) + (left ? ` ${left}` : "") + (n > MAX_CUTS ? ` The chat plays ${MAX_CUTS}; the other ${n - MAX_CUTS} are in Review.` : ""),
+          media: cutsOf(edit, ready),
         };
     }
     // the person's phones hear of a run that failed or left cuts in Review, wherever it was started

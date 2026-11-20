@@ -186,12 +186,21 @@ struct RouteView: View {
         screen.toolbar(.hidden, for: .tabBar)
     }
 
+    /// `-PhoneDemo`: the edit pages are the studio's, with the demo's edit.
+    private var demo: Bool {
+        #if DEBUG
+        PhoneDemo.on
+        #else
+        false
+        #endif
+    }
+
     @ViewBuilder private var screen: some View {
         switch route {
         case .assistant: AssistantChatView()
         case .chat(let id): AssistantChatRoute(id: id)
         case .edit(let id):
-            if plugins.studio { EditThreadView(id: id) } else { PageView(path: "/editor/\(id)") }
+            if plugins.studio || demo { EditThreadView(id: id) } else { PageView(path: "/editor/\(id)") }
         case .review(let id, let version): ReviewRouteView(id: id, version: version)
         case .session(let id): SessionRouteView(id: id)
         case .finals: EmptyView()   // a tab, never pushed (AppNavigator.open)

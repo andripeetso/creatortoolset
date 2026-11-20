@@ -122,7 +122,7 @@ describe("a recording dropped in the chat becomes a Video Note", () => {
     await vi.waitFor(async () => expect((await messagesOf(cookie)).at(-1)!.text).toBe("“Tiny tumbles plan” is ready."), { timeout: 20_000, interval: 100 });
     const messages = await messagesOf(cookie);
     expect(messages.slice(-2).map((m: AssistantMessage) => [m.role, m.text, m.status])).toEqual([["assistant", "Done.", "done"], ["assistant", "“Tiny tumbles plan” is ready.", "done"]]);
-    expect(messages.at(-1)!.choices).toEqual(["Sum it up", "Show me"]);
+    expect(messages.at(-1)!.choices).toEqual(["Sum it up"]);
     expect(messages.at(-2)!.work![0]).toMatchObject({ id: `notes:${noteId}`, status: "done", detail: "Ready" });
   });
 
@@ -175,7 +175,7 @@ describe("a recording dropped in the chat becomes a Video Note", () => {
     await vi.waitFor(async () => expect((await messagesOf(cookie)).at(-1)!.text).toBe("“Bad take.wav” did not finish: The speech model stopped"), { timeout: 20_000, interval: 100 });
     hears = "words";
     const messages = await messagesOf(cookie);
-    expect(messages.at(-1)!.choices).toEqual(["Show me"]);
+    expect(messages.at(-1)!.choices).toBeUndefined();
     expect(messages.at(-2)!.work![0]).toMatchObject({ id: `notes:${made.id}`, status: "failed", detail: "The speech model stopped" });
     expect((await tool(anaKey, "notes_list")).out.notes[0]).toMatchObject({ id: made.id, status: "error" });
   });

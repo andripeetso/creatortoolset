@@ -21,7 +21,7 @@ const subject = await import("./subject");
 
 const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
-const { readMeta } = await import("../review");
+const { readMeta, setApproval } = await import("../review");
 const { emptyTracks } = await import("./timeline");
 const { createEdit, readDraft, readEdit, readFiled, readStep, saveDraft, saveEdit } = await import("./store");
 const { applyEdits } = await import("./edits");
@@ -211,8 +211,11 @@ describe("AI Editor preview", () => {
       { source_version_id: "ver_a", note: "editor" },
     ]);
 
+    // approved (or sent back), the next cut filed waits for review again
+    await setApproval(filed.assetId, "approved", "mem-a");
     await run();
     const again = (await readMeta(filed.assetId))!;
+    expect(again.approval.status).toBe("needs_review");
     expect(readStep(e.id, "review")!.v1).toEqual({ assetId: filed.assetId, n: 2, by: "mem-a" });
     expect(again.versions.map((v) => v.n)).toEqual([1, 2]);
 

@@ -277,6 +277,11 @@ struct WideButton: View {
                 Text(title)
             }
             .font(.subheadline.weight(.semibold))
+            // one line, shrunk to fit a narrow phone, never touching the button's edges
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .allowsTightening(true)
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 44)
             .foregroundStyle(kind == .main ? Color.white : kind == .danger ? Color.red : Color.primary)
             .background(kind == .main ? Color("AccentColor") : Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12))
@@ -284,6 +289,17 @@ struct WideButton: View {
         .buttonStyle(.plain)
         .disabled(busy)
     }
+}
+
+/// The iPhone's own share sheet.
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 // MARK: The message box

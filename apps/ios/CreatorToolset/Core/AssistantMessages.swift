@@ -185,11 +185,17 @@ struct AssistantWorkCard: View {
     }
 }
 
-/// A video a reply shows: it plays in place, and its title opens its page.
+/// A video a reply shows: it plays in place, and its title opens its page. A ready cut (`cut`) opens with "Review ›"
+/// and has the Review page's two buttons under it, in the same places: Approve left, Request changes right.
 struct AssistantVideoCard: View {
     let media: AssistantMedia
     @State private var player: AVPlayer?
     @State private var poster: UIImage?
+    @State private var approving = false
+    @State private var approved = false
+    @State private var problem: String?
+    /// The server's question before its owner approves a cut whose faces aren't blurred.
+    @State private var asFilmedAsk: String?
     /// One video of the chat plays at a time.
     private static weak var playing: AVPlayer?
 
@@ -231,13 +237,37 @@ struct AssistantVideoCard: View {
                     if let duration = media.duration, duration > 0 {
                         Text(clock(duration)).font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    if media.cut != nil { Text("Review").font(.subheadline.weight(.semibold)).foregroundStyle(Color("AccentColor")) }
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                        .foregroundStyle(media.cut != nil ? AnyShapeStyle(Color("AccentColor")) : AnyShapeStyle(.tertiary))
                 }
                 .padding(.horizontal, 14)
                 .frame(minHeight: 48)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            if let cut = media.cut {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        WideButton(title: approved ? "Approved" : ReviewAsset.approveTitle(cut.next), systemImage: "checkmark", busy: approving) {
+                            Task { await approve(cut) }
+                        }
+                        .disabled(approved)
+                        WideButton(title: "Request changes", kind: .plain) {
+                            let draft = AssistantModel.shared.draft
+                            draft.about = "Request changes on “\(media.title)” (Review \(media.href))"
+                            draft.ask = "What should change in \(ReviewAsset.draftName(cut.n))?"
+                        }
+                    }
+                    if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+            }
+        }
+        .alert(asFilmedAsk ?? "", isPresented: Binding(get: { asFilmedAsk != nil }, set: { if !$0 { asFilmedAsk = nil } })) {
+            Button("Approve as filmed") { if let cut = media.cut { Task { await approve(cut, asFilmed: true) } } }
+            Button("Cancel", role: .cancel) {}
         }
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -248,6 +278,22 @@ struct AssistantVideoCard: View {
         .onDisappear { player?.pause() }
         .onAppear {
             if debugArg("AssistantPlay") != nil, player == nil { play() }   // a check that it plays, without a tap
+        }
+    }
+
+    /// Approve on that Review video and version, no turn of the AI; a cut with unblurred faces asks its owner first.
+    private func approve(_ cut: AssistantMedia.Cut, asFilmed: Bool = false) async {
+        guard let api = AssistantModel.shared.chatAPI else { return }
+        approving = true
+        defer { approving = false }
+        do {
+            switch try await ReviewApproval.send(api, asset: cut.asset, .approved, asFilmed: asFilmed, version: cut.n) {
+            case .ask(let line): asFilmedAsk = line
+            case .done: approved = true
+            }
+            problem = nil
+        } catch {
+            problem = error.localizedDescription
         }
     }
 

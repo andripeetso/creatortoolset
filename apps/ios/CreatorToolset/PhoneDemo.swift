@@ -56,7 +56,7 @@ enum PhoneDemo {
     static func edits() -> (videos: [ReviewListItem], others: [ChatRow], spaces: [String: String]) {
         let json = """
         [{"id":"r1","name":"Handstand basics, cut 2","approval":{"status":"needs_review"},"updatedAt":\(ago(10)),
-          "versions":[{"n":1,"status":"ready","createdAt":1},{"n":2,"status":"ready","createdAt":2}]}]
+          "versions":[{"n":1,"status":"ready","createdAt":1,"duration":87,"draft":{"edit":"e5","name":"v1"}},{"n":2,"status":"ready","createdAt":2,"duration":90,"draft":{"edit":"e5","name":"v1"}}]}]
         """
         let videos = (try? JSONDecoder().decode([ReviewListItem].self, from: Data(json.utf8))) ?? []
         let date = { (m: Double) in Date(timeIntervalSince1970: ago(m) / 1000) }
@@ -76,10 +76,36 @@ enum PhoneDemo {
     static let assistant = """
     {"id":"c1","provider":"claude","aiName":"Claude","workspace":"tiny","sendNow":true,"videosLater":true,
      "messages":[{"id":"m1","role":"user","text":"Turn yesterday's beam clips into a 30 second reel","at":\(ago(20))},
-                 {"id":"m2","role":"assistant","text":"Done: the cut is in Review as Handstand basics, cut 2.","at":\(ago(18)),"status":"done"}],
+                 {"id":"m2","role":"assistant","text":"Draft 2 of “Handstand basics” is ready.","at":\(ago(18)),"status":"done",
+                  "media":[{"id":"review:r1:2","kind":"video","title":"Handstand basics · Draft 2","src":"/api/review/assets/r1/v/2/play",
+                            "poster":"/demo/2","href":"/review/r1?v=2","duration":90,"cut":{"asset":"r1","n":2,"next":"B-roll"}}]}],
      "past":[{"id":"c2","title":"Captions for the cartwheel post","at":\(ago(300)),"count":6},
              {"id":"c3","title":"Open day poster for the gym","at":\(ago(400)),"count":3}]}
     """
+
+    /// The Review video the chat's cut is (`/review/r1`): two versions, notes on the first, the second waits.
+    static let review: ReviewDetail? = try? JSONDecoder().decode(ReviewDetail.self, from: Data("""
+    {"asset":{"id":"r1","name":"Handstand basics v1","approval":{"status":"needs_review"},"createdAt":1,
+      "versions":[{"n":1,"name":"Handstand basics v1.mp4","duration":87,"width":1080,"height":1920,"status":"ready","createdAt":1,"draft":{"edit":"e5","name":"v1"}},
+                  {"n":2,"name":"Handstand basics v1.mp4","duration":90,"width":1080,"height":1920,"status":"ready","createdAt":2,"draft":{"edit":"e5","name":"v1"},"next":"B-roll"}]},
+     "comments":[{"id":"k1","version":1,"t":0,"text":"These shots should not be blurred at all","author":"kaia","createdAt":1,"resolved":true,"mine":true},
+                 {"id":"k2","version":1,"t":31,"text":"Hold the landing a beat longer","author":"kaia","createdAt":2,"mine":true},
+                 {"id":"k3","version":2,"t":42,"text":"Nice, keep this pace","author":"kaia","createdAt":3,"mine":true}],
+     "manage":true}
+    """.utf8))
+
+    /// The studio edit behind it (`/editor/e5`): a failure a later run fixed, two cuts, a note on the first.
+    static let project: EditorProject? = try? JSONDecoder().decode(EditorProject.self, from: Data("""
+    {"id":"e5","name":"Handstand basics","jobs":[
+      {"id":"j1","kind":"analyze","status":"error","progress":0.2,"createdAt":\(ago(300)),"startedAt":\(ago(300)),"finishedAt":\(ago(299)),"error":"The mic file is missing"},
+      {"id":"j2","kind":"analyze","status":"done","progress":1,"createdAt":\(ago(290)),"startedAt":\(ago(290)),"finishedAt":\(ago(286))},
+      {"id":"j3","kind":"script","status":"done","progress":1,"createdAt":\(ago(285)),"startedAt":\(ago(285)),"finishedAt":\(ago(281))},
+      {"id":"j4","kind":"draft","status":"done","progress":1,"createdAt":\(ago(280)),"startedAt":\(ago(280)),"finishedAt":\(ago(150)),"draft":"v1"},
+      {"id":"j5","kind":"revise","status":"done","progress":1,"createdAt":\(ago(60)),"startedAt":\(ago(60)),"finishedAt":\(ago(20)),"draft":"v2"}],
+     "drafts":[{"name":"v1","variant":"A","n":1,"createdAt":\(ago(150)),"pass":false,"durationS":87,"failed":["vo_linked","look_away"],"preview":true,"review":{"asset":"r1","n":1}},
+               {"name":"v2","variant":"A","n":2,"createdAt":\(ago(20)),"pass":false,"durationS":90,"failed":["look_away"],"preview":true,"review":{"asset":"r1","n":2}}],
+     "feedback":[{"id":"f1","at":\(ago(70)),"text":"These shots should not be blurred at all","job":"j5"}]}
+    """.utf8))
 
     static let sessions: [WorkshopSession] = {
         func s(_ id: String, _ title: String, _ status: WorkshopStatus, _ kind: String, _ minutes: Double) -> WorkshopSession {

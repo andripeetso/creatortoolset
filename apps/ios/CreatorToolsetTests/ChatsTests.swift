@@ -36,15 +36,15 @@ final class ChatsTests: XCTestCase {
         let rows = ChatList.arrange(rows: ChatList.merge(videos: try decode(Self.reviews), others: []))
         XCTAssertEqual(rows.map(\.title), ["V1A-1", "V1A-2", "Hanging basics teaser v2"])
         XCTAssertEqual(rows[0].status, .review)
-        XCTAssertEqual(rows[0].detail, "V1")
+        XCTAssertEqual(rows[0].detail, "Draft 1 is ready · 0:10")
         XCTAssertEqual(rows[1].detail, "Changes requested")
         XCTAssertFalse(rows[1].status.waitsOnYou)
         XCTAssertEqual(rows[2].shelf, .done)
         var video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser","approval":{"status":"needs_review"},"versions":[{"n":1},{"n":2}],"newComments":2,"createdAt":5000}"#.utf8))
-        XCTAssertEqual(ChatList.row(video).detail, "V2 · 2 new comments")
+        XCTAssertEqual(ChatList.row(video).detail, "v2 is ready · 2 new comments")
         XCTAssertEqual(ChatList.row(video).at, Date(timeIntervalSince1970: 5))
         video.newComments = 1
-        XCTAssertEqual(ChatList.row(video).detail, "V2 · 1 new comment")
+        XCTAssertEqual(ChatList.row(video).detail, "v2 is ready · 1 new comment")
     }
 
     func testEditsOnAServerWithoutTheEditor() throws {

@@ -27,6 +27,7 @@ export function Composer({
   onPaste,
   quote,
   onDropQuote,
+  ask,
   waiting,
   autoFocus,
   aiPicker,
@@ -43,6 +44,8 @@ export function Composer({
   onPaste: (data: DataTransfer) => boolean;
   quote: string | null;
   onDropQuote: () => void;
+  /** Request changes under a ready cut: the box takes the cursor with this question as its placeholder. */
+  ask?: { text: string } | null;
   waiting: boolean;
   autoFocus?: boolean;
   /** The AI button (AiPicker), before send. */
@@ -72,8 +75,8 @@ export function Composer({
 
   // and a new quote (Cite, Ask assistant) puts you in the box to write about it
   useEffect(() => {
-    if (autoFocus || quote) box.current?.focus();
-  }, [autoFocus, quote]);
+    if (autoFocus || quote || ask) box.current?.focus();
+  }, [autoFocus, quote, ask]);
 
   const empty = draftEmpty(draft);
   const uploading = filesPending(draft);
@@ -247,7 +250,7 @@ export function Composer({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
             onPaste={(e) => onPaste(e.clipboardData) && e.preventDefault()}
-            placeholder="Message"
+            placeholder={ask?.text ?? "Message"}
             aria-label="Message the assistant"
             className="max-h-40 min-h-8 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-5 outline-none placeholder:text-muted-foreground/70"
           />

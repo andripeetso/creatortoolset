@@ -233,4 +233,33 @@ final class ReviewTests: XCTestCase {
         // the test server's own answer has no such field: no tag
         XCTAssertNil(try detail().asset.versions.compactMap(\.blurTag).first)
     }
+
+    func testTheTitleIsTheEditsNameAndApproveSaysWhatItStarts() throws {
+        // a plug-in's edit names its cut in the link back: "Sleep routine reel, V1A-2" reads "Sleep routine reel"
+        let made = try detail().asset
+        XCTAssertEqual(made.title, "Sleep routine reel")
+        XCTAssertEqual(made.latest?.editId, "840e7e5e-48c6-4e14-ae4d-8924aa0a3267")
+        // the app's own editor names the video "<edit> <cut>"; a video nothing made keeps its name
+        let own = try JSONDecoder().decode(ReviewAsset.self, from: Data(#"{"id":"a","name":"Tiny tumbles v1","approval":{"status":"needs_review"},"createdAt":1,"versions":[{"n":2,"name":"Tiny tumbles v1.mp4","duration":90,"width":1080,"height":1920,"status":"ready","createdAt":1,"draft":{"edit":"e1","name":"v1"},"next":"B-roll"}]}"#.utf8))
+        XCTAssertEqual([own.title, own.latest?.editId], ["Tiny tumbles", "e1"])
+        XCTAssertEqual(ReviewAsset.approveTitle(own.latest?.next), "Approve · add B-roll")
+        XCTAssertEqual(ReviewAsset.approveTitle(nil), "Approve")
+        let list = try JSONDecoder().decode([ReviewAsset].self, from: Data(listJSON.utf8))
+        XCTAssertEqual(list[0].title, "Hanging basics teaser v2")
+        // an edit's cuts are drafts; an uploaded video's versions keep their number
+        XCTAssertEqual([own.label(2), list[0].label(2)], ["Draft 2", "v2"])
+        XCTAssertEqual(ReviewAsset.draftName(2, version: "B"), "Draft 2 · Version B")
+    }
+
+    func testApproveNamesTheVersionItIsAbout() async throws {
+        ApprovalServer.bodies = []
+        ApprovalServer.answer = { _ in (200, "{}") }
+        _ = try await ReviewApproval.send(api, asset: "a1", .approved, version: 2, session: ApprovalServer.session())
+        XCTAssertEqual(ApprovalServer.bodies.first?["version"] as? Int, 2)
+    }
+
+    func testAReadyCutInTheChatDecodes() throws {
+        let media = try JSONDecoder().decode(AssistantMedia.self, from: Data(#"{"id":"review:a1:2","kind":"video","title":"Tiny tumbles · v2","src":"/p","href":"/review/a1?v=2","cut":{"asset":"a1","n":2,"next":"cards"}}"#.utf8))
+        XCTAssertEqual(media.cut, AssistantMedia.Cut(asset: "a1", n: 2, next: "cards"))
+    }
 }

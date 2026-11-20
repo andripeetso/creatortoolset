@@ -311,6 +311,41 @@ final class NativeToolsTests: XCTestCase {
         XCTAssertEqual(job.error, "No voice recording in the folder: the mic file is missing. Add it and run Sort again.")
     }
 
+    func testTheProjectPageNewestFirst() throws {
+        // the newest cut on top, the older one folded with the note it got, the editor's answer since then, and History
+        let revised: EditorProject = try decode(Self.revised)
+        let page = EditFeed.page(revised, chat: [])
+        XCTAssertEqual(page.newest?.name, "V1A-2")
+        XCTAssertEqual(page.earlier.map(\.draft.name), ["V1A-1"])
+        XCTAssertEqual(page.earlier.map(\.note), ["Make the hook faster."])
+        XCTAssertEqual(page.talk.map(\.id), ["reply-note-e28b220d-5171-4dd8-8cc2-c756dfb5c98a"])
+        XCTAssertEqual(page.history.count, 6)
+        XCTAssertTrue(page.live.isEmpty)
+        XCTAssertEqual(EditThreadView.number(page.newest!), 2)
+        // the checks of a cut in plain words, once
+        XCTAssertEqual(EditFeed.checks(["vo_linked", "look_away"]), "2 checks need a look: your voice is out of sync, you look away.")
+        XCTAssertEqual(EditFeed.checks(["new_check"]), "1 check needs a look: new check.")
+        XCTAssertNil(EditFeed.checks([]))
+
+        // an error still in the way is on top; once the step ran again it goes to History
+        let failed: EditorProject = try decode(Self.failed)
+        XCTAssertEqual(EditFeed.page(failed, chat: []).live.count, 1)
+        let json = String(decoding: Self.failed, as: UTF8.self).replacingOccurrences(of: #""finishedAt":1794417383378}]"#,
+            with: #""finishedAt":1794417383378},{"id":"again","kind":"analyze","status":"done","progress":1,"createdAt":1794417390000}]"#)
+        let fixed = EditFeed.page(try decode(Data(json.utf8), as: EditorProject.self), chat: [])
+        XCTAssertTrue(fixed.live.isEmpty)
+        XCTAssertEqual(fixed.history.count, 2)
+    }
+
+    func testAToReviewRowOpensTheCutAndSaysWhichVersion() throws {
+        let video: ReviewListItem = try decode(Data(#"{"id":"r1","name":"Teaser_V2A_D1","approval":{"status":"needs_review"},"versions":[{"n":1,"duration":80},{"n":2,"duration":90,"edit":{"project":"e1","draft":"Teaser_V2A_D1"},"source":{"href":"/editor/e1"}}]}"#.utf8))
+        XCTAssertEqual(ChatList.row(video).detail, "Draft 2 is ready · 1:30")
+        let edit = ChatRow(id: "/editor/e1", route: .edit("e1"), title: "Teaser", detail: "Teaser_V2A_D1 is in Review", status: .review, at: .now)
+        let row = ChatList.merge(videos: [video], others: [edit])
+        XCTAssertEqual(row.map(\.detail), ["Draft 2 is ready · 1:30"])
+        XCTAssertEqual(row.map(\.review), ["r1"])
+    }
+
     func testHowLongAJobTook() throws {
         func took(_ ms: Int) throws -> String {
             let json = String(decoding: Self.held, as: UTF8.self).replacingOccurrences(of: #""finishedAt":1794417379334"#, with: #""finishedAt":\#(1_794_417_379_306 + ms)"#)
