@@ -4,11 +4,14 @@ import SwiftUI
 // The small panel that pops up when a recording stops, at the bottom right corner of the recorded window or area (of
 // the screen for a whole display). It shows the thumbnail and the file's size and length; hovering it shows Save,
 // Copy, Share and Edit; its corners hold Close, Throw away and Show in Finder. It stays until the user acts or closes it, and does nothing with the recording itself: the
-// caller (Recorder) runs each action and calls close() when done.
+// caller (Recorder) runs each action and calls close() when done. With more than one workspace, its top shows the one
+// a share goes to (the window's at first) and lets you pick another before sending.
 
 @MainActor
 final class RecordingPreviewBusy: ObservableObject {
     @Published var text: String?
+    @Published var workspaces: [RecordWorkspace] = []
+    @Published var chosen: String?
 }
 
 @MainActor enum RecordingPreview {
@@ -17,7 +20,8 @@ final class RecordingPreviewBusy: ObservableObject {
         var edit: () -> Void
         var save: () -> Void
         var copy: () -> Void
-        var share: (ShareDestination) -> Void
+        /// The workspace: the one picked on the panel (nil: the window's).
+        var share: (ShareDestination, String?) -> Void
         var reveal: () -> Void
         var discard: () -> Void
     }
@@ -51,6 +55,13 @@ final class RecordingPreviewBusy: ObservableObject {
         current?.busy.text = text
     }
 
+    /// The person's workspaces and the one a share goes to unless another is picked.
+    static func setWorkspaces(_ list: [RecordWorkspace], chosen: String?) {
+        guard let busy = current?.busy else { return }
+        busy.workspaces = list
+        busy.chosen = list.contains { $0.id == chosen } ? chosen : list.first?.id
+    }
+
     @MainActor
     private final class Controller {
         static let size = NSSize(width: 340, height: 210)
@@ -80,7 +91,7 @@ final class RecordingPreviewBusy: ObservableObject {
     }
 }
 
-private struct PreviewView: View {
+struct PreviewView: View {
     let project: LocalProject
     let thumb: NSImage?
     @ObservedObject var busy: RecordingPreviewBusy
@@ -111,9 +122,11 @@ private struct PreviewView: View {
                     }
                     HStack(spacing: 10) {
                         Menu {
-                            Button("Review") { actions.share(.review) }
-                            Button("Video Notes") { actions.share(.notes) }
-                            Button("Guide Builder") { actions.share(.guide) }
+                            if busy.workspaces.count > 1, let workspace {
+                                Section("To \(workspace.name)") { shareButtons }
+                            } else {
+                                shareButtons
+                            }
                         } label: {
                             tileLabel("Share", "link")
                         }
@@ -158,6 +171,8 @@ private struct PreviewView: View {
                     .buttonStyle(.plain)
                     .help("Close (the recording stays)")
                     Spacer()
+                    if busy.workspaces.count > 1, let workspace { workspaceMenu(workspace) }
+                    Spacer()
                     // in sight, not in a menu: a take that is not wanted goes with one press (the panel asks once, over the picture)
                     Button { asking = true } label: {
                         Image(systemName: "trash")
@@ -194,6 +209,41 @@ private struct PreviewView: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.12)))
         .disabled(busy.text != nil)
         .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder private var shareButtons: some View {
+        Button("Review") { actions.share(.review, busy.chosen) }
+        Button("Video Notes") { actions.share(.notes, busy.chosen) }
+        Button("Guide Builder") { actions.share(.guide, busy.chosen) }
+    }
+
+    private var workspace: RecordWorkspace? { busy.workspaces.first { $0.id == busy.chosen } }
+
+    /// Which workspace a share goes to, in sight before Share is pressed.
+    private func workspaceMenu(_ workspace: RecordWorkspace) -> some View {
+        Menu {
+            ForEach(busy.workspaces) { w in
+                Button { busy.chosen = w.id } label: {
+                    if w.id == busy.chosen { Label(w.name, systemImage: "checkmark") } else { Text(w.name) }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(workspace.name).lineLimit(1).truncationMode(.tail)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: 220, minHeight: 22)
+            .background(Capsule().fill(Color.black.opacity(0.5)))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)   // the label as drawn: the borderless style paints its own dark text over the picture
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("The workspace Share sends it to")
     }
 
     private var infoLine: String {

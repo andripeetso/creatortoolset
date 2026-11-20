@@ -497,7 +497,10 @@ final class Recorder: ObservableObject {
     let setup = RecordSetup()
     @AppStorage("recordingsFolder") private var folderPath = ""
     /// Uploads a recording's original file and returns the page to open (Shell → Site.uploadRecording).
-    var upload: ((LocalProject, ShareDestination, @escaping @Sendable (Double) -> Void) async throws -> String)?
+    /// The workspace argument: where it goes (nil: the window's).
+    var upload: ((LocalProject, ShareDestination, String?, @escaping @Sendable (Double) -> Void) async throws -> String)?
+    /// The person's workspaces and the one the window is in, for the panel after Stop to ask which one a share goes to.
+    var workspaces: (() async -> (list: [RecordWorkspace], current: String?))?
     var openPage: ((String) -> Void)?
     /// The list of recordings on this Mac changed (a stop, a delete): the /record page asks again.
     var onRecordingsChanged: (() -> Void)?
@@ -961,9 +964,13 @@ final class Recorder: ObservableObject {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.writeObjects([project.screenURL as NSURL])
             },
-            share: { [weak self] destination in Task { await self?.share(project, to: destination) } },
+            share: { [weak self] destination, workspace in Task { await self?.share(project, to: destination, in: workspace) } },
             reveal: { NSWorkspace.shared.activateFileViewerSelecting([project.screenURL]) },
             discard: { [weak self] in self?.delete(project) }))
+        Task { [weak self] in
+            guard let got = await self?.workspaces?() else { return }
+            RecordingPreview.setWorkspaces(got.list, chosen: got.current)
+        }
     }
 
     /// The original file, saved where you choose. With "Save the streams separately" on (Settings), the camera and
@@ -1025,13 +1032,13 @@ final class Recorder: ObservableObject {
     }
 
     /// The original file to Review, Video Notes or a new guide (a Video Notes clip the guide is made from).
-    func share(_ project: LocalProject, to destination: ShareDestination) async {
+    func share(_ project: LocalProject, to destination: ShareDestination, in workspace: String? = nil) async {
         guard let upload, phase == .idle else { return }
         while true {
             phase = .uploading(0)
             RecordingPreview.setBusy("Uploading…")
             do {
-                let page = try await upload(project, destination) { p in
+                let page = try await upload(project, destination, workspace) { p in
                     Task { @MainActor in
                         if case .uploading = self.phase { self.phase = .uploading(p) }
                         RecordingPreview.setBusy("Uploading \(Int(p * 100))%")
@@ -1515,6 +1522,7 @@ extension Site {
         req.httpMethod = method
         req.httpShouldHandleCookies = false
         req.allHTTPHeaderFields = HTTPCookie.requestHeaderFields(with: cookies)
+        if let workspace { req.setValue(workspace, forHTTPHeaderField: "X-CT-Workspace") }
         return req
     }
 
