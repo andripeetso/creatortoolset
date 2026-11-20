@@ -23,6 +23,7 @@ import { resized } from "@/lib/design/resize";
 import { depthOf, everyLayer, findLayer, hugPages, inFrame, inScope, isGroup, mapLayers, pathTo, reid, scopeOf, unscope, unwrap, wrap } from "@/lib/design/tree";
 import { CopySizes } from "@/components/design/CopySizes";
 import { viewStore, zoomStop } from "@/lib/design/view";
+import { useAidPrefs } from "@/lib/design/aids";
 import { coloursOn } from "@/lib/design/colour";
 import { inPixels, refit } from "@/lib/design/path";
 import { addPicture, cutOutPicture, DesignChanged, getDesign, isPicture, pictureFrames, pictureId, pictureUrl, saveDesign, splitPicture, type SendError } from "@/lib/designs";
@@ -118,6 +119,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const [naming, setNaming] = useState<string | null>(null);
   const [hist, setHist] = useState<Hist<Page[]> | null>(null);
   const [live, setLiveRaw] = useState<Page[] | null>(null);
+  /** the rulers showing (⇧R): the messages over the canvas go below the top one */
+  const aidPrefs = useAidPrefs();
   const [at, setAt] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [framed, setFramed] = useState(false);
@@ -1203,12 +1206,21 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
         <LayersPanel pages={shown} at={k} selected={selected} framed={framed} framedIds={framedIds} onPick={pick} onPoint={setPointed} onPage={setPage} onMovePage={movePage} onAddPage={() => addFrame()} onZoomTo={zoomTo} />
 
         <div ref={frame} data-dropping={dropping || undefined} className={cn("relative min-w-0 flex-1 overflow-hidden bg-[#f5f5f5] dark:bg-[#1e1e1e]", dropping && "ring-2 ring-inset ring-[#0d99ff]")}>
-          {/* messages lie over the canvas, never above it: the canvas never moves under the pointer when one comes or goes */}
-          <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-col items-center gap-2">
-            {error && <p role="alert" className="pointer-events-auto w-full max-w-2xl rounded-md border border-red-500/40 bg-red-50 px-4 py-2 text-sm text-red-700 shadow-md dark:bg-[#3a2222] dark:text-red-300">{error}</p>}
+          {/* messages lie over the canvas, never above it: the canvas never moves under the pointer when one comes or goes.
+              In its top right corner, below the top ruler when the rulers show: clear of a frame's name (which drags the
+              frame) and of the handles over a picked layer, at the top left where a fitted frame starts */}
+          <div className={cn("pointer-events-none absolute right-3 z-30 flex w-[min(24rem,calc(100%-1.5rem))] flex-col gap-2", aidPrefs.rulers ? "top-8" : "top-3")}>
+            {error && (
+              <div role="alert" className="pointer-events-auto flex items-start gap-2 rounded-md border border-red-500/40 bg-red-50 py-1 pl-3 pr-1 text-sm text-red-700 shadow-md dark:bg-[#3a2222] dark:text-red-300">
+                <p className="max-h-32 min-w-0 flex-1 overflow-y-auto break-words py-1">{error}</p>
+                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" aria-label="Close" onClick={() => setError(null)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
             {macNote && (
-              <div role="status" className="pointer-events-auto flex w-full max-w-2xl items-center gap-2 rounded-md border border-amber-500/40 bg-amber-50 px-4 py-1.5 text-sm text-amber-800 shadow-md dark:bg-[#3a3122] dark:text-amber-200">
-                <span className="min-w-0 flex-1">{macNote.text}</span>
+              <div role="status" className="pointer-events-auto flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-50 py-1 pl-3 pr-1 text-sm text-amber-800 shadow-md dark:bg-[#3a3122] dark:text-amber-200">
+                <span className="max-h-32 min-w-0 flex-1 overflow-y-auto break-words">{macNote.text}</span>
                 {macNote.stop && (
                   <Button size="sm" variant="ghost" className="h-7" onClick={macNote.stop}>
                     Stop
