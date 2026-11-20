@@ -17,6 +17,8 @@ const { createUser } = await import("../users");
 const { applyReport, forgetOnRestart, indexForDevice, librariesOf, MOVED_IN, settleSilent } = await import("./report");
 const { indexOnMac } = await import("./on-mac");
 const { sendLater } = await import("./derived");
+const { scanWatchFolders } = await import("./watch");
+const { noPicture } = await import("./on-mac");
 const { searchApp } = await import("./search");
 const { libraryDb } = await import("./db");
 const { buildAssetQuery, indexAsset } = await import("./query");
@@ -537,5 +539,50 @@ describe("a computer that numbers no pages", () => {
     // the page holding keep.mov was lost in the restart
     await m.page("B", "old-r", true, [{ rel: "other2.mov", q: 872 }]);
     expect(d.prepare("SELECT state FROM version_places WHERE version_id = ? AND folder_id = ?").get(at.versionId, m.ids.B)).toEqual({ state: "verified" });
+  });
+});
+
+describe("hidden at once, the watch never shows a report's hide", () => {
+  it("a clip whose own file a list leaves out is hidden on the page that names it, and after a restart", async () => {
+    const m = computer("Tiny Mac P0");
+    await m.setUp([]);
+    await m.index("A", "Private/p.mov", 880);
+    await m.list("A", [{ rel: "Private/p.mov", q: 880 }]);
+    await m.listOfA(["Private"]);
+    // page 0 of a listing whose last page has not come (or never comes)
+    await m.page("A", "p0-only", false, [{ rel: "Private/p.mov", q: 880 }], 0);
+    expect([trashed(880), hidden(880)]).toEqual([false, true]);
+    forgetOnRestart();
+    await m.away("B");
+    expect([trashed(880), hidden(880)]).toEqual([false, true]);
+  });
+
+  it("this server's watch, with no list of its own, leaves a clip a report hid hidden", async () => {
+    expect(hidden(880)).toBe(true);
+    await scanWatchFolders((t += 1000));
+    expect(hidden(880)).toBe(true);
+  });
+
+  it("a clip the watch hid first that a computer's report then waits on is that computer's: the watch leaves it hidden", async () => {
+    const m = computer("Tiny Mac WR");
+    await m.setUp();
+    await m.index("A", "Day/w.mov", 881);
+    const c = clip(881);
+    await m.away("B");
+    // the watch hid it (no computer named)
+    d.prepare("UPDATE assets SET left_hidden_at = 1, left_hidden_on = NULL WHERE id = ?").run(c.id);
+    await m.list("A", [{ rel: "Private/w.mov", q: 881 }]);
+    expect(d.prepare("SELECT left_hidden_on FROM assets WHERE id = ?").get(c.id)).toEqual({ left_hidden_on: m.mac.id });
+    await scanWatchFolders((t += 1000));
+    expect(hidden(881)).toBe(true);
+  });
+
+  it("a hidden photo is never handed to a Mac to make its picture", async () => {
+    const m = computer("Tiny Mac PH");
+    await m.setUp();
+    const at = ((await indexForDevice(m.mac, m.ids.A, { name: "pic.jpg", path: `${m.roots.A}/Day/pic.jpg`, size: 10, quick: quick(882), frames: [] })) as { versions: { library: string; versionId: string }[] }).versions[0]!;
+    expect(noPicture(at.library, m.mac.id).map((x) => x.versionId)).toContain(at.versionId);
+    d.prepare("UPDATE assets SET left_hidden_at = 1 WHERE id = ?").run(clip(882).id);
+    expect(noPicture(at.library, m.mac.id).map((x) => x.versionId)).not.toContain(at.versionId);
   });
 });

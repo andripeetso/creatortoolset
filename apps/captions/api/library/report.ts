@@ -339,7 +339,10 @@ export async function settleSilent(now: number): Promise<string[]> {
 function hideLeft(device: string, owner: string, now: number, media: StorageFolder[]): string[] {
   const d = db();
   const known = placesThatCount(["verified", "found"]);
-  const hide = d.prepare("UPDATE assets SET left_hidden_at = ?, left_hidden_on = ? WHERE id = ? AND left_hidden_at IS NULL AND trashed_at IS NULL");
+  // a clip this server's watch hid first (no computer) waits on this one now: its computer is set too
+  const hide = d.prepare(
+    "UPDATE assets SET left_hidden_at = COALESCE(left_hidden_at, ?), left_hidden_on = COALESCE(left_hidden_on, ?) WHERE id = ? AND trashed_at IS NULL AND (left_hidden_at IS NULL OR left_hidden_on IS NULL)",
+  );
   const show = d.prepare("UPDATE assets SET left_hidden_at = NULL, left_hidden_on = NULL WHERE id = ? AND left_hidden_at IS NOT NULL");
   const libOf = d.prepare("SELECT library_id FROM assets WHERE id = ?");
   const changed: string[] = [];
@@ -564,6 +567,8 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   const touched = new Set<string>();
   const keepOut = keptOut(st, dev.id);
   const settle = new Set<string>();
+  // a clip that begins to wait in this report is hidden at once, not at its listing's last page
+  const waitingBefore = new Set(leftWaiting.get(dev.id)?.keys() ?? []);
   const media = mediaOf(st);
   // the copies' files, read the first time a list leaves a file out
   let read: Set<string> | undefined;
@@ -574,6 +579,7 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     const of = await librariesOf(dev.owner, folder);
     await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, media, settle, copies);
   }
+  const waitAdded = [...(leftWaiting.get(dev.id)?.keys() ?? [])].some((a) => !waitingBefore.has(a));
   // the clips waiting on this computer's other folders: settled once every one of its Media folders has listed since
   const waiting = leftWaiting.get(dev.id);
   if (waiting) {
@@ -591,7 +597,7 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
     if (lib) touched.add(lib.library_id);
   }
   // only a report that can change what is known: a last page, a page of no listing, a folder not read, or a clip settled
-  const changes = settle.size > 0 || folders.some((r) => !r.scan || r.complete || r.state !== "ok");
+  const changes = settle.size > 0 || waitAdded || folders.some((r) => !r.scan || r.complete || r.state !== "ok");
   if (changes) for (const l of hideLeft(dev.id, dev.owner, now, media)) touched.add(l);
   for (const l of await settleSilent(now)) touched.add(l);
   for (const l of touched) libraryChanged(l);
