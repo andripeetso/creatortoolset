@@ -3,7 +3,7 @@ import type { AuthVars } from "../auth";
 import type { LibrarySource, LibraryViewer } from "../../contracts/library-source";
 import { derivedMove, joinRoot, PLACES_MAX, rootKey, type GoneVersion, type PathMove, type PlaceMove, type PlaceOn, type PlacesAnswer, type PlacesReportAnswer, type RootLabel, type VersionPlaces } from "../../contracts/places";
 import type { Device } from "../../contracts/providers";
-import type { Disk, StorageFolder } from "../../contracts/storage";
+import { leftOutBy, type Disk, type StorageFolder } from "../../contracts/storage";
 import { deviceOf, listDevices } from "../lib/devices";
 import { hostPath, rootAt } from "../lib/storage";
 import { libraryChanged } from "./access";
@@ -347,7 +347,11 @@ placesApp.post("/:id/places", async (c) => {
   if (confirmed.length > PLACES_MAX || gone.length > PLACES_MAX) return c.json({ error: `At most ${PLACES_MAX} versions`, code: "invalid" }, 400);
   if (!gone.every(isId) || !confirmed.every((x) => x && isId(x.versionId) && isPath(x.path) && (x.quick === undefined || (typeof x.quick === "string" && /^[0-9a-f]{64}$/.test(x.quick)))))
     return c.json({ error: "Invalid entry", code: "invalid" }, 400);
-  const list = confirmed.map((x) => ({ versionId: x.versionId as string, path: (x.path as string).normalize("NFC"), ...(x.quick ? { quick: x.quick as string } : {}) }));
+  // a file in a folder a Media folder leaves out is no place of a clip (report.ts mediaForLibrary: the person's and the owner's lists)
+  const media = await (await import("./report")).mediaForLibrary(c.get("user").username, a.libraryId);
+  const list = confirmed
+    .map((x) => ({ versionId: x.versionId as string, path: (x.path as string).normalize("NFC"), ...(x.quick ? { quick: x.quick as string } : {}) }))
+    .filter((x) => !leftOutBy(media, x.path, a.dev.id));
   return c.json(await confirmPlaces(a.libraryId, a.viewer, a.dev, list, gone));
 });
 

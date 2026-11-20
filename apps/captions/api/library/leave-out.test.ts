@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthVars } from "../auth";
 
 // A Media folder's Folders left out (StorageFolder.leaveOut): files inside a folder of one of those names, at any depth,
@@ -14,12 +14,17 @@ delete process.env.CT_LOCAL;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const { createUser } = await import("../users");
-const { applyReport, indexForDevice, leftOutOn } = await import("./report");
+const { applyReport, indexForDevice, librariesOf, mediaFoldersOf, mediaForLibrary } = await import("./report");
+const { indexOnMac } = await import("./on-mac");
+const { recordVersion } = await import("./routes");
+const { locateApp } = await import("./locate");
+const { placesApp } = await import("./places");
 const { filesIn } = await import("./watch");
 const { changeStorage, storageApp } = await import("../devices-storage");
 const { pairDevice } = await import("../lib/devices");
 const { inRequestWorkspace } = await import("../lib/workspace-scope");
-const { notFootage } = await import("../../contracts/storage");
+const { leftOutBy, notFootage } = await import("../../contracts/storage");
+const leftOutOn = async (user: string, file: string, host?: string) => leftOutBy(await mediaFoldersOf(user), file, host);
 const { libraryDb } = await import("./db");
 createUser("tia", "password1", { role: "admin" });
 createUser("bo", "password1", { role: "admin" });
@@ -79,6 +84,10 @@ describe("a Media folder's Folders left out", () => {
     });
     expect(await leftOutOn("bo", `/mnt/footage/- NO SHARE/c.mov`)).toBe(false);
     expect(await leftOutOn("tia", `/mnt/footage/- NO SHARE/c.mov`)).toBe(true);
+    expect(await leftOutOn("tia", `/mnt/footage/- NO SHARE/c.mov`, "pc_2")).toBe(true);
+    // a computer named: only the folder's path there counts
+    expect(await leftOutOn("tia", `/mnt/footage/- NO SHARE/c.mov`, mac.id)).toBe(false);
+    expect(await leftOutOn("tia", `${LEFT}/- NO SHARE/c.mov`, "pc_2")).toBe(false);
   });
 
   it("this server's own watch reads none of their files", async () => {
@@ -136,6 +145,96 @@ describe("a clip indexed before its folder was left out", () => {
     await one("fold_arch", ARCH, "- ORIGINAL ARCHIVE/z.mov", 502, "paged", false);
     await one("fold_arch", ARCH, "Day 9/z.mov", 502, "paged", true);
     expect(trashed(502)).toBe(false);
+  });
+});
+
+describe("every way a left-out file could come in or stay", () => {
+  const listOf = (id: string, leaveOut: string[]) =>
+    changeStorage("tia", (st) => {
+      st.folders.find((f) => f.id === id)!.leaveOut = leaveOut;
+    });
+  const asset = (q: number) =>
+    libraryDb().prepare("SELECT a.id, a.library_id, a.trashed_at FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.quick = ?").get(quick(q)) as { id: string; library_id: string; trashed_at: number | null };
+  const scan = (folder: string, root: string, rels: string[], q: number) =>
+    applyReport(mac, [{ id: folder, state: "ok", scan: `r${++n}`, complete: true, files: rels.map((rel) => ({ path: `${root}/${rel}`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(q) })), unreadable: [] }]);
+  const F1 = "/Volumes/Tiny Footage/F1";
+  const F2 = "/Volumes/Tiny Footage/F2";
+  const MB = pairDevice("tia", "Tiny Mac B").device;
+
+  beforeAll(async () => {
+    await changeStorage("tia", (st) => {
+      st.folders.push(row("fold_f1", F1), row("fold_f2", F2));
+      st.folders.push({ ...row("fold_b", "/Volumes/Tiny Footage/F1"), origin: { host: MB.id, path: F1 } });
+    });
+  });
+
+  it("a clip indexed from the Mac window (a place with no folder) leaves too, and its place is gone", async () => {
+    const [lib] = await librariesOf("tia", row("fold_f1", F1) as never);
+    await indexOnMac(lib!.id, "tia", { ...onMac(F1, "- NO SHARE/w.mov", 600), device: mac.id });
+    await listOf("fold_f1", ["- NO SHARE"]);
+    await scan("fold_f1", F1, ["- NO SHARE/w.mov"], 600);
+    expect(asset(600).trashed_at).not.toBeNull();
+    expect(libraryDb().prepare("SELECT folder_id, state FROM version_places WHERE path = ?").all(`${F1}/- NO SHARE/w.mov`)).toEqual([{ folder_id: "", state: "gone" }]);
+  });
+
+  it("a clip uploaded from a folder later left out leaves too, unless a copy of it is found", async () => {
+    await listOf("fold_f1", []);
+    const [lib] = await librariesOf("tia", row("fold_f1", F1) as never);
+    const d = libraryDb();
+    recordVersion(d, { libraryId: lib!.id, versionId: "v_up", sourceKey: `libraries/${lib!.id}/v/v_up/source`, filename: "u.mov", size: 10, sha256: "f".repeat(64), by: "tia" });
+    d.prepare("UPDATE asset_versions SET quick = ? WHERE id = 'v_up'").run(quick(601));
+    await scan("fold_f1", F1, ["- NO SHARE/u.mov"], 601);
+    expect(d.prepare("SELECT state FROM version_places WHERE version_id = 'v_up'").get()).toEqual({ state: "verified" });
+    await listOf("fold_f1", ["- NO SHARE"]);
+    await scan("fold_f1", F1, ["- NO SHARE/u.mov"], 601);
+    expect(asset(601).trashed_at).not.toBeNull();
+  });
+
+  it("a copy in a later folder of the same report keeps the clip, with that folder as its place", async () => {
+    await listOf("fold_f1", []);
+    await indexForDevice(mac, "fold_f1", onMac(F1, "- NO SHARE/x.mov", 602));
+    await listOf("fold_f1", ["- NO SHARE"]);
+    await applyReport(mac, [
+      { id: "fold_f1", state: "ok", files: [{ path: `${F1}/- NO SHARE/x.mov`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(602) }], unreadable: [] },
+      { id: "fold_f2", state: "ok", files: [{ path: `${F2}/Day/x.mov`, bytes: 10, mtime: 1_700_000_000_000, quick: quick(602) }], unreadable: [] },
+    ]);
+    expect(asset(602).trashed_at).toBeNull();
+    const live = libraryDb().prepare("SELECT p.folder_id, p.path FROM version_places p JOIN asset_versions v ON v.id = p.version_id WHERE v.quick = ? AND p.state IN ('verified','found')").all(quick(602));
+    expect(live).toEqual([{ folder_id: "fold_f2", path: `${F2}/Day/x.mov` }]);
+  });
+
+  it("another computer's Media folder at the same path keeps its own list: one with none indexes everything", async () => {
+    const answer = await applyReport(MB, [{ id: "fold_b", state: "ok", files: [{ path: `${F1}/- NO SHARE/b.mov`, bytes: 10, mtime: 1, quick: quick(603) }], unreadable: [] }]);
+    expect(answer.index.map((i) => i.path)).toEqual([`${F1}/- NO SHARE/b.mov`]);
+    expect(((await indexForDevice(MB, "fold_b", onMac(F1, "- NO SHARE/b.mov", 603))) as { versions: { versionId?: string }[] }).versions[0]?.versionId).toBeTruthy();
+    expect(await indexForDevice(mac, "fold_f1", onMac(F1, "- NO SHARE/b2.mov", 604))).toBe("Inside Source media: not imported as footage");
+  });
+
+  it("a Locate or a place report never places a clip at a file in a left-out folder", async () => {
+    await listOf("fold_f1", []);
+    const [lib] = await librariesOf("tia", row("fold_f1", F1) as never);
+    const made = (await indexOnMac(lib!.id, "tia", { ...onMac(F1, "Day/l.mov", 605), device: mac.id })) as { versionId: string };
+    await listOf("fold_f1", ["- NO SHARE"]);
+    const app = new Hono<{ Variables: AuthVars }>();
+    app.use(async (c, next) => {
+      c.set("user", { username: "tia", role: "admin" } as never);
+      return next();
+    });
+    app.route("/api/library", locateApp);
+    app.route("/api/library", placesApp);
+    const hidden = `${F1}/Other/- NO SHARE/l.mov`;
+    const post = (url: string, body: unknown) => app.request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const located = await post(`/api/library/${lib!.id}/locate`, { versionId: made.versionId, gone: [], files: [{ path: hidden, size: 10, quick: quick(605) }], device: mac.id });
+    expect(await located.json()).toEqual({ reconnected: 0 });
+    const placed = await post(`/api/library/${lib!.id}/places`, { device: mac.id, confirmed: [{ versionId: made.versionId, path: hidden, quick: quick(605) }], gone: [] });
+    expect(((await placed.json()) as { confirmed: string[] }).confirmed).toEqual([]);
+    expect(libraryDb().prepare("SELECT 1 FROM version_places WHERE path = ?").get(hidden)).toBeUndefined();
+  });
+
+  it("a member adding to the owner's library is checked against the owner's list as well as their own", async () => {
+    const [lib] = await librariesOf("tia", row("fold_f1", F1) as never);
+    expect(leftOutBy(await mediaForLibrary("bo", lib!.id), `${F1}/- NO SHARE/m.mov`)).toBe(true);
+    expect(leftOutBy(await mediaFoldersOf("bo"), `${F1}/- NO SHARE/m.mov`)).toBe(false);
   });
 });
 

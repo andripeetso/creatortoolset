@@ -292,16 +292,21 @@ export function notFootage(rel: string, editorDirs: ReadonlySet<string> = new Se
 const nameKey = (n: string) => n.normalize("NFC").toLowerCase();
 
 /**
- * Whether `file` (a full path) is inside a folder that one of `folders` (Media folders) leaves out: each that holds it,
- * at its path on any computer that found it, counts (notFootage with its leaveOut). A Media folder inside another, kept
- * apart for another workspace, so leaves out what either list names: the safer of the two, and one rule for every reader.
+ * Whether `file` (a full path) is inside a folder that one of `folders` (Media folders) leaves out (notFootage with its
+ * leaveOut). `host`: the computer the path is on, when it is known; only each folder's path there counts (the path it was
+ * added at, inside its container, or where that computer found its marker), so a folder at the same path on another
+ * computer never decides. No `host`: the path on any computer that found it counts. Every folder that holds the file
+ * counts, so a Media folder inside another, kept apart for another workspace, leaves out what either list names: the
+ * safer of the two, and one rule for every reader.
  */
-export function leftOutBy(folders: ReadonlyArray<Pick<StorageFolder, "origin" | "reach" | "mountPath" | "leaveOut">>, file: string): boolean {
+export function leftOutBy(folders: ReadonlyArray<Pick<StorageFolder, "origin" | "reach" | "mountPath" | "leaveOut">>, file: string, host?: string): boolean {
   const at = file.normalize("NFC");
   return folders.some((f) => {
     if (!f.leaveOut?.length) return false;
-    const roots = new Set([f.origin.path, f.mountPath, ...Object.values(f.reach ?? {}).map((r) => r.path)].filter((r): r is string => !!r));
-    return [...roots].some((root) => {
+    const own = host === undefined || f.origin.host === host ? [f.origin.path, f.mountPath] : [];
+    const found = host === undefined ? Object.values(f.reach ?? {}).map((r) => r.path) : [f.reach?.[host]?.path];
+    return [...new Set([...own, ...found])].some((root) => {
+      if (!root) return false;
       const r = root.normalize("NFC").replace(/\/+$/, "");
       return at.startsWith(`${r}/`) && notFootage(at.slice(r.length + 1), undefined, f.leaveOut);
     });

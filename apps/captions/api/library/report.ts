@@ -1,5 +1,8 @@
 import { FILMED_MAX, FOLDER_STATES, REPORT_FILES_MAX, type FolderState, type RelayFolder, type ReportAnswer, type ReportFile, type ReportFolder } from "../../contracts/places";
-import { EVERY_WORKSPACE, editorDirsOf, leftOutBy, notFootage, okFolderPath, type StorageFolder } from "../../contracts/storage";
+import { EVERY_WORKSPACE, editorDirsOf, leftOutBy, notFootage, okFolderPath, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
+import os from "node:os";
+import path from "node:path";
+import { isThisMachine } from "../lib/devices";
 import type { Device } from "../../contracts/providers";
 import { LIBRARY_WORDS } from "../../contracts/library";
 import type { SessionUser } from "../users";
@@ -8,7 +11,7 @@ import { projectOf } from "../lib/project-of";
 import { inside } from "../lib/storage";
 import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import { isTeamMember } from "../lib/workspaces";
-import { ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
+import { accountOf, ensureLibrary, librariesHere, libraryChanged, servedByPlugin } from "./access";
 import { libraryDb } from "./db";
 import { mergeSamePath } from "./place-rows";
 import { enqueueJob } from "./jobs";
@@ -152,11 +155,13 @@ export function editorDirsSeen(key: string, scan: string | undefined, rels: stri
  * each clip made from one is a candidate to leave the library. `pending` collects them until the listing is read whole
  * (settleLeft): a copy of the same file elsewhere in it, on a later page, keeps the clip.
  */
-function leaveLibrary(dev: Device, folderId: string, inLibs: string, now: number, where: string, args: string[], pending: Set<string>): void {
+function leaveLibrary(dev: Device, folderId: string, inLibs: string, now: number, where: string, args: string[], pending: Set<string>, uploaded = false): void {
   const rows = db()
     .prepare(
+      // a place with no folder (the Mac window's index, a Locate) is this folder's file too
+      // `uploaded`: a left-out file's clip leaves even when the server keeps its bytes; otherwise only one read where it is
       `SELECT p.rowid AS place, a.id FROM version_places p JOIN asset_versions v ON v.id = p.version_id JOIN assets a ON a.id = v.asset_id
-       WHERE p.device = ? AND p.folder_id = ? AND p.kind = 'original' AND ${where} AND v.source_key LIKE 'mac:%' AND a.trashed_at IS NULL
+       WHERE p.device = ? AND p.folder_id IN (?, '') AND p.kind = 'original' AND ${where} ${uploaded ? "" : "AND v.source_key LIKE 'mac:%'"} AND a.trashed_at IS NULL
          AND a.library_id IN (SELECT value FROM json_each(?))`,
     )
     .all(dev.id, folderId, ...args, inLibs) as { place: number; id: string }[];
@@ -180,7 +185,9 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string):
     if (live.get(id)) continue;
     const held = trashHeld(id, now);
     if (held) {
-      console.log(`[library] ${what}: ${id} stays in the library (${held}), not moved to the trash`);
+      // said once per clip: the watch asks again every pass
+      if (!heldSaid.has(id)) console.log(`[library] ${what}: ${id} stays in the library (${held}), not moved to the trash`);
+      heldSaid.add(id);
       continue;
     }
     setTrashedAt(id, now);
@@ -189,7 +196,10 @@ export function settleLeft(assets: Iterable<string>, now: number, what: string):
   return moved;
 }
 
-/** The clips a listing (its key in `scans`) found only in files that are not footage so far: settled when it completes. */
+const heldSaid = new Set<string>();
+
+/** The clips a listing (its key in `scans`) found only in files that are not footage so far: settled when it completes.
+ *  Only a listing that found one has an entry, and a new listing of the same folder drops the older ones. */
 const leftSeen = new Map<string, Set<string>>();
 
 type Hit = { version_id: string; library_id: string; vbytes: number; vquick: string | null; state: string; bytes: number | null; mtime: number | null; folder_id: string; unread: number };
@@ -214,7 +224,7 @@ function upsert(versionId: string, device: string, folder: string, f: ReportFile
 }
 
 /** One folder's page of a listing from computer `device`: place rows written, the files no version matched answered. */
-async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[], filmed: ReportAnswer["filmed"], media: StorageFolder[]): Promise<void> {
+async function applyFolder(dev: Device, folder: StorageFolder, libraries: FolderLibrary[], r: ReportFolder, now: number, index: ReportAnswer["index"], touched: Set<string>, keepOut: string[], filmed: ReportAnswer["filmed"], media: StorageFolder[], settle: Set<string>): Promise<void> {
   const d = db();
   const device = dev.id;
   const libs = libraries.map((l) => l.id);
@@ -236,8 +246,8 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       return rel === null ? [] : [{ f, rel }];
     });
     const { dirs: editorDirs, fresh } = editorDirsSeen(key, r.scan, placed.map((x) => x.rel));
-    const left = r.scan ? (leftSeen.get(key) ?? new Set<string>()) : new Set<string>();
-    if (r.scan) leftSeen.set(key, left);
+    if (r.scan && !leftSeen.has(key)) for (const k of leftSeen.keys()) if (k.startsWith(`${device}|${folder.id}|`)) leftSeen.delete(k);
+    const left = (r.scan && leftSeen.get(key)) || new Set<string>();
     // an AI Editor folder this page names that earlier pages of the listing indexed as footage: its clips leave now
     for (const dir of fresh) {
       const hit = placed.find((x) => x.rel.startsWith(`${dir}/`))!;
@@ -246,11 +256,12 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
     }
     for (const { f, rel } of placed) {
       // not footage: an AI Editor folder, a folder this one leaves out, a half-written file, or anything inside a Projects or Exports folder
-      if (notFootage(rel, editorDirs) || leftOutBy(media, f.path) || keepOut.some((k) => inside(f.path, k) !== null)) {
+      const out = leftOutBy(media, f.path, device);
+      if (out || notFootage(rel, editorDirs) || keepOut.some((k) => inside(f.path, k) !== null)) {
         // indexed here before this rule: the clip leaves the library through the trash once the listing is read whole, unless
         // a copy of it is found elsewhere (never while in Review or shared); the file on the computer stays
         // a locate-only library is never trashed into
-        leaveLibrary(dev, folder.id, inOwn, now, "p.path = ?", [f.path], left);
+        leaveLibrary(dev, folder.id, inOwn, now, "p.path = ?", [f.path], left, out);
         continue;
       }
       const hits = d
@@ -300,11 +311,12 @@ async function applyFolder(dev: Device, folder: StorageFolder, libraries: Folder
       d.prepare("UPDATE version_places SET state = CASE WHEN state = 'gone' THEN 'gone' ELSE 'unchecked' END, checked_at = ? WHERE device = ? AND folder_id = ? AND (path = ? OR substr(path, 1, length(?) + 1) = ? || '/')")
         .run(now, device, folder.id, dir, dir, dir);
     }
-    // a page of no listing, or the last page of one: its clips found only where they are not footage leave now
+    // a page of no listing, or the last page of one: its clips found only where they are not footage leave once the whole
+    // report is read (applyReport), so a copy in a later folder of it keeps the clip
     if (!r.scan || r.complete) {
-      if (settleLeft(left, now, dev.name).length) libs.forEach((l) => touched.add(l));
+      left.forEach((a) => settle.add(a));
       leftSeen.delete(key);
-    }
+    } else if (left.size) leftSeen.set(key, left);
     const start = scans.get(key);
     if (r.complete) editorSeen.delete(key);
     if (r.complete && start !== undefined) {
@@ -334,11 +346,16 @@ export async function applyReport(dev: Device, folders: ReportFolder[], now = Da
   const st = await storageOf(dev.owner);
   const touched = new Set<string>();
   const keepOut = keptOut(st, dev.id);
+  const settle = new Set<string>();
   for (const r of folders) {
     const folder = st.folders.find((f) => f.id === r.id && f.origin.host === dev.id);
     if (!folder || useOf(folder) !== "media") continue;
     const of = await librariesOf(dev.owner, folder);
-    await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, mediaOf(st));
+    await applyFolder(dev, folder, of, r, now, index, touched, keepOut, filmed, mediaOf(st), settle);
+  }
+  for (const id of settleLeft(settle, now, dev.name)) {
+    const lib = db().prepare("SELECT library_id FROM assets WHERE id = ?").get(id) as { library_id: string } | undefined;
+    if (lib) touched.add(lib.library_id);
   }
   for (const l of touched) libraryChanged(l);
   return { ok: true, index, ...(filmed?.length ? { filmed } : {}) };
@@ -368,16 +385,25 @@ export async function filmedForDevice(dev: Device, folderId: string, x: { path: 
   return rows.length;
 }
 
-/** An account's Media folders: whose leave-out lists every reader applies (contracts/storage.ts leftOutBy). */
-const mediaOf = (st: { folders: StorageFolder[] }) => st.folders.filter((f) => useOf(f) === "media");
+/**
+ * An account's Media folders, whose leave-out lists every reader applies (contracts/storage.ts leftOutBy). One on this
+ * server's own computer has its "~/" read as this computer's home, as its watch reads it.
+ */
+export const mediaOf = (st: { folders: StorageFolder[] }): StorageFolder[] =>
+  st.folders
+    .filter((f) => useOf(f) === "media")
+    .map((f) => ((f.origin.host === THIS_COMPUTER || isThisMachine(f.origin.host)) && (f.origin.path === "~" || f.origin.path.startsWith("~/")) ? { ...f, origin: { ...f.origin, path: path.join(os.homedir(), f.origin.path.slice(1)) } } : f));
+
+export const mediaFoldersOf = async (user: string): Promise<StorageFolder[]> => mediaOf(await storageOf(user));
 
 /**
- * Whether one of `owner`'s Media folders leaves out the file at `file` (contracts/storage.ts leftOutBy): every one that
- * holds that path counts, on whichever computer, so a drop or a Look for new files that names no folder or computer is
- * checked against all of them. Its AI Editor folders are known only to a whole scan (applyFolder).
+ * The Media folders whose lists a file `user` brings into `libraryId` is checked against: the person's own and, for a
+ * member adding to the owner's library, the owner's too. Either list leaves a file out: they are privacy lists.
  */
-export async function leftOutOn(owner: string, file: string): Promise<boolean> {
-  return leftOutBy(mediaOf(await storageOf(owner)), nfc(file));
+export async function mediaForLibrary(user: string, libraryId: string): Promise<StorageFolder[]> {
+  const row = db().prepare("SELECT workspace_id FROM libraries WHERE id = ?").get(libraryId) as { workspace_id: string } | undefined;
+  const owner = row ? accountOf(row.workspace_id) : null;
+  return [...(await mediaFoldersOf(user)), ...(owner && owner !== user ? await mediaFoldersOf(owner) : [])];
 }
 
 /**
@@ -394,7 +420,7 @@ export async function indexForDevice(dev: Device, folderId: string, x: OnMacInde
   // a file of a Projects or Exports folder is never footage, even when a computer sends it (applyFolder keeps them out too)
   if (keptOut(st, dev.id).some((k) => inside(nfc(x.path), k) !== null)) return LIBRARY_WORDS.notFootage;
   const rel = inside(nfc(x.path), folder.origin.path) ?? (folder.mountPath ? inside(nfc(x.path), folder.mountPath) : null);
-  if ((rel !== null && notFootage(rel)) || leftOutBy(mediaOf(st), nfc(x.path))) return LIBRARY_WORDS.notFootage;
+  if ((rel !== null && notFootage(rel)) || leftOutBy(mediaOf(st), nfc(x.path), dev.id)) return LIBRARY_WORDS.notFootage;
   const versions: Array<{ library: string; versionId?: string; duplicateOf?: string }> = [];
   for (const { id: library, locate } of await librariesOf(dev.owner, folder)) {
     // a member's workspace is only located, never indexed into (applyFolder answers no file for it)

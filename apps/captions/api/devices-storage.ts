@@ -496,7 +496,6 @@ storageApp.patch("/folders/:id", async (c) => {
  */
 storageApp.put("/folders/:id/leave-out", async (c) => {
   const user = c.get("user").username;
-  if (c.get("user").role === "visitor") return c.json({ error: "Not for guests" }, 403);
   const id = c.req.param("id");
   const names = parseLeaveOut(((await c.req.json().catch(() => null)) as { leaveOut?: unknown } | null)?.leaveOut);
   if (!names) return c.json({ error: `Folder names only, at most ${LEAVE_OUT_MAX}` }, 400);

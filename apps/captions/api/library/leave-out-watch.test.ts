@@ -20,7 +20,8 @@ afterAll(() => {
 });
 
 const USER = "tiny";
-const media = path.join(dir, "Shoots");
+// an emoji in the root: one character to SQLite, two to JavaScript
+const media = path.join(dir, "Shoots \u{1F3AC}");
 const put = (rel: string, body: string) => {
   mkdirSync(path.dirname(path.join(media, rel)), { recursive: true });
   writeFileSync(path.join(media, rel), body);
