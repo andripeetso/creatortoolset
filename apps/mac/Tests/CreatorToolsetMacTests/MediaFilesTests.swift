@@ -100,6 +100,20 @@ final class MediaFilesTests: XCTestCase {
         XCTAssertTrue(isFile(MediaFiles.gate(file.path, granted: [composed])))
     }
 
+    /// What the AI Editor may copy from (copyFrom) is exactly what was dropped: a dropped file, never its folder, while the
+    /// folder is still granted for playing (pickedFolders).
+    func testDropRemembersExactlyWhatWasDroppedToCopyFrom() {
+        let suite = "media-files-tests-\(UUID().uuidString)"
+        let was = MediaFiles.defaults
+        MediaFiles.defaults = UserDefaults(suiteName: suite)!
+        defer { MediaFiles.defaults.removePersistentDomain(forName: suite); MediaFiles.defaults = was }
+        MediaFiles.grantDropped([["path": "/Users/tiny/Downloads/A001.mov"], ["path": "/Volumes/Tiny/Card", "folder": true]])
+        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: MediaFiles.copyFromKey), ["/Users/tiny/Downloads/A001.mov", "/Volumes/Tiny/Card"])
+        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: "pickedFolders"), ["/Users/tiny/Downloads", "/Volumes/Tiny/Card"])
+        MediaFiles.grantPicked([URL(fileURLWithPath: "/Users/tiny/Movies/B.mov")])
+        XCTAssertEqual(MediaFiles.defaults.stringArray(forKey: MediaFiles.copyFromKey)?.last, "/Users/tiny/Movies/B.mov")
+    }
+
     func testPickGrantsWhatWasPicked() throws {
         // a picked folder is granted itself; a picked file only itself, never the folder it is in
         try FileManager.default.createDirectory(at: granted.appendingPathComponent("Day 1"), withIntermediateDirectories: true)

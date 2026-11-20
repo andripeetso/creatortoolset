@@ -34,12 +34,23 @@ enum MediaFiles {
     /// A video, sound or picture file by its name.
     static func isMedia(_ path: String) -> Bool { type(of: path) != nil }
 
-    /// A drop on the window: each dropped folder, and each loose file's folder, may be played and scanned from then on.
+    /// A drop on the window: each dropped folder, and each loose file's folder, may be played and scanned from then on;
+    /// what was dropped itself, exactly, is remembered as a place the AI Editor may copy from (`chosen`).
     static func grantDropped(_ items: [[String: Any]]) {
         for item in items {
             guard let path = item["path"] as? String else { continue }
             add(item["folder"] as? Bool == true ? path : (path as NSString).deletingLastPathComponent)
+            chosen(path)
         }
+    }
+
+    /// The files and folders a person dropped on or picked in this app, exactly (never the folder a dropped file is in):
+    /// the only places outside the Media folders the AI Editor's worker copies a source in from (apps/editor worker.py
+    /// dropped_here), so a path an AI typed is never copied. The newest 2000.
+    static let copyFromKey = "copyFrom"
+    static func chosen(_ path: String) {
+        let old = defaults.stringArray(forKey: copyFromKey) ?? []
+        if !old.contains(path) { defaults.set(Array((old + [path]).suffix(2000)), forKey: copyFromKey) }
     }
 
     /// The granted folders, as chosen in the open panel.
@@ -47,7 +58,7 @@ enum MediaFiles {
     /// picked folder, and each picked file by itself, never the folder it is in (that holds files nobody picked). A
     /// file indexed in the Media Library from there is read on this Mac later (its shot descriptions, its transcript,
     /// playing its original), so the pick is the grant. `gate` takes a granted path that is the file itself.
-    static func grantPicked(_ urls: [URL], grant: (String) -> Void = add) {
+    static func grantPicked(_ urls: [URL], grant: (String) -> Void = { add($0); chosen($0) }) {
         for url in urls { grant(url.path) }
     }
 
