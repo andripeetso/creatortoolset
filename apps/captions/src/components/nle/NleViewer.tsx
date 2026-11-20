@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from "react";
 import { Grid2x2, Music } from "lucide-react";
-import type { NleTimeline } from "@/lib/nle/model";
+import { timecode, type NleTimeline } from "@/lib/nle/model";
+import type { NleClock } from "@/lib/nle/audio";
 import { peaks, wavePath } from "@/lib/waveform";
 import { cn } from "@/lib/utils";
 import { NlePlayer, type NleFile } from "./NlePlayer";
@@ -23,10 +24,10 @@ const readPrefs = (): { zoom: Zoom; guides: boolean } => {
   }
 };
 
-export function NleViewer({ tl, time, playing, rate, urlOf, nameOf, onClick, clock, transport, loop, below, over, onDragStart, onDragEnd }: {
+export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, clock, transport, loop, below, over, onDragStart, onDragEnd }: {
   tl: NleTimeline;
-  time: number;
-  playing: boolean;
+  /** the playhead's clock */
+  playhead: NleClock;
   rate: number;
   urlOf: (src: string) => NleFile | null;
   nameOf: (src: string) => string;
@@ -86,7 +87,7 @@ export function NleViewer({ tl, time, playing, rate, urlOf, nameOf, onClick, clo
         <div className="flex min-h-full min-w-full items-center justify-center" style={{ padding: PAD, width: prefs.zoom === "fit" ? undefined : W * scale + 2 * PAD, height: prefs.zoom === "fit" ? undefined : H * scale + 2 * PAD }}>
           <div data-frame className="relative shrink-0 shadow-[0_0_0_1px_rgb(255_255_255/0.28),0_4px_24px_rgb(0_0_0/0.45)]"
             style={{ width: W * scale, height: H * scale }} onClick={onClick} draggable={!!onDragStart} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-            <NlePlayer tl={tl} time={time} playing={playing} rate={rate} urlOf={urlOf} nameOf={nameOf} loop={loop} className="block size-full" />
+            <NlePlayer tl={tl} clock={playhead} rate={rate} urlOf={urlOf} nameOf={nameOf} loop={loop} className="block size-full" />
             {over}
             {prefs.guides && (
               <div aria-hidden className="pointer-events-none absolute inset-0">
@@ -122,8 +123,8 @@ export function NleViewer({ tl, time, playing, rate, urlOf, nameOf, onClick, clo
 }
 
 /** Under a source's picture: its length as a strip, the marked part lit, the playhead; a press or drag scrubs. */
-export function SourceStrip({ time, seconds, from, to, onSeek }: {
-  time: number;
+export function SourceStrip({ clock, seconds, from, to, onSeek }: {
+  clock: NleClock;
   seconds: number;
   /** the marked part, seconds (null: not marked) */
   from: number | null;
@@ -131,12 +132,13 @@ export function SourceStrip({ time, seconds, from, to, onSeek }: {
   onSeek: (t: number) => void;
 }) {
   const at = (t: number) => `${(Math.max(0, Math.min(1, t / (seconds || 1))) * 100).toFixed(3)}%`;
+  const head = useClockLeft(clock, seconds);
   const scrub = (e: PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     onSeek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * seconds);
   };
   return (
-    <div role="slider" aria-label="Source position" aria-valuemin={0} aria-valuemax={seconds} aria-valuenow={time} tabIndex={-1}
+    <div role="slider" aria-label="Source position" aria-valuemin={0} aria-valuemax={seconds} aria-valuenow={clock.now()} tabIndex={-1}
       className="relative h-4 shrink-0 cursor-ew-resize touch-none border-t border-black/60 bg-[#151518]"
       onPointerDown={(e) => { if (e.button !== 0) return; e.currentTarget.setPointerCapture(e.pointerId); scrub(e); }}
       onPointerMove={(e) => e.buttons === 1 && scrub(e)}>
@@ -145,13 +147,14 @@ export function SourceStrip({ time, seconds, from, to, onSeek }: {
       )}
       {from !== null && <div className="absolute inset-y-0 w-px bg-zinc-200" style={{ left: at(from) }} />}
       {to !== null && <div className="absolute inset-y-0 w-px bg-zinc-200" style={{ left: at(to) }} />}
-      <div className="absolute inset-y-0 w-px -translate-x-1/2 bg-red-500" style={{ left: at(time) }} />
+      <div ref={head} className="absolute inset-y-0 w-px -translate-x-1/2 bg-red-500" style={{ left: at(clock.now()) }} />
     </div>
   );
 }
 
 /** A sound source in the viewer: its waveform across the frame (a plain sound card while it is read or can't be). */
-export function SoundCard({ url, seconds, time }: { url: string | null; seconds: number; time: number }) {
+export function SoundCard({ url, seconds, clock }: { url: string | null; seconds: number; clock: NleClock }) {
+  const head = useClockLeft(clock, seconds);
   const [wave, setWave] = useState<Float32Array | null>(null);
   useEffect(() => {
     setWave(null);
@@ -170,7 +173,30 @@ export function SoundCard({ url, seconds, time }: { url: string | null; seconds:
       ) : (
         <Music className="size-1/6 text-emerald-400/70" />
       )}
-      <div className="absolute inset-y-0 w-px bg-red-500" style={{ left: `${Math.min(100, (time / (seconds || 1)) * 100)}%` }} />
+      <div ref={head} className="absolute inset-y-0 w-px bg-red-500" style={{ left: `${Math.min(100, (clock.now() / (seconds || 1)) * 100)}%` }} />
     </div>
   );
+}
+
+/** A playhead line placed in % of `seconds`, moved on the clock by its ref (no React render while playing). */
+function useClockLeft(clock: NleClock, seconds: number) {
+  const head = useRef<HTMLDivElement>(null);
+  useEffect(() => clock.subscribe((t) => {
+    if (head.current) head.current.style.left = `${(Math.max(0, Math.min(1, t / (seconds || 1))) * 100).toFixed(3)}%`;
+  }), [clock, seconds]);
+  return head;
+}
+
+/** The clock's frame as a timecode, written on the clock by its ref: no React render while playing. */
+export function Timecode({ clock, fps }: { clock: NleClock; fps: number }) {
+  const el = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const put = (t: number) => {
+      const s = timecode(Math.round(t * fps), fps);
+      if (el.current && el.current.textContent !== s) el.current.textContent = s;
+    };
+    put(clock.now());
+    return clock.subscribe(put);
+  }, [clock, fps]);
+  return <span ref={el} />;
 }

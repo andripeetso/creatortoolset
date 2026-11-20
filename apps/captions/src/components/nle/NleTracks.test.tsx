@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { withKeys, type NleTimeline } from "@/lib/nle/model";
+import { NleClock } from "@/lib/nle/audio";
 import { NleTracks } from "./NleTracks";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,7 +26,7 @@ const mount = async (props: Partial<Parameters<typeof NleTracks>[0]> = {}) => {
   const onCommit = vi.fn();
   const onSelect = vi.fn();
   await act(async () => root.render(
-    <NleTracks tl={tl} time={0} selected={[]} tool="select" snap={false} marks={[null, null]} onSeek={() => {}} onSelect={onSelect}
+    <NleTracks tl={tl} time={0} clock={new NleClock()} selected={[]} tool="select" snap={false} marks={[null, null]} onSeek={() => {}} onSelect={onSelect}
       onLive={onLive} onCommit={onCommit} onBlade={() => {}} onMenu={() => {}} onTrack={() => {}}
       nameOf={(i) => i.src} zoomKeys={{ current: null }} fileOf={(src) => (src === "a" ? { url: "" } : null)} {...props} />,
   ));

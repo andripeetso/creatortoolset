@@ -6,10 +6,12 @@ import { useTimeAxis } from "@/lib/use-time-axis";
 import { addTrack, addTrackAt, boxPick, canDeleteTrack, copyOf, deleteEmptyTracks, deleteTrack, dropPlan, edgesOf, gapAt, endOf, find, isVideo, keepLooks, lengthOf, lookOn, move, moveTarget, moveTrack, paste, roll, setFade, slip, timecode, trackNo, trackOrder, trim, withLinked, type Edge, type Gap, type NleItem, type NleTimeline, type NleTrack } from "@/lib/nle/model";
 import { dragging } from "@/lib/nle/drag";
 import { cn } from "@/lib/utils";
-import { drawWave, levels, type Levels } from "@/lib/waveform";
+import { drawWave, idleLevels, levels, type Levels } from "@/lib/waveform";
+import type { NleClock } from "@/lib/nle/audio";
 import { thumbAt } from "@/lib/nle/thumbs";
 import type { NleFile } from "./NlePlayer";
 import { Panel } from "./NleLayout";
+import { Timecode } from "./NleViewer";
 
 // The editor's timeline: track headers (name, lock, hide or mute, take off), the clips on their lanes, the ruler and the
 // playhead. A drag shows its result live (`onLive`) and becomes one step of undo when let go (`onCommit`).
@@ -90,10 +92,13 @@ type Drag = {
 };
 
 export const NleTracks = memo(function NleTracks({
-  tl, time, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
+  tl, time: paused, clock, selected, tool, snap, marks, onSeek, onSelect, onLive, onCommit, onBlade, onDrop, onMenu, onTrack, nameOf, zoomKeys, fileOf, tools, end, linkedSelection = true, gap = null, onGap,
 }: {
   tl: NleTimeline;
+  /** the playhead at rest (a pause, a seek): a new one draws the timeline again */
   time: number;
+  /** the playhead while it plays: moves the playhead lines and the ruler's timecode, never the rest */
+  clock: NleClock;
   selected: string[];
   tool: Tool;
   snap: boolean;
@@ -126,10 +131,9 @@ export const NleTracks = memo(function NleTracks({
   const drag = useRef<Drag | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
-  const timeRef = useRef(time);
-  timeRef.current = time;
+  const time = clock.now();
   // no end: the timeline runs for a day, it opens on (and \ fits) what is on it
-  const axis = useTimeAxis({ scroller, seconds: DAY, left: LABEL_W, maxPps: MAX_PPS, now: () => timeRef.current, fit: Math.max(10, content * 1.04 + 1), minPps: 0.001 });
+  const axis = useTimeAxis({ scroller, seconds: DAY, left: LABEL_W, maxPps: MAX_PPS, now: () => clock.now(), fit: Math.max(10, content * 1.04 + 1), minPps: 0.001 });
   // a browser can't lay out a box much over 30 million px: zoomed in close, the content is drawn for as many hours as
   // fit in 16 million (7 h at a frame's closest), and always past what is on it and the playhead
   const shown = Math.min(DAY, Math.max(MAX_PX / axis.pps, content + 3600, time + 60));
@@ -167,9 +171,19 @@ export const NleTracks = memo(function NleTracks({
       clearTimeout(t);
     };
   }, []);
-  // the playhead kept in view while it moves
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- on the time alone
-  useEffect(() => axis.follow(time), [time]);
+  // the playhead kept in view while it moves, and its lines moved, on the clock (nothing else draws again while it plays)
+  const follow = useRef(axis.follow);
+  follow.current = axis.follow;
+  const rulerHead = useRef<HTMLDivElement>(null);
+  const laneHead = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- on the time at rest alone
+  useEffect(() => follow.current(clock.now()), [paused]);
+  useEffect(() => clock.subscribe((t) => {
+    const x = t * ppsRef.current;
+    if (rulerHead.current) rulerHead.current.style.left = `${x}px`;
+    if (laneHead.current) laneHead.current.style.left = `${LABEL_W + x}px`;
+    follow.current(t);
+  }), [clock]);
   const [scale, setScale] = useState(readHeight);
   const [heights, setHeights] = useState(readHeights);
   const laneH = (id: string) => Math.round((heights[id] ?? (isVideo(id) ? 54 : 40)) * scale);
@@ -294,7 +308,7 @@ export const NleTracks = memo(function NleTracks({
     let df = Math.round((px / pps) * fps);
     const it = d.base.tracks[d.track].items.find((i) => i._k === d.key)!;
     const linked = new Set(withLinked(d.base, d.keys));
-    const targets = snap ? [...edgesOf(d.base, linked), Math.round(timeRef.current * fps), ...marks.filter((m): m is number => m !== null)] : [];
+    const targets = snap ? [...edgesOf(d.base, linked), Math.round(clock.now() * fps), ...marks.filter((m): m is number => m !== null)] : [];
     const tol = (SNAP_PX / pps) * fps;
     const roll_ = e.altKey && d.grip !== "body";
     let next = d.base;
@@ -364,7 +378,7 @@ export const NleTracks = memo(function NleTracks({
   const dropFrame = (clientX: number, len: number) => {
     const f = frameAt(clientX);
     if (!snap) return f;
-    const targets = [...edgesOf(tl, new Set()), Math.round(timeRef.current * fps), ...marks.filter((m): m is number => m !== null)];
+    const targets = [...edgesOf(tl, new Set()), Math.round(clock.now() * fps), ...marks.filter((m): m is number => m !== null)];
     return Math.max(0, f + snapDelta([f, f + len], 0, targets, (SNAP_PX / pps) * fps));
   };
   const ghostEls = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
@@ -451,7 +465,7 @@ export const NleTracks = memo(function NleTracks({
     <TimelineFrame scroller={scroller} inner={inner} seconds={shown} pps={pps} labelWidth={LABEL_W} rulerHeight={RULER_H} noMarks
       className="min-h-0 flex-1 overflow-y-scroll bg-[#151517] select-none" stickyRuler="bg-[#1d1d20] border-b border-black/60"
       ruler={{ onPointerDown: scrub, onPointerMove: (e) => e.buttons === 1 && scrubTo(e.clientX), className: "cursor-ew-resize" }}
-      rulerLabel={<span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead">{timecode(Math.round(time * fps), fps)}</span>}
+      rulerLabel={<span className="font-mono text-[13px] tabular-nums text-zinc-200" title="The playhead"><Timecode clock={clock} fps={fps} /></span>}
       rulerChildren={
         <>
           {ticks.map((k) => (
@@ -466,7 +480,7 @@ export const NleTracks = memo(function NleTracks({
           {marks[0] !== null && marks[1] !== null && (
             <div className="pointer-events-none absolute inset-y-0 bg-violet-500/20" style={{ left: (marks[0] / fps) * pps, width: ((marks[1] - marks[0]) / fps) * pps }} />
           )}
-          <div className="pointer-events-none absolute inset-y-0 z-10" style={{ left: time * pps }}>
+          <div ref={rulerHead} className="pointer-events-none absolute inset-y-0 z-10" style={{ left: time * pps }}>
             <div className="absolute inset-y-0 left-0 w-px bg-red-500" />
             <div className="absolute top-0 left-px h-[15px] w-[13px] -translate-x-1/2 bg-red-500 [clip-path:polygon(0_0,100%_0,100%_62%,50%_100%,0_62%)]" />
           </div>
@@ -580,7 +594,7 @@ export const NleTracks = memo(function NleTracks({
         );
       })}
       <div className="flex flex-1"><div data-head className={headCol} style={{ width: LABEL_W }} onContextMenu={(e) => openTrackMenu(e, null)} /></div>
-      <div className="pointer-events-none absolute top-0 bottom-0 z-[15] w-px bg-red-500" style={{ left: ph }} />
+      <div ref={laneHead} className="pointer-events-none absolute top-0 bottom-0 z-[15] w-px bg-red-500" style={{ left: ph }} />
       <div ref={boxEl} data-box className="pointer-events-none absolute z-[16] hidden border border-zinc-300/50 bg-zinc-300/15" />
       {ghostEls.map((g, i) => (
         <div key={i} ref={g} data-ghost className="pointer-events-none absolute z-[16] hidden truncate rounded-[3px] border border-white/70 bg-white/20 px-1 text-[10px] leading-4 text-white" />
@@ -769,8 +783,8 @@ const ClipLook = memo(function ClipLook({ path, from, to, video, url, still, w, 
   useEffect(() => {
     if (!sound || !url) return void setWave(null);
     let gone = false;
-    // a video file's sound too, unless it is too big to read whole
-    levels(url, SOUND_FILE.test(path) ? undefined : VIDEO_SOUND_BYTES).then((d) => !gone && setWave(d), () => {});
+    // a video file's sound too, unless it is too big to read whole, and only while nothing plays (waveform.ts idleLevels)
+    (SOUND_FILE.test(path) ? levels(url) : idleLevels(url, VIDEO_SOUND_BYTES)).then((d) => !gone && setWave(d), () => {});
     return () => void (gone = true);
   }, [sound, url, path]);
   const canvas = useRef<HTMLCanvasElement>(null);

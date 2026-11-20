@@ -56,20 +56,85 @@ export function picturesAt(tl: NleTimeline, f: number): Playing[] {
     .flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false && i.rec <= f && f < endOf(i)).map((item) => ({ track, item })));
 }
 
-/** The pictures that start within `ahead` frames after `f` (to have their files ready). */
-export const picturesSoon = (tl: NleTimeline, f: number, ahead: number): Playing[] =>
-  pictureTracks(tl).flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false && i.rec > f && i.rec <= f + ahead).map((item) => ({ track, item })));
+/** The next picture on each track that starts within `ahead` frames after `f` and doesn't play on from the one before it
+ *  (`chain`: chains()), to have its file open and waiting on its first frame. Only the next: every clip of a run of short
+ *  ones opened at once is a 4K decoder each. */
+export const picturesSoon = (tl: NleTimeline, f: number, ahead: number, chain?: Map<string, string>): Playing[] =>
+  pictureTracks(tl).flatMap(([track, t]) => {
+    const on = t.items.find((i) => i.enabled !== false && i.rec <= f && f < endOf(i));
+    const next = t.items
+      .filter((i) => i.enabled !== false && i.rec > f && i.rec <= f + ahead && !(on && chain && chain.get(keyOf(i)) === chain.get(keyOf(on))))
+      .sort((a, b) => a.rec - b.rec)[0];
+    return next ? [{ track, item: next }] : [];
+  });
+
+export const keyOf = (i: NleItem) => i._k ?? `${i.src}:${i.rec}`;
+
+/** Whether `b` plays on from `a` in one go: straight after it, the same file from where `a`'s source ends (give or take a
+ *  frame), at the same speed, neither held nor reversed. Then one <video> plays across the cut: no new element, no seek. */
+export function continues(tl: NleTimeline, a: NleItem, b: NleItem): boolean {
+  if (a.src !== b.src || endOf(a) !== b.rec || (a.speed || 1) !== (b.speed || 1)) return false;
+  if (a.freeze || b.freeze || a.rev || b.rev || a.fx || b.fx) return false;
+  const fps = tl.timeline.fps;
+  const sfps = tl.sources[a.src]?.fps || fps;
+  return Math.abs(b.in - (a.in + a.len * (sfps / fps) * (a.speed || 1))) <= 1 + 1e-6;
+}
+
+/** Each clip's key to the clip its run starts with: a clip that continues() the one before it on its track keeps that
+ *  one's, so the player and the sound play the run from one element. */
+export function chains(tl: NleTimeline): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const t of Object.values(tl.tracks)) {
+    let prev: NleItem | null = null;
+    for (const it of t.items.filter((i) => i.enabled !== false).sort((a, b) => a.rec - b.rec)) {
+      out.set(keyOf(it), prev && continues(tl, prev, it) ? out.get(keyOf(prev))! : keyOf(it));
+      prev = it;
+    }
+  }
+  return out;
+}
+
+/** The fields that change how a picture is drawn: any of them set, the canvas draws it. */
+const DRAWN = ["zoom", "pan", "tilt", "rot", "flip", "crop", "fit_x", "fit_y", "frame", "split", "under", "zoom_to", "pan_to", "tilt_to", "look", "fade_in", "fade_out", "freeze", "rev", "fx"];
+
+/** When the one picture showing is its plain <video> (none of DRAWN, fully seen): how the element fills the frame, as
+ *  placement() would ("cover" on the tracks that cover it, else "contain"). Null: the canvas draws it. */
+export function plainVideo(on: Playing[]): "cover" | "contain" | null {
+  if (on.length !== 1) return null;
+  const { item, track } = on[0];
+  const set = (k: string) => {
+    const v = (item as Record<string, unknown>)[k];
+    if (Array.isArray(v)) return v.some((x) => x !== 0 && x !== "0");
+    return v !== undefined && v !== null && v !== 0 && v !== false && v !== "" && !(k === "zoom" && v === 1);
+  };
+  if ((item.opacity ?? 1) < 1 || DRAWN.some(set)) return null;
+  return covers(track) ? "cover" : "contain";
+}
+
+/** Which of a file's open elements a run (`owner`) plays from: the one it has; else, under `max`, a new one (-1); else the
+ *  one used longest ago that nothing else wants now; else none (null). */
+export function pickSlot(slots: { owner: string; used: number; busy: boolean }[], owner: string, max = 2): number | null {
+  const own = slots.findIndex((s) => s.owner === owner);
+  if (own >= 0) return own;
+  if (slots.length < max) return -1;
+  let best: number | null = null;
+  slots.forEach((s, i) => {
+    if (!s.busy && (best === null || s.used < slots[best].used)) best = i;
+  });
+  return best;
+}
 
 /** A sound to play: from `at` seconds on the timeline, `offset` seconds into its file, for `dur` seconds of timeline. */
-export type SoundPiece = { key: string; src: string; at: number; offset: number; dur: number; speed: number; gain: number; fadeIn?: number; fadeOut?: number };
+export type SoundPiece = { key: string; track?: string; src: string; at: number; offset: number; dur: number; speed: number; gain: number; fadeIn?: number; fadeOut?: number };
 
 /** Every clip on the sound tracks that are heard, as pieces. */
 export function soundPieces(tl: NleTimeline): SoundPiece[] {
   const fps = tl.timeline.fps;
   return Object.entries(tl.tracks)
     .filter(([id, t]) => !isVideo(id) && !t.mute && t.enabled !== false)
-    .flatMap(([, t]) => t.items.filter((i) => i.enabled !== false).map((i) => ({
-      key: i._k ?? `${i.src}:${i.rec}`,
+    .flatMap(([track, t]) => t.items.filter((i) => i.enabled !== false).map((i) => ({
+      key: keyOf(i),
+      track,
       src: i.src,
       at: i.rec / fps,
       offset: i.in / (tl.sources[i.src]?.fps || fps),

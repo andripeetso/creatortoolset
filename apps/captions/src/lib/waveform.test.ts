@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { PEAKS_PER_SECOND, heightOf, levelsOf, scaleOf } from "./waveform";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PEAKS_PER_SECOND, heightOf, holdWaves, idleLevels, levels, levelsOf, scaleOf } from "./waveform";
 
 describe("waveform levels", () => {
   it("keeps each bucket's loudest sample and its loudness, over every channel", () => {
@@ -26,5 +26,42 @@ describe("waveform levels", () => {
     expect(beat - between).toBeGreaterThan(0.4);
     expect(between).toBeGreaterThanOrEqual(0);
     expect(heightOf(0, s)).toBe(0);
+  });
+});
+
+describe("a video file's waveform", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("is read only while nothing plays, one file at a time, stopped by playback and shared by URL", async () => {
+    const asked: string[] = [];
+    const aborts: string[] = [];
+    vi.stubGlobal("requestIdleCallback", (f: () => void) => setTimeout(f, 0));
+    vi.stubGlobal("fetch", (u: string, o: RequestInit) => new Promise((done, fail) => {
+      asked.push(u);
+      o.signal?.addEventListener("abort", () => (aborts.push(u), fail(new DOMException("stopped", "AbortError"))));
+      setTimeout(() => done({ ok: true, headers: new Headers({ "content-length": "8" }), arrayBuffer: async () => new ArrayBuffer(8) }), 30);
+    }));
+    vi.stubGlobal("OfflineAudioContext", class {
+      decodeAudioData = async () => ({ numberOfChannels: 1, sampleRate: 8000, getChannelData: () => new Float32Array(80).fill(0.5) });
+    });
+    const tick = () => new Promise((done) => setTimeout(done, 5));
+    const release = holdWaves();
+    const a = idleLevels("/tiny/a.mov", 100);
+    const b = idleLevels("/tiny/b.mov", 100);
+    await tick();
+    expect(asked).toEqual([]); // playing: nothing read
+    release();
+    await tick();
+    expect(asked).toEqual(["/tiny/a.mov"]); // one at a time
+    const again = holdWaves(); // playback starts: the read stops
+    await tick();
+    expect(aborts).toEqual(["/tiny/a.mov"]);
+    again();
+    expect((await a).peak[0]).toBeCloseTo(0.5);
+    expect(asked).toEqual(["/tiny/a.mov", "/tiny/a.mov", "/tiny/b.mov"].slice(0, asked.length));
+    await b;
+    expect(asked).toEqual(["/tiny/a.mov", "/tiny/a.mov", "/tiny/b.mov"]);
+    // the same file's levels for anyone else, not read again
+    expect(await levels("/tiny/a.mov")).toBe(await a);
+    expect(asked).toHaveLength(3);
   });
 });
