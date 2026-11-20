@@ -21,11 +21,10 @@ describe("LanguageSelect", () => {
     expect(renderToStaticMarkup(<LanguageSelect values={["et", "en"]} onValuesChange={() => {}} />)).toContain(">Estonian, English</span>");
   });
 
-  it("several: the default language can be ticked alongside another, and unticking the last goes back to the default", () => {
-    expect(toggleLanguage([], ["en"], "et")).toEqual(["en", "et"]);
-    expect(toggleLanguage(["et"], ["en"], "en")).toEqual(["et", "en"]);
-    expect(toggleLanguage(["et", "en"], ["en"], "et")).toEqual(["en"]);
-    expect(toggleLanguage(["et"], ["en"], "et")).toEqual([]);
-    expect(toggleLanguage([], ["en"], "en")).toEqual([]);
+  it("several: the default language ticks alongside another, and a first pick saves only itself", () => {
+    expect(toggleLanguage([], "et")).toEqual(["et"]);
+    expect(toggleLanguage(["et"], "en")).toEqual(["et", "en"]);
+    expect(toggleLanguage(["et", "en"], "et")).toEqual(["en"]);
+    expect(toggleLanguage(["et"], "et")).toEqual([]);
   });
 });
