@@ -1,5 +1,5 @@
-import { createContext, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Images, SlidersHorizontal } from "lucide-react";
+import { createContext, useEffect, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Images, PanelsTopLeft, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,22 +18,26 @@ export const NleGate = createContext<Gate>({ v2: null, field: () => null });
 const KEY = "ct-nle-layout";
 type Sizes = { media: number; inspector: number; top: number };
 const START: Sizes = { media: 260, inspector: 340, top: 0.5 };
+// Beside the chats (chat mode) the editor keeps its own sizes and open panels: the viewer takes the room, the panels
+// start hidden, and what is changed there never changes the editor outside chat mode
+const CHAT_KEY = "ct-nle-layout-chat";
+const CHAT_START: Sizes = { ...START, top: 0.66 };
 const LIMIT = { media: [180, 520], inspector: [240, 520], top: [0.22, 0.8] } as const;
 const clamp = (k: keyof Sizes, v: number) => Math.min(LIMIT[k][1], Math.max(LIMIT[k][0], v));
 
-const readSizes = (): Sizes => {
+const readSizes = (chat: boolean): Sizes => {
   try {
-    const got = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<Sizes> | null;
-    const out = { ...START };
+    const got = JSON.parse(localStorage.getItem(chat ? CHAT_KEY : KEY) ?? "null") as Partial<Sizes> | null;
+    const out = { ...(chat ? CHAT_START : START) };
     for (const k of Object.keys(START) as (keyof Sizes)[]) if (typeof got?.[k] === "number") out[k] = clamp(k, got[k]!);
     return out;
   } catch {
-    return START;
+    return chat ? CHAT_START : START;
   }
 };
-const keepSizes = (s: Sizes) => {
+const keepSizes = (s: Sizes, chat: boolean) => {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    localStorage.setItem(chat ? CHAT_KEY : KEY, JSON.stringify(s));
   } catch {
     // not kept: the sizes go back to the start ones next time
   }
@@ -41,13 +45,15 @@ const keepSizes = (s: Sizes) => {
 
 // Which side panels are open (the window buttons on top, Tab and ⇧Tab), kept apart from the sizes.
 const OPEN_KEY = "ct-nle-panels";
+const CHAT_OPEN_KEY = "ct-nle-panels-chat";
 type Open = { media: boolean; inspector: boolean };
-const readOpen = (): Open => {
+/** Open unless said otherwise; in chat mode hidden unless said otherwise. */
+const readOpen = (chat: boolean): Open => {
   try {
-    const got = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "null") as Partial<Open> | null;
-    return { media: got?.media !== false, inspector: got?.inspector !== false };
+    const got = JSON.parse(localStorage.getItem(chat ? CHAT_OPEN_KEY : OPEN_KEY) ?? "null") as Partial<Open> | null;
+    return chat ? { media: got?.media === true, inspector: got?.inspector === true } : { media: got?.media !== false, inspector: got?.inspector !== false };
   } catch {
-    return { media: true, inspector: true };
+    return { media: !chat, inspector: !chat };
   }
 };
 
@@ -107,24 +113,42 @@ function WindowButton({ on, icon, label, keys, onClick }: { on: boolean; icon: R
  * The four panels in their places, under a thin bar of window buttons (Media Pool on the left, Inspector on the right)
  * that show and hide the side panels; a hidden one gives its room to the viewer. `media` null: no Media panel at all.
  * `panelKeys` gets what Tab (media) and ⇧Tab (inspector) call.
+ *
+ * `chat` (the page beside the chats): the page's own bar in place of the window buttons, with All editing tools at its
+ * end showing both side panels or neither, and `foot` under the timeline. `timeline` given as a function hears whether
+ * every tool shows (`full`: outside chat mode, or a side panel open), to draw a smaller one when not.
  */
-export function NleLayout({ media, viewer, inspector, timeline, panelKeys, center }: {
-  media: ReactNode | null; viewer: ReactNode; inspector: ReactNode; timeline: ReactNode;
+export function NleLayout({ media, viewer, inspector, timeline, panelKeys, center, chat }: {
+  media: ReactNode | null; viewer: ReactNode; inspector: ReactNode; timeline: ReactNode | ((full: boolean) => ReactNode);
   /** the middle of the window-button bar, where Resolve has the project's name: the timeline's save */
   center?: ReactNode;
   panelKeys?: MutableRefObject<((p: keyof Open) => void) | null>;
+  chat?: { bar?: ReactNode; foot?: ReactNode } | null;
 }) {
-  const [sizes, setSizes] = useState(readSizes);
-  const [open, setOpen] = useState(readOpen);
-  const toggle = (p: keyof Open) => setOpen((o) => {
-    const next = { ...o, [p]: !o[p] };
+  const inChat = !!chat;
+  const [sizes, setSizes] = useState(() => readSizes(inChat));
+  const [open, setOpen] = useState(() => readOpen(inChat));
+  // chat mode turned on or off with the editor open: that mode's own sizes and panels
+  const mode = useRef(inChat);
+  useEffect(() => {
+    if (mode.current === inChat) return;
+    mode.current = inChat;
+    const s = readSizes(inChat);
+    from.current = live.current = s;
+    setSizes(s);
+    setOpen(readOpen(inChat));
+  }, [inChat]);
+  const keepOpen = (next: Open) => {
     try {
-      localStorage.setItem(OPEN_KEY, JSON.stringify(next));
+      localStorage.setItem(mode.current ? CHAT_OPEN_KEY : OPEN_KEY, JSON.stringify(next));
     } catch {
       // not kept: the panels open as they were next time
     }
     return next;
-  });
+  };
+  const toggle = (p: keyof Open) => setOpen((o) => keepOpen({ ...o, [p]: !o[p] }));
+  const full = !inChat || open.inspector || (media !== null && open.media);
+  const allTools = () => setOpen(() => keepOpen({ media: !full, inspector: !full }));
   if (panelKeys) panelKeys.current = toggle;
   const box = useRef<HTMLDivElement>(null);
   const from = useRef(sizes);
@@ -136,18 +160,32 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
     setSizes(next);
   };
   const begin = () => void (from.current = live.current);
-  const done = () => keepSizes(live.current);
-  const height = () => Math.max(1, (box.current?.clientHeight ?? 0) - 28); // less the bar of window buttons
+  const done = () => keepSizes(live.current, mode.current);
+  const barH = inChat ? 40 : 28;
+  const height = () => Math.max(1, (box.current?.clientHeight ?? 0) - barH); // less the bar of window buttons
   // hidden, not taken away: a panel shown again is as it was (the bin's search, the inspector's tab)
   const showMedia = media !== null && open.media;
   return (
     <div ref={box} data-nle className="dark flex min-h-0 w-full flex-1 select-none flex-col bg-[#0f0f11] p-1 pt-0 text-zinc-200 [color-scheme:dark] [&_input]:select-text [&_textarea]:select-text">
-      <div role="toolbar" aria-label="Panels" className="flex h-7 shrink-0 items-stretch justify-between">
-        {media !== null ? <WindowButton on={open.media} icon={<Images />} label="Media Pool" keys="Tab" onClick={() => toggle("media")} /> : <span />}
-        <div className="flex min-w-0 items-center gap-2 text-[12px]">{center}</div>
-        <WindowButton on={open.inspector} icon={<SlidersHorizontal />} label="Inspector" keys="⇧Tab" onClick={() => toggle("inspector")} />
-      </div>
-      <div className="flex min-h-0 shrink-0" style={{ height: `calc(${sizes.top * 100}% - ${sizes.top * 28}px)` }}>
+      {chat ? (
+        <div role="toolbar" aria-label="Editor" className="flex h-10 shrink-0 items-center gap-2 px-1">
+          <div className="flex min-w-0 flex-1 items-center gap-2">{chat.bar}</div>
+          <div className="flex shrink-0 items-center gap-2 text-[12px]">{center}</div>
+          <button type="button" aria-pressed={full} onClick={allTools}
+            title={full ? "Hide the Media Pool, the Inspector and the empty tracks" : "The Media Pool, the Inspector and every track (Tab, ⇧Tab)"}
+            className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[12px] [&_svg]:size-3.5",
+              full ? "border-zinc-500 bg-zinc-700 text-zinc-50" : "border-zinc-700 text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-100")}>
+            <PanelsTopLeft />All editing tools
+          </button>
+        </div>
+      ) : (
+        <div role="toolbar" aria-label="Panels" className="flex h-7 shrink-0 items-stretch justify-between">
+          {media !== null ? <WindowButton on={open.media} icon={<Images />} label="Media Pool" keys="Tab" onClick={() => toggle("media")} /> : <span />}
+          <div className="flex min-w-0 items-center gap-2 text-[12px]">{center}</div>
+          <WindowButton on={open.inspector} icon={<SlidersHorizontal />} label="Inspector" keys="⇧Tab" onClick={() => toggle("inspector")} />
+        </div>
+      )}
+      <div className="flex min-h-0 shrink-0" style={{ height: `calc(${sizes.top * 100}% - ${sizes.top * barH}px)` }}>
         {media !== null && (
           <>
             <div className={cn("flex min-w-0 shrink-0", !showMedia && "hidden")} style={{ width: sizes.media }}>{media}</div>
@@ -165,7 +203,8 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
       <div className="flex" onPointerDownCapture={begin}>
         <Splitter dir="y" label="Timeline height" onDrag={(d) => set({ top: from.current.top + d / height() })} onDone={done} />
       </div>
-      <div className="flex min-h-0 flex-1">{timeline}</div>
+      <div className="flex min-h-0 flex-1">{typeof timeline === "function" ? timeline(full) : timeline}</div>
+      {chat?.foot}
     </div>
   );
 }

@@ -38,6 +38,7 @@ import { canGrab, designFile, isDesign, placeText, renderScale } from "@/lib/nle
 import { drawFrame, grabDesign, grabFrame, makeText } from "@/lib/nle/text-design";
 import { CaptionsBody, CaptionsHead, CaptionsOver, captionsHref, downloadSrt, useCaptionClip } from "./NleCaptions";
 import { captionCards, captionsStale, fromOf, withoutCards } from "@/lib/nle/captions";
+import { useChatShown } from "@/lib/chat-mode";
 
 export type { NleFile };
 import { NleTracks as Timeline, useLinkedSelection, type MenuAt, type Tool } from "./NleTracks";
@@ -65,6 +66,16 @@ export interface NleDrop {
   src?: string;
   /** more of what the page knows of the source, kept on it */
   source?: Record<string, unknown>;
+}
+
+/** What the chat-mode foot (NleEditor `foot`) is told: the person's own edits since the timeline opened, and a save. */
+export interface NleFoot {
+  /** edits by hand since it opened (undo steps) */
+  changes: number;
+  /** some not saved yet */
+  dirty: boolean;
+  /** Save (⌘S): resolves true once saved, or when there was nothing to save */
+  save: () => Promise<boolean>;
 }
 
 export interface NleControl {
@@ -154,7 +165,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered, cached }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered, cached, bar, foot }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -188,7 +199,14 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   rendered?: { url: string; first?: boolean } | null;
   /** the V1 ranges [rec, len] of the timeline as last saved that the render cache holds: the render bar under the ruler */
   cached?: readonly (readonly [number, number])[];
+  /** beside the chats (chat mode): the page's bar over the viewer (its drafts and versions), in place of the panels' buttons */
+  bar?: ReactNode;
+  /** beside the chats: the bar under the timeline (what the person changed, the page's own buttons) */
+  foot?: (s: NleFoot) => ReactNode;
 }) {
+  // beside the chats the viewer takes the room: the side panels hidden until All editing tools, the empty tracks and the
+  // rarer tools left out of a smaller timeline (NleLayout `chat`)
+  const besideChat = useChatShown();
   const [first] = useState(() => openOf(initial, resetKey));
   // the timeline open now (its key and fingerprint), for keeping its unsaved edits
   const opened = useRef(first);
@@ -636,16 +654,19 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     };
   }, []);
 
-  const save = async () => {
-    if (!dirty || saving || readOnly) return;
-    if (Object.values(tl.sources).some((s) => isDesign(s) && !s.path)) return void toast("A text is still being drawn", { description: "Save again in a moment, or delete it" });
+  const save = async (): Promise<boolean> => {
+    if (!dirty) return true;
+    if (saving || readOnly) return false;
+    if (Object.values(tl.sources).some((s) => isDesign(s) && !s.path)) return (toast("A text is still being drawn", { description: "Save again in a moment, or delete it" }), false);
     const now = tl;
     try {
       await onSave(toSaved(now));
       setSaved(now);
       void markSaved(opened.current.key);
+      return true;
     } catch {
       // not saved: the page says why, and the timeline stays as it is to save again
+      return false;
     }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- on a change of the timeline only
@@ -742,6 +763,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   return (
     <NleGate.Provider value={gateCtx}>
       <NleLayout panelKeys={panelKeys}
+        chat={besideChat ? { bar, foot: foot?.({ changes: hist.past.length, dirty, save }) } : null}
         center={
           <>
             {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}
@@ -776,9 +798,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                       className={cn("h-5 rounded-[3px] px-1.5 capitalize disabled:opacity-40", view === v ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{v}</button>
                   ))}
                 </span>
-                {(inSource || !picker) && <span className="min-w-0 truncate text-zinc-500">{inSource ? source!.name : tl.timeline.name}</span>}
-                {/* the timeline's: in the middle, in place of its name, a way to the edit's other timelines */}
-                {picker && !inSource && (
+                {(inSource || !picker || besideChat) && <span className={cn("min-w-0 truncate text-zinc-500", besideChat && "font-mono text-[11px]")}>{inSource ? source!.name : tl.timeline.name}</span>}
+                {/* the timeline's: in the middle, in place of its name, a way to the edit's other timelines (beside the chats the page's bar has it) */}
+                {picker && !inSource && !besideChat && (
                   <div className="pointer-events-none absolute inset-x-0 flex justify-center"><div className="pointer-events-auto max-w-[60%]">{picker}</div></div>
                 )}
               </div>
@@ -824,10 +846,10 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             <NleText key={textSrc} source={textSource} scale={renderScale(tl, textSrc!, Number(textSource.w), Number(textSource.h))} reread={reread}
               onDrawn={(s) => redrawn(textSrc!, s)} onOpen={() => { tln.play(false); setDesigning({ id: String(textSource.design), src: textSrc! }); }} />
           ) : null} />}
-        timeline={
+        timeline={(full) => (
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => view === "source" && show("timeline")}>
-          <Timeline tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
+          <Timeline compact={!full} tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
             trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit} cached={cachedNow}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
@@ -835,12 +857,20 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
             onLowerUnderVoice={readOnly ? undefined : (duck) => setSound({ duck })}
             onDrop={readOnly ? undefined : dropOn}
-            lane={captions && {
+            lane={captions && (full || tl.captions) ? {
               head: <CaptionsHead link={tl.captions} busy={capBusy} readOnly={readOnly} onMake={() => run("makeCaptions")} onBurn={() => run("burnCaptions")} onMenu={setCapMenu} />,
               body: (pps) => <CaptionsBody pps={pps} link={tl.captions} clip={cap ? cap.clip : undefined} captioning={!!cap?.captioning} stale={captionsStale(shown)} busy={capBusy} cards={captionCards(tl)}
                 readOnly={readOnly} onUpdate={() => run("updateCaptions")} onOpen={() => tl.captions && captions.open(captionsHref(tl.captions))} />,
-            }}
-            tools={
+            } : undefined}
+            tools={!full ? (
+              <>
+                <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
+                <button type="button" aria-pressed={tool === "blade"} aria-label="Blade" title="Blade (B): a click cuts there. W or ⌘B splits at the playhead" onClick={() => setTool("blade")} className={iconBtn(tool === "blade")}><Scissors className="size-3.5" /></button>
+                {sep}
+                <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
+                <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
+              </>
+            ) : (
               <>
                 <button type="button" aria-pressed={tool === "select"} aria-label="Select" title="Select (A): move, trim the ends, ⌥ an end rolls" onClick={() => setTool("select")} className={iconBtn(tool === "select")}><MousePointer2 className="size-3.5" /></button>
                 <button type="button" aria-pressed={tool === "trim"} aria-label="Trim" title="Trim (T): slip a clip, ripple-trim the ends, ⌥ an end rolls" onClick={() => setTool("trim")} className={iconBtn(tool === "trim")}><UnfoldHorizontal className="size-3.5" /></button>
@@ -862,11 +892,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
                 <button type="button" aria-label="Keyboard Customization" title={`Keyboard Customization${tip("keyboard")}`} onClick={() => setKeysOpen(true)} className={iconBtn(false)}><Keyboard className="size-3.5" /></button>
               </>
-            }
+            )}
             end={<span className="flex min-w-0 items-center gap-2 truncate">{status}</span>} />
           <NleMeter clock={tln.clock} />
           </div>
-        } />
+        )} />
 
       {sound && "normalize" in sound && <NormalizeDialog tl={tl} keys={sound.normalize} onCommit={commit} onClose={() => setSound(null)} />}
       {sound && "duck" in sound && <LowerUnderVoiceDialog tl={tl} track={sound.duck} onCommit={commit} onClose={() => setSound(null)} />}
