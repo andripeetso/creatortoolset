@@ -78,6 +78,18 @@ export interface NleFoot {
   save: () => Promise<boolean>;
 }
 
+/** What the chat-mode side panel beside the viewer (NleEditor `side`) is given: the timeline as it is now, the picked
+ *  clips, the playhead at rest, a hand edit as one undo step, and a clip opened in the viewer as Source. */
+export interface NleSide {
+  tl: NleTimeline;
+  picked: string[];
+  /** the playhead's frame, at rest (a pause, a seek) */
+  playhead: number;
+  commit: (next: NleTimeline, label: string) => void;
+  /** a drop with `from` / `to` opens on that part, marked In and Out */
+  source: (d: NleDrop) => void;
+}
+
 export interface NleControl {
   /** a clip from the bin laid at the playhead on V1 (or the In mark) */
   put: (d: NleDrop) => void;
@@ -165,7 +177,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered, cached, bar, foot }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered, cached, bar, foot, side }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -203,6 +215,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   bar?: ReactNode;
   /** beside the chats: the bar under the timeline (what the person changed, the page's own buttons) */
   foot?: (s: NleFoot) => ReactNode;
+  /** beside the chats: a panel beside the viewer (NleLayout viewerBeside: a portrait cut's viewer narrows for it) */
+  side?: (s: NleSide) => ReactNode;
 }) {
   // beside the chats the viewer takes the room: the side panels hidden until All editing tools, the empty tracks and the
   // rarer tools left out of a smaller timeline (NleLayout `chat`)
@@ -527,7 +541,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const openSource = (d: NleDrop) => {
     tln.play(false);
     srcT.play(false);
-    if (d.path !== source?.path) srcT.seek((srcMarks[d.path]?.[0] ?? 0) / sfpsOf(d));
+    const f = sfpsOf(d);
+    // a drop naming its part opens on it, marked
+    const part: Marks | null = d.from !== undefined ? [Math.round(d.from * f), d.to !== undefined ? Math.max(Math.round(d.from * f), Math.round(d.to * f) - 1) : null] : null;
+    if (part) setSrcMarks((all) => ({ ...all, [d.path]: part }));
+    if (part || d.path !== source?.path) srcT.seek(((part ?? srcMarks[d.path])?.[0] ?? 0) / f);
     setSource(d);
     setView("source");
   };
@@ -764,6 +782,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     <NleGate.Provider value={gateCtx}>
       <NleLayout panelKeys={panelKeys}
         chat={besideChat ? { bar, foot: foot?.({ changes: hist.past.length, dirty, save }) } : null}
+        side={besideChat && side ? side({ tl, picked: sel, playhead: Math.round(tln.time * fps), commit: (next, label) => commit(next, label), source: openSource }) : undefined}
+        frame={{ w: tl.timeline.width || 1080, h: tl.timeline.height || 1920 }}
         center={
           <>
             {saving && <span className="min-w-0 truncate text-zinc-500">{saving.line}</span>}

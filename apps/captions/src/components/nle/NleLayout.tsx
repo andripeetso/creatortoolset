@@ -1,4 +1,4 @@
-import { createContext, useEffect, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createContext, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Images, PanelsTopLeft, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +56,22 @@ const readOpen = (chat: boolean): Open => {
     return { media: !chat, inspector: !chat };
   }
 };
+
+// The page's side panel beside the viewer (chat mode, `side`): the viewer as a column as wide as its frame drawn as tall
+// as the row lets it (a 9:16 cut leaves no grey bands), the panel the rest. The viewer's own bars and padding around
+// the frame, and the least each needs.
+const VIEWER_CHROME = 32 + 36 + 32 + 2;
+const VIEWER_PAD = 32 + 2 + 2;
+const VIEWER_MIN = 340;
+const SIDE_MIN = 260;
+
+/** The viewer's width with the side panel beside it in a row of `room`, for a frame of `frame`; null: no room for the
+ *  panel (a landscape cut keeps the width then). A portrait cut narrows its viewer to make room. */
+export function viewerBeside(room: { w: number; h: number }, frame: { w: number; h: number }): number | null {
+  const col = Math.max(VIEWER_MIN, Math.round(((room.h - VIEWER_CHROME) * frame.w) / frame.h) + VIEWER_PAD);
+  if (room.w - col >= SIDE_MIN) return col;
+  return frame.h > frame.w && room.w - VIEWER_MIN >= SIDE_MIN ? room.w - SIDE_MIN : null;
+}
 
 export const panelBar = "relative flex h-8 shrink-0 items-center gap-2 border-b border-black/60 bg-[#232327] px-2.5 text-[11px] text-zinc-400";
 
@@ -118,12 +134,15 @@ function WindowButton({ on, icon, label, keys, onClick }: { on: boolean; icon: R
  * end showing both side panels or neither, and `foot` under the timeline. `timeline` given as a function hears whether
  * every tool shows (`full`: outside chat mode, or a side panel open), to draw a smaller one when not.
  */
-export function NleLayout({ media, viewer, inspector, timeline, panelKeys, center, chat }: {
+export function NleLayout({ media, viewer, inspector, timeline, panelKeys, center, chat, side, frame }: {
   media: ReactNode | null; viewer: ReactNode; inspector: ReactNode; timeline: ReactNode | ((full: boolean) => ReactNode);
   /** the middle of the window-button bar, where Resolve has the project's name: the timeline's save */
   center?: ReactNode;
   panelKeys?: MutableRefObject<((p: keyof Open) => void) | null>;
   chat?: { bar?: ReactNode; foot?: ReactNode } | null;
+  /** beside the viewer while the side panels are hidden in chat mode (viewerBeside decides the room); `frame` its size */
+  side?: ReactNode;
+  frame?: { w: number; h: number };
 }) {
   const inChat = !!chat;
   const [sizes, setSizes] = useState(() => readSizes(inChat));
@@ -148,6 +167,16 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
   };
   const toggle = (p: keyof Open) => setOpen((o) => keepOpen({ ...o, [p]: !o[p] }));
   const full = !inChat || open.inspector || (media !== null && open.media);
+  const row = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = row.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setRoom({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const besideW = side && !full && frame ? viewerBeside(room, frame) : null;
   const allTools = () => setOpen(() => keepOpen({ media: !full, inspector: !full }));
   if (panelKeys) panelKeys.current = toggle;
   const box = useRef<HTMLDivElement>(null);
@@ -185,7 +214,7 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
           <WindowButton on={open.inspector} icon={<SlidersHorizontal />} label="Inspector" keys="⇧Tab" onClick={() => toggle("inspector")} />
         </div>
       )}
-      <div className="flex min-h-0 shrink-0" style={{ height: `calc(${sizes.top * 100}% - ${sizes.top * barH}px)` }}>
+      <div ref={row} className="flex min-h-0 shrink-0" style={{ height: `calc(${sizes.top * 100}% - ${sizes.top * barH}px)` }}>
         {media !== null && (
           <>
             <div className={cn("flex min-w-0 shrink-0", !showMedia && "hidden")} style={{ width: sizes.media }}>{media}</div>
@@ -194,7 +223,8 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
             </div>
           </>
         )}
-        <div className="flex min-w-0 flex-1">{viewer}</div>
+        <div className={cn("flex min-w-0", besideW === null ? "flex-1" : "shrink-0")} style={besideW === null ? undefined : { width: besideW }}>{viewer}</div>
+        {besideW !== null && <div className="ml-1 flex min-w-0 flex-1">{side}</div>}
         <div className={cn("flex", !open.inspector && "hidden")} onPointerDownCapture={begin}>
           <Splitter dir="x" label="Inspector width" onDrag={(d) => set({ inspector: from.current.inspector - d })} onDone={done} />
         </div>
