@@ -949,7 +949,8 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
     const p = pages[n]!;
     // every picture and drawing of the frame is there first: a frame is never saved with a grey box where one goes
     for (const l of p.layers) {
-      const img = l.hidden ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
+      // a hidden or reference layer is never drawn in it: its picture is not waited for
+      const img = l.hidden || l.reference ? undefined : (loaded.get(sourceOf(l) ?? "") as HTMLImageElement | undefined);
       if (!img || (img.complete && img.naturalWidth)) continue;
       const gone = new Error(`A picture on ${pageName(p, n)} could not be loaded: nothing was saved`);
       if (img.complete) throw gone;
@@ -1002,26 +1003,30 @@ function DesignPage({ id, onDone }: { id: string; onDone?: () => void }) {
   const [finishing, setFinishing] = useState(false);
   const finish = async () => {
     if (!onDone || finishing) return;
+    // Read: nothing here changes, so nothing is saved
+    if (locked) return onDone();
     setFinishing(true);
     // a field being typed in sets its value as it is left (a name, a hex code)
     (document.activeElement as HTMLElement | null)?.blur?.();
     // the change the blur made, and one merged in from a refused save, reach `unsaved` once the page has drawn them
     const drawn = () => new Promise((r) => setTimeout(r, 0));
+    /** The canvas is what the server has: a change merged in from a refused save reaches `unsaved` only when its timer's effect runs. */
+    const sent = () => JSON.stringify(latest.current) === JSON.stringify(server.current.pages);
     failed.current = false;
     try {
       await drawn();
       for (let n = 0; n < 5 && !failed.current; n++) {
-        if (unsaved.current) send(unsaved.current);
+        if (unsaved.current || !sent()) send(unsaved.current ?? latest.current);
         const now = saving.current;
         await now;
         await drawn();
-        if (now === saving.current && !unsaved.current) break;
+        if (now === saving.current && !unsaved.current && sent()) break;
       }
     } finally {
       setFinishing(false);
     }
-    // a save that failed says why in the error line, and the designer stays open
-    if (!unsaved.current) onDone();
+    // a save that failed says why in the error line, and the designer stays open; so does a merged change not sent yet
+    if (!unsaved.current && sent()) onDone();
   };
 
   const exportPngs = async (only?: number | readonly number[], as: ExportAs = { jpeg: false, scale: 1 }) => {

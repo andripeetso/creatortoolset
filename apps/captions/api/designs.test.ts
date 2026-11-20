@@ -214,6 +214,19 @@ describe("designs: an AI that designs", () => {
     expect((await call("GET", `/api/designs/${d.id}/pages`, undefined, "robin")).status).toBe(404);
   });
 
+  it("never drops a reference layer when it writes a frame's layers whole", async () => {
+    const d = (await call<Design>("POST", "/api/designs", { format: "thumbnail", blank: true, name: "Title" })).body;
+    const grab = { id: "g", type: "shape", shape: "rect", fill: "#00ff00", x: 0, y: 0, w: 1280, h: 720, name: "Frame grab", reference: true };
+    // the person's own write keeps it (PUT)
+    await call("PUT", `/api/designs/${d.id}`, { pages: [{ ...d.pages[0]!, layers: [grab] }] });
+    // sent again without the flag: still a reference
+    const again = (await write(d.id, { frames: [{ id: "p1", layers: [{ ...grab, reference: undefined }, { ...text, id: "t", text: "Big news" }] }] })).body.design.pages[0]!;
+    expect(again.layers.map((l) => [l.id, !!l.reference])).toEqual([["g", true], ["t", false]]);
+    // left out: kept under the rest
+    const left = (await write(d.id, { frames: [{ id: "p1", layers: [{ ...text, id: "t", text: "Bigger news" }] }] })).body.design.pages[0]!;
+    expect(left.layers.map((l) => [l.id, !!l.reference])).toEqual([["g", true], ["t", false]]);
+  });
+
   it("resizes a frame with its pinned layers, copies frames into other sizes and fills a frame with rows of words", async () => {
     const d = (await call<Design>("POST", "/api/designs", { format: "portrait", blank: true, pages: 2, name: "Sizes" })).body;
     const layers = [

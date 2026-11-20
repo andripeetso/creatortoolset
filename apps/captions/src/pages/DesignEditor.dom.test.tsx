@@ -79,3 +79,26 @@ it("stays open when the save fails, and says why", async () => {
   expect(onDone).not.toHaveBeenCalled();
   expect(document.body.textContent).toContain("The server is not reachable");
 });
+
+it("a save refused because the design changed elsewhere is merged and sent again before it hands back", async () => {
+  const { DesignChanged } = await import("@/lib/designs");
+  const elsewhere: Design = { ...design, updatedAt: 5, pages: [{ ...design.pages[0]!, name: "Renamed elsewhere" }] };
+  saveDesign.mockRejectedValueOnce(new DesignChanged(elsewhere));
+  const onDone = vi.fn();
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  act(() => root!.render(<MemoryRouter><DesignEditor id="d1" onDone={onDone} /></MemoryRouter>));
+  await settle();
+  const transparent = [...document.querySelectorAll("label")].find((l) => l.textContent?.includes("Transparent background"))!.querySelector<HTMLElement>("[role=checkbox]")!;
+  act(() => transparent.click());
+  await settle();
+  await act(async () => button("Done")!.click());
+  await settle();
+  expect(saveDesign).toHaveBeenCalledTimes(2);
+  // both changes in the save that went through: theirs and this window's
+  const last = saveDesign.mock.calls[1]![1].pages![0]!;
+  expect([last.name, last.fills]).toEqual(["Renamed elsewhere", []]);
+  expect(onDone).toHaveBeenCalledTimes(1);
+  expect(saveDesign.mock.invocationCallOrder[1]!).toBeLessThan(onDone.mock.invocationCallOrder[0]!);
+});

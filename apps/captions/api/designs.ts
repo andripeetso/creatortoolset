@@ -632,6 +632,10 @@ async function writeForAi(user: AuthVars["user"], d: Design, body: Raw): Promise
     const [w, h] = [size(t.more.w, was.w), size(t.more.h, was.h)];
     // a new size without the layers given whole: they follow the frame's edges as their pins say
     if (!t.whole && was.w && was.h && w && h && (w !== was.w || h !== was.h)) t.layers = placeLayers(t.layers.filter(raw) as Placed[], { w: was.w, h: was.h }, { w, h }, "stay");
+    // layers given whole never drop a reference (the video's frame designed over): one sent again stays a reference, one
+    // left out is kept under the rest. Otherwise it would show in every picture made of the frame, or the backdrop be gone
+    const refs = t.whole && !t.isNew ? was.layers.filter((l) => l.reference) : [];
+    if (refs.length) t.layers = [...refs.filter((r) => !t.layers.some((l) => raw(l)?.id === r.id)), ...t.layers.map((l) => (refs.some((r) => r.id === raw(l)?.id) ? { ...raw(l), reference: true } : l))];
     const made = cleanPages([{ id, layers: t.layers, w, h, background: t.more.background ?? was.background, gradient: "gradient" in t.more ? t.more.gradient : was.gradient, fills: "fills" in t.more ? t.more.fills : was.fills, strokes: "strokes" in t.more ? t.more.strokes : was.strokes, grain: "grain" in t.more ? t.more.grain : was.grain, vignette: "vignette" in t.more ? t.more.vignette : was.vignette, clip: "clip" in t.more ? t.more.clip : was.clip, ...Object.fromEntries((["guides", "grids", "safe"] as const).map((f) => [f, f in t.more ? t.more[f] : was[f]])), name: t.more.name ?? was.name }], {
       w: d.width,
       h: d.height,
