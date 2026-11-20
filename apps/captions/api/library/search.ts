@@ -145,7 +145,8 @@ function storedCopyPath(v: { source_key: string; storage_kind: string }): string
 /** One asset as a member of its library sees it: versions, transcript, folders, and its current version's jobs. `user`: the admin also gets sourcePath. */
 export function assetDetail(libraryId: string, assetId: string, user?: Pick<SessionUser, "role">, device?: string): AssetDetail | null {
   const row = db()
-    .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?`)
+    // a clip hidden while it waits on Folders left out is no clip to see (report.ts); a trashed one is (the trash view)
+    .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ? AND a.left_hidden_at IS NULL`)
     .get(assetId, libraryId) as CardRow | undefined;
   if (!row) return null;
   const versions = db()

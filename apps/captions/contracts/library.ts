@@ -481,6 +481,8 @@ export interface LibraryStatus {
   unreadable: number;
   /** done + failed + open = of; open is queued, running or waiting for a key */
   stages: (Omit<LibraryStage, "now"> & { open: number })[];
+  /** clips from a folder left out that went to the trash because the computer they waited on stopped reporting */
+  leftOut?: { computer: string; clips: number }[];
 }
 
 export interface LibrarySummary {

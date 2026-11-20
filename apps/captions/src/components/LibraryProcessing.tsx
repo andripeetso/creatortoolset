@@ -224,6 +224,10 @@ export function LibraryProgressBar({ libraryId, all = false }: { libraryId: stri
  * The whole library, step by step: how many of its clips have pictures, transcripts, descriptions and search, what
  * failed and what still waits. Opened from the page's More menu; the live run and what waits for a key on top.
  */
+/** One Library status line: clips from a folder left out that went to the trash because their computer went silent. */
+export const leftOutLine = (x: { computer: string; clips: number }) =>
+  `${x.clips.toLocaleString()} ${x.clips === 1 ? "clip" : "clips"} from a folder left out on ${x.computer} went to the trash: that computer hasn't reported for 14 days. Restore brings ${x.clips === 1 ? "it" : "them"} back.`;
+
 export function LibraryStatusDialog({ libraryId, onClose }: { libraryId: string; onClose: () => void }) {
   const [s, setS] = useState<LibraryStatus | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -250,6 +254,11 @@ export function LibraryStatusDialog({ libraryId, onClose }: { libraryId: string;
             {s.unreadable.toLocaleString()} {s.unreadable === 1 ? "file could not be read as video or sound" : "files could not be read as video or sound"}
           </p>
         )}
+        {s?.leftOut?.map((x) => (
+          <p key={x.computer} className="text-sm text-muted-foreground">
+            {leftOutLine(x)}
+          </p>
+        ))}
       </DialogContent>
     </Dialog>
   );

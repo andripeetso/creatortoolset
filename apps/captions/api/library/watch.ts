@@ -12,7 +12,7 @@ import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
-import { copyFilesOn, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, showLeft } from "./report";
+import { copyFilesOn, librariesOf, mediaFoldersOf, mediaForLibrary, settleLeft, settleSilent, showLeft } from "./report";
 import { pointSource } from "./locate";
 import { findUser } from "../users";
 import { isThisMachine, listDevices } from "../lib/devices";
@@ -831,7 +831,7 @@ async function leaveWatched(
     const copy = copyOf.get(r.version_id);
     if (copy && r.source_path === r.path) await pointSource(r.version_id, r.source_key, copy);
   }
-  return settleLeft([...assets].filter((a) => !kept.has(a)), now, "watch").length > 0;
+  return settleLeft([...assets].filter((a) => !kept.has(a)), now, "watch", media).length > 0;
 }
 
 /** One pass over a library's watch folders. Returns how many files it took in (new versions or known duplicates). */
@@ -986,6 +986,8 @@ export async function scanWatchFolders(now = Date.now()): Promise<number> {
   for (const [id, list] of lists) took += await scanLibrary(id, now, list);
   // ponytail: stats every referenced file each pass; fine to tens of thousands, batch by folder past that
   await refreshMissing();
+  // a clip hidden on a computer that stopped reporting goes to the trash (report.ts settleSilent)
+  for (const l of settleSilent(now)) libraryChanged(l);
   return took;
 }
 

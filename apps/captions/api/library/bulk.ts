@@ -49,7 +49,7 @@ bulkApp.get("/:id/zip", async (c) => {
   const taken = new Set<string>();
   for (const id of ids) {
     const a = db()
-      .prepare("SELECT a.current_version_id AS v, s.source_key AS key, s.mac_path FROM assets a JOIN asset_versions s ON s.id = a.current_version_id WHERE a.id = ? AND a.library_id = ?")
+      .prepare("SELECT a.current_version_id AS v, s.source_key AS key, s.mac_path FROM assets a JOIN asset_versions s ON s.id = a.current_version_id WHERE a.id = ? AND a.library_id = ? AND a.left_hidden_at IS NULL")
       .get(id, libraryId) as { v: string; key: string; mac_path: string | null } | undefined;
     // an original kept on a Mac is not here (its source may be its proxy): the zip holds originals only
     if (!a || a.mac_path || !(await canSee(viewer, assetRef(libraryId, id, a.v)))) continue;

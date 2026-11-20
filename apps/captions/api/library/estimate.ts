@@ -373,7 +373,11 @@ export function libraryStatus(libraryId: string): LibraryStatus {
     const r = rows.find((x) => x.kind === kind);
     return r ? [{ kind, done: r.done, failed: r.failed, open: r.open, of: r.done + r.failed + r.open }] : [];
   });
-  return { ...head, stages };
+  // clips hidden on a computer that went silent and so went to the trash (report.ts settleSilent), by computer
+  const leftOut = db
+    .prepare("SELECT left_trashed_from AS computer, COUNT(*) AS clips FROM assets WHERE library_id = ? AND trashed_at IS NOT NULL AND left_trashed_from IS NOT NULL GROUP BY left_trashed_from ORDER BY computer")
+    .all(libraryId) as { computer: string; clips: number }[];
+  return { ...head, stages, ...(leftOut.length ? { leftOut } : {}) };
 }
 
 /**

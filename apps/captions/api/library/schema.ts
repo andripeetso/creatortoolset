@@ -679,4 +679,13 @@ export const MIGRATIONS: string[] = [
   // Folders left out (report.ts): a clip whose only known place is in a left-out folder, while it waits to be trashed or
   // kept, is hidden from every view, search, AI, player and share link (a privacy list, owner 2026-11-20). Not the trash
   `ALTER TABLE assets ADD COLUMN left_hidden_at INTEGER;`,
+  // the computer a hidden clip waits on (report.ts adoptLeft): after a restart only that computer takes up its wait
+  `ALTER TABLE assets ADD COLUMN left_hidden_on TEXT;`,
+  // when each running listing started (report.ts), kept through a restart: a listing that began before a clip was found
+  // in a left-out folder never counts as read since, and its last page marks gone only what it did not name
+  `CREATE TABLE listing_starts (key TEXT PRIMARY KEY, at INTEGER NOT NULL);`,
+  // a clip hidden on a computer that went silent (report.ts settleSilent): trashed, with that computer's name for the
+  // Library status line; and when each computer no longer paired was first missed (its silence starts then)
+  `ALTER TABLE assets ADD COLUMN left_trashed_from TEXT;
+  CREATE TABLE left_gone_computers (device TEXT PRIMARY KEY, since INTEGER NOT NULL);`,
 ];
