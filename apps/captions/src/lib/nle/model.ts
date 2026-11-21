@@ -492,6 +492,7 @@ export function freezeFrame(tl: NleTimeline, keys: string[], f: number): NleTime
   const cut = hit.item.rec < f ? blade(tl, f, [hit.item._k!]) : tl;
   // a track holds one clip at a frame: the one starting at `f` is the part to hold
   return setItems(cut, [cut.tracks.V1.items.find((i) => i.rec === f)!._k!], { freeze: true });
+}
 
 /** A processing's setting for a clip: its own, else the timeline's (undefined: neither has one; null is a value). */
 export const processingOf = (tl: NleTimeline, it: NleItem, name: string): unknown => {
