@@ -1741,7 +1741,7 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
   });
   const sent = h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
   const uploading = (asked.files ?? []).filter((f) => f.uploading).map(({ id, name }) => ({ id, name }));
-  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], clipIds: [], clips: asked.clips ?? [], dir: placeOf(username, reply.id), context: h.context, note: sent ?? h.fit };
+  const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], clipIds: [], clips: asked.clips ?? [], dir: placeOf(username, reply.id), context: h.context, note: [sent, h.fit].filter(Boolean).join("\n") || undefined };
   if (h.context?.mac) fromMac.add(reply.id);
   if (h.context) pages.set(reply.id, h.context);
   if (h.pasted.length) pastedFor.set(reply.id, { ask: h.ask, texts: h.pasted.map((p) => p.text) });
@@ -2163,10 +2163,11 @@ const opened = (m: AssistantMessage, edit: string) =>
 const isAbout = (c: Chat, edit: string) => c.edit === edit || (c.edit === undefined && c.messages.some((m) => opened(m, edit)));
 const chatsHere = (conv: Conv): Chat[] => [conv as Chat, ...(conv.past ?? [])];
 
-/** The newest chat about an edit ("" = the AI Editor in general): one made for it, else one whose reply opened it. */
+/** The newest chat about an edit ("" = the AI Editor in general): one made for it, else one whose reply opened it (not a
+ *  scheduled task's run). */
 export function editChat(username: string, edit: string): Chat | null {
   const newest = (c: Chat) => c.messages.at(-1)?.at ?? c.made ?? 0;
-  return chatsHere(load(username)).filter((c) => isAbout(c, edit)).sort((a, b) => newest(b) - newest(a))[0] ?? null;
+  return chatsHere(load(username)).filter((c) => !c.task && isAbout(c, edit)).sort((a, b) => newest(b) - newest(a))[0] ?? null;
 }
 
 /** A new chat about that edit among the earlier ones (the open chat stays open), in the edit's workspace: its id. */
@@ -2178,7 +2179,8 @@ export function newEditChat(username: string, edit: string, title?: string, work
   return chat.id;
 }
 
-/** A new conversation about an edit: its chats are let go of (they stay among the person's chats), the next message starts another. */
+/** A new conversation about an edit: its chats are let go of (they stay among the person's chats), the next message starts another.
+ *  shortcut: a chat that opened several edits is let go of for all of them; keep a per-edit set if that bites. */
 export function forgetEditChat(username: string, edit: string): void {
   const conv = load(username);
   for (const c of chatsHere(conv)) if (isAbout(c, edit)) c.edit = null;

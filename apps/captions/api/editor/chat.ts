@@ -13,7 +13,7 @@ export const editorChatApp = new Hono<{ Variables: AuthVars }>();
 type C = Context<{ Variables: AuthVars }>;
 
 /** The edit asked about, when the caller may open it ("" = none asked); null: not found or not theirs. */
-async function editOf(c: C, raw: unknown): Promise<{ id: string; name: string; workspaceId: string } | "" | null> {
+async function editOf(c: C, raw: unknown): Promise<{ id: string; name: string; projectId?: string } | "" | null> {
   const id = typeof raw === "string" ? raw : "";
   if (!id) return "";
   const e = readEdit(id);
@@ -51,7 +51,7 @@ editorChatApp.post("/", async (c) => {
   if (e === null) return c.json(NOT_FOUND, 404);
   const user = c.get("user").username;
   const key = e ? e.id : "";
-  const id = editChat(user, key)?.id ?? newEditChat(user, key, e ? e.name : "AI Editor", e ? e.workspaceId : undefined);
+  const id = editChat(user, key)?.id ?? newEditChat(user, key, e ? e.name : "AI Editor", e ? e.projectId : undefined);
   const about = e
     ? `This chat is about the AI Editor edit ${JSON.stringify(e.name)} (edit id ${e.id}): a message here means that edit unless it names another.`
     : "This chat is the AI Editor's: the person is asking about their edits.";
