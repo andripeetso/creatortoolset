@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { rateAt } from "@contracts/edit-timeline";
 import type { ReviewPlayPlan } from "./plugin";
 
 // How the Review player follows a plug-in's play plan (ReviewPlayPlan, in frames at plan.fps). Pure: the page applies
@@ -30,7 +31,8 @@ export function mutedAt(plan: ReviewPlayPlan | null, pos: number): boolean {
 }
 
 /**
- * The page's follower: while it plays, the video skips, holds and follows `plan` as the playhead reaches each span. A hold
+ * The page's follower: while it plays, the video skips, holds and follows `plan` as the playhead reaches each span, and
+ * plays a sped-up or slowed shot (`plan.rates`) at `base` (the page's own speed) times its rate. A hold
  * pauses on its frame, shows `holding` frames to go on the chip, then plays on, but only while the viewer has not moved
  * (paused or sought away); `endHold` ends a hold at once and the page calls it on every control the viewer uses.
  */
@@ -39,6 +41,7 @@ export function usePlanFollow(
   plan: ReviewPlayPlan | null,
   time: number,
   playing: boolean,
+  base = 1,
 ): { holding: number; endHold: () => void } {
   const [holding, setHolding] = useState(0);
   const holdTimer = useRef(0);
@@ -52,6 +55,10 @@ export function usePlanFollow(
     const was = lastT.current;
     lastT.current = time;
     if (!plan || !playing || !el) return;
+    if (plan.rates?.length) { // into, out of or within a shot with a speed: the video at that rate (only then: the page owns it else)
+      const want = base * rateAt(plan, time * (plan.fps || 25));
+      if (Math.abs(el.playbackRate - want) > 1e-3) el.playbackRate = want;
+    }
     const act = followPlan(plan, time, was);
     if (act.kind === "seek") {
       el.currentTime = act.to;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { editedFrame } from "@contracts/edit-timeline";
+import { editedFrame, rateAt } from "@contracts/edit-timeline";
 import type { ReviewPlayPlan } from "./plugin";
 
 // Sound on a picture's clock (Web Audio). Each file is laid on the clock in pieces (from `at` seconds, `offset` seconds
@@ -11,7 +11,8 @@ import type { ReviewPlayPlan } from "./plugin";
 const DRIFT_S = 0.08;
 const EVENTS = ["play", "playing", "pause", "waiting", "seeked", "ratechange", "ended"] as const;
 
-export type Piece = { file: string; at: number; offset: number; dur: number };
+/** `dur` and `offset` in the file's seconds; `rate` = the file's seconds a second of the clock plays (a speed edit, none = 1). */
+export type Piece = { file: string; at: number; offset: number; dur: number; rate?: number };
 /** The clock now: `t` seconds, whether it runs, its speed; `steady` false = it runs without the picture (no drift check). */
 export type Clock = () => { t: number; run: boolean; rate: number; steady: boolean };
 
@@ -140,13 +141,14 @@ export class SyncedSound {
     for (const p of this.pieces) {
       const f = this.files.get(p.file);
       if (!f) continue;
-      const late = Math.max(0, this.from - p.at); // already into this piece by
+      const k = p.rate ?? 1;
+      const late = Math.max(0, this.from - p.at) * k; // already into this piece by (its file's seconds)
       const offset = p.offset + late - f.from;
       const dur = Math.min(p.dur - late, f.buf.duration - offset);
       if (dur <= 0 || offset < 0) continue;
       const s = this.ctx.createBufferSource();
       s.buffer = f.buf;
-      s.playbackRate.value = this.rate;
+      s.playbackRate.value = this.rate * k;
       s.connect(f.gain);
       s.start(this.t0 + Math.max(0, p.at - this.from) / this.rate, offset, dur);
       this.playing.push(s);
@@ -178,7 +180,7 @@ export class SyncedSound {
  * The edited timeline's clock for a plan (seconds): the video's frame mapped through the plan's skips and holds, running
  * on through a hold while the picture waits on its frame (`holding` = frames the page holds for, lib/review-play.ts).
  */
-export function editedClock(el: HTMLVideoElement, plan: Pick<ReviewPlayPlan, "fps" | "skips" | "holds">, holding: { current: number }): Clock {
+export function editedClock(el: HTMLVideoElement, plan: Pick<ReviewPlayPlan, "fps" | "skips" | "holds" | "rates">, holding: { current: number }): Clock {
   const fps = plan.fps || 25;
   let held = { since: 0, at: 0 };
   return () => {
@@ -192,7 +194,8 @@ export function editedClock(el: HTMLVideoElement, plan: Pick<ReviewPlayPlan, "fp
       return { t: t1, run: true, rate: el.playbackRate, steady: false };
     }
     held = { since: 0, at: 0 };
-    return { t, run, rate: el.playbackRate, steady: true };
+    // in a shot with a speed the video runs at its rate (review-play.ts), the timeline at the page's own
+    return { t, run, rate: el.playbackRate / rateAt(plan, r), steady: true };
   };
 }
 
@@ -205,7 +208,7 @@ export function editedClock(el: HTMLVideoElement, plan: Pick<ReviewPlayPlan, "fp
 export function useEditSound(video: RefObject<HTMLVideoElement | null>, plan: ReviewPlayPlan | null, holding: number): { live: boolean; error: string } {
   const [state, setState] = useState({ live: false, error: "" });
   const sound = plan?.sound;
-  const key = sound ? JSON.stringify([plan!.fps, plan!.skips, plan!.holds, sound]) : "";
+  const key = sound ? JSON.stringify([plan!.fps, plan!.skips, plan!.holds, plan!.rates, sound]) : "";
   const hold = useRef(holding);
   hold.current = holding;
   useEffect(() => {
@@ -221,7 +224,7 @@ export function useEditSound(video: RefObject<HTMLVideoElement | null>, plan: Re
     }
     let gone = false;
     setState({ live: false, error: "" });
-    s.load(plan.sound.map((p) => ({ file: p.src, at: p.at / fps, offset: p.offset, dur: p.frames / fps })), (f) => f).then(
+    s.load(plan.sound.map((p) => ({ file: p.src, at: p.at / fps, offset: p.offset, dur: (p.frames / fps) * (p.rate ?? 1), ...(p.rate ? { rate: p.rate } : {}) })), (f) => f).then(
       () => {
         if (gone) return;
         s.run();

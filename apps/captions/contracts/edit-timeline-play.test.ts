@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editedFrame, picturePieces, playPlan, renderPieces, splitView, voicePieces, type ItemEdit, type TimelineView } from "./edit-timeline";
+import { cleanEdits, describeEdit, editedFrame, picturePieces, playPlan, rateAt, renderPieces, splitView, voicePieces, type ItemEdit, type TimelineView } from "./edit-timeline";
 
 // The first three shots of a real AI edit (25 fps): each talent shot's voice is its own recording (R<k>vo), `ins` = the
 // in point in seconds. Shot 2 is the one whose voice was pulled out on Review's timeline.
@@ -97,3 +97,41 @@ describe("playing the edit from its originals", () => {
   });
 });
 
+
+describe("a talent shot played faster or slower (speed)", () => {
+  it("is kept on a talent shot only, 50 to 200 %, and said in words", () => {
+    const kept = cleanEdits([
+      { key: "V1:0", label: "fast", speed: 1.5 }, { key: "V2:0", label: "overlay", speed: 2 }, { key: "A1:0", label: "voice", speed: 2 },
+      { key: "V1:149", label: "too fast", speed: 3 }, { key: "V1:226", label: "as it is", speed: 1 },
+    ]);
+    expect(kept).toEqual([{ key: "V1:0", label: "fast", speed: 1.5 }]);
+    expect(describeEdit(kept[0], 25)).toBe("plays at 150 % with its voice, what follows moves up");
+  });
+
+  it("at 2× the shot and its voice take half the frames, from the same words, and everything after moves up", () => {
+    const edits = [e("V1:149", { speed: 2 })];
+    const plan = playPlan(splitView(view, edits), edits);
+    expect(plan.rates).toEqual([{ from: 149, to: 226, rate: 2 }]);
+    expect(rateAt(plan, 150)).toBe(2);
+    expect(rateAt(plan, 226)).toBe(1);
+    expect(editedFrame(plan, 149)).toBe(149);
+    expect(editedFrame(plan, 226)).toBe(187.5); // 77 frames at 2× = 38.5
+    expect(pieces(edits)).toEqual([
+      { src: "R3vo", at: 0, frames: 149, offset: 9.36 },
+      { src: "R1vo", at: 149, frames: 38.5, offset: 0, rate: 2 },
+      { src: "R1vo", at: 187.5, frames: 54, offset: 3.44 },
+    ]);
+    // the cut's own sound and the picture follow the same clock
+    expect(renderPieces(plan, 280, 25)).toEqual([
+      { src: "render", at: 0, frames: 149, offset: 0 },
+      { src: "render", at: 149, frames: 38.5, offset: 5.96, rate: 2 },
+      { src: "render", at: 187.5, frames: 54, offset: 9.04 },
+    ]);
+    expect(picturePieces(splitView(view, edits), edits, plan).find((p) => p.key === "V1:149"))
+      .toMatchObject({ src: "R1", at: 149, frames: 38.5, offset: 0, rate: 2 });
+  });
+
+  it("a slower shot (50 %) takes twice the frames", () => {
+    expect(editedFrame(playPlan(view, [e("V1:226", { speed: 0.5 })]), 280)).toBe(334);
+  });
+});

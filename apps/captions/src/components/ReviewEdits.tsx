@@ -356,9 +356,9 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   // and the talent shots from their camera originals, framed as cut: a shot made longer shows the take past the cut
   const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!, (s) => !!found[s])
     .filter((p) => found[p.src])
-    .map(({ src, at, frames, offset, zoom, pan, tilt }) => {
+    .map(({ src, at, frames, offset, rate, zoom, pan, tilt }) => {
       const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);
-      return { src: urlOf(src), at, frames, offset, x: box.x, y: box.y, s: box.s };
+      return { src: urlOf(src), at, frames, offset, ...(rate ? { rate } : {}), x: box.x, y: box.y, s: box.s };
     }) : null;
   // each sound clip's own waveform from its file, once the files are found: the timeline draws a clip and what its
   // edges are pulled out to from it (`waves[item.key]`, the file from its first second), so a stretched edge shows the
@@ -399,6 +399,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
     holds: plan?.holds ?? [],
     cards: plan?.cards.map((c) => toCard(c, manage, hooks.clipSrc)) ?? [],
     frames: plan?.frames ?? [],
+    ...(plan?.rates?.length ? { rates: plan.rates } : {}),
     looks: crop ? [] : [
       ...grades.map((g, i) => ({ from: g.from, to: g.to, filter: `url(#${gradeId(i)})` })),
       ...(shotLook ? [{ from: shotLook.from, to: shotLook.to, filter: `url(#${LIVE_GRADE})` }] : []),
