@@ -576,7 +576,7 @@ function Review({
 
   const arrived = useRef(false);
   useEffect(() => {
-    if (arrived.current) return;
+    if (arrived.current || !play.src) return; // the player's src first: in the Mac app it waits for where the file is
     arrived.current = true;
     const c = threads.find((x) => x.id === focusId);
     if (c) focusComment(c);
