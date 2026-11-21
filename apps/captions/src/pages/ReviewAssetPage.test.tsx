@@ -171,4 +171,11 @@ describe("the voice choices under the player", () => {
     expect(host!.querySelector(off)).not.toBeNull();
     expect(host!.querySelector('button[title="Adobe voice"]')).not.toBeNull();
   });
+
+  it("show Off and the one enhanced voice for a set from before enhancer lists (no fx)", async () => {
+    const older = { groups: [{ key: "g1", label: "Mic", mix: 1 }], voice: "enhanced", duration: 8 } as unknown as ReturnType<typeof stems>;
+    await render({ ...view, asset: { ...view.asset, versions: [{ ...version, stems: older }] } });
+    expect(host!.querySelector(off)).not.toBeNull();
+    expect(host!.querySelector('button[title="Enhanced voice"]')).not.toBeNull();
+  });
 });
