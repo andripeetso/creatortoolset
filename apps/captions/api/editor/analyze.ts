@@ -14,9 +14,9 @@ import { askVersionIn, editorKey, editorRoute, heardForEditor, versionRoute, wor
 import { eyelineOf } from "./eyeline";
 import { measurable } from "./media";
 import { allBroll, isMusic } from "./plan";
-import { ownerOf, saveStep } from "./store";
+import { ownerOf, readStep, saveStep, type EditMeta } from "./store";
 import { videoLanguages } from "../lib/video-languages";
-import { voiceChannel } from "./sync";
+import { matchPair, pairsToTry, rollsOf, voiceChannel, type PairMatch, type PairSource } from "./sync";
 import type { StepContext } from "./worker";
 import { gateOf, onComputer } from "../work/on-computer";
 
@@ -337,11 +337,20 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
 /** The analyze step's work after its gate: sentences, loudness and eye line of the ready sources, saved as the analysis. */
 async function analyzeWork({ edit, signal }: StepContext, { planned, notes, ready }: AnalyzeGate): Promise<void> {
   ready.sort((a, b) => (a.probe.capturedAt ?? Infinity) - (b.probe.capturedAt ?? Infinity) || a.row.title.localeCompare(b.row.title));
+  // a separate mic and a second camera of one take: found by their sound (sync.ts), their own words no takes of their own
+  const pairs = planned ? {} : await pairUp(ready, readStep(edit.id, "analysis")?.pairs ?? {}, signal);
+  const { rolls, under } = rollsOf(ready.map((r) => pairSource(r.row.id, r.probe)), pairs);
+  if (signal.aborted) return;
+  const title = (id: string) => ready.find((r) => r.row.id === id)?.row.title ?? id;
+  for (const [cam, r] of Object.entries(rolls)) {
+    if (r.mic) notes.push(`“${title(r.mic.id)}” is the sound of “${title(cam)}”: it plays under its picture`);
+    for (const a of r.angles ?? []) notes.push(`“${title(a.id)}” is a second camera on “${title(cam)}”: every other line plays on it`);
+  }
   const sentences: Sentence[] = [];
   const eyeline: Record<string, number> = {};
   for (const { row, probe, words } of ready) {
     if (signal.aborted) return;
-    sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
+    if (!under.has(row.id)) sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
     if (planned) continue; // the cut's loudness and eye line are for cutting around speech
     await energyOf(row.id, () => measurable(row.id, row.source_key), signal);
     const turned = probe.rotation === 90 || probe.rotation === 270;
@@ -351,5 +360,37 @@ async function analyzeWork({ edit, signal }: StepContext, { planned, notes, read
   }
   if (!sentences.length && !planned)
     notes.push(edit.languages?.length ? NO_SPEECH : `${NO_SPEECH}. If someone does speak in it, pick the language on the edit and run it again`);
-  await saveStep(edit.id, "analysis", { sentences, notes, ...(Object.keys(eyeline).length ? { eyeline } : {}) });
+  await saveStep(edit.id, "analysis", { sentences, notes, ...(Object.keys(eyeline).length ? { eyeline } : {}), ...(Object.keys(rolls).length ? { rolls } : {}), ...(Object.keys(pairs).length ? { pairs } : {}) });
+}
+
+/** A source as pairing reads it (sync.ts PairSource). */
+export const pairSource = (id: string, probe: ProbeSummary): PairSource => ({ id, picture: !!probe.vcodec && !probe.cover, duration: probe.duration, ...(probe.capturedAt !== undefined ? { capturedAt: probe.capturedAt } : {}) });
+
+/**
+ * Every pair of the ready sources worth comparing by sound, compared (sync.ts pairsToTry): `kept`, the last analysis's,
+ * are not compared again. Kept in the analysis, so a run on a computer brings them back with it.
+ */
+async function pairUp(ready: AnalyzeGate["ready"], kept: Record<string, PairMatch | null>, signal: AbortSignal): Promise<Record<string, PairMatch | null>> {
+  const file = (id: string) => measurable(id, ready.find((r) => r.row.id === id)!.row.source_key);
+  const out: Record<string, PairMatch | null> = {};
+  for (const [a, b] of pairsToTry(ready.map((r) => pairSource(r.row.id, r.probe)))) {
+    const key = `${a}~${b}`;
+    if (key in kept) out[key] = kept[key]!;
+    if (key in kept || signal.aborted) continue;
+    // a pair that can't be compared now (a file not on this computer) is left for the next run, the cut made without it
+    const m = await matchPair(await file(a), await file(b), signal).then((x) => ({ x }), () => null);
+    if (m) out[key] = m.x;
+  }
+  return out;
+}
+
+/** The pairs of an edit's sources still to compare by sound (none in its analysis yet): engine.ts places analyze on a computer for them. */
+export function pairsLeft(edit: Pick<EditMeta, "id" | "sources" | "song">): [string, string][] {
+  const done = readStep(edit.id, "analysis")?.pairs ?? {};
+  const read = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?");
+  const srcs = edit.sources.filter((id) => id !== edit.song && !isMusic(id)).flatMap((id) => {
+    const p = JSON.parse((read.get(id) as { probe: string | null } | undefined)?.probe ?? "null") as ProbeSummary | null;
+    return p?.acodec ? [pairSource(id, p)] : [];
+  });
+  return pairsToTry(srcs).filter(([a, b]) => !(`${a}~${b}` in done));
 }

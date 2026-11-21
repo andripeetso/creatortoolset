@@ -15,6 +15,7 @@ import { sayFor } from "./progress";
 import { facesIn, turnsOf } from "./speakers";
 import { describedSeeds, faceless, subjectTargets, trackSubject } from "./subject";
 import { draftNames, editDir, type EditMeta, readStep, saveDraft, saveStep } from "./store";
+import type { Roll } from "./sync";
 import type { StepContext } from "./worker";
 
 /**
@@ -71,6 +72,8 @@ export interface BuildInput {
   energy: Record<string, Float32Array>;
   punch: number;
   eyeline: Record<string, number>;
+  /** per camera take, its separate mic and second cameras (sync.ts rollsOf); their sources are in `sources` */
+  rolls?: Record<string, Roll>;
   cut?: CutSettings;
   /** the edit's working size (its style's); none = the first line's source's own size */
   size?: { w: number; h: number } | null;
@@ -89,7 +92,7 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
   const notes: string[] = [];
   let rec = 0;
   let shot = 0;
-  for (const { line, take } of i.plan.lines) {
+  for (const [k, { line, take }] of i.plan.lines.entries()) {
     const a = byN.get(take.first);
     const b = byN.get(take.last);
     const src = a && i.sources[a.src];
@@ -105,18 +108,38 @@ export function buildTimeline(i: BuildInput): { timeline: Timeline; notes: strin
     }
     tl.sources[a.src] = src;
     tl.markers.push({ rec, name: line, color: "BLUE", note: text.get(line) ?? "" });
+    const roll = i.rolls?.[a.src];
     for (const [s, e] of cut.segments) {
       const len = Math.round(((e - s) * fps) / src.fps);
       if (len <= 0) continue;
       const link = `c${shot + 1}`;
+      // every other line on the second camera (a new line, a new angle; inside a line punch-ins hide the cuts), its
+      // separate mic under the picture: each where it holds this stretch
+      const angle = k % 2 ? along(roll?.angles?.[0], s, len, src, fps, i.sources) : null;
+      const mic = along(roll?.mic, s, len, src, fps, i.sources);
+      const pic = angle ?? { src: a.src, in: s };
+      const ps = i.sources[pic.src]!;
+      tl.sources[pic.src] = ps;
+      if (mic) tl.sources[mic.src] = i.sources[mic.src]!;
       // a take with no picture (a voice recording) has nothing to punch in on
-      tl.tracks.V1.items.push({ src: a.src, in: s, len, rec, link, ...(src.w ? framingOf(shot, src, W, H, i.punch, i.eyeline[a.src] ?? DEFAULT_EYELINE) : {}) });
-      tl.tracks.A1.items.push({ src: a.src, in: s, len, rec, link });
+      tl.tracks.V1.items.push({ ...pic, len, rec, link, ...(ps.w ? framingOf(shot, ps, W, H, i.punch, i.eyeline[pic.src] ?? DEFAULT_EYELINE) : {}) });
+      tl.tracks.A1.items.push({ ...(mic ?? { src: a.src, in: s }), len, rec, link });
       rec += len;
       shot++;
     }
   }
   return { timeline: tl, notes };
+}
+
+/**
+ * Where a stretch of a camera take (`s`, its frames; `len` timeline frames) is in another recording of the same moment
+ * (`at.offset_s`: seconds into it at the take's 0 s), or null when there is none or it does not hold all of it.
+ */
+export function along(at: { id: string; offset_s: number } | undefined, s: number, len: number, src: TimelineSource, fps: number, sources: Record<string, TimelineSource>): { src: string; in: number } | null {
+  const o = at && sources[at.id];
+  if (!o) return null;
+  const from = Math.round((s / src.fps + at.offset_s) * o.fps);
+  return from >= 0 && from + Math.round((len / fps) * o.fps) <= o.dur ? { src: at.id, in: from } : null;
 }
 
 interface SourceRow {
@@ -178,6 +201,14 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     keyOf[id] = row.source_key;
     energy[id] = await energyOf(id, () => measurable(id, row.source_key), signal);
   }
+  // the separate mics and second cameras of the takes used: their pictures and sound only, never their words
+  const rolls = analysis.rolls ?? {};
+  for (const r of [...used].flatMap((id) => (rolls[id] ? [rolls[id]!] : []))) {
+    for (const o of [r.mic, ...(r.angles ?? [])]) {
+      const row = o && (db.prepare("SELECT v.id, a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(o.id) as SourceRow | undefined);
+      if (row?.probe) sources[row.id] = sourceOf(row.id, row.title, JSON.parse(row.probe) as ProbeSummary);
+    }
+  }
   const shape = edit.moments && edit.shape && Object.values(sources).some((x) => x.w > 0) ? MOMENT_SHAPES[edit.shape] : null;
   const built = buildTimeline({
     name: `${edit.name} ${version.name}`,
@@ -189,6 +220,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     energy,
     punch: edit.framing.punch,
     eyeline: { ...analysis.eyeline, ...edit.eyeline },
+    rolls,
     cut: edit.style?.pace === "natural" ? NATURAL_CUT : undefined,
     // a moment of a long recording keeps the recording's own shape (fitted into another frame it would be a small picture
     // between bars), or is reframed to the shape asked for, the picture following who talks
@@ -226,7 +258,8 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     timeline = reframeTimeline(timeline, follow);
   }
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
-  await saveDraft(edit.id, version.name, { timeline, notes });
+  // a cut the AI made: looked at and checked before Review (critique.ts)
+  await saveDraft(edit.id, version.name, { timeline, notes, due: 1 });
   await clearPasses(edit.id, version.name); // cut again: its passes start over
   // a cut with no picture: its B-roll is its picture, laid with the first cut and never a pass to wait for (engine.ts nextFor)
   if (edit.style?.passes && noPicture(timeline)) await markPasses(edit.id, { [version.name]: "broll" });

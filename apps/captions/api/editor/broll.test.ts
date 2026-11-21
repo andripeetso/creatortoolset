@@ -30,8 +30,8 @@ const shots: Item[] = [
 
 describe("B-roll placement (code rules, no model)", () => {
   it("the rules scale from 25 fps to the timeline's rate", () => {
-    expect(rulesAt(25)).toEqual({ hook: 37, min: 30, max: 60, gap: 20 });
-    expect(rulesAt(30)).toEqual({ hook: 44, min: 36, max: 72, gap: 24 });
+    expect(rulesAt(25)).toEqual({ hook: 37, min: 30, max: 60, gap: 20, snap: 12 });
+    expect(rulesAt(30)).toEqual({ hook: 44, min: 36, max: 72, gap: 24, snap: 14 });
   });
 
   it("the shortest cutaway placed is QA's minimum (1.2 s) at every rate, and one frame less is under it", () => {

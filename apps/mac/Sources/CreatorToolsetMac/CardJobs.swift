@@ -28,6 +28,12 @@ struct EditorJob: Equatable {
     var soon = false
     /// a plug-in's job (FaceBlurAutoJob.swift): what it needs to know, as words
     var options: [String: String] = [:]
+    /// a step that reads the edit's footage (LookAwayJob.swift): each file, where it is on this Mac or the server's copy
+    struct Footage: Equatable {
+        let id: String
+        let path: String?
+    }
+    var footage: [Footage] = []
 }
 
 extension EditorJob {
@@ -35,8 +41,9 @@ extension EditorJob {
     init?(claim data: Data) {
         guard let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let job = answer["job"] as? [String: Any],
               let id = job["id"] as? Int, id > 0, let kind = job["kind"] as? String else { return nil }
+        let footage = (job["footage"] as? [[String: Any]] ?? []).compactMap { f in (f["id"] as? String).map { Footage(id: $0, path: f["path"] as? String) } }
         self.init(id: id, kind: kind, model: job["model"] as? String, languages: job["languages"] as? [String] ?? [],
-                  soon: job["soon"] as? Bool ?? false, options: job["options"] as? [String: String] ?? [:])
+                  soon: job["soon"] as? Bool ?? false, options: job["options"] as? [String: String] ?? [:], footage: footage)
     }
 }
 
@@ -163,7 +170,7 @@ private func waitFor<T>(_ work: @escaping @MainActor () async -> T) -> T {
 }
 
 /// Whether a step is still this Mac's, shared with the thread that keeps its lease.
-private final class Lease: @unchecked Sendable {
+final class Lease: @unchecked Sendable {
     private let lock = NSLock()
     private var lost = false
     private var over = false
@@ -201,7 +208,7 @@ struct CardJob {
     /// beside `ok`): the same hint as on the long poll, on an answer this Mac gets anyway.
     func run() -> (end: End, more: Bool) {
         let lease = Lease()
-        Thread { keep(lease) }.start()
+        Thread { [api, base, beatEvery] in Self.keep(lease, api: api, base: base, every: beatEvery) }.start()
         defer {
             lease.end()
             try? FileManager.default.removeItem(at: folder)
@@ -216,8 +223,9 @@ struct CardJob {
         return (end, reply.map { $0.status == 200 && RelayRunner.editorWaits($0.data) } ?? false)
     }
 
-    /// The lease: a beat every 15 s. A blip is not a lost step; only the server saying it is no longer this Mac's is.
-    private func keep(_ lease: Lease) {
+    /// The lease of the step at `base`: a beat every 15 s. A blip is not a lost step; only the server saying it is no
+    /// longer this Mac's is.
+    static func keep(_ lease: Lease, api: DeviceAPI, base: String, every beatEvery: TimeInterval = 15) {
         var since = 0.0
         while !lease.isOver {
             Thread.sleep(forTimeInterval: 0.2)

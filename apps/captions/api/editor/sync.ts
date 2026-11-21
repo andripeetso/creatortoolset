@@ -234,3 +234,64 @@ function correlation(x: Float64Array, y: Float64Array): number {
   }
   return sxy / Math.sqrt(sxx * syy);
 }
+
+/** A camera take's other recordings of the same moment: the separate mic under it, and a second camera (its angle). */
+export interface Roll {
+  /** `offset_s`: seconds into the mic at the camera's 0 s */
+  mic?: { id: string; offset_s: number };
+  /** `offset_s`: seconds into the angle at the camera's 0 s */
+  angles?: { id: string; offset_s: number }[];
+}
+
+/** One source as pairing reads it: whether it has a picture, and when it was recorded and for how long (seconds). */
+export interface PairSource {
+  id: string;
+  picture: boolean;
+  capturedAt?: number;
+  duration: number;
+}
+
+/** Two recordings whose clocks put them this far apart (seconds) are never of one moment: their sound is not compared. */
+const APART_S = 3600;
+
+/**
+ * The pairs whose sound is compared, the camera first: two camera takes when their clocks say they overlap (the earlier
+ * one first, its ties by id), then each sound-only recording against each camera take. The order is the same whatever
+ * order the sources come in, so a pair compared once is known by its key ("a~b") on every later run.
+ * shortcut: two cameras with no clock, or one set hours wrong, are never paired as angles; compare every pair when that bites.
+ */
+export function pairsToTry(srcs: PairSource[]): [string, string][] {
+  const cams = srcs.filter((s) => s.picture).sort((a, b) => (a.capturedAt ?? Infinity) - (b.capturedAt ?? Infinity) || a.id.localeCompare(b.id));
+  const mics = srcs.filter((s) => !s.picture).sort((a, b) => a.id.localeCompare(b.id));
+  const near = (a: PairSource, b: PairSource) =>
+    a.capturedAt !== undefined && b.capturedAt !== undefined && a.capturedAt / 1000 < b.capturedAt / 1000 + b.duration + APART_S && b.capturedAt / 1000 < a.capturedAt / 1000 + a.duration + APART_S;
+  return [...cams.flatMap((a, i) => cams.slice(i + 1).filter((b) => near(a, b)).map((b): [string, string] => [a.id, b.id])), ...cams.flatMap((c) => mics.map((m): [string, string] => [c.id, m.id]))];
+}
+
+/**
+ * The rolls of an edit's sources, from the pairs that matched (matchPair(camera, other), keyed "a~b"): each camera take
+ * with its angles (a later camera take whose sound is the same moment) and its mic (the first sound-only recording found
+ * in it). One long mic or wide camera can be under several takes. A camera that is another's angle has no roll of its
+ * own: its lines are the other's. `under`: the sources that are another take's mic or angle, so their own words are not
+ * takes of their own.
+ */
+export function rollsOf(srcs: PairSource[], matched: Record<string, PairMatch | null>): { rolls: Record<string, Roll>; under: Set<string> } {
+  const rolls: Record<string, Roll> = {};
+  const under = new Set<string>();
+  for (const [a, b] of pairsToTry(srcs)) {
+    const m = matched[`${a}~${b}`];
+    if (!m || under.has(a)) continue;
+    const r = rolls[a] ?? {};
+    if (!srcs.find((s) => s.id === b)!.picture) {
+      if (r.mic) continue;
+      r.mic = { id: b, offset_s: m.offset_s };
+    } else {
+      // a camera with angles of its own stays a camera
+      if (rolls[b]) continue;
+      (r.angles ??= []).push({ id: b, offset_s: m.offset_s });
+    }
+    rolls[a] = r;
+    under.add(b);
+  }
+  return { rolls, under };
+}

@@ -10,6 +10,7 @@ import { libraryDb, playOf } from "../library/db";
 import { whoFor } from "../library/describe";
 import type { JobRow } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
+import { pairsLeft } from "../editor/analyze";
 import { atFor, foldersOf, lightKey } from "../editor/reach";
 import { downloadsAllowFor } from "./offline";
 import { serverOpen } from "./place";
@@ -54,7 +55,11 @@ function readsOf(kind: string, edit: EditMeta, variant: string, all: string[]): 
       return false;
     }
   };
-  if (kind === "analyze") return edit.sources.filter((id) => !has(id, "energy.f32") || !has(id, "eyeline.json"));
+  if (kind === "analyze") {
+    // and the sources of a pair still to compare by sound (analyze.ts pairsLeft)
+    const left = new Set(pairsLeft(edit).flat());
+    return edit.sources.filter((id) => !has(id, "energy.f32") || !has(id, "eyeline.json") || left.has(id));
+  }
   const draft = variant ? readDraft(edit.id, variant) : null;
   // a version's render, look and post read the draft's footage; before its draft, the edit's
   return draft ? Object.entries(draft.timeline.sources).filter(([, s]) => !s.file).map(([id]) => id) : all;

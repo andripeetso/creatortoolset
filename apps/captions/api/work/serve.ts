@@ -9,7 +9,9 @@ import { completeVisionWithFallback, type VisionImage } from "../ai-vision";
 import { packInstructions } from "../lib/packs";
 import { skillText } from "../lib/skills";
 import { CONTEXT_MAX, footageProfile } from "../lib/workshop/context";
+import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
+import { wordsOf } from "../library/transcribe";
 import type { JobRow } from "../library/jobs";
 import { workspaceSetup } from "../editor/plan";
 import { editRole, gradeOf, ownerOf, readEdit, seesEdit, type EditMeta } from "../editor/store";
@@ -96,6 +98,8 @@ const CALLS: Record<string, (h: { edit: EditMeta; actor: string }, args: unknown
     const names = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
     return skillText(ownerOf(edit), names, str(projectId) === edit.projectId ? edit.projectId : null, tools === null ? undefined : { ai: routeFor(actor), ...(tools === true ? { tools: true } : {}) });
   },
+  // the transcripts of the edit's own takes, for the look's word checks (critique.ts)
+  editorWords: async ({ edit }) => Object.fromEntries(edit.sources.map((id) => [id, wordsOf(libraryDb(), id) ?? []])),
   // an object, never null: the route's body is the answer
   grade: async ({ edit }) => ({ cdl: await gradeOf(ownerOf(edit), edit.bundle) }),
 };

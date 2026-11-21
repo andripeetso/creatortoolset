@@ -1,8 +1,9 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { Critique, EditPlan, IndexShot } from "../../contracts/edit-plan";
-import type { EditFeedback } from "../../contracts/editor";
+import type { EditFeedback, Timeline } from "../../contracts/editor";
 import { isLimitLine } from "../../contracts/plans";
 import { aiFor } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
@@ -11,13 +12,17 @@ import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { enqueueJob, MAX_ATTEMPTS } from "../library/jobs";
 import { clock, COLS, ROWS, RULE } from "../library/look";
-import { ffmpeg } from "../library/media/run";
-import { NeedsKey } from "../library/transcribe";
+import { ffmpeg, ffmpegSlot } from "../library/media/run";
+import { ffmpegCommand } from "../ffmpeg-runtime";
+import { NeedsKey, wordsOf } from "../library/transcribe";
+import { ask, onComputer } from "../work/on-computer";
+import { blackAtEnd, cutsOf, oddAt, TAIL_S, TH, TW, wordSlips, withFound, type Found } from "./checks";
 import { Waiting } from "./analyze";
 import type { StepContext } from "./engine";
 import { knownShots } from "./index";
 import { noteLines, sourceSpan, workspaceSetup } from "./plan";
 import { fileInReview, previewFile, saidOf } from "./preview";
+import { saidUnder } from "./broll";
 import { macAway } from "./script";
 import { editDir, markDraft, readDraft, readStep, type DraftFile, type EditMeta } from "./store";
 import { styleBlock } from "./styles";
@@ -45,7 +50,7 @@ const LINE_TEXT = 100;
 const CANT_MAX = 200;
 
 /** Two frames of each shot of the cut (frame numbers): a little after it starts and a little before it ends, always increasing. */
-export function shotFrames(plan: Pick<EditPlan, "fps" | "shots">): number[] {
+export function shotFrames(plan: { fps: number; shots: { at: number; dur: number }[] }): number[] {
   const out: number[] = [];
   for (const s of plan.shots) {
     const a = Math.round(s.at * plan.fps);
@@ -118,6 +123,88 @@ export function withFlaws(c: Critique, shown: (IndexShot | undefined)[], shots: 
   return { ...c, ok: !fails.length, fails: fails.sort((a, b) => a.n - b.n) };
 }
 
+/** ffmpeg's output, read through the server's ffmpeg limit. */
+function ffmpegOut(args: string[], signal?: AbortSignal): Promise<{ out: Buffer; err: string }> {
+  return ffmpegSlot(
+    () =>
+      new Promise((resolve, reject) => {
+        const p = spawn(ffmpegCommand(), ["-nostdin", ...args], { signal });
+        const out: Buffer[] = [];
+        let err = "";
+        p.stdout.on("data", (d: Buffer) => out.push(d));
+        p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-20000)));
+        p.on("error", reject);
+        p.on("close", (code) => (code === 0 ? resolve({ out: Buffer.concat(out), err }) : reject(new Error(err.trim().slice(-400) || `ffmpeg exited ${code}`))));
+      }),
+  );
+}
+
+/** Flash frames of the rendered `file` at the cut's own cuts (one decode of a 27×48 copy). */
+export async function flashFrames(file: string, cuts: number[], fps: number, signal?: AbortSignal): Promise<Found[]> {
+  if (!cuts.length) return [];
+  const { out } = await ffmpegOut(["-v", "error", "-i", file, "-an", "-vf", `fps=${fps},scale=${TW}:${TH}`, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], signal);
+  const size = TW * TH * 3;
+  const frames = Array.from({ length: Math.floor(out.length / size) }, (_, k) => new Uint8Array(out.buffer, out.byteOffset + k * size, size));
+  return [...new Set(cuts.flatMap((c) => oddAt(frames, c)))].map((f) => ({ rec: f, why: `a frame that belongs to neither shot at ${(f / fps).toFixed(2)} s` }));
+}
+
+/** Whether the rendered `file` ends on black (its last frame is no picture). */
+export async function endsOnBlack(file: string, duration: number, signal?: AbortSignal): Promise<boolean> {
+  const { err } = await ffmpegOut(["-v", "info", "-sseof", `-${TAIL_S}`, "-i", file, "-an", "-vf", "blackdetect=d=0.04:pix_th=0.08", "-f", "null", "-"], signal);
+  return blackAtEnd(err, duration);
+}
+
+/** Every check on the rendered `file` of cut `tl`; `words`: each take's transcript, for the word checks. */
+export async function renderChecks(tl: Timeline, file: string, words: Record<string, { w: string; s: number; e: number }[]>, signal?: AbortSignal): Promise<Found[]> {
+  const end = Math.max(0, ...(["V1", "V2", "A1", "A2", "A3"] as const).flatMap((t) => tl.tracks[t].items.map((i) => i.rec + i.len)));
+  const flashes = await flashFrames(file, cutsOf(tl), tl.fps, signal);
+  const black = (await endsOnBlack(file, end / tl.fps, signal)) ? [{ rec: Math.max(0, end - 1), why: "the video ends on black" }] : [];
+  return [...flashes, ...(tl.plan ? [] : wordSlips(tl, words)), ...black].sort((a, b) => a.rec - b.rec);
+}
+
+/** One shot of a cut as the picture shows it: when it plays (seconds), which footage and where in it, and whether it is a cutaway. */
+export interface PictureShot {
+  at: number;
+  dur: number;
+  src: string;
+  inS: number;
+  cutaway: boolean;
+}
+
+/** The shots a cut's picture shows, in order: a cutaway (V2) over the speaker (V1) is what plays where it lies. */
+export function pictureShots(tl: Timeline): PictureShot[] {
+  const top = [...tl.tracks.V2.items, ...tl.tracks.V1.items];
+  const edges = [...new Set(top.flatMap((i) => [i.rec, i.rec + i.len]))].sort((a, b) => a - b);
+  const out: (PictureShot & { item: object })[] = [];
+  for (let k = 0; k + 1 < edges.length; k++) {
+    const [a, b] = [edges[k]!, edges[k + 1]!];
+    const item = top.find((i) => i.rec <= a && a < i.rec + i.len);
+    if (!item) continue;
+    const prev = out.at(-1);
+    if (prev?.item === item) {
+      prev.dur = b / tl.fps - prev.at;
+      continue;
+    }
+    const sfps = tl.sources[item.src]?.fps || tl.fps;
+    out.push({ item, at: a / tl.fps, dur: (b - a) / tl.fps, src: item.src, inS: item.in / sfps + (a - item.rec) / tl.fps, cutaway: tl.tracks.V2.items.includes(item) });
+  }
+  return out.map(({ item: _, ...s }) => s);
+}
+
+/** Each shot's line for the look at a cut around speech: when it plays, which footage and where, and what is said under it. */
+export function talkLines(shots: PictureShot[], titles: Record<string, string>, said: (at: number, dur: number) => string): string[] {
+  return shots.map((s, k) => {
+    const words = said(s.at, s.dur).trim().slice(0, LINE_TEXT * 2);
+    return `${k + 1}. ${s.at.toFixed(2)}–${(s.at + s.dur).toFixed(2)} s · ${s.cutaway ? "cutaway" : "speaker"} · ${JSON.stringify(titles[s.src] ?? s.src)} at ${clock(s.inS)}${words ? ` · says: ${JSON.stringify(words)}` : ""}`;
+  });
+}
+
+/** The words of each take a cut plays, from the library (on a computer: asked of the server). */
+const spokenOf = async (tl: Timeline): Promise<Record<string, { w: string; s: number; e: number }[]>> =>
+  onComputer.on
+    ? ask("editorWords")
+    : Object.fromEntries([...new Set([...tl.tracks.A1.items, ...tl.tracks.V1.items].map((i) => i.src))].filter((id) => !tl.sources[id]?.file).map((id) => [id, wordsOf(libraryDb(), id) ?? []]));
+
 export const CRITIQUE_SYSTEM = `You watch a cut of a video before the person who asked for it does. You get what they asked for (the brief), their own words on earlier versions when there are any, the editing style, a line for each shot (when it plays, which footage it is and where in it, what that stretch of footage is described as, and why it was picked), and pictures of the cut: two frames of every shot, one just after it starts and one just before it ends.
 
 Judge the whole cut against all of that at once, the way the person will when they watch it. A shot fails when it doesn't hold up in this cut: watching it, the person would want it out or changed (a stretch where nothing happens in a cut that asks for action, say, a picture you can't make out, or something already shown: the same picture, or the same action again from another stretch). Name only the shots that fail, by number, each with one short reason in plain words, under ten words, about what is seen ("walking through town, nothing happens"). When every shot holds up, name none.
@@ -173,28 +260,52 @@ export function parseCritique(text: string, shots: number | { at: number; dur: n
   return { ok: !fails.length, fails: fails.sort((a, b) => a.n - b.n), round };
 }
 
+/** A cut as the look reads it: its shots in order (seconds), a line for each, and what its shots show when known. */
+interface LookCut {
+  fps: number;
+  landscape: boolean;
+  shots: { at: number; dur: number }[];
+  lines: string[];
+  song: boolean;
+  shown?: (IndexShot | undefined)[];
+}
+
+/** A planned cut as the look reads it. */
+async function plannedCut(plan: EditPlan, d: DraftFile): Promise<LookCut> {
+  const titles = Object.fromEntries(Object.entries(d.timeline.sources).map(([id, s]) => [id, s.name]));
+  const shown = await shownStretches(plan);
+  return { fps: plan.fps, landscape: plan.w >= plan.h, shots: plan.shots, lines: cutLines(plan, titles, shown), song: plan.lead.type === "song", shown };
+}
+
+/** A cut around speech as the look reads it: the shots its picture shows, with what is said under each. */
+function talkingCut(tl: Timeline, words: Record<string, { w: string; s: number; e: number }[]>): LookCut {
+  const titles = Object.fromEntries(Object.entries(tl.sources).map(([id, s]) => [id, s.name]));
+  const shots = pictureShots(tl);
+  const said = saidUnder(tl, words);
+  return { fps: tl.fps, landscape: tl.width >= tl.height, shots, lines: talkLines(shots, titles, (at, dur) => said(Math.round(at * tl.fps), Math.round(dur * tl.fps))), song: false };
+}
+
 /** The look at one version's rendered cut. */
-async function look(edit: EditMeta, actor: string, variant: string, plan: EditPlan, d: DraftFile, round: number, signal: AbortSignal): Promise<Critique> {
+async function look(edit: EditMeta, actor: string, variant: string, cut: LookCut, round: number, signal: AbortSignal): Promise<Critique> {
   const who = whoFor(actor);
   const route = aiFor(who, "editor", LABEL);
   if (route.off) throw new NeedsKey(route.off);
   const dir = path.join(editDir(edit.id), "previews", `${variant}.sheets`);
   try {
-    const sheets = await cutSheets(previewFile(edit.id, variant), shotFrames(plan), plan.w >= plan.h, dir);
+    const sheets = await cutSheets(previewFile(edit.id, variant), shotFrames(cut), cut.landscape, dir);
     const images = await Promise.all(sheets.map(async (f) => ({ jpegBase64: (await readFile(f)).toString("base64") })));
-    const titles = Object.fromEntries(Object.entries(d.timeline.sources).map(([id, s]) => [id, s.name]));
-    const shown = await shownStretches(plan);
     const { system, user } = critiquePrompt({
       brief: edit.brief,
       workspace: await workspaceSetup(edit, 6000),
       notes: edit.feedback ?? [],
       style: await styleBlock(edit.style, edit),
-      shots: cutLines(plan, titles, shown),
+      shots: cut.lines,
       sheets: sheets.length,
-      seconds: plan.shots.reduce((t, s) => Math.max(t, s.at + s.dur), 0),
-      song: plan.lead.type === "song",
+      seconds: cut.shots.reduce((t, s) => Math.max(t, s.at + s.dur), 0),
+      song: cut.song,
     });
-    return withFlaws((await completeVisionWithFallback(system, user, images, signal, (t) => parseCritique(t, plan.shots, round), who, { label: LABEL, job: "editor" })).value, shown, plan.shots);
+    const c = (await completeVisionWithFallback(system, user, images, signal, (t) => parseCritique(t, cut.shots, round), who, { label: LABEL, job: "editor" })).value;
+    return cut.shown ? withFlaws(c, cut.shown, cut.shots) : c;
   } catch (e) {
     const away = macAway(e);
     if (away) throw new NeedsKey(away.message);
@@ -205,8 +316,9 @@ async function look(edit: EditMeta, actor: string, variant: string, plan: EditPl
 }
 
 /**
- * The critique step (one planned version), after its preview: a cut the AI made (DraftFile.due) is looked at and filed
- * in Review here, with any failing shots named on it; any other cut is filed as it is. A look that can't be made files
+ * The critique step (one version), after its preview: a cut the AI made (DraftFile.due), planned or around speech, is
+ * looked at and checked (checks.ts) and filed in Review here, with any failing shots named on it; any other cut (one the
+ * person saved) is filed as it is. A look that can't be made files
  * the cut it has, and says so on it.
  */
 export async function critiqueStep({ edit, job, variant, signal }: StepContext): Promise<void> {
@@ -231,21 +343,38 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
     const why = limit ? (isLimitLine(limit.line) ? limit.line : "The AI's usage limit is reached") : e instanceof Waiting ? (e.line ?? "The footage is still being read") : e instanceof Error ? e.message : String(e);
     return why.replace(/\s+/g, " ").trim().replace(/\.$/, "").slice(0, CANT_MAX);
   };
-  const shots = readStep(edit.id, "shots");
-  const saved = shots?.[variant];
-  if (!due || !saved) return file(d.critique);
+  if (!due) return file(d.critique);
+  // a planned cut is read as its plan; any other cut the AI made (around speech) as the shots its picture shows
+  const saved = readStep(edit.id, "shots")?.[variant];
+  // words for the checks: none when they can't be read (a server too old to give them a computer)
+  const words = saved ? {} : await spokenOf(d.timeline).catch(() => ({}));
+  let cut: LookCut;
+  try {
+    cut = saved ? await plannedCut(saved.plan, d) : talkingCut(d.timeline, words);
+  } catch (e) {
+    const why = await cant(e);
+    if (why) return file(d.critique, `Not checked before Review: ${why}`);
+    throw e;
+  }
+  // the checks on the render itself: named on the cut, never a reason to hold it (a check that fails to run is skipped)
+  const found = await renderChecks(d.timeline, previewFile(edit.id, variant), words, signal).catch((e: Error) => {
+    if (!signal.aborted) console.warn("[editor] render checks:", e.message);
+    return [];
+  });
+  if (signal.aborted) return;
+  const checked = (c: Critique | undefined) => (found.length ? withFound(c ?? { ok: true, fails: [], round: 1 }, found, cut.shots, cut.fps) : c);
   // looked at already by a try that stopped after it: not asked again
   let c = d.critique;
   if (!c) {
     try {
-      c = await look(edit, job.actor!, variant, saved.plan, d, 1, signal);
+      c = await look(edit, job.actor!, variant, cut, 1, signal);
     } catch (e) {
       const why = await cant(e);
-      if (why) return file(undefined, `Not checked before Review: ${why}`);
+      if (why) return file(checked(undefined), `Not checked before Review: ${why}`);
       throw e;
     }
     if (signal.aborted) return;
     await markDraft(edit.id, variant, { ...d, critique: c });
   }
-  return file(c);
+  return file(checked(c));
 }

@@ -7,12 +7,14 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import { LOAD_PREFERENCES, type Device, type DeviceWaits } from "../contracts/providers";
 import { addAgain } from "../src/lib/wording";
-import { COPY_KIND, CUTOUT_KIND, FOLDER_BROWSE_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
+import { COPY_KIND, CUTOUT_KIND, FOLDER_BROWSE_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, LOOKAWAY_KIND, parseKinds, parseModels, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceClaim, type DeviceHint } from "../contracts/devices";
 import { clientAddress, phoneOrigin, type AuthVars } from "./auth";
 import { claimableBy, usesFootage } from "./editor/engine";
 import { fitsFor, footageFor, heldCopy } from "./editor/reach";
 import { serveBlob } from "./library/routes";
 import { cardsDraw, saveCard } from "./editor/cards/device";
+import { gazeFromDevice, gazeWanted } from "./editor/lookaway";
+import { readDraft } from "./editor/store";
 import { beatForDevice, claimForDevice, doneForDevice, failForDevice, waitsForDevice } from "./editor/worker";
 import { mayClaim, moveBalance, offOf, readBalance, writeBalance, type WorkerSeen } from "./lib/balance";
 import { claimTranscript, declareModels, heldAudio, heldProxy, isComputerModel, modelsOutOfStep, transcriptFailed, transcriptSent, transcriptWaits } from "./lib/computer-transcribe";
@@ -152,7 +154,12 @@ devicesApp.post("/relay/editor/claim", async (c) => {
 /** An AI Editor step for the device, if one waits for it: a step that reads footage carries where its files are for it. */
 async function editorStep(d: Device, kinds: string[]) {
   const job = await claimForDevice(d, kinds, Date.now(), await fitsFor(d));
-  return job && usesFootage(job.kind) ? { ...job, footage: await footageFor(d, job.editId) } : job;
+  if (!job || !usesFootage(job.kind)) return job;
+  const footage = await footageFor(d, job.editId);
+  // a look-away step reads only the takes of its cut still to measure
+  const cut = job.kind === LOOKAWAY_KIND ? readDraft(job.editId, job.variant) : undefined;
+  const wanted = cut === undefined ? null : new Set(cut ? gazeWanted(cut.timeline) : []);
+  return { ...job, footage: wanted ? footage.filter((f) => wanted.has(f.id)) : footage };
 }
 /** The kinds a device lists (its claim, or its long poll), kept as its own, and the ones of them it may take now. */
 async function declared(d: Device, kinds: string[]): Promise<string[]> {
@@ -230,6 +237,13 @@ devicesApp.get("/relay/editor/job/:id/footage/:version", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const key = heldCopy(d.id, jobId(c), c.req.param("version"), c.req.query("original") === "1");
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
+});
+// a look-away step (contracts/devices.ts LOOKAWAY_KIND): one take's samples
+devicesApp.post("/relay/editor/job/:id/gaze/:version", async (c) => {
+  const d = deviceCaller(c);
+  if (!d) return c.json({ error: "Unauthorized" }, 401);
+  const wrong = await gazeFromDevice(d.id, jobId(c), c.req.param("version"), await c.req.json().catch(() => null));
+  return wrong ? c.json({ error: wrong }, wrong === "Not found" ? 404 : 400) : c.json({ ok: true });
 });
 // a cards-draw step (contracts/devices.ts): what the Mac that holds it is to draw, and each card it drew
 devicesApp.get("/relay/editor/job/:id/cards", (c) => {
