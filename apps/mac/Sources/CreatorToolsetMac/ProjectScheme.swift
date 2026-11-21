@@ -42,8 +42,8 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
     /// the folders the page may play from: its server's, for the clip's workspace (`?ws=` on the media URL; none: any)
     private let granted: @MainActor (_ page: URL?, _ workspace: String?) -> [String]
     /// Tasks still being answered. Holding them keeps their ids unique until they end; `stop` removes one. Read and
-    /// written on the main thread only.
-    private var live: [ObjectIdentifier: WKURLSchemeTask] = [:]
+    /// written on the main thread only (not private: the tests stand in for WebKit).
+    var live: [ObjectIdentifier: WKURLSchemeTask] = [:]
 
     init(root: @escaping @MainActor () -> URL,
          granted: @escaping @MainActor (URL?, String?) -> [String] = { MediaFiles.granted(server: MediaFiles.serverKey($0), workspace: $1) }) {
@@ -86,9 +86,10 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         // with the proxy cache of the account signed in on the page's own server (ProxyCache.swift)
         let workspace = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ws" }?.value
         let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(webView.url, workspace), ProxyCache.allowed(page: webView.url)) }
-        // no account known yet for the page's server (no places check ran): a refused file is asked again once it is
+        // the account may be unknown (no places check ran yet) or another one (signed in again in this window): a refused
+        // file asks the page's server for its account once, then is judged again
         let store = webView.configuration.websiteDataStore.httpCookieStore
-        let ask: (() async -> String?)? = cache != nil ? nil : webView.url.map { page in {
+        let ask: (() async -> String?)? = webView.url.map { page in {
             await ProxyCache.allowed(page: page) { @MainActor in
                 let all = await withCheckedContinuation { c in store.getAllCookies { c.resume(returning: $0) } }
                 return Site(base: page, cookies: cookies(for: page, in: all))
@@ -104,14 +105,16 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         live[ObjectIdentifier(urlSchemeTask)] = nil
     }
 
-    private func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?,
+    func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?,
                        ask: (() async -> String?)? = nil, task: WKURLSchemeTask) {
         guard method == "GET" else { return reply(task, url, 405, ["Allow": "GET"]) }
         if url.host == MediaFiles.host {
             guard let path = MediaFiles.path(from: url) else { return reply(task, url, 404) }
             switch MediaFiles.gate(path, granted: granted, cache: cache, firstRead: true) {
             case .status(403) where ask != nil:
-                // the page marks a refused file bad for good, so the account is asked before answering (off this thread)
+                // the page marks a refused file bad for good, so the account is asked before answering (off this thread);
+                // the second try has no `ask`, so a file still refused is answered 403
+                nonisolated(unsafe) let task = task   // only answered through deliver, on the main thread
                 Task {
                     let cache = await ask!()
                     DispatchQueue.global(qos: .userInitiated).async {

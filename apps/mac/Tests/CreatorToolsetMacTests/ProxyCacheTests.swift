@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 import XCTest
 @testable import CreatorToolsetMac
 
@@ -105,11 +106,11 @@ final class ProxyCacheTests: XCTestCase {
         XCTAssertEqual(answers.count, 22)
         for cache in answers { XCTAssertEqual(MediaFiles.gate(mine, granted: [], roots: [], cache: cache), .file(mine, type: "video/mp4")) }
         XCTAssertEqual(site.requests.filter { $0.path == "/api/auth/check" }.count, 1)
-        // known now: no more asking
+        // known now, so the first try is served; one asked later (a file refused) asks again, once
         site.forget()
         let again = await ProxyCache.allowed(page: page) { Site(base: page, cookies: []) }
         XCTAssertNotNil(again)
-        XCTAssertTrue(site.requests.isEmpty)
+        XCTAssertEqual(site.requests.filter { $0.path == "/api/auth/check" }.count, 1)
 
         // signed out: still refused
         let out = FakeSite()
@@ -119,6 +120,71 @@ final class ProxyCacheTests: XCTestCase {
         let cache = await ProxyCache.allowed(page: outPage) { Site(base: outPage, cookies: []) }
         XCTAssertNil(cache)
         XCTAssertEqual(MediaFiles.gate(theirs, granted: [], roots: [], cache: cache), .status(403))
+    }
+
+    /// The scheme's side: a proxy refused with the folder of the account known before (alice) asks the server, which
+    /// says bob now, and is served from bob's cache; the second try never asks again, so a file still refused is a 403.
+    func testARefusedProxyIsServedOnceTheAccountIsAsked() throws {
+        let site = FakeSite()
+        site.answer = { _ in (200, #"{"authed":true,"user":{"username":"bob"},"viewedBy":null}"#) }
+        try proxy(site.url, "alice", "v1")
+        let bobs = try proxy(site.url, "bob", "v2")
+        let page = site.url.appendingPathComponent("editor/p1")
+        ProxyCache.remember("alice", for: site.url)
+        let scheme = ProjectScheme(root: { self.root })
+        var asks = 0
+        let served = run(scheme, bobs, cache: ProxyCache.allowed(page: page)) {
+            asks += 1
+            return await ProxyCache.allowed(page: page) { Site(base: page, cookies: []) }
+        }
+        XCTAssertEqual(served.status, 200)
+        XCTAssertEqual(served.bytes, 100)
+        XCTAssertTrue(served.finished)
+        XCTAssertEqual(asks, 1)
+        XCTAssertEqual(ProxyCache.allowed(page: page), ProxyCache.folder(server: site.url, account: "bob")?.path)
+
+        // still refused after asking (the answer kept alice): one ask, then 403, never a loop
+        ProxyCache.remember("alice", for: site.url)
+        let alices = ProxyCache.allowed(page: page)
+        asks = 0
+        let refused = run(scheme, bobs, cache: alices) { asks += 1; return alices }
+        XCTAssertEqual(refused.status, 403)
+        XCTAssertTrue(refused.finished)
+        XCTAssertEqual(asks, 1)
+    }
+
+    /// A request WebKit stops while the account is being asked gets nothing more.
+    func testARequestStoppedDuringTheAskGetsNothing() throws {
+        let server = URL(string: "https://studio.example.com")!
+        let bobs = try proxy(server, "bob", "v2")
+        let scheme = ProjectScheme(root: { self.root })
+        let asked = expectation(description: "asked")
+        let task = FakeTask(MediaFiles.url(path: bobs))
+        let got = run(scheme, bobs, cache: nil, task: task, settle: 0.5) {
+            await MainActor.run { scheme.webView(WKWebView(), stop: task) }
+            asked.fulfill()
+            return ProxyCache.folder(server: server, account: "bob")?.path
+        }
+        wait(for: [asked], timeout: 1)
+        XCTAssertNil(got.status)
+        XCTAssertEqual(got.bytes, 0)
+        XCTAssertFalse(got.finished)
+    }
+
+    /// `path` asked of `scheme` as WebKit would, with the page's cache folder `cache`; waits for the answer to end, or
+    /// `settle` seconds when none is expected.
+    private func run(_ scheme: ProjectScheme, _ path: String, cache: String?, task: FakeTask? = nil, settle: TimeInterval? = nil,
+                     ask: @escaping () async -> String?) -> FakeTask {
+        let task = task ?? FakeTask(MediaFiles.url(path: path))
+        scheme.live[ObjectIdentifier(task)] = task
+        let done = expectation(description: "answered")
+        if settle != nil { done.isInverted = true }
+        task.ended = { done.fulfill() }
+        DispatchQueue.global().async {
+            scheme.serve(task.request.url!, method: "GET", range: nil, root: self.root, granted: [], cache: cache, ask: ask, task: task)
+        }
+        wait(for: [done], timeout: settle ?? 5)
+        return task
     }
 
     func testOnlyAPlainAccountNameIsAFolder() {
@@ -269,4 +335,18 @@ final class ProxyCacheTests: XCTestCase {
             XCTAssertEqual(error as? ProxyCacheMoveError, .inside)
         }
     }
+}
+
+/// WebKit's side of one ctlocal request, as the tests see it (answered on the main thread, ProjectScheme.deliver).
+final class FakeTask: NSObject, WKURLSchemeTask {
+    let request: URLRequest
+    var status: Int?
+    var bytes = 0
+    var finished = false
+    var ended: () -> Void = {}
+    init(_ url: URL) { request = URLRequest(url: url) }
+    func didReceive(_ response: URLResponse) { status = (response as? HTTPURLResponse)?.statusCode }
+    func didReceive(_ data: Data) { bytes += data.count }
+    func didFinish() { finished = true; ended() }
+    func didFailWithError(_ error: Error) { ended() }
 }

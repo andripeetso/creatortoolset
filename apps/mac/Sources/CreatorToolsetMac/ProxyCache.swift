@@ -289,10 +289,10 @@ enum ProxyCache {
     /// per server: the account check under way, so the many first requests of a page make one
     private static var asking: [String: Task<Void, Never>] = [:]
 
-    /// `allowed(page:)`, with the page's server asked for the window's account first when none is known yet (a page
-    /// that plays proxies before any places check, such as the editor). Nil when signed out.
+    /// `allowed(page:)` after asking the page's server for the window's account again: for a file refused while the
+    /// account was not known yet (no places check ran, as in the editor) or was another one (signed in again in the
+    /// window). One check at a time per server: the requests that come during it share its answer. Nil when signed out.
     static func allowed(page: URL?, site: @escaping () async -> Site) async -> String? {
-        if let known = allowed(page: page) { return known }
         guard let page, page.scheme == "http" || page.scheme == "https" else { return nil }
         let k = key(page)
         let check = lock.withLock {
