@@ -184,7 +184,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
   /** where a source's file plays from in this browser (null: not here) */
-  urlOf: (src: string, tl: NleTimeline) => NleFile | null;
+  /** `clip`: the key of the sound clip that plays it, when one asks (its own `processing` can pick another file) */
+  urlOf: (src: string, tl: NleTimeline, clip?: string) => NleFile | null;
   /** Save (⌘S): the timeline as it is saved; resolves once it is kept */
   onSave: (tl: NleTimeline) => Promise<void>;
   /** each edit and save: the timeline as it is now and as it was last saved (the page tells the chat what changed) */
@@ -432,7 +433,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
 
   // a text clip plays its design's PNG from the server; a design deleted since is a red clip (asked once a PNG)
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
-  const urlOf = useCallback((src: string, t: NleTimeline): NleFile | null => (isDesign(t.sources[src]) ? designFile(t.sources[src], gone) : pageUrlOf(src, t)), [pageUrlOf, gone]);
+  const urlOf = useCallback((src: string, t: NleTimeline, clip?: string): NleFile | null => (isDesign(t.sources[src]) ? designFile(t.sources[src], gone) : pageUrlOf(src, t, clip)), [pageUrlOf, gone]);
   const asked = useRef(new Set<string>());
   useEffect(() => {
     for (const s of Object.values(tl.sources)) {
@@ -503,8 +504,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     }
   };
 
-  const urlFor = useCallback((src: string) => urlOf(src, shown), [urlOf, shown]);
-  const srcUrl = useCallback((k: string) => (srcTl ? urlOf(k, srcTl) : null), [urlOf, srcTl]);
+  const urlFor = useCallback((src: string, clip?: string) => urlOf(src, shown, clip), [urlOf, shown]);
+  const srcUrl = useCallback((k: string, clip?: string) => (srcTl ? urlOf(k, srcTl, clip) : null), [urlOf, srcTl]);
   const nameOfSrc = useCallback((src: string) => isDesign(shown.sources[src]) ? "Text" : String(shown.sources[src]?.path ?? shown.sources[src]?.name ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
   const nameOf = useCallback((it: NleItem) => (typeof it.name === "string" && it.name) || (typeof it.line === "string" && it.line ? `${it.line} · ${nameOfSrc(it.src)}` : nameOfSrc(it.src)), [nameOfSrc]);
 
