@@ -73,7 +73,7 @@ describe("what the Mac app says of a file", () => {
     expect(pathLine(await localFileState("ctlocal://media/x"))).toBeUndefined();
   });
 
-  it("placesState: a file that needs an OK in a folder added from this Mac is allowed and asked again; another computer's waits", async () => {
+  it("placesState: a file that needs an OK in a folder set for this Mac is allowed and asked again; another computer's waits", async () => {
     const asked: unknown[] = [];
     let ok = false;
     vi.stubGlobal("document", { documentElement: { dataset: { macDevice: "mac1" } } });
@@ -84,7 +84,9 @@ describe("what the Mac app says of a file", () => {
       if (b.folderGrant) return { granted: (ok = true) };
       return { states: { "/Volumes/X/FOOTAGE/a.mov": ok ? "here" : "needs_ok" } };
     } } } } });
-    expect(await placesState(["/Volumes/X/FOOTAGE/a.mov"])).toEqual({ states: { "/Volumes/X/FOOTAGE/a.mov": "here" }, disks: {} });
+    // two asks at once (an effect run twice) share one allow, and both get the answer after it
+    const both = await Promise.all([placesState(["/Volumes/X/FOOTAGE/a.mov"]), placesState(["/Volumes/X/FOOTAGE/a.mov"])]);
+    expect(both).toEqual([0, 1].map(() => ({ states: { "/Volumes/X/FOOTAGE/a.mov": "here" }, disks: {} })));
     expect(asked.filter((b) => (b as { folderGrant?: unknown }).folderGrant)).toEqual([{ folderGrant: { path: "/Volumes/X/FOOTAGE", folder: "f1" } }]);
     vi.unstubAllGlobals();
   });

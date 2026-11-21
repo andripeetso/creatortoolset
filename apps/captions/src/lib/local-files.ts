@@ -88,21 +88,26 @@ export async function placesState(paths: string[]): Promise<PathStates | null> {
   return said && Object.values(said.states).includes("needs_ok") && (await allowOwnFolders()) ? ask() : said;
 }
 
-let ownAsked = 0;
+let own: { at: number; p: Promise<boolean> } | null = null;
 /**
- * The Settings → Folders folders added from this Mac are its person's own: they play here with no second OK (owner,
- * 2026-11-21: "local files on my Mac should always be played locally"). A folder another computer added still waits for
- * the press. At most every 30 s, when this Mac says a file needs an OK; true when one was allowed.
+ * The Settings → Folders folders his account set for this Mac are his own: they play here with no second OK (owner,
+ * 2026-11-21: "local files on my Mac should always be played locally"). Calls at once share one ask; one that allowed
+ * nothing (the Mac hasn't read the folder list yet) is asked again on the next call, one that allowed some not for 30 s.
  */
-async function allowOwnFolders(): Promise<boolean> {
+function allowOwnFolders(): Promise<boolean> {
   const me = typeof document === "undefined" ? undefined : document.documentElement.dataset.macDevice;
-  if (!me || Date.now() - ownAsked < 30_000) return false;
-  ownAsked = Date.now();
-  const r = await fetch("/api/devices/storage").catch(() => null);
-  const view = r?.ok ? ((await r.json().catch(() => null)) as { folders?: { id: string; origin: { host: string; path: string } }[] } | null) : null;
-  let any = false;
-  for (const f of view?.folders ?? []) if (f.origin?.host === me && (await folderGrant(f.origin.path, f.id))) any = true;
-  return any;
+  if (!me) return Promise.resolve(false);
+  if (own && Date.now() - own.at < 30_000) return own.p;
+  const p = (async () => {
+    const r = await fetch("/api/devices/storage").catch(() => null);
+    const view = r?.ok ? ((await r.json().catch(() => null)) as { folders?: { id: string; origin: { host: string; path: string } }[] } | null) : null;
+    let any = false;
+    for (const f of view?.folders ?? []) if (f.origin?.host === me && (await folderGrant(f.origin.path, f.id))) any = true;
+    return any;
+  })();
+  const mine = (own = { at: Date.now(), p });
+  void p.then((any) => { if (!any && own === mine) own = null; });
+  return p;
 }
 
 /** "Allow on this Mac", pressed for a Settings → Folders folder (`folder` its id, `path` its path on this Mac). */
