@@ -103,6 +103,8 @@ async function enhanced(edit: EditMeta, actor: string, tl: Timeline, groups: str
     const no = missing.find(([, fx]) => !can.includes(fx));
     if (no) throw new NeedsKey(`${fxName(no[1])} can't run for you yet: set it up in Settings, or pick another voice for this edit`);
     const files = await localFiles({ ...tl, sources: Object.fromEntries(missing.map(([src]) => [src, tl.sources[src]!])) }, undefined, true);
+    // shortcut: a session enhances the whole recording, even when the cut uses a minute of an hour (and Adobe's plan may refuse
+    // the length); cut the span the edit uses first, on a computer, when moments of long recordings get a voice
     for (const [src, fx] of missing) {
       const id = await enhanceFile(user, `${edit.name} · ${tl.sources[src]!.name}`, files[src]!, fx, edit.projectId);
       all[src] = { ...all[src], [fx]: id };
@@ -182,6 +184,8 @@ export async function stemsPlan(edit: EditMeta, variant: string, tl: Timeline, g
   parts.push({ name: "rest.m4a", clips: rest.map((i) => clipOf(tl, i, name(local[i.src]!))) });
   mix["rest.m4a"] = 1;
   const secs = cutEnd(tl) / tl.fps;
+  // shortcut: the mix stays at the Enhancer's -15 LUFS (with a limiter), not the -14 every other preview is levelled to, so
+  // Review's controls play exactly what the cut does; level both parts and mix together if the 1 LU step is noticed
   const set: StemSet = { groups: groups.map((src) => ({ key: stemKey(src), label: tl.sources[src]!.name, mix: shareOf(edit.voice, src) })), fx, voice, duration: secs };
   return { edit: edit.id, variant, key: stemsKey(tl, edit.voice), secs, parts, mix, files, set };
 }
