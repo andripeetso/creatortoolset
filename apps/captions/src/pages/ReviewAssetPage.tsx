@@ -111,6 +111,8 @@ import { OriginalsPicture } from "@/components/OriginalsPicture";
 import { PlanOverlay } from "@/components/PlanOverlay";
 import { payloadError } from "@contracts/review-payload";
 import { canChange, useMe } from "@/lib/auth";
+import { useKeymap } from "@/components/nle/NleKeyboard";
+import { keyAction } from "@/lib/nle/keys";
 import { isPhoneHub } from "@/lib/mobile";
 import { webPlugins } from "@/plugins.gen";
 import { canReveal, revealReviewFile } from "./library/clip";
@@ -439,20 +441,25 @@ function Review({
     return () => window.removeEventListener("pointerup", up, true);
   }, []);
 
+  // play, shuttle and step from the editor's keys (lib/nle/keys.ts, with the person's own changes): 2 / Space play, 1 / 3 and J / L shuttle
+  const keys = useKeymap();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (comparing || screenEditor || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      // a key the timeline took (EditTimeline, which listens first): C cuts there in Edit mode, not a comment
+      if (e.defaultPrevented || comparing || screenEditor || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "Escape" && rangeIn !== null) {
         clearRange();
         return;
       }
       const k = e.key.toLowerCase();
-      if (k === " ") toggle();
-      else if (k === "k" || k === "2") shuttleTo(0);
-      else if (k === "l" || k === "3") shuttleTo(shuttle > 0 ? Math.min(shuttle * 2, 8) : 2);
-      else if (k === "j" || k === "1") shuttleTo(shuttle < 0 ? Math.max(shuttle * 2, -8) : -2);
-      else if (k === "arrowleft") step(e.shiftKey ? -Math.max(1, Math.round(fps || 30)) : -1);
-      else if (k === "arrowright") step(e.shiftKey ? Math.max(1, Math.round(fps || 30)) : 1);
+      const a = keyAction(e, keys);
+      const second = Math.max(1, Math.round(fps || 30));
+      if (a === "play") toggle();
+      else if (a === "stop") shuttleTo(0);
+      else if (a === "forward") shuttleTo(shuttle > 0 ? Math.min(shuttle * 2, 8) : 2);
+      else if (a === "reverse") shuttleTo(shuttle < 0 ? Math.max(shuttle * 2, -8) : -2);
+      else if (a === "frameBack" || a === "secondBack") step(a === "frameBack" ? -1 : -second);
+      else if (a === "frameOn" || a === "secondOn") step(a === "frameOn" ? 1 : second);
       else if (k === "m") setMuted((m) => !m);
       else if (k === "f") void fullscreen();
       else if (k === "c" || k === "enter") {
@@ -1259,7 +1266,7 @@ function Review({
             )}
             {postError && <p className="mt-1.5 text-xs text-red-400">{postError}</p>}
             <p className="mt-1.5 hidden text-[11px] text-zinc-600 lg:block">
-              Space play · J/K/L or 1/2/3 shuttle · ←/→ frame · Shift ←/→ second · C comment
+              Space or 2 play · J/L or 1/3 shuttle, K stops · ←/→ frame · Shift ←/→ second · C comment
             </p>
           </div>)}
         </aside>

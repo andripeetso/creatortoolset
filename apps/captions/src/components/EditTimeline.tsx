@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Crop, Eye, EyeOff, Lock, LockOpen, Magnet, Minus, MousePointer2, MoveHorizontal, Palette, Pencil, Plus, Redo2, RotateCcw, Scissors, Smile, SquareDashed, Trash2, Undo2, Volume2, VolumeX, X } from "lucide-react";
 import { SNAP_PX, settle, snapDelta } from "@/lib/clip-drag";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
+import { useKeymap } from "@/components/nle/NleKeyboard";
+import { keyAction } from "@/lib/nle/keys";
 import { useTimeAxis } from "@/lib/use-time-axis";
 import { PEAKS_PER_SECOND, wavePath } from "@/lib/waveform";
 import {
@@ -401,59 +403,68 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     if (scroller.current) scroller.current.scrollLeft = 0;
   };
 
-  // keys: = / - zoom, \ fits, ↑ / ↓ the previous / next
-  // cut; in Edit mode ⌘B or ⌘K cuts at the playhead, A / B select / blade, N snapping, Q / W (Shift+[ / ])
-  // trim the picked clip's start / end to the playhead, , / . nudge it (Shift: 5 frames), Delete takes
-  // out the picked item or placeholder, Esc lets go
+  // the editor's keys (lib/nle/keys.ts, with the person's own changes), so Review and the editor never differ: = / - zoom,
+  // \ fits, ↑ / ↓ the previous / next cut; in Edit mode W, C or ⌘B cuts at the playhead, Q / E trim the picked clip's (else
+  // the one under the playhead's) start / end to it, A / B select / blade, N snapping, , / . nudge (Shift: 5 frames),
+  // S / Delete take out the picked item or placeholder, Esc lets go. Review's own on top: Y slip, ⌘K cut, { / } trim.
+  // On document: after menus, dialogs and overlays had the key (one they took is theirs), before the page's keys on window,
+  // which leave a key taken here (C cuts here in Edit mode, opens a comment outside it)
+  const keys = useKeymap();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest?.("input, textarea, select, [contenteditable=true]")) return;
+      if (e.defaultPrevented || t?.closest?.("input, textarea, select, [contenteditable=true]")) return;
       const k = e.key.toLowerCase();
-      if (edit && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-        const texting = !!window.getSelection()?.toString(); // copying words off the page stays the browser's
-        let done = true;
-        if (k === "b" || k === "k") splitHere();
-        else if (k === "a") selectAll();
-        else if (k === "c" && !texting && group.length) done = !!copyGroup();
-        else if (k === "x" && !texting && group.length) {
-          const copied = copyGroup();
-          if (copied) removeToggle(copied);
-          done = !!copied;
-        } else if (k === "v" && clip.length) pasteAt(playF);
-        else done = false;
-        if (done) {
-          e.preventDefault();
-          return;
-        }
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "=" || e.key === "+") zoomBy(1.5);
-      else if (e.key === "-" || e.key === "_") zoomBy(1 / 1.5);
-      else if (e.key === "\\") zoomTo(1);
-      else if (e.key === "ArrowUp") jumpCut(-1);
-      else if (e.key === "ArrowDown") jumpCut(1);
-      else if (edit && k === "n") setSnapOn((v) => !v);
-      else if (edit && k === "a") setTool("select");
-      else if (edit && k === "b") setTool(tool === "blade" ? "select" : "blade");
-      else if (edit && k === "y") setTool(tool === "slip" ? "select" : "slip");
-      else if (edit && group.length && (k === "q" || e.key === "{")) trimTo(group, "head");
-      else if (edit && group.length && (k === "w" || e.key === "}")) trimTo(group, "tail");
-      else if (edit && group.length && (e.key === "," || e.key === "<")) nudgeBy(group, e.shiftKey ? -5 : -1);
-      else if (edit && group.length && (e.key === "." || e.key === ">")) nudgeBy(group, e.shiftKey ? 5 : 1);
-      else if (edit && (e.key === "Delete" || e.key === "Backspace") && holePicked && hole) {
+      const mod = e.metaKey || e.ctrlKey;
+      const texting = mod && !!window.getSelection()?.toString(); // copying words off the page stays the browser's
+      const a = keyAction(e, keys) ?? (!edit ? null
+        : mod && !e.altKey && !e.shiftKey && k === "k" ? "split"
+          : !mod && !e.altKey && k === "y" ? "slip"
+            : !mod && e.key === "{" ? "rippleStart" : !mod && e.key === "}" ? "rippleEnd"
+              : e.key === "Escape" ? "deselect" : null)
+        ?? (e.key === "_" ? "zoomOut" : null);
+      const near = group.length ? group : underPlayhead();
+      let done = true;
+      // ⌘+ / ⌘- stay the browser's page zoom here; Review has no markers, so ⇧↑ / ⇧↓ jump cuts as ↑ / ↓ do
+      if (mod && (a === "zoomIn" || a === "zoomOut" || a === "zoomFit")) done = false;
+      else if (a === "zoomIn") zoomBy(1.5);
+      else if (a === "zoomOut") zoomBy(1 / 1.5);
+      else if (a === "zoomFit") zoomTo(1);
+      else if (a === "prevEdit" || a === "prevMarker") jumpCut(-1);
+      else if (a === "nextEdit" || a === "nextMarker") jumpCut(1);
+      else if (!edit) done = false;
+      else if (a === "split") splitHere();
+      else if (a === "selectAll") selectAll();
+      else if (a === "copy" && !texting && group.length) done = !!copyGroup();
+      else if (a === "cut" && !texting && group.length) {
+        const copied = copyGroup();
+        if (copied) removeToggle(copied);
+        done = !!copied;
+      } else if (a === "paste" && clip.length) pasteAt(playF);
+      else if (a === "snap") setSnapOn((v) => !v);
+      else if (a === "toolSelect") setTool("select");
+      else if (a === "toolBlade") setTool(tool === "blade" ? "select" : "blade");
+      else if (a === "slip") setTool(tool === "slip" ? "select" : "slip");
+      else if (a === "rippleStart" && near.length) trimTo(near, "head");
+      else if (a === "rippleEnd" && near.length) trimTo(near, "tail");
+      else if (a === "nudgeBack" && group.length) nudgeBy(group, -1);
+      else if (a === "nudgeBack5" && group.length) nudgeBy(group, -5);
+      else if (a === "nudgeOn" && group.length) nudgeBy(group, 1);
+      else if (a === "nudgeOn5" && group.length) nudgeBy(group, 5);
+      else if ((a === "delete" || a === "rippleDelete") && holePicked && hole) {
         onPlaceholder?.(null);
         setHolePicked(false);
-      } else if (edit && (e.key === "Delete" || e.key === "Backspace") && group.length) removeToggle(group);
-      else if (edit && e.key === "Escape") {
+      } else if ((a === "delete" || a === "rippleDelete") && group.length) removeToggle(group);
+      else if (a === "deselect") {
         setTool("select");
         setHolePicked(false);
         setPicked([]);
-      } else return;
-      e.preventDefault();
+        done = false; // Esc goes on to the page too (it drops the comment's range)
+      } else done = false;
+      if (done) e.preventDefault();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   });
 
   // a press on the timeline takes the keys back from a text box: the press itself can't move the focus, it
@@ -756,7 +767,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                     className={`rounded p-1 ${tool === "slip" ? "bg-zinc-800 text-zinc-50" : "text-zinc-400 hover:text-zinc-200"}`}>
                     <MoveHorizontal className="h-3 w-3" />
                   </button>
-                  <button onClick={() => setTool(tool === "blade" ? "select" : "blade")} title="Blade (B): click a clip to cut it there · ⌘B cuts at the playhead"
+                  <button onClick={() => setTool(tool === "blade" ? "select" : "blade")} title="Blade (B): click a clip to cut it there · W, C or ⌘B cuts at the playhead"
                     className={`rounded p-1 ${tool === "blade" ? "bg-zinc-800 text-zinc-50" : "text-zinc-400 hover:text-zinc-200"}`}>
                     <Scissors className="h-3 w-3" />
                   </button>
