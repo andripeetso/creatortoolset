@@ -143,3 +143,43 @@ describe("a cut whose faces aren't blurred yet", () => {
     expect(host!.querySelector('[title="This link shows a cut whose faces aren\'t blurred yet"]')).toBeNull();
   });
 });
+
+describe("the voice choices under the player", () => {
+  const off = 'button[title="the recording as it is, levelled"]';
+  const stems = (fx: string[]) => ({ groups: [{ key: "g1", label: "Mic", mix: 1 }], fx, voice: fx[0] ?? "off", duration: 8 });
+  const render = async (v: ReviewView) => {
+    useAuth.setState({ me: { username: "owner", role: "admin", cloud: false, off: [] } as Me });
+    h.view = v;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <MemoryRouter initialEntries={["/review/a1"]}>
+          <Routes>
+            <Route path="/review/:assetId" element={<ReviewAssetPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+    await act(async () => {});
+  };
+
+  it("are left out while the stems carry no enhanced voice", async () => {
+    await render({ ...view, asset: { ...view.asset, versions: [{ ...version, stems: stems([]) }] } });
+    expect(host!.querySelector(off)).toBeNull();
+  });
+
+  it("show Off and each enhanced voice when the stems carry one", async () => {
+    await render({ ...view, asset: { ...view.asset, versions: [{ ...version, stems: stems(["adobe"]) }] } });
+    expect(host!.querySelector(off)).not.toBeNull();
+    expect(host!.querySelector('button[title="Adobe voice"]')).not.toBeNull();
+  });
+
+  it("show Off and the one enhanced voice for a set from before enhancer lists (no fx)", async () => {
+    const older = { groups: [{ key: "g1", label: "Mic", mix: 1 }], voice: "enhanced", duration: 8 } as unknown as ReturnType<typeof stems>;
+    await render({ ...view, asset: { ...view.asset, versions: [{ ...version, stems: older }] } });
+    expect(host!.querySelector(off)).not.toBeNull();
+    expect(host!.querySelector('button[title="Enhanced voice"]')).not.toBeNull();
+  });
+});
