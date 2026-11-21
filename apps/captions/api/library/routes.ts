@@ -18,6 +18,8 @@ import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginal
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
+import { playCopy } from "../lib/play-copies";
+import { isFinal } from "./finals";
 import { BLURRED_UPLOADS, type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
@@ -1458,6 +1460,12 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
     enqueueJob(db(), v.library_id, versionId, "proxy", username, true);
     prepareFirst(versionId);
     libraryChanged(v.library_id);
+  }
+  // a Final plays from its playback copy once one is made (a plug-in's CDN); the footage never does (lib/play-copies.ts)
+  if (kind === "play" && isFinal(versionId)) {
+    const at = await blobs.locate(file.key, 900, { contentType: file.type }).catch(() => null);
+    const copy = at?.kind === "path" ? await playCopy(c, `library/${versionId}`, at.path, file.type) : null;
+    if (copy) return copy;
   }
   return serveBlob(c, file.key, file.type, kind === "source" ? downloadName(versionId) : undefined);
 }

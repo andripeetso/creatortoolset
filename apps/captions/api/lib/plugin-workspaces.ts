@@ -61,7 +61,7 @@ export function serverWide(p: ServerPlugin): boolean {
   const tools = p.tools as { replaces?: string[] } | undefined;
   return !!(
     p.replaces || p.answers?.length || p.library || p.libraryRoutes || p.openRoutes || p.publicRoutes?.length || p.adminRoutes ||
-    p.finals || p.workshop || p.providers || p.connectors || p.uploadRelays?.length || p.uploadsTo || p.editor?.footageTarget || tools?.replaces?.length
+    p.finals || p.workshop || p.providers || p.connectors || p.uploadRelays?.length || p.uploadsTo || p.playCopies || p.editor?.footageTarget || tools?.replaces?.length
   );
 }
 /** Why a server-wide plug-in is on in every workspace, by what it runs: "It runs this server's AI Editor and Finals" (no full stop). */
@@ -77,6 +77,7 @@ export function serverWideWhy(p: ServerPlugin): string {
     ...(p.providers ? ["AI providers"] : []),
     ...(p.connectors ? ["social accounts"] : []),
     ...(p.uploadRelays?.length || p.uploadsTo ? ["uploads"] : []),
+    ...(p.playCopies ? ["Review and Finals playback"] : []),
     ...(tools?.replaces?.length ? ["assistant tools"] : []),
     ...(p.publicRoutes?.length || p.openRoutes || p.adminRoutes ? ["pages for the whole server"] : []),
   ];

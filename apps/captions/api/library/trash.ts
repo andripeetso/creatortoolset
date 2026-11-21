@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../lib/env";
 import { blobs, libraryDb } from "./db";
+import { sweepPlayCopies } from "../lib/play-copies";
 import { dropMacFrames } from "./on-mac";
 import { assetsCopiesLack, copiesNotice } from "./copies";
 
@@ -86,6 +87,7 @@ export async function purgeTrashedPieces(now = Date.now()): Promise<number> {
   // ponytail: one DELETE per piece id; a piece in the trash is rare, so no batching
   for (const p of pieces) d.prepare("DELETE FROM pieces WHERE id = ?").run(p.id);
   for (const p of pieces) if (p.cover_key) await blobs.delete(p.cover_key).catch((e) => console.error("[library] piece purge:", p.cover_key, e));
+  await sweepPlayCopies(["library/"]).catch((e) => console.error("[library] playback copies:", e));
   return pieces.length;
 }
 
@@ -127,6 +129,7 @@ export async function deleteAssets(assets: string[]): Promise<void> {
   // a file indexed on a Mac (on-mac.ts) has no blob here: "mac:<id>" names nothing to delete, and its stills go
   for (const k of keys) if (!k.startsWith("mac:")) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
   for (const k of keys) if (k.startsWith("mac:")) await dropMacFrames(k.slice(4));
+  await sweepPlayCopies(versions.map((v) => `library/${v}/`)).catch((e) => console.error("[library] playback copies:", e));
 }
 
 /**

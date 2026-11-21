@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { jobTurn, type AuthVars } from "./auth";
 import type { Expired } from "./retention";
 import { sendFile, servedType } from "./lib/send-file";
+import { playCopy, sweepPlayCopies, wantCopies } from "./lib/play-copies";
 import { uploadRelayView } from "./lib/storage";
 import { pluginUploadRelays, type UploadRelay } from "./lib/plugin";
 
@@ -782,7 +783,13 @@ async function mirror(id: string): Promise<void> {
 /** toLibrary for each id in turn; a library error is logged, never Review's answer. */
 async function syncLibrary(...ids: string[]): Promise<void> {
   for (const id of ids) await toLibrary(id).catch((e) => console.error(`[review] library ${id}:`, e));
+  // every change that removes a video or a version for good ends here: their playback copies go with them
+  void sweepPlayCopies(ids.map((id) => `review/${id}/`)).catch((e) => console.error("[review] playback copies:", e));
 }
+
+// A Review version's playback copy (review/<asset>/<createdAt>) stays while the video is live and the version not removed:
+// a trashed video's copy goes at once (a restore copies it again on its next play), a purged one's anyway.
+wantCopies("review", async ([id, createdAt]) => !!(await readMeta(id ?? ""))?.versions.some((x) => String(x.createdAt) === createdAt && !x.removed));
 
 /** At start: every Review video, the trash too, into the library. Unchanged ones cost a read of their meta. */
 export async function reviewToLibrary(): Promise<void> {
@@ -2438,9 +2445,9 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       return sendFile(c, sourcePath(id, n), version.mime, `${base}${ext}`);
     }
     if (version.status !== "ready") return c.json({ error: "Not ready" }, 409);
-    return version.proxy
-      ? sendFile(c, proxyPath(id, n), "video/mp4")
-      : sendFile(c, sourcePath(id, n), version.mime);
+    const [src, type] = version.proxy ? [proxyPath(id, n), "video/mp4"] : [sourcePath(id, n), version.mime];
+    // its playback copy once one is made (a plug-in's CDN), else this server streams it (lib/play-copies.ts)
+    return (await playCopy(c, `review/${id}/${version.createdAt}`, src, type)) ?? sendFile(c, src, type);
   });
 
   /** The frame a comment is on (?c=<comment>, its drawing painted in) or at ?t=
