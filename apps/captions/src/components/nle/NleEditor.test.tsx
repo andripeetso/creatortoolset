@@ -323,6 +323,67 @@ describe("the side panel beside the viewer (chat mode)", () => {
     p.done();
   });
 
+  it("an undone try stays gone on a redo, and Save works again", async () => {
+    const onSave = vi.fn(async () => {});
+    let last: NleFoot | null = null;
+    const { p, s } = await sideOf({ onSave, foot: (f) => ((last = f), null) });
+    act(() => s().commit(setItems(s().tl, [s().tl.tracks.V1.items[0]._k!], { in: 50 }), "Trim"));
+    act(() => s().preview(two, "Use take 3"));
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(s().trying).toBe(false);
+    await key("z", { metaKey: true, shiftKey: true, code: "KeyZ" });
+    expect(s().trying).toBe(false);
+    expect(clips(p.host)).toBe(1);
+    let ok = false;
+    await act(async () => void (ok = await last!.save()));
+    expect(ok).toBe(true);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    p.done();
+  });
+
+  it("while a try is on, edits on the timeline change nothing and the try stays: a blade, the panel's own edit, the chat", async () => {
+    const { p, s } = await sideOf();
+    act(() => s().seek(40));
+    act(() => s().preview(two, "Use take 3"));
+    await key("w", { code: "KeyW" });
+    act(() => s().commit(setItems(s().tl, [s().tl.tracks.V1.items[0]._k!], { in: 50 }), "Trim"));
+    bridge.replies.length = 0;
+    await p.deliver(ask({ id: "x1", commands: [{ id: "setLength", params: { seconds: 1 } }] }));
+    expect(bridge.replies[0].error).toContain("A take is being tried");
+    expect(s().trying).toBe(true);
+    expect(clips(p.host)).toBe(2);
+    await key("Escape", { code: "Escape" });
+    expect(clips(p.host)).toBe(1);
+    expect(p.changes.at(-1)!.tracks.V1.items).toHaveLength(1);
+    expect(p.now().tracks.V1.items[0].in).toBe(0);
+    p.done();
+  });
+
+  it("Enter on a focused button and Esc in a menu are theirs, not the try's", async () => {
+    const { p, s } = await sideOf();
+    act(() => s().preview(two, "Use take 3"));
+    const button = p.host.appendChild(document.createElement("button"));
+    await act(() => void button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true })));
+    const menu = p.host.appendChild(document.createElement("div"));
+    menu.setAttribute("role", "menu");
+    await act(() => void menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })));
+    expect(s().trying).toBe(true);
+    button.remove();
+    menu.remove();
+    p.done();
+  });
+
+  it("on Rendered, a try plays from the timeline; dropped, the render is back", async () => {
+    const { p, s } = await sideOf({ rendered: { url: "/r/cut.mp4", first: true } });
+    const render = () => p.host.querySelector('video[src="/r/cut.mp4"]');
+    expect(render()).not.toBeNull();
+    act(() => s().preview(two, "Use take 3"));
+    expect(render()).toBeNull();
+    await key("Escape", { code: "Escape" });
+    expect(render()).not.toBeNull();
+    p.done();
+  });
+
   it("seek moves the playhead and lets the pick go", async () => {
     const { p, s } = await sideOf();
     await key("a", { metaKey: true, code: "KeyA" });

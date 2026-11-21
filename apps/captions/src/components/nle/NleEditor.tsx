@@ -362,6 +362,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const tl = hist.now;
   const sel = selected.filter((k) => find(tl, k));
   const tryOn = tried?.base === tl ? tried : null;
+  if (tried && !tryOn) setTried(null); // its timeline undone or changed: gone for good, never back on a redo
   const shown = live ?? tryOn?.tl ?? tl;
   const cachedNow = useMemo(() => stillCached(shown, saved, cached), [shown, saved, cached]);
   const fps = tl.timeline.fps;
@@ -369,6 +370,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   // the cut's last frame: playing stops on it and End goes to it, so the viewer ends on a picture, never on past-the-end
   const last = Math.max(0, lengthOf(shown) - 1) / fps;
   const dirty = tl !== saved;
+  // what the render doesn't show: unsaved edits, or a try on
+  const unrendered = dirty || !!tryOn;
   const tln = useTransport(last, fps, loop && lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null);
   const { time, seek, now } = tln;
 
@@ -423,6 +426,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     renders && tracks.some((t) => (f ? !renders.tracks[t]?.includes(f) : !renders.tracks[t]) && !baseOff.has(f ? `${t} ${f}` : t)) ? NOT_RENDERED : null, [renders, baseOff]);
   const gateCtx = useMemo(() => ({ v2: gate, field: fieldOff }), [gate, fieldOff]);
   const commit = useCallback((next: NleTimeline, label?: string) => {
+    // while a try is on, only the try itself is kept: other edits wait for Enter or Esc
+    if (tryOn && next !== tryOn.tl) return;
     setLive(null);
     setTried(null);
     setGap(null);
@@ -430,8 +435,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     const no = why(next);
     if (no) return void toast(no);
     setHist((h) => histChange(h, () => next, label));
-  }, [readOnly, why]);
-  const live_ = useCallback((next: NleTimeline | null) => !readOnly && setLive(next), [readOnly]);
+  }, [readOnly, why, tryOn]);
+  const live_ = useCallback((next: NleTimeline | null) => !readOnly && !tryOn && setLive(next), [readOnly, tryOn]);
 
   // a text clip plays its design's PNG from the server; a design deleted since is a red clip (asked once a PNG)
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
@@ -604,7 +609,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
    *  the picks, the marks, what Paste lays and the playhead. */
   const apply = (s: NleState, next: NleState, label: string) => {
     if (next.tl !== s.tl) {
-      if (readOnly) return;
+      if (readOnly || tryOn) return;
       commit(next.tl, label);
     } else if (next.gap !== s.gap) setGap(next.gap ?? null);
     if (next.sel !== s.sel) setSelected(next.sel);
@@ -657,6 +662,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         reply({ error: `This window has ${here ? `draft ${here.draft} of edit ${here.edit}` : "no timeline"} open, not draft ${a.draft} of edit ${a.edit}.` });
       } else if (a.kind === "state") reply({ result: stateView(s) });
       else if (readOnly) reply({ error: "This timeline is read-only here." });
+      else if (tryOn) reply({ error: "A take is being tried on this timeline: it changes once the person keeps it (Enter) or drops it (Esc)." });
       else {
         try {
           const list = a.commands ?? [];
@@ -712,7 +718,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       if (designing) return;
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
       // the side panel's try: Enter keeps it, Esc drops it (the picked clips stay picked)
-      if (tryOn && (e.key === "Enter" || e.key === "Escape") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      if (tryOn && (e.key === "Enter" || e.key === "Escape") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+        && !(e.target as HTMLElement | null)?.closest?.("button, a[href], [role=menu]")) {
         e.preventDefault();
         return void (e.key === "Enter" ? keepTry() : setTried(null));
       }
@@ -836,9 +843,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Viewer shows">
                   {(["source", "timeline", ...(rendered ? ["rendered" as const] : [])] as const).map((v) => (
-                    <button key={v} type="button" aria-pressed={view === v || (v === "timeline" && view === "rendered" && dirty)} disabled={(v === "source" && !source) || (v === "rendered" && dirty)} onClick={() => show(v)}
+                    <button key={v} type="button" aria-pressed={view === v || (v === "timeline" && view === "rendered" && unrendered)} disabled={(v === "source" && !source) || (v === "rendered" && unrendered)} onClick={() => show(v)}
                       title={v === "source" ? "The clip opened from the Media Pool: mark In and Out, drag it on, F9 insert, F10 overwrite (Q back)"
-                        : v === "rendered" ? (dirty ? "Save to render the edits" : "The render of the saved timeline, with its texts and effects") : "The timeline"}
+                        : v === "rendered" ? (unrendered ? "Save to render the edits" : "The render of the saved timeline, with its texts and effects") : "The timeline"}
                       className={cn("h-5 rounded-[3px] px-1.5 capitalize disabled:opacity-40", view === v ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{v}</button>
                   ))}
                 </span>
@@ -856,7 +863,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               onDragStart={inSource ? (e) => { e.dataTransfer.setData(VIEWER_MIME, "1"); e.dataTransfer.effectAllowed = "copy"; note(source); } : undefined}
               onDragEnd={() => note(null)}
               over={inSource ? (!srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} clock={srcT.clock} /> : null)
-                : view === "rendered" && rendered && !dirty ? <NleRendered url={rendered.url} clock={tln.clock} playing={tln.playing} />
+                : view === "rendered" && rendered && !unrendered ? <NleRendered url={rendered.url} clock={tln.clock} playing={tln.playing} />
                 : cap?.clip && !captionsStale(shown) ? <CaptionsOver clip={cap.clip} clock={T.clock} fps={fps} /> : null}
               below={inSource ? (
                 <SourceStrip clock={srcT.clock} seconds={srcSecs} from={sm[0] !== null ? sm[0] / sfps : null} to={sm[1] !== null ? (sm[1] + 1) / sfps : null}
