@@ -67,6 +67,8 @@ export function thumbAt(url: string, sec: number, height = HEIGHT): Promise<Imag
   if (!got) {
     got = new Promise((done) => jobs.push({ url, sec, height, done }));
     kept.set(key, got);
+    // only real pictures are kept: a file that didn't load (a share still waking) is asked again on its next draw
+    void got.then((b) => b || kept.delete(key));
     // after the caller's own work, one seek at a time across the page
     void Promise.resolve().then(pump);
   }

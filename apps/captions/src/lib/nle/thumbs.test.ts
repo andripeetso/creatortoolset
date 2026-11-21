@@ -65,5 +65,8 @@ describe("timeline thumbnails", () => {
     expect(got).toEqual([null, null, null]);
     expect(made).toHaveLength(1);
     expect(openNow()).toBe(0);
+    // the file loads later (the share woke up): its pictures come then, nothing failed is kept
+    FakeVideo.broken = "";
+    expect(await thumbAt("/m/x.mp4", 1)).toBeTruthy();
   });
 });
