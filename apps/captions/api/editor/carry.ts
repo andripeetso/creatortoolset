@@ -159,3 +159,23 @@ export function exportGaps(tl: Timeline, graded = false): ExportGaps {
   }
   return out;
 }
+
+const HANDOVER: [string, ExportEditor | null][] = [
+  ["{name}.otio: DaVinci Resolve (File > Import > Timeline). Cuts, every track, markers with their notes, framing and moves, B-roll, music and sound effects.", "resolve"],
+  ["{name}.fcpxml: Final Cut Pro (File > Import > XML). The speaker's cuts with their sound, framing, moves, speed and freezes.", "final-cut"],
+  ["{name}.xml: Premiere Pro (File > Import) or free Resolve (File > Import > Timeline). The speaker's cuts with their sound and framing.", "premiere"],
+  ["{name}.edl (and {name}.V2.edl for the B-roll): any editor that reads CMX3600. Cuts and timecodes only, with the speaker's voice; no framing, effects, markers or music.", null],
+];
+
+/** The zip's README: which file each editor imports, what it carries, and what of the preview it leaves out (exportGaps). */
+export function handoverReadme(name: string, tl: Timeline, gaps: ExportGaps): string {
+  const lines = [`${name}: an AI Editor draft, ${tl.width}x${tl.height} at ${tl.fps} fps, handed over for edits by hand.`, ""];
+  for (const [text, ed] of HANDOVER) {
+    lines.push(text.replaceAll("{name}", name));
+    const left = ed && gaps[ed];
+    if (left?.length) lines.push(`  Not carried from the preview: ${left.join(", ")}.`);
+    lines.push("");
+  }
+  lines.push("Keep the media folder next to the timeline files; an editor that asks where a clip is finds it there by name.", "");
+  return lines.join("\n");
+}

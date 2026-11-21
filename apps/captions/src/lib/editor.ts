@@ -125,7 +125,7 @@ export const restoreEdit = (id: string) => send<{ ok: true }>(`${base(id)}/resto
 export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;
 export const likeCard = (id: string, variant: string, card: string) => send<Edit>(`${base(id)}/cards/${variant}/${card}/like`, "POST");
 export const makeCardsAgain = (id: string, variant: string) => send<Edit>(`${base(id)}/cards/${variant}/again`, "POST");
-export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "xml" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
+export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "xml" | "edl" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
 /** A timeline file changed in another editing app, as the draft's next version (api/editor/sent-back.ts). */
 export const sendBack = (id: string, name: string, file: string, text: string) => send<Edit>(`${base(id)}/drafts/${name}/sent-back`, "POST", { file, text });
 /** The open comments on the draft's newest Review version, each answered and the ones it changed resolved (api/editor/revise.ts). */

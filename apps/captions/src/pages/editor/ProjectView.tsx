@@ -240,6 +240,7 @@ function LookSheet({ e, job, editable, act }: { e: Edit; job: EditJob; editable:
 }
 
 const cardButton = "inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md border border-zinc-500/25 px-2 text-xs hover:bg-zinc-500/10 disabled:opacity-50 [&_svg]:h-3.5 [&_svg]:w-3.5 [&_svg]:shrink-0";
+const EXPORT_LABEL = { otio: "Timeline (.otio)", fcpxml: "Final Cut (.fcpxml)", edl: "Any editor (.edl)", zip: "All of them (.zip)" } as const;
 
 /** One version: its preview playing, its name and length, where it stands in Review, the ways into it. */
 function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onError }: {
@@ -389,10 +390,10 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {pv && <DropdownMenuItem asChild><a href={`/api/review/assets/${pv.assetId}/v/${pv.n}/download`} download>Video (.mp4)</a></DropdownMenuItem>}
-            {(["otio", "fcpxml", "zip"] as const).map((f) => (
+            {(["otio", "fcpxml", "edl", "zip"] as const).map((f) => (
               <DropdownMenuItem key={f} disabled={postHeld} asChild={!postHeld}>
-                {postHeld ? <span>{f === "otio" ? "Timeline (.otio)" : f === "fcpxml" ? "Final Cut (.fcpxml)" : "All of them (.zip)"}</span> : (
-                  <a href={exportUrl(e.id, n, f)} download title={(f === "otio" ? gapsLine(d?.exportGaps, "resolve") : f === "fcpxml" ? gapsLine(d?.exportGaps, "final-cut") : null) ?? undefined}>{f === "otio" ? "Timeline (.otio)" : f === "fcpxml" ? "Final Cut (.fcpxml)" : "All of them (.zip)"}</a>
+                {postHeld ? <span>{EXPORT_LABEL[f]}</span> : (
+                  <a href={exportUrl(e.id, n, f)} download title={(f === "otio" ? gapsLine(d?.exportGaps, "resolve") : f === "fcpxml" ? gapsLine(d?.exportGaps, "final-cut") : f === "edl" ? "Cuts and timecodes for any editor, with the speaker's voice: no framing, effects or music" : null) ?? undefined}>{EXPORT_LABEL[f]}</a>
                 )}
               </DropdownMenuItem>
             ))}

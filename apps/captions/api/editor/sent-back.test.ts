@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import { importTimeline, timelineSources } from "../../contracts/timeline-import";
+import { toEdl } from "./edl";
 import { toFcp7Xml, toFcpxml } from "./fcpxml";
 import { otioText, toOtio } from "./otio";
 import { formatOf, fromSentBack, SentBackRefused, sentBackSummary } from "./sent-back";
@@ -38,6 +39,7 @@ const writers = {
   "Tiny.otio": (tl: Timeline) => otioText(toOtio(tl, files)),
   "Tiny.fcpxml": (tl: Timeline) => toFcpxml(tl, files),
   "Tiny.xml": (tl: Timeline) => toFcp7Xml(tl, files),
+  "Tiny.edl": (tl: Timeline) => toEdl(tl, files),
 };
 const back = (name: string, text: string, tl = draft(), f: Record<string, string> = files) => fromSentBack(tl, f, importTimeline(name, text, tl.fps), timelineSources(name, text, tl.fps), formatOf(text));
 /** The parts the files carry and the draft keeps, links by pairing (their names are renumbered). */

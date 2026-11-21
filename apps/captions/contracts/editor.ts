@@ -406,6 +406,8 @@ export interface TimelineSource {
   fps: number;
   /** start timecode, in the source's frames */
   tc: number;
+  /** its timecode is drop frame (29.97, 59.94): `tc` counts real frames, its label skips numbers (an EDL writes the label) */
+  drop?: boolean;
   /** length in the source's frames */
   dur: number;
   /** picture size as shown (rotation applied); 0 for sound only */

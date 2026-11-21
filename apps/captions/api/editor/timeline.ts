@@ -50,7 +50,7 @@ export function sourceOf(versionId: string, name: string, p: ProbeSummary): Time
   const turned = p.rotation === 90 || p.rotation === 270;
   // a recording whose only picture is its cover art is sound only: a cover is not a picture to show
   const [w, h] = p.cover ? [0, 0] : turned ? [p.height, p.width] : [p.width, p.height];
-  return { versionId, name, fps, tc: timecodeFrames(p.timecode, fps), dur: Math.round(p.duration * fps), w, h };
+  return { versionId, name, fps, tc: timecodeFrames(p.timecode, fps), ...(p.timecode?.includes(";") ? { drop: true } : {}), dur: Math.round(p.duration * fps), w, h };
 }
 
 /** A cut whose takes have no picture: nothing to cut away from, so the B-roll is the whole picture. */
