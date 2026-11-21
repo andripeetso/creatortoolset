@@ -36,6 +36,14 @@ const mount = async (props: Partial<Parameters<typeof NleTracks>[0]> = {}) => {
 };
 
 describe("the timeline's clips", () => {
+  it("draws a clip in its Clip Color; an offline clip keeps the offline red", async () => {
+    const coloured = withKeys({ ...tl, tracks: { ...tl.tracks, V1: { items: tl.tracks.V1.items.map((i) => ({ ...i, color: "Cyan" })) } } } as NleTimeline);
+    const { host, root } = await mount({ tl: coloured });
+    const clips = [...host.querySelectorAll("[data-clip]")] as HTMLElement[];
+    expect(clips.map((c) => c.getAttribute("data-color"))).toEqual(["#3ec1d3", null]);
+    act(() => root.unmount());
+  });
+
   it("draws a clip whose file isn't here as offline, saying why", async () => {
     const { host, root } = await mount();
     const clips = [...host.querySelectorAll("[data-clip]")] as HTMLElement[];

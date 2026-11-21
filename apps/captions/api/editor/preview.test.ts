@@ -124,6 +124,18 @@ describe("AI Editor preview", () => {
     expect(frame(out, 25).every((b) => b > 20)).toBe(true);
   }, 60_000);
 
+  it("holds a frozen shot's first frame to its end, as the editor's Freeze Frame plays it", async () => {
+    const t = timeline();
+    t.tracks.V1.items = [{ src: "ver_a", in: 10, len: 15, rec: 0, link: "c1" }, { src: "ver_a", in: 25, len: 15, rec: 15, link: "c2", freeze: true }];
+    t.tracks.A1.items = t.tracks.V1.items.map(({ src, in: i, len, rec, link }) => ({ src, in: i, len, rec, link }));
+    const out = path.join(dir, "freeze.mp4");
+    await renderPreview(t, { ver_a: fixture }, out);
+    expect(Number(ffprobe(out, "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"))).toBe(30);
+    const apart = (a: number, b: number) => { const x = frame(out, a); const y = frame(out, b); return x.reduce((s, v, i) => s + Math.abs(v - y[i]), 0) / x.length; };
+    expect(apart(15, 29)).toBeLessThan(0.5); // held
+    expect(apart(0, 14)).toBeGreaterThan(1); // the shot before it plays on
+  }, 60_000);
+
   it("fades a shot from and to black as the editor's player does (to 9/255), and a gap on V1 stays black for its length", async () => {
     const white = path.join(dir, "Tiny Acrobatics white.mp4");
     execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=360x640:r=30:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", white]);

@@ -1,7 +1,7 @@
 import { MARKER_COLORS, type EdjMarker, type MarkerColor, type TransType } from "@contracts/editor";
 import {
   addMarker, blade, setMarker, clipAt, clipsFrom, closeGap, copyOf, duplicate, endOf, extract, find, isVideo, lengthOf, lengthTo, lift, markerAt, markersOf, move,
-  paste, remove, removeMarker, rippleToPlayhead, setItems, setMark, setTrack, type Gap, type Marks, type NleItem, type NleTimeline, type PlaceMode,
+  freezeFrame, paste, remove, removeMarker, rippleToPlayhead, setItems, setMark, setTrack, type Gap, type Marks, type NleItem, type NleTimeline, type PlaceMode,
 } from "./model";
 import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans } from "./loudness";
 import { INSPECTOR_COMMANDS } from "./inspector-commands";
@@ -152,6 +152,10 @@ const LIST: NleCommand[] = [
   cmd("delete", "Delete (leaves a gap); nothing picked and In and Out marked: lift that range", removable, remove_(false)),
   cmd("rippleDelete", "Ripple delete; nothing picked and In and Out marked: extract that range", removable, remove_(true)),
   cmd("closeGap", "Close Gap", (s) => !!s.gap, (s) => ({ ...s, tl: closeGap(s.tl, s.gap!), gap: null })),
+  cmd("freezeFrame", "Freeze Frame: the picked clip on V1 under the playhead holds that frame to its end", (s) => freezeFrame(s.tl, s.sel, s.playhead) !== s.tl,
+    (s) => ({ ...s, tl: freezeFrame(s.tl, s.sel, s.playhead) })),
+  pageOnly("changeDuration", "Change Clip Duration…"),
+  pageOnly("findInMediaPool", "Find in Media Pool"),
   cmd("enable", "Clip on / off", picked, (s) => ({ ...s, tl: setItems(s.tl, s.sel, { enabled: find(s.tl, s.sel[0])!.item.enabled === false ? undefined : false }) })),
   cmd("markIn", "Mark In at playhead", any, mark("in")),
   cmd("markOut", "Mark Out at playhead", any, mark("out")),

@@ -301,6 +301,8 @@ export interface Item {
   gainDb?: number;
   /** items that share it move together (a speaker shot and its voice) */
   link?: string;
+  /** the editor's Freeze Frame: the item holds its first frame to its end */
+  freeze?: boolean;
   /* A planned edit's shot (api/editor/plan.ts); absent on every other item. Times are seconds inside the item. */
   /** 1 = as filmed */
   speed?: number;

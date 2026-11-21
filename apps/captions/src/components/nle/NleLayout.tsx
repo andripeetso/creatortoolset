@@ -140,7 +140,7 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
   media: ReactNode | null; viewer: ReactNode; inspector: ReactNode; timeline: ReactNode | ((full: boolean) => ReactNode);
   /** the middle of the window-button bar, where Resolve has the project's name: the timeline's save */
   center?: ReactNode;
-  panelKeys?: MutableRefObject<((p: keyof Open) => void) | null>;
+  panelKeys?: MutableRefObject<((p: keyof Open, on?: boolean) => void) | null>;
   chat?: { bar?: ReactNode; foot?: ReactNode } | null;
   /** beside the viewer while the side panels are hidden in chat mode (viewerBeside decides the room); `frame` its size */
   side?: ReactNode;
@@ -167,7 +167,7 @@ export function NleLayout({ media, viewer, inspector, timeline, panelKeys, cente
     }
     return next;
   };
-  const toggle = (p: keyof Open) => setOpen((o) => keepOpen({ ...o, [p]: !o[p] }));
+  const toggle = (p: keyof Open, on?: boolean) => setOpen((o) => keepOpen({ ...o, [p]: on ?? !o[p] }));
   const full = !inChat || open.inspector || (media !== null && open.media);
   const row = useRef<HTMLDivElement>(null);
   const [room, setRoom] = useState({ w: 0, h: 0 });

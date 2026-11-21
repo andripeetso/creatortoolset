@@ -28,7 +28,7 @@ const ACTIONS: Record<Exclude<KeyAction, `lock:${string}`>, true> = {
   duplicate: true, selectAll: true, deselect: true, selectForward: true, selectBack: true, rippleStart: true, rippleEnd: true, delete: true,
   rippleDelete: true, enable: true, markIn: true, markOut: true, clearMarks: true, toolSelect: true, toolTrim: true, toolBlade: true, toolStretch: true, snap: true,
   linkedSelection: true, nudgeBack: true, nudgeBack5: true, nudgeOn: true, nudgeOn5: true, frameBack: true, frameOn: true, secondBack: true,
-  secondOn: true, prevEdit: true, nextEdit: true, start: true, end: true, zoomIn: true, zoomOut: true, zoomFit: true, mediaPool: true,
+  secondOn: true, prevEdit: true, nextEdit: true, start: true, end: true, zoomIn: true, zoomOut: true, zoomFit: true, mediaPool: true, findInMediaPool: true,
   inspector: true, clearIn: true, clearOut: true, insertEdit: true, overwriteEdit: true, loop: true,
   addMarker: true, prevMarker: true, nextMarker: true, addDissolve: true, keyboard: true,
 };

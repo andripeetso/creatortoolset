@@ -14,7 +14,7 @@
 // every unlocked track by one amount (as far as every track can go, so they stay in sync); clips that share a `link`
 // move and trim together.
 
-import type { EdjCaptions, EdjMarker, EdjTrans, Key, KeyProp } from "@contracts/editor";
+import type { EdjCaptions, EdjMarker, EdjTrans, Key, KeyProp, MarkerColor } from "@contracts/editor";
 
 export type Flip = "h" | "v" | "hv";
 
@@ -45,6 +45,10 @@ export interface NleItem {
   speed?: number;
   gain_db?: number;
   enabled?: boolean;
+  /** Clip Color: the label it is drawn in on the timeline (the marker colours); no render or export draws it */
+  color?: MarkerColor;
+  /** Freeze Frame: the clip holds its first frame to its end */
+  freeze?: boolean;
   /** timeline frames of fade at the start / end: a picture from / to black (an opacity ramp), a sound from / to silence */
   fade_in?: number;
   fade_out?: number;
@@ -125,6 +129,14 @@ const live = (t: NleTrack) => t.enabled !== false && !t.hidden && !t.mute;
 /** The timeline's length: where the last clip that is on ends, on any track that plays (0 when empty). */
 export const lengthOf = (tl: NleTimeline): number =>
   Math.max(0, ...Object.values(tl.tracks).filter(live).flatMap((t) => t.items.filter((i) => i.enabled !== false).map(endOf)));
+
+/** A length typed as frames ("50") or as a timecode ("1:00", "0:02:10", "1:00:00:00": frames last); null when it is neither. */
+export function framesOfTimecode(text: string, fps: number): number | null {
+  const parts = text.trim().split(/[:;.]/);
+  if (!parts.every((x) => /^\d+$/.test(x)) || parts.length > 4) return null;
+  const [ff, ss = 0, mm = 0, hh = 0] = parts.reverse().map(Number);
+  return ((hh * 60 + mm) * 60 + ss) * Math.round(fps) + ff;
+}
 
 /** m:ss:ff, h:mm:ss:ff from an hour. */
 export const timecode = (f: number, fps: number): string => {
@@ -441,6 +453,33 @@ export function setSpeed(tl: NleTimeline, keys: string[], speed: number): NleTim
     if (i && typeof dur === "number") i.len = Math.max(1, Math.min(i.len, Math.floor((dur - i.in) / rateOf(out, i) + 1e-6)));
   }
   return fixTrans(out);
+}
+
+/**
+ * Change Clip Duration: each clip made `len` frames long from where it starts, as dragging its end does (trim): its
+ * linked clips with the same end follow, it stops at the next clip, and a clip on a locked track stays.
+ */
+export const setDuration = (tl: NleTimeline, keys: string[], len: number): NleTimeline =>
+  keys.reduce((t, k) => { const i = find(t, k)?.item; return i ? trim(t, k, "tail", len - i.len) : t; }, tl);
+
+/** The longest a clip can be from its in point before its source runs out, counting its speed (Infinity: length unknown). */
+export function longestOf(tl: NleTimeline, it: NleItem): number {
+  const dur = tl.sources[it.src]?.dur;
+  // not roomOf: a clip already past its source's end (a speed raised in the Inspector) has no room, yet a length to keep
+  return typeof dur === "number" ? Math.floor((dur - it.in) / rateOf(tl, it) + 1e-6) : Infinity;
+}
+
+/**
+ * Freeze Frame: the picked clip on V1 under frame `f` holds the frame there to its end: cut at `f` (with its linked
+ * clips, as the blade does), the part from `f` on held. Unchanged when none is under `f`, it is held already or V1 is locked.
+ */
+export function freezeFrame(tl: NleTimeline, keys: string[], f: number): NleTimeline {
+  const hit = keys.map((k) => find(tl, k)).find((h) => h?.track === "V1" && h.item.rec <= f && f < endOf(h.item));
+  // a held clip already shows one frame everywhere
+  if (!hit || hit.item.freeze || tl.tracks.V1.locked) return tl;
+  const cut = hit.item.rec < f ? blade(tl, f, [hit.item._k!]) : tl;
+  // a track holds one clip at a frame: the one starting at `f` is the part to hold
+  return setItems(cut, [cut.tracks.V1.items.find((i) => i.rec === f)!._k!], { freeze: true });
 }
 
 export const unlink =(tl: NleTimeline, keys: string[]) => setItems(tl, withLinked(tl, keys), { link: undefined });

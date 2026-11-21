@@ -9,9 +9,9 @@ import { handlesAt, maxLen, withKeys, type NleItem, type NleTimeline } from "./m
 export const NOT_RENDERED = "Not in this server's renders yet";
 
 /** A clip field's value that changes nothing (a field left out changes nothing too). */
-const NEUTRAL: Record<string, unknown> = { zoom: 1, pan: 0, tilt: 0, rot: 0, opacity: 1, speed: 1, gain_db: 0, fade_in: 0, fade_out: 0, enabled: true, hidden: false, mute: false };
+const NEUTRAL: Record<string, unknown> = { zoom: 1, pan: 0, tilt: 0, rot: 0, opacity: 1, speed: 1, gain_db: 0, fade_in: 0, fade_out: 0, enabled: true, freeze: false, hidden: false, mute: false };
 /** The clip fields the editor's controls set, and the track ones. */
-const CLIP_FIELDS = ["zoom", "pan", "tilt", "rot", "opacity", "speed", "gain_db", "fade_in", "fade_out", "enabled", "flip", "crop"];
+const CLIP_FIELDS = ["zoom", "pan", "tilt", "rot", "opacity", "speed", "gain_db", "fade_in", "fade_out", "enabled", "flip", "crop", "freeze"];
 const TRACK_FIELDS = ["hidden", "mute"];
 const used = (v: unknown, f: string) =>
   v !== undefined && v !== null && v !== "" && (f === "crop" ? Array.isArray(v) && v.some((x) => x !== 0) : !(f in NEUTRAL) || v !== NEUTRAL[f]);
