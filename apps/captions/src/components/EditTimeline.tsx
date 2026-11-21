@@ -407,12 +407,13 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   // \ fits, ↑ / ↓ the previous / next cut; in Edit mode W, C or ⌘B cuts at the playhead, Q / E trim the picked clip's (else
   // the one under the playhead's) start / end to it, A / B select / blade, N snapping, , / . nudge (Shift: 5 frames),
   // S / Delete take out the picked item or placeholder, Esc lets go. Review's own on top: Y slip, ⌘K cut, { / } trim.
-  // Capture: it runs before the page's keys, which leave a key it took (C cuts here in Edit mode, opens a comment outside it)
+  // On document: after menus, dialogs and overlays had the key (one they took is theirs), before the page's keys on window,
+  // which leave a key taken here (C cuts here in Edit mode, opens a comment outside it)
   const keys = useKeymap();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t?.closest?.("input, textarea, select, [contenteditable=true]")) return;
+      if (e.defaultPrevented || t?.closest?.("input, textarea, select, [contenteditable=true]")) return;
       const k = e.key.toLowerCase();
       const mod = e.metaKey || e.ctrlKey;
       const texting = mod && !!window.getSelection()?.toString(); // copying words off the page stays the browser's
@@ -420,14 +421,17 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
         : mod && !e.altKey && !e.shiftKey && k === "k" ? "split"
           : !mod && !e.altKey && k === "y" ? "slip"
             : !mod && e.key === "{" ? "rippleStart" : !mod && e.key === "}" ? "rippleEnd"
-              : e.key === "Escape" ? "deselect" : null);
+              : e.key === "Escape" ? "deselect" : null)
+        ?? (e.key === "_" ? "zoomOut" : null);
       const near = group.length ? group : underPlayhead();
       let done = true;
-      if (a === "zoomIn") zoomBy(1.5);
+      // ⌘+ / ⌘- stay the browser's page zoom here; Review has no markers, so ⇧↑ / ⇧↓ jump cuts as ↑ / ↓ do
+      if (mod && (a === "zoomIn" || a === "zoomOut" || a === "zoomFit")) done = false;
+      else if (a === "zoomIn") zoomBy(1.5);
       else if (a === "zoomOut") zoomBy(1 / 1.5);
       else if (a === "zoomFit") zoomTo(1);
-      else if (a === "prevEdit") jumpCut(-1);
-      else if (a === "nextEdit") jumpCut(1);
+      else if (a === "prevEdit" || a === "prevMarker") jumpCut(-1);
+      else if (a === "nextEdit" || a === "nextMarker") jumpCut(1);
       else if (!edit) done = false;
       else if (a === "split") splitHere();
       else if (a === "selectAll") selectAll();
@@ -455,11 +459,12 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
         setTool("select");
         setHolePicked(false);
         setPicked([]);
+        done = false; // Esc goes on to the page too (it drops the comment's range)
       } else done = false;
       if (done) e.preventDefault();
     };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   });
 
   // a press on the timeline takes the keys back from a text box: the press itself can't move the focus, it

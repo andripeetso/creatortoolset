@@ -22,7 +22,7 @@ const view = {
 
 const press = (key: string) => {
   const e = new KeyboardEvent("keydown", { key, code: /^\d$/.test(key) ? `Digit${key}` : `Key${key.toUpperCase()}`, bubbles: true, cancelable: true });
-  act(() => void window.dispatchEvent(e));
+  act(() => void document.body.dispatchEvent(e));
   return e;
 };
 
@@ -47,6 +47,15 @@ it("takes the editor's keys: W and C cut at the playhead, Q / E trim the shot un
   onEdit.mockClear();
   expect(press("2").defaultPrevented).toBe(false);
   expect(onEdit).not.toHaveBeenCalled();
+
+  // a key a menu, dialog or overlay already took stays theirs, and ⌘= stays the browser's page zoom
+  const taken = new KeyboardEvent("keydown", { key: "w", code: "KeyW", bubbles: true, cancelable: true });
+  taken.preventDefault();
+  act(() => void document.body.dispatchEvent(taken));
+  expect(onEdit).not.toHaveBeenCalled();
+  const pageZoom = new KeyboardEvent("keydown", { key: "=", code: "Equal", metaKey: true, bubbles: true, cancelable: true });
+  act(() => void document.body.dispatchEvent(pageZoom));
+  expect(pageZoom.defaultPrevented).toBe(false);
 
   // Review's timeline outside Edit mode: C is the page's (a comment)
   await act(async () => root.render(<EditTimeline view={view} time={2} onSeek={() => {}} onEdit={onEdit} />));
