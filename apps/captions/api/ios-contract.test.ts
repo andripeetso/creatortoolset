@@ -34,12 +34,12 @@
  *   told apart by its query, which a route probe cannot see: `sign-in-app.test.ts` covers it.
  *   On a hosted server it answers 400 for any code it does not take, never 404; off hosted it answers 404, which the
  *   app reads as "this server has no such sign-in" and offers the password form.
- * - editor.worker: the Mac worker status endpoint; it goes with the legacy
- *   worker sunset, so it stays on the list until then.
+ * - editor.worker: whether one of the person's computers is on (api/editor/todo.ts workerOf), the to-do's `worker`.
  * - editor.chat-*: the AI Editor chat, the person's chat with the assistant about one edit (api/editor/chat.ts). chat-edit
  *   is one edit's messages (`?edit=<id>`; an empty value is no edit, so the probe reads the AI Editor's own chat).
- * - editor.todo, todo-read, job-go, feedback: the to-do list, a waiting job's go and feedback for new versions; in the
- *   plug-in editor only (the built-in editor has no job that waits for a go).
+ * - editor.todo, todo-read, job-go: the to-do list (api/editor/todo.ts), its read marks, and the go on what waits for one
+ *   (a held pass of an edit in passes, a cards look sheet). editor.jobs queues one step by hand; editor.draft-preview
+ *   is a version's newest Review video. editor.feedback: what the person said, kept for the next version.
  * - assistant.*: the in-app assistant as the phone's chat calls it: the conversation, a turn, stop, a new chat, an
  *   earlier chat, an approval's answer, a picture, and a video's upload (start, parts, complete).
  * - sync.events: the live change stream (server-sent events), so it is a route probe: a GET would never end.
@@ -82,13 +82,6 @@ type Entry = {
 
 /** Known gaps by entry id: the change that closes each one. Entries listed here are printed, not failed. */
 const PENDING: Record<string, string> = {
-  "editor.worker": "device status replaces the Mac worker endpoint: ed-device-registry, then legacy-sunset-public",
-  "editor.draft-preview": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
-  "editor.jobs": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
-  "editor.todo": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",
-  "editor.todo-read": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",
-  "editor.job-go": "the built-in editor has no job that waits for a go: the plug-in editor's",
-  "editor.feedback": "feedback for new versions is the plug-in editor's",
   // The four media and cover entries answer only when the old-path router is mounted (a plug-in); the public build has none.
   "finals.media-thumb": "finals old-path router: a plug-in mounts it (the iPhone's Finals paths)",
   "finals.media-play": "finals old-path router: a plug-in mounts it (the iPhone's Finals paths)",
@@ -99,14 +92,12 @@ const PENDING: Record<string, string> = {
 
 /** The Finals old-path router is mounted (a plug-in's), which answers the iPhone's Finals paths on the same base path. */
 const oldPathRouter = () => mounted("GET", "/api/library/media/:id/thumb");
-/** The AI Editor root routes a plug-in mounts for an admin are mounted: to-do, worker status, jobs, draft preview and revise. */
-const editorRoot = () => mounted("GET", "/api/editor/todo");
 /** The catalog server's paths (nginx `/catalog/`, the catalog server): not this app's routes, so not probed here. */
 const onCatalog = (e: Entry) => e.path.startsWith("/catalog/");
 
 const fixture = (JSON.parse(
   readFileSync(fileURLToPath(new URL("./__fixtures__/ios-paths.json", import.meta.url)), "utf8"),
-) as Entry[]).map((e) => ({ ...e, pending: (e.id.startsWith("finals.") && oldPathRouter()) || (e.id.startsWith("editor.") && editorRoot()) ? undefined : PENDING[e.id] }));
+) as Entry[]).map((e) => ({ ...e, pending: e.id.startsWith("finals.") && oldPathRouter() ? undefined : PENDING[e.id] }));
 
 const fontsDir = fileURLToPath(new URL("../public/fonts", import.meta.url));
 
@@ -196,8 +187,8 @@ describe("the iPhone app's server paths", () => {
     );
 
     expect(broken.map((r) => `${r.e.method} ${r.e.path}: ${r.reason}`)).toEqual([]);
-    // With the plug-in's Finals and AI Editor routers mounted, no app path may stay pending.
-    if (oldPathRouter() && editorRoot()) {
+    // With the plug-in's Finals router mounted, no app path may stay pending.
+    if (oldPathRouter()) {
       expect(pending.map((r) => `${r.e.method} ${r.e.path}`)).toEqual([]);
     }
   });

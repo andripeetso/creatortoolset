@@ -22,6 +22,7 @@ import { lineTakes } from "./takes";
 import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
 import { statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
@@ -37,6 +38,8 @@ import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
 import { editorChatApp } from "./chat";
 import { cardsApp } from "./cards/routes";
+import { clearCards, readCards, saveCards, sheetFile } from "./cards/state";
+import { heldPasses, markRead, readKeys, sheetOf, todoFor, workerOf } from "./todo";
 import { approvePass, markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, removeLearned, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
@@ -212,6 +215,26 @@ editorApp.get("/footage-target", async (c) => {
   const t = await footageTargetFor(c.get("user").username);
   return t ? c.json(t) : notFound(c);
 });
+
+// the to-do (todo.ts) and whether a computer of the person's is on; registered before /:id
+/** What waits on the person across the edits they see (?projectId= only that project's, as the list). */
+editorApp.get("/todo", async (c) => {
+  const user = c.get("user");
+  const want = await listWorkspaceId(user, c.req.query("projectId"));
+  const only = want && (await inProjectOf(user, want)) ? want : undefined;
+  const ids = new Set((await listFor(user)).filter((e) => !only || e.projectId === only).map((e) => e.id));
+  return c.json(await todoFor(user.username, allEdits().filter((e) => ids.has(e.id)), await readKeys(user.username)));
+});
+
+/** ✓ on a to-do row, or Mark all read: `keys`, the rows' own. */
+editorApp.post("/todo/read", async (c) => {
+  const keys = (await body(c)).keys;
+  if (!Array.isArray(keys)) return c.json({ error: "keys: the to-do rows' keys", code: "invalid" }, 400);
+  await markRead(c.get("user").username, keys.filter((k): k is string => typeof k === "string" && k.length < 200).slice(0, 500));
+  return c.json({ ok: true });
+});
+
+editorApp.get("/worker", (c) => c.json(workerOf(c.get("user").username)));
 
 // the defaults are registered before /:id, so "defaults" is never read as an edit id
 // the defaults of the workspace the request works in (the window's, or the one picked in Settings: X-CT-Workspace);
@@ -462,6 +485,73 @@ editorApp.post("/:id/jobs/:jobId/retry", async (c) => {
   return c.json(viewFor(r));
 });
 
+/** Steps the person starts by hand (POST /:id/jobs): the whole edit's, or one version's. The others follow the step before them (engine.ts). */
+const WHOLE_STEPS = ["analyze", "script"];
+const VERSION_STEPS = ["draft", "broll", "cards", "post", "sound", "preview"];
+
+/** One step queued ({kind, variant} or the phone's {kind, draft}): 201 with the job, 409 while the same step is queued or running. */
+editorApp.post("/:id/jobs", async (c) => {
+  const r = await load(c, true);
+  if (!r) return notFound(c);
+  const b = await body(c);
+  const kind = typeof b.kind === "string" ? b.kind : "";
+  const whole = WHOLE_STEPS.includes(kind);
+  if (!whole && !VERSION_STEPS.includes(kind)) return c.json({ error: "Unknown step", code: "invalid" }, 400);
+  const variant = whole ? "" : typeof b.variant === "string" ? b.variant : typeof b.draft === "string" ? b.draft : "";
+  // a version's cut is made from its plan; every other step works on a cut it has
+  const known = kind === "draft" ? !!readStep(r.e.id, "plan")?.plans.some((p) => p.name === variant) : draftNames(r.e.id).includes(variant);
+  if (!whole && !known) return c.json({ error: "Unknown version", code: "invalid" }, 400);
+  const db = libraryDb();
+  const vid = `${r.e.id}:${variant}`;
+  if (db.prepare("SELECT 1 FROM edit_jobs WHERE version_id = ? AND kind = ? AND state IN ('queued', 'running')").get(vid, kind)) return c.json({ error: "Already on its way", code: "conflict" }, 409);
+  enqueueJob(db, r.e.workspaceId, vid, kind, r.user, true, "edit_jobs");
+  return c.json(jobsOf(r.e.id).find((j) => j.kind === kind && j.variant === variant), 201);
+});
+
+/**
+ * The person's go on what waits for it (todo.ts): a look sheet's cards are laid on the cut, or with `note` made again
+ * answering it (a new sheet); a held pass of an edit in passes is queued, as Approve in Review queues it (passes.ts).
+ */
+editorApp.post("/:id/jobs/:job/go", async (c) => {
+  const r = await load(c, true);
+  if (!r) return notFound(c);
+  const db = libraryDb();
+  const row = db.prepare("SELECT id, version_id, kind, state FROM edit_jobs WHERE id = ? AND edit_id = ?").get(Number(c.req.param("job")), r.e.id) as
+    | { id: number; version_id: string; kind: string; state: string }
+    | undefined;
+  if (!row) return notFound(c);
+  const variant = row.version_id.slice(r.e.id.length + 1);
+  const b = await body(c);
+  const note = typeof b.note === "string" ? b.note.trim() : "";
+  if (note.length > EDIT_FEEDBACK_TEXT_MAX) return c.json({ error: `A note is ${EDIT_FEEDBACK_TEXT_MAX.toLocaleString("en-US")} characters at most`, code: "invalid" }, 400);
+  const st = row.kind === "cards" && row.state === "queued" && sheetOf(r.e.id, variant) ? readCards(r.e.id, variant) : null;
+  if (st) {
+    if (note) {
+      // made again from nothing with the note: a new plan, script and draw, then a new sheet
+      await clearCards(r.e.id, variant);
+      await saveCards(r.e.id, variant, { style: st.style, calls: 0, draws: 0, drawn: [], liked: [], sheetNote: note });
+    } else await saveCards(r.e.id, variant, { ...st, go: true });
+    db.prepare("UPDATE edit_jobs SET run_after = 0 WHERE id = ? AND state = 'queued'").run(row.id);
+    return c.json(viewFor(r, readEdit(r.e.id)!));
+  }
+  if (heldPasses(r.e).some((h) => h.job === row.id)) {
+    if (note) return c.json({ error: "A note on the cut goes in Review or the chat; the go starts the next pass", code: "invalid" }, 400);
+    const p = nextPass(r.e, variant)!;
+    await markPasses(r.e.id, { [variant]: p });
+    enqueueJob(db, r.e.workspaceId, row.version_id, p, r.user, true, "edit_jobs");
+    return c.json(viewFor(r, readEdit(r.e.id)!));
+  }
+  return c.json({ error: "Nothing here waits for a go", code: "conflict" }, 409);
+});
+
+/** A waiting look sheet's picture (EditJob.sheet). */
+editorApp.get("/:id/jobs/:job/sheet.jpg", async (c) => {
+  const r = await load(c, true);
+  const row = r && (libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND edit_id = ? AND kind = 'cards'").get(Number(c.req.param("job")), r.e.id) as { version_id: string } | undefined);
+  const bytes = row && (await readFile(sheetFile(r.e.id, row.version_id.slice(r.e.id.length + 1))).catch(() => null));
+  return bytes ? new Response(bytes, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "no-store" } }) : notFound(c);
+});
+
 editorApp.post("/:id/stop", async (c) => {
   const r = await load(c);
   if (!r) return notFound(c);
@@ -699,6 +789,13 @@ editorApp.post("/sound", async (c) => {
  * A version's draft with its checks, run against the edit's other drafts as they are now; `view`, the draft as an editable
  * timeline (what /cut's edits name without a Review version), and `filed`, the Review version that is exactly this draft.
  */
+/** A version's newest preview: its Review version's video (the phone plays this). */
+editorApp.get("/:id/drafts/:name/preview", async (c) => {
+  const r = await load(c, true);
+  const p = r && readStep(r.e.id, "review")?.[c.req.param("name")];
+  return p ? c.redirect(`/api/review/assets/${encodeURIComponent(p.assetId)}/v/${p.n}/play`) : notFound(c);
+});
+
 editorApp.get("/:id/drafts/:name", async (c) => {
   const r = await load(c);
   const name = c.req.param("name");

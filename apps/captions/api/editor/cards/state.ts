@@ -76,6 +76,12 @@ export interface CardsState {
   left?: string[];
   /** nothing more to make: a later cut places what is here, with no AI call */
   done?: boolean;
+  /** an edit in passes: the look sheet of the drawn cards was made then (sheetFile) and waits for the person's go or note */
+  sheet?: { at: number };
+  /** the person's go on the look sheet: the cards are laid on the cut */
+  go?: true;
+  /** the person's note on the last look sheet: the cards are made again with it */
+  sheetNote?: string;
 }
 
 const VARIANT = /^(v[1-9]|m[1-9]\d?)$/; // a draft's name, as store.ts has it
@@ -86,6 +92,8 @@ export const cardsFolder = (variant: string) => `cards/${variant}`;
 const stateFile = (editId: string, variant: string) => path.join(editDir(editId), "cards", `${variant}.json`);
 export const cardsDir = (editId: string, variant: string) => path.join(editDir(editId), cardsFolder(variant));
 export const scriptFile = (editId: string, variant: string) => path.join(cardsDir(editId, variant), "script.txt");
+/** The look sheet the person is shown (an edit in passes): every drawn card's three stills on one JPEG. */
+export const sheetFile = (editId: string, variant: string) => path.join(cardsDir(editId, variant), "sheet.jpg");
 /** A card's clip (`still` absent) or one of its stills; `draw`: of the draw that is out. Null for a name that is no card. */
 export function cardFile(editId: string, variant: string, id: string, still?: (typeof STILLS)[number], draw = false): string | null {
   if (!VARIANT.test(variant) || !CARD.test(id)) return null;
