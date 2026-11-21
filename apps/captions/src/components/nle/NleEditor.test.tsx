@@ -203,7 +203,10 @@ describe("beside the chats (chat mode)", () => {
 });
 
 describe("the side panel beside the viewer (chat mode)", () => {
-  afterEach(() => useChatMode.setState({ on: false, shown: false }));
+  afterEach(() => {
+    useChatMode.setState({ on: false, shown: false });
+    localStorage.clear(); // the panels and Inspector tab opened here
+  });
 
   it("a portrait cut's viewer is as wide as its frame drawn as tall as the row; a landscape one keeps the width unless there is room", () => {
     // a 1000 px row 600 tall: the 9:16 frame is (600 - 102) * 9/16 = 280 wide, 316 with its padding
