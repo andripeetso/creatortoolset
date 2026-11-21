@@ -19,7 +19,7 @@ import { readDraft, readEdit, readStep, type EditMeta } from "./store";
 const headline = (drafts: number[], name: string) => (new Set(drafts).size === 1 ? `${draftName(drafts[0]!)} of ${name}` : name);
 
 /**
- * A draft's cut in Review, as the ready line plays it in the chat with Approve and Request changes under it (AssistantMedia
+ * A draft's cut in Review, as the ready line plays it in the chat with Open in Review, Open in Editor and Approve under it (AssistantMedia
  * `cut`): no AI turn to watch it. `next`: the pass approving it starts (passes.ts), as filing named it on the version.
  */
 export function cutMedia(edit: EditMeta, variant: string): AssistantMedia | null {
@@ -35,7 +35,7 @@ export function cutMedia(edit: EditMeta, variant: string): AssistantMedia | null
     src: `${api}/play`,
     poster: `${api}/thumb`,
     href: `/review/${p.assetId}?v=${p.n}`,
-    cut: { asset: p.assetId, n: p.n, ...(pass ? { next: PASS_WORD[pass] } : {}) },
+    cut: { asset: p.assetId, n: p.n, editor: `/editor/${edit.id}/${variant}`, ...(pass ? { next: PASS_WORD[pass] } : {}) },
   };
 }
 /**

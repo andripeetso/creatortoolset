@@ -1,11 +1,8 @@
-import { createContext, useContext, useState, type MouseEvent } from "react";
+import { useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router";
-import { ArrowUpRight, Check, ChevronRight } from "lucide-react";
+import { ArrowUpRight, Check } from "lucide-react";
 import type { AssistantMedia } from "@contracts/assistant";
 import { confirmDialog } from "@/lib/dialogs";
-
-/** Request changes under a ready cut: the chat box takes the cursor and asks what should change in it (the dock provides it). */
-export const AskChanges = createContext<((cut: AssistantMedia) => void) | null>(null);
 
 type Cut = NonNullable<AssistantMedia["cut"]>;
 
@@ -27,9 +24,8 @@ async function approveCut(cut: Cut): Promise<void> {
   if (!r.ok) throw new Error(j?.error || "Could not approve");
 }
 
-/** A ready cut's own buttons, Approve left and Request changes right, as on the Review page. */
-function CutButtons({ media, cut }: { media: AssistantMedia; cut: Cut }) {
-  const ask = useContext(AskChanges);
+/** A ready cut's own buttons (owner, 2026-11-20): Open in Review, Open in Editor (that version's timeline), Approve. */
+function CutButtons({ media, cut, open }: { media: AssistantMedia; cut: Cut; open: (e: MouseEvent, href: string) => void }) {
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
   const [error, setError] = useState("");
   const approve = async () => {
@@ -43,16 +39,22 @@ function CutButtons({ media, cut }: { media: AssistantMedia; cut: Cut }) {
       setError((e as Error).message);
     }
   };
-  const btn = "flex-1 rounded-full px-3 py-1.5 text-xs font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] disabled:opacity-60";
+  const btn = "flex-1 truncate rounded-full px-3 py-1.5 text-center text-xs font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] disabled:opacity-60";
+  const outline = "border hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]";
   return (
     <div className="space-y-1 px-3 pb-2.5">
       <div className="flex gap-2">
+        <a href={media.href} onClick={(e) => open(e, media.href)} className={`${btn} ${outline}`}>
+          Open in Review
+        </a>
+        {cut.editor && (
+          <a href={cut.editor} onClick={(e) => open(e, cut.editor!)} className={`${btn} ${outline}`}>
+            Open in Editor
+          </a>
+        )}
         <button type="button" disabled={state !== "idle"} onClick={() => void approve()} className={`${btn} flex items-center justify-center gap-1 bg-[var(--tint)] text-white hover:opacity-90`}>
           <Check className="size-3.5" aria-hidden />
           {state === "done" ? "Approved" : cut.next ? `Approve · add ${cut.next}` : "Approve"}
-        </button>
-        <button type="button" disabled={!ask} onClick={() => ask?.(media)} className={`${btn} border hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]`}>
-          Request changes
         </button>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -64,7 +66,7 @@ const clock = (s: number) => `${Math.floor(Math.round(s) / 60)}:${String(Math.ro
 
 /**
  * The videos a reply shows (show_video, a ready cut): a small player each; the title and Open go to its page, the dock
- * stays open. A ready cut opens with Review › and has Approve and Request changes under it.
+ * stays open. A ready cut has its buttons under it (CutButtons) instead of Open.
  */
 export function VideoCards({ media }: { media?: AssistantMedia[] }) {
   const navigate = useNavigate();
@@ -95,23 +97,17 @@ export function VideoCards({ media }: { media?: AssistantMedia[] }) {
               {v.title}
             </a>
             {v.duration ? <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{clock(v.duration)}</span> : null}
-            <a
-              href={v.href}
-              onClick={(e) => open(e, v.href)}
-              className="flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)]"
-            >
-              {v.cut ? (
-                <>
-                  Review <ChevronRight className="size-3" aria-hidden />
-                </>
-              ) : (
-                <>
-                  Open <ArrowUpRight className="size-3" aria-hidden />
-                </>
-              )}
-            </a>
+            {!v.cut && (
+              <a
+                href={v.href}
+                onClick={(e) => open(e, v.href)}
+                className="flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)]"
+              >
+                Open <ArrowUpRight className="size-3" aria-hidden />
+              </a>
+            )}
           </div>
-          {v.cut && <CutButtons media={v} cut={v.cut} />}
+          {v.cut && <CutButtons media={v} cut={v.cut} open={open} />}
         </li>
       ))}
     </ul>

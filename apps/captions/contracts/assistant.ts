@@ -117,11 +117,11 @@ export interface AssistantMedia {
   duration?: number;
   /**
    * A cut waiting in Review (an editor's ready line, workEnded `media`): under the player the app's own buttons, never words
-   * sent to the AI. Approve (left) is POST /api/review/assets/<asset>/approval { status: "approved", version: n }; Request
-   * changes (right) puts the cursor in the chat box, and the answer goes to the editor as notes; the title opens `href`.
+   * sent to the AI: Open in Review (`href`), Open in Editor (`editor`, that version's timeline; no button without it) and
+   * Approve, POST /api/review/assets/<asset>/approval { status: "approved", version: n }.
    * `next`: what approving starts ("B-roll", "cards"), so Approve reads "Approve · add B-roll"; absent, plain Approve.
    */
-  cut?: { asset: string; n: number; next?: string };
+  cut?: { asset: string; n: number; next?: string; editor?: string };
 }
 
 /**

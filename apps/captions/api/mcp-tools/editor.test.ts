@@ -124,9 +124,9 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     const last = (await chat()).at(-1)!;
     expect(last).toMatchObject({ role: "assistant", status: "done", text: "Draft 1 of “Tiny tumbles” is ready." });
     expect(last.choices).toBeUndefined();
-    // the cut plays in the chat, with Approve and Request changes acting on that Review video and version
+    // the cut plays in the chat, with Open in Review, Open in Editor (that version's timeline) and Approve on that Review video and version
     const asset = "11111111-2222-4333-8444-555555555555";
-    expect(last.media).toEqual([{ id: `review:${asset}:1`, kind: "video", title: "Tiny tumbles · Draft 1", src: `/api/review/assets/${asset}/v/1/play`, poster: `/api/review/assets/${asset}/v/1/thumb`, href: `/review/${asset}?v=1`, cut: { asset, n: 1 } }]);
+    expect(last.media).toEqual([{ id: `review:${asset}:1`, kind: "video", title: "Tiny tumbles · Draft 1", src: `/api/review/assets/${asset}/v/1/play`, poster: `/api/review/assets/${asset}/v/1/thumb`, href: `/review/${asset}?v=1`, cut: { asset, n: 1, editor: `/editor/${id}/v1` } }]);
     expect(await saidSince(from)).toEqual(["Draft 1 of “Tiny tumbles” is ready."]);
 
     // a typed "Show me" is the person's next message: the AI gets the line and the edit's page with it
