@@ -29,6 +29,16 @@ struct ResolveRequest: Equatable {
     }
 }
 
+/// The draft's timeline taken back from Resolve after the person changed it there: the one Open in Resolve made (by its
+/// name, or "name (2)"… when Resolve numbered it), written as OTIO for the server's next round (api/editor/sent-back.ts).
+struct ResolveTakeBack: Equatable {
+    let name: String
+    let project: String
+    let outPath: String
+
+    var environment: [String: String] { ["CT_RESOLVE_NAME": name, "CT_RESOLVE_PROJECT": project, "CT_RESOLVE_OUT": outPath] }
+}
+
 enum ResolveReply: Equatable {
     case opened(timeline: String)
     case failed(String)
@@ -79,18 +89,27 @@ enum ResolveBridge {
         }
     }
 
-    /// Runs the script with `runner` (Resolve's fuscript, or a fake in the tests) and reads its answer.
+    /// Runs the open script with `runner` (Resolve's fuscript, or a fake in the tests) and reads its answer.
     static func run(_ request: ResolveRequest, runner: URL, timeout: TimeInterval) async throws -> ResolveReply {
+        try await run(script: openDraftScript, environment: request.environment, runner: runner, timeout: timeout)
+    }
+
+    /// Runs the take-back script: the draft's timeline as Resolve has it now, written as OTIO to `request.outPath`.
+    static func run(_ request: ResolveTakeBack, runner: URL, timeout: TimeInterval) async throws -> ResolveReply {
+        try await run(script: takeBackScript, environment: request.environment, runner: runner, timeout: timeout)
+    }
+
+    private static func run(script text: String, environment: [String: String], runner: URL, timeout: TimeInterval) async throws -> ResolveReply {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("resolve-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let script = dir.appendingPathComponent("open-draft.lua")
-        try openDraftScript.write(to: script, atomically: true, encoding: .utf8)
+        let script = dir.appendingPathComponent("resolve.lua")
+        try text.write(to: script, atomically: true, encoding: .utf8)
 
         let process = Process()
         process.executableURL = runner
         process.arguments = ["-l", "lua", script.path]
-        process.environment = ProcessInfo.processInfo.environment.merging(request.environment) { _, new in new }
+        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
@@ -174,4 +193,45 @@ if not timeline then print("error\\tResolve refused " .. otio) return end
 project:SetCurrentTimeline(timeline)
 pm:SaveProject()
 print("ok\\t" .. title)
+"""
+
+/// The take-back script: the edit's project (loaded when another is open, which is saved first), then the timeline open
+/// now when it is the draft's, else the newest of the draft's (its name, or its name numbered), exported as OTIO. Nothing in
+/// Resolve is changed.
+private let takeBackScript = """
+-- Writes the draft's timeline as Resolve has it now to CT_RESOLVE_OUT (OTIO). Inputs: CT_RESOLVE_NAME (the name Open in
+-- Resolve gave it), CT_RESOLVE_PROJECT (the edit's project). Prints one answer line.
+resolve = Resolve()
+if not resolve then print("error\\tResolve isn't open, or external scripting is off: Preferences -> System -> General -> External scripting: Local") return end
+local name = os.getenv("CT_RESOLVE_NAME") or "Draft"
+local wanted = os.getenv("CT_RESOLVE_PROJECT") or ""
+local out = os.getenv("CT_RESOLVE_OUT") or ""
+if out == "" then print("error\\tno file to write") return end
+local pm = resolve:GetProjectManager()
+local project = pm:GetCurrentProject()
+if wanted ~= "" and not (project and project:GetName() == wanted) then
+  if project then pm:SaveProject() end
+  project = pm:LoadProject(wanted)
+end
+if not project then print("error\\tResolve has no project " .. wanted .. ": open the draft in Resolve first") return end
+-- 1 for the name itself, k for "name (k)", nil for any other timeline
+local function number(t)
+  local n = t:GetName()
+  if n == name then return 1 end
+  if n:sub(1, #name + 2) == name .. " (" then return tonumber(n:sub(#name + 3):match("^(%d+)%)$")) end
+  return nil
+end
+local timeline = project:GetCurrentTimeline()
+if not (timeline and number(timeline)) then
+  timeline = nil
+  local best = 0
+  for i = 1, project:GetTimelineCount() do
+    local t = project:GetTimelineByIndex(i)
+    local k = number(t)
+    if k and k >= best then best, timeline = k, t end
+  end
+end
+if not timeline then print("error\\tResolve's project " .. project:GetName() .. " has no timeline " .. name .. ": open the draft in Resolve first") return end
+if not resolve.EXPORT_OTIO or not timeline:Export(out, resolve.EXPORT_OTIO) then print("error\\tResolve wouldn't write " .. timeline:GetName() .. " as OTIO (it needs Resolve 18.5 or newer)") return end
+print("ok\\t" .. timeline:GetName())
 """

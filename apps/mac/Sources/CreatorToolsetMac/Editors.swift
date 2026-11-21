@@ -41,11 +41,12 @@ struct OpenEditorAsk: Equatable {
     var height: Int?
 }
 
-func isEditorAsk(_ ask: String) -> Bool { ask == "editors" || ask.hasPrefix("open-editor:") }
+func isEditorAsk(_ ask: String) -> Bool { ask == "editors" || ask.hasPrefix("open-editor:") || ask.hasPrefix("take-back-editor:") }
 
-func openEditorAsk(_ ask: String) -> OpenEditorAsk? {
-    guard ask.hasPrefix("open-editor:"),
-          let json = (try? JSONSerialization.jsonObject(with: Data(ask.dropFirst("open-editor:".count).utf8))) as? [String: Any],
+/// "open-editor:{…}" opens the draft in the editor; "take-back-editor:{…}" (the same fields) reads it back from there.
+func openEditorAsk(_ ask: String, prefix: String = "open-editor:") -> OpenEditorAsk? {
+    guard ask.hasPrefix(prefix),
+          let json = (try? JSONSerialization.jsonObject(with: Data(ask.dropFirst(prefix.count).utf8))) as? [String: Any],
           let edit = json["edit"] as? String, let draft = json["draft"] as? String, let editor = json["editor"] as? String,
           [edit, draft, editor].allSatisfy({ id in !id.isEmpty && id.count <= 80 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") } })
     else { return nil }
@@ -143,6 +144,34 @@ enum Editors {
             await start(editor.app)
             NSWorkspace.shared.activateFileViewerSelecting([file])
             return ["ok": true, "note": "In Resolve: File → Import → Timeline, and pick \(file.lastPathComponent) (shown in Finder)"]
+        }
+    }
+
+    /// The draft's timeline as the person left it in Resolve (the one Open in Resolve made), as OTIO text for the server's
+    /// next round: { text, file } or { problem }. Only Resolve Studio takes scripts; the others export a file by hand.
+    static func takeBack(_ ask: OpenEditorAsk) async -> [String: Any] {
+        guard ask.editor == "resolve-studio", let editor = installed().first(where: { $0.id == ask.editor }) else {
+            return ["problem": "Only DaVinci Resolve Studio hands a timeline back: export it as OTIO, FCPXML or XML and send that file back"]
+        }
+        guard running(editor.app) else { return ["problem": "Open Resolve with the edit's project first"] }
+        let file: URL
+        do {
+            file = try Self.file(for: OpenEditorAsk(edit: ask.edit, draft: ask.draft, editor: ask.editor, name: "\(ask.name) from Resolve"), format: "otio")
+        } catch {
+            return ["problem": "Could not make the timeline file"]
+        }
+        defer { try? FileManager.default.removeItem(at: file) }
+        let request = ResolveTakeBack(name: ask.name, project: ask.project, outPath: file.path)
+        do {
+            switch try await ResolveBridge.run(request, runner: editor.app.appendingPathComponent("Contents/Libraries/Fusion/fuscript"), timeout: ResolveBridge.defaultTimeout) {
+            case .opened(let timeline):
+                let text = try String(contentsOf: file, encoding: .utf8)
+                return ["text": text, "file": "\(timeline).otio"]
+            case .failed(let why):
+                return ["problem": why]
+            }
+        } catch {
+            return ["problem": "Could not read the timeline from Resolve: in Resolve, File → Export → Timeline as OTIO, and send that file back"]
         }
     }
 

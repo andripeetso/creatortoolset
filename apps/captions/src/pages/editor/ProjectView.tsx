@@ -23,7 +23,7 @@ import {
 import { useCachedLoad } from "@/lib/local-cache";
 import { confirmHeavy } from "@/lib/setup";
 import { useWorkPrefs } from "@/lib/setup";
-import { editorsOnMac, openInEditor, type MacEditor } from "@/lib/thisMac";
+import { editorsOnMac, openInEditor, takeBackFromEditor, type MacEditor } from "@/lib/thisMac";
 import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace";
@@ -249,7 +249,7 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
   const run = (f: () => Promise<unknown>) => { onError(null); return f().catch((x) => { onError(message(x)); refresh(); }); };
 
   const sentBack = useRef<HTMLInputElement>(null);
-  const takeBack = (f: File | undefined) => f && run(async () => onEdit(await sendBack(e.id, n, f.name, await f.text())));
+  const sendFileBack = (f: File | undefined) => f && run(async () => onEdit(await sendBack(e.id, n, f.name, await f.text())));
 
   const duplicate = () => run(async () => {
     const made = await duplicateVersion(e.id, n);
@@ -275,6 +275,13 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
       .then((r) => (r.problem ? toast.error(r.problem) : r.note && toast(r.note)))
       .finally(() => setOpening(false));
   };
+
+  // the timeline Open in Resolve made, as the person left it there, is the next version (the same name and project)
+  const takeBack = () => editor && run(async () => {
+    const r = await takeBackFromEditor({ edit: e.id, draft: n, editor: editor.id, name: `${e.name} ${title}`, project: e.name });
+    if (!r.text) throw new Error(r.problem ?? "Could not read the timeline from Resolve");
+    onEdit(await sendBack(e.id, n, r.file ?? "Resolve.otio", r.text));
+  });
 
   const card = (
     <article aria-label={title} className="grid min-w-0 content-start gap-2">
@@ -348,6 +355,12 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
             {opening ? <Loader2 className="animate-spin" /> : <MonitorPlay />} <span className="truncate">Open in {editor.name.replace(/^DaVinci /, "")}</span>
           </button>
         )}
+        {editor?.id === "resolve-studio" && (
+          <button type="button" disabled={!editable || !d || !!job} onClick={() => void takeBack()} className={cardButton}
+            title="The timeline Open in Resolve made, as you left it in Resolve: its cuts become the next version">
+            <Upload /> <span className="truncate">Take back from Resolve</span>
+          </button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button type="button" className={cardButton}><Download /> <span className="truncate">Download</span></button>
@@ -367,7 +380,7 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <input ref={sentBack} type="file" accept={TIMELINE_ACCEPT} hidden onChange={(x) => { takeBack(x.target.files?.[0]); x.target.value = ""; }} />
+        <input ref={sentBack} type="file" accept={TIMELINE_ACCEPT} hidden onChange={(x) => { sendFileBack(x.target.files?.[0]); x.target.value = ""; }} />
       </div>
       {!postHeld && d && editor && <ExportGapsNote gaps={d.exportGaps} editors={[editor.id]} />}
       {cards && (cards.cards.length > 0 || cards.note) && (

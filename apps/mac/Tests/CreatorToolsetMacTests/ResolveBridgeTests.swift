@@ -17,7 +17,8 @@ final class ResolveBridgeTests: XCTestCase {
         case "$CT_RESOLVE_NAME" in
           refuse*) printf 'noise\\nerror\\tResolve refused %s\\n' "$CT_RESOLVE_OTIO" ;;
           hang*) exec sleep 30 ;;
-          *) printf 'loading...\\nok\\t%s\\n' "$CT_RESOLVE_NAME" ;;
+          *) if [ -n "$CT_RESOLVE_OUT" ] && grep -q EXPORT_OTIO "$3"; then printf '{"OTIO_SCHEMA":"Timeline.1"}' > "$CT_RESOLVE_OUT"; fi
+             printf 'loading...\\nok\\t%s\\n' "$CT_RESOLVE_NAME" ;;
         esac
         """.write(to: runner, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runner.path)
@@ -39,6 +40,17 @@ final class ResolveBridgeTests: XCTestCase {
                                      project: "Tiny Acrobatics edit", mediaFolder: nil)
         let reply = try await ResolveBridge.run(request, runner: runner, timeout: 10)
         XCTAssertEqual(reply, .opened(timeline: "Tiny Acrobatics cut"))
+    }
+
+    func testTakesTheDraftBackAsOtio() async throws {
+        let (runner, dir) = try fakeRunner()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let out = dir.appendingPathComponent("back.otio")
+        let request = ResolveTakeBack(name: "Tiny Acrobatics cut", project: "Tiny Acrobatics edit", outPath: out.path)
+        XCTAssertEqual(request.environment["CT_RESOLVE_OUT"], out.path)
+        let reply = try await ResolveBridge.run(request, runner: runner, timeout: 10)
+        XCTAssertEqual(reply, .opened(timeline: "Tiny Acrobatics cut"))
+        XCTAssertEqual(try String(contentsOf: out, encoding: .utf8), #"{"OTIO_SCHEMA":"Timeline.1"}"#)
     }
 
     func testResolveRefusalComesBackAsAFailure() async throws {

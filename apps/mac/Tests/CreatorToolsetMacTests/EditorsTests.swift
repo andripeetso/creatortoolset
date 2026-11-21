@@ -43,6 +43,11 @@ final class EditorsTests: XCTestCase {
         XCTAssertNil(openEditorAsk(#"open-editor:{"edit":"../x","draft":"v2","editor":"premiere"}"#))
         XCTAssertNil(openEditorAsk(#"open-editor:{"edit":"e","draft":"v2?format=zip","editor":"premiere"}"#))
         XCTAssertNil(openEditorAsk("open-editor:nope"))
+        // the take-back ask has the same fields under its own prefix, and is never taken for an open
+        let back = #"take-back-editor:{"edit":"ed_1","draft":"v2","editor":"resolve-studio","name":"Tiny cut","project":"Tiny"}"#
+        XCTAssertTrue(isEditorAsk(back))
+        XCTAssertEqual(openEditorAsk(back, prefix: "take-back-editor:")?.project, "Tiny")
+        XCTAssertNil(openEditorAsk(back))
         // a timeline's name never leaves the timelines folder
         let file = try Editors.file(for: OpenEditorAsk(edit: "e", draft: "v1", editor: "premiere", name: "../../etc/x"), format: "xml")
         XCTAssertEqual(file.deletingLastPathComponent().lastPathComponent, "Timelines")
