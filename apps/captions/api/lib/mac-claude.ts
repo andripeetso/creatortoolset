@@ -114,7 +114,7 @@ export type MacAskStatus = "waiting" | "allowed" | "denied" | "expired";
 
 /* ---- usage: every answer's tokens and API-equivalent cost, by hour (UTC) and what it was for ---- */
 
-type Tally = { calls: number; tokens: number; costUsd: number };
+export type Tally = { calls: number; tokens: number; costUsd: number };
 /** Totals, and the same split by `${scope}:${instance}` (`by`). Entries from before scopes have a bare instance id: those are the workspace's. */
 type Split = Tally & { by?: Record<string, Tally> };
 /**
@@ -133,6 +133,10 @@ const usageScope = new AsyncLocalStorage<string>();
  * calls count under. It changes nothing else: what the work reads is still its own business (workspaceScope).
  */
 export const usageIn = <T>(workspace: string | undefined, fn: () => T): T => (workspace ? usageScope.run(workspace, fn) : fn());
+
+const jobTally = new AsyncLocalStorage<Tally>();
+/** One queue step's AI calls also add up in `sink` (editor/worker.ts: what an AI Editor step spent, shown on its edit). */
+export const tallyInto = <T>(sink: Tally, fn: () => T): T => jobTally.run(sink, fn);
 /** The workspace an AI call made now counts under: the one named for the work (usageIn), else the request's own. */
 function usageWorkspace(): string | undefined {
   const id = usageScope.getStore() ?? workspaceScope.getStore()?.id;
@@ -143,7 +147,12 @@ function usageWorkspace(): string | undefined {
  * One answer's usage, tallied by hour and label (the Mac's own, and the API path's with " (API)"), by scope and provider
  * instance, and by the workspace the call ran in. `workspace` null: in none (an answer whose request named none).
  */
-export async function recordUsage(label: string, u: MacUsage, instance?: string, scope: Scope = "workspace", workspace: string | null | undefined = usageWorkspace()): Promise<void> {
+export async function recordUsage(label: string, u: MacUsage, instance?: string, scope: Scope = "workspace", workspace: string | null | undefined = usageWorkspace(), sink: Tally | undefined = jobTally.getStore()): Promise<void> {
+  if (sink) {
+    sink.calls++;
+    sink.tokens += u.tokens;
+    sink.costUsd += u.costUsd;
+  }
   const all = await loadTally();
   const hour = new Date().toISOString().slice(0, 13);
   const zero = (): Tally => ({ calls: 0, tokens: 0, costUsd: 0 });
@@ -225,6 +234,8 @@ export class MacClaudeError extends Error {
 
 interface Req {
   id: string;
+  /** the queue step it was asked for, whose spend it adds to (tallyInto); not kept across a restart */
+  sink?: Tally;
   /** the device that may claim it: the provider's (contracts/providers.ts) */
   device: string;
   system: string;
@@ -446,7 +457,7 @@ export function streamMacClaude(
   // ponytail: no device = nothing to run it: an unclaimed miss, so an API-key fallback may still answer
   if (!opts.provider?.device) return Promise.reject(new MacClaudeError("No Mac runs this provider: pick one in Settings → Providers", "unclaimed"));
   return wait(
-    { id: randomUUID(), device: opts.provider.device, system, user, web: !!opts.web, background: !!opts.background, label: opts.label ?? "other", files: opts.files, once: opts.once, model: opts.model, provider: opts.provider, workspace: usageWorkspace(), session: opts.session, mcp: opts.mcp, keep: opts.keep },
+    { id: randomUUID(), device: opts.provider.device, system, user, web: !!opts.web, background: !!opts.background, label: opts.label ?? "other", files: opts.files, once: opts.once, model: opts.model, provider: opts.provider, workspace: usageWorkspace(), sink: jobTally.getStore(), session: opts.session, mcp: opts.mcp, keep: opts.keep },
     false,
     cancel,
     onDelta,
@@ -455,7 +466,7 @@ export function streamMacClaude(
   );
 }
 
-type Asked = Pick<Req, "id" | "device" | "system" | "user" | "web" | "background" | "label" | "files" | "once" | "model" | "provider" | "workspace" | "session" | "mcp" | "keep">;
+type Asked = Pick<Req, "id" | "device" | "system" | "user" | "web" | "background" | "label" | "files" | "once" | "model" | "provider" | "workspace" | "sink" | "session" | "mcp" | "keep">;
 type Hooks = Pick<MacOpts, "onStep" | "onAsk" | "onSession">;
 
 /** The promise of one request's answer: a new one waits for its Mac, one taken up after a restart (`claimed`) is already with it. */
@@ -476,7 +487,7 @@ function wait(asked: Asked, claimed: boolean, cancel: AbortSignal | undefined, o
         end();
         if (usage) {
           console.log(`[mac-claude] ${r.label}${r.provider ? ` (${r.provider.instance})` : ""}: ${usage.tokens} tokens, $${usage.costUsd.toFixed(2)} API-equivalent`);
-          void recordUsage(r.label, usage, r.provider?.instance, r.provider?.scope, r.workspace ?? null);
+          void recordUsage(r.label, usage, r.provider?.instance, r.provider?.scope, r.workspace ?? null, r.sink);
           onUsage?.(usage);
         }
         if (session) hooks.onSession?.(session);
@@ -665,7 +676,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const r = mine(c);
     const b = await body(c);
     const usage = usageOf(b.usage);
-    if (usage) void recordUsage(r?.label ?? "Stopped", usage, r?.provider?.instance, r?.provider?.scope, r?.workspace ?? null);
+    if (usage) void recordUsage(r?.label ?? "Stopped", usage, r?.provider?.instance, r?.provider?.scope, r?.workspace ?? null, r?.sink);
     if (!r) return c.json({ error: "Not found" }, 404);
     const error = String(b.error ?? "failed").slice(0, 300);
     // the relay says what the CLI said; a closed usage window says when it opens again

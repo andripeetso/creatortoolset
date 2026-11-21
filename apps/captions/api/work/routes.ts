@@ -8,6 +8,7 @@ import { Readable } from "node:stream";
 import { parseMachine, type Device } from "../../contracts/providers";
 import { WORK_MIN, type MadeProxy, type WorkClaim, type WorkResult } from "../../contracts/work";
 import { beatForDevice, claimForComputer, failForDevice } from "../editor/worker";
+import { spending } from "../editor/store";
 import { deviceForToken, deviceOf, noteMachine, setDeviceWork, touchDevice } from "../lib/devices";
 import { onLeave } from "../lib/sync";
 import { libraryDb } from "../library/db";
@@ -207,7 +208,9 @@ workApp.post("/:id/ai", async (c) => {
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const job = held(idOf(c), d.id);
   if (!job) return c.json({ error: "Not found" }, 404);
-  return c.json((await serveAi(job, await c.req.json().catch(() => null))) ?? null);
+  const b = await c.req.json().catch(() => null);
+  // the step's spend, as a step on the server adds it up (editor/store.ts spending)
+  return c.json((await spending(job, () => serveAi(job, b))) ?? null);
 });
 workApp.post("/:id/call", async (c) => {
   const d = caller(c);

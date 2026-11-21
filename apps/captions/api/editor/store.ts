@@ -10,7 +10,7 @@ import { pluginEditFlags } from "../lib/plugin";
 import type { EditStepChoice } from "../../contracts/editor-steps";
 import type { EditStyleCopy, WorkingSize } from "../../contracts/editor-styles";
 import type { Coverage, Critique, EditPlan } from "../../contracts/edit-plan";
-import { cardsView } from "./cards/state";
+import { cardsView, readCards } from "./cards/state";
 import { downloadsAsk, waitLine } from "./reach";
 import { passesView } from "./passes";
 import { chosenSteps } from "./steps";
@@ -32,6 +32,7 @@ import { libraryHasSounds } from "../library/sfx";
 import { pluginsOffIn } from "../lib/plugin-workspaces";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { findUser, pictureOf, type SessionUser } from "../users";
+import { tallyInto, type Tally } from "../lib/mac-claude";
 import type { PairMatch, Roll } from "./sync";
 
 /**
@@ -164,6 +165,8 @@ export interface StepFiles {
   read: { at: number };
   /** the Audio Enhancer sessions of its recordings' voices, by source version id, then enhancer (voice-mix.ts) */
   voice: Record<string, Record<string, string>>;
+  /** what each step's AI calls spent, by job id, every run of it added up (spending) */
+  usage: Record<string, Tally>;
 }
 
 /** A planned version's plan (plan.ts). */
@@ -679,6 +682,29 @@ export async function createEdit(username: string, body: Record<string, unknown>
   return e;
 }
 
+let usageChain: Promise<unknown> = Promise.resolve();
+/**
+ * Runs one step of an edit with its AI calls added to its job's spend (usage.json beside the edit), also when it fails or
+ * waits. Written on one chain: an edit's versions run their steps side by side.
+ */
+export async function spending<T>(job: { id: number; version_id: string | null }, fn: () => Promise<T>): Promise<T> {
+  const used: Tally = { calls: 0, tokens: 0, costUsd: 0 };
+  try {
+    return await tallyInto(used, fn);
+  } finally {
+    const id = (job.version_id ?? "").split(":")[0]!;
+    if (used.calls && readEdit(id)) {
+      usageChain = usageChain.then(async () => {
+        const all = readStep(id, "usage") ?? {};
+        const had = all[job.id] ?? { calls: 0, tokens: 0, costUsd: 0 };
+        all[job.id] = { calls: had.calls + used.calls, tokens: had.tokens + used.tokens, costUsd: had.costUsd + used.costUsd };
+        await saveStep(id, "usage", all);
+      }).catch((e) => console.warn(`[editor] usage ${id}: ${e}`));
+      await usageChain;
+    }
+  }
+}
+
 interface JobDbRow {
   id: number;
   version_id: string;
@@ -690,6 +716,7 @@ interface JobDbRow {
 
 export function jobsOf(id: string): EditJob[] {
   const rows = libraryDb().prepare("SELECT id, version_id, kind, state, attempts, error, actor, device FROM edit_jobs WHERE edit_id = ? ORDER BY id").all(id) as unknown as Array<JobDbRow & { actor: string | null; device: string | null }>;
+  const spent = readStep(id, "usage") ?? {};
   return rows.map((r) => {
     // running on a computer: what it last said (work/place.ts), else which computer holds it
     const p = r.state === "running" ? progressOf(r.id) : undefined;
@@ -698,7 +725,11 @@ export function jobsOf(id: string): EditJob[] {
     const line = r.state === "running" ? (p?.line ?? lineOf(r.id)) : r.state === "queued" && r.actor ? waitLine(r.actor, r) : undefined;
     // queued with no reader and a server copy to download: the chat asks to turn Downloads on (reach.ts downloadsAsk)
     const downloads = r.state === "queued" && r.actor ? downloadsAsk(r) : undefined;
-    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}), ...(progress ? { progress } : {}), ...(downloads ? { downloads } : {}) };
+    const usage = spent[r.id];
+    // the cards step of an edit in passes waits on its look sheet for the person's go (cards/step.ts)
+    const st = r.kind === "cards" && r.state === "queued" ? readCards(id, r.version_id.slice(id.length + 1)) : null;
+    const sheet = st?.sheet && !st.go ? { at: st.sheet.at } : undefined;
+    return { id: r.id, kind: r.kind, variant: r.version_id.slice(id.length + 1), state: r.state, attempts: r.attempts, error: r.error, ...(line ? { line } : {}), ...(progress ? { progress } : {}), ...(downloads ? { downloads } : {}), ...(usage ? { usage } : {}), ...(sheet ? { sheet } : {}) };
   });
 }
 
@@ -707,7 +738,8 @@ export function summaryOf(e: EditMeta): EditSummary {
   const row = libraryDb().prepare("SELECT kind, state, error = 'Stopped' AS stopped FROM edit_jobs WHERE edit_id = ? ORDER BY id DESC LIMIT 1").get(e.id) as
     { kind: EditJob["kind"]; state: EditJob["state"]; stopped: number | null } | undefined;
   const last = row ? { kind: row.kind, state: row.state, ...(row.stopped ? { stopped: true as const } : {}) } : null;
-  return { id: e.id, name: e.name, createdBy: e.createdBy, ...makerOf(e), createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last };
+  const costUsd = Object.values(readStep(e.id, "usage") ?? {}).reduce((n, u) => n + u.costUsd, 0);
+  return { id: e.id, name: e.name, createdBy: e.createdBy, ...makerOf(e), createdAt: e.createdAt, updatedAt: e.updatedAt, sources: e.sources, ...(e.uploads ? { uploads: e.uploads } : {}), last, ...(costUsd ? { costUsd } : {}) };
 }
 
 /** Who made it, by name and picture, where the edit's workspace has a team: one person's own edits carry none. */
