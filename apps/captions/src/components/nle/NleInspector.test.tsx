@@ -288,7 +288,7 @@ describe("Inspector processing: the timeline's setting and a clip's own", () => 
   } as unknown as NleTimeline);
   const boost: NleProcessing = {
     name: "boost", title: "Boost", tab: "audio", def: 0, applies: (_it, track) => track === "A1",
-    render: ({ value, mixed, set, readOnly }) => readOnly ? <span data-shown>{String(value)}</span> : (
+    render: ({ value, mixed, set, readOnly, playhead }) => readOnly ? <span data-shown data-at={playhead}>{String(value)}</span> : (
       <input type="number" aria-label="Boost" data-mixed={mixed} defaultValue={String(value)} onChange={(ev) => set(Number(ev.target.value), false)}
         onBlur={(ev) => set(Number(ev.target.value), true)} />
     ),
@@ -299,7 +299,7 @@ describe("Inspector processing: the timeline's setting and a clip's own", () => 
     const [tl, setTl] = useState(start);
     const [sel] = useState(() => keys(start));
     return (
-      <NleInspector tl={tl} keys={sel} nameOf={() => "shot"} onLive={(t) => void lives.push(t)} processing={[boost]} readOnly={readOnly}
+      <NleInspector tl={tl} keys={sel} nameOf={() => "shot"} onLive={(t) => void lives.push(t)} processing={[boost]} readOnly={readOnly} playhead={40}
         onCommit={(next, label) => { steps.push({ tl: next, label }); setTl(next); }} />
     );
   }
@@ -328,6 +328,7 @@ describe("Inspector processing: the timeline's setting and a clip's own", () => 
     const done = await open((tl) => [a1(tl)[0]._k!]);
     expect(radio("Same as timeline").getAttribute("aria-checked")).toBe("true");
     expect($("[data-shown]").textContent).toBe("3");
+    expect($("[data-shown]").dataset.at).toBe("40");   // the frame under the playhead, for a preview
     expect(document.querySelector('[aria-label="Boost"]')).toBeNull();
     await click(radio("This clip only"));
     expect(steps.at(-1)!.label).toBe("Boost: this clip only");
@@ -338,6 +339,8 @@ describe("Inspector processing: the timeline's setting and a clip's own", () => 
     expect(steps).toHaveLength(2);
     expect(a1(steps.at(-1)!.tl)[0].processing).toEqual({ boost: 7 });
     expect(steps.at(-1)!.tl.timeline.processing).toEqual({ boost: 3 });
+    await setNum(byLabel<HTMLInputElement>("Boost"), "7");   // let go where it was: no undo step, the dragged copy dropped
+    expect([steps.length, lives.at(-1)]).toEqual([2, null]);
     await click(radio("Same as timeline"));
     expect(steps).toHaveLength(3);
     expect(a1(steps.at(-1)!.tl)[0].processing).toBeUndefined();

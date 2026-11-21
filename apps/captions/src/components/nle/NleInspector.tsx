@@ -79,6 +79,8 @@ export type NleProcessingView = {
   tl: NleTimeline;
   /** the clips the section is for (none in the Timeline tab; with scope "timeline" there, they follow it) */
   keys: string[];
+  /** the playhead's timeline frame (a preview of the frame under it) */
+  playhead: number;
 };
 
 export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave, text, audio, processing = [], readOnly = false }: {
@@ -128,7 +130,7 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
     setPref(t);
   };
   const first = hits[0];
-  const pe: ProcEdit = { tl, onLive, onCommit, readOnly, toTimeline: () => pick("timeline") };
+  const pe: ProcEdit = { tl, onLive, onCommit, playhead, readOnly, toTimeline: () => pick("timeline") };
   const own = (t: "video" | "audio", on: string[]) => processing.filter((p) => p.tab === t).map((p) => (
     // a clip that has its own setting keeps the section (moved off the clips it applies to, it can still go back to the timeline's)
     <ClipProcessing key={p.name} p={p} e={pe} keys={on.filter((k) => {
@@ -406,7 +408,7 @@ function TimelineTab({ tl, onCommit, notes, onRun, children }: { tl: NleTimeline
   );
 }
 
-type ProcEdit = Pick<Edit, "tl" | "onLive" | "onCommit"> & { readOnly: boolean; toTimeline: () => void };
+type ProcEdit = Pick<Edit, "tl" | "onLive" | "onCommit" | "playhead"> & { readOnly: boolean; toTimeline: () => void };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 /** a value, or the processing's own `def` when there is none (null is a value) */
 const orDef = (p: NleProcessing, v: unknown) => (v === undefined ? p.def : v);
@@ -417,8 +419,9 @@ function TimelineProcessing({ p, e }: { p: NleProcessing; e: ProcEdit }) {
   return (
     <Section title={p.title}>
       {p.render({
-        value: orDef(p, e.tl.timeline.processing?.[p.name]), mixed: false, readOnly: e.readOnly, scope: "timeline", tl: e.tl, keys: [],
-        set: (v, done) => (done ? e.onCommit(put(v), p.title) : e.onLive(put(v))),
+        value: orDef(p, e.tl.timeline.processing?.[p.name]), mixed: false, readOnly: e.readOnly, scope: "timeline", tl: e.tl, keys: [], playhead: e.playhead,
+        // let go where it started: no undo step, and the dragged copy is dropped
+        set: (v, done) => (!done ? e.onLive(put(v)) : same(v, orDef(p, e.tl.timeline.processing?.[p.name])) ? e.onLive(null) : e.onCommit(put(v), p.title)),
       })}
     </Section>
   );
@@ -462,7 +465,7 @@ function ClipProcessing({ p, e, keys }: { p: NleProcessing; e: ProcEdit; keys: s
       {mixed && !(e.readOnly && owned > 0 && !ownAll) && <p className="px-2 text-zinc-400">Mixed</p>}
       {owned === 0 ? (
         <>
-          {p.render({ value: tlValue, mixed: false, readOnly: true, scope: "timeline", tl: e.tl, keys, set: () => {} })}
+          {p.render({ value: tlValue, mixed: false, readOnly: true, scope: "timeline", tl: e.tl, keys, playhead: e.playhead, set: () => {} })}
           {!e.readOnly && (
             <button type="button" onClick={e.toTimeline} className="justify-self-start px-2 text-zinc-300 underline-offset-2 hover:text-zinc-50 hover:underline">
               Edit timeline setting
@@ -470,8 +473,8 @@ function ClipProcessing({ p, e, keys }: { p: NleProcessing; e: ProcEdit; keys: s
           )}
         </>
       ) : p.render({
-        value: values[0], mixed, readOnly: e.readOnly, scope: "clip", tl: e.tl, keys,
-        set: (v, done) => (done ? e.onCommit(put(v), p.title) : e.onLive(put(v))),
+        value: values[0], mixed, readOnly: e.readOnly, scope: "clip", tl: e.tl, keys, playhead: e.playhead,
+        set: (v, done) => (!done ? e.onLive(put(v)) : !mixed && same(v, values[0]) ? e.onLive(null) : e.onCommit(put(v), p.title)),
       })}
     </Section>
   );
