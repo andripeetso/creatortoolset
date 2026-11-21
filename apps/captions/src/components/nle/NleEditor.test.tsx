@@ -348,7 +348,7 @@ describe("the side panel beside the viewer (chat mode)", () => {
     await key("w", { code: "KeyW" });
     act(() => s().commit(setItems(s().tl, [s().tl.tracks.V1.items[0]._k!], { in: 50 }), "Trim"));
     bridge.replies.length = 0;
-    await p.deliver(ask({ id: "x1", commands: [{ id: "setLength", params: { seconds: 1 } }] }));
+    await p.deliver(ask({ id: "during-try", commands: [{ id: "setLength", params: { seconds: 1 } }] }));
     expect(bridge.replies[0].error).toContain("A take is being tried");
     expect(s().trying).toBe(true);
     expect(clips(p.host)).toBe(2);

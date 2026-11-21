@@ -371,7 +371,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const last = Math.max(0, lengthOf(shown) - 1) / fps;
   const dirty = tl !== saved;
   // what the render doesn't show: unsaved edits, or a try on
-  const unrendered = dirty || !!tryOn;
+  const renderStale = dirty || !!tryOn;
   const tln = useTransport(last, fps, loop && lengthOf(shown) ? loopPart(marks, lengthOf(shown), fps) : null);
   const { time, seek, now } = tln;
 
@@ -843,9 +843,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span className="inline-flex shrink-0 rounded border border-zinc-700/70 p-0.5" role="group" aria-label="Viewer shows">
                   {(["source", "timeline", ...(rendered ? ["rendered" as const] : [])] as const).map((v) => (
-                    <button key={v} type="button" aria-pressed={view === v || (v === "timeline" && view === "rendered" && unrendered)} disabled={(v === "source" && !source) || (v === "rendered" && unrendered)} onClick={() => show(v)}
+                    <button key={v} type="button" aria-pressed={view === v || (v === "timeline" && view === "rendered" && renderStale)} disabled={(v === "source" && !source) || (v === "rendered" && renderStale)} onClick={() => show(v)}
                       title={v === "source" ? "The clip opened from the Media Pool: mark In and Out, drag it on, F9 insert, F10 overwrite (Q back)"
-                        : v === "rendered" ? (unrendered ? "Save to render the edits" : "The render of the saved timeline, with its texts and effects") : "The timeline"}
+                        : v === "rendered" ? (renderStale ? "Save to render the edits" : "The render of the saved timeline, with its texts and effects") : "The timeline"}
                       className={cn("h-5 rounded-[3px] px-1.5 capitalize disabled:opacity-40", view === v ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:text-zinc-100")}>{v}</button>
                   ))}
                 </span>
@@ -863,7 +863,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               onDragStart={inSource ? (e) => { e.dataTransfer.setData(VIEWER_MIME, "1"); e.dataTransfer.effectAllowed = "copy"; note(source); } : undefined}
               onDragEnd={() => note(null)}
               over={inSource ? (!srcPicture ? <SoundCard url={srcUrl(srcKey ?? "source")?.url ?? null} seconds={srcSecs} clock={srcT.clock} /> : null)
-                : view === "rendered" && rendered && !unrendered ? <NleRendered url={rendered.url} clock={tln.clock} playing={tln.playing} />
+                : view === "rendered" && rendered && !renderStale ? <NleRendered url={rendered.url} clock={tln.clock} playing={tln.playing} />
                 : cap?.clip && !captionsStale(shown) ? <CaptionsOver clip={cap.clip} clock={T.clock} fps={fps} /> : null}
               below={inSource ? (
                 <SourceStrip clock={srcT.clock} seconds={srcSecs} from={sm[0] !== null ? sm[0] / sfps : null} to={sm[1] !== null ? (sm[1] + 1) / sfps : null}
