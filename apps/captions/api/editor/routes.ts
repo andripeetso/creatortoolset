@@ -16,7 +16,8 @@ import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
 import { addFeedback, MAX_SOURCES, newestDraft, serial, queueVersion, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editDir, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft, seesEdit } from "./store";
 import { fileIntoProjects } from "./projects";
-import { emptyTracks, sourceOf } from "./timeline";
+import { emptyTracks, NATURAL_CUT, sourceOf } from "./timeline";
+import { lineTakes } from "./takes";
 import { wordsOf } from "../library/transcribe";
 import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
@@ -31,6 +32,7 @@ import type { NleTimeline } from "../../src/lib/nle/model";
 import { rendersOf } from "./preview";
 import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
+import { editorChatApp } from "./chat";
 import { cardsApp } from "./cards/routes";
 import { approvePass, markPasses, nextPass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, removeLearned, stylesView, updateStyle } from "./styles";
@@ -307,6 +309,8 @@ editorApp.delete("/styles/:id/learned/:editId", (c) => (removeLearned(c.get("use
 editorApp.route("/animation-styles", animationApp);
 // a voice made from text, saved in the Media Library as a take (voice.ts); before /:id too
 editorApp.route("/voice", voiceApp);
+// the AI Editor's chat (the assistant's chat about one edit), before /:id would read "chat" as an edit
+editorApp.route("/chat", editorChatApp);
 // a version's cards on the edit page: a still, the 👍, Make cards again (cards/routes.ts)
 editorApp.route("/", cardsApp);
 
@@ -439,6 +443,14 @@ editorApp.put("/:id/eyeline/:versionId", async (c) => {
 editorApp.get("/:id/sentences", async (c) => {
   const r = await load(c);
   return r ? c.json(readStep(r.e.id, "analysis")?.sentences ?? []) : notFound(c);
+});
+
+/** The take picker's takes of one line (contracts LineTakes), cut as the draft step cuts them; nothing is decoded. */
+editorApp.get("/:id/takes/:line", async (c) => {
+  const r = await load(c, true);
+  const line = r && readStep(r.e.id, "plan")?.lines.find((l) => l.id === c.req.param("line"));
+  if (!r || !line) return notFound(c);
+  return c.json(await lineTakes(line, readStep(r.e.id, "analysis")?.sentences ?? [], r.e.style?.pace === "natural" ? NATURAL_CUT : undefined));
 });
 
 /**

@@ -19,7 +19,10 @@ import { toNle } from "@/lib/nle/draft";
 import type { NleTimeline } from "@/lib/nle/model";
 import { usePageNote } from "@/lib/page-context";
 import { undoable } from "@/lib/undo";
+import { describeChanges } from "@contracts/edit-summary";
+import { ChatFoot, RoundBar } from "./DraftChatBars";
 import { versionTitle } from "./ProjectView";
+import { TakePicker } from "./TakePicker";
 
 /**
  * One version on the timeline (/editor/:id/:draft), in the editor (components/nle): it plays the clips from the Media
@@ -99,8 +102,9 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
   };
 
   const title = e ? versionTitle(e, name) : name;
-  // the chat knows which version is open here
-  const said = `Editor timeline: ${e?.name ?? id}, ${title}`;
+  // the chat knows which version is open here and what the person changed by hand and has not saved yet
+  const [unsaved, setUnsaved] = useState("");
+  const said = `Editor timeline: ${e?.name ?? id} (edit id ${id}), ${title}. ${unsaved ? `Unsaved edits by hand: ${unsaved}` : "No unsaved edits"}`;
   useEffect(() => usePageNote.setState({ note: said }), [said]);
   useEffect(() => () => usePageNote.setState({ note: null }), []);
   const run = (f: () => Promise<unknown>) => void f().catch((x) => toast.error(message(x)));
@@ -149,7 +153,10 @@ export function NleDraftPage({ id, name }: { id: string; name: string }) {
       <div className="flex min-h-0 flex-1 flex-col">
         {initial && draft ? (
           <NleEditor initial={initial} resetKey={`${id}/${name}`} urlOf={urlOf} onSave={save} control={control}
-            bar={<span className="truncate text-[13px] font-medium text-zinc-200">{title}</span>}
+            bar={e ? <RoundBar e={e} name={name} /> : <span className="truncate text-[13px] font-medium text-zinc-200">{title}</span>}
+            side={e?.lines.length ? (s) => <TakePicker key={name} s={s} e={e} name={name} title={title} /> : undefined}
+            foot={e && editable ? (f) => <ChatFoot f={f} e={e} name={name} unsaved={unsaved} filed={filed} busy={saving || !!making} /> : undefined}
+            onChange={(now, was) => setUnsaved(now === was ? "" : describeChanges(was, now))}
             renders={draft.renders ?? OLD_SERVER}
             rendered={filed ? { url: `/api/review/assets/${filed.assetId}/v/${filed.n}/play`, first: !!draft.timeline.plan } : null}
             readOnly={!editable}
