@@ -27,7 +27,7 @@ import {
 } from "./lib/uploads";
 import { env } from "./lib/env";
 import { clipReadyToEdit, createProjectFromFile, linkOrCopy } from "./projects";
-import { findUser, USERNAME_RE, type SessionUser } from "./users";
+import { findUser, mayUse, USERNAME_RE, type SessionUser } from "./users";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
@@ -2730,7 +2730,9 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     // and a pass cut's (`next`) starts the next pass: it is not finished. The approval stands whatever Finals answers: the
     // answer goes back with it. Undo leaves the piece in Finals.
     const newest = meta.versions.at(-1);   // the one an approval is about
-    const finals = status === "approved" && v.manage && newest && !newest.next
+    // an owner with the Media Library off has no Finals: the approval says nothing about them
+    const owner = findUser(meta.owner);
+    const finals = status === "approved" && v.manage && newest && !newest.next && (!owner || mayUse(owner, "media"))
       ? await versionToFinals(meta, newest).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }))
       : undefined;
     return c.json({ ...publicAsset(meta, v.manage, v.download), ...(finals ? { finals: "error" in finals ? { error: finals.error } : finals } : {}) });

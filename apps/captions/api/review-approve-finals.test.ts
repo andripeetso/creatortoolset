@@ -27,8 +27,8 @@ afterAll(() => {
 });
 
 const cookies: Record<string, string> = {};
-async function account(username: string) {
-  setOff(createUser(username, "password1", { role: "user" }), []);
+async function account(username: string, off: string[] = []) {
+  setOff(createUser(username, "password1", { role: "user" }), off);
   const res = await app.request("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password: "password1" }) });
   cookies[username] = res.headers.get("set-cookie")!.split(";")[0]!;
 }
@@ -78,6 +78,16 @@ describe.skipIf(!hasFfmpeg)("Approve sends to Finals", () => {
     expect(out.finals).toEqual({ error: "Blur it first" });
     expect(seen).toEqual([{ versionId }]);
     expect(items((await readMeta(id))!.name)).toBe(0);
+  });
+
+  it("an owner with the Media Library off approves with no Finals answer (no error)", async () => {
+    await account("nolib");
+    const id = await video("nolib", "Tiny Acrobatics no library");
+    const { findUser } = await import("./users");
+    setOff(findUser("nolib")!, ["media"]);
+    const out = await approve("nolib", id, "approved");
+    expect(out.approval.status).toBe("approved");
+    expect(out).not.toHaveProperty("finals");
   });
 
   it("a reviewer's Approve on a share link and a pass cut's Approve (it starts the next pass) send nothing", async () => {
