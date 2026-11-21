@@ -36,8 +36,8 @@
  *   app reads as "this server has no such sign-in" and offers the password form.
  * - editor.worker: the Mac worker status endpoint; it goes with the legacy
  *   worker sunset, so it stays on the list until then.
- * - editor.chat-*: the AI Editor chat; it is in the plug-in editor only. chat-edit is one edit's messages (`?edit=<id>`;
- *   an empty value is no edit, so the probe reads the whole chat's shape).
+ * - editor.chat-*: the AI Editor chat, the person's chat with the assistant about one edit (api/editor/chat.ts). chat-edit
+ *   is one edit's messages (`?edit=<id>`; an empty value is no edit, so the probe reads the AI Editor's own chat).
  * - editor.todo, todo-read, job-go, feedback: the to-do list, a waiting job's go and feedback for new versions; in the
  *   plug-in editor only (the built-in editor has no job that waits for a go).
  * - assistant.*: the in-app assistant as the phone's chat calls it: the conversation, a turn, stop, a new chat, an
@@ -86,10 +86,6 @@ const PENDING: Record<string, string> = {
   "editor.draft-preview": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
   "editor.draft-revise": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
   "editor.jobs": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
-  "editor.chat-get": "AI Editor chat moves into the plug-in: ba-editor-plugin",
-  "editor.chat-post": "AI Editor chat moves into the plug-in: ba-editor-plugin",
-  "editor.chat-delete": "AI Editor chat moves into the plug-in: ba-editor-plugin",
-  "editor.chat-edit": "AI Editor chat moves into the plug-in: ba-editor-plugin",
   "editor.todo": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",
   "editor.todo-read": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",
   "editor.job-go": "the built-in editor has no job that waits for a go: the plug-in editor's",
@@ -104,8 +100,8 @@ const PENDING: Record<string, string> = {
 
 /** The Finals old-path router is mounted (a plug-in's), which answers the iPhone's Finals paths on the same base path. */
 const oldPathRouter = () => mounted("GET", "/api/library/media/:id/thumb");
-/** The AI Editor root routes a plug-in mounts for an admin are mounted: chat, worker status, jobs, draft preview and revise. */
-const editorRoot = () => mounted("GET", "/api/editor/chat");
+/** The AI Editor root routes a plug-in mounts for an admin are mounted: to-do, worker status, jobs, draft preview and revise. */
+const editorRoot = () => mounted("GET", "/api/editor/todo");
 /** The catalog server's paths (nginx `/catalog/`, the catalog server): not this app's routes, so not probed here. */
 const onCatalog = (e: Entry) => e.path.startsWith("/catalog/");
 

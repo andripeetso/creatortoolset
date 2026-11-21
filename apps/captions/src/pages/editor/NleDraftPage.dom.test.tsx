@@ -34,9 +34,9 @@ const SOUND = ["gain_db", "fade_in", "fade_out", "enabled", "mute"];
 const renders = { edj_version: 1, tracks: { V1: ["zoom", "tilt", "fade_in", "fade_out", "enabled"], V2: ["zoom", "tilt", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND } };
 vi.mock("@/lib/editor", async (orig) => ({
   ...(await orig<typeof import("@/lib/editor")>()),
-  getEdit: async () => ({ id: "e1", name: "Rolls", jobs: [], plans: [], previews: {}, marks: {} }) as unknown as Edit,
+  getEdit: async () => ({ id: "e1", name: "Rolls", jobs: [], plans: [], lines: [], drafts: [], previews: {}, marks: {} }) as unknown as Edit,
   getDraft: async () => fake.draft,
-  saveTimeline: async (id: string, name: string, tl: NleTimeline) => (fake.saved.push([id, name, tl]), { id: "e1", name: "Rolls", jobs: [], plans: [], previews: {}, marks: {} }),
+  saveTimeline: async (id: string, name: string, tl: NleTimeline) => (fake.saved.push([id, name, tl]), { id: "e1", name: "Rolls", jobs: [], plans: [], lines: [], drafts: [], previews: {}, marks: {} }),
   nlePending: async () => ({ requests: fake.queue.splice(0) }),
   nleReply: async (r: { id: string }) => void fake.replies.push(r),
   listLuts: async () => [],

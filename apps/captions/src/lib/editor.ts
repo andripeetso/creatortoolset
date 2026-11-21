@@ -4,7 +4,7 @@ import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInp
 import type { ItemEdit } from "@contracts/edit-timeline";
 import type { NleRun } from "./nle/commands";
 import type { NleTimeline } from "./nle/model";
-import type { Draft, TimelineSource, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
+import type { Draft, EditorChatView, LineTakes, TimelineSource, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
 
 /** The Editor's calls to api/editor/routes.ts. */
 
@@ -30,6 +30,10 @@ export const createEdit = (e: NewEdit) => send<{ id: string }>("/api/editor", "P
 export const listVoices = () => send<VoicesView>("/api/editor/voice");
 export const makeVoice = (v: NewVoice) => send<MadeVoice | { waiting: string }>("/api/editor/voice", "POST", v);
 export const getEdit = (id: string) => send<Edit>(base(id));
+/** One line's takes for the take picker, each cut as a draft cuts it. */
+export const getLineTakes = (id: string, line: string) => send<LineTakes>(`${base(id)}/takes/${encodeURIComponent(line)}`);
+/** The newest chat with the assistant about this edit (its id, to open it). */
+export const getEditChat = (id: string) => send<EditorChatView>(`/api/editor/chat?edit=${encodeURIComponent(id)}`);
 /** The chat's editor requests for this window (api/editor/nle-bridge.ts), each handed over once, and the page's answer. */
 export type NleAsk = { id: string; edit: string; draft: string; kind: "state" | "run"; commands?: NleRun[] };
 export const nlePending = (client: string) => send<{ requests: NleAsk[] }>(`/api/editor/nle/pending?client=${encodeURIComponent(client)}`);

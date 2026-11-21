@@ -25,6 +25,10 @@
  *   POST   /api/editor/:id/restore               out of the trash again (Undo of DELETE; the maker and the workspace owner)
  *   GET    /api/editor/:id/sentences       → Sentence[] (what analyze found, for playing a take)
  *   PUT    /api/editor/:id/lines           PlansPatch (the creator): takes swapped or lines reordered → Edit; redrafts what changed
+ *   GET    /api/editor/:id/takes/:line     → LineTakes: the take picker's takes of one line, each cut as a draft would cut it (no AI, nothing decoded)
+ *   GET    /api/editor/chat?edit=<id>      → EditorChatView: the newest chat with the assistant about that edit (none: no edit, the AI Editor's own)
+ *   POST   /api/editor/chat                { text, edit? } a message to that chat, answered by the person's own AI → EditorChatView
+ *   DELETE /api/editor/chat?edit=<id>      a new conversation about it: the old chat stays among the person's chats → EditorChatView
  *   DELETE /api/editor/:id                 to the trash (kept LIBRARY_TRASH_DAYS)
  *   GET    /api/editor/defaults            → EditorDefaults (the set a new edit gets, and the items each slot can take)
  *   PUT    /api/editor/defaults/:slot      { id: string | null } (null = back to the built-in one) → EditorDefaults
@@ -201,6 +205,34 @@ export interface Line {
   id: string;
   text: string;
   takes: Take[];
+}
+
+/** A take as the take picker lays it on a timeline: its recording, its seconds there, and the parts its cut keeps. */
+export interface TakeCut extends Take {
+  /** the library version it was said in (a timeline source key) */
+  src: string;
+  /** seconds in the source, first sentence's start to last's end */
+  s: number;
+  e: number;
+  /** source frames [in, out) the cut keeps, in order (restarts and long pauses out, as the draft step cuts) */
+  cut: [number, number][];
+}
+
+/** GET /:id/takes/:line: a line's takes, best first as the script ranked them, and each one's source as a timeline keeps it. */
+export interface LineTakes {
+  line: string;
+  text: string;
+  takes: TakeCut[];
+  sources: Record<string, TimelineSource>;
+}
+
+/** /api/editor/chat: the person's chat with the assistant about one edit, as an edit's thread shows it (the phone's too). */
+export interface EditorChatView {
+  /** the assistant chat (none yet: the first message makes it) */
+  chat?: string;
+  messages: { id: string; role: "user" | "assistant"; text: string; at: number; steps?: string[]; error?: boolean; edit?: string }[];
+  /** the reply being written now: `claimed` once it has started working */
+  turn: { at: number; claimed: boolean; steps: string[] } | null;
 }
 
 /** One version's cut (script): its lines in order, each with the take handed to it. */

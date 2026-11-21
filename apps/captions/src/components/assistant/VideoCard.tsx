@@ -10,7 +10,7 @@ type Cut = NonNullable<AssistantMedia["cut"]>;
 
 /** Approve on that Review video and version; a cut with unblurred faces asks its owner first, as Review does. The answer is
  *  why it did not go to Finals, when it did not (an owner's Approve sends it there). */
-async function approveCut(cut: Cut): Promise<string | undefined> {
+export async function approveCut(cut: Pick<Cut, "asset" | "n">): Promise<string | undefined> {
   const post = async (asFilmed: boolean) => {
     const r = await fetch(`/api/review/assets/${cut.asset}/approval`, {
       method: "POST",
