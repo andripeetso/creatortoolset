@@ -1,4 +1,5 @@
 import { confirmDialog } from "@/lib/dialogs";
+import { whenSaid } from "@/lib/when-said";
 import {
   useCallback,
   useEffect,
@@ -82,6 +83,9 @@ import {
   type ReviewRef,
   type ReviewView,
   type Stroke,
+  assetTitle,
+  cutOf,
+  versionLabel,
 } from "@/lib/review";
 import { undoable } from "@/lib/undo";
 import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
@@ -862,7 +866,7 @@ function Review({
                 <span className="block h-[30dvh] overflow-hidden rounded bg-zinc-900 opacity-40" style={{ aspectRatio: `${version.width || 9} / ${version.height || 16}` }}>
                   <Picture src={api.media(version, "thumb")} alt="" className="h-full w-full object-contain" />
                 </span>
-                V{version.n}'s video was deleted to save space.
+                {versionLabel(version)}'s video was deleted to save space.
               </div>
             ) : version.status === "ready" ? (
               <div ref={wrap} className={cn("relative", "overflow-hidden", pic.z > 1 && !drawMode && "cursor-grab active:cursor-grabbing")}
@@ -1352,7 +1356,7 @@ function Header({
     const blob = new Blob([["In,Out,Type,Author,Status,Comment", ...rows].join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${asset.name} v${n} comments.csv`;
+    a.download = `${assetTitle(asset.name)} ${versionLabel(version)} comments.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -1400,23 +1404,24 @@ function Header({
           onClick={() => manage && !locked && setRenaming(true)}
           title={manage && !locked ? "Rename" : undefined}
         >
-          {asset.name}
+          {assetTitle(asset.name)}
         </h1>
       )}
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs font-medium hover:bg-zinc-900">
-            <Layers className="h-3.5 w-3.5" /> V{n}
+            <Layers className="h-3.5 w-3.5" /> {versionLabel(version)}
             <ChevronDown className="h-3 w-3 text-zinc-500" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-64">
-          <DropdownMenuLabel>Versions</DropdownMenuLabel>
+          <DropdownMenuLabel>{asset.versions.some((v) => cutOf(v.name) || v.draft) ? "Drafts" : "Versions"}</DropdownMenuLabel>
           {[...asset.versions].reverse().map((v) => (
             <DropdownMenuItem key={v.n} onClick={() => pickVersion(v.n)} className="flex items-center gap-2">
-              <span className="w-7 font-medium">V{v.n}</span>
-              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{v.name}</span>
+              <span className="shrink-0 font-medium">{versionLabel(v)}</span>
+              {/* a cut's file name only repeats the label; its time tells two saves of one draft apart */}
+              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{cutOf(v.name) ? whenSaid(v.createdAt) : v.name}</span>
               {v.captioned && <CC />}
               {v.removed && <span className="text-[10px] text-zinc-500" title="Video deleted to save space">No file</span>}
               {v.notBlurred && <span className="text-[10px] text-amber-300">Not blurred yet</span>}
@@ -1623,7 +1628,7 @@ function CaptionStudioButton({ asset, n, next }: { asset: ReviewAsset; n: number
               next &&
               old.length &&
               (await confirmDialog({
-                title: `Delete the video files of ${old.map((x) => `V${x.n}`).join(", ")} now that V${n} is approved?`,
+                title: `Delete the video files of ${old.map(versionLabel).join(", ")} now that ${versionLabel(asset.versions.find((x) => x.n === n) ?? { n, name: "" })} is approved?`,
                 body: `Frees ${fmtBytes(old.reduce((sum, x) => sum + x.bytes, 0))}; their comments and thumbnails are kept.`,
                 ok: "Delete files",
                 danger: true,
@@ -1674,7 +1679,7 @@ function CaptionsMenu({
   const tick = (on: boolean) => on && <Check className="ml-auto h-3.5 w-3.5" />;
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger>V{n} captions</DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger>{versionLabel(version)} captions</DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-72">
         <DropdownMenuItem onClick={() => void mark({ captioned: false })}>
           Not burned in {tick(!version.captioned)}
@@ -1682,7 +1687,7 @@ function CaptionsMenu({
         {sources.map((v) => (
           <DropdownMenuItem key={v.n} onClick={() => void mark({ captioned: true, madeFrom: v.n })}>
             <span className="min-w-0 truncate">
-              Burned in, made from V{v.n} <span className="text-xs text-muted-foreground">{v.name}</span>
+              Burned in, made from {versionLabel(v)} <span className="text-xs text-muted-foreground">{v.name}</span>
             </span>
             {tick(!!version.captioned && version.madeFrom === v.n)}
           </DropdownMenuItem>

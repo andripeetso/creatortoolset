@@ -3,7 +3,7 @@ import { HomeLink } from "@/components/HomeLink";
 import { Picture } from "@/components/Picture";
 import { Folder, Layers } from "lucide-react";
 import { useCachedLoad } from "@/lib/local-cache";
-import { APPROVAL, getSharedProject, thumbUrl, timecode, type ReviewAsset } from "@/lib/review";
+import { APPROVAL, getSharedProject, thumbUrl, timecode, versionLabel, type ReviewAsset } from "@/lib/review";
 import { cn } from "@/lib/utils";
 
 /** A project's share link (/rp/:ptoken): every video in it, for reviewers
@@ -61,7 +61,7 @@ export default function ReviewSharedProjectPage() {
                   )}
                   {a.versions.length > 1 && (
                     <span className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium">
-                      <Layers className="h-3 w-3" /> V{v?.n}
+                      <Layers className="h-3 w-3" /> {v && versionLabel(v)}
                     </span>
                   )}
                   {v && v.duration > 0 && (
