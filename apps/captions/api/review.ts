@@ -2379,8 +2379,8 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const v = await viewer(c);
     if (!v) return c.json({ error: "Not found" }, 404);
     const comments = await readComments(v.meta.id);
-    // an AI reading with the access key (Authorization) doesn't mark comments seen
-    const owner = v.manage && v.user === v.meta.owner && !c.req.header("authorization");
+    // an AI reading with the access key (Authorization), or a chat card asking where its cut's file is (?quiet), marks nothing seen
+    const owner = v.manage && v.user === v.meta.owner && !c.req.header("authorization") && c.req.query("quiet") === undefined;
     const newest = Math.max(0, ...comments.map((x) => x.createdAt));
     if (owner && newest > (v.meta.seenAt ?? 0)) {
       await updateMeta(v.meta.id, (m) => {

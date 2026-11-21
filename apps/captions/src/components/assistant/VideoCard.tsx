@@ -3,6 +3,8 @@ import { useNavigate } from "react-router";
 import { ArrowUpRight, Check, ChevronRight } from "lucide-react";
 import type { AssistantMedia } from "@contracts/assistant";
 import { confirmDialog } from "@/lib/dialogs";
+import { usePlayFrom } from "@/lib/play-here";
+import type { ReviewView } from "@/lib/review";
 
 /** Request changes under a ready cut: the chat box takes the cursor and asks what should change in it (the dock provides it). */
 export const AskChanges = createContext<((cut: AssistantMedia) => void) | null>(null);
@@ -60,6 +62,32 @@ function CutButtons({ media, cut }: { media: AssistantMedia; cut: Cut }) {
   );
 }
 
+/** A ready cut's version as Review has it, for its file on this computer (`local`, managers only); ?quiet marks nothing seen. */
+async function cutLocal(cut: Cut): Promise<string | undefined> {
+  const r = await fetch(`/api/review/assets/${cut.asset}?quiet`);
+  const view = r.ok ? ((await r.json()) as ReviewView) : null;
+  return view?.asset.versions.find((x) => x.n === cut.n)?.local;
+}
+
+/** One card's player: a ready cut plays from its file on this computer when it is here (lib/play-here.ts), else as sent. */
+function CardVideo({ media: v }: { media: AssistantMedia }) {
+  const play = usePlayFrom(v.src, v.cut && (() => cutLocal(v.cut!)));
+  return (
+    <video
+      data-chat-video
+      src={play.src}
+      onError={play.onError}
+      poster={v.poster}
+      controls
+      playsInline
+      preload="metadata"
+      // one at a time: starting this one pauses the others in the chat
+      onPlay={(e) => document.querySelectorAll<HTMLVideoElement>("video[data-chat-video]").forEach((x) => x !== e.currentTarget && x.pause())}
+      className="mx-auto block max-h-80 max-w-full bg-black"
+    />
+  );
+}
+
 const clock = (s: number) => `${Math.floor(Math.round(s) / 60)}:${String(Math.round(s) % 60).padStart(2, "0")}`;
 
 /**
@@ -79,17 +107,7 @@ export function VideoCards({ media }: { media?: AssistantMedia[] }) {
     <ul className="my-1.5 space-y-2">
       {media.map((v) => (
         <li key={v.id} className="overflow-hidden rounded-xl border border-border bg-background/60 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-          <video
-            data-chat-video
-            src={v.src}
-            poster={v.poster}
-            controls
-            playsInline
-            preload="metadata"
-            // one at a time: starting this one pauses the others in the chat
-            onPlay={(e) => document.querySelectorAll<HTMLVideoElement>("video[data-chat-video]").forEach((x) => x !== e.currentTarget && x.pause())}
-            className="mx-auto block max-h-80 max-w-full bg-black"
-          />
+          <CardVideo media={v} />
           <div className="flex items-center gap-2 px-3 py-2">
             <a href={v.href} onClick={(e) => open(e, v.href)} className="min-w-0 flex-1 truncate text-sm font-medium text-foreground hover:underline" title={v.title}>
               {v.title}

@@ -321,6 +321,9 @@ describe("review", () => {
       const [listed] = await read(app.request("/"));
       expect(listed).toMatchObject({ comments: 1, newComments: 1, approval: { status: "approved", by: "Client" }, looked: 1 }); // the owner opened v1 above
       expect(listed.share.enabled).toBe(true);
+      // a chat card's ?quiet read (where its cut's file is) marks no comment seen; the owner's own read does
+      await app.request(`/assets/${asset.id}?quiet`);
+      expect((await read(app.request("/")))[0]).toMatchObject({ newComments: 1 });
 
       // downloads stay off for reviewers until the owner allows them
       expect((await app.request(`${s}/v/1/download`)).status).toBe(403);
