@@ -323,7 +323,7 @@ describe("the side panel beside the viewer (chat mode)", () => {
     act(() => s().seek(40));
     await flush();
     expect(s().picked).toHaveLength(0);
-    expect((await p.state()).playhead).toBe(40);
+    expect((await p.state()).playhead).toBe(40 / 25); // the chat is told seconds
     p.done();
   });
 });
