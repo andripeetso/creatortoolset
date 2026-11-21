@@ -73,6 +73,22 @@ describe("what the Mac app says of a file", () => {
     expect(pathLine(await localFileState("ctlocal://media/x"))).toBeUndefined();
   });
 
+  it("placesState: a file that needs an OK in a folder added from this Mac is allowed and asked again; another computer's waits", async () => {
+    const asked: unknown[] = [];
+    let ok = false;
+    vi.stubGlobal("document", { documentElement: { dataset: { macDevice: "mac1" } } });
+    vi.stubGlobal("fetch", async (url: string) => ({ ok: url === "/api/devices/storage", json: async () => ({ folders: [
+      { id: "f1", origin: { host: "mac1", path: "/Volumes/X/FOOTAGE" } }, { id: "f2", origin: { host: "pc2", path: "/Volumes/X/OTHER" } }] }) }));
+    vi.stubGlobal("window", { webkit: { messageHandlers: { mediaAccess: { postMessage: async (b: Record<string, unknown>) => {
+      asked.push(b);
+      if (b.folderGrant) return { granted: (ok = true) };
+      return { states: { "/Volumes/X/FOOTAGE/a.mov": ok ? "here" : "needs_ok" } };
+    } } } } });
+    expect(await placesState(["/Volumes/X/FOOTAGE/a.mov"])).toEqual({ states: { "/Volumes/X/FOOTAGE/a.mov": "here" }, disks: {} });
+    expect(asked.filter((b) => (b as { folderGrant?: unknown }).folderGrant)).toEqual([{ folderGrant: { path: "/Volumes/X/FOOTAGE", folder: "f1" } }]);
+    vi.unstubAllGlobals();
+  });
+
   it("placesState: null outside the app and from an app that doesn't answer it", async () => {
     vi.stubGlobal("window", {});
     expect(await placesState(["/a.mov"])).toBeNull();

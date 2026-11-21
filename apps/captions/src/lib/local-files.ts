@@ -79,9 +79,30 @@ export type PathStates = { states: Record<string, PathState>; disks: Record<stri
  * the app or from an app that doesn't answer it (before the location agent): the caller reads each file then (onDisk).
  */
 export async function placesState(paths: string[]): Promise<PathStates | null> {
-  const a = await askMac({ placesState: { paths } });
-  if (!a || !a.states || typeof a.states !== "object") return null;
-  return { states: a.states as PathStates["states"], disks: (a.disks && typeof a.disks === "object" ? a.disks : {}) as PathStates["disks"] };
+  const ask = async () => {
+    const a = await askMac({ placesState: { paths } });
+    if (!a || !a.states || typeof a.states !== "object") return null;
+    return { states: a.states as PathStates["states"], disks: (a.disks && typeof a.disks === "object" ? a.disks : {}) as PathStates["disks"] };
+  };
+  const said = await ask();
+  return said && Object.values(said.states).includes("needs_ok") && (await allowOwnFolders()) ? ask() : said;
+}
+
+let ownAsked = 0;
+/**
+ * The Settings → Folders folders added from this Mac are its person's own: they play here with no second OK (owner,
+ * 2026-11-21: "local files on my Mac should always be played locally"). A folder another computer added still waits for
+ * the press. At most every 30 s, when this Mac says a file needs an OK; true when one was allowed.
+ */
+async function allowOwnFolders(): Promise<boolean> {
+  const me = typeof document === "undefined" ? undefined : document.documentElement.dataset.macDevice;
+  if (!me || Date.now() - ownAsked < 30_000) return false;
+  ownAsked = Date.now();
+  const r = await fetch("/api/devices/storage").catch(() => null);
+  const view = r?.ok ? ((await r.json().catch(() => null)) as { folders?: { id: string; origin: { host: string; path: string } }[] } | null) : null;
+  let any = false;
+  for (const f of view?.folders ?? []) if (f.origin?.host === me && (await folderGrant(f.origin.path, f.id))) any = true;
+  return any;
 }
 
 /** "Allow on this Mac", pressed for a Settings → Folders folder (`folder` its id, `path` its path on this Mac). */
