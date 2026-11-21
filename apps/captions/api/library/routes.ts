@@ -9,7 +9,7 @@ import { env } from "../lib/env";
 import { appendBody, freeBytes, sha256File } from "../lib/uploads";
 import { blurAtIntake, BLUR_UPLOADS, hasMembers, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
-import { accountOf, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
+import { accountOf, addRole, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
@@ -281,7 +281,9 @@ export async function saveToLibrary(
       .map((v) => (db().prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(v) as { library_id: string } | undefined)?.library_id)
       .find((l) => l && libraryRole(username, l)) ??
     (await librariesHere(username))[0]?.id;
-  if (!lib || !libraryRole(username, lib)) return null;
+  // its own library, or the team owner's in a workspace given it on Read & write (addRole)
+  const as = lib ? await addRole(username, lib) : null;
+  if (!lib || (as !== "owner" && as !== "member")) return null;
   if (RAW_FILE.test(filename)) return { error: RAW_FROM_COMPUTER, code: "failed" };
   const { size } = await stat(file);
   await mkdir(stagingDir(), { recursive: true });
@@ -300,7 +302,11 @@ export async function saveToLibrary(
   // reads none for anything not blurred, so it goes there too); a file kept as filmed, and a blurred render, follow the
   // Upload the owner chose (upload-gate.ts uploadFor)
   const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" || blurredOf ? libraryUploadStored(lib) : libraryUpload(lib);
-  if (serverKind() !== "local" && hostsNone(upload)) return saveOnComputer(username, lib, file, filename, from, footage, sound, opts.after, opts.importName, opts.blur, blurredOf);
+  if (serverKind() !== "local" && hostsNone(upload)) {
+    // a member's computer is not where the owner keeps this library's files: refused, as a member's upload is (startUpload)
+    if (as === "member") return { error: REFUSED_COMPUTER_OFF, code: "failed" };
+    return saveOnComputer(username, lib, file, filename, from, footage, sound, opts.after, opts.importName, opts.blur, blurredOf);
+  }
   // kept here: under Blur faces only a file made wholly of blurred renders (a sound has no picture); the rule said once more
   // where the routing above changes. This Mac keeps its own (the server is the owner's computer, as mayReceive reads it)
   if (serverKind() !== "local" && kindOf(filename) !== "audio") {

@@ -32,7 +32,7 @@ import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
 import { addToFinals, belowHd, finalsItemName, libraryOf as libraryFor } from "./library/finals";
-import { ensureLibrary, servedByPlugin } from "./library/access";
+import { addRole, ensureLibrary, homeOf, servedByPlugin } from "./library/access";
 import { blursFaces } from "./library/db";
 import { mayLeave, workspaceLibrary } from "./library/upload-gate";
 import { blobs, libraryDb, serverBucket, serverStore } from "./library/db";
@@ -720,7 +720,9 @@ async function mirror(id: string): Promise<void> {
   if (m.versions.some((x) => !x.versionId)) return;
   // the library of the video's own workspace ("": from before workspaces, the account's first library)
   const libraryId = row?.library_id ?? (await ensureLibrary(m.owner, m.workspace ?? "")) ?? libraryFor(m.owner);
-  if (!libraryId) return;
+  // the team owner's, in a workspace given to the uploader: kept up only while they may add there (Read only: Review alone)
+  const home = (d.prepare("SELECT workspace_id AS w FROM libraries WHERE id = ?").get(libraryId) as { w: string } | undefined)?.w;
+  if (home !== homeOf(m.owner) && (await addRole(m.owner, libraryId)) !== "member") return;
   const dir = live ? assetDir(id) : trashDir(id);
   const file = (n: number, name: string) => path.join(dir, `v${n}`, name);
   const shown = m.versions.filter((x) => x.status !== "processing");

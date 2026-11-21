@@ -6,7 +6,7 @@ import { pluginMainSource, pluginUploadsTo } from "../lib/plugin";
 import { announce } from "../lib/sync";
 import { inProjectOf } from "../lib/project-of";
 import { ownedProject, sharedHere, sharedProjects, workspaceScope } from "../lib/workshop/workspace";
-import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
+import { currentWorkspaceId } from "../lib/workspace-scope";
 import { findUser, listUsers, LOCAL_USER, mayChange, mayUse, type SessionUser } from "../users";
 import { blobs, libraryDb, newLibrarySettings } from "./db";
 import { mayLeave } from "./upload-gate";
@@ -50,19 +50,22 @@ export function accountOf(workspaceId: string): string | null {
   return [...listUsers().map((u) => u.username), LOCAL_USER.username].find((u) => homeOf(u) === workspaceId) ?? null;
 }
 
-/** Which of the account's libraries are in a workspace: `projectId`, else the one this request works in (inProjectOf). */
-const scopeOf = (username: string, projectId?: string) => {
+/** Which of the account's libraries are in a workspace (inProjectOf), and its id: `projectId`, else the one this request works in. */
+const scopeOf = async (username: string, projectId?: string) => {
   const user = { username } as SessionUser;
-  return projectId === undefined ? inCurrentWorkspace(user) : inProjectOf(user, projectId);
+  const id = projectId ?? (await currentWorkspaceId(user));
+  return { keep: await inProjectOf(user, id), id };
 };
 
 type LibraryRow = { id: string; name: string; storage_kind: string; settings: string };
 
-function librariesIn(username: string, keep: ((own?: string) => boolean) | null): LibraryRow[] {
+/** The account's libraries `keep` holds, oldest first, but one tagged with workspace `exact` before any that is the
+ *  workspace's only by falling to its first brand (from before workspaces, or tagged with a workspace that is gone). */
+function librariesIn(username: string, keep: ((own?: string) => boolean) | null, exact?: string): LibraryRow[] {
   const rows = libraryDb()
     .prepare("SELECT id, name, storage_kind, settings, json_extract(settings, '$.projectId') AS ws FROM libraries WHERE workspace_id = ? ORDER BY created_at, id")
     .all(homeOf(username)) as (LibraryRow & { ws: string | null })[];
-  return rows.filter((r) => !keep || keep(r.ws ?? undefined));
+  return rows.filter((r) => !keep || keep(r.ws ?? undefined)).sort((a, b) => Number(!!exact && b.ws === exact) - Number(!!exact && a.ws === exact));
 }
 
 /**
@@ -72,9 +75,21 @@ function librariesIn(username: string, keep: ((own?: string) => boolean) | null)
  */
 export async function librariesHere(username: string, projectId?: string): Promise<LibraryRow[]> {
   // a workspace the team's owner gave this person (Settings → Team): the owner's libraries there, to look at (givenLibrary)
-  const given = projectId === undefined ? await sharedHere({ username } as SessionUser) : null;
-  if (given) return librariesIn(given.owner, await inProjectOf({ username: given.owner } as SessionUser, given.id));
-  return librariesIn(username, await scopeOf(username, projectId));
+  const given = await givenIn(username, projectId);
+  if (given) return librariesIn(given.owner, await inProjectOf({ username: given.owner } as SessionUser, given.id), given.id);
+  const { keep, id } = await scopeOf(username, projectId);
+  return librariesIn(username, keep, id);
+}
+
+/**
+ * The workspace `projectId` names (else the one this request works in) when the team's owner gave it to this account:
+ * whose it is. Its library is that owner's for every member, so a member opening it first never makes one of their own.
+ * Null for a workspace of the account's own, or none.
+ */
+async function givenIn(username: string, projectId?: string): Promise<{ owner: string; id: string } | null> {
+  if (projectId === undefined) return sharedHere({ username } as SessionUser);
+  const p = (await sharedProjects(username)).find((x) => x.id === projectId);
+  return p ? { owner: p.owner, id: p.id } : null;
 }
 
 /**
@@ -102,9 +117,11 @@ export async function givenLibrary(username: string, libraryId: string): Promise
 export async function ensureLibrary(username: string, projectId?: string): Promise<string | null> {
   const account = findUser(username);
   if (account && !mayUse(account, "media")) return null;
-  const [keep, ws] = await Promise.all([scopeOf(username, projectId), projectId ?? currentWorkspaceId({ username } as SessionUser)]);
+  const given = await givenIn(username, projectId);
+  if (given) return ensureLibrary(given.owner, given.id);
+  const { keep, id: ws } = await scopeOf(username, projectId);
   // nothing is awaited between the look and the insert: two pages asking at once never make two
-  const found = librariesIn(username, keep)[0];
+  const found = librariesIn(username, keep, ws)[0];
   if (found) return found.id;
   const id = `lib_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   libraryDb()
@@ -133,8 +150,25 @@ export function libraryRole(username: string, libraryId: string): "owner" | null
  * libraryRole (the owner), and a member's upload is marked as theirs (created_by).
  */
 export async function mayAdd(user: SessionUser, libraryId: string): Promise<boolean> {
-  return !!libraryRole(user.username, libraryId) || ((await givenLibrary(user.username, libraryId)) && mayChange(user, "media"));
+  const as = await addRole(user.username, libraryId, user);
+  return as === "owner" || as === "member";
 }
+
+/**
+ * How the account may add to the library, the one check every add asks (an upload, Send to Finals, a Review video's
+ * copy, a sound effect, a Finals folder): "owner" (its own), "member" (the owner's, in a workspace the owner gave it with
+ * the Media Library on Read & write), "read" (given, on Read only: it may look, never add; READ_ONLY says so), else null.
+ * `user`: the request's account; work outside a request (an export, a Review copy) reads the account's record.
+ */
+export async function addRole(username: string, libraryId: string, user?: Pick<SessionUser, "role" | "off" | "read">): Promise<"owner" | "member" | "read" | null> {
+  if (libraryRole(username, libraryId)) return "owner";
+  const who = user ?? findUser(username);
+  if (!who || !(await givenLibrary(username, libraryId))) return null;
+  return mayChange(who, "media") ? "member" : "read";
+}
+
+/** Why a member on Read only for the Media Library (Settings → Team → Access) adds nothing to the workspace's library. */
+export const READ_ONLY = "The Media Library is Read only for you in this workspace";
 
 /**
  * The workspace this request names (the app's X-CT-Workspace, or a chat's own, which wins: workspaceScope), checked:
@@ -205,8 +239,9 @@ export async function clipsHere(username: string, versionIds: string[]): Promise
 }
 
 /**
- * Whether a workspace's Media Library is set up (setupAt, on the library its owner keeps, found by the workspace's
- * projectId: never the asker's home). No projectId: the asker's own first library. `owner`: the asker sets it up; a
+ * Whether a workspace's Media Library is set up (setupAt, on the library its owner keeps: the one librariesHere reads,
+ * never the asker's home nor another account's). No projectId: the workspace this request works in, else the asker's
+ * own first library. `owner`: the asker sets it up; a
  * member is told it isn't set up, with no button.
  */
 export async function mediaReady(username: string, projectId?: string): Promise<{ ready: boolean; owner: boolean; libraryId: string | null }> {
@@ -214,16 +249,28 @@ export async function mediaReady(username: string, projectId?: string): Promise<
   const d = libraryDb();
   type Row = { id: string; setupAt: string | null };
   if (projectId === undefined) {
+    // the workspace this request works in, read as librariesHere reads it (a given one is its owner's library)
+    const here = await currentWorkspaceId({ username } as SessionUser);
+    if (here) return mediaReady(username, here);
     const row = d.prepare(`${cols} workspace_id = ? ORDER BY created_at, id LIMIT 1`).get(homeOf(username)) as Row | undefined;
     return settled(row, true, username, undefined);
   }
   const ws = workspaceById(projectId);
   // the owner: of the team, or of the workspace itself (a person's own workspace is in no team)
   const owner = !!ws?.members.some((m) => m.username === username && m.role === "owner") || !!(await ownedProject(projectId, { username } as SessionUser));
-  const row =
-    (d.prepare(`${cols} json_extract(settings, '$.projectId') = ? ORDER BY created_at, id LIMIT 1`).get(projectId) as Row | undefined) ??
-    // a library from before workspaces kept their own: the first brand's, as librariesIn reads it
-    (ws && (d.prepare(`${cols} workspace_id = ? AND json_extract(settings, '$.projectId') IS NULL ORDER BY created_at, id LIMIT 1`).get(homeOf(ws.members.find((m) => m.role === "owner")?.username ?? "")) as Row | undefined));
+  // whose library it is: the owner of a workspace given to the asker, of the team, else the asker's own
+  const holder = (await givenIn(username, projectId))?.owner ?? ws?.members.find((m) => m.role === "owner")?.username ?? username;
+  // one of the holder's workspaces: the very library librariesIn, ensureLibrary and a folder's scan pick (one from before
+  // workspaces is its first brand's), never another account's with the same projectId
+  const keep = await inProjectOf({ username: holder } as SessionUser, projectId);
+  const first = keep ? librariesIn(holder, keep, projectId)[0] : undefined;
+  const row = first
+    ? { id: first.id, setupAt: (JSON.parse(first.settings || "{}") as { setupAt?: string }).setupAt ?? null }
+    : keep
+      ? undefined
+      : ((d.prepare(`${cols} workspace_id = ? AND json_extract(settings, '$.projectId') = ? ORDER BY created_at, id LIMIT 1`).get(homeOf(holder), projectId) as Row | undefined) ??
+        // a library from before workspaces kept their own: the team's first
+        (ws && (d.prepare(`${cols} workspace_id = ? AND json_extract(settings, '$.projectId') IS NULL ORDER BY created_at, id LIMIT 1`).get(homeOf(holder)) as Row | undefined)));
   return settled(row || undefined, owner, username, projectId);
 }
 

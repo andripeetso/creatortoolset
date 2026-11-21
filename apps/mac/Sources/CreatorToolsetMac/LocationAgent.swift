@@ -261,6 +261,7 @@ final class LocationAgent: @unchecked Sendable {
             sendFilmed(folder: i.folder, path: i.path)
         }
         // the quick pass: one file at a time, then the listing again with what was read
+        var later: [(folder: String, path: String, blur: Bool)] = []
         for (id, files, unreadable) in listed {
             var printed = files, any = false
             for (n, f) in files.enumerated() where f.quick == nil {
@@ -270,7 +271,13 @@ final class LocationAgent: @unchecked Sendable {
                 Thread.sleep(forTimeInterval: 0.05)
             }
             cache.save()
-            if any { for page in Self.pages(id: id, files: printed, unreadable: unreadable, scan: UUID().uuidString) { _ = report(head, page) } }
+            if any { for page in Self.pages(id: id, files: printed, unreadable: unreadable, scan: UUID().uuidString) { later += report(head, page) } }
+        }
+        // what that listing matched to no version is indexed too: a long quick pass may end after the folder's workspace got
+        // a library (the first answer said nothing to index), and no other pass comes until something changes
+        for i in later {
+            if isStopped { break }
+            indexFile(folder: i.folder, path: i.path, blur: i.blur, cache: cache)
         }
     }
 

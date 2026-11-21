@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { homeOf, libraryRole, mayWrite } from "./access";
+import { addRole, homeOf, libraryChanged, mayWrite, READ_ONLY } from "./access";
+import { assetRef, canSee } from "./sources";
 import { libraryDb, newLibrarySettings } from "./db";
 import { addExternalItem, externalCanSee, externalRefFor } from "./refs";
 import { pushFinalCopy, saveToLibrary } from "./routes";
@@ -99,8 +100,11 @@ export function finalsCollectionId(libraryId: string): string {
 export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promise<FinalsOutcome> {
   const small = belowHd(input.width, input.height);
   if (small) return { ok: false, code: "below_hd", error: small };
-  const role = libraryRole(input.owner, input.libraryId);
-  if (!role) return { ok: false, code: "not_found", error: "The Media Library isn't on for this account" };
+  // the account's own library, or its team owner's in a workspace given it on Read & write (addRole)
+  const as = await addRole(input.owner, input.libraryId);
+  if (as === "read") return { ok: false, code: "no_access", error: READ_ONLY };
+  if (!as) return { ok: false, code: "not_found", error: "The Media Library isn't on for this account" };
+  const viewer = as === "owner" ? { username: input.owner, role: as } : { username: input.owner, role: as, given: true as const };
   try {
     const refusal = await pluginFinalsRefusal(input, source);
     if (refusal) return { ok: false, code: "refused", error: refusal };
@@ -112,13 +116,15 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
     if ("external" in source) {
       ref = externalRefFor(source.external.source, source.external.kind, source.external.externalId, source.external.title);
       if (!ref) return { ok: false, code: "failed", error: "That source isn't connected" };
-      if (!(await externalCanSee({ username: input.owner, role }, ref, input.libraryId))) return { ok: false, code: "no_access", error: "Not allowed" };
+      if (!(await externalCanSee(viewer, ref, input.libraryId))) return { ok: false, code: "no_access", error: "Not allowed" };
     } else if ("versionId" in source) {
       const row = d
         .prepare("SELECT a.id AS asset_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL")
         .get(source.versionId, input.libraryId) as { asset_id: string } | undefined;
       if (!row) return { ok: false, code: "not_found", error: "That video is not in the Media Library" };
-      if (!(await mayWrite(input.owner, input.libraryId, row.asset_id, source.versionId))) return { ok: false, code: "no_access", error: "Not allowed" };
+      // a member links what they may see; the owner what their policies let them change
+      const may = as === "owner" ? await mayWrite(input.owner, input.libraryId, row.asset_id, source.versionId) : await canSee(viewer, assetRef(input.libraryId, row.asset_id, source.versionId));
+      if (!may) return { ok: false, code: "no_access", error: "Not allowed" };
       assetId = row.asset_id;
       versionId = source.versionId;
     } else {
@@ -142,9 +148,10 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
     }
 
     const collectionId = finalsCollectionId(input.libraryId);
+    // a member adds to a piece of their own only: one of the owner's with the same name is never theirs to fill or link
     let piece = d
-      .prepare("SELECT id FROM pieces WHERE library_id = ? AND collection_id = ? AND label = ? ORDER BY created_at, id LIMIT 1")
-      .get(input.libraryId, collectionId, input.label) as { id: string } | undefined;
+      .prepare("SELECT id FROM pieces WHERE library_id = ? AND collection_id = ? AND label = ? AND (? OR created_by = ?) ORDER BY created_at, id LIMIT 1")
+      .get(input.libraryId, collectionId, input.label, Number(as === "owner"), input.owner) as { id: string } | undefined;
     if (!piece) {
       const id = `pce_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
       d.prepare("INSERT INTO pieces (id, library_id, collection_id, label, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(
@@ -179,6 +186,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
     }
     emitEvent("library.changed", {});
     announce(input.owner, "library"); // sent from the Workshop or the AI Editor: the open Finals pages refetch
+    if (as === "member") libraryChanged(input.libraryId); // and the library's owner's
     const outcome: FinalsOutcome = { ok: true, pieceId: piece.id, assetId, versionId };
     await pluginFinalsAdded(input, source, outcome); // a plug-in's own reaction (a change note, say); its failure does not undo this
     return outcome;
@@ -188,11 +196,14 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
 }
 
 /** Links a Finals piece to a session of the same account: its versions get post descriptions there (the piece `docId`,
- *  else the session's main one). False when the piece is not in a library the account owns. */
-export function linkFinalsPiece(pieceId: string, sessionId: string, docId: string | undefined, owner: string): boolean {
+ *  else the session's main one). False unless the piece is in the account's own library, or is one it made in its team
+ *  owner's library while it may add there (addRole). */
+export async function linkFinalsPiece(pieceId: string, sessionId: string, docId: string | undefined, owner: string): Promise<boolean> {
   const d = libraryDb();
-  const row = d.prepare("SELECT library_id FROM pieces WHERE id = ?").get(pieceId) as { library_id: string } | undefined;
-  if (!row || libraryRole(owner, row.library_id) !== "owner") return false;
+  const row = d.prepare("SELECT library_id, created_by FROM pieces WHERE id = ?").get(pieceId) as { library_id: string; created_by: string | null } | undefined;
+  const as = row ? await addRole(owner, row.library_id) : null;
+  // a member links only a piece they made: the owner's pieces stay linked where the owner put them
+  if (as !== "owner" && !(as === "member" && row?.created_by === owner)) return false;
   d.prepare("UPDATE pieces SET workshop_session = ?, workshop_doc = ? WHERE id = ?").run(sessionId, docId ?? null, pieceId);
   emitEvent("library.changed", {});
   announce(owner, "library");

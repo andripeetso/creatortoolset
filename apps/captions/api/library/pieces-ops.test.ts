@@ -107,9 +107,9 @@ describe("Finals pieces: merge, split, trash", () => {
     expect(told).toBe(2);
   });
 
-  it("a piece links to a session of its owner; its versions are the session's Finals", () => {
-    expect(linkFinalsPiece("pc_link", "sess-1", undefined, "someone-else")).toBe(false);
-    expect(linkFinalsPiece("pc_link", "sess-1", undefined, "owner-a")).toBe(true);
+  it("a piece links to a session of its owner; its versions are the session's Finals", async () => {
+    expect(await linkFinalsPiece("pc_link", "sess-1", undefined, "someone-else")).toBe(false);
+    expect(await linkFinalsPiece("pc_link", "sess-1", undefined, "owner-a")).toBe(true);
     const versions = finalsLinkedTo("sess-1", "doc-main", "doc-main");
     expect(versions).toEqual([{ key: "pc_link-i0", label: "Link · s1", facts: "file s1, video, version 1" }]);
     expect(finalsLinkedTo("sess-1", "doc-other", "doc-main")).toEqual([]);

@@ -64,7 +64,7 @@ export function mediaFolders(folders: StorageFolder[], places = placesOf): Stora
     return !outer || (!!inner && inner.every((w) => outer.includes(w)));
   };
   const outerOf = (f: StorageFolder) =>
-    f?.role === "footage" ? all.find((o) => o !== f && o.role === "footage" && o.origin?.host === f.origin?.host && !!inside(f.origin.path, o.origin.path) && covers(o, f)) : undefined;
+    f?.role === "footage" ? all.find((o) => o !== f && o.role === "footage" && o.origin?.host === f.origin?.host && readsInto(f.origin.path, o.origin.path) && covers(o, f)) : undefined;
   const kept = all.filter((f) => !outerOf(f));
   const names = new Map<StorageFolder, string[]>();
   for (const f of all) {
@@ -188,6 +188,13 @@ export function inside(p: string, dir: string): string | null {
   return a.startsWith(pre) ? (win ? p.replace(/\\/g, "/") : p).slice(pre.length) : null;
 }
 
+
+/** Whether a Media folder at `outer` reads the folder `p` below it: inside it and under no hidden folder (a "." name),
+ *  which every scan of a Media folder skips. A folder kept in a hidden one is read only when added itself. */
+export function readsInto(p: string, outer: string): boolean {
+  const rel = inside(p, outer);
+  return !!rel && !rel.split("/").some((s) => s.startsWith("."));
+}
 
 /** Where `host` has `folder`: on its own computer the path it reads it at (inside the container a helper runs in, mountPath;
  *  else the path it was made at), else where that computer found its marker. */
