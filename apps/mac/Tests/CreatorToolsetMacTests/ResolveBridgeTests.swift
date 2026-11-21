@@ -73,6 +73,53 @@ final class ResolveBridgeTests: XCTestCase {
         }
     }
 
+    /// The open script itself, run by a plain Lua against a fake Resolve object model (skipped where no `lua` is installed):
+    /// the timeline lands in Timelines, the draft's earlier imports move to Timelines/Earlier cuts, the footage to Footage.
+    func testOpenScriptFilesTheDraftIntoBins() throws {
+        guard let lua = ["/opt/homebrew/bin/lua", "/usr/local/bin/lua", "/usr/bin/lua"].first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        else { throw XCTSkip("no lua here") }
+        let (_, dir) = try fakeRunner()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fake = """
+        local function folder(n) return { n = n, subs = {}, clips = {}, GetName = function(s) return s.n end,
+          GetSubFolderList = function(s) return s.subs end, GetClipList = function(s) return s.clips end } end
+        local function clip(n, kind) return { n = n, GetName = function(s) return s.n end, GetClipProperty = function(s, k) return { Type = kind } end } end
+        local master, timelines = folder("Master"), folder("Timelines")
+        master.subs[1] = timelines
+        timelines.clips = { clip("Cut", "Timeline"), clip("Cut (2)", "Timeline"), clip("Cut (2) old", "Timeline"), clip("Other", "Timeline") }
+        local current = master
+        local pool = {
+          GetRootFolder = function() return master end, GetCurrentFolder = function() return current end,
+          SetCurrentFolder = function(_, f) current = f; return true end,
+          AddSubFolder = function(_, p, n) local f = folder(n); p.subs[#p.subs + 1] = f; return f end,
+          ImportTimelineFromFile = function(_, path, o)
+            current.clips[#current.clips + 1] = clip(o.timelineName, "Timeline")
+            current.clips[#current.clips + 1] = clip("Take A", "Video + Audio")
+            return {} end,
+          MoveClips = function(_, cs, to) for _, c in ipairs(cs) do print("move\\t" .. c.n .. "\\t" .. to.n) end return true end,
+        }
+        local names = { "Cut", "Cut (2)", "Cut (2) old", "Other" }
+        local project = { GetName = function() return "Tiny edit" end, GetTimelineCount = function() return #names end,
+          GetTimelineByIndex = function(_, i) return { GetName = function() return names[i] end } end,
+          GetMediaPool = function() return pool end, SetCurrentTimeline = function() return true end }
+        local pm = { GetCurrentProject = function() return project end, SaveProject = function() print("current\\t" .. current.n) return true end }
+        function Resolve() return { GetProjectManager = function() return pm end } end
+
+        """
+        let script = dir.appendingPathComponent("open.lua")
+        try (fake + openDraftScript).write(to: script, atomically: true, encoding: .utf8)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: lua)
+        p.arguments = [script.path]
+        p.environment = ResolveRequest(otioPath: "/x/cut.otio", name: "Cut", project: "Tiny edit", mediaFolder: nil).environment
+        let out = Pipe()
+        p.standardOutput = out
+        try p.run()
+        p.waitUntilExit()
+        let lines = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines, ["move\tCut\tEarlier cuts", "move\tCut (2)\tEarlier cuts", "move\tTake A\tFootage", "current\tMaster", "ok\tCut (3)"])
+    }
+
     func testProbeIsOffWithoutResolve() {
         XCTAssertNil(resolveScriptRunner(exists: { _ in false }))
         XCTAssertEqual(

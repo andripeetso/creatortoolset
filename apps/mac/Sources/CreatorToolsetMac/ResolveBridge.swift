@@ -143,9 +143,10 @@ private final class Flag: @unchecked Sendable {
 }
 
 /// The script Resolve runs (Resolve's own Lua API, as its bundled examples use it). It only ever adds a timeline to the
-/// edit's project: a name taken is numbered, and no other timeline is touched. Clips missing from the pool are looked
-/// for in the media folder.
-private let openDraftScript = """
+/// edit's project: a name taken is numbered, and no other timeline is changed. Clips missing from the pool are looked
+/// for in the media folder. The project keeps its bins tidy: the timeline in Timelines, the draft's earlier imports moved
+/// to Timelines/Earlier cuts, the footage the import added in Footage (ResolveBridgeTests runs it against a fake Resolve).
+let openDraftScript = """
 -- Opens one OTIO draft in DaVinci Resolve as a new timeline of the edit's project. Inputs: the environment variables
 -- CT_RESOLVE_OTIO (the .otio file), CT_RESOLVE_NAME (the timeline's name), CT_RESOLVE_PROJECT (the project's name) and
 -- CT_RESOLVE_MEDIA (optional: the folder the draft's media is in). Prints one answer line.
@@ -186,11 +187,38 @@ for i = 1, project:GetTimelineCount() do taken[project:GetTimelineByIndex(i):Get
 local title, k = name, 1
 while taken[title] do k = k + 1; title = name .. " (" .. k .. ")" end
 local pool = project:GetMediaPool()
+-- the project's bins: Timelines (this import, the draft's earlier imports in Timelines/Earlier cuts) and Footage
+local function bin(parent, wanted)
+  for _, f in pairs(parent:GetSubFolderList() or {}) do if f:GetName() == wanted then return f end end
+  return pool:AddSubFolder(parent, wanted)
+end
+local was = pool:GetCurrentFolder()
+local root = pool:GetRootFolder()
+local timelines = root and bin(root, "Timelines")
+if timelines then pool:SetCurrentFolder(timelines) end
 local options = { timelineName = title, importSourceClips = true }
 if media ~= "" then options.sourceClipsPath = media end
 local timeline = pool:ImportTimelineFromFile(otio, options)
-if not timeline then print("error\\tResolve refused " .. otio) return end
+if not timeline then
+  if was then pool:SetCurrentFolder(was) end
+  print("error\\tResolve refused " .. otio) return
+end
 project:SetCurrentTimeline(timeline)
+if timelines then
+  -- the clips the import made land beside the timeline: footage goes to Footage, the draft's earlier imports
+  -- (its name, or its name numbered) to Earlier cuts. Nothing is deleted.
+  local older, footage = {}, {}
+  for _, c in pairs(timelines:GetClipList() or {}) do
+    local kind = c:GetClipProperty("Type")
+    if type(kind) == "table" then kind = kind.Type end
+    local n = c:GetName()
+    if kind ~= "Timeline" then footage[#footage + 1] = c
+    elseif n ~= title and (n == name or n:sub(1, #name + 2) == name .. " (" and n:sub(#name + 3):match("^%d+%)$")) then older[#older + 1] = c end
+  end
+  if #older > 0 then local earlier = bin(timelines, "Earlier cuts"); if earlier then pool:MoveClips(older, earlier) end end
+  if #footage > 0 then local f = bin(root, "Footage"); if f then pool:MoveClips(footage, f) end end
+end
+if was then pool:SetCurrentFolder(was) end
 pm:SaveProject()
 print("ok\\t" .. title)
 """
