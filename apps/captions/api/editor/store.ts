@@ -32,6 +32,7 @@ import { libraryHasSounds } from "../library/sfx";
 import { pluginsOffIn } from "../lib/plugin-workspaces";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { findUser, pictureOf, type SessionUser } from "../users";
+import type { Roll } from "./sync";
 
 /**
  * The AI Editor's edits: $DATA_DIR/editor/<id>/edit.json (what the user asked for), and its steps in the library
@@ -142,7 +143,8 @@ export function newestDraft(id: string): string | undefined {
 /** What the steps found, each in its own file beside edit.json, so a step never overwrites a change the user made meanwhile. */
 export interface StepFiles {
   /** `eyeline`: per source version, the eye line found on this computer (eyeline.ts) */
-  analysis: { sentences: Sentence[]; notes: string[]; eyeline?: Record<string, number> };
+  /** `rolls`: per camera take, its separate mic and second cameras, found by their sound (sync.ts rollsOf) */
+  analysis: { sentences: Sentence[]; notes: string[]; eyeline?: Record<string, number>; rolls?: Record<string, Roll> };
   /** `at`: when it was made; `coverage`: what footage a planned edit's cut was made from (plan.ts) */
   plan: { lines: Line[]; plans: VersionPlan[]; notes: string[]; at?: number; coverage?: Coverage };
   /** each version's preview in Review (preview.ts) */

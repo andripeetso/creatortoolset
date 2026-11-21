@@ -1,4 +1,8 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { env } from "../lib/env";
 import { ffmpegCommand } from "../ffmpeg-runtime";
 import { probe } from "../library/media/probe";
 import { ffmpegSlot } from "../library/media/run";
@@ -233,4 +237,80 @@ function correlation(x: Float64Array, y: Float64Array): number {
     syy += dy * dy;
   }
   return sxy / Math.sqrt(sxx * syy);
+}
+
+/** A camera take's other recordings of the same moment: the separate mic under it, and a second camera (its angle). */
+export interface Roll {
+  /** `offset_s`: seconds into the mic at the camera's 0 s */
+  mic?: { id: string; offset_s: number };
+  /** `offset_s`: seconds into the angle at the camera's 0 s */
+  angles?: { id: string; offset_s: number }[];
+}
+
+/** One source as pairing reads it: whether it has a picture, and when it was recorded and for how long (seconds). */
+export interface PairSource {
+  id: string;
+  picture: boolean;
+  capturedAt?: number;
+  duration: number;
+}
+
+/** Two recordings whose clocks put them this far apart (seconds) are never of one moment: their sound is not compared. */
+const APART_S = 3600;
+
+/**
+ * The pairs whose sound is compared, the camera first: each sound-only recording against each camera take, and two
+ * camera takes when their clocks say they overlap.
+ * shortcut: two cameras with no clock, or one set hours wrong, are never paired as angles; compare every pair when that bites.
+ */
+export function pairsToTry(srcs: PairSource[]): [string, string][] {
+  const cams = srcs.filter((s) => s.picture);
+  const mics = srcs.filter((s) => !s.picture);
+  const near = (a: PairSource, b: PairSource) =>
+    a.capturedAt !== undefined && b.capturedAt !== undefined && a.capturedAt / 1000 < b.capturedAt / 1000 + b.duration + APART_S && b.capturedAt / 1000 < a.capturedAt / 1000 + a.duration + APART_S;
+  return [...cams.flatMap((c) => mics.map((m): [string, string] => [c.id, m.id])), ...cams.flatMap((a, i) => cams.slice(i + 1).filter((b) => near(a, b)).map((b): [string, string] => [a.id, b.id]))];
+}
+
+/**
+ * The rolls of an edit's sources, from the pairs that matched (matchPair(camera, other)): each camera take with its mic
+ * (the first sound-only recording found in it) and its angles (a later camera take whose sound is the same moment).
+ * `under`: the sources that are another take's mic or angle, so their own words are not takes of their own.
+ */
+export function rollsOf(srcs: PairSource[], matched: Map<string, PairMatch | null>): { rolls: Record<string, Roll>; under: Set<string> } {
+  const rolls: Record<string, Roll> = {};
+  const under = new Set<string>();
+  for (const [a, b] of pairsToTry(srcs)) {
+    const m = matched.get(`${a}~${b}`);
+    if (!m || under.has(a) || under.has(b)) continue;
+    const r = rolls[a] ?? {};
+    if (!srcs.find((s) => s.id === b)!.picture) {
+      if (r.mic) continue;
+      r.mic = { id: b, offset_s: m.offset_s };
+    } else {
+      // a camera with a roll of its own (its own mic) stays a camera
+      if (rolls[b]) continue;
+      (r.angles ??= []).push({ id: b, offset_s: m.offset_s });
+    }
+    rolls[a] = r;
+    under.add(b);
+  }
+  return { rolls, under };
+}
+
+export const pairFile = (a: string, b: string) => path.join(env.dataDir, "editor", "cache", `${a}~${b}.pair.json`);
+
+/** Whether this pair's sound was compared already (kept, match or not). */
+export const pairKept = (a: string, b: string) => existsSync(pairFile(a, b));
+
+/** matchPair of two versions, kept once found (no match is kept too): `files` gives their files only when it must run. */
+export async function pairOf(a: string, b: string, files: () => Promise<[string, string]>, signal?: AbortSignal): Promise<PairMatch | null> {
+  const file = pairFile(a, b);
+  const kept = await readFile(file, "utf8").then((t) => JSON.parse(t) as { m: PairMatch | null }, () => null);
+  if (kept) return kept.m;
+  const [fa, fb] = await files();
+  const m = await matchPair(fa, fb, signal);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(`${file}.part`, JSON.stringify({ m }));
+  await rename(`${file}.part`, file);
+  return m;
 }

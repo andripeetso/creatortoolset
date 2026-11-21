@@ -16,7 +16,7 @@ const { enqueueJob } = await import("../library/jobs");
 const { saveTranscript } = await import("../library/transcribe");
 const { ENERGY_PER_SECOND, energyFile } = await import("./analyze");
 const { createEdit, editDir, readDraft, readStep, saveDraft, saveEdit, saveStep, viewOf, readEdit } = await import("./store");
-const { buildTimeline, sourceOf, timecodeFrames } = await import("./timeline");
+const { along, buildTimeline, sourceOf, timecodeFrames } = await import("./timeline");
 const { tick } = await import("./worker");
 const { tiltFor } = await import("./framing");
 
@@ -100,6 +100,32 @@ describe("AI Editor timeline", () => {
     // the first take opens a little before "we" and closes a little after "roll."
     expect(a!.in).toBeLessThanOrEqual(Math.round(0.5 * 25));
     expect(a!.in + a!.len).toBeGreaterThanOrEqual(Math.round(1.1 * 25));
+  });
+
+  it("lays a camera take's separate mic under its picture, and every other line on its second camera", () => {
+    const sources: Record<string, TimelineSource> = {
+      ver_a: sourceOf("ver_a", "Take A", { ...probe, fps: 25 }),
+      mic: sourceOf("mic", "Recorder", { ...probe, fps: 0, duration: 60, vcodec: "", width: 0, height: 0, rotation: 0 }),
+      ang: sourceOf("ang", "Angle", { ...probe, fps: 30, duration: 10, rotation: 0 }),
+    };
+    const plan: VersionPlan = { name: "v1", title: "One take", lines: [{ line: "L1", take: { first: 1, last: 1, score: 1 } }, { line: "L2", take: { first: 2, last: 2, score: 1 } }] };
+    const { timeline: t } = buildTimeline({
+      name: "Tiny v1", plan, lines, sentences, sources, words: { ver_a: words }, energy: { ver_a: energy }, punch: 1.15, eyeline: {},
+      rolls: { ver_a: { mic: { id: "mic", offset_s: 10 }, angles: [{ id: "ang", offset_s: 2 }] } },
+    });
+    const [v0, v1] = t.tracks.V1.items;
+    const [a0, a1] = t.tracks.A1.items;
+    // line 1 on the camera, line 2 on the angle at the same moment; the mic under both, at the same moment too
+    expect([v0!.src, v1!.src]).toEqual(["ver_a", "ang"]);
+    const s1 = Math.round((v1!.in / 30 - 2) * 25);
+    expect(v1!.in).toBe(Math.round((s1 / 25 + 2) * 30));
+    expect([a0!.src, a1!.src]).toEqual(["mic", "mic"]);
+    expect(a0!.in).toBe(Math.round((v0!.in / 25 + 10) * 30));
+    expect([a0!.link, a1!.link]).toEqual([v0!.link, v1!.link]);
+    expect(Object.keys(t.sources).sort()).toEqual(["ang", "mic", "ver_a"]);
+    // an angle that does not hold the stretch: the camera's own picture
+    expect(along({ id: "ang", offset_s: -5 }, 10, 25, sources.ver_a!, 25, sources)).toBeNull();
+    expect(along(undefined, 10, 25, sources.ver_a!, 25, sources)).toBeNull();
   });
 
   it("a working size of 1080x1920 from 4K vertical footage: the same cut and framing, its sources fitted into the smaller frame", async () => {

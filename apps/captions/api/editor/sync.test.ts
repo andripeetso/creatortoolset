@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ffmpegCommand } from "../ffmpeg-runtime";
-import { SYNC_RATE, matchPair, voiceChannel } from "./sync";
+import { SYNC_RATE, matchPair, pairsToTry, rollsOf, voiceChannel } from "./sync";
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
@@ -99,5 +99,29 @@ describe("voiceChannel", () => {
     const tone = Float32Array.from({ length: 3 * SYNC_RATE }, (_, i) => (i >= SYNC_RATE && i < 2 * SYNC_RATE ? 0 : 0.5 * Math.sin((2 * Math.PI * 440 * i) / SYNC_RATE)));
     const e = await readEnergy(wav("stereo-tone.wav", [new Float32Array(tone.length), tone]));
     expect(e[50]).toBeCloseTo(0.5 / Math.SQRT2, 2);
+  });
+});
+
+describe("rolls: a camera take with its separate mic and second camera", () => {
+  const H = 3_600_000;
+  const srcs = [
+    { id: "cam", picture: true, capturedAt: 0, duration: 60 },
+    { id: "osmo", picture: true, capturedAt: 5_000, duration: 60 },
+    { id: "far", picture: true, capturedAt: 5 * H, duration: 60 },
+    { id: "mic", picture: false, duration: 600 },
+  ];
+
+  it("compares each mic with each camera, and two cameras only when their clocks overlap", () => {
+    expect(pairsToTry(srcs)).toEqual([["cam", "mic"], ["osmo", "mic"], ["far", "mic"], ["cam", "osmo"]]);
+  });
+
+  it("gives a camera the mic and the angle whose sound matched, and marks them as under it", () => {
+    const m = (offset_s: number) => ({ offset_s, score: 0.9 });
+    const matched = new Map([["cam~mic", m(12.5)], ["osmo~mic", m(17.5)], ["far~mic", null], ["cam~osmo", m(-5)]]);
+    const { rolls, under } = rollsOf(srcs, matched);
+    // the mic is the first camera's; the angle, being under it, takes no mic of its own
+    expect(rolls).toEqual({ cam: { mic: { id: "mic", offset_s: 12.5 }, angles: [{ id: "osmo", offset_s: -5 }] } });
+    expect([...under].sort()).toEqual(["mic", "osmo"]);
+    expect(rollsOf(srcs, new Map())).toEqual({ rolls: {}, under: new Set() });
   });
 });

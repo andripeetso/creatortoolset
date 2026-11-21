@@ -16,7 +16,7 @@ import { measurable } from "./media";
 import { allBroll, isMusic } from "./plan";
 import { ownerOf, saveStep } from "./store";
 import { videoLanguages } from "../lib/video-languages";
-import { voiceChannel } from "./sync";
+import { pairOf, rollsOf, voiceChannel, type PairMatch, type PairSource, pairsToTry } from "./sync";
 import type { StepContext } from "./worker";
 import { gateOf, onComputer } from "../work/on-computer";
 
@@ -337,11 +337,19 @@ export async function analyzeGate({ edit, job }: Pick<StepContext, "edit" | "job
 /** The analyze step's work after its gate: sentences, loudness and eye line of the ready sources, saved as the analysis. */
 async function analyzeWork({ edit, signal }: StepContext, { planned, notes, ready }: AnalyzeGate): Promise<void> {
   ready.sort((a, b) => (a.probe.capturedAt ?? Infinity) - (b.probe.capturedAt ?? Infinity) || a.row.title.localeCompare(b.row.title));
+  // a separate mic and a second camera of one take: found by their sound (sync.ts), their own words no takes of their own
+  const { rolls, under } = planned ? { rolls: {}, under: new Set<string>() } : await pairUp(ready, signal);
+  if (signal.aborted) return;
+  const title = (id: string) => ready.find((r) => r.row.id === id)?.row.title ?? id;
+  for (const [cam, r] of Object.entries(rolls)) {
+    if (r.mic) notes.push(`“${title(r.mic.id)}” is the sound of “${title(cam)}”: it plays under its picture`);
+    for (const a of r.angles ?? []) notes.push(`“${title(a.id)}” is a second camera on “${title(cam)}”: every other line plays on it`);
+  }
   const sentences: Sentence[] = [];
   const eyeline: Record<string, number> = {};
   for (const { row, probe, words } of ready) {
     if (signal.aborted) return;
-    sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
+    if (!under.has(row.id)) sentences.push(...sentencesOf(words, row.id, sentences.length + 1));
     if (planned) continue; // the cut's loudness and eye line are for cutting around speech
     await energyOf(row.id, () => measurable(row.id, row.source_key), signal);
     const turned = probe.rotation === 90 || probe.rotation === 270;
@@ -351,5 +359,21 @@ async function analyzeWork({ edit, signal }: StepContext, { planned, notes, read
   }
   if (!sentences.length && !planned)
     notes.push(edit.languages?.length ? NO_SPEECH : `${NO_SPEECH}. If someone does speak in it, pick the language on the edit and run it again`);
-  await saveStep(edit.id, "analysis", { sentences, notes, ...(Object.keys(eyeline).length ? { eyeline } : {}) });
+  await saveStep(edit.id, "analysis", { sentences, notes, ...(Object.keys(eyeline).length ? { eyeline } : {}), ...(Object.keys(rolls).length ? { rolls } : {}) });
+}
+
+/** A source as pairing reads it (sync.ts PairSource). */
+export const pairSource = (id: string, probe: ProbeSummary): PairSource => ({ id, picture: !!probe.vcodec && !probe.cover, duration: probe.duration, ...(probe.capturedAt !== undefined ? { capturedAt: probe.capturedAt } : {}) });
+
+/** The ready sources' rolls: each pair worth comparing compared once (kept, sync.ts pairOf). */
+async function pairUp(ready: AnalyzeGate["ready"], signal: AbortSignal) {
+  const srcs = ready.map((r) => pairSource(r.row.id, r.probe));
+  const file = (id: string) => measurable(id, ready.find((r) => r.row.id === id)!.row.source_key);
+  const matched = new Map<string, PairMatch | null>();
+  for (const [a, b] of pairsToTry(srcs)) {
+    if (signal.aborted) break;
+    // a pair that can't be compared (a file that won't decode) is no pair: the cut is made without it
+    matched.set(`${a}~${b}`, await pairOf(a, b, async () => [await file(a), await file(b)], signal).catch(() => null));
+  }
+  return rollsOf(srcs, matched);
 }
