@@ -281,6 +281,12 @@ describe("the side panel beside the viewer (chat mode)", () => {
     expect(s().picked).toEqual([k]);
     act(() => s().seek(10));
     expect(s().picked).toEqual([]);
+    // during a try the strip shows the try's clips picked, the panel keeps the kept timeline's
+    const tk = two.tracks.V1.items[0]._k!;
+    act(() => s().preview(two, "Use take 3"));
+    act(() => s().pick([k, tk]));
+    expect(s().picked).toEqual([k]);
+    expect(p.host.querySelector(`[data-clip="${tk}"]`)?.getAttribute("aria-pressed")).toBe("true");
     p.done();
   });
 
