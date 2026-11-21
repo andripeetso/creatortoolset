@@ -348,7 +348,8 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   // what this Mac said of the files by path: a drive away, or a folder waiting for an OK (with its Allow); else the reach text
   const pathAway = originals && lost.length > 0 ? originalsAway(originals) : null;
   const pathLine = pathAway === WORDS.needsOk && !toAllow.length ? null : pathAway;
-  const sound = view && plan && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
+  // not with a speed edit: Web Audio would change the voice's pitch with its rate, where the rendered cut keeps it
+  const sound = view && plan && originalsOn && !plan.rates?.length && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
     ...soundPieces(splitView(view, playEdits), playEdits, plan, soundLanes)
       .filter((p) => found[p.src]).map((p) => ({ ...p, src: urlOf(p.src) })),
     ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),
@@ -356,9 +357,9 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   // and the talent shots from their camera originals, framed as cut: a shot made longer shows the take past the cut
   const picture = sound && view ? picturePieces(splitView(view, playEdits), playEdits, plan!, (s) => !!found[s])
     .filter((p) => found[p.src])
-    .map(({ src, at, frames, offset, zoom, pan, tilt }) => {
+    .map(({ src, at, frames, offset, rate, zoom, pan, tilt }) => {
       const box = cameraIn({ zoom, pan, tilt }, { x: 0, y: 0, k: 1 }, view.width, view.height);
-      return { src: urlOf(src), at, frames, offset, x: box.x, y: box.y, s: box.s };
+      return { src: urlOf(src), at, frames, offset, ...(rate ? { rate } : {}), x: box.x, y: box.y, s: box.s };
     }) : null;
   // each sound clip's own waveform from its file, once the files are found: the timeline draws a clip and what its
   // edges are pulled out to from it (`waves[item.key]`, the file from its first second), so a stretched edge shows the
@@ -399,6 +400,7 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
     holds: plan?.holds ?? [],
     cards: plan?.cards.map((c) => toCard(c, manage, hooks.clipSrc)) ?? [],
     frames: plan?.frames ?? [],
+    ...(plan?.rates?.length ? { rates: plan.rates } : {}),
     looks: crop ? [] : [
       ...grades.map((g, i) => ({ from: g.from, to: g.to, filter: `url(#${gradeId(i)})` })),
       ...(shotLook ? [{ from: shotLook.from, to: shotLook.to, filter: `url(#${LIVE_GRADE})` }] : []),

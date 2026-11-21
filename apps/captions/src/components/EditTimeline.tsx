@@ -3,6 +3,7 @@ import { Crop, Eye, EyeOff, Lock, LockOpen, Magnet, Minus, MousePointer2, MoveHo
 import { SNAP_PX, settle, snapDelta } from "@/lib/clip-drag";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { useKeymap } from "@/components/nle/NleKeyboard";
+import { SpeedBox } from "@/components/nle/NleSpeedDialog";
 import { keyAction } from "@/lib/nle/keys";
 import { useTimeAxis } from "@/lib/use-time-axis";
 import { PEAKS_PER_SECOND, wavePath } from "@/lib/waveform";
@@ -72,6 +73,8 @@ export interface TimelineRules {
   layers?: boolean;
   /** false = this talent shot has no Reframe */
   reframe?: (item: TimelineItem) => boolean;
+  /** false = no talent shot's speed is changed (Change Clip Speed…, R) */
+  speed?: boolean;
 }
 /**
  * What the app's own AI Editor cuts into a version by hand (api/editor/edits.ts): a voice stays with its picture (cut,
@@ -83,6 +86,7 @@ export const OWN_CUT_RULES: TimelineRules = {
   layers: false,
   // a moment reframed to 9:16 (its window can be moved or set to follow someone); nothing else is reframed by hand
   reframe: (it) => !!it.window,
+  speed: false, // the draft's render plays no speed (api/editor/preview.ts rendersOf)
 };
 // the loudest peak of a clip's own sound, found once per array
 const peakCache = new WeakMap<Float32Array, number>();
@@ -269,6 +273,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   const editable = (it: TimelineItem, mode: Mode) =>
     // the talent never moves; the voice moves sideways, never slips
     edit && !editOf[it.key]?.remove && unlocked(it) && !(it.track === "V1" && (mode === "move" || mode === "slip")) && !(it.track === "A1" && mode === "slip") &&
+    // a shot with a speed keeps its length (its length or its speed, one at a time: the studio refuses both)
+    !(it.track === "V1" && editOf[it.key]?.speed && (mode === "head" || mode === "tail")) &&
     (rules?.can?.(it, mode) ?? true);
   const layered = rules?.layers !== false;
   /** A clip's own sound: its own, or that of the clip it was cut or copied from (a piece's `before` counts from the same first second). */
@@ -347,7 +353,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     for (const it of list) {
       const e = editOf[it.key];
       const s = spanOf(it);
-      if (e?.remove || !unlocked(it)) continue;
+      if (e?.remove || !unlocked(it) || (it.track === "V1" && e?.speed)) continue;
       const room = mediaRoom(it, e);
       if (end === "head" && playF < s.rec + s.len - 1) changes.push([it, { head: Math.min(room.head, (e?.head ?? 0) + s.rec - playF) }]);
       if (end === "tail" && playF > s.rec) changes.push([it, { tail: Math.min(room.tail, (e?.tail ?? 0) + playF - (s.rec + s.len)) }]);
@@ -410,6 +416,11 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   // On document: after menus, dialogs and overlays had the key (one they took is theirs), before the page's keys on window,
   // which leave a key taken here (C cuts here in Edit mode, opens a comment outside it)
   const keys = useKeymap();
+  // Change Clip Speed… (R, a talent shot's menu): the shot and its voice play at a rate, what follows moves up. Not on a
+  // shot made longer or shorter (its trimmed frames and the rate would not agree): one of the two at a time
+  const [speedOf, setSpeedOf] = useState<TimelineItem | null>(null);
+  const speedable = (it: TimelineItem) => it.track === "V1" && rules?.speed !== false && unlocked(it);
+  const speedOff = (it: TimelineItem) => (editOf[it.key]?.head || editOf[it.key]?.tail ? "Undo its trim first: a shot's length or its speed, one at a time" : undefined);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -445,7 +456,11 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
       else if (a === "toolSelect") setTool("select");
       else if (a === "toolBlade") setTool(tool === "blade" ? "select" : "blade");
       else if (a === "slip") setTool(tool === "slip" ? "select" : "slip");
-      else if (a === "rippleStart" && near.length) trimTo(near, "head");
+      else if (a === "toolStretch") {
+        const shot = (group.length ? group : underPlayhead()).find(speedable);
+        if (shot && !speedOff(shot)) setSpeedOf(shot);
+        else done = false;
+      } else if (a === "rippleStart" && near.length) trimTo(near, "head");
       else if (a === "rippleEnd" && near.length) trimTo(near, "tail");
       else if (a === "nudgeBack" && group.length) nudgeBy(group, -1);
       else if (a === "nudgeBack5" && group.length) nudgeBy(group, -5);
@@ -998,7 +1013,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                       {v.head > 0 && <span className="pointer-events-none absolute inset-y-0 left-0" style={{ width: x(v.head), background: ADDED }} />}
                       {v.tail > 0 && <span className="pointer-events-none absolute inset-y-0 right-0" style={{ width: x(v.tail), background: ADDED }} />}
                       <span className={`relative block truncate ${e?.remove ? "line-through opacity-60" : ""}`}>
-                        {it.label}{e?.zoom !== undefined ? ` → ${e.zoom.toFixed(2)}×` : ""}
+                        {it.label}{e?.zoom !== undefined ? ` → ${e.zoom.toFixed(2)}×` : ""}{e?.speed ? ` · ${Math.round(e.speed * 100)} %` : ""}
                         {!!v.slip && ` · slip ${v.slip > 0 ? "+" : "−"}${(Math.abs(v.slip) / fps).toFixed(2)} s`}
                       </span>
                       {!!pins?.[it.key] && (
@@ -1088,6 +1103,10 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
             <div className="absolute -left-[5px] top-0 h-0 w-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-red-400" />
           </div>
       </TimelineFrame>
+      {speedOf && (
+        <SpeedBox speed={editOf[speedOf.key]?.speed ?? 1} min={50} max={200} hint="50 to 200: the shot and its voice together, what follows moves up."
+          onPick={(s) => onEdit?.([[speedOf, { speed: s === 1 ? undefined : s }]])} onClose={() => setSpeedOf(null)} />
+      )}
       {menu && (() => {
         const it = menu.it;
         const may = !!it;
@@ -1126,6 +1145,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 {it.track === "V1" && onReframe && (rules?.reframe?.(it) ?? true) && <button className={row} onClick={act(() => { setEditing(true); onReframe(it); })}>Reframe…</button>}
                 {it.track === "V1" && onColor && <button className={row} onClick={act(() => { setEditing(true); onColor(it); })}>Colour…</button>}
                 {it.track === "V1" && onFace && <button className={row} onClick={act(() => { setEditing(true); onFace(it); })}>Face…</button>}
+                {may && speedable(it) && <button className={row} disabled={!!speedOff(it)} title={speedOff(it)}
+                  onClick={act(() => { setEditing(true); setSpeedOf(it); })}>Change Clip Speed… (R)</button>}
               </>
             )}
             {it && may && (
@@ -1133,9 +1154,9 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
                 <div className="my-1 border-t border-zinc-800" />
                 <button className={row} onClick={act(() => { setEditing(true); splitAt([it], menu.f); })}>Split here</button>
                 <button className={row} disabled={!(playF > spanOf(it).rec && playF < spanOf(it).rec + spanOf(it).len)}
-                  onClick={act(() => { setEditing(true); splitAt([it], playF); })}>Split at the playhead (⌘B)</button>
+                  onClick={act(() => { setEditing(true); splitAt([it], playF); })}>Split at the playhead (W)</button>
                 <button className={row} onClick={act(() => { setEditing(true); trimTo([it], "head"); })}>Trim start to the playhead (Q)</button>
-                <button className={row} onClick={act(() => { setEditing(true); trimTo([it], "tail"); })}>Trim end to the playhead (W)</button>
+                <button className={row} onClick={act(() => { setEditing(true); trimTo([it], "tail"); })}>Trim end to the playhead (E)</button>
               </>
             )}
             {clip.length > 0 && (

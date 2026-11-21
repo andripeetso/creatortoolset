@@ -103,6 +103,8 @@ function refusals(items: TimelineItem[], edits: ItemEdit[]): string[] {
     else if (!(TRACKS as readonly string[]).includes(e.track ?? it.track) || (e.track && (e.track[0] !== it.track[0] || e.track === "V1" || e.track === "A1")))
       why.push(`${e.label}: this editor has no layer ${e.track ?? it.track}`);
     else if (e.zoom !== undefined) why.push(`${e.label}: a reframe can't be made into a version here`);
+    // the draft's render plays no speed (preview.ts rendersOf): said, never dropped
+    else if (e.speed) why.push(`${e.label}: a speed change can't be made into a version here; change its speed in the editor`);
     else if (e.grade) why.push(`${e.label}: a colour change can't be made into a version here`);
     else if (e.crop && !pieceOf(e)?.window) why.push(`${e.label} is not reframed`);
     else if (e.crop && "speaker" in e.crop && !pieceOf(e)!.window!.follow[e.crop.speaker])

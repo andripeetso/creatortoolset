@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { useWorkPrefs } from "@/lib/setup";
 import type { TimelineView } from "@contracts/edit-timeline";
-import { EditTimeline } from "./EditTimeline";
+import { EditTimeline, OWN_CUT_RULES } from "./EditTimeline";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -60,5 +60,35 @@ it("takes the editor's keys: W and C cut at the playhead, Q / E trim the shot un
   // Review's timeline outside Edit mode: C is the page's (a comment)
   await act(async () => root.render(<EditTimeline view={view} time={2} onSeek={() => {}} onEdit={onEdit} />));
   expect(press("c").defaultPrevented).toBe(false);
+  await act(async () => root.unmount());
+});
+
+it("R opens Change Clip Speed for the talent shot under the playhead: the shot and its voice at that rate; not where the cut can't take one", async () => {
+  useWorkPrefs.setState({ prefs: {} as never });
+  const onEdit = vi.fn();
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () => root.render(<EditTimeline view={view} time={2} onSeek={() => {}} onEdit={onEdit} nle />));
+  expect(press("r").defaultPrevented).toBe(true);
+  const input = document.querySelector<HTMLInputElement>("#nle-speed")!;
+  expect(input.value).toBe("100");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "150");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => [...document.querySelectorAll("button")].find((b) => b.textContent === "Change")!.click());
+  expect(onEdit).toHaveBeenLastCalledWith([[expect.objectContaining({ key: "V1:0" }), { speed: 1.5 }]]);
+  expect(document.querySelector("#nle-speed")).toBeNull();
+
+  // a shot with a speed keeps its length: Q / E leave it (its length or its speed, one at a time)
+  onEdit.mockClear();
+  await act(async () => root.render(<EditTimeline view={view} time={2} onSeek={() => {}} onEdit={onEdit} edits={[{ key: "V1:0", label: "Shot one", speed: 1.5 }]} nle />));
+  press("q");
+  press("e");
+  expect(onEdit).not.toHaveBeenCalled();
+
+  // the app's own AI Editor cuts: its render plays no speed, so R does nothing there
+  await act(async () => root.render(<EditTimeline view={view} time={2} onSeek={() => {}} onEdit={onEdit} rules={OWN_CUT_RULES} nle />));
+  expect(press("r").defaultPrevented).toBe(false);
+  expect(document.querySelector("#nle-speed")).toBeNull();
   await act(async () => root.unmount());
 });

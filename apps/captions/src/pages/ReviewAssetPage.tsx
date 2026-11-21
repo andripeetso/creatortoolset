@@ -330,16 +330,16 @@ function Review({
   const pause = () => video.current?.pause();
   // a plug-in's preview (ReviewPlayPlan, lib/review-play.ts): the player skips, holds and follows it while it plays
   const plan = bridge.plan();
-  const { holding, endHold } = usePlanFollow(video, plan, time, playing);
+  // J / K / L as in Resolve, and 1 / 2 / 3 the same ("JKL123"): L plays fast at once
+  // (Space is the 1×; one press of J should already speed it up), again for 4×, 8×; J the same
+  // backwards (the page steps the picture back: a video can't play in reverse); K stops
+  const [shuttle, setShuttle] = useState(0);
+  const { holding, endHold } = usePlanFollow(video, plan, time, playing, shuttle > 0 ? shuttle : speed);
   // the timeline's edits with their sound from the originals (the plan's `sound`): the video plays muted under it
   const editSound = useEditSound(video, plan, holding);
   const pf = time * fps;
   const frameNow = plan?.frames.find((r) => pf >= r.from && pf < r.to);
   const lookNow = plan?.looks?.find((r) => pf >= r.from && pf < r.to);
-  // J / K / L as in Resolve, and 1 / 2 / 3 the same ("JKL123"): L plays fast at once
-  // (Space is the 1×; one press of J should already speed it up), again for 4×, 8×; J the same
-  // backwards (the page steps the picture back: a video can't play in reverse); K stops
-  const [shuttle, setShuttle] = useState(0);
   const shuttleTo = (n: number) => {
     endHold();
     const el = video.current;
