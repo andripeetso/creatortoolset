@@ -32,6 +32,22 @@ export function transparentVideoMade(onProgress: (part: number) => void, signal:
   });
 }
 
+/**
+ * Asks the app where an export of this file name goes, before it is made: the download of that name is then written
+ * there. False when the person cancels. An app from before `save-as:` (no <html data-mac-save-as>) puts it in Downloads.
+ */
+export function askSavePlace(fileName: string): Promise<boolean> {
+  if (document.documentElement.dataset.macSaveAs !== "1") return Promise.resolve(true);
+  return new Promise((done) => {
+    const on = (e: Event) => {
+      window.removeEventListener("mac-save-as", on);
+      done(!!(e as CustomEvent<{ ok: boolean }>).detail?.ok);
+    };
+    window.addEventListener("mac-save-as", on);
+    tellRecorder(`save-as:${fileName}`);
+  });
+}
+
 /** Where a local recording is sent from the page or the /record list. */
 export type ShareDest = "review" | "notes" | "guide";
 
@@ -48,7 +64,8 @@ export type RecorderMessage =
   | `reveal:${string}`
   | `streams:${string}`
   | `delete:${string}`
-  | `trash:${string}`;
+  | `trash:${string}`
+  | `save-as:${string}`;
 
 /** Posts a raw message to the app (no-op outside it). */
 export function postToApp(message: string) {

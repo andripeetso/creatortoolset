@@ -39,6 +39,8 @@ export type EditorAction = {
   label: string;
   title?: string;
   primary?: boolean;
+  /** asked before the video is made (`name` with no extension); false stops there */
+  before?: (name: string) => Promise<boolean>;
   run: (out: { blob: Blob; name: string }, progress: (step: string, pct: number) => void) => Promise<void>;
 };
 
@@ -405,6 +407,8 @@ export function ScreenRecordingEditor({
     if (!look || !events) return;
     setExporting(false);
     player.pause();
+    const name = `${base} (zoomed)`;
+    if (a?.before && !(await a.before(name))) return;
     const ctl = new AbortController();
     abort.current = ctl;
     const out = a ? exportSize(settings, look.shape, width, height) : outputSize(look.shape, width, height, 1080);
@@ -436,7 +440,7 @@ export function ScreenRecordingEditor({
         download?.(blob, alphaFileName(`${base} (transparent)`, out.width, out.height));
         return await made;
       }
-      await a.run({ blob, name: `${base} (zoomed)` }, (step, pct) => {
+      await a.run({ blob, name }, (step, pct) => {
         if (!ctl.signal.aborted) setMaking({ step, pct: Math.round(pct) });
       });
     } catch (e) {
@@ -464,9 +468,15 @@ export function ScreenRecordingEditor({
       )}
       {extra}
       {making ? (
-        <Button size="sm" variant="outline" onClick={() => abort.current?.abort()}>
-          <Loader2 className="animate-spin" /> {making.step} {making.pct}% · Stop
-        </Button>
+        // the video is made in this window: the count is only a label, Stop its own button (a click on the count stopped it)
+        <>
+          <span className="flex items-center gap-1.5 text-sm text-zinc-300" title="Made in this window: leaving this page stops it">
+            <Loader2 className="size-4 animate-spin" /> {making.step} {making.pct}%
+          </span>
+          <Button size="sm" variant="outline" onClick={() => abort.current?.abort()}>
+            Stop
+          </Button>
+        </>
       ) : (
         <>
           <Button size="sm" disabled={!look} onClick={() => setExporting(true)} className="bg-violet-600 text-white hover:bg-violet-500">

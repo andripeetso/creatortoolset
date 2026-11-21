@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScreenRecordingEditor, type EditorAction } from "@/components/ScreenRecordingEditor";
-import { canRecordScreen, tellRecorder, throwAwayRecording, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
+import { askSavePlace, canRecordScreen, tellRecorder, throwAwayRecording, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
 import { uploadReviewFile } from "@/lib/review";
 import { canUse, useMe } from "@/lib/auth";
 import { alertDialog } from "@/lib/dialogs";
@@ -90,9 +90,28 @@ export default function ScreenProjectPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
   /**
-   * Send to AI Editor: the screen (with the voice) and the camera, each filed in the library as its own clip in the AI
-   * Editor's footage folder, then New edit opens with both picked. The page reads the files itself, so any Mac app does it.
+   * Files the videos in the library, each as its own clip in the AI Editor's footage folder, then New edit opens with
+   * them picked. `onPct`: how far the upload is (0–100).
    */
+  const toEditorWith = async (parts: { blob: Blob; name: string }[], onPct: (pct: number) => void) => {
+    const total = parts.reduce((n, p) => n + p.blob.size, 0) || 1;
+    const target = await footageTarget();
+    const pick: Picked[] = [];
+    let done = 0;
+    for (const p of parts) {
+      const file = new File([p.blob], p.name, { type: "video/mp4" });
+      const onMac = await macIndexOnly(target.libraryId);
+      const up = await uploadFile(target.libraryId, file, (sent) => onPct(Math.round(((done + sent) / total) * 100)), target.collectionId, undefined, { onMac });
+      const assetId = up.assetId ?? up.duplicateOf;
+      if (!assetId) throw new Error(`${p.name} was not added to the Media Library`);
+      await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
+      const asset = await getAsset(target.libraryId, assetId);
+      pick.push({ versionId: asset.versionId, title: asset.title });
+      done += p.blob.size;
+    }
+    navigate(`/editor?new=1&name=${encodeURIComponent(rec?.name ?? "")}`, { state: { pick } });
+  };
+  /** The menu's Send to Editor: the recording as it was made, the screen (with the voice) and the camera as two clips. */
   const sendToEditor = async () => {
     if (!rec || !source || toEditor !== null) return;
     setToEditor(0);
@@ -100,22 +119,7 @@ export default function ScreenProjectPage() {
       const read = (blob: Blob | undefined, url: string) => (blob ? Promise.resolve(blob) : fetch(url).then((r) => r.blob()));
       const parts = [{ blob: await read(source.file, source.url), name: `${rec.name} (screen).mp4` }];
       if (source.cameraUrl) parts.push({ blob: await read(source.cameraFile, source.cameraUrl), name: `${rec.name} (camera).mp4` });
-      const total = parts.reduce((n, p) => n + p.blob.size, 0) || 1;
-      const target = await footageTarget();
-      const pick: Picked[] = [];
-      let done = 0;
-      for (const p of parts) {
-        const file = new File([p.blob], p.name, { type: "video/mp4" });
-        const onMac = await macIndexOnly(target.libraryId);
-        const up = await uploadFile(target.libraryId, file, (sent) => setToEditor(Math.round(((done + sent) / total) * 100)), target.collectionId, undefined, { onMac });
-        const assetId = up.assetId ?? up.duplicateOf;
-        if (!assetId) throw new Error(`${p.name} was not added to the Media Library`);
-        await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
-        const asset = await getAsset(target.libraryId, assetId);
-        pick.push({ versionId: asset.versionId, title: asset.title });
-        done += p.blob.size;
-      }
-      navigate(`/editor?new=1&name=${encodeURIComponent(rec.name)}`, { state: { pick } });
+      await toEditorWith(parts, setToEditor);
     } catch (e) {
       await alertDialog({ title: "Could not send to the Editor", body: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -127,9 +131,18 @@ export default function ScreenProjectPage() {
     {
       label: "Export",
       primary: true,
-      title: "Makes the video with this look and saves it where you choose",
+      title: "Asks where it goes, then makes the video with this look and saves it there",
+      before: (name) => askSavePlace(`${name}.mp4`),
       run: async ({ blob, name }) => download(blob, `${name}.mp4`),
     },
+    ...(canUse(me, "editor")
+      ? [{
+          label: "Send to Editor",
+          title: "Makes the video with this look and starts a new AI Editor project with it",
+          run: async ({ blob, name }: { blob: Blob; name: string }, progress: (step: string, pct: number) => void) =>
+            toEditorWith([{ blob, name: `${name}.mp4` }], (pct) => progress("Sending to the Editor", pct)),
+        }]
+      : []),
     {
       label: "Upload to Review",
       title: "Makes the video with this look and uploads it to Review as a new video",
