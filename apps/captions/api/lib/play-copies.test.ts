@@ -96,7 +96,9 @@ const play = (url: string, headers: Record<string, string> = {}) => app.request(
 const copiesOf = (prefix: string) => [...objects.keys()].filter((k) => k.startsWith(`play-copies/${prefix}`));
 
 const pushed = (prefix: string) => until(() => copiesOf(prefix).length > 0);
-const dropped = (prefix: string) => until(() => copiesOf(prefix).length === 0);
+/** Gone from Storage and from the record (the record is written right after Storage answers the delete). */
+const dropped = (prefix: string) =>
+  until(async () => copiesOf(prefix).length === 0 && !(await heldCopies()).some((k) => k.startsWith(`play-copies/${prefix}`)));
 /** Runs `run` as if COPY_DAYS and a day had passed. */
 const later = async (run: () => Promise<unknown>) => {
   const now = Date.now();
@@ -181,7 +183,6 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     expect(await pushed(`review/${id}/`)).toBe(true);
     await purgeExpiredReview((owner, at) => owner === "owner" && at > 0);
     expect(await dropped(`review/${id}/`)).toBe(true);
-    expect((await heldCopies()).filter((k) => k.includes(id))).toEqual([]);
   });
 
   it(`sweeps copies past ${COPY_DAYS} days but keeps an approved version's and a Final's; a later play pushes again`, async () => {
@@ -231,5 +232,6 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     expect(await pushed(`library/${versionId}/`)).toBe(true);
     await deleteAssets([id]);
     expect(copiesOf(`library/${versionId}/`)).toHaveLength(0);
+    expect((await heldCopies()).some((k) => k.includes(versionId))).toBe(false);
   });
 });
