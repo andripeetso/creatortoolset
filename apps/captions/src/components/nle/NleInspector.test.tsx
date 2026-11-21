@@ -373,6 +373,14 @@ describe("Inspector processing: the timeline's setting and a clip's own", () => 
     let done = await open((tl) => [tl.tracks.A2.items[0]._k!]);
     expect(document.querySelector('[role="radiogroup"][aria-label="Boost setting"]')).toBeNull();
     done();
+    // a clip moved off A1 with its own setting keeps the section, so it can follow the timeline again
+    document.body.innerHTML = "";
+    const moved = two();
+    moved.tracks.A2.items[0].processing = { boost: 6 };
+    done = await open((tl) => [tl.tracks.A2.items[0]._k!], moved);
+    await click(radio("Same as timeline"));
+    expect(steps.at(-1)!.tl.tracks.A2.items[0].processing).toBeUndefined();
+    done();
     document.body.innerHTML = "";
     const start = two();
     a1(start)[0].processing = { boost: 8 };

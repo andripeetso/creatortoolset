@@ -567,6 +567,8 @@ describe("nle model: processing, the timeline's setting and a clip's own", () =>
     expect(processingOf(tl, own, "voice")).toEqual({ fx: "b", share: 1 });
     expect(processingOf(tl, other, "voice")).toEqual({ fx: "a", share: 0.6 });
     expect(processingOf(tl, other, "face")).toBeUndefined();
+    // null is a clip's own value (a page's "off"), never the timeline's
+    expect(processingOf(tl, find(setClipProcessing(tl, [other._k!], "voice", null), other._k!)!.item, "voice")).toBeNull();
     const back = setClipProcessing(tl, [own._k!], "voice", undefined);
     expect(find(back, own._k!)!.item.processing).toBeUndefined();
     expect(processingOf(back, find(back, own._k!)!.item, "voice")).toEqual({ fx: "a", share: 0.6 });

@@ -77,6 +77,7 @@ export type NleProcessingView = {
   /** "timeline": the timeline's setting; "clip": the own setting of clips `keys` */
   scope: "timeline" | "clip";
   tl: NleTimeline;
+  /** the clips the section is for (none in the Timeline tab; with scope "timeline" there, they follow it) */
   keys: string[];
 };
 
@@ -129,7 +130,11 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
   const first = hits[0];
   const pe: ProcEdit = { tl, onLive, onCommit, readOnly, toTimeline: () => pick("timeline") };
   const own = (t: "video" | "audio", on: string[]) => processing.filter((p) => p.tab === t).map((p) => (
-    <ClipProcessing key={p.name} p={p} e={pe} keys={on.filter((k) => { const h = find(tl, k); return !!h && (p.applies?.(h.item, h.track, tl) ?? true); })} />
+    // a clip that has its own setting keeps the section (moved off the clips it applies to, it can still go back to the timeline's)
+    <ClipProcessing key={p.name} p={p} e={pe} keys={on.filter((k) => {
+      const h = find(tl, k);
+      return !!h && (h.item.processing?.[p.name] !== undefined || (p.applies?.(h.item, h.track, tl) ?? true));
+    })} />
   ));
 
   return (
@@ -403,6 +408,8 @@ function TimelineTab({ tl, onCommit, notes, onRun, children }: { tl: NleTimeline
 
 type ProcEdit = Pick<Edit, "tl" | "onLive" | "onCommit"> & { readOnly: boolean; toTimeline: () => void };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** a value, or the processing's own `def` when there is none (null is a value) */
+const orDef = (p: NleProcessing, v: unknown) => (v === undefined ? p.def : v);
 
 /** A processing's section in the Timeline tab: the timeline's setting, what every clip without its own follows. */
 function TimelineProcessing({ p, e }: { p: NleProcessing; e: ProcEdit }) {
@@ -410,7 +417,7 @@ function TimelineProcessing({ p, e }: { p: NleProcessing; e: ProcEdit }) {
   return (
     <Section title={p.title}>
       {p.render({
-        value: e.tl.timeline.processing?.[p.name] ?? p.def, mixed: false, readOnly: e.readOnly, scope: "timeline", tl: e.tl, keys: [],
+        value: orDef(p, e.tl.timeline.processing?.[p.name]), mixed: false, readOnly: e.readOnly, scope: "timeline", tl: e.tl, keys: [],
         set: (v, done) => (done ? e.onCommit(put(v), p.title) : e.onLive(put(v))),
       })}
     </Section>
@@ -426,9 +433,9 @@ function ClipProcessing({ p, e, keys }: { p: NleProcessing; e: ProcEdit; keys: s
   const items = keys.map((k) => find(e.tl, k)!.item);
   const owned = items.filter((i) => i.processing?.[p.name] !== undefined).length;
   const ownAll = owned === items.length;
-  const values = items.map((i) => processingOf(e.tl, i, p.name) ?? p.def);
+  const values = items.map((i) => orDef(p, processingOf(e.tl, i, p.name)));
   const mixed = values.some((v) => !same(v, values[0]));
-  const tlValue = e.tl.timeline.processing?.[p.name] ?? p.def;
+  const tlValue = orDef(p, e.tl.timeline.processing?.[p.name]);
   const only = keys.length > 1 ? "These clips only" : "This clip only";
   const choose = (mine: boolean) =>
     mine ? e.onCommit(setClipProcessing(e.tl, keys.filter((_, i) => items[i].processing?.[p.name] === undefined), p.name, tlValue), `${p.title}: ${only.toLowerCase()}`)
@@ -452,7 +459,7 @@ function ClipProcessing({ p, e, keys }: { p: NleProcessing; e: ProcEdit; keys: s
           })}
         </div>
       )}
-      {mixed && <p className="px-2 text-zinc-400">Mixed</p>}
+      {mixed && !(e.readOnly && owned > 0 && !ownAll) && <p className="px-2 text-zinc-400">Mixed</p>}
       {owned === 0 ? (
         <>
           {p.render({ value: tlValue, mixed: false, readOnly: true, scope: "timeline", tl: e.tl, keys, set: () => {} })}

@@ -447,8 +447,11 @@ export function setSpeed(tl: NleTimeline, keys: string[], speed: number): NleTim
   return fixTrans(out);
 }
 
-/** A processing's setting for a clip: its own, else the timeline's (undefined: neither has one). */
-export const processingOf = (tl: NleTimeline, it: NleItem, name: string): unknown => it.processing?.[name] ?? tl.timeline.processing?.[name];
+/** A processing's setting for a clip: its own, else the timeline's (undefined: neither has one; null is a value). */
+export const processingOf = (tl: NleTimeline, it: NleItem, name: string): unknown => {
+  const own = it.processing?.[name];
+  return own !== undefined ? own : tl.timeline.processing?.[name];
+};
 
 /** `bag` with `name` set to a copy of `v`, or taken off when `v` is undefined; undefined when nothing is left. */
 function withSetting(bag: Record<string, unknown> | undefined, name: string, v: unknown): Record<string, unknown> | undefined {
