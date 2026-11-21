@@ -6,8 +6,11 @@
 const HEIGHT = 44;
 const kept = new Map<string, Promise<ImageBitmap | null>>();
 let open: { url: string; el: HTMLVideoElement } | null = null;
-let waiting = 0;
-let line: Promise<unknown> = Promise.resolve();
+type Job = { url: string; sec: number; height: number; done: (b: ImageBitmap | null) => void };
+const jobs: Job[] = [];
+let running = false;
+// files that didn't load in this run: their other pictures give up at once instead of waiting 8 s each
+const dead = new Set<string>();
 
 const shut = () => {
   open?.el.removeAttribute("src");
@@ -30,27 +33,42 @@ const ready = (el: HTMLVideoElement, ev: "loadeddata" | "seeked") =>
     el.addEventListener("error", no);
   });
 
+async function draw({ url, sec, height }: Job): Promise<ImageBitmap | null> {
+  if (dead.has(url)) return null;
+  if (open?.url !== url) {
+    shut();
+    open = { url, el: Object.assign(document.createElement("video"), { muted: true, playsInline: true, preload: "auto", src: url }) };
+    if (!(await ready(open.el, "loadeddata"))) return (dead.add(url), shut(), null);
+  }
+  const el = open.el;
+  if (el.error) return null;
+  el.currentTime = Math.min(sec, Math.max(0, (el.duration || sec) - 0.05));
+  if (!(await ready(el, "seeked")) || !el.videoWidth) return null;
+  return createImageBitmap(el, { resizeHeight: height, resizeQuality: height > HEIGHT ? "medium" : "low" }).catch(() => null);
+}
+
+async function pump() {
+  if (running) return;
+  running = true;
+  while (jobs.length) {
+    // the open file's pictures first: a file opens once per run, not again for every clip that cuts back to it
+    const [job] = jobs.splice(Math.max(0, jobs.findIndex((j) => j.url === open?.url)), 1);
+    job.done(await draw(job).catch(() => null));
+  }
+  shut();
+  dead.clear();   // a file that comes online later gets its pictures on the next run
+  running = false;
+}
+
 /** The picture of `url` at second `sec`, `height` px tall (null when the file won't play here). */
 export function thumbAt(url: string, sec: number, height = HEIGHT): Promise<ImageBitmap | null> {
   const key = `${url}@${sec}@${height}`;
   let got = kept.get(key);
   if (!got) {
-    waiting++;
-    const job = line.then(async () => {
-      if (open?.url !== url) {
-        shut();
-        open = { url, el: Object.assign(document.createElement("video"), { muted: true, playsInline: true, preload: "auto", src: url }) };
-        if (!(await ready(open.el, "loadeddata"))) return null;
-      }
-      const el = open.el;
-      if (el.error) return null;
-      el.currentTime = Math.min(sec, Math.max(0, (el.duration || sec) - 0.05));
-      if (!(await ready(el, "seeked")) || !el.videoWidth) return null;
-      return createImageBitmap(el, { resizeHeight: height, resizeQuality: height > HEIGHT ? "medium" : "low" }).catch(() => null);
-    });
-    line = got = job.catch(() => null);
-    void got.then(() => void (--waiting || shut()));
+    got = new Promise((done) => jobs.push({ url, sec, height, done }));
     kept.set(key, got);
+    // after the caller's own work, one seek at a time across the page
+    void Promise.resolve().then(pump);
   }
   return got;
 }
