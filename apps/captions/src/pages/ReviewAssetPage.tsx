@@ -1571,7 +1571,7 @@ function Header({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={exportCsv}>Export V{n} comments (CSV)</DropdownMenuItem>
+              <DropdownMenuItem onClick={exportCsv}>Export {versionLabel(version)} comments (CSV)</DropdownMenuItem>
               {!locked && <CaptionsMenu asset={asset} n={n} setAsset={setAsset} onError={setError} />}
               {!locked && <DropdownMenuSeparator />}
               {!locked && <DropdownMenuItem
@@ -1628,7 +1628,7 @@ function CaptionStudioButton({ asset, n, next }: { asset: ReviewAsset; n: number
               next &&
               old.length &&
               (await confirmDialog({
-                title: `Delete the video files of ${old.map(versionLabel).join(", ")} now that ${versionLabel(asset.versions.find((x) => x.n === n) ?? { n, name: "" })} is approved?`,
+                title: `Delete the video files of ${old.map((x) => versionLabel(x, asset.versions)).join(", ")} now that ${versionLabel(asset.versions.find((x) => x.n === n) ?? { n, name: "" })} is approved?`,
                 body: `Frees ${fmtBytes(old.reduce((sum, x) => sum + x.bytes, 0))}; their comments and thumbnails are kept.`,
                 ok: "Delete files",
                 danger: true,
@@ -1703,13 +1703,15 @@ function CaptionsMenu({
 /** A captioned version needs no Caption Studio: it shows as captioned, and the version it was made from. */
 function CaptionedPair({ asset, n }: { asset: ReviewAsset; n: number }) {
   const version = asset.versions.find((v) => v.n === n)!;
+  const made = version.madeFrom ? asset.versions.find((v) => v.n === version.madeFrom) : undefined;
+  const from = made ? versionLabel(made) : version.madeFrom ? `V${version.madeFrom}` : "";
   return (
     <>
       <span
         className="flex items-center gap-1.5 rounded-md border border-zinc-800 px-2 py-1 text-xs"
-        title={version.madeFrom ? `Captions burned in, made from V${version.madeFrom}` : "Captions burned in"}
+        title={from ? `Captions burned in, made from ${from}` : "Captions burned in"}
       >
-        <CC /> {version.madeFrom ? `from V${version.madeFrom}` : "Captioned"}
+        <CC /> {from ? `from ${from}` : "Captioned"}
       </span>
     </>
   );

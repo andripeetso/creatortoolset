@@ -105,7 +105,7 @@ export function ReviewCompare({
   });
 
   const stacked = mode !== "side";
-  const say = (n: number) => { const v = versions.find((x) => x.n === n); return v ? versionLabel(v) : `V${n}`; };
+  const say = (n: number) => { const v = versions.find((x) => x.n === n); return v ? versionLabel(v, versions) : `V${n}`; };
   const label = (n: number, side: string) => (
     <span className={cn("pointer-events-none absolute top-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium", side)}>
       {say(n)}

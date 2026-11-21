@@ -26,6 +26,10 @@ describe("AI Editor cuts in the editor's words", () => {
     expect(versionLabel({ n: 8, name: "Tiny_A_D6.mp4" })).toBe("Draft 6");
     expect(versionLabel({ n: 3, name: "Tiny v1.mp4", draft: { edit: "e", name: "v1" } })).toBe("Draft 3");
     expect(versionLabel({ n: 2, name: "holiday.mov" })).toBe("V2");
+    // two saves of one old draft: told apart by their time when the others are given
+    const saves = [{ n: 3, name: "Tiny_V2A_D1.mp4", createdAt: 1 }, { n: 4, name: "Tiny_V2A_D2.mp4", createdAt: 2 }, { n: 5, name: "Tiny_A_D3.mp4", createdAt: 3 }];
+    expect(versionLabel(saves[0]!, saves)).toMatch(/^Draft 2 · /);
+    expect(versionLabel(saves[2]!, saves)).toBe("Draft 3");
   });
   it("titles a video named after its newest cut by its title and version", () => {
     expect(assetTitle("ApologyVideoButStandalone_A_D6")).toBe("ApologyVideoButStandalone · Version A");

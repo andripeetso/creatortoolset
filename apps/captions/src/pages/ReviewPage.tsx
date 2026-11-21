@@ -158,7 +158,7 @@ export function reviewListing(
       : projects.filter((p) => finished(p) === at.done && hit(p.name)).sort(at.sort === "name" ? byName : (x, y) => projectAt(y) - projectAt(x)),
     videos:
       assets
-        ?.filter((a) => (at.q && !at.project ? true : folderOf(a) === at.project) && (!!at.project || isFinished(a) === at.done) && hit(a.name))
+        ?.filter((a) => (at.q && !at.project ? true : folderOf(a) === at.project) && (!!at.project || isFinished(a) === at.done) && (hit(a.name) || hit(assetTitle(a.name))))
         .sort((x, y) => (at.sort === "name" ? byName(x, y) : 0))
         .sort((x, y) => (at.project ? +isFinished(x) - +isFinished(y) : 0)) ?? null,
   };
@@ -958,7 +958,7 @@ function AssetCard({
           </Link>
           <div className="min-w-0 flex-1">
             <Link to={to} draggable={false} className="block truncate text-sm font-medium text-zinc-100">
-              {over ? `${dragId ? "Stack on top" : "Add"} as version ${a.versions.length + 1}` : a.name}
+              {over ? `${dragId ? "Stack on top" : "Add"} as version ${a.versions.length + 1}` : assetTitle(a.name)}
             </Link>
             <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
               {statusMenu}

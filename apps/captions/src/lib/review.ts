@@ -3,6 +3,7 @@ import type { ScreenEvents, ScreenLook } from "./screen-recording";
 import type { TimelineView } from "@contracts/timeline-import";
 import type { UploadRelayTus, UploadRelayView } from "@contracts/storage";
 import type { Critique } from "@contracts/edit-plan";
+import { whenSaid } from "./when-said";
 
 /** Review — Frame.io-style video review. Server: api/review.ts. */
 
@@ -85,10 +86,13 @@ export function cutOf(name: string): { title: string; draft: number; letter: str
   return m ? { title: title(m.index), draft: Number(m[2]), letter: m[1] ?? "" } : null;
 }
 
-/** A version as the editor says it: "Draft 6" for an AI Editor cut (the app's own editor files draft n as version n), else "V3". */
-export function versionLabel(v: Pick<ReviewVersion, "n" | "name" | "draft">): string {
-  const c = cutOf(v.name);
-  return c ? `Draft ${c.draft}` : v.draft ? `Draft ${v.n}` : `V${v.n}`;
+type Labelled = Pick<ReviewVersion, "n" | "name" | "draft"> & { createdAt?: number };
+const labelOf = (v: Labelled) => { const c = cutOf(v.name); return c ? `Draft ${c.draft}` : v.draft ? `Draft ${v.n}` : `V${v.n}`; };
+/** A version as the editor says it: "Draft 6" for an AI Editor cut (the app's own editor files draft n as version n), else
+ *  "V3". With `among`: two saves of one old draft (Tiny_V2A_D1, _D2) are told apart by their time ("Draft 2 · 18:51"). */
+export function versionLabel(v: Labelled, among?: Labelled[]): string {
+  const l = labelOf(v);
+  return v.createdAt && among?.some((x) => x.n !== v.n && labelOf(x) === l) ? `${l} · ${whenSaid(v.createdAt)}` : l;
 }
 
 /** The video's name: one still named after its newest cut is said as its title and version ("Tiny · Version A"). */

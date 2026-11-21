@@ -3,7 +3,7 @@ import { HomeLink } from "@/components/HomeLink";
 import { Picture } from "@/components/Picture";
 import { Folder, Layers } from "lucide-react";
 import { useCachedLoad } from "@/lib/local-cache";
-import { APPROVAL, getSharedProject, thumbUrl, timecode, versionLabel, type ReviewAsset } from "@/lib/review";
+import { APPROVAL, assetTitle, getSharedProject, thumbUrl, timecode, versionLabel, type ReviewAsset } from "@/lib/review";
 import { cn } from "@/lib/utils";
 
 /** A project's share link (/rp/:ptoken): every video in it, for reviewers
@@ -71,7 +71,7 @@ export default function ReviewSharedProjectPage() {
                   )}
                 </div>
                 <div className="px-3.5 py-3">
-                  <p className="truncate text-sm font-medium text-zinc-100">{a.name}</p>
+                  <p className="truncate text-sm font-medium text-zinc-100">{assetTitle(a.name)}</p>
                   <p className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
                     <span className={cn("h-2 w-2 rounded-full", APPROVAL[a.approval.status].dot)} />
                     {APPROVAL[a.approval.status].label}
