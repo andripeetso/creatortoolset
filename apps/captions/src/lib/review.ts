@@ -3,6 +3,7 @@ import type { ScreenEvents, ScreenLook } from "./screen-recording";
 import type { TimelineView } from "@contracts/timeline-import";
 import type { UploadRelayTus, UploadRelayView } from "@contracts/storage";
 import type { Critique } from "@contracts/edit-plan";
+import { whenSaid } from "./when-said";
 
 /** Review — Frame.io-style video review. Server: api/review.ts. */
 
@@ -64,6 +65,40 @@ export interface ReviewVersion {
   /** What approving it starts ("B-roll", "cards"): an AI Editor edit in passes. */
   next?: string;
   createdAt: number;
+}
+
+/*
+ * AI Editor cuts in the editor's words (owner, 2026-11-20): Draft N is a round, A/B/C the versions made in it. A cut's
+ * file is Title_A_D2, or Title_D2 with one version; one named before keeps Title_V2A_D1 (the second run's version A, so
+ * Draft 2 · Version A; its _D1, _D2 are saves of that version). Review reads the place from the name, as the edit page does.
+ * shortcut: any file named <title>_D<n> reads as a draft, the owner's own uploads too; fine while names stay like that.
+ */
+const OLD_CUT = /_V(\d+)([A-Z]?)_D\d+$/;
+const NEW_CUT = /(?:_([A-Z]))?_D(\d+)$/;
+
+/** A cut's title, draft and version letter ("" with one version) from its file or video name; null for any other name. */
+export function cutOf(name: string): { title: string; draft: number; letter: string } | null {
+  const s = name.replace(/\.[a-z0-9]{2,4}$/i, "");
+  const title = (at: number) => s.slice(0, at).replace(/_/g, " ");
+  const old = OLD_CUT.exec(s);
+  if (old) return { title: title(old.index), draft: Number(old[1]), letter: old[2]! };
+  const m = NEW_CUT.exec(s);
+  return m ? { title: title(m.index), draft: Number(m[2]), letter: m[1] ?? "" } : null;
+}
+
+type Labelled = Pick<ReviewVersion, "n" | "name" | "draft"> & { createdAt?: number };
+const labelOf = (v: Labelled) => { const c = cutOf(v.name); return c ? `Draft ${c.draft}` : v.draft ? `Draft ${v.n}` : `V${v.n}`; };
+/** A version as the editor says it: "Draft 6" for an AI Editor cut (the app's own editor files draft n as version n), else
+ *  "V3". With `among`: two saves of one old draft (Tiny_V2A_D1, _D2) are told apart by their time ("Draft 2 · 18:51"). */
+export function versionLabel(v: Labelled, among?: Labelled[]): string {
+  const l = labelOf(v);
+  return v.createdAt && among?.some((x) => x.n !== v.n && labelOf(x) === l) ? `${l} · ${whenSaid(v.createdAt)}` : l;
+}
+
+/** The video's name: one still named after its newest cut is said as its title and version ("Tiny · Version A"). */
+export function assetTitle(name: string): string {
+  const c = cutOf(name);
+  return c?.title ? `${c.title}${c.letter ? ` · Version ${c.letter}` : ""}` : name;
 }
 
 export interface ReviewAsset {

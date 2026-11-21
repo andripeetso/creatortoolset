@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Pause, Play, SkipBack, SkipForward, Volume2, X } from "lucide-react";
 import { HomeLink } from "@/components/HomeLink";
-import { frameAt, frameTime, timecode, type ReviewVersion } from "@/lib/review";
+import { frameAt, frameTime, timecode, versionLabel, type ReviewVersion } from "@/lib/review";
 import { cn } from "@/lib/utils";
 
 type Mode = "side" | "wipe" | "diff";
@@ -105,9 +105,10 @@ export function ReviewCompare({
   });
 
   const stacked = mode !== "side";
+  const say = (n: number) => { const v = versions.find((x) => x.n === n); return v ? versionLabel(v, versions) : `V${n}`; };
   const label = (n: number, side: string) => (
     <span className={cn("pointer-events-none absolute top-2 z-10 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium", side)}>
-      V{n}
+      {say(n)}
     </span>
   );
   const picker = (value: number, set: (n: number) => void, title: string) => (
@@ -119,7 +120,7 @@ export function ReviewCompare({
     >
       {versions.map((v) => (
         <option key={v.n} value={v.n}>
-          V{v.n} · {v.name}
+          {versionLabel(v)} · {v.name}
         </option>
       ))}
     </select>
@@ -250,7 +251,7 @@ export function ReviewCompare({
           className="ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-zinc-800"
           title="Switch sound to the other version"
         >
-          <Volume2 className="h-4 w-4" /> V{audio === "left" ? left : right}
+          <Volume2 className="h-4 w-4" /> {say(audio === "left" ? left : right)}
         </button>
       </div>
     </div>
