@@ -342,6 +342,14 @@ final class NativeToolsTests: XCTestCase {
         let fixed = EditFeed.page(try decode(Data(json.utf8), as: EditorProject.self), chat: [])
         XCTAssertTrue(fixed.live.isEmpty)
         XCTAssertEqual(fixed.history.count, 2)
+        // a retry is a new draft number, so a cut that failed is put right by the next cut of its version, not another's
+        let cut = String(decoding: Self.failed, as: UTF8.self).replacingOccurrences(of: #""kind":"analyze""#, with: #""kind":"draft","variant":"B","draft":"V5B""#)
+        func after(_ later: String) throws -> EditFeed.Page {
+            let json = cut.replacingOccurrences(of: #""finishedAt":1794417383378}]"#, with: #""finishedAt":1794417383378},"# + later + "]")
+            return EditFeed.page(try decode(Data(json.utf8), as: EditorProject.self), chat: [])
+        }
+        XCTAssertTrue(try after(#"{"id":"v6b","kind":"draft","variant":"B","draft":"V6B","status":"running","progress":0,"createdAt":1794417390000}"#).live.isEmpty)
+        XCTAssertEqual(try after(#"{"id":"v6a","kind":"draft","variant":"A","draft":"V6A","status":"done","progress":1,"createdAt":1794417390000}"#).live.count, 1)
     }
 
     func testAToReviewRowOpensTheCutAndSaysWhichVersion() throws {
