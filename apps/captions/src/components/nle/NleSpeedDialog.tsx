@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { find, setSpeed, type NleTimeline } from "@/lib/nle/model";
 
-/** Change Clip Speed… (a clip's menu): the picked clips' speed in %, as the Inspector's Speed Change sets it. */
+/** Change Clip Speed… (a clip's menu): the picked clips' speed in % (a right-click picks the linked voice too, so they stay together). */
 export function SpeedDialog({ tl, keys, onCommit, onClose }: { tl: NleTimeline; keys: string[]; onCommit: (tl: NleTimeline) => void; onClose: () => void }) {
   const [pct, setPct] = useState(String(Math.round((find(tl, keys[0])?.item.speed ?? 1) * 10000) / 100));
   const n = Number(pct);
@@ -21,7 +21,7 @@ export function SpeedDialog({ tl, keys, onCommit, onClose }: { tl: NleTimeline; 
         <DialogHeader><DialogTitle>Change Clip Speed</DialogTitle></DialogHeader>
         <form className="grid gap-1.5 text-sm" onSubmit={(e) => { e.preventDefault(); go(); }}>
           <Label htmlFor="nle-speed">Speed (%)</Label>
-          <Input id="nle-speed" type="number" step="1" min={10} max={1600} autoFocus value={pct} onChange={(e) => setPct(e.target.value)} />
+          <Input id="nle-speed" type="number" step="any" min={10} max={1600} autoFocus value={pct} onChange={(e) => setPct(e.target.value)} />
           <p className="text-muted-foreground">10 to 1600. 200 plays twice as fast, 50 half as fast.</p>
         </form>
         <DialogFooter>
