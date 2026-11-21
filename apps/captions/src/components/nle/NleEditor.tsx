@@ -79,7 +79,8 @@ export interface NleFoot {
 }
 
 /** What the chat-mode side panel beside the viewer (NleEditor `side`) is given: the timeline as it is now, the picked
- *  clips, the playhead at rest, a hand edit as one undo step, and a clip opened in the viewer as Source. */
+ *  clips, the playhead at rest, a hand edit as one undo step, a clip opened in the viewer as Source, and a try: a
+ *  timeline shown and played in place of this one until Enter keeps it (one undo step) or Esc drops it. */
 export interface NleSide {
   tl: NleTimeline;
   picked: string[];
@@ -88,6 +89,14 @@ export interface NleSide {
   commit: (next: NleTimeline, label: string) => void;
   /** a drop with `from` / `to` opens on that part, marked In and Out */
   source: (d: NleDrop) => void;
+  /** shows `next` in place of the timeline until it is kept or dropped (null drops it); `label` names the kept step */
+  preview: (next: NleTimeline | null, label?: string) => void;
+  /** a try is on */
+  trying: boolean;
+  /** keeps the try as one undo step, as Enter does */
+  commitPreview: () => void;
+  /** the playhead to this frame, the picked clips let go */
+  seek: (frame: number) => void;
 }
 
 export interface NleControl {
@@ -227,6 +236,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const [hist, setHist] = useState<Hist<NleTimeline>>(() => freshHist(first.saved));
   const [saved, setSaved] = useState<NleTimeline>(first.saved);
   const [live, setLive] = useState<NleTimeline | null>(null);
+  // the side panel's try, on the timeline it was made from (an undo or another edit under it drops it)
+  const [tried, setTried] = useState<{ tl: NleTimeline; label?: string; base: NleTimeline } | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   // a gap picked on the timeline (its clips' selection let go); any edit lets it go
   const [gap, setGap] = useState<Gap | null>(null);
@@ -320,6 +331,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     setHist(freshHist(o.saved));
     setSaved(o.saved);
     setLive(null);
+    setTried(null);
     setSelected([]);
     tln.setPlaying(false);
     tln.seek(0);
@@ -349,7 +361,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
 
   const tl = hist.now;
   const sel = selected.filter((k) => find(tl, k));
-  const shown = live ?? tl;
+  const tryOn = tried?.base === tl ? tried : null;
+  const shown = live ?? tryOn?.tl ?? tl;
   const cachedNow = useMemo(() => stillCached(shown, saved, cached), [shown, saved, cached]);
   const fps = tl.timeline.fps;
   const end = lengthOf(shown) / fps;
@@ -411,6 +424,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const gateCtx = useMemo(() => ({ v2: gate, field: fieldOff }), [gate, fieldOff]);
   const commit = useCallback((next: NleTimeline, label?: string) => {
     setLive(null);
+    setTried(null);
     setGap(null);
     if (readOnly) return;
     const no = why(next);
@@ -673,7 +687,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     };
   }, []);
 
+  const keepTry = () => tryOn && commit(tryOn.tl, tryOn.label);
   const save = async (): Promise<boolean> => {
+    if (tryOn) return (toast("Enter keeps the take you're trying, Esc drops it"), false);
     if (!dirty) return true;
     if (saving || readOnly) return false;
     if (Object.values(tl.sources).some((s) => isDesign(s) && !s.path)) return (toast("A text is still being drawn", { description: "Save again in a moment, or delete it" }), false);
@@ -695,6 +711,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     const onKey = (e: KeyboardEvent) => {
       if (designing) return;
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
+      // the side panel's try: Enter keeps it, Esc drops it (the picked clips stay picked)
+      if (tryOn && (e.key === "Enter" || e.key === "Escape") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        return void (e.key === "Enter" ? keepTry() : setTried(null));
+      }
       const k = commandOfKey(e, keys);
       const c = k && COMMANDS[k.id];
       if (!c) return;
@@ -783,7 +804,9 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     <NleGate.Provider value={gateCtx}>
       <NleLayout panelKeys={panelKeys}
         chat={besideChat ? { bar, foot: foot?.({ changes: hist.past.length, dirty, save }) } : null}
-        side={besideChat && side ? side({ tl, picked: sel, playhead: Math.round(tln.time * fps), commit: (next, label) => commit(next, label), source: openSource }) : undefined}
+        side={besideChat && side ? side({ tl, picked: sel, playhead: Math.round(tln.time * fps), commit: (next, label) => commit(next, label), source: openSource,
+          preview: (next, label) => setTried(next && !readOnly ? { tl: next, label, base: tl } : null), trying: !!tryOn, commitPreview: () => void keepTry(),
+          seek: (f) => (seek(f / fps), pick([])) }) : undefined}
         frame={{ w: tl.timeline.width || 1080, h: tl.timeline.height || 1920 }}
         center={
           <>

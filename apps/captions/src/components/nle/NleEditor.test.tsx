@@ -46,6 +46,12 @@ vi.mock("@/lib/nle/text-design", async (orig) => ({
   grabDesign: async () => ({ id: "d9", pages: [{ id: "p1", layers: [] }], pictures: [] }),
 }));
 vi.mock("@/lib/designs", async (orig) => ({ ...(await orig<typeof import("@/lib/designs")>()), getDesign: async () => ({ id: "d9", pages: [{ id: "p1", layers: [] }], pictures: [] }) }));
+// what the page says (its toasts' titles)
+const toasts = vi.hoisted(() => [] as unknown[]);
+vi.mock("sonner", async (orig) => {
+  const m = await orig<typeof import("sonner")>();
+  return { ...m, toast: Object.assign((t: unknown, o?: object) => (toasts.push(t), m.toast(t as string, o)), m.toast) };
+});
 const { NleEditor } = await import("./NleEditor");
 
 // a Tiny Acrobatics cut: one 3 s shot with its voice
@@ -229,6 +235,95 @@ describe("the side panel beside the viewer (chat mode)", () => {
     // F9 lays the part the viewer opened on, as marked: 2 s to 4 s of the file
     await key("F9", { code: "F9" });
     expect(p.length()).toBe(125);
+    p.done();
+  });
+
+  // the try: two shots in place of the one (`two`, below)
+  const sideOf = async (more: Partial<Parameters<typeof NleEditor>[0]> = {}) => {
+    useChatMode.setState({ on: true, shown: true });
+    let s: NleSide | null = null;
+    const p = await mount(tl, { side: (x) => ((s = x), null), ...more });
+    return { p, s: () => s! };
+  };
+  const clips = (host: Element) => host.querySelectorAll('[data-clip][aria-label^="V1"]').length;
+
+  it("a try shows on the timeline; Enter keeps it as one named undo step, the same as its own Keep", async () => {
+    const { p, s } = await sideOf();
+    act(() => s().preview(two, "Use take 3"));
+    expect(s().trying).toBe(true);
+    expect(clips(p.host)).toBe(2);
+    expect(p.length()).toBe(75); // not an edit yet
+    await key("Enter", { code: "Enter" });
+    expect(s().trying).toBe(false);
+    expect(p.length()).toBe(150);
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(p.length()).toBe(75);
+    // Keep in the panel does what Enter does
+    act(() => s().preview(two, "Use take 3"));
+    act(() => s().commitPreview());
+    expect(s().trying).toBe(false);
+    expect(p.length()).toBe(150);
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(p.length()).toBe(75);
+    p.done();
+  });
+
+  it("the kept try's step carries its name in History", async () => {
+    const { p, s } = await sideOf();
+    act(() => s().preview(two, "Use take 3"));
+    act(() => s().commitPreview());
+    act(() => [...p.host.querySelectorAll("button")].find((b) => b.textContent === "All editing tools")!.click());
+    act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((b) => b.textContent === "History")!.click());
+    expect([...p.host.querySelectorAll('[aria-label="History"] button')].map((b) => b.textContent)).toEqual(["1Opened", "2Use take 3"]);
+    p.done();
+  });
+
+  it("Esc drops the try and keeps the picked clip; Enter in a text box does nothing", async () => {
+    const { p, s } = await sideOf();
+    await key("a", { metaKey: true, code: "KeyA" });
+    expect(s().picked).toHaveLength(2);
+    act(() => s().preview(two, "Use take 3"));
+    expect(clips(p.host)).toBe(2);
+    const box = p.host.appendChild(document.createElement("input"));
+    await act(() => void box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true })));
+    expect(s().trying).toBe(true);
+    box.remove();
+    await key("Escape", { code: "Escape" });
+    expect(s().trying).toBe(false);
+    expect(clips(p.host)).toBe(1);
+    expect(s().picked).toHaveLength(2);
+    expect(p.length()).toBe(75);
+    // with no try on, Esc lets the pick go as before
+    await key("Escape", { code: "Escape" });
+    expect(s().picked).toHaveLength(0);
+    p.done();
+  });
+
+  it("⌘S and Save refuse while a try is on, saying how to end it", async () => {
+    const onSave = vi.fn(async () => {});
+    let last: NleFoot | null = null;
+    const { p, s } = await sideOf({ onSave, foot: (f) => ((last = f), null) });
+    act(() => s().preview(two, "Use take 3"));
+    await key("s", { metaKey: true, code: "KeyS" });
+    let ok = true;
+    await act(async () => void (ok = await last!.save()));
+    expect(ok).toBe(false);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(toasts.filter((t) => t === "Enter keeps the take you're trying, Esc drops it")).toHaveLength(2);
+    await key("Enter", { code: "Enter" });
+    await act(async () => void (ok = await last!.save()));
+    expect(ok).toBe(true);
+    expect(onSave).toHaveBeenCalledTimes(1);
+    p.done();
+  });
+
+  it("seek moves the playhead and lets the pick go", async () => {
+    const { p, s } = await sideOf();
+    await key("a", { metaKey: true, code: "KeyA" });
+    act(() => s().seek(40));
+    await flush();
+    expect(s().picked).toHaveLength(0);
+    expect((await p.state()).playhead).toBe(40);
     p.done();
   });
 });
