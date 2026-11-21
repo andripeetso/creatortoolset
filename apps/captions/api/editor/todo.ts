@@ -69,13 +69,14 @@ export const sheetOf = (editId: string, variant: string): { at: number } | null 
 
 /**
  * A version of an edit in passes whose cut is in Review and whose next pass waits for the go: the job its go is given on
- * (the version's newest step). Nothing while any step of the edit is queued or running (passes.ts passesView).
+ * (the version's newest finished step). Nothing while any step of the edit is queued or running (passes.ts passesView).
  */
 export function heldPasses(e: EditMeta, rows = rowsOf(e.id)): { variant: string; job: number; at: number }[] {
   if (!e.style?.passes || rows.some((r) => r.state === "queued" || r.state === "running")) return [];
   const filed = readStep(e.id, "review") ?? {};
   return Object.keys(filed).flatMap((v) => {
-    const last = rows.filter((r) => r.version_id === `${e.id}:${v}`).at(-1);
+    // the go hangs on the version's newest finished step: a failed one is its own row
+    const last = rows.filter((r) => r.version_id === `${e.id}:${v}` && r.state === "done").at(-1);
     return last && !e.marks?.[v]?.trashedAt && nextPass(e, v) ? [{ variant: v, job: last.id, at: last.done_at ?? 0 }] : [];
   });
 }
