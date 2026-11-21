@@ -339,6 +339,8 @@ describe("Inspector processing: the timeline's setting and a clip's own", () => 
     expect(steps).toHaveLength(2);
     expect(a1(steps.at(-1)!.tl)[0].processing).toEqual({ boost: 7 });
     expect(steps.at(-1)!.tl.timeline.processing).toEqual({ boost: 3 });
+    await setNum(byLabel<HTMLInputElement>("Boost"), "7");   // let go where it was: no undo step, the dragged copy dropped
+    expect([steps.length, lives.at(-1)]).toEqual([2, null]);
     await click(radio("Same as timeline"));
     expect(steps).toHaveLength(3);
     expect(a1(steps.at(-1)!.tl)[0].processing).toBeUndefined();

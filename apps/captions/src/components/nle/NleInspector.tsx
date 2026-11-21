@@ -420,7 +420,8 @@ function TimelineProcessing({ p, e }: { p: NleProcessing; e: ProcEdit }) {
     <Section title={p.title}>
       {p.render({
         value: orDef(p, e.tl.timeline.processing?.[p.name]), mixed: false, readOnly: e.readOnly, scope: "timeline", tl: e.tl, keys: [], playhead: e.playhead,
-        set: (v, done) => (done ? e.onCommit(put(v), p.title) : e.onLive(put(v))),
+        // let go where it started: no undo step, and the dragged copy is dropped
+        set: (v, done) => (!done ? e.onLive(put(v)) : same(v, orDef(p, e.tl.timeline.processing?.[p.name])) ? e.onLive(null) : e.onCommit(put(v), p.title)),
       })}
     </Section>
   );
@@ -473,7 +474,7 @@ function ClipProcessing({ p, e, keys }: { p: NleProcessing; e: ProcEdit; keys: s
         </>
       ) : p.render({
         value: values[0], mixed, readOnly: e.readOnly, scope: "clip", tl: e.tl, keys, playhead: e.playhead,
-        set: (v, done) => (done ? e.onCommit(put(v), p.title) : e.onLive(put(v))),
+        set: (v, done) => (!done ? e.onLive(put(v)) : !mixed && same(v, values[0]) ? e.onLive(null) : e.onCommit(put(v), p.title)),
       })}
     </Section>
   );
