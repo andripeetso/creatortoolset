@@ -115,6 +115,7 @@ const VIEWER_MIME = "application/x-ct-nle-viewer";
 const LOOP_KEY = "ct-nle-loop";
 /** what an edit refused while the side panel's try is on says */
 const TRYING = "Enter keeps the take you're trying, Esc drops it";
+const TRY_TOAST = "nle-trying";
 /** Keys that go to what the viewer shows (Source or Timeline); the first six stop it playing. */
 const STEPS = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "prevEdit", "nextEdit"]);
 /** Home and End go there even from within the frame they are on. */
@@ -370,7 +371,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const undo = () => (tryOn ? setTried(null) : setHist(histUndo));
   const redo = () => (tryOn ? setTried(null) : setHist(histRedo));
   /** a try on: says so and is true (the edit asked for waits for Enter or Esc) */
-  const refused = () => !!tryOn && (toast(TRYING), true);
+  const refused = () => !!tryOn && (toast(TRYING, { id: TRY_TOAST }), true);
+  // the try as of now, for work that lands later (a text drawn again, captions made): it lands and drops the try, said
+  const tryRef = useRef(tryOn);
+  tryRef.current = tryOn;
+  const landed = (what: string) => tryRef.current && toast(`${what}: the take you were trying is dropped`, { id: TRY_TOAST });
   const shown = live ?? tryOn?.tl ?? tl;
   const cachedNow = useMemo(() => stillCached(shown, saved, cached), [shown, saved, cached]);
   const fps = tl.timeline.fps;
@@ -435,7 +440,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const gateCtx = useMemo(() => ({ v2: gate, field: fieldOff }), [gate, fieldOff]);
   const commit = useCallback((next: NleTimeline, label?: string) => {
     // while a try is on, only the try itself is kept: other edits wait for Enter or Esc
-    if (tryOn && next !== tryOn.tl) return void toast(TRYING);
+    if (tryOn && next !== tryOn.tl) return void toast(TRYING, { id: TRY_TOAST });
     setLive(null);
     setGap(null);
     if (readOnly) return;
@@ -480,7 +485,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     setHist((h) => ({ ...h, past: h.past.map(one), now: one(h.now), future: h.future.map(one) }));
   };
   /** A text clip's source drawn again (a new PNG): one step. */
-  const redrawn = (src: string, made: NleSource) => !refused() && setHist((h) => histChange(h, (t) => (t.sources[src]?.design === made.design ? { ...t, sources: { ...t.sources, [src]: made } } : t), "Text"));
+  // the text panel is hidden while a try is on, so only a redraw already on its way lands during one
+  const redrawn = (src: string, made: NleSource) => (landed("The text is drawn again"), setHist((h) => histChange(h, (t) => (t.sources[src]?.design === made.design ? { ...t, sources: { ...t.sources, [src]: made } } : t), "Text")));
 
   // Design full screen over the editor (its keys are its own while it is open): a text clip's design, or a frame of the
   // video to design over, laid at frame `at` once it is done
@@ -607,6 +613,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     setCapBusy(true);
     captions.send().then((r) => {
       // onto the timeline as it is now; `from` is the cut that was rendered
+      landed("The captions are in");
       setHist((h) => histChange(h, (now) => ({ ...now, captions: { project: r.project, clip: r.clip, burn: at.captions?.burn ?? false, from: fromOf(at) } }), at.captions ? "Update Captions" : "Make Captions"));
       if (r.note) toast(r.note);
     }, (e: Error) => toast.error(e.message)).finally(() => setCapBusy(false));
@@ -906,7 +913,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} playhead={Math.round(tln.time * fps)}
           transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => (tryOn ? setTried(null) : setHist((h) => histGo(h, i)))}
           autosaves={autosaves} onAutosave={restore}
-          text={textSource && !readOnly ? (
+          text={textSource && !readOnly && !tryOn ? (
             <NleText key={textSrc} source={textSource} scale={renderScale(tl, textSrc!, Number(textSource.w), Number(textSource.h))} reread={reread}
               onDrawn={(s) => redrawn(textSrc!, s)} onOpen={() => { if (refused()) return; tln.play(false); setDesigning({ id: String(textSource.design), src: textSrc! }); }} />
           ) : null} />}

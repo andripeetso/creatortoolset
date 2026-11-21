@@ -52,6 +52,9 @@ vi.mock("sonner", async (orig) => {
   const m = await orig<typeof import("sonner")>();
   return { ...m, toast: Object.assign((t: unknown, o?: object) => (toasts.push(t), m.toast(t as string, o)), m.toast) };
 });
+// the Inspector's text panel, a stand-in: the redraw callback it took when last drawn
+const textPanel = vi.hoisted(() => ({ onDrawn: null as null | ((s: unknown) => void) }));
+vi.mock("./NleText", () => ({ NleText: ({ onDrawn }: { onDrawn: (s: unknown) => void }) => ((textPanel.onDrawn = onDrawn), <div aria-label="Text panel" />) }));
 const { NleEditor } = await import("./NleEditor");
 
 // a Tiny Acrobatics cut: one 3 s shot with its voice
@@ -432,6 +435,44 @@ describe("the side panel beside the viewer (chat mode)", () => {
     await key("Escape", { code: "Escape" });
     expect(render()).not.toBeNull();
     p.done();
+  });
+
+  it("no text can be edited during a try; a text redraw already on its way lands and drops the try, saying so", async () => {
+    const card = { kind: "design", design: "d1", frame: "p1", path: "/data/designs/u/d1/renders/a.png", w: 1080, h: 1920 };
+    const texts = withKeys({ timeline: { fps: 25, name: "Card" }, sources: { t1: card }, tracks: { V1: { items: [{ src: "t1", rec: 0, len: 75, in: 0 }] } } } as unknown as NleTimeline);
+    useChatMode.setState({ on: true, shown: true });
+    let s: NleSide | null = null;
+    const p = await mount(texts, { side: (x) => ((s = x), null) });
+    act(() => [...p.host.querySelectorAll("button")].find((b) => b.textContent === "All editing tools")!.click());
+    await key("a", { metaKey: true, code: "KeyA" });
+    const panel = () => p.host.querySelector('[aria-label="Text panel"]');
+    expect(panel()).not.toBeNull();
+    const drawn = textPanel.onDrawn!; // what the panel holds for a change typed now
+    act(() => s!.preview(two, "Use take 3"));
+    expect(panel()).toBeNull();
+    toasts.length = 0;
+    act(() => drawn({ ...card, path: "/data/designs/u/d1/renders/b.png" }));
+    expect(s!.trying).toBe(false);
+    expect(p.now().sources.t1.path).toBe("/data/designs/u/d1/renders/b.png");
+    expect(toasts).toEqual(["The text is drawn again: the take you were trying is dropped"]);
+    p.done();
+  });
+
+  it("captions asked for before a try land and drop it, saying so", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
+    let made: (r: { project: string; clip: string }) => void = () => {};
+    const send = () => new Promise<{ project: string; clip: string }>((r) => (made = r));
+    const { p, s } = await sideOf({ captions: { send, open: () => {} } });
+    await p.deliver(ask({ id: "captions-before-try", commands: [{ id: "makeCaptions" }] }));
+    act(() => s().preview(two, "Use take 3"));
+    toasts.length = 0;
+    await act(async () => made({ project: "p1", clip: "c1" }));
+    await flush();
+    expect(s().trying).toBe(false);
+    expect(p.now().captions).toMatchObject({ project: "p1", clip: "c1" });
+    expect(toasts).toEqual(["The captions are in: the take you were trying is dropped"]);
+    p.done();
+    vi.restoreAllMocks();
   });
 
   it("seek moves the playhead and lets the pick go", async () => {
