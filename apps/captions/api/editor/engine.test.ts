@@ -22,7 +22,7 @@ afterAll(() => {
 
 describe("editor step registry", () => {
   it("the server's STEPS and NEXT come from the registry: core kinds have handlers, device kinds do not", () => {
-    expect(Object.keys(STEPS).sort()).toEqual(["analyze", "broll", "cards", "critique", "draft", "file", "post", "preview", "script"]);
+    expect(Object.keys(STEPS).sort()).toEqual(["analyze", "broll", "cards", "critique", "draft", "file", "post", "preview", "revise", "script"]);
     expect(NEXT.analyze).toEqual(["script"]);
     expect(NEXT.draft).toEqual(["broll"]);
     expect(NEXT.broll).toEqual(["post"]);

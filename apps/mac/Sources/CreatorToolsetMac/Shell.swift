@@ -255,6 +255,10 @@ final class Shell: NSObject, ObservableObject {
             // Open in <editor> on an AI Editor draft (Editors.swift): the editors this Mac has, and opening one there
             if ask == "editors" { return done(["editors": Editors.installed().map(\.reply)]) }
             if isEditorAsk(ask) {
+                if let back = openEditorAsk(ask, prefix: "take-back-editor:") {
+                    Task { done(await Editors.takeBack(back)) }
+                    return
+                }
                 guard let open = openEditorAsk(ask) else { return done(["problem": "Could not open the draft"]) }
                 Task { done(await Editors.open(open, site: await self.client())) }
                 return

@@ -550,6 +550,15 @@ export async function openInEditor(ask: { edit: string; draft: string; editor: s
   return r ?? { problem: "Could not open the draft" };
 }
 
+/** The draft's timeline as the person left it in Resolve on this Mac (the one Open in Resolve made), as OTIO text for
+ *  the editor's sent-back route; the same fields as openInEditor. */
+export async function takeBackFromEditor(ask: { edit: string; draft: string; editor: string; name: string; project: string }): Promise<{ text?: string; file?: string; problem?: string }> {
+  const bridge = thisMacBridge();
+  if (!bridge) return { problem: "Needs the Mac app" };
+  const r = (await bridge.postMessage(`take-back-editor:${JSON.stringify(ask)}`).catch(() => null)) as unknown as { text?: string; file?: string; problem?: string } | null;
+  return r ?? { problem: "Could not read the timeline from the editor" };
+}
+
 /**
  * Storage › This computer: the Mac app's download cache folder. The app answers each ask with its own JSON (its path, or
  * none when the picker was cancelled); a browser has no bridge and gets null.
