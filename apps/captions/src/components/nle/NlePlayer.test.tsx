@@ -141,6 +141,46 @@ describe("the sound of a clip from a video file", () => {
     expect(routed).toHaveLength(1);
     act(() => root.unmount());
   });
+  it("a blend of two files of one recording plays both, each at its share of the clip's gain", async () => {
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (u: string) => {
+      fetched.push(String(u));
+      return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(8) };
+    }));
+    const gains: number[] = [];
+    const node = () => ({ connect: (n: unknown) => n, disconnect: () => {}, gain: { cancelScheduledValues: () => {}, setValueAtTime: (v: number) => void gains.push(v), linearRampToValueAtTime: () => {} } });
+    vi.stubGlobal("AudioContext", class {
+      state = "running";
+      currentTime = 1;
+      destination = {};
+      resume = async () => {};
+      createGain = node;
+      createMediaElementSource = () => node();
+      createBufferSource = () => ({ ...node(), start: () => {}, stop: () => {}, playbackRate: { value: 1 }, buffer: null });
+      decodeAudioData = async () => ({ duration: 60 });
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    const voice = withKeys({
+      timeline: { fps: 25, width: 1080, height: 1920 },
+      sources: { vo: { fps: 25 } },
+      tracks: { A1: { items: [{ src: "vo", rec: 0, len: 50, in: 0, gain_db: 6 }] } },
+    } as unknown as NleTimeline);
+    const urlOf = (): NleFile => ({ url: "/tiny/VO.original.flac", mix: { url: "/tiny/VO.clean.flac", share: 0.25 } });
+    const clock = new NleClock();
+    const root = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => root.render(<NlePlayer tl={voice} clock={clock} rate={1} urlOf={urlOf} nameOf={() => "VO"} />));
+    await act(async () => {
+      nleAudio();
+      clock.play(1);
+      clock.ready();
+      clock.tick();
+      await new Promise((done) => setTimeout(done, 20));
+    });
+    expect(fetched).toEqual(expect.arrayContaining(["/tiny/VO.original.flac", "/tiny/VO.clean.flac"]));
+    const g = 10 ** (6 / 20);
+    expect(gains.filter((v) => v !== 1).map((v) => Math.round(v * 1000) / 1000).sort()).toEqual([g * 0.25, g * 0.75].map((v) => Math.round(v * 1000) / 1000).sort());
+    act(() => root.unmount());
+  });
 });
 
 describe("on the graphics stage", () => {

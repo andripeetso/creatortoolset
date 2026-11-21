@@ -47,7 +47,10 @@ const folded = new Set<string>();
 const parked = new Map<string, Record<string, Partial<NleItem>> | null>();
 let lastTab: Tab = "video";
 
-export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave, text }: {
+/** What a page adds at the top of the Audio tab, for the selection's sound clips (`keys`): live while dragged, one undo step when let go. */
+export type NleAudioSlot = { tl: NleTimeline; keys: string[]; onLive: (tl: NleTimeline | null) => void; onCommit: (tl: NleTimeline, label?: string) => void };
+
+export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave, text, audio }: {
   /** the timeline as committed (what a change is made from) */
   tl: NleTimeline;
   keys: string[];
@@ -70,6 +73,8 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
   onAutosave?: (a: Autosave) => void;
   /** at the top of the Video tab: a text clip's words and their style (NleText) */
   text?: ReactNode;
+  /** at the top of the Audio tab: the page's own controls for the selection's sound */
+  audio?: (s: NleAudioSlot) => ReactNode;
 }) {
   const [pref, setPref] = useState<Tab>(lastTab);
   const fps = tl.timeline.fps;
@@ -110,7 +115,7 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
         {tab === "timeline" ? <TimelineTab tl={tl} onCommit={onCommit} notes={notes} onRun={e.onRun} />
           : tab === "history" ? <HistoryTab hist={hist!} onHistory={onHistory ?? (() => {})} autosaves={autosaves} onAutosave={onAutosave ?? (() => {})} />
           : tab === "video" ? (trans ? <TransitionTab {...e} k={trans} /> : <>{text}<VideoTab {...e} keys={videos} /></>)
-          : tab === "audio" ? <AudioTab {...e} keys={sounds} />
+          : tab === "audio" ? <>{audio?.({ tl, keys: sounds, onLive, onCommit })}<AudioTab {...e} keys={sounds} /></>
           : tab === "color" ? <ColorTab {...e} keys={videos} nameOf={nameOf} onClose={() => pick("video")} />
           : <FileTab {...e} item={first!.item} keys={hits.map((h) => h.item._k!)} fps={fps} />}
       </div>
