@@ -86,6 +86,7 @@ export type RecorderMessage =
   | "state"
   | "list"
   | "alpha-stop"
+  | "save-drop"
   | `share:${string}:${ShareDest}`
   | `reveal:${string}`
   | `streams:${string}`

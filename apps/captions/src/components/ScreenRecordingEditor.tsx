@@ -25,7 +25,7 @@ import {
   type ScreenLook,
 } from "@/lib/screen-recording";
 import { exportBitrate, renderScreenVideo } from "@/lib/screen-export";
-import { canSaveTransparent, transparentVideoMade } from "@/lib/mac-record";
+import { canSaveTransparent, tellRecorder, transparentVideoMade } from "@/lib/mac-record";
 import type { ScreenSource } from "@/lib/screen-source";
 import { Inspector, type InspectorTab } from "@/components/screen-editor/Inspector";
 import { Timeline } from "@/components/screen-editor/Timeline";
@@ -420,6 +420,7 @@ export function ScreenRecordingEditor({
     abort.current = ctl;
     const out = a ? exportSize(settings, look.shape, width, height) : outputSize(look.shape, width, height, 1080);
     const kept = trimOf(look, duration);
+    let handed = false;
     try {
       setError("");
       setMaking({ step: "Exporting", pct: 0 });
@@ -450,10 +451,13 @@ export function ScreenRecordingEditor({
       await a.run({ blob, name }, (step, pct) => {
         if (!ctl.signal.aborted) setMaking({ step, pct: Math.round(pct) });
       }, ctl.signal);
+      handed = true;
     } catch (e) {
       if (!ctl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setMaking(null);
+      // stopped or failed before its video went: the place the app asked for waits for no other download
+      if (a?.before && !handed) tellRecorder("save-drop");
     }
   };
 

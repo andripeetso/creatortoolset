@@ -102,7 +102,7 @@ export default function ScreenProjectPage() {
     for (const p of parts) {
       const file = new File([p.blob], p.name, { type: "video/mp4" });
       const onMac = await macIndexOnly(target.libraryId);
-      const up = await uploadFile(target.libraryId, file, (sent) => onPct(Math.round(((done + sent) / total) * 100)), target.collectionId, p.path, { onMac, signal });
+      const up = await uploadFile(target.libraryId, file, (sent) => onPct(Math.round(((done + sent) / total) * 100)), target.collectionId, onMac ? p.path : undefined, { onMac, signal });   // a path only where the library reads files in place: elsewhere it is a copy (a recording thrown away must not take the clip with it)
       const assetId = up.assetId ?? up.duplicateOf;
       if (!assetId) throw new Error(`${p.name} was not added to the Media Library`);
       await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);

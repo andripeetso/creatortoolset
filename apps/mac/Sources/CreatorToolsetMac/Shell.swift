@@ -686,6 +686,7 @@ final class Shell: NSObject, ObservableObject {
         case "alpha-stop": alphaTask?.cancel()   // the editor's Stop while its see-through video is made
         // the editor's Export, before it is made ("save-for": one the page goes on with, Send to Editor: not shown in Finder)
         case "save-as", "save-for": askExportPlace(parts.dropFirst().joined(separator: ":"), reveal: parts[0] == "save-as")
+        case "save-drop": exportPlace = nil   // that export stopped or failed before its download
         default: break   // "state": only the answer
         }
         pushRecorderState()
