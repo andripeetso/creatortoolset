@@ -203,6 +203,8 @@ export interface EditSummary {
   still?: { asset: string; n: number };
   /** what its steps' AI calls spent so far, in dollars at the API's price (absent: nothing yet) */
   costUsd?: number;
+  /** GET /api/editor only: something of it waits for the person's go (a held pass, a cards look sheet: GET /api/editor/todo) */
+  waits?: "go";
 }
 
 /** One spoken sentence of the footage (analyze): numbered from 1 across every source, in recording order. */

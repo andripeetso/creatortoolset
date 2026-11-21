@@ -46,6 +46,11 @@ describe("todoRows", () => {
     expect(todoRows([], [{ ...a, approval: { status: "rejected" }, looked: 0 }])).toEqual([]);
   });
 
+  it("lists an edit that waits for the person's go (a held pass, a look sheet) as waiting, not failed", () => {
+    const rows = todoRows([{ ...edit("e1", { kind: "cards", state: "queued" }), waits: "go" }], []);
+    expect(rows.map((r) => [r.text.split(": ")[1], r.icon])).toEqual([["waits for your go", "review"]]);
+  });
+
   it("is empty when nothing waits on the account", () => {
     expect(todoRows([edit("e1", null)], [asset("a1", "none")])).toEqual([]);
   });

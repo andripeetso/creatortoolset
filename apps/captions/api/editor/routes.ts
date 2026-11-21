@@ -170,7 +170,8 @@ async function listFor(user: SessionUser): Promise<EditSummary[]> {
     const projectId = ofs.get(owner)?.(e.projectId);
     const names = draftNames(e.id).filter((n) => !e.marks?.[n]?.trashedAt);
     const still = newestStill(e.id, names);
-    out.push({ ...summaryOf(e), ...(projectId ? { projectId } : {}), versionCount: names.length, ...(still ? { still } : {}) });
+    const go = heldPasses(e).length > 0 || jobsOf(e.id).some((j) => j.sheet);
+    out.push({ ...summaryOf(e), ...(projectId ? { projectId } : {}), versionCount: names.length, ...(still ? { still } : {}), ...(go ? { waits: "go" as const } : {}) });
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }

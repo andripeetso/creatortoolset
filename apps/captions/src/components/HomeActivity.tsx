@@ -26,8 +26,8 @@ export interface TodoRow {
   asset?: string;
 }
 
-/** An edit whose last step failed (not one the person stopped) or needs a key: it waits on you. */
-export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.last.stopped) || e.last?.state === "needs_key";
+/** An edit whose last step failed (not one the person stopped), needs a key, or waits for your go: it waits on you. */
+export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.last.stopped) || e.last?.state === "needs_key" || e.waits === "go";
 
 /** What waits on you, from the lists the Home page already reads: videos to review, and edits whose last step failed
  *  or needs a key. Pure, so the rows can be tested without a server. */
@@ -39,11 +39,12 @@ export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[]
     .filter(editWaits)
     .map((e): TodoRow => {
       const needsKey = e.last?.state === "needs_key";
+      const go = !needsKey && e.waits === "go" && e.last?.state !== "failed";
       return {
         key: `e:${e.id}`,
         to: `/editor/${e.id}`,
-        text: needsKey ? `${e.name}: needs a key` : `${e.name}: the last step failed`,
-        icon: needsKey ? "key" : "failed",
+        text: needsKey ? `${e.name}: needs a key` : go ? `${e.name}: waits for your go` : `${e.name}: the last step failed`,
+        icon: needsKey ? "key" : go ? "review" : "failed",
       };
     });
   return [...review, ...edit];
