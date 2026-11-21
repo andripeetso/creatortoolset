@@ -114,6 +114,7 @@ import { canChange, useMe } from "@/lib/auth";
 import { isPhoneHub } from "@/lib/mobile";
 import { webPlugins } from "@/plugins.gen";
 import { canReveal, revealReviewFile } from "./library/clip";
+import { usePlayFrom } from "@/lib/play-here";
 
 const COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
 const AVATARS = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-fuchsia-600", "bg-teal-600"];
@@ -233,6 +234,8 @@ function Review({
   const version = asset.versions.find((v) => v.n === n)!;
   const fps = version.fps;
   const video = useRef<HTMLVideoElement>(null);
+  // in the Mac app on the computer that rendered it, the version plays from that file (lib/play-here.ts)
+  const play = usePlayFrom(api.media(version, "play"), version.status === "ready" ? version.local : undefined);
   const player = useRef<HTMLDivElement>(null);
   const composerBox = useRef<HTMLTextAreaElement>(null);
   const [time, setTime] = useState(0);
@@ -577,7 +580,7 @@ function Review({
 
   const arrived = useRef(false);
   useEffect(() => {
-    if (arrived.current) return;
+    if (arrived.current || !play.src) return; // the player's src first: in the Mac app it waits for where the file is
     arrived.current = true;
     const c = threads.find((x) => x.id === focusId);
     if (c) focusComment(c);
@@ -892,7 +895,10 @@ function Review({
                 onPointerCancel={() => (panFrom.current = null)}>
                 <video
                   ref={video}
-                  src={api.media(version, "play")}
+                  src={play.src}
+                  onError={play.onError}
+                  // the Mac app's files are another origin: the colour panel reads this player's frames (its scheme allows it)
+                  crossOrigin={play.src?.startsWith("ctlocal:") ? "anonymous" : undefined}
                   className="h-full w-full"
                   playsInline
                   preload="auto"

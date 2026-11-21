@@ -1003,7 +1003,8 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(manage && v.edit ? { edit: v.edit } : {}),
       ...(manage && v.draft ? { draft: v.draft } : {}),
       ...(manage && v.source ? { source: v.source } : {}),
-      ...(manage && v.local && !v.removed ? { local: v.local } : {}),
+      // a later version made at the same path (a voice change renders the same draft again) holds that file now, not this one
+      ...(manage && v.local && !v.removed && !m.versions.some((x) => x.n > v.n && x.local === v.local) ? { local: v.local } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred ? { blurred: true } : {}),
@@ -2379,8 +2380,8 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const v = await viewer(c);
     if (!v) return c.json({ error: "Not found" }, 404);
     const comments = await readComments(v.meta.id);
-    // an AI reading with the access key (Authorization) doesn't mark comments seen
-    const owner = v.manage && v.user === v.meta.owner && !c.req.header("authorization");
+    // an AI reading with the access key (Authorization), or a chat card asking where its cut's file is (?quiet), marks nothing seen
+    const owner = v.manage && v.user === v.meta.owner && !c.req.header("authorization") && c.req.query("quiet") === undefined;
     const newest = Math.max(0, ...comments.map((x) => x.createdAt));
     if (owner && newest > (v.meta.seenAt ?? 0)) {
       await updateMeta(v.meta.id, (m) => {
