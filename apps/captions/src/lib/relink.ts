@@ -123,7 +123,7 @@ export async function allowFolders(o: Originals, folders: StorageFolder[], store
   for (const f of folders) await folderGrant(f.origin.path, f.id);
   const loose = waitingOf(o).filter((p) => !folders.some((f) => allGranted([p], [f.origin.path])));
   const asked = loose.length ? await askMediaFolder(commonFolder(loose)) : [];
-  const now = asked.length ? asked : o.folders;
+  const now = asked.length ? asked : await listMediaFolders();
   return { ...o, ...(await look(o.paths, stored(store), exists, now)), folders: now };
 }
 

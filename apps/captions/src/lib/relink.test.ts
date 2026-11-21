@@ -111,8 +111,10 @@ describe("an edit's files in a Settings → Folders folder (the Mac's own grant 
     expect(folders.map((f) => f.id)).toEqual(["f_1"]);
     expect(postMessage.mock.calls.some(([b]) => "folderGrant" in b)).toBe(false); // no prompt by itself
     postMessage.mockImplementation(async (b) => (b.placesState ? { states: all("here"), disks: {} } : b.folderGrant ? { granted: true } : null));
+    vi.mocked(askMediaFolder).mockClear();
     const after = await allowFolders(o, folders, "ed.3", on([]).exists);
     expect(postMessage).toHaveBeenCalledWith({ folderGrant: { path: DRIVE, folder: "f_1" } });
+    expect(askMediaFolder).not.toHaveBeenCalled(); // every waiting file is in a Settings folder: no panel
     expect(after.found).toEqual(paths);
   });
 
@@ -126,7 +128,9 @@ describe("an edit's files in a Settings → Folders folder (the Mac's own grant 
     expect(await foldersToAllow(o)).toEqual([]);
     // cancelled: still waiting
     vi.mocked(askMediaFolder).mockResolvedValueOnce([]);
-    expect((await allowFolders(o, [], "ed.5", on([]).exists)).found.vo).toBeUndefined();
+    const cancelled = await allowFolders(o, [], "ed.5", on([]).exists);
+    expect(cancelled.found.vo).toBeUndefined();
+    expect(cancelled.folders).toEqual([]);
     expect(askMediaFolder).toHaveBeenLastCalledWith(VO);
     // allowed: plays from then on
     vi.mocked(askMediaFolder).mockResolvedValueOnce([VO]);
@@ -134,6 +138,24 @@ describe("an edit's files in a Settings → Folders folder (the Mac's own grant 
     const after = await allowFolders(o, [], "ed.5", on([]).exists);
     expect(after.found).toEqual(withVo);
     expect(after.folders).toEqual([VO]);
+  });
+
+  it("a Settings folder and a loose file together: the folder is allowed, the panel opens at the loose file's folder only", async () => {
+    const VO = "/Volumes/Tiny Drive/AI Editor/VO";
+    const withVo = { ...paths, vo: `${VO}/VO_take_1.wav` };
+    const postMessage = mac({ ...all("here"), [paths.s2]: "needs_ok", [withVo.vo]: "not_granted" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ serverDisks: [], folders: [
+      { id: "f_1", role: "footage", name: "Shoots", origin: { host: "dev_1", path: DRIVE }, make: false, createdAt: 0, reach: {} },
+    ] }) })));
+    const o = await openOriginals(withVo, "ed.6", on([]).exists);
+    const folders = await foldersToAllow(o);
+    expect(folders.map((f) => f.id)).toEqual(["f_1"]);
+    vi.mocked(askMediaFolder).mockResolvedValueOnce([VO]);
+    postMessage.mockImplementation(async (b) => (b.placesState ? { states: Object.fromEntries(Object.values(withVo).map((p) => [p, "here"])), disks: {} } : b.folderGrant ? { granted: true } : null));
+    const after = await allowFolders(o, folders, "ed.6", on([]).exists);
+    expect(postMessage).toHaveBeenCalledWith({ folderGrant: { path: DRIVE, folder: "f_1" } });
+    expect(askMediaFolder).toHaveBeenLastCalledWith(VO);
+    expect(after.found).toEqual(withVo);
   });
 
   it("an older Mac app that doesn't answer placesState: each file is read through the app", async () => {
