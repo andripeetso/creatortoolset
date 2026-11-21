@@ -55,6 +55,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         let secure = NSSelectorFromString("_registerURLSchemeAsSecure:")
         if config.processPool.responds(to: secure) { config.processPool.perform(secure, with: ProjectScheme.scheme) }
         super.init(frame: .zero, configuration: config)
+        // no white square before the first page paints: the window's own (dark or light) background shows instead
+        // private key: checked first, so a macOS without it brings the white square back instead of a launch crash
+        if responds(to: NSSelectorFromString("_setDrawsBackground:")) { setValue(false, forKey: "drawsBackground") }
         // Retains self: the window's one web view lives as long as the app.
         configuration.userContentController.add(self, name: "window")
         configuration.userContentController.add(self, name: "appLog")
@@ -284,6 +287,12 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
+        // the page's own colours (index.html theme-color), so the first paint doesn't shift from the system grey
+        window.backgroundColor = NSColor(name: nil) { look in
+            look.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0x0b / 255, green: 0x0b / 255, blue: 0x10 / 255, alpha: 1)
+                : NSColor(srgbRed: 0xfa / 255, green: 0xfa / 255, blue: 0xfa / 255, alpha: 1)
+        }
         placeButtons()
         // AppKit puts the buttons back where it likes after a layout, a resize or full screen.
         DispatchQueue.main.async { [weak self] in
