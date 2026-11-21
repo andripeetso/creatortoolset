@@ -1411,7 +1411,7 @@ function Header({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-xs font-medium hover:bg-zinc-900">
-            <Layers className="h-3.5 w-3.5" /> {versionLabel(version)}
+            <Layers className="h-3.5 w-3.5" /> {versionLabel(version, asset.versions)}
             <ChevronDown className="h-3 w-3 text-zinc-500" />
           </button>
         </DropdownMenuTrigger>

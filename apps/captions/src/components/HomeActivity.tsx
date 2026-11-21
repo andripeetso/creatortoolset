@@ -11,7 +11,7 @@ import type { ActivityChoice, ActivityRow } from "@contracts/activity";
 import { listEdits } from "@/lib/editor";
 import { byProject } from "@/lib/by-project";
 import { useWorkspace } from "@/lib/workspace";
-import { listReviewAssets, reviewApi, waitsOnYou, type ReviewAsset } from "@/lib/review";
+import { assetTitle, listReviewAssets, reviewApi, waitsOnYou, type ReviewAsset } from "@/lib/review";
 import { undoable } from "@/lib/undo";
 import { useSessionSummaries, type SessionSummary } from "@/lib/workshop-summary";
 import { ownMacLine } from "@/lib/wording";
@@ -34,7 +34,7 @@ export const editWaits = (e: EditSummary) => (e.last?.state === "failed" && !e.l
 export function todoRows(edits: EditSummary[], assets: ReviewAsset[]): TodoRow[] {
   const review = assets
     .filter(waitsOnYou)
-    .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${a.name}: needs review`, icon: "review", asset: a.id }));
+    .map((a): TodoRow => ({ key: `r:${a.id}`, to: `/review/${a.id}`, text: `${assetTitle(a.name)}: needs review`, icon: "review", asset: a.id }));
   const edit = edits
     .filter(editWaits)
     .map((e): TodoRow => {
