@@ -553,6 +553,10 @@ describe("the side panel beside the viewer (chat mode)", () => {
     expect(s().trying).toBe(true);
     expect(s().tried).toEqual({ take: "t3" });
     expect(p.host.querySelector('[role="status"]')).toBeNull(); // the panel has its own Keep
+    const all = () => act(() => [...p.host.querySelectorAll("button")].find((b) => b.textContent === "All editing tools")!.click());
+    all(); // the panels open: the side panel goes, so the bar shows
+    expect(p.host.querySelector('[role="status"]')?.textContent).toContain("Keep · Enter");
+    all();
     act(() => useChatMode.setState({ shown: false }));
     act(() => [...p.host.querySelectorAll("button")].find((b) => b.textContent === "Keep · Enter")!.click());
     expect(p.length()).toBe(150);

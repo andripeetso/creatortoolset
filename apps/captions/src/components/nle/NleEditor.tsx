@@ -1007,7 +1007,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 {sep}
                 <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length && !tryOn} onClick={undo} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
                 <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length && !tryOn} onClick={redo} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
-                {tryOn && !(besideChat && side) && (
+                {/* shortcut: a chat-mode viewer too narrow for the side panel still hides this bar (Enter/Esc work); have NleLayout say when it leaves the panel out if that bites */}
+                {tryOn && (!besideChat || !side || full) && (
                   <span role="status" className="ml-1 inline-flex shrink-0 items-center gap-1 rounded bg-sky-500/15 py-0.5 pr-0.5 pl-2 text-sky-200">
                     Trying{tryOn.label ? `: ${tryOn.label}` : ""}
                     <button type="button" onClick={keepTry} className="h-5 rounded-[3px] bg-sky-500 px-1.5 font-medium text-black hover:bg-sky-400">Keep · Enter</button>
