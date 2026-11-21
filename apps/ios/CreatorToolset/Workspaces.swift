@@ -237,6 +237,10 @@ final class Workspaces: ObservableObject {
         picked = id
         // the screens open on Projects were the other workspace's; a chat keeps its own workspace and stays open
         AppNavigator.shared.projects = []
+        // a Review video open over a chat asks the workspace in use, not its chat's: it closes too, with what's over it
+        if let at = AppNavigator.shared.chats.firstIndex(where: { if case .review = $0 { true } else { false } }) {
+            AppNavigator.shared.chats.removeSubrange(at...)
+        }
         // a plug-in's library may be this workspace's and not the last one's (Media's library)
         ServerPlugins.shared.load(for: Servers.shared.currentId, workspace: id)
         Task {
