@@ -276,8 +276,10 @@ describe("the side panel beside the viewer (chat mode)", () => {
     act(() => s().preview(two, "Use take 3"));
     act(() => s().commitPreview());
     act(() => [...p.host.querySelectorAll("button")].find((b) => b.textContent === "All editing tools")!.click());
-    act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((b) => b.textContent === "History")!.click());
+    const tab = (name: string) => act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((b) => b.textContent === name)!.click());
+    tab("History");
     expect([...p.host.querySelectorAll('[aria-label="History"] button')].map((b) => b.textContent)).toEqual(["1Opened", "2Use take 3"]);
+    tab("Video"); // the Inspector opens on the tab last shown, in later tests too
     p.done();
   });
 
