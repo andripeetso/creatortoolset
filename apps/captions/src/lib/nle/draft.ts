@@ -20,7 +20,7 @@ type Tracks = Record<string, { items: Record<string, unknown>[]; [k: string]: un
 
 /** A draft as the editor opens it. */
 export function toNle(tl: Timeline): NleTimeline {
-  const { name, fps, width, height, sources, tracks, markers, ...rest } = tl;
+  const { name, fps, width, height, sources, tracks, markers, processing, ...rest } = tl;
   const out: Record<string, NleTimeline["tracks"][string]> = {};
   for (const [id, t] of Object.entries(tracks as unknown as Tracks)) {
     out[id] = {
@@ -33,7 +33,7 @@ export function toNle(tl: Timeline): NleTimeline {
   }
   return {
     ...rest,
-    timeline: { name, fps, width, height },
+    timeline: { name, fps, width, height, ...(processing ? { processing } : {}) },
     sources: sources as unknown as NleTimeline["sources"],
     tracks: out,
     markers: (markers ?? []).map(({ rec, ...m }) => ({ ...m, ...markerToEdj({ rec, ...m }) })),

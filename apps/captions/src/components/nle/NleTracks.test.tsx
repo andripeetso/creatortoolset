@@ -51,6 +51,15 @@ describe("the timeline's clips", () => {
     act(() => root.unmount());
   });
 
+  it("a clip with its own processing setting has a badge naming it; the others none", async () => {
+    const own = structuredClone(tl);
+    own.tracks.V1.items[0].processing = { face: { on: true } };
+    const { host, root } = await mount({ tl: own });
+    expect([...host.querySelectorAll("[data-own]")].map((b) => b.getAttribute("aria-label"))).toEqual(["Own setting: face"]);
+    expect(host.querySelector("[data-clip] [data-own]")!.closest("[data-clip]")).toBe(host.querySelector("[data-clip]"));
+    act(() => root.unmount());
+  });
+
   it("a drag on a clip's top corner sets its fade, one step when let go", async () => {
     const { host, root, onLive, onCommit, pointer } = await mount();
     const handle = host.querySelector('[aria-label="Fade in"]')!;
