@@ -10,17 +10,15 @@ struct CreatorToolsetMacApp: App {
     @StateObject private var shell: Shell
     /// Sparkle: reads the appcast at FEED_URL every hour and installs what it finds (Info.plist keys from
     /// build-app.sh). A build without a feed (`swift run`) starts no updater.
-    private let updater = SPUStandardUpdaterController(
-        startingUpdater: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil,
-        updaterDelegate: UpdateWhenIdle.shared,
-        userDriverDelegate: nil
-    )
+    private let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main,
+                                     userDriver: UpdateDriver(hostBundle: .main, delegate: nil),
+                                     delegate: UpdateWhenIdle.shared)
 
     init() {
         let shell = Shell()
         _shell = StateObject(wrappedValue: shell)
         AppDelegate.shell = shell   // links arrive at the delegate, also while the window is closed
-        watchForUpdates(updater.updater)
+        watchForUpdates(updater)
     }
 
     var body: some Scene {
@@ -32,7 +30,7 @@ struct CreatorToolsetMacApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .appInfo) {
-                UpdateMenuItem { updater.checkForUpdates(nil) }
+                UpdateMenuItem { updater.checkForUpdates() }
             }
             // the one Settings: the server's own (This Mac is a section there, and in the Servers menu)
             CommandGroup(replacing: .appSettings) {
@@ -74,7 +72,7 @@ struct CreatorToolsetMacApp: App {
         .windowResizability(.contentMinSize)
 
         MenuBarExtra {
-            ActivityPanel(shell: shell, checkForUpdates: { updater.checkForUpdates(nil) })
+            ActivityPanel(shell: shell, checkForUpdates: { updater.checkForUpdates() })
         } label: {
             MenuBarLabel(shell: shell)
         }
@@ -172,9 +170,13 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
                 + (shell.runsHere ? "\n\nAI Editor steps start again by themselves after the update." : "")
             a.addButton(withTitle: "Update When Done")
             a.addButton(withTitle: "Update Now")
-            NSApp.activate()
-            guard a.runModal() == .alertFirstButtonReturn else { return false }
-            whenIdle(every: 5, inBackground: false, install)
+            // asked from the run loop, not inside Sparkle's call: see UpdateDriver
+            RunLoop.main.perform {
+                MainActor.assumeIsolated {
+                    NSApp.activate()
+                    if a.runModal() == .alertFirstButtonReturn { self.whenIdle(every: 5, inBackground: false, install) } else { install() }
+                }
+            }
             return true
         }
     }
