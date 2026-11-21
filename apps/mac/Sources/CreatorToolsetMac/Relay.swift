@@ -370,7 +370,7 @@ final class RelayRunner {
     /// script in, a transcript with a speech model when it has the link to them.
     /// Shot descriptions of this Mac's own files need the app's ffmpeg (a build with its server).
     private var takes: [String] {
-        (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind, folderListKind, folderBrowseKind, helperCheckKind, libraryCopyKind] + (speech == nil ? [] : [transcribeKind])
+        (cannotDraw ? [] : [cardsKind]) + [cutoutKind, splitKind, faceBlurAutoKind, folderListKind, folderBrowseKind, helperCheckKind, libraryCopyKind, lookAwayKind] + (speech == nil ? [] : [transcribeKind])
             + (HelperCheckJob.ffmpeg == nil ? [] : [libraryLookKind])
     }
 
@@ -483,6 +483,8 @@ final class RelayRunner {
                 (end, more) = TranscribeJob(api: api, step: step, speech: speech, proxies: work.appendingPathComponent("work/proxies"), granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil)).run()
             } else if step.kind == faceBlurAutoKind {
                 (end, more) = FaceBlurAutoJob(api: api, step: step, folder: work.appendingPathComponent("faceblur/\(step.id)")).run()
+            } else if step.kind == lookAwayKind {
+                (end, more) = LookAwayJob(api: api, step: step, proxies: work.appendingPathComponent("work/proxies"), granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil), stopped: { [weak self] in self?.isStopped ?? true }).run()
             } else if step.kind == folderListKind {
                 (end, more) = FolderListJob(api: api, step: step).run()
             } else if step.kind == folderBrowseKind {
@@ -500,7 +502,7 @@ final class RelayRunner {
                 (end, more) = CardJob(api: api, id: step.id, folder: work.appendingPathComponent("cards/\(step.id)"),
                                       stopped: { [weak self] in self?.isStopped ?? true }).run()
             }
-            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : step.kind == splitKind ? "split" : step.kind == transcribeKind ? "transcript" : step.kind == faceBlurAutoKind ? "face blur" : step.kind == folderListKind ? "folder list" : step.kind == folderBrowseKind ? "folder browse" : step.kind == helperCheckKind ? "computer check" : "cards"): step \(step.id) failed: \(why)") }
+            if case .failed(let why) = end { AppLog.write("\(step.kind == cutoutKind ? "cut-out" : step.kind == splitKind ? "split" : step.kind == transcribeKind ? "transcript" : step.kind == faceBlurAutoKind ? "face blur" : step.kind == folderListKind ? "folder list" : step.kind == folderBrowseKind ? "folder browse" : step.kind == helperCheckKind ? "computer check" : step.kind == lookAwayKind ? "look-away" : "cards"): step \(step.id) failed: \(why)") }
             if case .cannot = end { cannot = true }
             // without that word from the site the next step is seen on a later poll (the one in flight listed no kind)
             next = more && !cannot && !isStopped ? claimStep() : nil

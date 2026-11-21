@@ -2,14 +2,17 @@ import { existsSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { libraryDb } from "../library/db";
 import { MAX_ATTEMPTS, type JobRow, type JobTable } from "../library/jobs";
-import { CARDS_DRAW_KIND, RESOLVE_KIND } from "../../contracts/devices";
+import { CARDS_DRAW_KIND, LOOKAWAY_KIND, RESOLVE_KIND } from "../../contracts/devices";
 import { announce } from "../lib/sync";
 import { analyzeStep, energyFile } from "./analyze";
 import { brollStep } from "./broll";
 import { cardsStep } from "./cards/step";
 import { critiqueStep } from "./critique";
 import { eyelineFile } from "./eyeline";
-import { allBroll, isPlanned } from "./plan";
+import { allBroll, isMusic, isPlanned } from "./plan";
+import { pairSource } from "./analyze";
+import { pairKept, pairsToTry } from "./sync";
+import type { ProbeSummary } from "../library/media/probe";
 import { postStep } from "./post";
 import { fileStep, previewStep } from "./preview";
 import { reviseStep } from "./revise";
@@ -53,7 +56,7 @@ export interface EditKind {
 export type Place = "server" | "computer";
 
 /** Probe of a library version, or null. */
-const probeOf = (id: string): { vcodec?: string } | null => {
+const probeOf = (id: string): { vcodec?: string; duration?: number } | null => {
   const r = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?").get(id) as { probe: string | null } | undefined;
   return r?.probe ? (JSON.parse(r.probe) as { vcodec?: string }) : null;
 };
@@ -61,8 +64,17 @@ const probeOf = (id: string): { vcodec?: string } | null => {
 const unmeasured = (id: string, eyes: boolean) => !existsSync(energyFile(id)) || (eyes && !!probeOf(id)?.vcodec && !existsSync(eyelineFile(id)));
 const computerIf = (yes: boolean): Place => (yes ? "computer" : "server");
 
-/** analyze reads the footage only for an edit cut around speech, and only for a source not measured yet (analyze.ts). */
-const analyzePlace = (edit: EditMeta): Place => computerIf(!edit.plan && !allBroll(edit) && edit.sources.some((id) => unmeasured(id, true)));
+/** Sources whose sound is still to be compared with another's (a separate mic, a second camera: sync.ts pairsToTry). */
+const unpaired = (edit: EditMeta): boolean => {
+  const srcs = edit.sources.filter((id) => id !== edit.song && !isMusic(id)).flatMap((id) => {
+    const p = probeOf(id);
+    return p ? [pairSource(id, p as ProbeSummary)] : [];
+  });
+  return pairsToTry(srcs).some(([a, b]) => !pairKept(a, b));
+};
+
+/** analyze reads the footage only for an edit cut around speech, and only for a source not measured or paired yet (analyze.ts). */
+const analyzePlace = (edit: EditMeta): Place => computerIf(!edit.plan && !allBroll(edit) && (edit.sources.some((id) => unmeasured(id, true)) || unpaired(edit)));
 
 /**
  * One version's draft: a planned one with a generated shot, one cut around speech from a source not measured yet, or a
@@ -108,6 +120,8 @@ const KINDS: Record<string, EditKind> = {
   [RESOLVE_KIND]: { source: "device", next: [] },
   // a Mac draws an edit's cards in its sandbox (cards/step.ts asks, cards/device.ts answers)
   [CARDS_DRAW_KIND]: { source: "device", next: [], footage: false },
+  // a Mac finds where the eyes leave the lens in a version's camera takes (broll.ts asks and waits, lookaway.ts answers)
+  [LOOKAWAY_KIND]: { source: "device", next: [] },
 };
 
 /** A device kind that reads the edit's footage: it goes only to a computer that can get at the files (api/editor/reach.ts). */

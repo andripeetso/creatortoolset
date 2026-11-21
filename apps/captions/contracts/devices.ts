@@ -33,6 +33,16 @@ export const RESOLVE_KIND = "resolve";
 export const CARDS_DRAW_KIND = "cards-draw";
 
 /**
+ * The step kind that finds where the speaker's eyes leave the lens in a version's camera takes (api/editor/lookaway.ts;
+ * the Mac app's LookAwayJob.swift, with the Mac's own face finder), so its B-roll covers them. The B-roll step asks for it
+ * and waits while a Mac of the account that lists it is online. Its footage is only the takes still to measure. For
+ * each, then done (or fail: the B-roll is laid without it):
+ *   POST editor/job/:id/gaze/:version   { fps, step, samples: [[yaw°, pitch°, iris 0..1] | null, …] } → { ok: true }
+ *     a sample every `step` frames of the take from frame 0, at its `fps`; null where no face is found
+ */
+export const LOOKAWAY_KIND = "lookaway";
+
+/**
  * The kind that cuts a still picture out of its background on a Mac (api/lib/cutouts.ts; the Mac app's Cutout.swift). Not an
  * edit step: a person's call queues it (the cut-out plug-in), and a Mac lists, is hinted and claims it on the road above.
  *   GET  cutout/:id                             → the picture (PNG, JPEG or HEIC)

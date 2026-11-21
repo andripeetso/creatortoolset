@@ -4,8 +4,13 @@ import { savedQuery } from "../library/collections";
 import { NeedsKey, wordsOf } from "../library/transcribe";
 import { buildAssetQuery, MAX_LIMIT, type CardRow } from "../library/query";
 import type { ProbeSummary } from "../library/media/probe";
+import { LOOKAWAY_KIND } from "../../contracts/devices";
+import { isOnline, listDevices } from "../lib/devices";
+import { enqueueJob } from "../library/jobs";
+import { Waiting } from "./analyze";
+import { gazeWanted, onScreen, readGaze, stretches, subtract } from "./lookaway";
 import { brollMinFrames } from "./qa";
-import { ownerOf, readDraft, saveDraft, seesClip, sourcesWorkspace } from "./store";
+import { ownerOf, readDraft, saveDraft, seesClip, sourcesWorkspace, type EditMeta } from "./store";
 import { noPicture, sourceOf } from "./timeline";
 import type { StepContext } from "./worker";
 
@@ -30,11 +35,13 @@ export const HOOK_FRAMES = 37;
 export const MAX_SHOT_FRAMES = 60;
 /** His face between two cutaways is at least this long, else the later cutaway is dropped. */
 export const FACE_GAP_FRAMES = 20;
+/** A cover of a look-away moves its edge onto a speaker cut this near (frames at 25 fps). */
+export const SNAP_FRAMES = 12;
 
 /** The placement rules in frames of a timeline at `fps`. */
 export function rulesAt(fps: number) {
   const f = (n: number) => Math.round((n * fps) / 25);
-  return { hook: f(HOOK_FRAMES), min: brollMinFrames(fps), max: f(MAX_SHOT_FRAMES), gap: f(FACE_GAP_FRAMES) };
+  return { hook: f(HOOK_FRAMES), min: brollMinFrames(fps), max: f(MAX_SHOT_FRAMES), gap: f(FACE_GAP_FRAMES), snap: f(SNAP_FRAMES) };
 }
 
 export interface BrollResult {
@@ -63,11 +70,14 @@ export function freeStart(taken: [number, number][], frames: number, dur: number
  * gap, and never in the hook) to its cut, and never past the CTA's start. A shot too long for MAX_SHOT_FRAMES keeps
  * its cut at the end and starts later.
  */
+/** Where the CTA starts: the last line's marker, else the end of the picture. */
+const ctaOf = (tl: Timeline, picture: number) => (tl.markers.length ? Math.max(...tl.markers.map((m) => m.rec)) : picture);
+
 export function windowsOf(tl: Timeline): Window[] {
   const speaker = [...tl.tracks.V1.items].sort((a, b) => a.rec - b.rec);
   const picture = Math.max(0, ...speaker.map((i) => i.rec + i.len));
   // the CTA is the last line: from its marker to the end of the picture
-  const ctaFrom = tl.markers.length ? Math.max(...tl.markers.map((m) => m.rec)) : picture;
+  const ctaFrom = ctaOf(tl, picture);
   const r = rulesAt(tl.fps);
   const wins: Window[] = [];
   for (const i of speaker) {
@@ -84,9 +94,11 @@ export function windowsOf(tl: Timeline): Window[] {
 
 /**
  * Lays cutaways from `pool` over the speaker track of `tl` (a copy comes back; V1 is untouched). A window no clip fits
- * (too short, or every moment of every clip already used) gets a note and no cutaway.
+ * (too short, or every moment of every clip already used) gets a note and no cutaway. `aways`: where the speaker's eyes
+ * leave the lens ([a, b) timeline frames, lookaway.ts onScreen): every one is covered edge to edge (coverAways), except
+ * in the hook and the CTA, which stay on the face by rule and are noted.
  */
-export function placeBroll(tl: Timeline, pool: TimelineSource[]): BrollResult {
+export function placeBroll(tl: Timeline, pool: TimelineSource[], aways: [number, number][] = []): BrollResult {
   const out = structuredClone(tl);
   const notes: string[] = [];
   const clips = pool.filter((s, k) => s.dur > 0 && s.w > 0 && pool.findIndex((o) => o.versionId === s.versionId) === k);
@@ -114,7 +126,61 @@ export function placeBroll(tl: Timeline, pool: TimelineSource[]): BrollResult {
     if (!done) notes.push(`${BROLL_NOTE}no clip has a free moment long enough for the cut at ${w.rec}`);
   }
   out.tracks.V2.items = placed;
+  if (aways.length) notes.push(...coverAways(out, aways, clips, taken));
   return { timeline: out, notes };
+}
+
+const secs = (spans: [number, number][], fps: number) => spans.map(([a, b]) => `${(a / fps).toFixed(1)}–${(b / fps).toFixed(1)} s`).join(", ");
+
+/**
+ * Covers every look-away the picture still shows (`out` is changed in place): from the cutaway before it or a speaker cut
+ * near its start to the next cutaway or a speaker cut near its end, so no sliver of the face shows between, in shots of
+ * MIN..MAX frames, each from a clip moment not used yet. The hook and the CTA keep the face (noted); a look-away no clip
+ * is left for is noted too. Returns the notes.
+ */
+export function coverAways(out: Timeline, aways: [number, number][], clips: TimelineSource[], taken: Map<string, [number, number][]>): string[] {
+  const r = rulesAt(out.fps);
+  const v1 = out.tracks.V1.items;
+  const end = Math.max(0, ...v1.map((i) => i.rec + i.len));
+  const hold: [number, number][] = [[0, r.hook], [ctaOf(out, end), end]];
+  const need = subtract(aways, hold);
+  const kept = subtract(aways, need);
+  const cuts = [...new Set(v1.flatMap((i) => [i.rec, i.rec + i.len]))];
+  const left: [number, number][] = [];
+  let turn = 0;
+  for (const [a0, b0] of subtract(need, out.tracks.V2.items.map((i): [number, number] => [i.rec, i.rec + i.len]))) {
+    const v2 = out.tracks.V2.items;
+    const lo = Math.max(0, ...v2.map((i) => i.rec + i.len).filter((e) => e <= a0));
+    const hi = Math.min(end, ...v2.map((i) => i.rec).filter((s) => s >= b0));
+    // onto the cutaway beside it when the face between would be a sliver, else onto a speaker cut near it
+    let a = a0 - lo < r.gap ? lo : Math.max(lo, Math.min(a0, ...cuts.filter((c) => c <= a0 && a0 - c <= r.snap)));
+    let b = hi - b0 < r.gap ? hi : Math.min(hi, Math.max(b0, ...cuts.filter((c) => c >= b0 && c - b0 <= r.snap)));
+    if (b - a < r.min) {
+      b = Math.min(hi, a + r.min);
+      a = Math.max(lo, b - r.min);
+    }
+    const n = Math.max(1, Math.ceil((b - a) / r.max));
+    for (let j = 0; j < n; j++) {
+      const w = { rec: a + Math.floor(((b - a) * j) / n), len: a + Math.floor(((b - a) * (j + 1)) / n) - (a + Math.floor(((b - a) * j) / n)) };
+      const pick = clips.map((_, k) => clips[(turn + k) % clips.length]!).flatMap((src) => {
+        const start = freeStart(taken.get(src.versionId) ?? [], Math.round((w.len * src.fps) / out.fps), src.dur);
+        return start === null ? [] : [{ src, start }];
+      })[0];
+      if (!pick) {
+        left.push([w.rec, b]);
+        break;
+      }
+      taken.set(pick.src.versionId, [...(taken.get(pick.src.versionId) ?? []), [pick.start, pick.start + Math.round((w.len * pick.src.fps) / out.fps)]]);
+      out.sources[pick.src.versionId] = pick.src;
+      v2.push({ src: pick.src.versionId, in: pick.start, len: w.len, rec: w.rec });
+      turn = (clips.indexOf(pick.src) + 1) % clips.length;
+    }
+    v2.sort((x, y) => x.rec - y.rec);
+  }
+  return [
+    ...(kept.length ? [`${BROLL_NOTE}the eyes leave the lens in the hook or the call to action, kept on the face: ${secs(kept, out.fps)}`] : []),
+    ...(left.length ? [`${BROLL_NOTE}no clip is left to cover the eyes off the lens at ${secs(left, out.fps)}`] : []),
+  ];
 }
 
 /** The longest shot of a covered picture, in frames at 25 fps (3 s): a longer line is cut into equal shots. */
@@ -288,6 +354,51 @@ export function rankByWords(rows: { id: string }[]): (text: string) => string[] 
       .map((c) => c.id);
 }
 
+/** How long the B-roll waits for a Mac to find the look-aways, and how often it looks again (seconds). */
+const LOOK_MS = 10 * 60_000;
+const LOOK_WAKE_S = 15;
+/** When each version's look-away step was asked for (lost on a restart: the wait starts again then). */
+const lookAsked = new Map<string, number>();
+
+/**
+ * Where the cut's speaker track shows the eyes off the lens ([a, b) timeline frames, lookaway.ts). A take never measured
+ * is measured first by a Mac of the account that lists the `lookaway` step: it is asked for and the B-roll waits
+ * (Waiting) while that Mac is online, up to LOOK_MS. With no such Mac the cut is covered as before; a measure that was
+ * asked for and did not come is noted.
+ */
+export function lookAways(edit: Pick<EditMeta, "id" | "workspaceId">, actor: string, variant: string, tl: Timeline, now = Date.now()): { spans: [number, number][]; notes: string[] } {
+  const notes: string[] = [];
+  if (gazeWanted(tl).length) {
+    const db = libraryDb();
+    const vid = `${edit.id}:${variant}`;
+    const row = db.prepare("SELECT state, error FROM edit_jobs WHERE version_id = ? AND kind = ?").get(vid, LOOKAWAY_KIND) as { state: string; error: string | null } | undefined;
+    const on = listDevices((d) => d.owner === actor && !!d.kinds?.includes(LOOKAWAY_KIND) && isOnline(d.id)).length > 0;
+    const out = row?.state === "queued" || row?.state === "running";
+    if (!row && on) {
+      enqueueJob(db, edit.workspaceId, vid, LOOKAWAY_KIND, actor, true, "edit_jobs");
+      lookAsked.set(vid, now);
+      throw new Waiting(LOOK_WAKE_S, LOOK_LINE);
+    }
+    if (!lookAsked.has(vid)) lookAsked.set(vid, now);
+    if (out && on && now - lookAsked.get(vid)! < LOOK_MS) throw new Waiting(LOOK_WAKE_S, LOOK_LINE);
+    if (row) {
+      db.prepare("DELETE FROM edit_jobs WHERE version_id = ? AND kind = ?").run(vid, LOOKAWAY_KIND);
+      if (row.state !== "done") notes.push(`${BROLL_NOTE}where the eyes leave the lens was not found (${row.error ?? (on ? "the Mac took over 10 minutes" : "the Mac went offline")})`);
+    }
+    lookAsked.delete(vid);
+  }
+  const aways: Record<string, [number, number][]> = {};
+  for (const id of new Set(tl.tracks.V1.items.map((i) => i.src))) {
+    const g = readGaze(id);
+    const fps = tl.sources[id]?.fps;
+    if (g && fps) aways[id] = stretches(g).map(([a, b]) => [Math.round((a * fps) / g.fps), Math.round((b * fps) / g.fps)]);
+  }
+  return { spans: onScreen(tl, aways), notes };
+}
+
+/** Said beside the B-roll step while it waits for the look-aways. */
+export const LOOK_LINE = "Waiting for a Mac to find where the eyes leave the lens";
+
 /** The B-roll step for one version's draft: its cutaways from the edit's collection (a cut with no picture: its whole picture), saved over the draft. */
 export async function brollStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   if (!variant) return; // a whole-edit step is not a draft: each version's draft queues its own
@@ -308,8 +419,13 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   if (sourcesWorkspace(ownerOf(edit), rows.map((r) => r.id)) !== edit.workspaceId) throw new Error("This account can no longer read the B-roll folder");
   const pool = rows.flatMap((r) => (r.probe ? [sourceOf(r.id, r.title, JSON.parse(r.probe) as ProbeSummary)] : []));
   if (signal.aborted) return;
+  // a cut with a picture of its own: its look-aways first, so its B-roll covers them (a voice cut is all cover anyway)
+  const look = cover ? { spans: [], notes: [] } : lookAways(edit, job.actor ?? "", variant, draft.timeline);
   const spoken = () => Object.fromEntries([...new Set(draft.timeline.tracks.V1.items.map((i) => i.src))].map((id) => [id, wordsOf(libraryDb(), id) ?? []]));
-  const { timeline, notes } = cover ? placeCover(draft.timeline, pool, rankByWords(rows), saidUnder(draft.timeline, spoken())) : placeBroll(draft.timeline, pool);
+  const placed = cover ? placeCover(draft.timeline, pool, rankByWords(rows), saidUnder(draft.timeline, spoken())) : placeBroll(draft.timeline, pool, look.spans);
+  const { timeline } = placed;
+  const notes = [...look.notes, ...placed.notes];
   if (cover && !timeline.tracks.V2.items.length) throw new NeedsKey(NO_COVER_IN_FOLDER);
-  await saveDraft(edit.id, variant, { timeline, notes: [...draft.notes.filter((n) => !n.startsWith(BROLL_NOTE)), ...notes] });
+  // a new cut the AI made: looked at again before Review (critique.ts), an earlier look's verdict gone with the old cut
+  await saveDraft(edit.id, variant, { timeline, notes: [...draft.notes.filter((n) => !n.startsWith(BROLL_NOTE)), ...notes], due: 1 });
 }

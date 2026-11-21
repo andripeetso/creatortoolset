@@ -75,11 +75,11 @@ final class SpeechModelsTests: XCTestCase {
         site.bytes = { $0.method == "GET" && $0.path == "/api/devices/relay/transcribe/5" ? wav : nil }
         let seen = Seen()
         let runner = runner(site, speech: link(seen))
-        XCTAssertEqual(runner.editorKinds(now: 0), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy", "transcribe"])
+        XCTAssertEqual(runner.editorKinds(now: 0), ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy", "lookaway", "transcribe"])
         let step = try XCTUnwrap(runner.claimStep(now: 1000))
         XCTAssertEqual(step, EditorJob(id: 5, kind: "transcribe", model: "whisper-base.en", languages: ["en"]))
         let claim = try XCTUnwrap(JSONSerialization.jsonObject(with: site.requests[0].body) as? NSDictionary)
-        XCTAssertEqual(claim, ["kinds": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy", "transcribe"], "models": ["whisper-base.en"], "getting": [], "asked": ["whisper-base.en"]])
+        XCTAssertEqual(claim, ["kinds": ["cards-draw", "cutout", "split", "faceblur", "folder-list", "folder-browse", "helper-check", "copy", "lookaway", "transcribe"], "models": ["whisper-base.en"], "getting": [], "asked": ["whisper-base.en"]])
         XCTAssertEqual(seen.wanted, [["whisper-base.en"]])
         await offMain { runner.runSteps(step) }
         XCTAssertEqual(site.requests.map { "\($0.method) \($0.path)" },
