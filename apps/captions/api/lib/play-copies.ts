@@ -18,12 +18,19 @@ import { pluginPlayCopies } from "./plugin";
 
 /** Days a copy stays after its push, unless its owner keeps it for good (an approved version, a Final). */
 export const COPY_DAYS = 14;
-/** A signed link lasts a day, so a paused video still resumes; every /play signs a new one. */
+/** A signed link lasts about a day (23–24 h), so a paused video still resumes; every /play signs one. A copy deleted from
+ *  Storage can still play from the CDN's cache through a link already given out, until that link expires. */
 const LINK_SECONDS = 24 * 3600;
 /** How long a copy that was checked is trusted before Storage is asked again whether it is still there. */
 const CHECKED_MS = 10 * 60_000;
 /** A push that failed waits this long before the next try. */
 const RETRY_MS = 3600_000;
+/** Storage has this long to say whether a copy is there before /play streams instead. */
+const STAT_MS = 3000;
+/** A copy this new may have landed while a player was already reading the file from this server (see playCopy). */
+const LANDING_MS = 10 * 60_000;
+/** A push still going after this is given up, so one stalled upload never holds up the others. */
+const PUT_MS = 30 * 60_000;
 const DAY_MS = 86_400_000;
 const ROOT = "play-copies";
 // The pull zone serves a file with the type its name's extension says, so only these go.
@@ -35,11 +42,19 @@ export const copyIsFresh = (at: number): boolean => Date.now() - at < COPY_DAYS 
 type Held = Record<string, { bytes: number; at: number }>;
 const recordPath = () => path.join(env.dataDir, "play-copies.json");
 let held: Held | null = null;
+let loading: Promise<Held> | null = null;
 let saving: Promise<void> = Promise.resolve();
 
-async function record(): Promise<Held> {
-  return (held ??= JSON.parse(await readFile(recordPath(), "utf-8").catch(() => "{}")) as Held);
+/** The record, read from disk once (every caller shares that one read). */
+function record(): Promise<Held> {
+  return (loading ??= readFile(recordPath(), "utf-8")
+    .catch(() => "{}")
+    .then((text) => (held = JSON.parse(text) as Held)));
 }
+
+/** `p`, or a rejection after `ms`. */
+const within = <T>(p: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([p, new Promise<never>((_, no) => setTimeout(() => no(new Error(`no answer in ${ms / 1000} s`)), ms).unref())]);
 
 /** The record as it is now, written whole (one write at a time, through a temp file). */
 function save(): Promise<void> {
@@ -104,10 +119,21 @@ function pushLater(store: BlobStore, key: string, file: string, type: string, by
       // put() takes the file it is given: a hard link, so the server's own file stays and no bytes are copied on disk
       // shortcut: a file on another disk than DATA_DIR can't be linked, so it is never pushed; copy it to tmp if that matters
       await link(file, tmp);
-      await store.put(key, tmp, { contentType: type });
-      (await record())[key] = { bytes, at: Date.now() };
+      const put = store.put(key, tmp, { contentType: type });
+      await within(put, PUT_MS).catch((e) => {
+        put.then(() => store.delete(key)).catch(() => {}); // a push given up leaves nothing behind once it ends
+        throw e;
+      });
+      const all = await record();
+      all[key] = { bytes, at: Date.now() };
       checked.set(key, Date.now());
       failed.delete(key);
+      await save();
+      // the same version's older copy (its play file was made again: a new size) goes, so nothing kept for good piles up
+      const name = key.slice(0, key.lastIndexOf("/") + 1);
+      for (const old of Object.keys(all).filter((k) => k !== key && k.startsWith(name))) {
+        await store.delete(old).then(() => void delete all[old], (e) => console.error(`[play-copies] delete ${old}:`, e instanceof Error ? e.message : e));
+      }
       await save();
       await sweepPlayCopies([key]); // its version may have gone while the push was on its way
     } catch (e) {
@@ -132,12 +158,16 @@ export async function playCopy(c: Context, name: string, file: string, type: str
   if (!k) return null;
   const { key } = k;
   try {
-    if (!(await record())[key]) {
+    const got = (await record())[key];
+    if (!got) {
       pushLater(store, key, file, type, k.bytes);
       return null;
     }
+    // a copy that just landed takes only a load from the start: a player already reading this file from the server keeps
+    // reading here, since a media load may refuse bytes from a second origin midway (not seen in a browser yet)
+    if (Date.now() - got.at < LANDING_MS && !/^bytes=0-/.test(c.req.header("range")?.trim() ?? "bytes=0-")) return null;
     if (Date.now() - (checked.get(key) ?? 0) > CHECKED_MS) {
-      if (!(await store.stat(key))) {
+      if (!(await within(store.stat(key), STAT_MS))) {
         delete held![key]; // gone from Storage (deleted by hand): pushed again, streamed meanwhile
         checked.delete(key);
         void save();
@@ -146,7 +176,9 @@ export async function playCopy(c: Context, name: string, file: string, type: str
       }
       checked.set(key, Date.now());
     }
-    const at = await store.locate(key, LINK_SECONDS);
+    // the expiry is rounded down to the hour, so the same link comes back within an hour and the browser reuses its bytes
+    const now = Math.floor(Date.now() / 1000);
+    const at = await store.locate(key, Math.floor((now + LINK_SECONDS) / 3600) * 3600 - now);
     if (at.kind !== "url") return null;
     c.header("Cache-Control", "no-store");
     return c.redirect(at.url, 302);

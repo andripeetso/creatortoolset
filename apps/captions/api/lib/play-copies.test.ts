@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -56,7 +56,7 @@ const { collectionApp } = await import("../library/collections");
 const { libraryDb } = await import("../library/db");
 const { finalsCollectionId } = await import("../library/finals");
 const { deleteAssets } = await import("../library/trash");
-const { COPY_DAYS, copiesSettled, heldCopies, sweepPlayCopies } = await import("./play-copies");
+const { COPY_DAYS, copiesSettled, heldCopies, pushPlayCopy, sweepPlayCopies } = await import("./play-copies");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -125,8 +125,30 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     expect(link.pathname).toMatch(new RegExp(`^/play-copies/review/${id}/\\d+/\\d+\\.mp4$`));
     expect(Number(link.searchParams.get("expires")) - Date.now() / 1000).toBeGreaterThan(23 * 3600);
     expect(link.searchParams.get("token")).toMatch(/^HS256-/);
-    // a CORS load (a canvas reading the frames) stays on this server
+    expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=0-1" })).status).toBe(302); // Safari's first probe
+    // a player already reading from this server when the copy landed keeps reading here; a CORS load (a canvas reading
+    // the frames) always does
+    expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=4000-" })).status).toBe(206);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11 * 60_000);
+    try {
+      expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=4000-" })).status).toBe(302); // landed a while ago
+    } finally {
+      clock.mockRestore();
+    }
     expect((await play(`/assets/${id}/v/1/play`, { "sec-fetch-mode": "cors" })).status).toBe(200);
+  });
+
+  it("drops a version's older copy when its play file is pushed again in a new size", async () => {
+    const id = await up("Tiny Acrobatics remade.mp4");
+    expect(await pushed(`review/${id}/`)).toBe(true);
+    const [first] = copiesOf(`review/${id}/`);
+    const name = first!.split("/").slice(1, -1).join("/");
+    const remade = path.join(dataDir, "remade.mp4");
+    writeFileSync(remade, Buffer.concat([readFileSync(mp4), Buffer.alloc(10)]));
+    await pushPlayCopy(name, remade, "video/mp4");
+    await copiesSettled();
+    expect(copiesOf(`review/${id}/`)).toEqual([first!.replace(/\/\d+\.mp4$/, `/${readFileSync(mp4).length + 10}.mp4`)]);
+    expect(existsSync(remade)).toBe(true);
   });
 
   it("changes nothing without a store: no push, no sweep, /play streams", async () => {

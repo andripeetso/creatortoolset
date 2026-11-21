@@ -214,7 +214,8 @@ interface Meta {
   workspace?: string;
   versions: Version[];
   share?: Share;
-  approval: { status: Approval; by?: string; at?: number };
+  /** `of`: the createdAt of the version it was given on (the newest then); older approvals go by `at` */
+  approval: { status: Approval; by?: string; at?: number; of?: number };
   /** In the trash since. */
   deletedAt?: number;
   /** Marked Finished or In progress by hand (Review's tabs), until a newer version comes in. */
@@ -794,8 +795,11 @@ const playFile = (id: string, v: Version): [string, string] => (v.proxy ? [proxy
 const copyName = (id: string, v: Version) => `review/${id}/${v.createdAt}`;
 
 /** The version an approval is about: the newest one when it was given (the route refuses an approval of an older one). */
-const approvedVersion = (m: Meta): Version | undefined =>
-  m.approval?.status === "approved" ? m.versions.filter((x) => x.createdAt <= (m.approval.at ?? Infinity)).at(-1) : undefined;
+const approvedVersion = (m: Meta): Version | undefined => {
+  const a = m.approval;
+  if (a?.status !== "approved") return undefined;
+  return a.of !== undefined ? m.versions.find((x) => x.createdAt === a.of) : m.versions.filter((x) => x.createdAt <= (a.at ?? Infinity)).at(-1);
+};
 
 // A Review version's playback copy (lib/play-copies.ts) goes at once when the version is removed, its video trashed,
 // deleted or Rejected; an approved version's and a Final's stay, every other one for COPY_DAYS from its push. A trashed
@@ -2261,7 +2265,7 @@ export function setApproval(id: string, status: Approval, by: string, only?: App
   return updateMeta(id, (m) => {
     if (only && m.approval.status !== only) return;
     if (!canMove(APPROVAL_MOVES, m.approval.status, status)) return;
-    m.approval = { status, by, at: Date.now() };
+    m.approval = { status, by, at: Date.now(), of: m.versions.at(-1)?.createdAt };
   });
 }
 
@@ -2697,7 +2701,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
         if (body?.asFilmed !== true) return void (refused = [AS_FILMED_ASK, 409, "not_blurred"]);
         m.versions.at(-1)!.approvedAsFilmed = { by: v.user, at: Date.now() };
       }
-      m.approval = { status, by, at: Date.now() };
+      m.approval = { status, by, at: Date.now(), of: m.versions.at(-1)?.createdAt };
     });
     if (refused) return c.json({ error: refused[0], code: refused[2] }, refused[1]);
     if (!meta) return c.json({ error: "Not found" }, 404);
