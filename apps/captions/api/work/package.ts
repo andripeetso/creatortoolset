@@ -1,5 +1,5 @@
 /** Item 4A: the package a computer gets for a step (design 2.2), and the edit-folder files it may fetch. */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { WORK_V, type WorkFile, type WorkPackage, type WorkTable } from "../../contracts/work";
@@ -208,7 +208,9 @@ export async function buildPackage(job: JobRow, device: { id: string; owner: str
 function ownOf(kind: string, edit: EditMeta, variant: string): string[] {
   const draft = variant ? readDraft(edit.id, variant) : null;
   const clips = Object.values(draft?.timeline.sources ?? {}).flatMap((s) => (s.file ? [s.file] : []));
-  return [...new Set([...clips, ...(kind === "critique" && variant ? [`previews/${variant}.mp4`] : [])])];
+  // a preview plays a picked voice's mix (editor/voice-mix.ts), made on the server's side
+  const mix = `stems/${variant}/mix.m4a`;
+  return [...new Set([...clips, ...(kind === "critique" && variant ? [`previews/${variant}.mp4`] : []), ...(kind === "preview" && variant && existsSync(path.join(editDir(edit.id), mix)) ? [mix] : [])])];
 }
 
 /** The absolute path of an edit-folder file the package names, else null. */

@@ -15,7 +15,7 @@ import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
 import { addFeedback, cleanVoice, MAX_SOURCES, newestDraft, serial, queueVersion, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editDir, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft, seesEdit } from "./store";
-import { stemKey, voiceGroups } from "./voice-mix";
+import { forgetFailed, stemKey, voiceGroups } from "./voice-mix";
 import { fileIntoProjects } from "./projects";
 import { emptyTracks, NATURAL_CUT, sourceOf } from "./timeline";
 import { lineTakes } from "./takes";
@@ -372,16 +372,17 @@ editorApp.patch("/:id", async (c) => {
     else delete e.byTool;
     await saveEdit(e);
     // another voice: every version's sound is made again with it, the same cut (voice-mix.ts), as the next Review version
-    if (patch.voice && JSON.stringify(patch.voice) !== JSON.stringify(now.voice ?? null)) recutSound(e, draftNames(e.id).filter((n) => !e.marks?.[n]?.trashedAt), r.user);
+    if (patch.voice && JSON.stringify(patch.voice) !== JSON.stringify(now.voice ?? null)) await recutSound(e, draftNames(e.id).filter((n) => !e.marks?.[n]?.trashedAt), r.user);
     return e;
   });
   return e ? c.json(viewFor(r, readEdit(e.id)!)) : notFound(c);
 });
 
-/** Each named version's sound made again (the sound step, then its preview and Review), its cut as it is. */
-const recutSound = (e: EditMeta, names: string[], user: string) => {
+/** Each named version's sound made again (the sound step, then its preview and Review), its cut as it is; a voice that failed is tried anew. */
+async function recutSound(e: EditMeta, names: string[], user: string) {
+  await forgetFailed(e.id);
   for (const n of names) enqueueJob(libraryDb(), e.workspaceId, `${e.id}:${n}`, "sound", user, true, "edit_jobs");
-};
+}
 
 /**
  * Review's voice controls kept for the edit: the enhancer every recording plays ("off" = as recorded) and each voice
@@ -409,7 +410,7 @@ editorApp.post("/:id/drafts/:name/voice", async (c) => {
     return { ...now, voice };
   });
   if (!e) return notFound(c);
-  recutSound(e, [name], r.user);
+  await recutSound(e, [name], r.user);
   return c.json({ voice: e.voice }, 201);
 });
 

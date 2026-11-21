@@ -1,35 +1,39 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { copyFile, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { EditVoice, Timeline } from "../../contracts/editor";
+import type { EditVoice, Item, Timeline } from "../../contracts/editor";
 import { sessionOf } from "../auth";
-import { enhanceFile, enhanceResult, LOUDNESS, usableEngines } from "../enhance";
-import { ffmpegTo } from "../library/media/run";
+import { enhanceFile, enhanceResult, usableEngines } from "../enhance";
 import { NeedsKey } from "../library/transcribe";
-import type { StemSet } from "../review";
+import { attachStems, type StemSet } from "../review";
 import { findUser } from "../users";
+import type { StemClip, StemsInput } from "../work/tasks/enhance";
+import { dropTask, startTask, taskFor, taskWaitLine } from "../work/tasks";
 import { Waiting } from "./analyze";
-import { ASKS_MUSIC, cutEnd, laySound } from "./bed";
+import { asksMusic, cutEnd, laySound } from "./bed";
 import type { StepContext } from "./engine";
-import { sfxMix } from "./plan-render";
 import { localFiles } from "./preview";
-import { editDir, readDraft, readStep, saveDraft, saveStep, type EditMeta } from "./store";
+import { editDir, readDraft, readEdit, readStep, saveDraft, saveStep, type EditMeta } from "./store";
 
 /**
  * The sound step (one version, on the server, after post-processing): the cut's music bed and sound effects (bed.ts), then
- * its voice. Nothing is done to a voice until the person picks an enhancer (EditVoice); each recording picked goes through
- * the Audio Enhancer as a session of its own (api/enhance.ts: NVIDIA, ElevenLabs, or a plug-in's engine such as Adobe
- * Enhance Speech on the person's own sign-in), made once per recording and enhancer and kept for every later cut.
+ * its voice. Nothing is done to a voice until the person picks an enhancer (EditVoice); each recording of the cut then goes
+ * through the Audio Enhancer as a session of its own (api/enhance.ts: NVIDIA, ElevenLabs, or a plug-in's engine such as
+ * Adobe Enhance Speech on the person's own sign-in), made once per recording and enhancer and kept for every later cut.
  *
- * Once a recording of the cut has an enhanced voice, the cut's sound is filed in parts (stems) for Review's voice
- * controls: per recording its voice as recorded and through each enhancer made, all at one loudness, and the rest (music,
- * sound effects). The cut plays the sum of those parts at the person's picks, so Review's controls start from exactly what
- * the cut sounds like, and "Off" is the recording as it is.
+ * Once every recording of the cut has an enhanced voice, its sound is made in parts (stems) for Review's voice controls,
+ * by a computer task (work/tasks/enhance.ts STEMS_TASK: it decodes, so it runs where the person's computers or the
+ * server's video work allow): per recording its voice as recorded and through each enhancer made, all at the Enhancer's
+ * one loudness, and the rest (music, sound effects), with their mix. The preview then plays that mix (preview.ts), so
+ * Review's controls start from exactly what the cut sounds like, and "Off" is the recording as it is.
  */
 
 /** Notes this file writes start with this, so a rerun replaces them. */
 export const VOICE_NOTE = "Voice: ";
+/** work/tasks/enhance.ts STEMS_TASK (a task module is imported only by work/task-kinds.ts). */
+const STEMS_TASK = "editor-stems";
+/** How long a picked voice is waited for before the cut goes on without it. */
+const VOICE_WAIT_MS = 6 * 3600_000;
 
 const NAMES: Record<string, string> = { nvidia: "NVIDIA", elevenlabs: "ElevenLabs", adobespeech: "Adobe Enhance Speech" };
 export const fxName = (fx: string) => NAMES[fx] ?? fx;
@@ -37,9 +41,9 @@ export const fxName = (fx: string) => NAMES[fx] ?? fx;
 /** A voice group's key in the stem file names (review.ts STEM_FILE). */
 export const stemKey = (src: string) => createHash("sha1").update(src).digest("hex").slice(0, 8);
 
-/** The recordings the cut's voice track plays (none when it is muted), in the order they first play. */
+/** The recordings the cut's voice track plays (none when it is muted, or on a planned cut: its own render mixes its sound), in the order they first play. */
 export function voiceGroups(tl: Timeline): string[] {
-  if (tl.tracks.A1.mute) return [];
+  if (tl.tracks.A1.mute || tl.plan) return [];
   const on = tl.tracks.A1.items.filter((i) => i.enabled !== false && !tl.sources[i.src]?.file).sort((a, b) => a.rec - b.rec);
   return [...new Set(on.map((i) => i.src))];
 }
@@ -69,18 +73,27 @@ function oneAtATime<T>(id: string, fn: () => Promise<T>): Promise<T> {
 type Made = { original: string; enhanced: string };
 
 /**
- * Each picked recording's session, started where it has none: the enhanced voices that are done, by recording and
- * enhancer (every one made for it, picked or not, so Review can offer them), and the notes of any that failed. Throws
- * NeedsKey when a picked enhancer can't run for the person (its key, its sign-in), Waiting while one is being made.
+ * The enhancer each recording's session is made with: its own pick, and for one that plays as recorded the edit's (its
+ * levelled original is what Review's Off plays). shortcut: that spends one enhancer run on a recording heard as recorded;
+ * level it on a computer instead if that costs too much. None while the edit has no enhancer.
+ */
+const sessionFx = (voice: EditVoice | undefined, src: string) => (!voice || voice.fx === "off" ? null : pickOf(voice, src) === "off" ? voice.fx : pickOf(voice, src));
+
+/**
+ * Each recording's session, started where it has none (or its old one was cancelled, refused or deleted): the enhanced
+ * voices that are done, by recording and enhancer (every one made for it, picked or not, so Review can offer them), and
+ * the notes of any that failed. Throws NeedsKey when a picked enhancer can't run for the person (its key, its sign-in),
+ * Waiting while one is being made.
  */
 async function enhanced(edit: EditMeta, actor: string, tl: Timeline, groups: string[]): Promise<{ made: Record<string, Record<string, Made>>; notes: string[] }> {
-  const want = groups.flatMap((src) => (pickOf(edit.voice, src) === "off" ? [] : [[src, pickOf(edit.voice, src)] as const]));
+  const want = groups.flatMap((src) => (sessionFx(edit.voice, src) ? [[src, sessionFx(edit.voice, src)!] as const] : []));
   const sessions = await oneAtATime(edit.id, async () => {
     const all = readStep(edit.id, "voice") ?? {};
     const missing = [];
     for (const [src, fx] of want) {
       const id = all[src]?.[fx];
-      if (!id || (await enhanceResult(id)).status === "gone") missing.push([src, fx] as const);
+      const st = id ? (await enhanceResult(id)).status : "gone";
+      if (st === "gone" || st === "ready" || st === "needs_key") missing.push([src, fx] as const);
     }
     if (!missing.length) return all;
     const rec = findUser(actor);
@@ -103,101 +116,128 @@ async function enhanced(edit: EditMeta, actor: string, tl: Timeline, groups: str
   for (const src of groups) {
     for (const [fx, id] of Object.entries(sessions[src] ?? {})) {
       const r = await enhanceResult(id);
-      const picked = pickOf(edit.voice, src) === fx;
+      const wanted = sessionFx(edit.voice, src) === fx;
       if (r.original && r.enhanced) (made[src] ??= {})[fx] = { original: r.original, enhanced: r.enhanced };
-      else if (r.status === "queued" || r.status === "running") waiting += picked ? 1 : 0;
-      else if (picked) notes.push(`${VOICE_NOTE}${fxName(fx)} could not enhance ${tl.sources[src]!.name}${r.error ? ` (${r.error})` : ""}, so it plays as recorded`);
+      else if ((r.status === "queued" || r.status === "running") && wanted) {
+        if (Date.now() - (r.createdAt ?? 0) < VOICE_WAIT_MS) waiting++;
+        else notes.push(`${VOICE_NOTE}${fxName(fx)} has not finished ${tl.sources[src]!.name} after hours, so it plays as recorded (the Audio Enhancer goes on with it)`);
+      } else if (wanted && r.status === "error") notes.push(`${VOICE_NOTE}${fxName(fx)} could not enhance ${tl.sources[src]!.name}${r.error ? ` (${r.error})` : ""}, so it plays as recorded: pick the voice again to try again`);
     }
   }
   if (waiting) throw new Waiting(20, `Enhancing the voice: ${waiting} recording${waiting === 1 ? "" : "s"} left`);
   return { made, notes };
 }
 
-/** One voice group's part: each of its clips on the voice track laid at its place from `file`, silence elsewhere, `secs` long. */
-async function part(tl: Timeline, src: string | null, files: Record<string, string>, secs: number, out: string): Promise<void> {
-  const tracks = src ? (["A1"] as const) : (["A2", "A3"] as const);
-  const only = src ? { ...tl, tracks: { ...tl.tracks, A1: { ...tl.tracks.A1, items: tl.tracks.A1.items.filter((i) => i.src === src) } } } : tl;
-  const mix = sfxMix(only, files, 1, "[0:a]", [...tracks]);
-  await ffmpegTo(out, [
-    "-f", "lavfi", "-t", secs.toFixed(6), "-i", "anullsrc=r=48000:cl=stereo",
-    ...(mix ? [...mix.inputs, "-filter_complex", `${mix.filter};[sfxm]anull[a]`, "-map", "[a]"] : ["-map", "0:a"]),
-    "-c:a", "aac", "-b:a", "192k", "-f", "mp4",
-  ]);
+/** The sessions of an edit's voices that failed, forgotten: picking a voice again makes them anew. */
+export async function forgetFailed(editId: string): Promise<void> {
+  await oneAtATime(editId, async () => {
+    const all = readStep(editId, "voice");
+    if (!all) return;
+    for (const fxs of Object.values(all)) for (const [fx, id] of Object.entries(fxs)) if ((await enhanceResult(id)).status === "error") delete fxs[fx];
+    await saveStep(editId, "voice", all);
+  });
 }
 
+/** A clip of a sound track as a part lays it: in seconds, from `file`. */
+const clipOf = (tl: Timeline, i: Item, file: string): StemClip => ({
+  file,
+  at: i.rec / tl.fps,
+  from: i.in / tl.sources[i.src]!.fps,
+  dur: i.len / tl.fps,
+  ...(i.gainDb ? { gainDb: i.gainDb } : {}),
+  ...(i.fade_in ? { fadeIn: i.fade_in / tl.fps } : {}),
+  ...(i.fade_out ? { fadeOut: i.fade_out / tl.fps } : {}),
+});
+
 /**
- * The version's stems and its mix (mix.m4a: what the cut plays), made into stemsDir with their manifest (stems.json) last;
- * none when no recording of the cut has an enhanced voice (the cut keeps the sound it was rendered with).
+ * What the stems task makes for this cut: per recording a part as recorded and one per enhancer made (the edit's slot
+ * plays the recording's own pick), the rest (music and sound effects), and the mix the cut plays. Null when a recording
+ * of the cut has no enhanced voice yet (nothing to choose between).
  */
-async function makeStems(edit: EditMeta, variant: string, tl: Timeline, groups: string[], made: Record<string, Record<string, Made>>): Promise<void> {
-  const dir = stemsDir(edit.id, variant);
-  const fx = [...new Set(groups.flatMap((src) => Object.keys(made[src] ?? {})))].sort((a, b) => Number(b === edit.voice?.fx) - Number(a === edit.voice?.fx) || a.localeCompare(b));
-  await rm(dir, { recursive: true, force: true });
-  if (!fx.length) return;
-  const tmp = `${dir}.tmp`;
-  await rm(tmp, { recursive: true, force: true });
-  await mkdir(tmp, { recursive: true });
-  const secs = cutEnd(tl) / tl.fps;
+export async function stemsPlan(edit: EditMeta, variant: string, tl: Timeline, groups: string[], made: Record<string, Record<string, Made>>): Promise<StemsInput | null> {
+  if (!groups.length || groups.some((src) => !made[src])) return null;
   const voice = edit.voice?.fx && edit.voice.fx !== "off" ? edit.voice.fx : "off";
-  const own = await ownOriginals(edit, tl, groups.filter((src) => !made[src]));
+  const fx = [...new Set(groups.flatMap((src) => Object.keys(made[src]!)))].sort((a, b) => Number(b === voice) - Number(a === voice) || a.localeCompare(b));
+  const files: Record<string, string> = {};
+  const name = (p: string) => Object.keys(files).find((k) => files[k] === p) ?? ((files[`f${Object.keys(files).length}`] = p), `f${Object.keys(files).length - 1}`);
+  const on = (i: Item) => i.enabled !== false;
+  const parts: StemsInput["parts"] = [];
+  const mix: StemsInput["mix"] = {};
   for (const src of groups) {
     const key = stemKey(src);
-    const original = Object.values(made[src] ?? {})[0]?.original ?? own[src]!;
+    const original = Object.values(made[src]!)[0]!.original;
     const pick = pickOf(edit.voice, src);
+    const items = tl.tracks.A1.items.filter((i) => on(i) && i.src === src);
     for (const f of ["original", ...fx]) {
-      // the edit's slot plays what this recording itself picked (its own enhancer); one it has none of is the recording as it is
+      // the edit's slot plays what this recording itself picked; an enhancer it has none of is the recording as it is
       const which = f === voice ? pick : f;
-      const file = f === "original" || which === "off" ? original : (made[src]?.[which]?.enhanced ?? original);
-      await part(tl, src, { [src]: file }, secs, path.join(tmp, `${key}.${f}.m4a`));
+      const file = f === "original" || which === "off" ? original : (made[src]![which]?.enhanced ?? original);
+      parts.push({ name: `${key}.${f}.m4a`, clips: items.map((i) => clipOf(tl, i, name(file))) });
     }
+    mix[`${key}.original.m4a`] = 1 - shareOf(edit.voice, src);
+    if (voice !== "off") mix[`${key}.${voice}.m4a`] = shareOf(edit.voice, src);
   }
-  const others = [...new Set([...tl.tracks.A2.items, ...tl.tracks.A3.items].map((i) => i.src))];
-  await part(tl, null, others.length ? await localFiles({ ...tl, sources: Object.fromEntries(others.map((s) => [s, tl.sources[s]!])) }, edit.id, true) : {}, secs, path.join(tmp, "rest.m4a"));
+  const rest = (["A2", "A3"] as const).filter((t) => !tl.tracks[t].mute).flatMap((t) => tl.tracks[t].items.filter(on));
+  const local = rest.length ? await localFiles({ ...tl, sources: Object.fromEntries(rest.map((i) => [i.src, tl.sources[i.src]!])) }, edit.id, true) : {};
+  parts.push({ name: "rest.m4a", clips: rest.map((i) => clipOf(tl, i, name(local[i.src]!))) });
+  mix["rest.m4a"] = 1;
+  const secs = cutEnd(tl) / tl.fps;
   const set: StemSet = { groups: groups.map((src) => ({ key: stemKey(src), label: tl.sources[src]!.name, mix: shareOf(edit.voice, src) })), fx, voice, duration: secs };
-  // the cut's sound: each recording as recorded at 1 - its share and through the edit's enhancer at its share, and the rest, as Review's controls mix them
-  const ins = [...groups.flatMap((src) => [`${stemKey(src)}.original.m4a`, `${stemKey(src)}.${voice === "off" ? "original" : voice}.m4a`]), "rest.m4a"];
-  const w = [...groups.flatMap((src) => [1 - shareOf(edit.voice, src), shareOf(edit.voice, src)]), 1];
-  await ffmpegTo(path.join(tmp, "mix.m4a"), [
-    ...ins.flatMap((f) => ["-i", path.join(tmp, f)]),
-    "-filter_complex", `${ins.map((_, k) => `[${k}:a]volume=${w[k]!.toFixed(3)}[m${k}]`).join(";")};${ins.map((_, k) => `[m${k}]`).join("")}amix=inputs=${ins.length}:duration=longest:normalize=0,alimiter=limit=0.89[a]`,
-    "-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-f", "mp4",
-  ]);
-  await writeFile(path.join(tmp, "stems.json"), JSON.stringify({ set, key: stemsKey(tl, edit.voice) }));
+  return { edit: edit.id, variant, key: stemsKey(tl, edit.voice), secs, parts, mix, files, set };
+}
+
+/** The stems task's files, on the server: the version's stems folder replaced whole, its manifest (stems.json) written last. */
+export async function keepStems(input: StemsInput, files: Record<string, string>): Promise<void> {
+  const dir = stemsDir(input.edit, input.variant);
+  const tmp = `${dir}.tmp-${process.pid}`;
+  await rm(tmp, { recursive: true, force: true });
+  await (await import("node:fs/promises")).mkdir(tmp, { recursive: true });
+  for (const [name, at] of Object.entries(files)) await rename(at, path.join(tmp, name));
+  await writeFile(path.join(tmp, "stems.json"), JSON.stringify({ set: input.set, key: input.key }));
+  await rm(dir, { recursive: true, force: true });
   await rename(tmp, dir);
 }
 
-/** The voice of recordings with no session, levelled as the Audio Enhancer levels its originals (enhance.ts LOUDNESS); made once each. */
-async function ownOriginals(edit: EditMeta, tl: Timeline, srcs: string[]): Promise<Record<string, string>> {
-  if (!srcs.length) return {};
-  const files = await localFiles({ ...tl, sources: Object.fromEntries(srcs.map((s) => [s, tl.sources[s]!])) }, undefined, true);
-  const out: Record<string, string> = {};
-  for (const src of srcs) {
-    const dest = path.join(editDir(edit.id), "voice", `${src}.original.m4a`);
-    if (!existsSync(dest)) {
-      await mkdir(path.dirname(dest), { recursive: true });
-      await ffmpegTo(dest, ["-i", files[src]!, "-vn", "-map", "0:a:0", "-af", LOUDNESS, "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-f", "mp4"]);
-    }
-    out[src] = dest;
-  }
-  return out;
-}
-
 /** The version's stems when they were made from this cut and the edit's voice now, else null. */
-export async function stemsFor(edit: EditMeta, variant: string, tl: Timeline): Promise<{ dir: string; set: StemSet } | null> {
+export async function stemsFor(edit: Pick<EditMeta, "id" | "voice">, variant: string, tl: Timeline): Promise<{ dir: string; set: StemSet } | null> {
   const dir = stemsDir(edit.id, variant);
   const got = JSON.parse(await readFile(path.join(dir, "stems.json"), "utf8").catch(() => "null")) as { set: StemSet; key: string } | null;
   return got && got.key === stemsKey(tl, edit.voice) ? { dir, set: got.set } : null;
 }
 
-/** The rendered preview's sound replaced by the stems' mix (the picture copied as it is). */
-export async function withMix(video: string, dir: string): Promise<void> {
-  await ffmpegTo(video, ["-i", video, "-i", path.join(dir, "mix.m4a"), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "copy", "-shortest", "-movflags", "+faststart", "-f", "mp4"]);
+/** Review's stems folder filled from the version's own (linked where the disk allows, else copied). */
+export async function fileStems(edit: EditMeta, variant: string, tl: Timeline, assetId: string, n: number): Promise<void> {
+  const stems = await stemsFor(edit, variant, tl);
+  if (!stems) return;
+  const { copyFile, link } = await import("node:fs/promises");
+  await attachStems(assetId, n, stems.set, async (dir) => {
+    for (const f of stemFiles(stems.set)) await link(path.join(stems.dir, f), path.join(dir, f)).catch(() => copyFile(path.join(stems.dir, f), path.join(dir, f)));
+  });
 }
 
-/** Review's stems folder filled from the version's own (linked where the disk allows, else copied). */
-export const placeStems = (from: string, set: StemSet) => async (dir: string) => {
-  for (const f of stemFiles(set)) await link(path.join(from, f), path.join(dir, f)).catch(() => copyFile(path.join(from, f), path.join(dir, f)));
-};
+/**
+ * The parts made, or being made: done when the version's stems are this cut's; else the task is started (or one under way
+ * for this cut waited for: Waiting), and a failed one is said in a note, the cut going on with the sound it renders.
+ */
+async function stems(edit: EditMeta, variant: string, tl: Timeline, plan: StemsInput | null, actor: string): Promise<string[]> {
+  const ref = `${edit.id}:${variant}`;
+  if (!plan) {
+    await rm(stemsDir(edit.id, variant), { recursive: true, force: true });
+    return [];
+  }
+  if (await stemsFor(edit, variant, tl)) return [];
+  const t = taskFor(STEMS_TASK, ref);
+  const same = (t?.input as StemsInput | null)?.key === plan.key;
+  if (t && same && (t.state === "queued" || t.state === "running")) throw new Waiting(20, taskWaitLine(t) ?? t.line ?? "Making the voice parts");
+  if (t && same && t.state === "failed") {
+    dropTask(STEMS_TASK, ref);
+    return [`${VOICE_NOTE}its parts for Review's voice controls could not be made (${t.error ?? "unknown error"}), so it plays as rendered`];
+  }
+  if (t) dropTask(STEMS_TASK, ref);
+  const got = await startTask<StemsInput, null>(STEMS_TASK, ref, actor, edit.workspaceId, plan);
+  if (got.state === "queued") throw new Waiting(20, got.line ?? "Making the voice parts");
+  return [];
+}
 
 /**
  * The edit has something for the sound step: a voice picked, voices made before (Review offers them), a bed asked for
@@ -205,7 +245,7 @@ export const placeStems = (from: string, set: StemSet) => async (dir: string) =>
  */
 export function soundDue(e: Partial<Pick<EditMeta, "id" | "voice" | "song" | "brief" | "bundle" | "plan">>): boolean {
   if ((e.voice && (e.voice.fx !== "off" || Object.keys(e.voice.per ?? {}).length)) || (e.id && Object.keys(readStep(e.id, "voice") ?? {}).length)) return true;
-  return !e.plan && (!!e.song || ASKS_MUSIC.test(e.brief ?? "") || e.bundle?.sfxSet === "library");
+  return !e.plan && (!!e.song || asksMusic(e.brief ?? "") || e.bundle?.sfxSet === "library");
 }
 
 export async function soundStep({ edit, job, variant, signal }: StepContext): Promise<void> {
@@ -216,15 +256,14 @@ export async function soundStep({ edit, job, variant, signal }: StepContext): Pr
   if (laid !== d) await saveDraft(edit.id, variant, (d = { ...d, ...laid }));
   const tl = d.timeline;
   const groups = voiceGroups(tl);
-  const { made, notes } = groups.length ? await enhanced(edit, job.actor ?? edit.createdBy, tl, groups) : { made: {}, notes: [] };
+  const { made, notes } = groups.length ? await enhanced(edit, job.actor!, tl, groups) : { made: {}, notes: [] };
   if (signal.aborted) return;
-  try {
-    await makeStems(edit, variant, tl, groups, made);
-  } catch (e) {
-    // the voice controls are a nicety: the cut is filed with the sound it was rendered with
-    await rm(stemsDir(edit.id, variant), { recursive: true, force: true });
-    notes.push(`${VOICE_NOTE}its parts for Review's voice controls could not be made (${e instanceof Error ? e.message : String(e)}), so it plays as rendered`);
-  }
+  notes.push(...(await stems(edit, variant, tl, await stemsPlan(edit, variant, tl, groups, made), job.actor!)));
+  // the app's own Voice step cleaned the recording; an enhancer picked works from the recording itself
+  if (pickOf(edit.voice, groups[0] ?? "") !== "off" && edit.steps?.some((s) => s.id === "voice")) notes.push(`${VOICE_NOTE}${fxName(edit.voice!.fx)} works from the recording itself, in place of the Voice step's clean-up`);
   const next = [...d.notes.filter((n) => !n.startsWith(VOICE_NOTE)), ...notes];
   if (next.join("\n") !== d.notes.join("\n")) await saveDraft(edit.id, variant, { ...d, notes: next });
+  // the voice was changed while this ran: make it again with the new one (the queue keeps no second job of a running one)
+  const now = readEdit(edit.id);
+  if (now && JSON.stringify(now.voice ?? null) !== JSON.stringify(edit.voice ?? null)) throw new Waiting(1, "The voice changed: making it again");
 }

@@ -25,8 +25,8 @@ export const BED_DB = -22;
 /** Seconds the bed fades out over at the cut's end. */
 const BED_FADE_S = 1.5;
 
-/** The brief asks for music under the voice in so many words. */
-export const ASKS_MUSIC = /\b(music|song|soundtrack|backing track)\b/i;
+/** The brief asks for music under the voice in so many words ("no music" is not asking). */
+export const asksMusic = (brief: string) => /\b(music|song|soundtrack|backing track)\b/i.test(brief) && !/\b(no|without|not? any)\s+(\w+\s+)?(music|song|soundtrack)/i.test(brief);
 
 /**
  * The bed for a cut around speech: the song the edit names, a song among its sources, the library's song whose title the
@@ -35,7 +35,7 @@ export const ASKS_MUSIC = /\b(music|song|soundtrack|backing track)\b/i;
 export function bedSong(edit: EditMeta): { id: string; title: string; src: TimelineSource } | null {
   // songFor's index stands in for footage where someone speaks: it then never falls back to the newest song itself
   const speaking = { sources: edit.sources.map((id) => ({ id, speech: true })) } as unknown as FootageIndex;
-  const song = songFor(edit, speaking) ?? (ASKS_MUSIC.test(edit.brief) ? songFor(edit, { sources: [] } as unknown as FootageIndex) : null);
+  const song = songFor(edit, speaking) ?? (asksMusic(edit.brief) ? songFor(edit, { sources: [] } as unknown as FootageIndex) : null);
   if (!song) return null;
   const r = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?").get(song.id) as { probe: string | null } | undefined;
   return r?.probe ? { id: song.id, title: song.title, src: sourceOf(song.id, song.title, JSON.parse(r.probe) as ProbeSummary) } : null;

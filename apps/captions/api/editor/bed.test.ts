@@ -10,7 +10,7 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-bed-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-bed-test-secret";
-const { BED_DB, cutEnd, cutMoments, layBed, laySfx, laySound, MUSIC_NOTE, SFX_NOTE } = await import("./bed");
+const { asksMusic, BED_DB, cutEnd, cutMoments, layBed, laySfx, laySound, MUSIC_NOTE, SFX_NOTE } = await import("./bed");
 const { SFX_DB } = await import("./sfx");
 const { emptyTracks } = await import("./timeline");
 type EditMeta = import("./store").EditMeta;
@@ -56,6 +56,14 @@ describe("the sound of a cut around speech", () => {
     ]);
     expect(Object.keys(tl.sources)).toEqual(expect.arrayContaining(["w1", "w2", "p1"]));
     expect(laySfx(cut(), [sound("x", "hit")]).tracks.A3.items).toEqual([]); // no sound of a type a moment takes: none
+  });
+
+  it("hears a brief ask for music, and not one that says no music", () => {
+    expect(asksMusic("calm music under the voice")).toBe(true);
+    expect(asksMusic("pick a song")).toBe(true);
+    expect(asksMusic("no music, just the voice")).toBe(false);
+    expect(asksMusic("without any song")).toBe(false);
+    expect(asksMusic("a tight cut")).toBe(false);
   });
 
   it("lays each part once: not on a planned cut, not over what is on A2 or A3, not again where its note says it was laid", () => {

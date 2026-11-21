@@ -146,3 +146,59 @@ taskKind<BlendInput, null>("enhance-blend", {
   },
   apply: async (t, _r, files) => (await tool()).enhanceBlended(t.input, files),
 });
+
+/**
+ * The AI Editor's voice in parts (editor/voice-mix.ts): each part a cut-long sound laying its clips at their places,
+ * silence elsewhere, then the mix of the parts at their weights (what the cut plays). Sound only: Audio Enhancer results,
+ * and the cut's music and sound effects.
+ */
+export const STEMS_TASK = "editor-stems";
+/** One clip of a part, in seconds: at `at` on the cut, `dur` long, from `from` in input file `file`. */
+export type StemClip = { file: string; at: number; from: number; dur: number; gainDb?: number; fadeIn?: number; fadeOut?: number };
+export interface StemsInput {
+  edit: string;
+  variant: string;
+  /** what the parts were made from (voice-mix.ts stemsKey), filed with them */
+  key: string;
+  secs: number;
+  parts: { name: string; clips: StemClip[] }[];
+  /** part name → its weight in mix.m4a */
+  mix: Record<string, number>;
+  /** input name → its path on the server */
+  files: Record<string, string>;
+  /** the manifest Review gets (api/review.ts StemSet) */
+  set: { groups: { key: string; label: string; mix: number }[]; fx: string[]; voice: string; duration: number };
+}
+
+const AAC = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-f", "mp4"];
+
+taskKind<StemsInput, null>(STEMS_TASK, {
+  serve: (t, name) => (t.input as StemsInput).files[name],
+  async run(input, ctx) {
+    const at: Record<string, string> = {};
+    for (const name of new Set(input.parts.flatMap((p) => p.clips.map((c) => c.file)))) at[name] = await ctx.file(name);
+    return withSignal(ctx.signal, async () => {
+      for (const p of input.parts) {
+        ctx.beat("Making the voice parts");
+        const chains = p.clips.map((c, k) =>
+          `[${k + 1}:a]asetpts=PTS-STARTPTS,${c.gainDb ? `volume=${c.gainDb}dB,` : ""}${c.fadeIn ? `afade=t=in:d=${c.fadeIn.toFixed(3)},` : ""}${c.fadeOut ? `afade=t=out:st=${Math.max(0, c.dur - c.fadeOut).toFixed(3)}:d=${c.fadeOut.toFixed(3)},` : ""}adelay=${Math.round(c.at * 1000)}:all=1,aresample=48000,aformat=channel_layouts=stereo[c${k}]`);
+        await ffmpegTo(path.join(ctx.dir, p.name), [
+          "-f", "lavfi", "-t", input.secs.toFixed(6), "-i", "anullsrc=r=48000:cl=stereo",
+          ...p.clips.flatMap((c) => ["-ss", c.from.toFixed(6), "-t", c.dur.toFixed(6), "-i", at[c.file]!]),
+          ...(p.clips.length
+            ? ["-filter_complex", `${chains.join(";")}${chains.length ? ";" : ""}[0:a]${p.clips.map((_, k) => `[c${k}]`).join("")}amix=inputs=${p.clips.length + 1}:duration=first:normalize=0[a]`, "-map", "[a]"]
+            : ["-map", "0:a"]),
+          ...AAC,
+        ]);
+      }
+      const ins = Object.entries(input.mix);
+      await ffmpegTo(path.join(ctx.dir, "mix.m4a"), [
+        ...ins.flatMap(([name]) => ["-i", path.join(ctx.dir, name)]),
+        "-filter_complex", `${ins.map(([, w], k) => `[${k}:a]volume=${w.toFixed(3)}[m${k}]`).join(";")};${ins.map((_, k) => `[m${k}]`).join("")}amix=inputs=${ins.length}:duration=longest:normalize=0,alimiter=limit=0.89[a]`,
+        "-map", "[a]", ...AAC,
+      ]);
+      return { result: null, files: [...input.parts.map((p) => p.name), "mix.m4a"] };
+    });
+  },
+  apply: async (t, _r, files) => (await import("../../editor/voice-mix")).keepStems(t.input, files),
+});

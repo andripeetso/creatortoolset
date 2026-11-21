@@ -11,9 +11,12 @@ mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "editor-voice-mix-"));
 process.env.DATA_DIR = dir;
 process.env.APP_SECRET = "editor-voice-mix-test-secret";
+process.env.CT_LOCAL = "1"; // This Mac: the stems task runs here at once, the server being the person's own computer
 const { cleanVoice, readDraft, saveDraft, saveStep } = await import("./store");
 const { emptyTracks } = await import("./timeline");
-const { pickOf, shareOf, soundDue, soundStep, stemKey, stemsFor, stemsKey, voiceGroups, VOICE_NOTE, withMix } = await import("./voice-mix");
+const { pickOf, shareOf, soundDue, soundStep, stemKey, stemsFor, stemsKey, stemsPlan, voiceGroups, VOICE_NOTE } = await import("./voice-mix");
+const { withMix } = await import("./preview");
+await import("../work/tasks/enhance"); // registers the stems task (work/task-kinds.ts loads it with the worker)
 type EditMeta = import("./store").EditMeta;
 type StepContext = import("./engine").StepContext;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -76,6 +79,7 @@ describe("an edit's voice, picked", () => {
     const k = stemsKey(tl, { fx: "nvidia" });
     expect(stemsKey(tl, { fx: "nvidia", mix: { rec: 0.5 } })).not.toBe(k);
     expect(stemsKey({ ...tl, tracks: { ...tl.tracks, V1: { ...tl.tracks.V1, items: [] } } }, { fx: "nvidia" })).toBe(k); // the picture alone: same parts
+    expect(voiceGroups({ ...tl, plan: { kind: "reel" } })).toEqual([]); // a planned cut's render mixes its own sound
   });
 
   it("sends an edit to the sound step only with a voice picked or made, a bed asked for, or the library's sound effects", () => {
@@ -85,6 +89,26 @@ describe("an edit's voice, picked", () => {
     expect(soundDue({ voice: { fx: "nvidia" }, plan: true })).toBe(true);
     expect(soundDue({ song: "s1" })).toBe(true);
     expect(soundDue({ song: "s1", plan: true })).toBe(false);
+  });
+});
+
+describe("the voice's parts, planned", () => {
+  const made = { rec: { nvidia: { original: "/s/orig.m4a", enhanced: "/s/nv.m4a" }, elevenlabs: { original: "/s/orig2.m4a", enhanced: "/s/el.m4a" } } };
+  it("lays each recording's clips at their place in seconds; the edit's slot plays the recording's own pick; the mix weighs the edit's", async () => {
+    const tl = cut();
+    tl.tracks.A1.items[0]!.gainDb = -3;
+    const p = (await stemsPlan(edit({ fx: "elevenlabs", per: { rec: "nvidia" }, mix: { rec: 0.25 } }), "v1", tl, ["rec"], made))!;
+    const key = stemKey("rec");
+    expect(p.parts.map((x) => x.name)).toEqual([`${key}.original.m4a`, `${key}.elevenlabs.m4a`, `${key}.nvidia.m4a`, "rest.m4a"]);
+    const file = (part: number) => p.files[p.parts[part]!.clips[0]!.file];
+    expect([file(0), file(1), file(2)]).toEqual(["/s/orig.m4a", "/s/nv.m4a", "/s/nv.m4a"]);
+    expect(p.parts[0]!.clips[0]).toMatchObject({ at: 0.5, from: 0.5, dur: 2, gainDb: -3 });
+    expect(p.parts[3]!.clips).toEqual([]);
+    expect(p.mix).toEqual({ [`${key}.original.m4a`]: 0.75, [`${key}.elevenlabs.m4a`]: 0.25, "rest.m4a": 1 });
+    expect(p.set).toEqual({ groups: [{ key, label: "Take 1", mix: 0.25 }], fx: ["elevenlabs", "nvidia"], voice: "elevenlabs", duration: 2.5 });
+    // Off: the recordings as they are; nothing to choose between until each recording has a voice made
+    expect((await stemsPlan(edit(), "v1", tl, ["rec"], made))!.mix).toEqual({ [`${key}.original.m4a`]: 1, "rest.m4a": 1 });
+    expect(await stemsPlan(edit({ fx: "nvidia" }), "v1", tl, ["rec", "rec2"], made)).toBeNull();
   });
 });
 
