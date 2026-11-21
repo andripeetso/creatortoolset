@@ -263,7 +263,7 @@ describe.skipIf(rootReplaced)("an edit the assistant started ends in the chat", 
     expect((await editOf(id)).previews.v1!.n).toBe(2);
     expect(await cardOf(`edit:${id}:review:v1`)).toMatchObject({ status: "done", detail: "In Review" });
     expect(await saidSince(from)).toEqual(["Draft 2 of “Tiny cartwheel” is in Review."]);
-    expect((await chat()).at(-1)!.media?.map((m) => [m.title, m.cut])).toEqual([["Tiny cartwheel · Draft 2", { asset: "11111111-2222-4333-8444-555555555555", n: 2 }]]);
+    expect((await chat()).at(-1)!.media?.map((m) => [m.title, m.cut])).toEqual([["Tiny cartwheel · Draft 2", { asset: "11111111-2222-4333-8444-555555555555", n: 2, editor: `/editor/${id}/v1` }]]);
   });
 });
 
