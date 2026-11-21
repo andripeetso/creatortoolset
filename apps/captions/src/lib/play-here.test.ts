@@ -26,9 +26,11 @@ describe("where a file plays", () => {
   it("plays a Review version's path only while the file there is still that version's (a later render took the path: the server's)", async () => {
     mac("3");
     const file = { path: LOCAL, bytes: 5_000_000 };
-    expect(await playFrom(SERVER, file, { said: never, exists: never, serves, size: async () => 5_000_000 })).toBe(localMediaUrl(LOCAL));
-    expect(await playFrom(SERVER, file, { said: never, exists: never, serves, size: async () => 5_200_000 })).toBe(SERVER);
-    expect(await playFrom(SERVER, file, { said: never, exists: never, serves, size: async () => null })).toBe(SERVER);
+    expect(await playFrom(SERVER, file, { said: says("here"), exists: never, serves, size: async () => 5_000_000 })).toBe(localMediaUrl(LOCAL));
+    expect(await playFrom(SERVER, file, { said: says("here"), exists: never, serves, size: async () => 5_200_000 })).toBe(SERVER);
+    expect(await playFrom(SERVER, file, { said: says("here"), exists: never, serves, size: async () => null }
+    // not here at all: no size is read
+    expect(await playFrom(SERVER, file, { said: says("not_here"), exists: never, serves, size: never })).toBe(SERVER);)).toBe(SERVER);
   });
 
   it("reads a local file's size from the Mac app's answer to a one-byte read", async () => {

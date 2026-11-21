@@ -2467,7 +2467,7 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       if (framesBusy >= FRAMES_AT_ONCE) return c.json({ error: "Busy, try again in a moment" }, 503);
       framesBusy++;
       try {
-        const input: FrameInput = { src: sourcePath(v.meta.id, n), out, at, width: w, strokes: cm?.drawing, ...(version.local ? { paths: { src: version.local } } : {}) };
+        const input: FrameInput = { src: sourcePath(v.meta.id, n), out, at, width: w, strokes: cm?.drawing, ...(version.local ? { paths: { src: version.local }, sizes: { src: version.bytes } } : {}) };
         const got = await startFrame(`${v.meta.id}/${n}/${key}`, v.meta, input);
         if (got.state === "queued") return c.json({ waiting: true, line: got.line ?? null }, 202);
       } catch (e) {

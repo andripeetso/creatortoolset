@@ -47,7 +47,8 @@ export async function playFrom(
   if (!localMediaFiles()) return server;
   const path = typeof local === "string" ? local : local.path;
   // a version's own file only: a re-render at the same path that Review never filed as a newer version is another size
-  const here = typeof local !== "string" ? (await size(localMediaUrl(path))) === local.bytes : await isHere(path, said, exists);
+  // the Mac app's quick answer first (a drive that stopped answering is away within seconds), then the size read
+  const here = (await isHere(path, said, exists)) && (typeof local === "string" || (await size(localMediaUrl(path))) === local.bytes);
   return here && (await serves(server)) ? localMediaUrl(path) : server;
 }
 
