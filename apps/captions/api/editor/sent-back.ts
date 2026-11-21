@@ -44,36 +44,49 @@ function sourceKeys(draft: Timeline, files: Record<string, string>, paths: Recor
   return out;
 }
 
+/** Timeline frames as the source's frames. */
+const srcFrames = (draft: Timeline, frames: number, src: string) => Math.round((frames * (draft.sources[src]?.fps || draft.fps)) / draft.fps);
+
 /** The draft's item on `track` an imported clip was cut from: same source, the most source frames shared (else the nearest: more of the same take). */
 function origin(draft: Timeline, track: TrackId, it: Item): Item | undefined {
   let best: Item | undefined;
   let most = -Infinity;
+  const last = (i: Item) => i.in + srcFrames(draft, i.len, i.src);
   for (const o of draft.tracks[track].items) {
     if (o.src !== it.src) continue;
-    const shared = Math.min(o.in + o.len, it.in + it.len) - Math.max(o.in, it.in);
+    const shared = Math.min(last(o), last(it)) - Math.max(o.in, it.in);
     if (shared > most) [best, most] = [o, shared];
   }
   return best;
 }
 
-/** The fields the file can't carry, from the clip's origin; a reframed shot's window re-cut to where the clip now starts. */
+/**
+ * The fields the file can't carry, from the clip's origin: a reframed shot's window re-cut to where the clip now starts,
+ * a fade only where the clip still starts or ends where its origin did.
+ */
 function carried(draft: Timeline, track: TrackId, it: Item): Item {
   const o = origin(draft, track, it);
   if (!o) return it;
-  const { src: _s, in: _i, len: _l, rec: _r, link: _k, path, ...rest } = o;
+  const { src: _s, in: _i, len: _l, rec: _r, link: _k, path, fade_in, fade_out, ...rest } = o;
   const sfps = draft.sources[it.src]?.fps || draft.fps;
   const moved = path?.length ? pathIn(path, (it.in - o.in) / sfps, it.len / draft.fps) : [];
-  return { ...rest, ...it, ...(moved.length ? { path: moved } : {}) };
+  const ends = (i: Item) => i.in + srcFrames(draft, i.len, i.src);
+  return { ...rest, ...it, ...(moved.length ? { path: moved } : {}), ...(fade_in && it.in === o.in ? { fade_in } : {}), ...(fade_out && ends(it) === ends(o) ? { fade_out } : {}) };
 }
 
 /**
  * The speaker (V1) and their voice (A1) linked as the renders play them (preview.ts: a shot plays the voice linked to it,
  * from the same frame): each shot cut where a voice starts or ends under it, each piece linked to the voice under it.
- * A voice under no shot stays on A1 unlinked (the files carry it; the preview has no picture to play it with).
+ * A voice under no shot stays on A1 unlinked (the files carry it; the preview has no picture to play it with), except a
+ * take with no picture (a voice recording): the writers leave its shot out, so it gets its shot back, linked.
  */
 function linked(draft: Timeline, v1: Item[], a1: Item[]): { V1: Item[]; A1: Item[] } {
-  const toSrc = (frames: number, src: string) => Math.round((frames * (draft.sources[src]?.fps || draft.fps)) / draft.fps);
-  const cutAt = (i: Item, a: number, b: number): Item => ({ ...i, in: i.in + toSrc(a - i.rec, i.src), rec: a, len: b - a });
+  // a piece of an item: its window re-cut, a fade only on the piece at that end
+  const cutAt = (i: Item, a: number, b: number): Item => {
+    const { path, fade_in, fade_out, ...rest } = i;
+    const sub = path?.length ? pathIn(path, (a - i.rec) / draft.fps, (b - a) / draft.fps) : [];
+    return { ...rest, in: i.in + srcFrames(draft, a - i.rec, i.src), rec: a, len: b - a, ...(sub.length ? { path: sub } : {}), ...(fade_in && a === i.rec ? { fade_in } : {}), ...(fade_out && b === end(i) ? { fade_out } : {}) };
+  };
   const V1: Item[] = [];
   const A1: Item[] = [];
   let n = 0;
@@ -92,14 +105,23 @@ function linked(draft: Timeline, v1: Item[], a1: Item[]): { V1: Item[]; A1: Item
     }
   }
   // the voice's frames under no shot
+  const bare = (x: Item, a: number, b: number) => {
+    const { link: _l, ...piece } = cutAt(x, a, b);
+    if (draft.sources[x.src]?.w) return void A1.push(piece);
+    const link = `c${++n}`;
+    const { fade_in: _fi, fade_out: _fo, gainDb: _g, ...shot } = piece;
+    V1.push(carried(draft, "V1", { ...shot, link }));
+    A1.push({ ...piece, link });
+  };
   for (const x of a1) {
     let at = x.rec;
     for (const v of v1.filter((v) => end(v) > x.rec && v.rec < end(x)).sort((p, q) => p.rec - q.rec)) {
-      if (v.rec > at) A1.push(cutAt({ ...x, link: undefined }, at, v.rec));
+      if (v.rec > at) bare(x, at, v.rec);
       at = Math.max(at, end(v));
     }
-    if (at < end(x)) A1.push(cutAt({ ...x, link: undefined }, at, end(x)));
+    if (at < end(x)) bare(x, at, end(x));
   }
+  V1.sort((p, q) => p.rec - q.rec);
   for (const i of A1) if (!i.link) delete i.link;
   return { V1, A1: A1.sort((p, q) => p.rec - q.rec) };
 }
@@ -112,16 +134,28 @@ export function fromSentBack(draft: Timeline, files: Record<string, string>, vie
   // shortcut: a planned edit's speeds, ramps and effects aren't read from the files, so its next round stays in the app; read LinearTimeWarp / timeMap when one is asked for
   if (draft.plan) throw new SentBackRefused("A planned edit's speeds and effects can't be read back from a timeline file yet: make the changes in the app's editor");
   if (Math.abs(view.fps - draft.fps) > 0.01) throw new SentBackRefused(`The timeline sent back runs at ${view.fps} fps and the draft at ${draft.fps}: export it at the draft's frame rate`);
-  const keys = sourceKeys(draft, files, paths);
-  const lanes = view.tracks.filter((t) => t.id !== "V0" && t.items.some((i) => !i.off));
-  const extra = lanes.filter((t) => !(TRACKS as readonly string[]).includes(t.id)).map((t) => t.id);
+  // the tracks the format carries (otio.ts, fcpxml.ts), each found by the name the export gave it (the parser numbers only
+  // the lanes with clips, so an empty Music track would make Sound "A2"), else by its place
+  const reads: readonly string[] = format === "otio" ? TRACKS : format === "xml" ? ["V1", "A1"] : ["V1"];
+  const shown = view.tracks.filter((t) => t.id !== "V0" && t.items.some((i) => !i.off));
+  const named = shown.map((t) => TRACKS.find((k) => k[0] === t.id[0] && !!t.name && draft.tracks[k].name === t.name) ?? t.id);
+  const ids = new Set(named).size === named.length ? named : shown.map((t) => t.id);
+  const lanes = shown.map((t, k) => ({ ...t, id: ids[k]! })).filter((t) => format === "otio" || reads.includes(t.id));
+  const extra = lanes.filter((t) => !reads.includes(t.id)).map((t) => t.id);
   if (extra.length) throw new SentBackRefused(`This editor has picture tracks V1 and V2 and sound tracks A1 to A3: move the clips on ${extra.join(", ")} onto those`);
+  // only the files on the tracks read: a clip on a track the format never carried is not this round's
+  const usedKeys = new Set(lanes.flatMap((t) => t.items.flatMap((i) => (i.src && !i.off ? [i.src] : []))));
+  const keys = sourceKeys(draft, files, Object.fromEntries(Object.entries(paths).filter(([k]) => usedKeys.has(k))));
   const read = (id: TrackId): Item[] =>
     (lanes.find((t) => t.id === id)?.items ?? []).flatMap((i) => {
       if (i.off) return [];
       if (!i.src || i.ins === undefined) throw new SentBackRefused(`${i.label} on ${id} has no file the draft knows`);
       const src = keys[i.src]!;
-      const it: Item = { src, in: Math.round(i.ins * (draft.sources[src]!.fps || draft.fps)), len: i.len, rec: i.rec };
+      const s = draft.sources[src]!;
+      const sfps = s.fps || draft.fps;
+      // an EDL's source in is the file's own timecode: from the file's first frame, as the other formats give it
+      const secs = format === "edl" ? i.ins - s.tc / sfps : i.ins;
+      const it: Item = { src, in: Math.max(0, Math.round(secs * sfps)), len: i.len, rec: i.rec };
       return [carried(draft, id, it)];
     });
   const tracks = Object.fromEntries(TRACKS.map((t) => [t, { ...draft.tracks[t], items: [] as Item[] }])) as Timeline["tracks"];
@@ -145,7 +179,8 @@ export function fromSentBack(draft: Timeline, files: Record<string, string>, vie
     ...draft,
     sources: Object.fromEntries(Object.entries(draft.sources).filter(([k]) => used.has(k))),
     tracks,
-    markers: view.markers.map((m) => ({ rec: m.frame, name: m.name, color: (m.color ?? "Blue").toUpperCase(), note: notes.get(m.name) ?? "" })),
+    // an EDL has no markers: the draft's stay
+    markers: format === "edl" ? draft.markers : view.markers.map((m) => ({ rec: m.frame, name: m.name, color: (m.color ?? "Blue").toUpperCase(), note: notes.get(m.name) ?? "" })),
     // who speaks when was measured on the old cut's frames
     speakers: undefined,
   };

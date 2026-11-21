@@ -502,9 +502,10 @@ editorApp.post("/:id/drafts/:name/review", async (c) => {
 editorApp.post("/:id/drafts/:name/revise", async (c) => {
   const r = await load(c, true);
   const name = c.req.param("name");
-  if (!r || !readDraft(r.e.id, name)) return notFound(c);
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
   if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return c.json({ error: "This version is still being made", code: "conflict" }, 409);
-  const got = await openComments(r.e.id, name);
+  const got = await openComments(r.e.id, name, d.timeline);
   if (typeof got === "string") return c.json({ error: got, code: "invalid" }, 400);
   enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "revise", r.user, true, "edit_jobs");
   return c.json(viewFor(r));

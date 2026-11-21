@@ -21,7 +21,7 @@ vi.mock("../review", () => ({
 vi.mock("./store", () => ({
   readStep: () => ({ v1: { assetId: "rev-1", n: 2 } }),
   readFiled: () => ({ variant: "v1", timeline: w.timeline }),
-  readDraft: () => ({ timeline: w.timeline, notes: ["Drafted"] }),
+  readDraft: vi.fn(() => ({ timeline: w.timeline, notes: ["Drafted"] })),
   saveDraft: async (...a: unknown[]) => void w.saved.push(a),
 }));
 vi.mock("../ai-complete", () => ({
@@ -105,6 +105,16 @@ describe("revise from Review comments", () => {
     expect(plan.timeline!.tracks.V1.items.every((i) => i.link)).toBe(true);
   });
 
+  it("a split can't carry a removal out of the comment's zone", () => {
+    const tl = cut();
+    // the comment sits at 1.85 s (frames 41-71); the split leaves the removed first piece at frames 30-40
+    const plan = planRevision(tl, draftView(tl), [{ ...base, id: "c1", t: 1.85, text: "lose the last words" }], [
+      { comment: "c1", reply: "Cut.", edits: [{ key: "V1:30", label: "Second shot", split: [40], remove: true }] },
+    ]);
+    expect(plan.timeline).toBeNull();
+    expect(plan.replies).toEqual([{ id: "c1", reply: "Cut. Left alone, as the comment isn't about it: Second shot.", resolve: false }]);
+  });
+
   it("a comment's own timeline edits are made as they are; an AI edit on a clip an earlier comment changed is left out", () => {
     const tl = cut();
     const plan = planRevision(tl, draftView(tl), [
@@ -143,7 +153,8 @@ describe("revise from Review comments", () => {
       { comment: "c1", reply: "Took out the um.", edits: [{ key: "V1:30", label: "um", split: [40], remove: true }] },
       { comment: "c0", reply: "Thanks!", edits: [] },
     ] });
-    await reviseStep({ edit: { id: "e1", workspaceId: "ws" } as never, job: { actor: "maker", version_id: "e1:v1" } as never, variant: "v1", signal: new AbortController().signal });
+    const job = { actor: "maker", version_id: "e1:v1", attempts: 1 };
+    await reviseStep({ edit: { id: "e1", workspaceId: "ws" } as never, job: job as never, variant: "v1", signal: new AbortController().signal });
     expect(w.asked[0]).toMatch(/- c0 general: lovely\n- c1 at 1\.10 s \(frame 33\): cut the um\n {4}reply: the second one/);
     expect(w.asked[0]).not.toContain("old version");
     const [[id, name, saved]] = w.saved as [[string, string, { timeline: Timeline; notes: string[] }]];
@@ -155,5 +166,11 @@ describe("revise from Review comments", () => {
       { id: "c0", reply: "Thanks!", resolve: false },
       { id: "c1", reply: "Took out the um. In the next version.", resolve: true },
     ]]]);
+    // a try after one that saved the revision (its draft now ends with that cut's note): no second revision, post queued
+    w.asked.length = w.saved.length = w.queued.length = 0;
+    const revised = saved;
+    vi.mocked((await import("./store")).readDraft).mockReturnValueOnce(revised as never);
+    await reviseStep({ edit: { id: "e1", workspaceId: "ws" } as never, job: { ...job, attempts: 2 } as never, variant: "v1", signal: new AbortController().signal });
+    expect([w.asked, w.saved, w.queued]).toEqual([[], [], [["e1:v1", "post"]]]);
   });
 });

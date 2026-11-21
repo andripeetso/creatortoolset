@@ -1,6 +1,6 @@
 import type { Timeline } from "../../contracts/editor";
 import { describeEdits } from "../../contracts/edit-summary";
-import { cleanEdits, stackEdits, type ItemEdit, type TimelineView } from "../../contracts/edit-timeline";
+import { cleanEdits, splitView, stackEdits, type ItemEdit, type TimelineView } from "../../contracts/edit-timeline";
 import { aiFor, completeWithFallback } from "../ai-complete";
 import { completeVisionWithFallback } from "../ai-vision";
 import { parseJsonObject } from "../lib/instagram/vision";
@@ -29,6 +29,9 @@ const AUTHOR = "AI Editor";
 /** Review's own key for the timeline edits a comment carries (src/components/ReviewEdits.tsx REVIEW_TIMELINE_ID). */
 const TIMELINE_EDITS = "timeline-edits";
 const MAX_WORDS = 2500;
+/** The notes routes.ts saveCutDraft starts a cut's note with. */
+const HAND_NOTE = "Cut by hand";
+const AI_NOTE = "Cut by the AI";
 
 type Anchor = { track: string; rec: number; len: number; label: string };
 export interface ReviseComment {
@@ -135,13 +138,6 @@ export function parseAnswers(text: string): Answer[] {
  * comment's change stands). `timeline` is null when nothing changed.
  */
 export function planRevision(tl: Timeline, view: TimelineView, comments: ReviseComment[], answers: Answer[]): { timeline: Timeline | null; edits: ItemEdit[]; replies: Reply[] } {
-  const items = new Map(view.tracks.flatMap((t) => t.items).map((i) => [i.key, i]));
-  const span = (key: string): [number, number] => {
-    const it = items.get(key);
-    const f = Number(key.split(":")[1]);
-    return it ? [it.rec, it.rec + it.len] : [f, f + 1]; // a piece a split makes starts at its frame
-  };
-  const inside = (e: ItemEdit, zs: [number, number][] | null) => !zs || zs.some(([a, b]) => span(e.key)[0] < b && a < span(e.key)[1]);
   let kept: ItemEdit[] = [];
   let timeline: Timeline | null = null;
   const replies: Reply[] = [];
@@ -150,6 +146,13 @@ export function planRevision(tl: Timeline, view: TimelineView, comments: ReviseC
     const zs = zonesOf(c, view.fps);
     const taken = new Set(kept.map((e) => e.key));
     const asked = (a?.edits ?? []).filter((e) => !c.edits.some((h) => h.key === e.key));
+    // each edit's clip as the cuts leave it (a split's first piece keeps the key and only its own frames), so a split
+    // can't carry a removal out of the zone
+    const pieces = new Map(splitView(view, stackEdits([kept, c.edits, asked])).tracks.flatMap((t) => t.items).map((i) => [i.key, i]));
+    const inside = (e: ItemEdit, zs: [number, number][] | null) => {
+      const it = pieces.get(e.key);
+      return !zs || (!!it && zs.some(([x, y]) => it.rec < y && x < it.rec + it.len));
+    };
     const out = asked.filter((e) => !inside(e, zs));
     const clash = asked.filter((e) => inside(e, zs) && taken.has(e.key));
     const mine = [...c.edits, ...asked.filter((e) => inside(e, zs) && !taken.has(e.key))];
@@ -194,10 +197,12 @@ export function reviseComment(x: ReviewComment, all: ReviewComment[]): ReviseCom
 }
 
 /** The newest Review version of a draft whose cut is the one filed, and its open comments; a line for the person when there is none. */
-export async function openComments(id: string, variant: string): Promise<{ at: { assetId: string; n: number }; tl: Timeline; open: ReviewComment[]; all: ReviewComment[] } | string> {
+export async function openComments(id: string, variant: string, draft: Timeline): Promise<{ at: { assetId: string; n: number }; tl: Timeline; open: ReviewComment[]; all: ReviewComment[] } | string> {
   const at = readStep(id, "review")?.[variant];
   const filed = at && readFiled(id, at.assetId, at.n);
   if (!at || !filed || filed.variant !== variant) return "File this version in Review first";
+  // changed since (by hand, a render that failed): its comments are about another cut, and revising would drop the change
+  if (JSON.stringify(filed.timeline) !== JSON.stringify(draft)) return "This version changed since it was filed in Review: file it in Review again first";
   const all = await readComments(at.assetId);
   const open = all.filter((x) => x.version === at.n && !x.parentId && !x.resolved && (x.text.trim() || cleanEdits((x.plugins?.[TIMELINE_EDITS] as { edits?: unknown } | undefined)?.edits).length));
   if (!open.length) return `There are no open comments on version ${at.n} in Review`;
@@ -207,8 +212,14 @@ export async function openComments(id: string, variant: string): Promise<{ at: {
 /** The revise step (one version): the AI reads the comments, the cut is made, each comment is answered (planRevision). */
 export async function reviseStep({ edit, job, variant, signal }: StepContext): Promise<void> {
   const d = readDraft(edit.id, variant);
-  const got = await openComments(edit.id, variant);
   if (!d) throw new Error(`No draft ${variant}`);
+  // a try after one that saved the revision (it stopped before its post was queued): not revised twice
+  const n0 = readStep(edit.id, "review")?.[variant]?.n;
+  if (job.attempts > 1 && n0 !== undefined && d.notes.at(-1)?.startsWith(AI_NOTE) && d.notes.at(-1)!.includes(` on version ${n0} (`)) {
+    enqueueJob(libraryDb(), edit.workspaceId, job.version_id ?? "", "post", job.actor, true, "edit_jobs");
+    return;
+  }
+  const got = await openComments(edit.id, variant, d.timeline);
   if (typeof got === "string") throw new Error(got);
   const { at, tl, open, all } = got;
   const comments = open.sort((a, b) => a.createdAt - b.createdAt).map((x) => reviseComment(x, all));
@@ -251,9 +262,13 @@ export async function reviseStep({ edit, job, variant, signal }: StepContext): P
   const plan = planRevision(tl, view, comments, answers);
   if (plan.timeline) {
     const n = plan.replies.filter((r) => r.resolve).length;
-    // "Cut by the AI" leads, as routes.ts saveCutDraft writes it, so the chat and the next hand cut read it as a cut
-    await saveDraft(edit.id, variant, { timeline: plan.timeline, notes: [...d.notes, `Cut by the AI from ${n} Review comment${n === 1 ? "" : "s"} on version ${at.n} (${describeEdits(plan.edits, tl.fps)})`] });
-    enqueueJob(libraryDb(), edit.workspaceId, job.version_id ?? "", "post", job.actor, true, "edit_jobs");
+    // "Cut by the AI" leads, as routes.ts saveCutDraft writes it, so the chat and the next hand cut read it as a cut; the
+    // last five cuts kept, as there
+    const isCut = (x: string) => x.startsWith(HAND_NOTE) || x.startsWith(AI_NOTE);
+    let older = d.notes.filter(isCut).length - 4;
+    const note = `${AI_NOTE} from ${n} Review comment${n === 1 ? "" : "s"} on version ${at.n} (${describeEdits(plan.edits, tl.fps)})`;
+    await saveDraft(edit.id, variant, { timeline: plan.timeline, notes: [...d.notes.filter((x) => !isCut(x) || --older < 0), note] });
   }
   await answerComments(at.assetId, at.n, AUTHOR, plan.replies);
+  if (plan.timeline) enqueueJob(libraryDb(), edit.workspaceId, job.version_id ?? "", "post", job.actor, true, "edit_jobs");
 }
