@@ -79,6 +79,13 @@ it("R opens Change Clip Speed for the talent shot under the playhead: the shot a
   expect(onEdit).toHaveBeenLastCalledWith([[expect.objectContaining({ key: "V1:0" }), { speed: 1.5 }]]);
   expect(document.querySelector("#nle-speed")).toBeNull();
 
+  // a shot with a speed keeps its length: Q / E leave it (its length or its speed, one at a time)
+  onEdit.mockClear();
+  await act(async () => root.render(<EditTimeline view={view} time={2} onSeek={() => {}} onEdit={onEdit} edits={[{ key: "V1:0", label: "Shot one", speed: 1.5 }]} nle />));
+  press("q");
+  press("e");
+  expect(onEdit).not.toHaveBeenCalled();
+
   // the app's own AI Editor cuts: its render plays no speed, so R does nothing there
   await act(async () => root.render(<EditTimeline view={view} time={2} onSeek={() => {}} onEdit={onEdit} rules={OWN_CUT_RULES} nle />));
   expect(press("r").defaultPrevented).toBe(false);

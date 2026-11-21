@@ -348,7 +348,8 @@ function Edits({ asset, version, api, reload, player, composer, history, preview
   // what this Mac said of the files by path: a drive away, or a folder waiting for an OK (with its Allow); else the reach text
   const pathAway = originals && lost.length > 0 ? originalsAway(originals) : null;
   const pathLine = pathAway === WORDS.needsOk && !toAllow.length ? null : pathAway;
-  const sound = view && plan && originalsOn && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
+  // not with a speed edit: Web Audio would change the voice's pitch with its rate, where the rendered cut keeps it
+  const sound = view && plan && originalsOn && !plan.rates?.length && (plan.skips.length + plan.mutes.length + plan.holds.length > 0) ? [
     ...soundPieces(splitView(view, playEdits), playEdits, plan, soundLanes)
       .filter((p) => found[p.src]).map((p) => ({ ...p, src: urlOf(p.src) })),
     ...(version.stems ? renderPieces(plan, Math.round(version.duration * view.fps), view.fps, api.stem(version, "rest.m4a")) : []),

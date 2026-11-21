@@ -54,11 +54,12 @@ export function usePlanFollow(
     const el = video.current;
     const was = lastT.current;
     lastT.current = time;
-    if (!plan || !playing || !el) return;
-    if (plan.rates?.length) { // into, out of or within a shot with a speed: the video at that rate (only then: the page owns it else)
-      const want = base * rateAt(plan, time * (plan.fps || 25));
+    // the page's speed times the shot's (a speed edit), and back to the page's own once no plan or no speed is there
+    if (el && playing) {
+      const want = base * (plan ? rateAt(plan, time * (plan.fps || 25)) : 1);
       if (Math.abs(el.playbackRate - want) > 1e-3) el.playbackRate = want;
     }
+    if (!plan || !playing || !el) return;
     const act = followPlan(plan, time, was);
     if (act.kind === "seek") {
       el.currentTime = act.to;

@@ -273,6 +273,8 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
   const editable = (it: TimelineItem, mode: Mode) =>
     // the talent never moves; the voice moves sideways, never slips
     edit && !editOf[it.key]?.remove && unlocked(it) && !(it.track === "V1" && (mode === "move" || mode === "slip")) && !(it.track === "A1" && mode === "slip") &&
+    // a shot with a speed keeps its length (its length or its speed, one at a time: the studio refuses both)
+    !(it.track === "V1" && editOf[it.key]?.speed && (mode === "head" || mode === "tail")) &&
     (rules?.can?.(it, mode) ?? true);
   const layered = rules?.layers !== false;
   /** A clip's own sound: its own, or that of the clip it was cut or copied from (a piece's `before` counts from the same first second). */
@@ -351,7 +353,7 @@ export function EditTimeline({ view, time, onSeek, selected, onSelect, pins, sho
     for (const it of list) {
       const e = editOf[it.key];
       const s = spanOf(it);
-      if (e?.remove || !unlocked(it)) continue;
+      if (e?.remove || !unlocked(it) || (it.track === "V1" && e?.speed)) continue;
       const room = mediaRoom(it, e);
       if (end === "head" && playF < s.rec + s.len - 1) changes.push([it, { head: Math.min(room.head, (e?.head ?? 0) + s.rec - playF) }]);
       if (end === "tail" && playF > s.rec) changes.push([it, { tail: Math.min(room.tail, (e?.tail ?? 0) + playF - (s.rec + s.len)) }]);
