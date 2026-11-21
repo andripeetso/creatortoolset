@@ -99,6 +99,8 @@ export interface NleSide {
   commitPreview: () => void;
   /** the playhead to this frame, the picked clips let go */
   seek: (frame: number) => void;
+  /** picks these clips on the timeline (none: lets the pick go) */
+  pick: (keys: string[]) => void;
 }
 
 export interface NleControl {
@@ -878,7 +880,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
             setTried(next && !readOnly ? { tl: next, label, base: tl } : null);
           }, trying: !!tryOn, commitPreview: () => void keepTry(),
-          seek: (f) => (seek(f / fps), pick([])) }) : undefined}
+          seek: (f) => (seek(f / fps), pick([])), pick }) : undefined}
         frame={{ w: tl.timeline.width || 1080, h: tl.timeline.height || 1920 }}
         center={
           <>
@@ -965,7 +967,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         timeline={(full) => (
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => view === "source" && show("timeline")}>
-          <Timeline compact={!full} tl={shown} time={time} clock={tln.clock} selected={sel} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
+          <Timeline compact={!full} tl={shown} time={time} clock={tln.clock} selected={shown === tl ? sel : selected.filter((k) => find(shown, k))} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
             trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit} cached={cachedNow}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
