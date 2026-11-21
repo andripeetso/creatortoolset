@@ -917,7 +917,9 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const at = await reviewOf({ json, origin }, a.link);
       if (!at.manage && a.status !== "approved" && a.status !== "changes") throw new ToolError("That video is someone else's: on its share link you can approve it or ask for changes (approved, changes), nothing else.");
       const r = await json(`${at.path}/approval`, "POST", { status: a.status, ...(a.status === "approved" && typeof a.words === "string" ? { words: a.words } : {}) });
-      return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status };
+      // an owner's Approve also sends the cut to Finals: a refusal is said, so the chat can pass it on
+      const finals = r.finals as { pieceId?: string; error?: string } | undefined;
+      return { id: r.id, name: r.name, approval: (r.approval as Args | undefined)?.status, ...(finals ? { finals: finals.error ? `Not in Finals: ${finals.error}` : "In Finals" } : {}) };
     },
     review_share: async (a) => {
       const at = await reviewOf({ json, origin }, a.link);

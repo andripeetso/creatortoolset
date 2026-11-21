@@ -41,10 +41,10 @@ const approve = async (user: string, asset: string, status: string) =>
 const items = (label: string) =>
   (libraryDb().prepare("SELECT COUNT(*) AS n FROM piece_items i JOIN pieces p ON p.id = i.piece_id WHERE p.label = ?").get(label) as { n: number }).n;
 
-async function video(owner: string, name: string): Promise<string> {
+async function video(owner: string, name: string, next?: string): Promise<string> {
   const clip = path.join(dir, `${name}.mp4`);
   spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=1080x1920:rate=25:duration=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", clip]);
-  const added = await addVersion(undefined, { owner, name: `${name}.mp4`, mime: "video/mp4", bytes: statSync(clip).size }, async (dest) => copyFileSync(clip, dest));
+  const added = await addVersion(undefined, { owner, name: `${name}.mp4`, mime: "video/mp4", bytes: statSync(clip).size, ...(next ? { next } : {}) }, async (dest) => copyFileSync(clip, dest));
   const id = added!.meta.id;
   await reviewJobsDone();
   for (let i = 0; i < 200 && !(await readMeta(id))?.versions[0]?.versionId; i++) await new Promise((r) => setTimeout(r, 50));
@@ -78,5 +78,25 @@ describe.skipIf(!hasFfmpeg)("Approve sends to Finals", () => {
     expect(out.finals).toEqual({ error: "Blur it first" });
     expect(seen).toEqual([{ versionId }]);
     expect(items((await readMeta(id))!.name)).toBe(0);
+  });
+
+  it("a reviewer's Approve on a share link and a pass cut's Approve (it starts the next pass) send nothing", async () => {
+    await account("sharer");
+    const id = await video("sharer", "Tiny Acrobatics shared");
+    const shared = (await (await app.request(`/api/review/assets/${id}`, {
+      method: "PATCH", headers: { cookie: cookies.sharer!, "content-type": "application/json" }, body: JSON.stringify({ share: { enabled: true } }),
+    })).json()) as { share: { token: string } };
+    const guest = (await (await app.request(`/api/review/s/${shared.share.token}/approval`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: "approved", author: "Tiny client" }),
+    })).json()) as { approval: { status: string }; finals?: unknown };
+    expect(guest.approval.status).toBe("approved");
+    expect(guest).not.toHaveProperty("finals");
+    expect(items((await readMeta(id))!.name)).toBe(0);
+
+    const pass = await video("sharer", "Tiny Acrobatics pass", "B-roll");
+    const out = await approve("sharer", pass, "approved");
+    expect(out.approval.status).toBe("approved");
+    expect(out).not.toHaveProperty("finals");
+    expect(items((await readMeta(pass))!.name)).toBe(0);
   });
 });
