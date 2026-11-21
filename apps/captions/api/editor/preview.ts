@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Critique } from "../../contracts/edit-plan";
 import type { Item, Renders, Timeline } from "../../contracts/editor";
 import { addVersion, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
+import { fileStems, stemsFor } from "./voice-mix";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
 import { blobs, fileBlur, isBlurred, libraryDb, playOf, SOUND_ONLY_SQL } from "../library/db";
@@ -388,8 +389,16 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
   if (held && !d.notes.includes(held)) await saveDraft(edit.id, variant, (d = { ...d, notes: [...others, held] }));
   else if (followed && !held) await saveDraft(edit.id, variant, (d = { ...d, timeline: followed as Timeline, notes: others }));
   await renderPreview(d.timeline, { ...files, ...postFiles(edit.id, variant) }, out, signal, grade);
+  // a voice the person picked plays as the sound step mixed it (voice-mix.ts; mix.m4a comes to a computer with the package)
+  const stems = await stemsFor(edit, variant, d.timeline);
+  if (stems && stems.set.voice !== "off" && !signal.aborted) await withMix(out, stems.dir);
   if (signal.aborted || d.due) return;
   await fileInReview(edit, variant, d.timeline, saidOf(d), job.actor);
+}
+
+/** The rendered preview's sound replaced by the voice's mix (the picture copied as it is). */
+export async function withMix(video: string, dir: string): Promise<void> {
+  await ffmpegTo(video, ["-i", video, "-i", path.join(dir, "mix.m4a"), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "copy", "-shortest", "-movflags", "+faststart", "-f", "mp4"]);
 }
 
 /**
@@ -443,6 +452,8 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));
   if (!added) throw new Error("Could not file the preview in Review");
+  // the cut's sound in parts, for Review's voice controls (voice-mix.ts): a nicety, never a reason not to file
+  await fileStems(edit, variant, timeline, added.meta.id, added.n).catch((e) => console.warn(`[editor] stems ${edit.id} ${variant}: ${e}`));
   // a new cut after Approve (its next pass) or Request changes waits for review again, as the new version it is
   if (added.n > 1 && (added.meta.approval.status === "approved" || added.meta.approval.status === "changes")) await setApproval(added.meta.id, "needs_review", ownerOf(edit));
   // the timeline this version shows: kept as it is now (a later cut of the draft doesn't change what this version's keys name)

@@ -14,7 +14,8 @@ import { LINK_TTL_S, mediaPaths } from "./media";
 import { otioText, toOtio } from "./otio";
 import { qaOf } from "./qa";
 import { forgetFinished, finishedOf, removeFinished } from "./finished";
-import { addFeedback, MAX_SOURCES, newestDraft, serial, queueVersion, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editDir, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft, seesEdit } from "./store";
+import { addFeedback, cleanVoice, MAX_SOURCES, newestDraft, serial, queueVersion, allEdits, byToolAfter, cleanBrief, createEdit, uploadFinished, draftNames, editDir, editorDefaults, editRole, editSources, gradeOf, mayRename, NoCollection, NoStyle, ownerOf, readDraft, readEdit, POST_UNFINISHED, postFiles, postUnfinished, readStep, saveEdit, saveStep, setChosenDefault, styleFields, summaryOf, viewOf, type EditMeta, jobsOf, readFiled, saveDraft, seesEdit } from "./store";
+import { forgetFailed, stemKey, voiceGroups } from "./voice-mix";
 import { fileIntoProjects } from "./projects";
 import { emptyTracks, NATURAL_CUT, sourceOf } from "./timeline";
 import { lineTakes } from "./takes";
@@ -370,9 +371,47 @@ editorApp.patch("/:id", async (c) => {
     if (byTool) e.byTool = byTool;
     else delete e.byTool;
     await saveEdit(e);
+    // another voice: every version's sound is made again with it, the same cut (voice-mix.ts), as the next Review version
+    if (patch.voice && JSON.stringify(patch.voice) !== JSON.stringify(now.voice ?? null)) await recutSound(e, draftNames(e.id).filter((n) => !e.marks?.[n]?.trashedAt), r.user);
     return e;
   });
   return e ? c.json(viewFor(r, readEdit(e.id)!)) : notFound(c);
+});
+
+/** Each named version's sound made again (the sound step, then its preview and Review), its cut as it is; a voice that failed is tried anew. */
+async function recutSound(e: EditMeta, names: string[], user: string) {
+  await forgetFailed(e.id);
+  for (const n of names) enqueueJob(libraryDb(), e.workspaceId, `${e.id}:${n}`, "sound", user, true, "edit_jobs");
+}
+
+/**
+ * Review's voice controls kept for the edit: the enhancer every recording plays ("off" = as recorded) and each voice
+ * group's share of it (`mix`, by the stem group's key), then this version cut again with them, only its sound.
+ */
+editorApp.post("/:id/drafts/:name/voice", async (c) => {
+  const r = await load(c, true);
+  const name = c.req.param("name");
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
+  const b = await body(c);
+  const keys = Object.fromEntries(voiceGroups(d.timeline).map((src) => [stemKey(src), src]));
+  const given = Object.entries((b.mix ?? {}) as Record<string, unknown>).filter(([k]) => keys[k]);
+  if (b.voice !== undefined && !cleanVoice({ fx: b.voice })) return c.json({ error: "voice is off or an enhancer's id", code: "invalid" }, 400);
+  if (b.voice === undefined && !given.length) return c.json({ error: "No voice of this cut in that mix", code: "invalid" }, 400);
+  const e = await serial(async () => {
+    const now = readEdit(r.e.id);
+    if (!now) return null;
+    const voice = cleanVoice({
+      ...now.voice,
+      fx: typeof b.voice === "string" ? b.voice : (now.voice?.fx ?? "off"),
+      mix: { ...now.voice?.mix, ...Object.fromEntries(given.map(([k, v]) => [keys[k], v])) },
+    })!;
+    await saveEdit({ ...now, voice });
+    return { ...now, voice };
+  });
+  if (!e) return notFound(c);
+  await recutSound(e, [name], r.user);
+  return c.json({ voice: e.voice }, 201);
 });
 
 editorApp.post("/:id/run", async (c) => {

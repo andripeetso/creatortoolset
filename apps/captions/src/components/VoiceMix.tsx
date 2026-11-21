@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { AudioLines, Loader2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
+import { ENGINES } from "@/lib/enhance";
 import { cn } from "@/lib/utils";
 import type { StemSet } from "@/lib/review";
 import { SyncedSound } from "@/lib/synced-sound";
@@ -13,7 +14,7 @@ import { SyncedSound } from "@/lib/synced-sound";
  */
 /** The choices a version's sound offers: Off, then each enhanced voice its stems list (keys set by the editor that made them). */
 // "chain": an editor's own cleanup chain (filters, no AI), said as what it does
-const label = (key: string) => (key === "chain" ? "Cleanup" : key.charAt(0).toUpperCase() + key.slice(1));
+const label = (key: string) => (key === "chain" ? "Cleanup" : ENGINES.find((e) => e.key === key)?.label ?? key.charAt(0).toUpperCase() + key.slice(1));
 
 export function VoiceMix({ video, stems: given, url, muted, onLive, save }: {
   video: RefObject<HTMLVideoElement | null>;

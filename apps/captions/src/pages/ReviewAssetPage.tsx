@@ -264,6 +264,8 @@ function Review({
   const me = useMe();
   // a signed-in account set to Read: looks and reads only (a share link's reviewer with no account keeps commenting)
   const locked = !!view.user && !canChange(me, "review");
+  // the AI Editor's version this is: its edit and draft (an older plug-in filed `edit` instead), for Use this voice
+  const made = version.draft ?? (version.edit ? { edit: version.edit.project, name: version.edit.draft } : undefined);
   const slots = useMemo(() => reviewSlotsFor(me, webPlugins), [me]);
   // plug-in slots: their chips above the box, their data for the next comment, their ⌘Z (see lib/review-slots.ts)
   const [, setSlotTick] = useState(0);
@@ -1060,7 +1062,7 @@ function Review({
               url={(f) => api.stem(version, f)}
               muted={muted || editSound.live}
               onLive={setVoiceLive}
-              save={version.edit && !locked ? (mix, voice) => saveVoiceMix(version.edit!.project, version.edit!.draft, mix, voice).then(
+              save={made && !locked ? (mix, voice) => saveVoiceMix(made.edit, made.name, mix, voice).then(
                 () => "Making the next version with this voice") : undefined}
             />
           )}

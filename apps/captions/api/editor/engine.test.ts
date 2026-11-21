@@ -22,7 +22,7 @@ afterAll(() => {
 
 describe("editor step registry", () => {
   it("the server's STEPS and NEXT come from the registry: core kinds have handlers, device kinds do not", () => {
-    expect(Object.keys(STEPS).sort()).toEqual(["analyze", "broll", "cards", "critique", "draft", "file", "post", "preview", "revise", "script"]);
+    expect(Object.keys(STEPS).sort()).toEqual(["analyze", "broll", "cards", "critique", "draft", "file", "post", "preview", "revise", "script", "sound"]);
     expect(NEXT.analyze).toEqual(["script"]);
     expect(NEXT.draft).toEqual(["broll"]);
     expect(NEXT.broll).toEqual(["post"]);
@@ -39,6 +39,13 @@ describe("editor step registry", () => {
     expect(nextFor("broll", passes, NEXT, ["broll", "cards"])).toEqual(["cards"]); // Make cards again lays the B-roll first
     for (const kind of ["analyze", "script", "cards", "post", "preview", "file"]) expect(nextFor(kind, passes, NEXT)).toEqual(NEXT[kind]);
     expect(NEXT.post).toEqual(["preview"]);
+    // post goes to the sound step only for an edit with something for it: a voice picked, a bed asked for, the library's sound effects
+    expect(NEXT.sound).toEqual(["preview"]);
+    expect(nextFor("post", { voice: { fx: "nvidia" } }, NEXT)).toEqual(["sound"]);
+    expect(nextFor("post", { voice: { fx: "off" } }, NEXT)).toEqual(["preview"]);
+    expect(nextFor("post", { brief: "a calm song under it" }, NEXT)).toEqual(["sound"]);
+    expect(nextFor("post", { bundle: { designSystem: "plain", grade: "none", voiceMix: "level", sfxSet: "library" } }, NEXT)).toEqual(["sound"]);
+    expect(nextFor("post", { plan: true, song: "s1" }, NEXT)).toEqual(["preview"]); // a planned edit lays its own song
     expect(NEXT.preview).toEqual(["file"]);
     expect(STEPS["fake-kind"]).toBeUndefined();
   });

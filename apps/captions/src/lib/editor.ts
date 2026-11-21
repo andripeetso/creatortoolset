@@ -4,7 +4,7 @@ import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInp
 import type { ItemEdit } from "@contracts/edit-timeline";
 import type { NleRun } from "./nle/commands";
 import type { NleTimeline } from "./nle/model";
-import type { Draft, EditorChatView, LineTakes, TimelineSource, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
+import type { Draft, EditorChatView, LineTakes, TimelineSource, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditVoice, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
 
 /** The Editor's calls to api/editor/routes.ts. */
 
@@ -148,5 +148,5 @@ export function takeSpan(take: Pick<Take, "first" | "last">, sentences: Sentence
 
 /** Keeps a preview's voice mix for its edit: the next draft is cut again with it (a voice job). */
 export const saveVoiceMix = (id: string, name: string, mix: Record<string, number>, voice: string) =>
-  send<{ job: { id: number }; voiceMix: Record<string, number>; voice: string }>(
+  send<{ voice: EditVoice }>(
     `${base(id)}/drafts/${encodeURIComponent(name)}/voice`, "POST", { mix, voice });
