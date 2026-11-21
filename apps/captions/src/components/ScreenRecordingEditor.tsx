@@ -140,6 +140,7 @@ export function ScreenRecordingEditor({
     }
   });
   const [exporting, setExporting] = useState(false);
+  const asking = useRef(false);
   const [making, setMaking] = useState<{ step: string; pct: number } | null>(null);
   const abort = useRef<AbortController | null>(null);
   // the source is read through a ref: its identity can change on every page render, its url cannot
@@ -408,7 +409,12 @@ export function ScreenRecordingEditor({
     setExporting(false);
     player.pause();
     const name = `${base} (zoomed)`;
-    if (a?.before && !(await a.before(name))) return;
+    if (a?.before) {
+      if (asking.current) return;   // a second click while the save panel is on its way
+      asking.current = true;
+      const go = await a.before(name).finally(() => (asking.current = false));
+      if (!go) return;
+    }
     const ctl = new AbortController();
     abort.current = ctl;
     const out = a ? exportSize(settings, look.shape, width, height) : outputSize(look.shape, width, height, 1080);
