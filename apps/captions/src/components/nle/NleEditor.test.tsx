@@ -275,6 +275,7 @@ describe("the side panel beside the viewer (chat mode)", () => {
     const { p, s } = await sideOf();
     act(() => s().preview(two, "Use take 3"));
     act(() => s().commitPreview());
+    await key("a", { metaKey: true, code: "KeyA" }); // a clip picked, so Video can be gone back to
     act(() => [...p.host.querySelectorAll("button")].find((b) => b.textContent === "All editing tools")!.click());
     const tab = (name: string) => act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((b) => b.textContent === name)!.click());
     tab("History");
