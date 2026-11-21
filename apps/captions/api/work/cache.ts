@@ -61,6 +61,18 @@ export const proxiesDir = () => {
   return path.join(root(), encodeURIComponent(account).replace(/^\./, "%2E"));
 };
 
+/** The account's preview segments (editor/segcache.ts): counted and emptied with its proxies. A dot name is never an account's. */
+export const segmentsDir = () => path.join(proxiesDir(), ".segments");
+
+/** The bytes of the files in `dir` (none: 0). */
+function dirBytes(dir: string): number {
+  try {
+    return readdirSync(dir).reduce((n, f) => n + (sizeOf(path.join(dir, f)) ?? 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
 /** A version id is a file name here: nothing that climbs out of the folder. */
 export const safeName = (id: string): boolean => !!id && path.basename(id) === id && !id.startsWith(".");
 
@@ -239,6 +251,7 @@ export function trimCache(limit = cacheLimit(), keep = protectedIds()): string[]
 /** Settings → Storage → Empty: every file and unfinished download goes, except the ones kept offline or here. */
 export function emptyCache(keep = protectedIds()): void {
   for (const e of entries()) if (!keep.has(e.id)) rmSync(e.file, { force: true });
+  rmSync(segmentsDir(), { recursive: true, force: true });
 }
 
 /**
@@ -265,7 +278,7 @@ export function cacheReport(): WorkClaimBody["cache"] {
   // the proxies only: an original kept offline is not a version the server knows as a proxy (its dropFor check)
   const versions = [...new Set(all.flatMap((e) => (e.part || e.ext !== "mp4" ? [] : [e.id])))];
   return {
-    bytes: all.reduce((n, e) => n + e.size, 0),
+    bytes: all.reduce((n, e) => n + e.size, 0) + dirBytes(segmentsDir()),
     ...(limit ? { limit } : {}),
     ...(offline.length ? { offline } : {}),
     versions,

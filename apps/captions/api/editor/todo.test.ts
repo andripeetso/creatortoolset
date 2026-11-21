@@ -114,9 +114,12 @@ describe.skipIf(rootReplaced)("AI Editor: to-do, go, jobs", () => {
 
     // a note: the cards go, made again with it, and the step wakes now
     expect((await call("maker", "POST", `/api/editor/${id}/jobs/${job}/go`, { note: "Bigger words" })).status).toBe(200);
-    expect(readCards(id, "v2")).toEqual({ style: animId, calls: 0, draws: 0, drawn: [], liked: [], sheetNote: "Bigger words" });
+    expect(readCards(id, "v2")).toEqual({ style: animId, calls: 0, draws: 0, drawn: [], liked: [], sheetNote: "Bigger words", sheetNotes: 1 });
     expect(rowOf(id, "v2", "cards").run_after).toBe(0);
     expect((await call("maker", "POST", `/api/editor/${id}/jobs/${job}/go`, {})).status).toBe(409); // no sheet out now
+    // five notes at most, then the go or Make cards again
+    await saveCards(id, "v2", { style: animId, calls: 2, draws: 1, drawn: ["c1"], liked: [], done: true, sheet: { at: 7 }, sheetNotes: 5 });
+    expect((await call("maker", "POST", `/api/editor/${id}/jobs/${job}/go`, { note: "Again" })).status).toBe(409);
 
     // the next sheet, then the go: laid on the cut, the step no longer holds
     await saveCards(id, "v2", { style: animId, calls: 2, draws: 1, drawn: ["c1"], liked: [], done: true, sheet: { at: 9 } });
@@ -149,6 +152,8 @@ describe.skipIf(rootReplaced)("AI Editor: to-do, go, jobs", () => {
     expect(made.status).toBe(201);
     expect(await made.json()).toMatchObject({ kind: "preview", variant: "v1", state: "queued" });
     expect((await post({ kind: "preview", variant: "v1" })).status).toBe(409);
+    // another step while the edit is being made waits too: one step of an edit at a time
+    expect((await post({ kind: "sound", variant: "v2" })).status).toBe(409);
     expect((await call("other", "POST", `/api/editor/${id}/jobs`, { kind: "analyze" })).status).toBe(404);
     while (await tick(10 ** 13));
   });

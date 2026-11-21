@@ -69,16 +69,24 @@ export const sheetOf = (editId: string, variant: string): { at: number } | null 
 
 /**
  * A version of an edit in passes whose cut is in Review and whose next pass waits for the go: the job its go is given on
- * (the version's newest finished step). Nothing while any step of the edit is queued or running (passes.ts passesView).
+ * (the version's step that finished last). Nothing while any step of the edit is queued or running (passes.ts
+ * passesView), nor for a version with a step that failed: its cut is not the one the pass would start from.
  */
 export function heldPasses(e: EditMeta, rows = rowsOf(e.id)): { variant: string; job: number; at: number }[] {
   if (!e.style?.passes || rows.some((r) => r.state === "queued" || r.state === "running")) return [];
   const filed = readStep(e.id, "review") ?? {};
   return Object.keys(filed).flatMap((v) => {
-    // the go hangs on the version's newest finished step: a failed one is its own row
-    const last = rows.filter((r) => r.version_id === `${e.id}:${v}` && r.state === "done").at(-1);
+    // one row per step and version, holding its last run: every one done, or the version waits on a failure instead
+    const mine = rows.filter((r) => r.version_id === `${e.id}:${v}`);
+    const last = mine.every((r) => r.state === "done") ? mine.sort((a, b) => (a.done_at ?? 0) - (b.done_at ?? 0)).at(-1) : undefined;
     return last && !e.marks?.[v]?.trashedAt && nextPass(e, v) ? [{ variant: v, job: last.id, at: last.done_at ?? 0 }] : [];
   });
+}
+
+/** Something of the edit waits for the person's go (the edit list's `waits`): a held pass or a look sheet. */
+export function waitsGo(e: EditMeta): boolean {
+  const rows = rowsOf(e.id);
+  return heldPasses(e, rows).length > 0 || rows.some((r) => r.kind === "cards" && r.state === "queued" && !!sheetOf(e.id, r.version_id.slice(e.id.length + 1)));
 }
 
 /** Whether a computer of `user` is on (GET /api/editor/worker): the first one's name with it. */

@@ -82,6 +82,8 @@ export interface CardsState {
   go?: true;
   /** the person's note on the last look sheet: the cards are made again with it */
   sheetNote?: string;
+  /** how many notes these cards were made again for (each a new plan, script and draw): MAX_SHEET_NOTES at most */
+  sheetNotes?: number;
 }
 
 const VARIANT = /^(v[1-9]|m[1-9]\d?)$/; // a draft's name, as store.ts has it
@@ -92,6 +94,8 @@ export const cardsFolder = (variant: string) => `cards/${variant}`;
 const stateFile = (editId: string, variant: string) => path.join(editDir(editId), "cards", `${variant}.json`);
 export const cardsDir = (editId: string, variant: string) => path.join(editDir(editId), cardsFolder(variant));
 export const scriptFile = (editId: string, variant: string) => path.join(cardsDir(editId, variant), "script.txt");
+/** The notes on one version's look sheets that make the cards again; then the go, or Make cards again. */
+export const MAX_SHEET_NOTES = 5;
 /** The look sheet the person is shown (an edit in passes): every drawn card's three stills on one JPEG. */
 export const sheetFile = (editId: string, variant: string) => path.join(cardsDir(editId, variant), "sheet.jpg");
 /** A card's clip (`still` absent) or one of its stills; `draw`: of the draw that is out. Null for a name that is no card. */

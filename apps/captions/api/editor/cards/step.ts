@@ -296,26 +296,30 @@ async function place(editId: string, variant: string, st: CardsState): Promise<v
   if (left.join("\n") !== (st.left ?? []).join("\n")) await saveCards(editId, variant, { ...st, left });
 }
 
-/** What the cards step says while its look sheet waits, and how often it looks for the go (the go also wakes it at once). */
+/** What the cards step says while its look sheet waits. The go wakes it; it also looks again this seldom, as a fallback. */
 export const SHEET_LINE = "Look sheet: waiting for your go";
-const SHEET_WAKE_S = 300;
+const SHEET_WAKE_S = 6 * 3600;
 
 /**
  * The look sheet of the drawn cards, made once and kept (sheetFile), then the step waits until the person gives their go
- * or a note. A sheet that cannot be laid out holds nothing up: the cards are laid as they are.
+ * or a note. Answers the state to lay the cards from. A sheet that cannot be laid out holds nothing up: the cards are
+ * laid as they are. The state is read again before waiting: a go or a note given while this run was out counts now.
  */
-async function lookSheetWait(editId: string, variant: string, owner: string, st: CardsState): Promise<void> {
+async function lookSheetWait(editId: string, variant: string, owner: string, st: CardsState): Promise<CardsState> {
   if (!st.sheet) {
     const shown = (st.cards ?? []).filter((c) => st.drawn.includes(c.id)).map((c) => c.id);
     const made = await lookSheet(owner, editId, variant, shown, st.width!, st.height!).catch((e) => {
       if (e instanceof Waiting) throw e;
       return null;
     });
-    if (!made) return;
+    if (!made) return st;
     await writeFile(sheetFile(editId, variant), Buffer.from(made.image.jpegBase64, "base64"));
     await saveCards(editId, variant, { ...st, sheet: { at: clock.now() } });
   }
-  throw new Waiting(SHEET_WAKE_S, SHEET_LINE);
+  const now = readCards(editId, variant);
+  if (now?.go) return now;
+  // no sheet now: a note made the cards start again, so the step runs again at once
+  throw now?.sheet ? new Waiting(SHEET_WAKE_S, SHEET_LINE) : new Waiting(1);
 }
 
 export async function cardsStep(ctx: StepContext): Promise<void> {
@@ -333,7 +337,7 @@ export async function cardsStep(ctx: StepContext): Promise<void> {
     if (!st.done) st = await make(ctx, draft.timeline, st);
     if (signal.aborted) return;
     // an edit in passes: the drawn cards wait on a look sheet for the person's go or note (todo.ts, POST …/jobs/:job/go)
-    if (edit.style?.passes && st.drawn.length && !st.go) await lookSheetWait(edit.id, variant, ownerOf(edit), st);
+    if (edit.style?.passes && st.drawn.length && !st.go) st = await lookSheetWait(edit.id, variant, ownerOf(edit), st);
     await place(edit.id, variant, st);
   } catch (e) {
     if (e instanceof Waiting || signal.aborted) throw e;

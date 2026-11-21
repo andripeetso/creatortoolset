@@ -12,6 +12,7 @@ const dir = mkdtempSync(path.join(scratch, "editor-segcache-"));
 process.env.DATA_DIR = dir;
 
 const { cachedSegment, segDir, segKey, trimSegments } = await import("./segcache");
+const { cacheReport, emptyCache, segmentsDir, setCacheAccount } = await import("../work/cache");
 const { renderPreview } = await import("./preview");
 const { emptyTracks } = await import("./timeline");
 
@@ -55,6 +56,15 @@ describe("preview segment cache", () => {
     expect(readdirSync(cache)).toEqual([path.basename(one)]);
   });
 
+  it("on a computer it is the account's, counted and emptied with its proxies in Settings → Storage", () => {
+    setCacheAccount("tiny");
+    mkdirSync(segmentsDir(), { recursive: true });
+    writeFileSync(path.join(segmentsDir(), "a.mov"), Buffer.alloc(1000));
+    expect(cacheReport()!.bytes).toBe(1000);
+    emptyCache();
+    expect(cacheReport()!.bytes).toBe(0);
+  });
+
   it("past its limit the segments used longest ago go, never one used in the last hour", async () => {
     const cache = path.join(dir, "c2");
     mkdirSync(cache);
@@ -64,8 +74,14 @@ describe("preview segment cache", () => {
       const t = new Date(now - hoursAgo * 3600_000);
       utimesSync(path.join(cache, `${n}.mov`), t, t);
     }
+    // a killed render's part goes once it is an hour old; one being written stays
+    for (const [n, hoursAgo] of [["dead.mov.x.part", 2], ["live.mov.y.part", 0]] as const) {
+      writeFileSync(path.join(cache, n), "");
+      const t = new Date(now - hoursAgo * 3600_000);
+      utimesSync(path.join(cache, n), t, t);
+    }
     await trimSegments(cache, 150, now);
-    expect(readdirSync(cache).sort()).toEqual(["new.mov"]);
+    expect(readdirSync(cache).sort()).toEqual(["live.mov.y.part", "new.mov"]);
   });
 
   it("a cut changed in one shot renders that shot again and takes the other from the cache, the same render", async () => {

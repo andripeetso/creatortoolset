@@ -1,4 +1,7 @@
+import { execFile } from "node:child_process";
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
+import { ffmpegCommand } from "../ffmpeg-runtime";
 import path from "node:path";
 import type { Critique } from "../../contracts/edit-plan";
 import type { Item, Renders, Timeline } from "../../contracts/editor";
@@ -165,6 +168,10 @@ export function piecesOf(shot: Item, cutaways: Item[]): Piece[] {
   return out;
 }
 
+let tool: Promise<string> | null = null;
+/** The encoder's version line: a cached segment another build made is not reused (segcache.ts). */
+const toolVersion = () => (tool ??= promisify(execFile)(ffmpegCommand(), ["-version"]).then((r) => r.stdout.split("\n", 1)[0] ?? "", () => ""));
+
 /**
  * Renders the speaker track V1 with its linked voice from A1, and the B-roll cutaways (V2) laid over it, into `out`
  * (an .mp4). A cutaway shows its own clip's picture and keeps his voice underneath, as the timeline does. `files`:
@@ -181,6 +188,7 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
   // on the person's Mac a shot that did not change comes from the segment cache (segcache.ts)
   const cache = segDir();
   const seen = new Map<string, string>();
+  const version = cache ? await toolVersion() : "";
   try {
     const list: string[] = [];
     // a clip switched off is not there; a hidden B-roll track and a muted voice track neither
@@ -232,7 +240,7 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         ];
         const inputs = [pic?.file, a ? files[a.src] : undefined].filter((f): f is string => !!f);
         const seg = cache
-          ? await cachedSegment(cache, args, inputs, seen, (o) => ffmpeg([...args, "-f", "mov", o]))
+          ? await cachedSegment(cache, args, inputs, seen, (o) => ffmpeg([...args, "-f", "mov", o]), version)
           : path.join(parts, `${String(list.length).padStart(4, "0")}.mov`);
         if (!cache) await ffmpeg([...args, seg]);
         list.push(`file '${seg.replace(/'/g, "'\\''")}'`);

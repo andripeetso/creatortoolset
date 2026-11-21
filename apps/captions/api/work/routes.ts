@@ -220,7 +220,7 @@ workApp.post("/:id/call", async (c) => {
   const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   if (typeof b?.fn !== "string") return c.json({ error: "fn: a name" }, 400);
   try {
-    return c.json((await serveCall(job, b.fn, Array.isArray(b.args) ? b.args : [])) ?? null);
+    return c.json((await spending(job, () => serveCall(job, b.fn as string, Array.isArray(b.args) ? b.args : []))) ?? null);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
