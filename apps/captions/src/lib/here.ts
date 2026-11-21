@@ -65,6 +65,13 @@ async function check(libraries: string[], ids: string[]): Promise<Here> {
   return out;
 }
 
+/** A version's file on this computer for a player (lib/play-here.ts): its original or cached proxy, as pickSource picks it;
+ *  undefined: none here, the server's plays. */
+export async function localOf(library: string, versionId: string): Promise<string | undefined> {
+  const { src } = pickSource((await check([library], [versionId]))[versionId], versionId);
+  return src.startsWith("ctlocal:") ? src : undefined;
+}
+
 /**
  * This computer's answer for each of `ids` in `library` (or in each of several: Review's edit may use clips of more than
  * one), asked again on the Mac app's `mac-places` event (a disk came or went), when the window comes back to the front,

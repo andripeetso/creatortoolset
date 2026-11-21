@@ -1,25 +1,43 @@
-// A Review version plays from its own file on this computer when it is here (the Mac app on the computer that rendered
-// it), else from the server copy. `local` is the version's path where it was made (managers only, api/review.ts); it is
-// the same file the server holds, so nothing plays here that Review wouldn't show this person.
+// Every player's one rule for where a file plays: from this computer when the Mac app has it here, else from the server.
+// `local` is either the file's absolute path on the computer that made it (a Review version's `local`, an AI Editor
+// draft's render), which the Mac app is asked about, or a ctlocal:// URL the Mac app already found here by its own rules
+// (a library version's places answer, lib/here.ts). A path plays here only when the server would serve this person the
+// same file (one byte is asked for), so nothing plays locally that the server keeps from them (Blur faces, say).
 
 import { useEffect, useState } from "react";
 import { localMediaFiles, localMediaUrl, placesState } from "@/lib/local-files";
 import { onDisk, type Exists } from "@/lib/relink";
+import { macPlaces } from "@/lib/thisMac";
 
-/** The src to play: the local file when the Mac app says it is here (an older app: it answers a one-byte read), else `server`. */
-export async function playFrom(server: string, local: string | undefined, said = placesState, exists: Exists = onDisk): Promise<string> {
-  if (!local || !localMediaFiles()) return server;
-  const s = await said([local]);
+/** Whether the server serves `url` to this person: a one-byte read answered, or sent on elsewhere (a signed link). */
+export async function servedTo(url: string): Promise<boolean> {
+  try {
+    const r = await fetch(url, { headers: { Range: "bytes=0-0" }, redirect: "manual" });
+    void r.body?.cancel();
+    return r.ok || r.type === "opaqueredirect";
+  } catch {
+    return false;
+  }
+}
+
+/** The src to play: the Mac app's own URL, or the local path's when the Mac app says it is here (an older app: it answers a
+ *  one-byte read) and the server serves it to this person; else `server`. */
+export async function playFrom(server: string, local: string | undefined, said = placesState, exists: Exists = onDisk, serves = servedTo): Promise<string> {
+  if (!local) return server;
+  if (local.startsWith("ctlocal:")) return local;
+  if (!localMediaFiles()) return server;
+  const [s, ok] = await Promise.all([said([local]), serves(server)]);
+  if (!ok) return server;
   const here = s ? s.states[local] === "here" : await exists(local);
   return here ? localMediaUrl(local) : server;
 }
 
 /**
- * A <video>'s src for a Review version (undefined while the Mac app is asked) and its onError: a local file that fails
- * to load falls back to the server copy. `local` may be looked up first (a chat card asks Review for it).
+ * A <video>'s src (undefined while the Mac app is asked) and its onError: a local file that fails to load falls back to
+ * the server copy. `local` may be looked up first (a chat card asks Review for it). Outside the Mac app: `server` at once.
  */
 export function usePlayFrom(server: string, local: string | undefined | (() => Promise<string | undefined>)) {
-  const ask = !!local && localMediaFiles();
+  const ask = !!local && (localMediaFiles() || macPlaces());
   const [src, setSrc] = useState<string | undefined>(ask ? undefined : server);
   const key = typeof local === "function" ? "lookup" : local;
   useEffect(() => {

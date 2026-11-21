@@ -36,6 +36,8 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { createSession, listSessions, sessionPath, type SessionRow } from "@/lib/workshop";
 import { finalsTiles } from "./FinalsPage";
 import { confirmDialog } from "@/lib/dialogs";
+import { localOf } from "@/lib/here";
+import { usePlayFrom } from "@/lib/play-here";
 
 /**
  * One piece of Finals (/finals/:pieceId): its versions in drag order, the winner (its frame is the cover on the list),
@@ -173,6 +175,8 @@ export function PieceEditor({
   const pick = piece.items.find((i) => i.id === pickId && i.versionId) ?? cover;
   const pickVersion = pick?.versionId ?? null;
   const pickIsVideo = pickVersion ? byVersion.get(pickVersion)?.kind !== "image" : false;
+  // a video this computer has plays from it (lib/play-here.ts): its original or cached proxy, as the library's player
+  const play = usePlayFrom(`/api/library/media/${pickVersion}/play`, pickVersion && pickIsVideo ? () => localOf(libraryId, pickVersion) : undefined);
 
   // Runs the calls one after another; only the last answer (the piece as the server holds it) is kept.
   /** A cover design from the frame the player is on: tall for an upright video, a wide thumbnail for a wide one. */
@@ -338,7 +342,8 @@ export function PieceEditor({
               <video
                 key={pickVersion}
                 ref={player}
-                src={`/api/library/media/${pickVersion}/play`}
+                src={play.src}
+                onError={play.onError}
                 controls
                 playsInline
                 preload="metadata"

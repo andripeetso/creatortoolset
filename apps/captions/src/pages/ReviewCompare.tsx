@@ -3,6 +3,7 @@ import { Pause, Play, SkipBack, SkipForward, Volume2, X } from "lucide-react";
 import { HomeLink } from "@/components/HomeLink";
 import { frameAt, frameTime, timecode, type ReviewVersion } from "@/lib/review";
 import { cn } from "@/lib/utils";
+import { usePlayFrom } from "@/lib/play-here";
 
 type Mode = "side" | "wipe" | "diff";
 const MODES: [Mode, string][] = [
@@ -44,6 +45,9 @@ export function ReviewCompare({
   const a = useRef<HTMLVideoElement>(null);
   const b = useRef<HTMLVideoElement>(null);
   const fps = versions.find((v) => v.n === left)?.fps || 0;
+  // each side plays from this computer when it has the version's file (lib/play-here.ts)
+  const playA = usePlayFrom(media(left), versions.find((v) => v.n === left)?.local);
+  const playB = usePlayFrom(media(right), versions.find((v) => v.n === right)?.local);
 
   // the right player follows the left one's clock
   useEffect(() => {
@@ -166,7 +170,8 @@ export function ReviewCompare({
         <div className={cn("relative min-h-0", stacked && "h-full")}>
           <video
             ref={a}
-            src={media(left)}
+            src={playA.src}
+            onError={playA.onError}
             className="h-full w-full object-contain"
             playsInline
             preload="auto"
@@ -197,7 +202,8 @@ export function ReviewCompare({
         >
           <video
             ref={b}
-            src={media(right)}
+            src={playB.src}
+            onError={playB.onError}
             className="h-full w-full object-contain"
             playsInline
             preload="auto"
