@@ -87,14 +87,17 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         let workspace = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ws" }?.value
         let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(webView.url, workspace), ProxyCache.allowed(page: webView.url)) }
         // the account may be unknown (no places check ran yet) or another one (signed in again in this window): a refused
-        // file asks the page's server for its account once, then is judged again
+        // file in its server's proxy cache asks the page's server for its account once, then is judged again
         let store = webView.configuration.websiteDataStore.httpCookieStore
-        let ask: (() async -> String?)? = webView.url.map { page in {
-            await ProxyCache.allowed(page: page) { @MainActor in
-                let all = await withCheckedContinuation { c in store.getAllCookies { c.resume(returning: $0) } }
-                return Site(base: page, cookies: cookies(for: page, in: all))
+        let ask = webView.url.flatMap { page -> (() async -> String?)? in
+            guard let path = MediaFiles.path(from: url), ProxyCache.holds(path, page: page) else { return nil }
+            return {
+                await ProxyCache.allowed(page: page) { @MainActor in
+                    let all = await withCheckedContinuation { c in store.getAllCookies { c.resume(returning: $0) } }
+                    return Site(base: page, cookies: cookies(for: page, in: all))
+                }
             }
-        } }
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             self.serve(url, method: request.httpMethod, range: request.value(forHTTPHeaderField: "Range"),
                        root: root, granted: granted, cache: cache, ask: ask, task: task)

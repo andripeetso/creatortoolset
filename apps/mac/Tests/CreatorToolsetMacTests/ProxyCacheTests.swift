@@ -187,6 +187,38 @@ final class ProxyCacheTests: XCTestCase {
         return task
     }
 
+    /// A server that answers but can't check now (a restart's 502, a 503, a 429) keeps the account, as one with no
+    /// answer does, so its cached proxies go on playing; a refusal (401) forgets it.
+    func testAServerErrorKeepsTheAccount() async throws {
+        let site = FakeSite()
+        let mine = try proxy(site.url, "alice", "v1")
+        let page = site.url.appendingPathComponent("editor/p1")
+        ProxyCache.remember("alice", for: site.url)
+        for code in [502, 503, 429] {
+            site.answer = { _ in (code, "{}") }
+            let (name, offline) = await ProxyCache.account(Site(base: site.url, cookies: []))
+            XCTAssertEqual(name, "alice", "\(code)")
+            XCTAssertTrue(offline)
+            XCTAssertEqual(MediaFiles.gate(mine, granted: [], roots: [], cache: ProxyCache.allowed(page: page)), .file(mine, type: "video/mp4"))
+        }
+        site.answer = { _ in (401, "{}") }
+        let refused = await ProxyCache.account(Site(base: site.url, cookies: []))
+        XCTAssertNil(refused.name)
+        XCTAssertNil(ProxyCache.allowed(page: page))
+    }
+
+    /// Only a file in the page's server's proxy cache asks for the account: footage that isn't granted is refused at once.
+    func testOnlyAFileInTheProxyCacheAsks() throws {
+        let server = URL(string: "https://studio.example.com")!
+        let page = server.appendingPathComponent("editor/p1")
+        XCTAssertTrue(ProxyCache.holds(try proxy(server, "bob", "v2"), page: page))
+        XCTAssertFalse(ProxyCache.holds(root.appendingPathComponent("footage/a.mp4").path, page: page))
+        XCTAssertFalse(ProxyCache.holds(ProxyCache.root(server: server).path + "-other/bob/v2.mp4", page: page))
+        // another server's cache, and a page that is no server's
+        XCTAssertFalse(ProxyCache.holds(try proxy(URL(string: "https://other.example.com")!, "bob", "v2"), page: page))
+        XCTAssertFalse(ProxyCache.holds(try proxy(server, "bob", "v3"), page: URL(string: "ctlocal://media/x")!))
+    }
+
     func testOnlyAPlainAccountNameIsAFolder() {
         let server = URL(string: "https://studio.example.com")!
         for name in ["", "..", "../bob", "a/b", ".hidden", "tïny"] { XCTAssertNil(ProxyCache.folder(server: server, account: name), name) }
