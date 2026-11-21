@@ -2726,10 +2726,13 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }
-    // an owner's or admin's Approve puts the newest version in Finals (owner, 2026-11-19); a reviewer's only says it is good.
-    // The approval stands whatever Finals answers: the answer goes back with it. Undo leaves the piece in Finals.
+    // an owner's or admin's Approve puts the newest version in Finals (owner, 2026-11-19); a reviewer's only says it is good,
+    // and a pass cut's (`next`) starts the next pass: it is not finished. The approval stands whatever Finals answers: the
+    // answer goes back with it. Undo leaves the piece in Finals.
     const newest = meta.versions.at(-1);   // the one an approval is about
-    const finals = status === "approved" && v.manage && newest ? await versionToFinals(meta, newest) : undefined;
+    const finals = status === "approved" && v.manage && newest && !newest.next
+      ? await versionToFinals(meta, newest).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }))
+      : undefined;
     return c.json({ ...publicAsset(meta, v.manage, v.download), ...(finals ? { finals: "error" in finals ? { error: finals.error } : finals } : {}) });
   });
 }
