@@ -43,7 +43,9 @@ describe("what a timeline file carries of the preview", () => {
       { t: 0.9, v: 0.5 },
       { t: 2, v: 1.6 },
     ]);
-    expect(retime(tl(), shot({ speed: 2, fx: [{ type: "reverse" }] }))).toEqual([{ t: 0, v: 4 }, { t: 2, v: 0 }]);
+    expect(retime(tl(), shot({ speed: 2, fx: [{ type: "reverse" }] }))).toEqual([{ t: 0, v: 4 }, { t: 2, v: 0 }]);    // the editor's Freeze Frame: the whole shot on its in-point; Final Cut carries it, the others say they leave it out
+    expect(retime(tl(), shot({ freeze: true }))).toEqual([{ t: 0, v: 0 }, { t: 2, v: 0 }]);
+    expect(exportGaps(tl([shot({ freeze: true })]))).toEqual({ resolve: ["freeze frames on 1 shot"], premiere: ["freeze frames on 1 shot"] });
   });
 
   it("gaps: per editor, what its file leaves out with how many shots; nothing for a plain cut", () => {

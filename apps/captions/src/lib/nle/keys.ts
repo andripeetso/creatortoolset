@@ -11,7 +11,7 @@ export type KeyAction =
   | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "toolStretch" | "snap" | "linkedSelection"
   | "nudgeBack" | "nudgeBack5" | "nudgeOn" | "nudgeOn5"
   | "frameBack" | "frameOn" | "secondBack" | "secondOn" | "prevEdit" | "nextEdit" | "start" | "end"
-  | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector"
+  | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector" | "findInMediaPool"
   | `lock:V${number}`
   | "clearIn" | "clearOut" | "insertEdit" | "overwriteEdit" | "loop"
   | "addMarker" | "prevMarker" | "nextMarker" | "addDissolve" | "keyboard";
@@ -43,7 +43,7 @@ export const KEYS: Record<string, KeyAction> = {
   ArrowUp: "prevEdit", ArrowDown: "nextEdit", Home: "start", End: "end",
   "=": "zoomIn", "+": "zoomIn", "⇧+": "zoomIn", "⌘=": "zoomIn", "⌘+": "zoomIn", "⌘⇧+": "zoomIn",
   "-": "zoomOut", "⌘-": "zoomOut", "\\": "zoomFit", "⇧Z": "zoomFit",
-  Tab: "mediaPool", "⇧Tab": "inspector",
+  Tab: "mediaPool", "⇧Tab": "inspector", "⌥F": "findInMediaPool",
   ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`⌥⇧${n}`, `lock:V${n}` as const])),
   "⌥I": "clearIn", "⌥O": "clearOut", F9: "insertEdit", F10: "overwriteEdit", "⌘/": "loop",
   M: "addMarker", "⇧ArrowUp": "prevMarker", "⇧ArrowDown": "nextMarker", "⌘T": "addDissolve", "⌘⌥K": "keyboard",
@@ -61,7 +61,7 @@ export const RESOLVE_KEYS: Record<string, KeyAction> = {
   ",": "nudgeBack", "⇧,": "nudgeBack5", ".": "nudgeOn", "⇧.": "nudgeOn5",
   ArrowLeft: "frameBack", ArrowRight: "frameOn", "⇧ArrowLeft": "secondBack", "⇧ArrowRight": "secondOn",
   ArrowUp: "prevEdit", ArrowDown: "nextEdit", Home: "start", End: "end",
-  "⌘=": "zoomIn", "⌘+": "zoomIn", "⌘-": "zoomOut", "⇧Z": "zoomFit",
+  "⌘=": "zoomIn", "⌘+": "zoomIn", "⌘-": "zoomOut", "⇧Z": "zoomFit", "⌥F": "findInMediaPool",
   F9: "insertEdit", F10: "overwriteEdit", "⌘/": "loop",
   M: "addMarker", "⇧ArrowUp": "prevMarker", "⇧ArrowDown": "nextMarker", "⌘T": "addDissolve", "⌘⌥K": "keyboard",
 };

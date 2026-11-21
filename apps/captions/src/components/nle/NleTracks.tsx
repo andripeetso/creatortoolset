@@ -826,7 +826,8 @@ export const NleTracks = memo(function NleTracks({
                     offline={fileOf && it.fx !== "flash" && (!file || file.why) ? file?.why || "Media offline" : null}
                     path={String(tl.sources[it.src]?.path ?? "")} from={from} to={from + (it.len / fps) * (it.speed || 1)}
                     url={fileOf ? file?.url || null : undefined} still={!!file?.frame} drawW={drawW} x0={x0} x1={x1} ctl={ctl}
-                    vol={v ? null : volLine(it, fps, sfps)} volTip={volTip && volTip.k === it._k ? dbText(volTip.db) : null} />
+                    vol={v ? null : volLine(it, fps, sfps)} volTip={volTip && volTip.k === it._k ? dbText(volTip.db) : null}
+                    color={it.color ? MARKER_HEX[it.color] : undefined} />
                 );
               })}
               {t.items.filter((it) => picked.has(it._k!)).flatMap((it) => keyMarks(tl, it._k!).map(({ f, props, ease }, i) => (
@@ -1016,7 +1017,7 @@ const ramp = (side: "left" | "right", px: number) => (
  * waveform, an offline clip dark red with its name (the why on hover). Plain values only, so it is drawn again only when
  * it changes.
  */
-const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl, vol, volTip }: {
+const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl, vol, volTip, color }: {
   k: string; track: string; video: boolean; left: number; width: number; height: number; name: string; length: string; on: boolean; dim: boolean;
   tool: Tool; locked: boolean;
   /** the fades, in px */
@@ -1030,12 +1031,15 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
   ctl: MutableRefObject<Ctl>;
   /** a sound clip's volume line (volLine), null on a video clip; the dB it is being dragged to */
   vol?: string | null; volTip?: string | null;
+  /** its Clip Color (a hex), drawn over its usual look; an offline clip keeps the offline red */
+  color?: string;
 }) {
   const w = Math.max(2, width);
   const bar = w > 24 ? barOf(height) : 0;
   const body = height - 2 - bar;
   const look = offline ? LOOK.offline : video ? LOOK.video : LOOK.sound;
   const fades = w > 24 && !locked && tool !== "blade";
+  const tint = offline ? undefined : color;
   return (
     <div data-clip={k} role="button" aria-pressed={on} aria-label={`${track} ${name}`} title={offline ?? undefined}
       onPointerDown={(e) => ctl.current.down(e, k, track)}
@@ -1043,14 +1047,14 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
       className={// strict containment and content-visibility: a zoom lays out and paints only the clips that show, each on its own
       cn("group absolute top-px bottom-px overflow-hidden rounded-[3px] border text-[10px] leading-4 select-none [contain:strict] [content-visibility:auto]", look.box,
         dim && "opacity-40", tool === "select" ? "cursor-grab" : tool === "trim" ? "cursor-ew-resize" : "")}
-      style={{ left, width: w }}>
+      style={{ left, width: w, ...(tint ? { borderColor: tint, backgroundColor: `${tint}59` } : {}) }} data-color={tint}>
       <div className="pointer-events-none absolute inset-x-0 top-0" style={{ bottom: bar, ...(offline ? OFFLINE_BG : {}) }}>
         {!offline && url !== undefined && w > 8 && <ClipLook path={path} from={from} to={to} video={video} url={url} still={still} w={drawW} x0={x0} x1={x1} height={Math.max(1, body)} />}
         {fadeIn > 0 && ramp("left", Math.min(fadeIn, w))}
         {fadeOut > 0 && ramp("right", Math.min(fadeOut, w))}
       </div>
       {bar > 0 ? (
-        <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1 px-1", look.bar)} style={{ height: bar }}>
+        <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1 px-1", look.bar)} style={{ height: bar, ...(tint ? { backgroundColor: tint } : {}) }}>
           <span className="min-w-0 flex-1 truncate">{name}</span>
           {w > 70 && <span className="shrink-0 font-mono text-[9px] tabular-nums opacity-80">{length}</span>}
         </div>

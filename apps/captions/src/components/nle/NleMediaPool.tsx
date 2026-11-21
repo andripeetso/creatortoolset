@@ -84,13 +84,15 @@ const loadPrefs = (): Prefs => {
   }
 };
 
-export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, onBinDrag, onRelink, onNewText }: {
+export function NleMediaPool({ tl, nameOf, here, bin, reveal, onPick, onOpen, onDrag, onBinDrag, onRelink, onNewText }: {
   tl: NleTimeline;
   nameOf: (src: string) => string;
   /** a source's file here (null: not here) */
   here: (src: string) => NleFile | null;
   /** the page's library, shown as its own bin */
   bin?: ReactNode;
+  /** Find in Media Pool: this source shown picked and scrolled to (a new `n` asks again) */
+  reveal?: { src: string; n: number } | null;
   /** selects the source's clips on the timeline */
   onPick: (src: string) => void;
   /** a click: the source in the viewer */
@@ -135,12 +137,21 @@ export function NleMediaPool({ tl, nameOf, here, bin, onPick, onOpen, onDrag, on
   const clip = (r: PoolRow) => ({
     draggable: !!r.path,
     title: String(r.path ?? r.src),
+    "data-pool-src": r.src,
     onDragStart: (e: DragEvent) => { e.dataTransfer.setData(SOURCE_MIME, r.src); e.dataTransfer.effectAllowed = "copy"; onDrag(r.src); },
     onDragEnd: () => onDrag(null),
     onClick: () => { setPicked(r.src); onOpen(r.src); },
     onContextMenu: (e: MouseEvent) => { e.preventDefault(); setPicked(r.src); setMenu({ x: e.clientX, y: e.clientY, src: r.src }); },
   });
   const pool = showBin !== "library";
+  useEffect(() => {
+    if (!reveal) return;
+    setOpen("timeline");
+    setFind(null);
+    setPicked(reveal.src);
+    // once the bin shows it
+    requestAnimationFrame(() => [...document.querySelectorAll<HTMLElement>("[data-pool-src]")].find((el) => el.dataset.poolSrc === reveal.src)?.scrollIntoView?.({ block: "nearest" }));
+  }, [reveal]);
 
   return (
     <Panel title="Media Pool" className="flex-1 select-none [&_input]:select-text"

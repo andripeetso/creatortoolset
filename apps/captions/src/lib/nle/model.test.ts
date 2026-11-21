@@ -3,7 +3,7 @@ import {
   addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, deleteTrack, roll,
   fadeAt, setFade, setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
   NO_MARKS, clipOfPart, editTracks, loopNext, loopPart, markedPart, setMark, sourceTimeline, type Marks,
-  closeGap, extract, lift, rateStretch, slide, type NleItem, addMarker, markerAt, markersCsv, removeMarker, setMarker,
+  closeGap, extract, lift, rateStretch, slide, type NleItem, addMarker, framesOfTimecode, freezeFrame, longestOf, setDuration, markerAt, markersCsv, removeMarker, setMarker,
 } from "./model";
 import { valueAt } from "./keyframes";
 
@@ -552,5 +552,78 @@ describe("nle model: timeline markers", () => {
   it("exports a CSV: timecode, name, colour, note, duration, quoted where a cell needs it", () => {
     const t = setMarker(addMarker(addMarker(tl(), 3700 * 25 + 3, { name: "End" }), 30, { name: 'Hook, "big"' }), 30, { note: "two\nlines", dur: 50 });
     expect(markersCsv(t)).toBe('Timecode,Name,Colour,Note,Duration\n00:00:01:05,"Hook, ""big""",Blue,"two\nlines",00:00:02:00\n01:01:40:03,End,Blue,,00:00:00:01\n');
+  });
+});
+
+describe("clip menu: duration and freeze frame", () => {
+  // one 3 s shot of a 4 s file with its voice (linked), then a gap, then a second shot
+  const pair = (): NleTimeline =>
+    withKeys({
+      timeline: { fps: 25, name: "Tiny Acrobatics" },
+      sources: { cam: { path: "/m/cam.mp4", fps: 25, dur: 100 } },
+      tracks: {
+        V1: { items: [{ src: "cam", rec: 0, len: 75, in: 0, link: 1 }, { src: "cam", rec: 90, len: 10, in: 0 }] },
+        A1: { items: [{ src: "cam", rec: 0, len: 75, in: 0, link: 1 }] },
+      },
+    } as unknown as NleTimeline);
+
+  it("Change Clip Duration trims the end of a linked picture and voice together, up to the next clip, never on a locked track", () => {
+    const tl = pair();
+    const [v, a] = [key(tl, "V1", 0), key(tl, "A1", 0)];
+    const short = setDuration(tl, [v, a], 50);
+    expect([find(short, v)!.item.len, find(short, a)!.item.len]).toEqual([50, 50]);
+    expect(find(short, v)!.item).toMatchObject({ rec: 0, in: 0 });
+    expect(short.tracks.V1.items[1].rec).toBe(90); // nothing after it moves
+    // longer: the picture stops where the next shot starts, as a drag of its end does
+    expect(find(setDuration(tl, [v], 95), v)!.item.len).toBe(90);
+    expect(find(setDuration(setTrack(tl, "V1", { locked: true }), [v], 50), v)!.item.len).toBe(75);
+  });
+
+  it("the longest a clip can be counts its speed: 50 frames at 200 % use 100 source frames", () => {
+    const tl = pair();
+    const v = key(tl, "V1", 0);
+    expect(longestOf(tl, find(tl, v)!.item)).toBe(100);
+    const fast = setItems(tl, [v], { speed: 2 });
+    expect(longestOf(fast, find(fast, v)!.item)).toBe(50);
+    const late = setItems(tl, [v], { speed: 2, in: 2 });
+    expect(longestOf(late, find(late, v)!.item)).toBe(49);
+  });
+
+  it("reads a length as frames or a timecode, frames last", () => {
+    expect(framesOfTimecode("50", 25)).toBe(50);
+    expect(framesOfTimecode("2:10", 25)).toBe(60);
+    expect(framesOfTimecode("0:01:00:00", 25)).toBe(1500);
+    expect(framesOfTimecode("1:00:00:00", 30)).toBe(108000);
+    expect(framesOfTimecode("1:30", 25)).toBeNull(); // 30 frames at 25 fps
+    // at 29.97 what timecode() writes reads back as the same length
+    for (const f of [1000, 9000, 29, 30]) expect(framesOfTimecode(timecode(f, 29.97), 29.97)).toBe(f);
+    expect(framesOfTimecode("2 s", 25)).toBeNull();
+    expect(framesOfTimecode("", 25)).toBeNull();
+  });
+
+  it("Freeze Frame cuts the V1 clip at the playhead (its voice too) and holds the part after it; nothing off V1 or off the clip", () => {
+    const tl = pair();
+    const [v, a] = [key(tl, "V1", 0), key(tl, "A1", 0)];
+    const held = freezeFrame(tl, [v, a], 30);
+    expect(spans(held, "V1").slice(0, 2)).toEqual([[0, 30, 0], [30, 45, 30]]);
+    expect(held.tracks.V1.items.map((i) => !!i.freeze)).toEqual([false, true, false]);
+    expect(spans(held, "A1")).toEqual([[0, 30, 0], [30, 45, 30]]);
+    // the held part and its voice are linked to each other, apart from the parts before the cut
+    const [vl, vr] = held.tracks.V1.items;
+    const [al, ar] = held.tracks.A1.items;
+    expect([al.link, ar.link]).toEqual([vl.link, vr.link]);
+    expect(vr.link).not.toBe(vl.link);
+    // a held clip runs on past its file's end: its length isn't capped by the source
+    expect(longestOf(held, vr)).toBe(Infinity);
+    expect(find(setDuration(held, [vr._k!], 200), vr._k!)!.item.len).toBe(60); // up to the next shot at 90
+    expect(held.tracks.A1.items.some((i) => i.freeze)).toBe(false);
+    // at its first frame the whole clip is held, no cut
+    expect(freezeFrame(tl, [v], 0).tracks.V1.items.map((i) => !!i.freeze)).toEqual([true, false]);
+    // already held, off the clip, only its voice picked, a locked V1: unchanged
+    expect(freezeFrame(held, [key(held, "V1", 30)], 40)).toBe(held);
+    expect(freezeFrame(tl, [v], 80)).toBe(tl);
+    expect(freezeFrame(tl, [a], 30)).toBe(tl);
+    expect(freezeFrame(setItems(tl, [v], { rev: true }), [v], 30).tracks.V1.items.some((i) => i.freeze)).toBe(false);
+    expect(freezeFrame(setTrack(tl, "V1", { locked: true }), [v], 30).tracks.V1.items.some((i) => i.freeze)).toBe(false);
   });
 });

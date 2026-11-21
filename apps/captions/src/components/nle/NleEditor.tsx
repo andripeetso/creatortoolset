@@ -4,7 +4,7 @@ import { ChevronRight, Gauge, Keyboard, Link2, Loader2, Magnet, MousePointer2, M
 import { freshHist, histChange, histGo, histRedo, histUndo, type Hist } from "@/lib/edit-history";
 import {
   addSource, blade, clipOfPart, editTracks, endOf, find, freeTrack, isVideo, lengthOf, linkTogether,
-  loopNext, loopPart, markedPart, markerAt, markersCsv, markersOf, NO_MARKS, place, removeMarker, setMarker, setTrack, sourceTimeline,
+  loopNext, loopPart, markedPart, markerAt, markersCsv, markersOf, NO_MARKS, place, removeMarker, setItems, setMarker, setTrack, sourceTimeline,
   timecode, toSaved, unlink, withKeys, type Gap, type Marks, type NleItem, type NleSource, type NleTimeline, type PlaceMode,
 } from "@/lib/nle/model";
 import { COMMANDS, runAll, stateView, type NleRun, type NleState } from "@/lib/nle/commands";
@@ -18,18 +18,19 @@ import { chordLabel, chordsOf, commandOfKey } from "@/lib/nle/keys";
 import { NleKeyboard, useKeymap } from "./NleKeyboard";
 import { CAMERA_FILE, readCamera, rangeReader } from "@/lib/nle/camera";
 import { downloadText } from "@/lib/download";
-import { NleMarkerDialog } from "./NleMarkerDialog";
+import { MARKER_HEX, NleMarkerDialog } from "./NleMarkerDialog";
 import { CHAT_STEP, NleInspector } from "./NleInspector";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
 import { NleGate, NleLayout, Panel } from "./NleLayout";
-import { edjVersion, type Edj, type Renders } from "@contracts/editor";
+import { edjVersion, MARKER_COLORS, type Edj, type MarkerColor, type Renders } from "@contracts/editor";
 import { newlyUnrendered, NOT_RENDERED, unrendered } from "@/lib/nle/check";
 import { NleMeter } from "./NleMeter";
 import { NleRendered } from "./NleRendered";
 import { LowerUnderVoiceDialog, NormalizeDialog } from "./NleSound";
 import { SpeedDialog } from "./NleSpeedDialog";
+import { DurationDialog } from "./NleDurationDialog";
 import { soundKeys } from "@/lib/nle/loudness";
 import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
 import { NleViewer, SoundCard, SourceStrip, Timecode } from "./NleViewer";
@@ -265,11 +266,15 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       return false;
     }
   });
-  const [menu, setMenu] = useState<MenuAt | null>(null);
+  // `key`: the clip right-clicked (Find in Media Pool finds its source)
+  const [menu, setMenu] = useState<(MenuAt & { key?: string }) | null>(null);
   const [sound, setSound] = useState<{ normalize: string[] } | { duck: string } | null>(null);
   const [speedOf, setSpeedOf] = useState<string[] | null>(null);
+  const [durationOf, setDurationOf] = useState<string[] | null>(null);
+  // Find in Media Pool: the source the pool shows picked (`n` asks again for the same one)
+  const [reveal, setReveal] = useState<{ src: string; n: number } | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
-  const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
+  const panelKeys = useRef<((p: "media" | "inspector", on?: boolean) => void) | null>(null);
 
   // autosaves: unsaved edits kept in this browser a moment after each change (the live one, rewritten), sealed every
   // 30 s, on leaving the window and on closing the timeline when they changed, so a reload, a crash or the page opened
@@ -747,6 +752,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         case "mediaPool": panelKeys.current?.("media"); break;
         case "inspector": panelKeys.current?.("inspector"); break;
         case "keyboard": setKeysOpen(true); break;
+        case "changeDuration": if (sel.length && !readOnly && !lockedWhy) setDurationOf(sel); break;
+        case "findInMediaPool": findInPool(sel[0]); break;
       }
       e.preventDefault();
     };
@@ -763,8 +770,22 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const newTextRow: MenuRow = ["New Text", "", () => run("newText"), !!readOnly || !!gate, gate ?? undefined];
   const menuRow = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
   const linked = sel.some((k) => find(tl, k)?.item.link !== undefined);
+  const selTracks = [...new Set(sel.flatMap((k) => find(tl, k)?.track ?? []))];
   // a track whose renders can't play a speed change says so, as the Inspector's Speed Change does
-  const speedOff = fieldOff([...new Set(sel.flatMap((k) => find(tl, k)?.track ?? []))], "speed");
+  const speedOff = fieldOff(selTracks, "speed");
+  const lockedWhy = selTracks.some((t) => tl.tracks[t]?.locked) ? "The track is locked" : null;
+  // worked out only while a clip's menu is open: it cuts a copy of the timeline
+  const freezeWhy = menu?.on !== "clip" ? null : lockedWhy ?? fieldOff(["V1"], "freeze") ?? (COMMANDS.freezeFrame.enabled(stateNow()) ? null : "Needs the playhead over a clip on V1");
+  const clipOff = !!readOnly || !!lockedWhy;
+  const disabled = find(tl, sel[0] ?? "")?.item.enabled === false;
+  const enableWhy = lockedWhy ?? fieldOff(selTracks, "enabled");
+  /** Find in Media Pool: the pool opened on the clip's source, picked and scrolled to */
+  const findInPool = (key: string | undefined) => {
+    const src = key && find(tl, key)?.item.src;
+    if (!src) return;
+    panelKeys.current?.("media", true);
+    setReveal({ src, n: Date.now() });
+  };
   const iconBtn = (on: boolean) => cn("inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[11px]", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
   const sep = <span className="mx-1 h-4 w-px shrink-0 bg-zinc-700/70" />;
 
@@ -806,7 +827,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
           </>
         }
         media={
-          <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} onRelink={onRelink} onNewText={readOnly ? undefined : () => run("newText")}
+          <NleMediaPool tl={tl} nameOf={nameOfSrc} here={urlFor} bin={bin} reveal={reveal} onRelink={onRelink} onNewText={readOnly ? undefined : () => run("newText")}
             onPick={(src) => setSelected(Object.values(tl.tracks).flatMap((t) => t.items.filter((i) => i.src === src).map((i) => i._k!)))}
             onOpen={(src) => { const d = dropOfSrc(src); if (d) openSource(d); }}
             onDrag={(src) => note(src ? dropOfSrc(src) : null)} onBinDrag={binDrag} />
@@ -878,7 +899,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit} cached={cachedNow}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
-            onMenu={(at) => setMenu(at)}
+            onMenu={(at, key) => setMenu({ ...at, key })}
             onTrack={(id, patch) => commit(setTrack(tl, id, patch))}
             onLowerUnderVoice={readOnly ? undefined : (duck) => setSound({ duck })}
             onDrop={readOnly ? undefined : dropOn}
@@ -919,10 +940,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
 
       {sound && "normalize" in sound && <NormalizeDialog tl={tl} keys={sound.normalize} onCommit={commit} onClose={() => setSound(null)} />}
       {sound && "duck" in sound && <LowerUnderVoiceDialog tl={tl} track={sound.duck} onCommit={commit} onClose={() => setSound(null)} />}
+      {durationOf && <DurationDialog tl={tl} keys={durationOf} onCommit={(next) => commit(next, "Change Clip Duration")} onClose={() => setDurationOf(null)} />}
       {speedOf && <SpeedDialog tl={tl} keys={speedOf} onCommit={(next) => commit(next, "Change Clip Speed")} onClose={() => setSpeedOf(null)} />}
       {menu && (
         <div className="fixed inset-0 z-50" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
-          <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 300) }}
+          <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: menu.x, top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.on === "clip" ? 520 : 300))) }}
             onPointerDown={(e) => e.stopPropagation()}>
             {menu.on === "clip" && menu.cut && (
               <div className="group/sub relative">
@@ -946,20 +968,40 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               // a catalog original is never drawn into a design: only blurred copies, his own files and designs (canGrab)
               : menu.on === "viewer" ? [["Design on This Frame", "", () => void designOnFrame(), readOnly || !!gate || inSource || !canGrab(shown, Math.round(tln.now() * fps), urlFor), gate ?? undefined] as MenuRow]
               : [
-              ["Cut", kl("cut"), () => run("cut"), false],
+              ["Cut", kl("cut"), () => run("cut"), clipOff, lockedWhy ?? undefined],
               ["Copy", kl("copy"), () => run("copy"), false],
               ["Paste", kl("paste"), () => run("paste"), !clipboard.length],
-              ["Duplicate", kl("duplicate"), () => run("duplicate"), false],
-              ["Delete", kl("delete"), () => run("delete"), false],
-              ["Ripple delete", kl("rippleDelete"), () => run("rippleDelete"), false],
-              [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), !linked && sel.length < 2],
-              ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !!gate || !soundKeys(tl, sel).length, gate ?? undefined],
-              ["Change Clip Speed…", "", () => setSpeedOf(sel), !!readOnly || !!speedOff, speedOff ?? undefined],
+              ["Duplicate", kl("duplicate"), () => run("duplicate"), clipOff, lockedWhy ?? undefined],
+              ["Delete", kl("delete"), () => run("delete"), clipOff, lockedWhy ?? undefined],
+              ["Ripple Delete", kl("rippleDelete"), () => run("rippleDelete"), clipOff, lockedWhy ?? undefined],
+              [disabled ? "Enable Clip" : "Disable Clip", kl("enable"), () => run("enable"), !!readOnly || !!enableWhy, enableWhy ?? undefined],
+              [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), clipOff || (!linked && sel.length < 2), lockedWhy ?? undefined],
+              ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), clipOff || !!gate || !soundKeys(tl, sel).length, lockedWhy ?? gate ?? undefined],
+              ["Change Clip Speed…", "", () => setSpeedOf(sel), clipOff || !!speedOff, lockedWhy ?? speedOff ?? undefined],
+              ["Change Clip Duration…", kl("changeDuration"), () => setDurationOf(sel), clipOff, lockedWhy ?? undefined],
+              ["Freeze Frame", kl("freezeFrame"), () => run("freezeFrame"), !!readOnly || !!freezeWhy, freezeWhy ?? undefined],
+              ["Find in Media Pool", kl("findInMediaPool"), () => findInPool(menu.key ?? sel[0]), false],
             ] as MenuRow[]).map(([l, key, fn, off, why]) => (
               <button key={l} type="button" role="menuitem" disabled={off} title={why} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
                 <span>{l}</span><span className="text-zinc-500">{key}</span>
               </button>
             ))}
+            {menu.on === "clip" && (
+              <div className="group/color relative">
+                <button type="button" role="menuitem" aria-haspopup="menu" disabled={clipOff} title={lockedWhy ?? undefined} className={menuRow}><span>Clip Color</span><ChevronRight className="size-3.5 text-zinc-500" /></button>
+                {!clipOff && (
+                  <div role="menu" aria-label="Clip Color" className="absolute -bottom-1 left-full hidden w-40 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl group-focus-within/color:block group-hover/color:block">
+                    {([...Object.keys(MARKER_COLORS), "None"] as (MarkerColor | "None")[]).map((c) => (
+                      <button key={c} type="button" role="menuitem" className={menuRow} onClick={() => { setMenu(null); commit(setItems(tl, sel, { color: c === "None" ? undefined : c }), "Clip Color"); }}>
+                        <span className="flex items-center gap-2">
+                          <span className="size-2.5 rounded-full border border-zinc-600" style={{ background: c === "None" ? "transparent" : MARKER_HEX[c] }} />{c}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

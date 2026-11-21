@@ -94,7 +94,7 @@ describe("a clip that plays on from the one before it in the same file", () => {
     // a gap on the timeline between them
     expect(continues(tl, it_[4], it_[5])).toBe(false);
     expect(continues(tl, it_[0], { ...it_[1], speed: 2 })).toBe(false);
-    expect(continues(tl, it_[0], { ...it_[1], freeze: 1 } as NleItem)).toBe(false);
+    expect(continues(tl, it_[0], { ...it_[1], freeze: true })).toBe(false);
     const c = chains(tl);
     expect(c.get(keyOf(it_[1]))).toBe(keyOf(it_[0]));
     expect(c.get(keyOf(it_[2]))).toBe(keyOf(it_[2]));
