@@ -151,7 +151,7 @@ enum Editors {
     /// next round: { text, file } or { problem }. Only Resolve Studio takes scripts; the others export a file by hand.
     static func takeBack(_ ask: OpenEditorAsk) async -> [String: Any] {
         guard ask.editor == "resolve-studio", let editor = installed().first(where: { $0.id == ask.editor }) else {
-            return ["problem": "Only DaVinci Resolve Studio hands a timeline back: export it as OTIO, FCPXML or XML and send that file back"]
+            return ["problem": "Only DaVinci Resolve Studio hands a timeline back: export it as OTIO, FCPXML or XML and import it with Download → Import a changed timeline"]
         }
         guard running(editor.app) else { return ["problem": "Open Resolve with the edit's project first"] }
         let file: URL
@@ -171,7 +171,7 @@ enum Editors {
                 return ["problem": why]
             }
         } catch {
-            return ["problem": "Could not read the timeline from Resolve: in Resolve, File → Export → Timeline as OTIO, and send that file back"]
+            return ["problem": "Could not read the timeline from Resolve: in Resolve, File → Export → Timeline as OTIO, and import it with Download → Import a changed timeline"]
         }
     }
 

@@ -376,7 +376,7 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
             ))}
             <DropdownMenuItem disabled={!editable || !d || !!job} onSelect={() => sentBack.current?.click()}
               title="A timeline you changed in Resolve, Premiere or Final Cut, exported as OTIO, FCPXML, XML or EDL: its cuts become the next version">
-              <Upload className="h-3.5 w-3.5" /> Send a timeline back…
+              <Upload className="h-3.5 w-3.5" /> Import a changed timeline…
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
