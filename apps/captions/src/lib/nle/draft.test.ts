@@ -32,6 +32,16 @@ describe("a draft in the editor and back", () => {
     expect(back).toEqual(tl);
   });
 
+  it("a timeline's processing settings stay under timeline across a save and a reopen, a clip's on the clip", () => {
+    const tl = { ...draft(), processing: { voice: { fx: "a", share: 0.6 } } };
+    tl.tracks.A1.items[0] = { ...tl.tracks.A1.items[0]!, processing: { voice: { fx: "b", share: 1 } } };
+    const nle = toNle(tl);
+    expect(nle.timeline.processing).toEqual({ voice: { fx: "a", share: 0.6 } });
+    expect(nle.processing).toBeUndefined();
+    expect(nle.tracks.A1.items[0]!.processing).toEqual({ voice: { fx: "b", share: 1 } });
+    expect(fromNle(toSaved(withKeys(nle)))).toEqual(tl);
+  });
+
   it("zoom: fitted inside the frame there, covering it here, so a wide take's zoom 2 is about 0.63 here", () => {
     const nle = toNle(draft());
     // fitted: 1080 / 1920 wide; covering: 1920 / 1080 tall → the ratio (1080/1920)²

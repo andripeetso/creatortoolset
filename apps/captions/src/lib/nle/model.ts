@@ -52,6 +52,9 @@ export interface NleItem {
   keys?: Partial<Record<KeyProp, Key[]>>;
   /** the transition at the cut before it (trans.ts), kept right after every edit */
   trans?: EdjTrans;
+  /** this clip's own setting of a processing the page offers, by name (processingOf); absent = it follows the timeline's.
+   *  Not `fx`: a planned shot's effects (contracts/editor.ts Item.fx) already ride on that name. */
+  processing?: Record<string, unknown>;
   /** this editor's own handle on the clip while it is open (stripped on save) */
   _k?: string;
   [k: string]: unknown;
@@ -68,7 +71,8 @@ export interface NleTrack {
 }
 
 export interface NleTimeline {
-  timeline: { fps: number; width?: number; height?: number; duration?: number; name?: string; [k: string]: unknown };
+  /** `processing`: the timeline's setting of each processing the page offers ("voice", "face", …), what a clip follows unless it has its own */
+  timeline: { fps: number; width?: number; height?: number; duration?: number; name?: string; processing?: Record<string, unknown>; [k: string]: unknown };
   tracks: Record<string, NleTrack>;
   sources: Record<string, NleSource>;
   /** timeline markers (contracts/editor.ts EdjMarker): a ripple moves them with what is after the edit */
@@ -441,6 +445,37 @@ export function setSpeed(tl: NleTimeline, keys: string[], speed: number): NleTim
     if (i && typeof dur === "number") i.len = Math.max(1, Math.min(i.len, Math.floor((dur - i.in) / rateOf(out, i) + 1e-6)));
   }
   return fixTrans(out);
+}
+
+/** A processing's setting for a clip: its own, else the timeline's (undefined: neither has one). */
+export const processingOf = (tl: NleTimeline, it: NleItem, name: string): unknown => it.processing?.[name] ?? tl.timeline.processing?.[name];
+
+/** `bag` with `name` set to a copy of `v`, or taken off when `v` is undefined; undefined when nothing is left. */
+function withSetting(bag: Record<string, unknown> | undefined, name: string, v: unknown): Record<string, unknown> | undefined {
+  const { [name]: _, ...rest } = bag ?? {};
+  const out = v === undefined ? rest : { ...rest, [name]: clone(v) };
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Clips' own setting of processing `name` set to `v` (a copy each); `undefined` takes it off, so they follow the timeline again. */
+export function setClipProcessing(tl: NleTimeline, keys: string[], name: string, v: unknown): NleTimeline {
+  if (!keys.length || lockedAny(tl, keys)) return tl;
+  const out = clone(tl);
+  for (const k of keys) {
+    const i = find(out, k)?.item;
+    if (!i) continue;
+    // a new object per clip: a split or paste may leave two clips holding one
+    const p = withSetting(i.processing, name, v);
+    if (p) i.processing = p; else delete i.processing;
+  }
+  return out;
+}
+
+/** The timeline's setting of processing `name` (what clips without their own follow); `undefined` takes it off. */
+export function setTimelineProcessing(tl: NleTimeline, name: string, v: unknown): NleTimeline {
+  const { processing, ...t } = tl.timeline;
+  const p = withSetting(processing, name, v);
+  return { ...tl, timeline: p ? { ...t, processing: p } : t };
 }
 
 export const unlink =(tl: NleTimeline, keys: string[]) => setItems(tl, withLinked(tl, keys), { link: undefined });

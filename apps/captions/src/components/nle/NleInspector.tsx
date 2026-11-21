@@ -50,6 +50,36 @@ let lastTab: Tab = "video";
 /** What a page adds at the top of the Audio tab, for the selection's sound clips (`keys`): live while dragged, one undo step when let go. */
 export type NleAudioSlot = { tl: NleTimeline; keys: string[]; onLive: (tl: NleTimeline | null) => void; onCommit: (tl: NleTimeline, label?: string) => void };
 
+/**
+ * A processing a page offers (lib/nle/model.ts processingOf): its setting for the timeline in the Timeline tab, and in
+ * clip tab `tab` "Same as timeline" or "This clip only" for the selected clips it applies to.
+ */
+export type NleProcessing = {
+  /** its key in `timeline.processing` and in a clip's `processing` */
+  name: string;
+  /** the section's title */
+  title: string;
+  tab: "video" | "audio";
+  /** the clips it applies to (every clip of `tab` when absent); no section when none of the selection's do */
+  applies?: (item: NleItem, track: string, tl: NleTimeline) => boolean;
+  /** the value while the timeline has none of its own (what "This clip only" starts a clip from then) */
+  def: unknown;
+  /** the controls for a value; read only: the value shown, no controls */
+  render: (p: NleProcessingView) => ReactNode;
+};
+export type NleProcessingView = {
+  value: unknown;
+  /** the clips' values differ: `value` is the first one's, a change sets them all */
+  mixed: boolean;
+  /** `done` false while dragged (heard and seen at once), true when let go (one undo step) */
+  set: (v: unknown, done: boolean) => void;
+  readOnly: boolean;
+  /** "timeline": the timeline's setting; "clip": the own setting of clips `keys` */
+  scope: "timeline" | "clip";
+  tl: NleTimeline;
+  keys: string[];
+};
+
 export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave, text, audio }: {
   /** the timeline as committed (what a change is made from) */
   tl: NleTimeline;
