@@ -1003,7 +1003,8 @@ function publicAsset(m: Meta, manage: boolean, download = manage || !!m.share?.d
       ...(manage && v.edit ? { edit: v.edit } : {}),
       ...(manage && v.draft ? { draft: v.draft } : {}),
       ...(manage && v.source ? { source: v.source } : {}),
-      ...(manage && v.local && !v.removed ? { local: v.local } : {}),
+      // a later version made at the same path (a voice change renders the same draft again) holds that file now, not this one
+      ...(manage && v.local && !v.removed && !m.versions.some((x) => x.n > v.n && x.local === v.local) ? { local: v.local } : {}),
       ...(v.stems && !v.removed ? { stems: v.stems } : {}),
       ...(v.notBlurred ? { notBlurred: true } : {}),
       ...(v.blurred ? { blurred: true } : {}),

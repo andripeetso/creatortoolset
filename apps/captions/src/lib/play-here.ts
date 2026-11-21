@@ -26,10 +26,9 @@ export async function playFrom(server: string, local: string | undefined, said =
   if (!local) return server;
   if (local.startsWith("ctlocal:")) return local;
   if (!localMediaFiles()) return server;
-  const [s, ok] = await Promise.all([said([local]), serves(server)]);
-  if (!ok) return server;
+  const s = await said([local]);
   const here = s ? s.states[local] === "here" : await exists(local);
-  return here ? localMediaUrl(local) : server;
+  return here && (await serves(server)) ? localMediaUrl(local) : server;
 }
 
 /**
@@ -38,22 +37,23 @@ export async function playFrom(server: string, local: string | undefined, said =
  */
 export function usePlayFrom(server: string, local: string | undefined | (() => Promise<string | undefined>)) {
   const ask = !!local && (localMediaFiles() || macPlaces());
-  const [src, setSrc] = useState<string | undefined>(ask ? undefined : server);
-  const key = typeof local === "function" ? "lookup" : local;
+  const key = `${server}\n${typeof local === "function" ? "lookup" : (local ?? "")}\n${ask}`;
+  // the src kept with the inputs it was picked for, so a new file never starts loading the last one's
+  const [got, setGot] = useState<{ key: string; src: string }>();
   useEffect(() => {
-    if (!ask) return setSrc(server);
+    if (!ask) return;
     let live = true;
-    setSrc(undefined);
     const path = typeof local === "function" ? local().catch(() => undefined) : Promise.resolve(local);
     void path
       .then((p) => playFrom(server, p))
       .catch(() => server)
-      .then((s) => live && setSrc(s));
+      .then((src) => live && setGot({ key, src }));
     return () => {
       live = false;
     };
-    // `local` as a lookup is a new function each render: `key` stands for it
+    // `local` as a lookup is a new function each render: `key` stands for it and `server`
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server, key, ask]);
-  return { src, onError: () => setSrc((s) => (s && s !== server ? server : s)) };
+  }, [key]);
+  const src = !ask ? server : got?.key === key ? got.src : undefined;
+  return { src, onError: () => src && src !== server && setGot({ key, src: server }) };
 }

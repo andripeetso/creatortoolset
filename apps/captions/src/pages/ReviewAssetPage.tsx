@@ -231,7 +231,7 @@ function Review({
   const fps = version.fps;
   const video = useRef<HTMLVideoElement>(null);
   // in the Mac app on the computer that rendered it, the version plays from that file (lib/play-here.ts)
-  const play = usePlayFrom(api.media(version, "play"), version.local);
+  const play = usePlayFrom(api.media(version, "play"), version.status === "ready" ? version.local : undefined);
   const player = useRef<HTMLDivElement>(null);
   const composerBox = useRef<HTMLTextAreaElement>(null);
   const [time, setTime] = useState(0);
@@ -893,6 +893,8 @@ function Review({
                   ref={video}
                   src={play.src}
                   onError={play.onError}
+                  // the Mac app's files are another origin: the colour panel reads this player's frames (its scheme allows it)
+                  crossOrigin={play.src?.startsWith("ctlocal:") ? "anonymous" : undefined}
                   className="h-full w-full"
                   playsInline
                   preload="auto"

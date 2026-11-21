@@ -637,5 +637,10 @@ describe("plug-in data and edit references", () => {
     const shared = await read(app.request(`/s/${token}`));
     expect(shared.asset.versions[0]).not.toHaveProperty("edit");
     expect(shared.asset.versions[0]).not.toHaveProperty("local");   // a path on someone's computer stays private
+    // the same draft rendered again at the same path (a voice change): that file is the new version's now, so only it says so
+    await addVersion(id, { owner: "owner", name: "Draft.mp4", mime: "video/mp4", bytes: 1, local: "/Users/tiny/Shoot/drafts/Main.preview.mp4" }, place);
+    const [v1, v2] = (await read(app.request(`/assets/${id}`))).asset.versions;
+    expect(v1).not.toHaveProperty("local");
+    expect(v2.local).toBe("/Users/tiny/Shoot/drafts/Main.preview.mp4");
   });
 });
