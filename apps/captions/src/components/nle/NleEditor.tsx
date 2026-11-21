@@ -19,7 +19,7 @@ import { NleKeyboard, useKeymap } from "./NleKeyboard";
 import { CAMERA_FILE, readCamera, rangeReader } from "@/lib/nle/camera";
 import { downloadText } from "@/lib/download";
 import { MARKER_HEX, NleMarkerDialog } from "./NleMarkerDialog";
-import { CHAT_STEP, NleInspector } from "./NleInspector";
+import { CHAT_STEP, NleInspector, type NleAudioSlot } from "./NleInspector";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
 import { holdWaves } from "@/lib/waveform";
 import type { NleFile } from "./NlePlayer";
@@ -179,7 +179,7 @@ function useTransport(last: number, fps: number, loop: [number, number] | null) 
 }
 
 
-export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered, cached, bar, foot, side }: {
+export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving, bin, readDrop, control, status, notes, readOnly, onRelink, picker, onChange, captions, renders, rendered, cached, bar, foot, side, audio }: {
   initial: NleTimeline;
   /** a new key opens `initial` afresh (another version); the same key keeps what is being edited */
   resetKey: string;
@@ -219,6 +219,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   foot?: (s: NleFoot) => ReactNode;
   /** beside the chats: a panel beside the viewer (NleLayout viewerBeside: a portrait cut's viewer narrows for it) */
   side?: (s: NleSide) => ReactNode;
+  /** at the top of the inspector's Audio tab: the page's own controls for the selected sound (none when read only) */
+  audio?: (s: NleAudioSlot) => ReactNode;
 }) {
   // beside the chats the viewer takes the room: the side panels hidden until All editing tools, the empty tracks and the
   // rarer tools left out of a smaller timeline (NleLayout `chat`)
@@ -887,7 +889,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         }
         inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} playhead={Math.round(tln.time * fps)}
           transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => setHist((h) => histGo(h, i))}
-          autosaves={autosaves} onAutosave={restore}
+          autosaves={autosaves} onAutosave={restore} audio={readOnly ? undefined : audio}
           text={textSource && !readOnly ? (
             <NleText key={textSrc} source={textSource} scale={renderScale(tl, textSrc!, Number(textSource.w), Number(textSource.h))} reread={reread}
               onDrawn={(s) => redrawn(textSrc!, s)} onOpen={() => { tln.play(false); setDesigning({ id: String(textSource.design), src: textSrc! }); }} />

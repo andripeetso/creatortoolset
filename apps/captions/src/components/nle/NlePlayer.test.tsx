@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { withKeys, type NleTimeline } from "@/lib/nle/model";
 import { NleClock, nleAudio } from "@/lib/nle/audio";
-import { NlePlayer, whyNot, type NleFile } from "./NlePlayer";
+import { NlePlayer, playedPieces, whyNot, type NleFile } from "./NlePlayer";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -140,6 +140,21 @@ describe("the sound of a clip from a video file", () => {
     expect(sources).toContainEqual(["AUDIO", "/tiny/IMG_0001.MOV"]);
     expect(routed).toHaveLength(1);
     act(() => root.unmount());
+  });
+  it("a blend of two files of one recording plays both, each at its share of the clip's gain", () => {
+    const voice = withKeys({
+      timeline: { fps: 25, width: 1080, height: 1920 },
+      sources: { vo: { fps: 25 } },
+      tracks: { A1: { items: [{ src: "vo", rec: 0, len: 50, in: 0, gain_db: 6 }] } },
+    } as unknown as NleTimeline);
+    const g = 10 ** (6 / 20);
+    const [a, b, ...rest] = playedPieces(voice, () => ({ url: "/tiny/VO.original.flac", mix: { url: "/tiny/VO.clean.flac", share: 0.25 } }));
+    expect(rest).toEqual([]);
+    expect([a.url, b.url]).toEqual(["/tiny/VO.original.flac", "/tiny/VO.clean.flac"]);
+    expect([a.gain, b.gain].map((x) => Math.round(x * 1000))).toEqual([g * 0.75, g * 0.25].map((x) => Math.round(x * 1000)));
+    expect([a.at, a.offset, a.dur]).toEqual([b.at, b.offset, b.dur]);   // laid together, sample for sample
+    expect(a.key).not.toBe(b.key);
+    expect(playedPieces(voice, () => ({ url: "/tiny/VO.original.flac" })).map((p) => p.gain)).toEqual([g]);
   });
 });
 
