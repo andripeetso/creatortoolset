@@ -4,11 +4,24 @@ import AppKit
 import Sparkle
 import SwiftUI
 
+/// Sparkle opens its "You're up to date" and error alerts modal from inside a main-queue block, and no other main-queue
+/// block runs until they close: dictation stayed on Listening, its key presses held back. They open from the run loop.
+final class UpdateDriver: SPUStandardUserDriver {
+    override func showUpdateNotFoundWithError(_ error: any Error, acknowledgement: @escaping () -> Void) {
+        RunLoop.main.perform { MainActor.assumeIsolated { super.showUpdateNotFoundWithError(error, acknowledgement: acknowledgement) } }
+    }
+
+    override func showUpdaterError(_ error: any Error, acknowledgement: @escaping () -> Void) {
+        RunLoop.main.perform { MainActor.assumeIsolated { super.showUpdaterError(error, acknowledgement: acknowledgement) } }
+    }
+}
+
 /// A check at launch (a restart onto an update may already be one behind) and on coming back to the app after 10
 /// minutes, besides Sparkle's hourly one. A check does nothing while an update is held: the next one is looked for
 /// after it installs.
 @MainActor func watchForUpdates(_ updater: SPUUpdater) {
     guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return }
+    do { try updater.start() } catch { AppLog.write("updates: \(error.localizedDescription)"); return }
     UpdateWhenIdle.shared.updater = updater
     updater.checkForUpdatesInBackground()
     var last = Date()
