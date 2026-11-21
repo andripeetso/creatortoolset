@@ -494,11 +494,17 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       const k = Object.keys(t.sources).find((x) => t.sources[x].pending === id);
       return k ? { ...t, sources: { ...t.sources, [k]: made } } : t;
     };
+    const now = latest.current.hist.now;
+    if (one(now) !== now) landed("A new text is drawn");
     setHist((h) => ({ ...h, past: h.past.map(one), now: one(h.now), future: h.future.map(one) }));
   };
   /** A text clip's source drawn again (a new PNG): one step. */
   // the text panel is hidden while a try is on, so only a redraw already on its way lands during one
-  const redrawn = (src: string, made: NleSource) => (landed("The text is drawn again"), setHist((h) => histChange(h, (t) => (t.sources[src]?.design === made.design ? { ...t, sources: { ...t.sources, [src]: made } } : t), "Text")));
+  const redrawn = (src: string, made: NleSource) => {
+    const drawn = (t: NleTimeline) => (t.sources[src]?.design === made.design ? { ...t, sources: { ...t.sources, [src]: made } } : t);
+    if (drawn(latest.current.hist.now) !== latest.current.hist.now) landed("The text is drawn again");
+    setHist((h) => histChange(h, drawn, "Text"));
+  };
 
   // Design full screen over the editor (its keys are its own while it is open): a text clip's design, or a frame of the
   // video to design over, laid at frame `at` once it is done
@@ -538,7 +544,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     }
   };
 
-  const urlFor = useCallback((src: string, clip?: string) => urlOf(src, shown, clip), [urlOf, shown]);
+  // a file only the timeline under a try has (the media pool lists them) is found on that one
+  const urlFor = useCallback((src: string, clip?: string) => urlOf(src, shown.sources[src] ? shown : tl, clip), [urlOf, shown, tl]);
   const srcUrl = useCallback((k: string, clip?: string) => (srcTl ? urlOf(k, srcTl, clip) : null), [urlOf, srcTl]);
   const nameOfSrc = useCallback((src: string) => isDesign(shown.sources[src]) ? "Text" : String(shown.sources[src]?.path ?? shown.sources[src]?.name ?? src).split("/").pop()!.replace(/\.[^.]+$/, "").replace(/[_-]?%0\d+d/, ""), [shown]);
   const nameOf = useCallback((it: NleItem) => (typeof it.name === "string" && it.name) || (typeof it.line === "string" && it.line ? `${it.line} · ${nameOfSrc(it.src)}` : nameOfSrc(it.src)), [nameOfSrc]);
@@ -570,11 +577,19 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const lookCamera = (src: string, path: string, at: NleTimeline) => {
     const f = urlOf(src, at);
     if (!f?.url || f.frame || f.why || !CAMERA_FILE.test(path) || at.sources[src]?.camera) return;
-    void readCamera(rangeReader(f.url)).then((camera) => camera && setHist((h) => {
-      const x = h.now.sources[src];
-      const now = { ...h.now, sources: { ...h.now.sources, [src]: { ...x, camera } } };
-      return x?.path === path && !x.camera && !beyond(now) ? { ...h, now } : h;
-    }));
+    void readCamera(rangeReader(f.url)).then((camera) => {
+      if (!camera) return;
+      const read = (t: NleTimeline) => {
+        const x = t.sources[src];
+        const now = { ...t, sources: { ...t.sources, [src]: { ...x, camera } } };
+        return x?.path === path && !x.camera && !beyond(now) ? now : t;
+      };
+      if (read(latest.current.hist.now) !== latest.current.hist.now) landed("The camera is read");
+      setHist((h) => {
+        const now = read(h.now);
+        return now === h.now ? h : { ...h, now };
+      });
+    });
   };
   // a drop with the marks its file has in the source viewer: their part only
   const marked = (d: NleDrop): NleDrop => (d.from !== undefined || d.to !== undefined ? d : { ...d, ...markedPart(srcMarks[d.path], sfpsOf(d), d.seconds) });

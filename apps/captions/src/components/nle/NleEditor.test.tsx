@@ -35,13 +35,13 @@ vi.mock("@/lib/sync", async (orig) => ({
   onTopic: (topic: string, fn: () => void) => (bridge.topics.set(topic, fn), () => bridge.topics.delete(topic)),
 }));
 // Design over the editor, and a text clip's design and PNG, stand-ins: what reaches them is what is checked
-const designs = vi.hoisted(() => ({ made: [] as string[], grabbed: 0 }));
+const designs = vi.hoisted(() => ({ made: [] as string[], grabbed: 0, hold: null as Promise<void> | null }));
 vi.mock("@/pages/DesignPage", () => ({
   DesignEditor: ({ onDone }: { onDone: () => void }) => <div role="dialog" aria-label="Design"><button type="button" onClick={onDone}>Done</button></div>,
 }));
 vi.mock("@/lib/nle/text-design", async (orig) => ({
   ...(await orig<typeof import("@/lib/nle/text-design")>()),
-  makeText: async (words: string, w: number, h: number) => (designs.made.push(words), { kind: "design", design: "d1", frame: "p1", path: "/data/designs/u/d1/renders/0123456789abcdef0123.png", w, h }),
+  makeText: async (words: string, w: number, h: number) => (await designs.hold, designs.made.push(words), { kind: "design", design: "d1", frame: "p1", path: "/data/designs/u/d1/renders/0123456789abcdef0123.png", w, h }),
   grabFrame: async () => (designs.grabbed++, new File(["x"], "frame.jpg", { type: "image/jpeg" })),
   grabDesign: async () => ({ id: "d9", pages: [{ id: "p1", layers: [] }], pictures: [] }),
 }));
@@ -451,10 +451,57 @@ describe("the side panel beside the viewer (chat mode)", () => {
     act(() => s!.preview(two, "Use take 3"));
     expect(panel()).toBeNull();
     toasts.length = 0;
+    act(() => drawn({ ...card, design: "d2", path: "/data/designs/u/d2/renders/b.png" })); // another design's: changes nothing
+    expect(s!.trying).toBe(true);
+    expect(toasts).toEqual([]);
     act(() => drawn({ ...card, path: "/data/designs/u/d1/renders/b.png" }));
     expect(s!.trying).toBe(false);
     expect(p.now().sources.t1.path).toBe("/data/designs/u/d1/renders/b.png");
     expect(toasts).toEqual(["The text is drawn again: the take you were trying is dropped"]);
+    p.done();
+  });
+
+  it("a new text's picture landing after a try started drops it, saying so", async () => {
+    let open = () => {};
+    designs.hold = new Promise<void>((r) => (open = r));
+    const pending = { kind: "design", pending: "new-text", words: "Hi", w: 1080, h: 1920 };
+    const texts = withKeys({ ...tl, sources: { ...tl.sources, t1: pending }, tracks: { ...tl.tracks, V2: { items: [{ src: "t1", rec: 0, len: 75, in: 0 }] } } } as unknown as NleTimeline);
+    useChatMode.setState({ on: true, shown: true });
+    let s: NleSide | null = null;
+    const p = await mount(texts, { side: (x) => ((s = x), null) });
+    act(() => s!.preview(two, "Use take 3"));
+    toasts.length = 0;
+    await act(async () => open());
+    await flush();
+    designs.hold = null;
+    expect(s!.trying).toBe(false);
+    expect(p.now().sources.t1.path).toMatch(/\.png$/);
+    expect(toasts).toEqual(["A new text is drawn: the take you were trying is dropped"]);
+    p.done();
+  });
+
+  it("a dropped clip's camera read landing after a try started drops it, saying so", async () => {
+    const file = new Uint8Array([0, 0, 0, 16, ...new TextEncoder().encode("uuid"), 0, 0, 0, 0, 0, 0, 0, 0,
+      ...((x: Uint8Array) => [0, 0, (x.length + 8) >> 8, (x.length + 8) & 255, ...new TextEncoder().encode("uuid"), ...x])(new TextEncoder().encode(
+        '<AcquisitionRecord><Group name="CameraUnitMetadataSet"><Item name="CaptureGammaEquation" value="s-log3-cine"/><Item name="CaptureColorPrimaries" value="s-gamut3-cine"/></Group></AcquisitionRecord>'))]);
+    let open = () => {};
+    const gate = new Promise<void>((r) => (open = r));
+    vi.stubGlobal("fetch", vi.fn(async (_u: unknown, init?: RequestInit) => {
+      await gate;
+      const [a, b] = String((init?.headers as Record<string, string>).Range).slice(6).split("-").map(Number);
+      return a >= file.length ? new Response(null, { status: 416 }) : new Response(file.slice(a, b + 1), { status: 206 });
+    }));
+    const control = { current: null as NleControl | null };
+    const { p, s } = await sideOf({ control, urlOf: (src, t) => ({ url: `ctlocal://media${t.sources[src].path}` }) });
+    await act(async () => control.current!.put({ path: "/m/slog.mp4", name: "slog", seconds: 2, fps: 25 }));
+    act(() => s().preview(two, "Use take 3"));
+    toasts.length = 0;
+    await act(async () => open());
+    for (let i = 0; i < 5; i++) await flush();
+    expect(s().trying).toBe(false);
+    expect(Object.values(p.now().sources).find((x) => x.path === "/m/slog.mp4")!.camera).toMatchObject({ curve: "slog3" });
+    expect(toasts).toEqual(["The camera is read: the take you were trying is dropped"]);
+    vi.unstubAllGlobals();
     p.done();
   });
 
