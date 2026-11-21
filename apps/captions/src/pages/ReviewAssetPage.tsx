@@ -1041,7 +1041,8 @@ function Review({
             <ReviewEdits {...slotCtx} {...bindSlot(REVIEW_TIMELINE_ID)} hooks={timelineHooks} pin={timelinePin} faceAt={faceAt} />
           )}
 
-          {version.stems && version.status === "ready" && !version.removed && (
+          {/* no enhanced voice in the set (none is made before the finish): no lone Off button. A set from before `fx` offers its one */}
+          {version.stems && version.stems.fx?.length !== 0 && version.status === "ready" && !version.removed && (
             <VoiceMix
               key={`${version.n}-${version.createdAt}`}
               video={video}
