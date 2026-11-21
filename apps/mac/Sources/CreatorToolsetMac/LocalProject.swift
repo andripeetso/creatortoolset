@@ -123,7 +123,9 @@ struct LocalProject {
 
     var listing: [String: Any] {
         ["id": id, "name": name, "createdAt": Int(createdAt.timeIntervalSince1970 * 1000), "durationMs": durationMs,
-         "width": width, "height": height, "camera": camera]
+         "width": width, "height": height, "camera": camera,
+         // where its files are, so the page can add them to a library that reads files in place (Send to Editor)
+         "screenPath": screenURL.path, "cameraPath": camera ? cameraURL.path : NSNull()]
     }
 
     private func writeMeta() throws {

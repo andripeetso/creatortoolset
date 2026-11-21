@@ -41,7 +41,8 @@ export type EditorAction = {
   primary?: boolean;
   /** asked before the video is made (`name` with no extension); false stops there */
   before?: (name: string) => Promise<boolean>;
-  run: (out: { blob: Blob; name: string }, progress: (step: string, pct: number) => void) => Promise<void>;
+  /** `signal`: the person pressed Stop; nothing should go on after it */
+  run: (out: { blob: Blob; name: string }, progress: (step: string, pct: number) => void, signal: AbortSignal) => Promise<void>;
 };
 
 const SIZE_KEY = "screen-editor-size";
@@ -448,7 +449,7 @@ export function ScreenRecordingEditor({
       }
       await a.run({ blob, name }, (step, pct) => {
         if (!ctl.signal.aborted) setMaking({ step, pct: Math.round(pct) });
-      });
+      }, ctl.signal);
     } catch (e) {
       if (!ctl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {

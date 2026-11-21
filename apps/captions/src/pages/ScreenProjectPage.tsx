@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScreenRecordingEditor, type EditorAction } from "@/components/ScreenRecordingEditor";
-import { askSavePlace, canRecordScreen, tellRecorder, throwAwayRecording, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
+import { askSavePlace, canAskSavePlace, canRecordScreen, savedOnMac, tellRecorder, throwAwayRecording, useLocalRecordings, type ShareDest } from "@/lib/mac-record";
 import { uploadReviewFile } from "@/lib/review";
 import { canUse, useMe } from "@/lib/auth";
 import { alertDialog } from "@/lib/dialogs";
@@ -91,9 +91,10 @@ export default function ScreenProjectPage() {
   };
   /**
    * Files the videos in the library, each as its own clip in the AI Editor's footage folder, then New edit opens with
-   * them picked. `onPct`: how far the upload is (0–100).
+   * them picked. `onPct`: how far the upload is (0–100). A part's `path` (where it is on this Mac) lets a library that
+   * reads files in place add it; without one such a library refuses it.
    */
-  const toEditorWith = async (parts: { blob: Blob; name: string }[], onPct: (pct: number) => void) => {
+  const toEditorWith = async (parts: { blob: Blob; name: string; path?: string }[], onPct: (pct: number) => void, signal?: AbortSignal) => {
     const total = parts.reduce((n, p) => n + p.blob.size, 0) || 1;
     const target = await footageTarget();
     const pick: Picked[] = [];
@@ -101,7 +102,7 @@ export default function ScreenProjectPage() {
     for (const p of parts) {
       const file = new File([p.blob], p.name, { type: "video/mp4" });
       const onMac = await macIndexOnly(target.libraryId);
-      const up = await uploadFile(target.libraryId, file, (sent) => onPct(Math.round(((done + sent) / total) * 100)), target.collectionId, undefined, { onMac });
+      const up = await uploadFile(target.libraryId, file, (sent) => onPct(Math.round(((done + sent) / total) * 100)), target.collectionId, p.path, { onMac, signal });
       const assetId = up.assetId ?? up.duplicateOf;
       if (!assetId) throw new Error(`${p.name} was not added to the Media Library`);
       await changeFolderItems(target.libraryId, target.collectionId, [assetId], true);
@@ -109,6 +110,7 @@ export default function ScreenProjectPage() {
       pick.push({ versionId: asset.versionId, title: asset.title });
       done += p.blob.size;
     }
+    signal?.throwIfAborted();   // Stop while it was filed: the person stays here
     navigate(`/editor?new=1&name=${encodeURIComponent(rec?.name ?? "")}`, { state: { pick } });
   };
   /** The menu's Send to Editor: the recording as it was made, the screen (with the voice) and the camera as two clips. */
@@ -117,14 +119,49 @@ export default function ScreenProjectPage() {
     setToEditor(0);
     try {
       const read = (blob: Blob | undefined, url: string) => (blob ? Promise.resolve(blob) : fetch(url).then((r) => r.blob()));
-      const parts = [{ blob: await read(source.file, source.url), name: `${rec.name} (screen).mp4` }];
-      if (source.cameraUrl) parts.push({ blob: await read(source.cameraFile, source.cameraUrl), name: `${rec.name} (camera).mp4` });
+      const parts = [{ blob: await read(source.file, source.url), name: `${rec.name} (screen).mp4`, path: rec.screenPath }];
+      if (source.cameraUrl) parts.push({ blob: await read(source.cameraFile, source.cameraUrl), name: `${rec.name} (camera).mp4`, path: rec.cameraPath ?? undefined });
       await toEditorWith(parts, setToEditor);
     } catch (e) {
       await alertDialog({ title: "Could not send to the Editor", body: e instanceof Error ? e.message : String(e) });
     } finally {
       setToEditor(null);
     }
+  };
+
+  /**
+   * The Export dialog's Send to Editor: the video made with the chosen look and settings. A library that reads files in
+   * place (uploads off) gets it from a file: where it is saved is asked first, and it is added from there.
+   */
+  const editorWay = (): EditorAction => {
+    let saveFirst = false;
+    return {
+      label: "Send to Editor",
+      title: "Makes the video with this look and starts a new AI Editor project with it",
+      before: async (name) => {
+        try {
+          saveFirst = await macIndexOnly((await footageTarget()).libraryId);
+        } catch (e) {
+          await alertDialog({ title: "Could not send to the Editor", body: e instanceof Error ? e.message : String(e) });
+          return false;
+        }
+        if (!saveFirst) return true;
+        if (canAskSavePlace()) return askSavePlace(`${name}.mp4`, false);
+        await alertDialog({ title: "Could not send to the Editor", body: "This library adds files where they are on this Mac. Update the app to send a video made here, or Export it and add the file in the Media Library." });
+        return false;
+      },
+      run: async ({ blob, name }, progress, signal) => {
+        const fileName = `${name}.mp4`;
+        let path: string | undefined;
+        if (saveFirst) {
+          const saved = savedOnMac(fileName, signal);   // listening before the download starts
+          progress("Saving", 0);
+          download(blob, fileName);
+          path = await saved;
+        }
+        await toEditorWith([{ blob, name: fileName, path }], (pct) => progress("Sending to the Editor", pct), signal);
+      },
+    };
   };
 
   const actions: EditorAction[] = [
@@ -135,19 +172,13 @@ export default function ScreenProjectPage() {
       before: (name) => askSavePlace(`${name}.mp4`),
       run: async ({ blob, name }) => download(blob, `${name}.mp4`),
     },
-    ...(canUse(me, "editor")
-      ? [{
-          label: "Send to Editor",
-          title: "Makes the video with this look and starts a new AI Editor project with it",
-          run: async ({ blob, name }: { blob: Blob; name: string }, progress: (step: string, pct: number) => void) =>
-            toEditorWith([{ blob, name: `${name}.mp4` }], (pct) => progress("Sending to the Editor", pct)),
-        }]
-      : []),
+    ...(canUse(me, "editor") ? [editorWay()] : []),
     {
       label: "Upload to Review",
       title: "Makes the video with this look and uploads it to Review as a new video",
-      run: async ({ blob, name }, progress) => {
+      run: async ({ blob, name }, progress, signal) => {
         const asset = await uploadReviewFile(new File([blob], `${name}.mp4`, { type: "video/mp4" }), (pct) => progress("Uploading", pct));
+        signal.throwIfAborted();   // shortcut: Stop does not stop this upload itself (uploadReviewFile takes no signal), only the move to Review
         navigate(`/review/${asset.id}`);
       },
     },

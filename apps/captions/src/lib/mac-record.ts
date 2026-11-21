@@ -36,15 +36,41 @@ export function transparentVideoMade(onProgress: (part: number) => void, signal:
  * Asks the app where an export of this file name goes, before it is made: the download of that name is then written
  * there. False when the person cancels. An app from before `save-as:` (no <html data-mac-save-as>) puts it in Downloads.
  */
-export function askSavePlace(fileName: string): Promise<boolean> {
-  if (document.documentElement.dataset.macSaveAs !== "1") return Promise.resolve(true);
+export function askSavePlace(fileName: string, reveal = true): Promise<boolean> {
+  if (!canAskSavePlace()) return Promise.resolve(true);
   return new Promise((done) => {
     const on = (e: Event) => {
       window.removeEventListener("mac-save-as", on);
       done(!!(e as CustomEvent<{ ok: boolean }>).detail?.ok);
     };
     window.addEventListener("mac-save-as", on);
-    tellRecorder(`save-as:${fileName}`);
+    tellRecorder(`${reveal ? "save-as" : "save-for"}:${fileName}`);
+  });
+}
+
+/** The app asks where an export goes, and says where it wrote it (`save-as:`, `mac-saved`). */
+export const canAskSavePlace = () => document.documentElement.dataset.macSaveAs === "1";
+
+/**
+ * Where the app wrote the export asked for with askSavePlace (`fileName` as asked), once it is there. Listen before the
+ * download starts. Rejects when the download failed or `signal` stops it.
+ */
+export function savedOnMac(fileName: string, signal: AbortSignal): Promise<string> {
+  return new Promise((done, fail) => {
+    const stop = () => {
+      window.removeEventListener("mac-saved", on);
+      fail(signal.reason);
+    };
+    const on = (e: Event) => {
+      const { name, path } = (e as CustomEvent<{ name: string; path: string | null }>).detail ?? {};
+      if (name !== fileName) return;
+      window.removeEventListener("mac-saved", on);
+      signal.removeEventListener("abort", stop);
+      if (path) done(path);
+      else fail(new Error("The video could not be saved"));
+    };
+    window.addEventListener("mac-saved", on);
+    signal.addEventListener("abort", stop, { once: true });
   });
 }
 
@@ -65,7 +91,8 @@ export type RecorderMessage =
   | `streams:${string}`
   | `delete:${string}`
   | `trash:${string}`
-  | `save-as:${string}`;
+  | `save-as:${string}`
+  | `save-for:${string}`;
 
 /** Posts a raw message to the app (no-op outside it). */
 export function postToApp(message: string) {
@@ -123,6 +150,9 @@ export type LocalRecording = {
   width: number;
   height: number;
   camera: boolean;
+  /** where its screen and camera files are on this Mac (an app from 11-20 on) */
+  screenPath?: string;
+  cameraPath?: string | null;
 };
 
 /** The local recordings, newest first (null until the app answers). Refreshed after every stop and delete. */
