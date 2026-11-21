@@ -607,7 +607,11 @@ final class Places: @unchecked Sendable {
         let url = had
             ?? "\(parts.fs)://\(parts.host.contains(".") ? parts.host : parts.host + ".local")/\(parts.share.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? parts.share)"
         if had == nil {
-            guard await MainActor.run(body: { confirm(server, url) }) else { return ["problem": "Not connected"] }
+            // asked from the run loop, not a main-queue job: its modal would hold dictation back (UpdateDriver)
+            let yes = await withCheckedContinuation { c in
+                RunLoop.main.perform { MainActor.assumeIsolated { c.resume(returning: confirm(server, url)) } }
+            }
+            guard yes else { return ["problem": "Not connected"] }
         }
         let status = await withCheckedContinuation { c in mountShare(url, true) { c.resume(returning: $0) } }
         if status == 0 {

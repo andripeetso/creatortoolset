@@ -21,7 +21,19 @@ final class UpdateDriver: SPUStandardUserDriver {
 /// after it installs.
 @MainActor func watchForUpdates(_ updater: SPUUpdater) {
     guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return }
-    do { try updater.start() } catch { AppLog.write("updates: \(error.localizedDescription)"); return }
+    do { try updater.start() } catch {
+        AppLog.write("updates: \(error.localizedDescription)")
+        // Check for Updates… would do nothing: say why, as Sparkle's own controller did
+        RunLoop.main.perform {
+            MainActor.assumeIsolated {
+                let a = NSAlert()
+                a.messageText = "Unable to Check for Updates"
+                a.informativeText = error.localizedDescription
+                a.runModal()
+            }
+        }
+        return
+    }
     UpdateWhenIdle.shared.updater = updater
     updater.checkForUpdatesInBackground()
     var last = Date()
