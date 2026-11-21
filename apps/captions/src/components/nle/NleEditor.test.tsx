@@ -323,16 +323,31 @@ describe("the side panel beside the viewer (chat mode)", () => {
     p.done();
   });
 
-  it("an undone try stays gone on a redo, and Save works again", async () => {
+  it("with a try on, undo, redo and History take back only the try, never the edit under it; Save works again", async () => {
     const onSave = vi.fn(async () => {});
     let last: NleFoot | null = null;
     const { p, s } = await sideOf({ onSave, foot: (f) => ((last = f), null) });
-    act(() => s().commit(setItems(s().tl, [s().tl.tracks.V1.items[0]._k!], { in: 50 }), "Trim"));
+    const trim = () => act(() => s().commit(setItems(s().tl, [s().tl.tracks.V1.items[0]._k!], { in: 50 }), "Trim"));
+    const inNow = () => p.now().tracks.V1.items[0].in;
+    trim();
     act(() => s().preview(two, "Use take 3"));
     await key("z", { metaKey: true, code: "KeyZ" });
     expect(s().trying).toBe(false);
+    expect(inNow()).toBe(50); // the trim stays
+    await key("z", { metaKey: true, code: "KeyZ" });
+    expect(inNow()).toBe(0);
+    // a redo with a try on drops the try and redoes nothing
+    act(() => s().preview(two, "Use take 3"));
     await key("z", { metaKey: true, shiftKey: true, code: "KeyZ" });
     expect(s().trying).toBe(false);
+    expect(inNow()).toBe(0);
+    await key("z", { metaKey: true, shiftKey: true, code: "KeyZ" });
+    expect(inNow()).toBe(50);
+    // the Undo button the same
+    act(() => s().preview(two, "Use take 3"));
+    act(() => (p.host.querySelector('button[aria-label="Undo"]') as HTMLButtonElement).click());
+    expect(s().trying).toBe(false);
+    expect(inNow()).toBe(50);
     expect(clips(p.host)).toBe(1);
     let ok = false;
     await act(async () => void (ok = await last!.save()));
@@ -345,8 +360,10 @@ describe("the side panel beside the viewer (chat mode)", () => {
     const { p, s } = await sideOf();
     act(() => s().seek(40));
     act(() => s().preview(two, "Use take 3"));
+    toasts.length = 0;
     await key("w", { code: "KeyW" });
     act(() => s().commit(setItems(s().tl, [s().tl.tracks.V1.items[0]._k!], { in: 50 }), "Trim"));
+    expect(toasts).toEqual(["Enter keeps the take you're trying, Esc drops it", "Enter keeps the take you're trying, Esc drops it"]);
     bridge.replies.length = 0;
     await p.deliver(ask({ id: "during-try", commands: [{ id: "setLength", params: { seconds: 1 } }] }));
     expect(bridge.replies[0].error).toContain("A take is being tried");
@@ -359,17 +376,50 @@ describe("the side panel beside the viewer (chat mode)", () => {
     p.done();
   });
 
-  it("Enter on a focused button and Esc in a menu are theirs, not the try's", async () => {
+  it("Enter on a focused button and Esc in a menu or list are theirs, not the try's; a try started from a button lets go of its focus", async () => {
     const { p, s } = await sideOf();
+    const take = p.host.appendChild(document.createElement("button"));
+    take.focus();
+    expect(document.activeElement).toBe(take);
     act(() => s().preview(two, "Use take 3"));
+    expect(document.activeElement).not.toBe(take);
     const button = p.host.appendChild(document.createElement("button"));
     await act(() => void button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true })));
-    const menu = p.host.appendChild(document.createElement("div"));
-    menu.setAttribute("role", "menu");
-    await act(() => void menu.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })));
+    for (const role of ["menu", "listbox"]) {
+      const el = p.host.appendChild(document.createElement("div"));
+      el.setAttribute("role", role);
+      await act(() => void el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })));
+      el.remove();
+    }
     expect(s().trying).toBe(true);
+    take.remove();
     button.remove();
-    menu.remove();
+    p.done();
+  });
+
+  it("a try the server's renders can't take stays on after Enter, saying why", async () => {
+    const { p, s } = await sideOf({ renders: V1_ONLY });
+    const louder = { ...two, tracks: { ...two.tracks, A1: { items: two.tracks.A1.items.map((i) => ({ ...i, norm_db: -3 })) } } } as NleTimeline;
+    toasts.length = 0;
+    act(() => s().preview(louder, "Use take 3"));
+    await key("Enter", { code: "Enter" });
+    expect(s().trying).toBe(true);
+    expect(String(toasts[0])).toContain("Not in this server's renders yet");
+    expect(p.length()).toBe(75);
+    p.done();
+  });
+
+  it("Design on This Frame waits while a try is on", async () => {
+    designs.grabbed = 0;
+    const { p, s } = await sideOf({ urlOf: () => ({ url: "/m/a.mp4", grab: true }) });
+    act(() => s().preview(two, "Use take 3"));
+    toasts.length = 0;
+    await rightClick(p.host.querySelector("[data-frame]")!);
+    await act(() => menuItem("Design on This Frame").click());
+    await flush();
+    expect(designs.grabbed).toBe(0);
+    expect(document.querySelector('[role="dialog"][aria-label="Design"]')).toBeNull();
+    expect(toasts).toEqual(["Enter keeps the take you're trying, Esc drops it"]);
     p.done();
   });
 

@@ -113,6 +113,8 @@ let clipboard: { track: string; item: NleItem }[] = [];
 /** A drag from the source viewer's picture: the source's marked part. */
 const VIEWER_MIME = "application/x-ct-nle-viewer";
 const LOOP_KEY = "ct-nle-loop";
+/** what an edit refused while the side panel's try is on says */
+const TRYING = "Enter keeps the take you're trying, Esc drops it";
 /** Keys that go to what the viewer shows (Source or Timeline); the first six stop it playing. */
 const STEPS = new Set(["frameBack", "frameOn", "secondBack", "secondOn", "prevEdit", "nextEdit"]);
 /** Home and End go there even from within the frame they are on. */
@@ -354,6 +356,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   }, [resetKey]);
   /** An autosave picked in History: back to it as one step, so undo goes back to where it was left. */
   const restore = (a: Autosave) => {
+    if (tryOn) return void setTried(null);
     autosave(); // where it was stays an autosave too
     snapped.current = a.tl;
     setHist((h) => histChange(h, () => a.tl, "Restore autosave"));
@@ -363,6 +366,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const sel = selected.filter((k) => find(tl, k));
   const tryOn = tried?.base === tl ? tried : null;
   if (tried && !tryOn) setTried(null); // its timeline undone or changed: gone for good, never back on a redo
+  // with a try on, undo, redo and History take back only the try, never an edit hidden under it
+  const undo = () => (tryOn ? setTried(null) : setHist(histUndo));
+  const redo = () => (tryOn ? setTried(null) : setHist(histRedo));
+  /** a try on: says so and is true (the edit asked for waits for Enter or Esc) */
+  const refused = () => !!tryOn && (toast(TRYING), true);
   const shown = live ?? tryOn?.tl ?? tl;
   const cachedNow = useMemo(() => stillCached(shown, saved, cached), [shown, saved, cached]);
   const fps = tl.timeline.fps;
@@ -427,13 +435,13 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const gateCtx = useMemo(() => ({ v2: gate, field: fieldOff }), [gate, fieldOff]);
   const commit = useCallback((next: NleTimeline, label?: string) => {
     // while a try is on, only the try itself is kept: other edits wait for Enter or Esc
-    if (tryOn && next !== tryOn.tl) return;
+    if (tryOn && next !== tryOn.tl) return void toast(TRYING);
     setLive(null);
-    setTried(null);
     setGap(null);
     if (readOnly) return;
     const no = why(next);
     if (no) return void toast(no);
+    setTried(null); // only once kept: a try the renders can't take stays on to drop
     setHist((h) => histChange(h, () => next, label));
   }, [readOnly, why, tryOn]);
   const live_ = useCallback((next: NleTimeline | null) => !readOnly && !tryOn && setLive(next), [readOnly, tryOn]);
@@ -472,7 +480,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     setHist((h) => ({ ...h, past: h.past.map(one), now: one(h.now), future: h.future.map(one) }));
   };
   /** A text clip's source drawn again (a new PNG): one step. */
-  const redrawn = (src: string, made: NleSource) => setHist((h) => histChange(h, (t) => (t.sources[src]?.design === made.design ? { ...t, sources: { ...t.sources, [src]: made } } : t), "Text"));
+  const redrawn = (src: string, made: NleSource) => !refused() && setHist((h) => histChange(h, (t) => (t.sources[src]?.design === made.design ? { ...t, sources: { ...t.sources, [src]: made } } : t), "Text"));
 
   // Design full screen over the editor (its keys are its own while it is open): a text clip's design, or a frame of the
   // video to design over, laid at frame `at` once it is done
@@ -498,6 +506,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
     }
   };
   const designOnFrame = async () => {
+    if (refused()) return;
     const box = viewerBox.current?.closest<HTMLElement>("[data-frame]");
     if (!box) return;
     tln.play(false);
@@ -592,7 +601,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const burnt = !!tl.captions?.burn && !!cap?.clip && !captionsStale(shown);
   const viewed = useMemo(() => (burnt ? withoutCards(shown) : shown), [burnt, shown]);
   const sendCaptions = () => {
-    if (!captions || capBusy || readOnly) return;
+    if (!captions || capBusy || readOnly || refused()) return;
     if (dirty) return void toast.error("Save this cut first: its captions are made from the saved cut's render");
     const at = tl;
     setCapBusy(true);
@@ -609,7 +618,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
    *  the picks, the marks, what Paste lays and the playhead. */
   const apply = (s: NleState, next: NleState, label: string) => {
     if (next.tl !== s.tl) {
-      if (readOnly || tryOn) return;
+      if (readOnly || refused()) return;
       commit(next.tl, label);
     } else if (next.gap !== s.gap) setGap(next.gap ?? null);
     if (next.sel !== s.sel) setSelected(next.sel);
@@ -695,7 +704,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
 
   const keepTry = () => tryOn && commit(tryOn.tl, tryOn.label);
   const save = async (): Promise<boolean> => {
-    if (tryOn) return (toast("Enter keeps the take you're trying, Esc drops it"), false);
+    if (refused()) return false;
     if (!dirty) return true;
     if (saving || readOnly) return false;
     if (Object.values(tl.sources).some((s) => isDesign(s) && !s.path)) return (toast("A text is still being drawn", { description: "Save again in a moment, or delete it" }), false);
@@ -719,7 +728,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       if ((e.target as HTMLElement | null)?.closest?.("input:not([type=range]):not([type=checkbox]), textarea, select, [contenteditable=true], [role=dialog]")) return;
       // the side panel's try: Enter keeps it, Esc drops it (the picked clips stay picked)
       if (tryOn && (e.key === "Enter" || e.key === "Escape") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
-        && !(e.target as HTMLElement | null)?.closest?.("button, a[href], [role=menu]")) {
+        && !(e.target as HTMLElement | null)?.closest?.("button, a[href], [role=menu], [role=listbox]")) {
         e.preventDefault();
         return void (e.key === "Enter" ? keepTry() : setTried(null));
       }
@@ -754,8 +763,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         case "forward": T.shuttle(1); break;
         case "reverse": T.shuttle(-1); break;
         case "save": void save(); break;
-        case "undo": setHist(histUndo); break;
-        case "redo": setHist(histRedo); break;
+        case "undo": undo(); break;
+        case "redo": redo(); break;
         case "insertEdit": edit("insert"); break;
         case "overwriteEdit": edit("overwrite"); break;
         case "loop": toggleLoop(); break;
@@ -812,7 +821,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       <NleLayout panelKeys={panelKeys}
         chat={besideChat ? { bar, foot: foot?.({ changes: hist.past.length, dirty, save }) } : null}
         side={besideChat && side ? side({ tl, picked: sel, playhead: Math.round(tln.time * fps), commit: (next, label) => commit(next, label), source: openSource,
-          preview: (next, label) => setTried(next && !readOnly ? { tl: next, label, base: tl } : null), trying: !!tryOn, commitPreview: () => void keepTry(),
+          preview: (next, label) => {
+            // a try starts from a button: let go of its focus, so Enter keeps the try rather than pressing it again
+            if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
+            setTried(next && !readOnly ? { tl: next, label, base: tl } : null);
+          }, trying: !!tryOn, commitPreview: () => void keepTry(),
           seek: (f) => (seek(f / fps), pick([])) }) : undefined}
         frame={{ w: tl.timeline.width || 1080, h: tl.timeline.height || 1920 }}
         center={
@@ -891,11 +904,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
           </Panel>
         }
         inspector={<NleInspector tl={tl} keys={sel} nameOf={nameOf} onLive={live_} onCommit={commit} notes={notes} playhead={Math.round(tln.time * fps)}
-          transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => setHist((h) => histGo(h, i))}
+          transKey={transPick} onRun={runOn} hist={hist} onHistory={(i) => (tryOn ? setTried(null) : setHist((h) => histGo(h, i)))}
           autosaves={autosaves} onAutosave={restore}
           text={textSource && !readOnly ? (
             <NleText key={textSrc} source={textSource} scale={renderScale(tl, textSrc!, Number(textSource.w), Number(textSource.h))} reread={reread}
-              onDrawn={(s) => redrawn(textSrc!, s)} onOpen={() => { tln.play(false); setDesigning({ id: String(textSource.design), src: textSrc! }); }} />
+              onDrawn={(s) => redrawn(textSrc!, s)} onOpen={() => { if (refused()) return; tln.play(false); setDesigning({ id: String(textSource.design), src: textSrc! }); }} />
           ) : null} />}
         timeline={(full) => (
           // a click in the timeline puts the viewer back on it
@@ -933,8 +946,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 <button type="button" aria-pressed={linkSel} aria-label="Linked Selection" title={`Linked Selection${tip("linkedSelection")}`} onClick={toggleLinkSel} className={iconBtn(linkSel)}><Link2 className="size-3.5" /></button>
                 </>)}
                 {sep}
-                <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length} onClick={() => setHist(histUndo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
-                <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length} onClick={() => setHist(histRedo)} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
+                <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length && !tryOn} onClick={undo} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
+                <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length && !tryOn} onClick={redo} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
                 {full && <button type="button" aria-label="Keyboard Customization" title={`Keyboard Customization${tip("keyboard")}`} onClick={() => setKeysOpen(true)} className={iconBtn(false)}><Keyboard className="size-3.5" /></button>}
               </>
             }
