@@ -22,6 +22,7 @@ import { fitted } from "./framing";
 import { sayFor } from "./progress";
 import { followPicked, HELD_NOTE } from "./subject";
 import { renderPlanPreview, sfxMix } from "./plan-render";
+import { cachedSegment, segDir, trimSegments } from "./segcache";
 import { type DraftFile, editDir, type EditMeta, gradeOf, ownerOf, POST_UNFINISHED, postFiles, postUnfinished, readDraft, readEdit, readStep, saveDraft, saveFiled, saveStep } from "./store";
 import { nextPass, PASS_WORD } from "./passes";
 import { refuse, type Received } from "../library/upload-gate";
@@ -177,6 +178,9 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
   const parts = `${out}.parts`;
   await rm(parts, { recursive: true, force: true });
   await mkdir(parts, { recursive: true });
+  // on the person's Mac a shot that did not change comes from the segment cache (segcache.ts)
+  const cache = segDir();
+  const seen = new Map<string, string>();
   try {
     const list: string[] = [];
     // a clip switched off is not there; a hidden B-roll track and a muted voice track neither
@@ -197,7 +201,6 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
       heard ||= !!a;
       for (const p of piecesOf(v, cutaways)) {
         if (signal?.aborted) throw new Error("Stopped");
-        const seg = path.join(parts, `${String(list.length).padStart(4, "0")}.mov`);
         // seconds into the shot, which the voice and the picture both advance by
         const off = (p.at - v.rec) / tl.fps;
         const voice = a
@@ -217,7 +220,7 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         // a take with no picture (a voice recording) under no cutaway: black, as a gap in the picture is
         const picture = pic ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];
         // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one
-        await ffmpeg([
+        const args = [
           ...picture,
           ...voice,
           "-map", "0:v:0", "-map", "1:a:0",
@@ -226,8 +229,12 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
           "-frames:v", String(p.frames), "-t", secs(p.frames),
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
           "-c:a", "pcm_s16le",
-          seg,
-        ]);
+        ];
+        const inputs = [pic?.file, a ? files[a.src] : undefined].filter((f): f is string => !!f);
+        const seg = cache
+          ? await cachedSegment(cache, args, inputs, seen, (o) => ffmpeg([...args, "-f", "mov", o]))
+          : path.join(parts, `${String(list.length).padStart(4, "0")}.mov`);
+        if (!cache) await ffmpeg([...args, seg]);
         list.push(`file '${seg.replace(/'/g, "'\\''")}'`);
       }
     }
@@ -248,6 +255,7 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
       "-c:a", "aac", "-b:a", "192k",
       "-movflags", "+faststart",
     ]);
+    if (cache) await trimSegments(cache).catch((e) => console.warn(`[editor] segment cache: ${e}`));
   } finally {
     await rm(parts, { recursive: true, force: true });
   }
