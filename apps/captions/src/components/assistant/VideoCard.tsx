@@ -39,11 +39,12 @@ function CutButtons({ media, cut, open }: { media: AssistantMedia; cut: Cut; ope
       setError((e as Error).message);
     }
   };
-  const btn = "flex-1 truncate rounded-full px-3 py-1.5 text-center text-xs font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] disabled:opacity-60";
-  const outline = "border hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]";
+  const btn = "rounded-full px-3 py-1.5 text-center text-xs font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tint)] disabled:opacity-60";
+  // the links keep their words whole; Approve takes the rest, on a line of its own when the chat is too narrow
+  const outline = "shrink-0 whitespace-nowrap border hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]";
   return (
     <div className="space-y-1 px-3 pb-2.5">
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <a href={media.href} onClick={(e) => open(e, media.href)} className={`${btn} ${outline}`}>
           Open in Review
         </a>
@@ -52,9 +53,9 @@ function CutButtons({ media, cut, open }: { media: AssistantMedia; cut: Cut; ope
             Open in Editor
           </a>
         )}
-        <button type="button" disabled={state !== "idle"} onClick={() => void approve()} className={`${btn} flex items-center justify-center gap-1 bg-[var(--tint)] text-white hover:opacity-90`}>
-          <Check className="size-3.5" aria-hidden />
-          {state === "done" ? "Approved" : cut.next ? `Approve · add ${cut.next}` : "Approve"}
+        <button type="button" disabled={state !== "idle"} onClick={() => void approve()} className={`${btn} flex min-w-0 flex-1 basis-28 items-center justify-center gap-1 bg-[var(--tint)] text-white hover:opacity-90`}>
+          <Check className="size-3.5 shrink-0" aria-hidden />
+          <span className="truncate">{state === "done" ? "Approved" : cut.next ? `Approve · add ${cut.next}` : "Approve"}</span>
         </button>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
