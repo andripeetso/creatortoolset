@@ -29,6 +29,7 @@ import { newlyUnrendered, NOT_RENDERED, unrendered } from "@/lib/nle/check";
 import { NleMeter } from "./NleMeter";
 import { NleRendered } from "./NleRendered";
 import { LowerUnderVoiceDialog, NormalizeDialog } from "./NleSound";
+import { SpeedDialog } from "./NleSpeedDialog";
 import { soundKeys } from "@/lib/nle/loudness";
 import { NleMediaPool, SOUND, SOURCE_MIME, STILL } from "./NleMediaPool";
 import { NleViewer, SoundCard, SourceStrip, Timecode } from "./NleViewer";
@@ -266,6 +267,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   });
   const [menu, setMenu] = useState<MenuAt | null>(null);
   const [sound, setSound] = useState<{ normalize: string[] } | { duck: string } | null>(null);
+  const [speedOf, setSpeedOf] = useState<string[] | null>(null);
   const zoomKeys = useRef<((e: KeyboardEvent) => boolean) | null>(null);
   const panelKeys = useRef<((p: "media" | "inspector") => void) | null>(null);
 
@@ -761,6 +763,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const newTextRow: MenuRow = ["New Text", "", () => run("newText"), !!readOnly || !!gate, gate ?? undefined];
   const menuRow = "flex w-full items-center justify-between gap-4 px-3 py-1.5 text-left text-[13px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-40 disabled:hover:bg-transparent";
   const linked = sel.some((k) => find(tl, k)?.item.link !== undefined);
+  // a track whose renders can't play a speed change says so, as the Inspector's Speed Change does
+  const speedOff = fieldOff([...new Set(sel.flatMap((k) => find(tl, k)?.track ?? []))], "speed");
   const iconBtn = (on: boolean) => cn("inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-[11px]", on ? "bg-zinc-700 text-zinc-50" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100");
   const sep = <span className="mx-1 h-4 w-px shrink-0 bg-zinc-700/70" />;
 
@@ -915,6 +919,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
 
       {sound && "normalize" in sound && <NormalizeDialog tl={tl} keys={sound.normalize} onCommit={commit} onClose={() => setSound(null)} />}
       {sound && "duck" in sound && <LowerUnderVoiceDialog tl={tl} track={sound.duck} onCommit={commit} onClose={() => setSound(null)} />}
+      {speedOf && <SpeedDialog tl={tl} keys={speedOf} onCommit={(next) => commit(next, "Change Clip Speed")} onClose={() => setSpeedOf(null)} />}
       {menu && (
         <div className="fixed inset-0 z-50" onPointerDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
           <div role="menu" className="fixed w-52 rounded-md border border-zinc-800 bg-zinc-950 py-1 shadow-xl" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 300) }}
@@ -949,6 +954,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
               ["Ripple delete", kl("rippleDelete"), () => run("rippleDelete"), false],
               [linked ? "Unlink" : "Link", "", () => commit(linked ? unlink(tl, sel) : linkTogether(tl, sel)), !linked && sel.length < 2],
               ["Normalize Audio Levels…", "", () => setSound({ normalize: sel }), readOnly || !!gate || !soundKeys(tl, sel).length, gate ?? undefined],
+              ["Change Clip Speed…", "", () => setSpeedOf(sel), !!readOnly || !!speedOff, speedOff ?? undefined],
             ] as MenuRow[]).map(([l, key, fn, off, why]) => (
               <button key={l} type="button" role="menuitem" disabled={off} title={why} className={menuRow} onClick={() => { setMenu(null); fn(); }}>
                 <span>{l}</span><span className="text-zinc-500">{key}</span>
