@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { ArrowUpRight, Check } from "lucide-react";
 import type { AssistantMedia } from "@contracts/assistant";
 import { confirmDialog } from "@/lib/dialogs";
-import { usePlayFrom } from "@/lib/play-here";
+import { usePlayFrom, type Local } from "@/lib/play-here";
 import type { ReviewView } from "@/lib/review";
 
 type Cut = NonNullable<AssistantMedia["cut"]>;
@@ -66,10 +66,11 @@ function CutButtons({ media, cut, open }: { media: AssistantMedia; cut: Cut; ope
 }
 
 /** A ready cut's version as Review has it, for its file on this computer (`local`, managers only); ?quiet marks nothing seen. */
-async function cutLocal(cut: Cut): Promise<string | undefined> {
+async function cutLocal(cut: Cut): Promise<Local | undefined> {
   const r = await fetch(`/api/review/assets/${cut.asset}?quiet`);
   const view = r.ok ? ((await r.json()) as ReviewView) : null;
-  return view?.asset.versions.find((x) => x.n === cut.n)?.local;
+  const v = view?.asset.versions.find((x) => x.n === cut.n);
+  return v?.local ? { path: v.local, bytes: v.bytes } : undefined;
 }
 
 /** One card's player: a ready cut plays from its file on this computer when it is here (lib/play-here.ts), else as sent. */

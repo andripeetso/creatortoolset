@@ -5,6 +5,10 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReviewView } from "@/lib/review";
 import { useAuth, type Me } from "@/lib/auth";
+import { useWorkPrefs } from "@/lib/setup";
+
+// the editor's default keys, so the page never asks the server for the person's own
+useWorkPrefs.setState({ prefs: {} as never });
 
 // The Review page in a DOM, with a test plug-in whose panel sends a play plan that skips a span: the page's player
 // must skip it as it plays. The server calls are replaced by one fixed view; the plug-in is the only slot.

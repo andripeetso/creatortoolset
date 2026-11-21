@@ -301,6 +301,8 @@ export interface Item {
   gainDb?: number;
   /** items that share it move together (a speaker shot and its voice) */
   link?: string;
+  /** the editor's Freeze Frame: the item holds its first frame to its end */
+  freeze?: boolean;
   /* A planned edit's shot (api/editor/plan.ts); absent on every other item. Times are seconds inside the item. */
   /** 1 = as filmed */
   speed?: number;
@@ -327,6 +329,8 @@ export interface Item {
   fade_out?: number;
   /** false: switched off, as if not there */
   enabled?: boolean;
+  /** its own setting of a processing the editor's page offers, by name; absent = the timeline's (src/lib/nle/model.ts processingOf) */
+  processing?: Record<string, unknown>;
 }
 
 /**
@@ -373,6 +377,8 @@ export interface Timeline {
    * clicked in Review once a computer has followed it (`picked`, by framing.ts pickKey; preview.ts).
    */
   reframe?: Record<string, { auto: { t: number; x: number }[]; speakers: Record<number, { t: number; x: number }[]>; picked?: Record<string, { t: number; x: number }[]> }>;
+  /** the timeline's setting of each processing the editor's page offers, by name; a clip's own is its item's `processing` (src/lib/nle/model.ts processingOf) */
+  processing?: Record<string, unknown>;
   /** a planned edit (api/editor/plan.ts): the kind it is, in the brief's words, and its texts (seconds on the timeline). Absent: cut around speech */
   plan?: { kind: string; texts?: PlanText[] };
 }
@@ -431,6 +437,8 @@ export interface EdjItem {
   /** dB that Normalize added, on top of gain_db (or its keys) and fades */
   norm_db?: number;
   grade?: Grade;
+  /** the clip's own setting of a processing, by name; absent = the timeline's `timeline.processing` (src/lib/nle/model.ts processingOf) */
+  processing?: Record<string, unknown>;
   [k: string]: unknown;
 }
 

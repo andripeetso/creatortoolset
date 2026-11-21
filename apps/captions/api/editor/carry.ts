@@ -88,7 +88,8 @@ const same = (a: Key, b: Key) => a.zoom === b.zoom && a.x === b.x && a.y === b.y
  * forwards with no freeze (a plain speed, which every format writes on its own).
  */
 export function retime(tl: Timeline, i: Item): Array<{ t: number; v: number }> | null {
-  const freezes = (i.fx ?? []).flatMap((f) => (f.type === "freeze" ? [{ a: f.at ?? 0, d: f.dur ?? 0.4 }] : [])).sort((x, y) => x.a - y.a);
+  // the editor's Freeze Frame holds the whole shot
+  const freezes = i.freeze ? [{ a: 0, d: i.len / tl.fps }] : (i.fx ?? []).flatMap((f) => (f.type === "freeze" ? [{ a: f.at ?? 0, d: f.dur ?? 0.4 }] : [])).sort((x, y) => x.a - y.a);
   const reverse = i.fx?.some((f) => f.type === "reverse");
   if (!freezes.length && !reverse && !i.ramp?.length) return null;
   const D = i.len / tl.fps;
@@ -140,6 +141,7 @@ export function exportGaps(tl: Timeline, graded = false): ExportGaps {
     for (const f of i.fx ?? []) fs.add(f.type as Feature);
     if (i.enter && i.enter !== "cut") fs.add(i.enter);
     if (i.ramp?.length) fs.add("ramp");
+    if (i.freeze) fs.add("freeze");
     if (i.split?.length) fs.add("split");
     else if (i.frame === "blur") fs.add("frame-blur");
     else if (i.frame === "letterbox" || i.frame === "inset") fs.add(i.frame);

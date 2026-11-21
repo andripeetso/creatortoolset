@@ -14,7 +14,7 @@
 // every unlocked track by one amount (as far as every track can go, so they stay in sync); clips that share a `link`
 // move and trim together.
 
-import type { EdjCaptions, EdjMarker, EdjTrans, Key, KeyProp } from "@contracts/editor";
+import type { EdjCaptions, EdjMarker, EdjTrans, Key, KeyProp, MarkerColor } from "@contracts/editor";
 
 export type Flip = "h" | "v" | "hv";
 
@@ -45,6 +45,10 @@ export interface NleItem {
   speed?: number;
   gain_db?: number;
   enabled?: boolean;
+  /** Clip Color: the label it is drawn in on the timeline (the marker colours); no render or export draws it */
+  color?: MarkerColor;
+  /** Freeze Frame: the clip holds its first frame to its end */
+  freeze?: boolean;
   /** timeline frames of fade at the start / end: a picture from / to black (an opacity ramp), a sound from / to silence */
   fade_in?: number;
   fade_out?: number;
@@ -52,6 +56,9 @@ export interface NleItem {
   keys?: Partial<Record<KeyProp, Key[]>>;
   /** the transition at the cut before it (trans.ts), kept right after every edit */
   trans?: EdjTrans;
+  /** this clip's own setting of a processing the page offers, by name (processingOf); absent = it follows the timeline's.
+   *  Not `fx`: a planned shot's effects (contracts/editor.ts Item.fx) already ride on that name. */
+  processing?: Record<string, unknown>;
   /** this editor's own handle on the clip while it is open (stripped on save) */
   _k?: string;
   [k: string]: unknown;
@@ -68,7 +75,8 @@ export interface NleTrack {
 }
 
 export interface NleTimeline {
-  timeline: { fps: number; width?: number; height?: number; duration?: number; name?: string; [k: string]: unknown };
+  /** `processing`: the timeline's setting of each processing the page offers ("voice", "face", …), what a clip follows unless it has its own */
+  timeline: { fps: number; width?: number; height?: number; duration?: number; name?: string; processing?: Record<string, unknown>; [k: string]: unknown };
   tracks: Record<string, NleTrack>;
   sources: Record<string, NleSource>;
   /** timeline markers (contracts/editor.ts EdjMarker): a ripple moves them with what is after the edit */
@@ -126,6 +134,16 @@ const live = (t: NleTrack) => t.enabled !== false && !t.hidden && !t.mute;
 export const lengthOf = (tl: NleTimeline): number =>
   Math.max(0, ...Object.values(tl.tracks).filter(live).flatMap((t) => t.items.filter((i) => i.enabled !== false).map(endOf)));
 
+/** A length typed as frames ("50") or as a timecode ("1:00", "0:02:10", "1:00:00:00": frames last); null when it is neither. */
+export function framesOfTimecode(text: string, fps: number): number | null {
+  const parts = text.trim().split(/[:;.]/);
+  if (!parts.every((x) => /^\d+$/.test(x)) || parts.length > 4) return null;
+  const [ff, ss = 0, mm = 0, hh = 0] = parts.reverse().map(Number);
+  if (parts.length > 1 && ff >= Math.round(fps)) return null;
+  // timecode()'s inverse: whole seconds at the real rate (29.97 too), then the frames
+  return Math.round(((hh * 60 + mm) * 60 + ss) * fps) + ff;
+}
+
 /** m:ss:ff, h:mm:ss:ff from an hour. */
 export const timecode = (f: number, fps: number): string => {
   const s = Math.floor(f / fps);
@@ -151,7 +169,8 @@ export function roomOf(tl: NleTimeline, it: NleItem): { before: number; after: n
   const dur = tl.sources[it.src]?.dur;
   return {
     before: Math.floor(it.in / r + 1e-6),
-    after: typeof dur === "number" ? Math.max(0, Math.floor((dur - it.in) / r + 1e-6) - it.len) : Infinity,
+    // a held clip shows one source frame however long it runs
+    after: typeof dur === "number" && !it.freeze ? Math.max(0, Math.floor((dur - it.in) / r + 1e-6) - it.len) : Infinity,
   };
 }
 
@@ -350,12 +369,16 @@ export function blade(tl: NleTimeline, f: number, keys?: string[]): NleTimeline 
   const want = keys?.length ? new Set(withLinked(tl, keys)) : null;
   const out = clone(tl);
   let any = false;
+
   for (const t of Object.values(out.tracks)) {
     if (t.locked) continue;
     t.items = t.items.flatMap((i) => {
       if ((want && !want.has(i._k!)) || f <= i.rec || f >= endOf(i)) return [i];
       any = true;
-      return cutAt(out, i, f);
+      const [left, right] = cutAt(out, i, f);
+      // the parts after the cut are linked to each other under a link of their own (one per cut), apart from the parts before it
+      if (right.link !== undefined) right.link = `${right.link}@${f}`;
+      return [left, right];
     });
   }
   return any ? fixTrans(out) : tl;
@@ -441,6 +464,68 @@ export function setSpeed(tl: NleTimeline, keys: string[], speed: number): NleTim
     if (i && typeof dur === "number") i.len = Math.max(1, Math.min(i.len, Math.floor((dur - i.in) / rateOf(out, i) + 1e-6)));
   }
   return fixTrans(out);
+}
+
+/**
+ * Change Clip Duration: each clip made `len` frames long from where it starts, as dragging its end does (trim): its
+ * linked clips with the same end follow, it stops at the next clip, and a clip on a locked track stays.
+ */
+export const setDuration = (tl: NleTimeline, keys: string[], len: number): NleTimeline =>
+  keys.reduce((t, k) => { const i = find(t, k)?.item; return i ? trim(t, k, "tail", len - i.len) : t; }, tl);
+
+/** The longest a clip can be from its in point before its source runs out, counting its speed (Infinity: length unknown). */
+export function longestOf(tl: NleTimeline, it: NleItem): number {
+  const dur = tl.sources[it.src]?.dur;
+  if (it.freeze) return Infinity;
+  // not roomOf: a clip already past its source's end (a speed raised in the Inspector) has no room, yet a length to keep
+  return typeof dur === "number" ? Math.floor((dur - it.in) / rateOf(tl, it) + 1e-6) : Infinity;
+}
+
+/**
+ * Freeze Frame: the picked clip on V1 under frame `f` holds the frame there to its end: cut at `f` (with its linked
+ * clips, as the blade does), the part from `f` on held. Unchanged when none is under `f`, it is held already or V1 is locked.
+ */
+export function freezeFrame(tl: NleTimeline, keys: string[], f: number): NleTimeline {
+  const hit = keys.map((k) => find(tl, k)).find((h) => h?.track === "V1" && h.item.rec <= f && f < endOf(h.item));
+  // a held clip already shows one frame everywhere; a reversed one shows a frame the cut wouldn't hold
+  if (!hit || hit.item.freeze || hit.item.rev || tl.tracks.V1.locked) return tl;
+  const cut = hit.item.rec < f ? blade(tl, f, [hit.item._k!]) : tl;
+  // a track holds one clip at a frame: the one starting at `f` is the part to hold
+  return setItems(cut, [cut.tracks.V1.items.find((i) => i.rec === f)!._k!], { freeze: true });
+}
+
+/** A processing's setting for a clip: its own, else the timeline's (undefined: neither has one; null is a value). */
+export const processingOf = (tl: NleTimeline, it: NleItem, name: string): unknown => {
+  const own = it.processing?.[name];
+  return own !== undefined ? own : tl.timeline.processing?.[name];
+};
+
+/** `bag` with `name` set to a copy of `v`, or taken off when `v` is undefined; undefined when nothing is left. */
+function withSetting(bag: Record<string, unknown> | undefined, name: string, v: unknown): Record<string, unknown> | undefined {
+  const { [name]: _, ...rest } = bag ?? {};
+  const out = v === undefined ? rest : { ...rest, [name]: clone(v) };
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Clips' own setting of processing `name` set to `v` (a copy each); `undefined` takes it off, so they follow the timeline again. */
+export function setClipProcessing(tl: NleTimeline, keys: string[], name: string, v: unknown): NleTimeline {
+  if (!keys.length || lockedAny(tl, keys)) return tl;
+  const out = clone(tl);
+  for (const k of keys) {
+    const i = find(out, k)?.item;
+    if (!i) continue;
+    // a new object per clip: a split or paste may leave two clips holding one
+    const p = withSetting(i.processing, name, v);
+    if (p) i.processing = p; else delete i.processing;
+  }
+  return out;
+}
+
+/** The timeline's setting of processing `name` (what clips without their own follow); `undefined` takes it off. */
+export function setTimelineProcessing(tl: NleTimeline, name: string, v: unknown): NleTimeline {
+  const { processing, ...t } = tl.timeline;
+  const p = withSetting(processing, name, v);
+  return { ...tl, timeline: p ? { ...t, processing: p } : t };
 }
 
 export const unlink =(tl: NleTimeline, keys: string[]) => setItems(tl, withLinked(tl, keys), { link: undefined });

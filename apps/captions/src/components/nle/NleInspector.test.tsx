@@ -27,6 +27,7 @@ vi.mock("@/lib/sync", async (orig) => ({
 }));
 const { NleEditor } = await import("./NleEditor");
 const { NleInspector } = await import("./NleInspector");
+type NleProcessing = import("./NleInspector").NleProcessing;
 
 // a Tiny Acrobatics cut: one 4 s shot with its voice, from a file the camera tagged S-Log3
 const cut = (camera?: object): NleTimeline => withKeys({
@@ -271,5 +272,128 @@ describe("Inspector transition", () => {
     await click(byLabel<HTMLInputElement>("Cross-fade sound"));
     expect(now.tracks.A1.items[1].trans).toEqual({ type: "crossfade", len: 20, at: "start" });
     act(() => root.unmount());
+  });
+});
+
+describe("Inspector processing: the timeline's setting and a clip's own", () => {
+  // two shots with their voices; the page offers "boost" on A1 only
+  const two = (): NleTimeline => withKeys({
+    timeline: { fps: 25, processing: { boost: 3 } },
+    sources: { a: { path: "/m/a.mp4", fps: 25, dur: 500 } },
+    tracks: {
+      V1: { items: [{ src: "a", rec: 0, len: 75, in: 0 }, { src: "a", rec: 75, len: 75, in: 10 }] },
+      A1: { items: [{ src: "a", rec: 0, len: 75, in: 0 }, { src: "a", rec: 75, len: 75, in: 10 }] },
+      A2: { items: [{ src: "a", rec: 0, len: 150, in: 0 }] },
+    },
+  } as unknown as NleTimeline);
+  const boost: NleProcessing = {
+    name: "boost", title: "Boost", tab: "audio", def: 0, applies: (_it, track) => track === "A1",
+    render: ({ value, mixed, set, readOnly, playhead }) => readOnly ? <span data-shown data-at={playhead}>{String(value)}</span> : (
+      <input type="number" aria-label="Boost" data-mixed={mixed} defaultValue={String(value)} onChange={(ev) => set(Number(ev.target.value), false)}
+        onBlur={(ev) => set(Number(ev.target.value), true)} />
+    ),
+  };
+  const steps: { tl: NleTimeline; label?: string }[] = [];
+  const lives: (NleTimeline | null)[] = [];
+  function Host({ start, keys, readOnly }: { start: NleTimeline; keys: (tl: NleTimeline) => string[]; readOnly?: boolean }) {
+    const [tl, setTl] = useState(start);
+    const [sel] = useState(() => keys(start));
+    return (
+      <NleInspector tl={tl} keys={sel} nameOf={() => "shot"} onLive={(t) => void lives.push(t)} processing={[boost]} readOnly={readOnly} playhead={40}
+        onCommit={(next, label) => { steps.push({ tl: next, label }); setTl(next); }} />
+    );
+  }
+  const open = async (keys: (tl: NleTimeline) => string[], start = two(), readOnly = false) => {
+    steps.length = 0;
+    lives.length = 0;
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    await act(async () => root.render(<Host start={start} keys={keys} readOnly={readOnly} />));
+    await flush();
+    await click(tabOf("Audio"));
+    return () => act(() => root.unmount());
+  };
+  const radio = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((b) => b.textContent === name)!;
+  const a1 = (tl: NleTimeline) => tl.tracks.A1.items;
+  const setNum = async (input: HTMLInputElement, v: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, v);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => void input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    await flush();
+  };
+
+  it("a clip follows the timeline, read only, until This clip only copies it; editing it is live then one step; Same as timeline takes it off", async () => {
+    const done = await open((tl) => [a1(tl)[0]._k!]);
+    expect(radio("Same as timeline").getAttribute("aria-checked")).toBe("true");
+    expect($("[data-shown]").textContent).toBe("3");
+    expect($("[data-shown]").dataset.at).toBe("40");   // the frame under the playhead, for a preview
+    expect(document.querySelector('[aria-label="Boost"]')).toBeNull();
+    await click(radio("This clip only"));
+    expect(steps.at(-1)!.label).toBe("Boost: this clip only");
+    expect(a1(steps.at(-1)!.tl)[0].processing).toEqual({ boost: 3 });
+    expect(a1(steps.at(-1)!.tl)[1].processing).toBeUndefined();
+    await setNum(byLabel<HTMLInputElement>("Boost"), "7");
+    expect(a1(lives.at(-1)!)[0].processing).toEqual({ boost: 7 });
+    expect(steps).toHaveLength(2);
+    expect(a1(steps.at(-1)!.tl)[0].processing).toEqual({ boost: 7 });
+    expect(steps.at(-1)!.tl.timeline.processing).toEqual({ boost: 3 });
+    await setNum(byLabel<HTMLInputElement>("Boost"), "7");   // let go where it was: no undo step, the dragged copy dropped
+    expect([steps.length, lives.at(-1)]).toEqual([2, null]);
+    await click(radio("Same as timeline"));
+    expect(steps).toHaveLength(3);
+    expect(a1(steps.at(-1)!.tl)[0].processing).toBeUndefined();
+    done();
+  });
+
+  it("Edit timeline setting opens the Timeline tab, where a change sets what every following clip plays", async () => {
+    const done = await open((tl) => [a1(tl)[0]._k!]);
+    await click([...document.querySelectorAll("button")].find((b) => b.textContent === "Edit timeline setting")!);
+    expect(tabOf("Timeline").getAttribute("aria-selected")).toBe("true");
+    await setNum(byLabel<HTMLInputElement>("Boost"), "5");
+    expect(steps.at(-1)!.tl.timeline.processing).toEqual({ boost: 5 });
+    expect(steps.at(-1)!.label).toBe("Boost");
+    done();
+  });
+
+  it("several clips: only the ones it applies to; different values show Mixed and a change sets them all", async () => {
+    const start = two();
+    a1(start)[1].processing = { boost: 9 };
+    const done = await open((tl) => [...a1(tl), ...tl.tracks.A2.items].map((i) => i._k!), start);
+    expect(radio("Same as timeline").getAttribute("aria-checked")).toBe("false");
+    expect(radio("These clips only").getAttribute("aria-checked")).toBe("false");
+    expect(document.body.textContent).toContain("Mixed");
+    expect(byLabel("Boost").getAttribute("data-mixed")).toBe("true");
+    await setNum(byLabel<HTMLInputElement>("Boost"), "4");
+    const now = steps.at(-1)!.tl;
+    expect(a1(now).map((i) => i.processing)).toEqual([{ boost: 4 }, { boost: 4 }]);
+    expect(now.tracks.A2.items[0].processing).toBeUndefined();
+    done();
+  });
+
+  it("no section when none of the selection applies; read only shows the values with no controls", async () => {
+    let done = await open((tl) => [tl.tracks.A2.items[0]._k!]);
+    expect(document.querySelector('[role="radiogroup"][aria-label="Boost setting"]')).toBeNull();
+    done();
+    // a clip moved off A1 with its own setting keeps the section, so it can follow the timeline again
+    document.body.innerHTML = "";
+    const moved = two();
+    moved.tracks.A2.items[0].processing = { boost: 6 };
+    done = await open((tl) => [tl.tracks.A2.items[0]._k!], moved);
+    await click(radio("Same as timeline"));
+    expect(steps.at(-1)!.tl.tracks.A2.items[0].processing).toBeUndefined();
+    done();
+    document.body.innerHTML = "";
+    const start = two();
+    a1(start)[0].processing = { boost: 8 };
+    done = await open((tl) => [a1(tl)[0]._k!], start, true);
+    expect(document.querySelector('[role="radio"]')).toBeNull();
+    expect(document.body.textContent).toContain("This clip only");
+    expect($("[data-shown]").textContent).toBe("8");
+    expect(document.querySelector('[aria-label="Boost"]')).toBeNull();
+    await click(tabOf("Timeline"));
+    expect($("[data-shown]").textContent).toBe("3");
+    done();
   });
 });

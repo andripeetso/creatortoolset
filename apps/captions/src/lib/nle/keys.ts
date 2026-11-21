@@ -8,10 +8,10 @@ export type KeyAction =
   | "play" | "stop" | "forward" | "reverse"
   | "save" | "undo" | "redo" | "split" | "copy" | "cut" | "paste" | "duplicate" | "selectAll" | "deselect"
   | "selectForward" | "selectBack" | "rippleStart" | "rippleEnd" | "delete" | "rippleDelete" | "enable"
-  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "snap" | "linkedSelection"
+  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "toolStretch" | "snap" | "linkedSelection"
   | "nudgeBack" | "nudgeBack5" | "nudgeOn" | "nudgeOn5"
   | "frameBack" | "frameOn" | "secondBack" | "secondOn" | "prevEdit" | "nextEdit" | "start" | "end"
-  | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector"
+  | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector" | "findInMediaPool"
   | `lock:V${number}`
   | "clearIn" | "clearOut" | "insertEdit" | "overwriteEdit" | "loop"
   | "addMarker" | "prevMarker" | "nextMarker" | "addDissolve" | "keyboard";
@@ -30,20 +30,20 @@ export function chordOf(e: KeyLike): string {
 export const KEYS: Record<string, KeyAction> = {
   Space: "play", "2": "play", K: "stop", L: "forward", "3": "forward", J: "reverse", "1": "reverse",
   "⌘S": "save", "⌘Z": "undo", "⌘⇧Z": "redo",
-  W: "split", "⌘B": "split", "⌘\\": "split",
+  W: "split", C: "split", "⌘B": "split", "⌘\\": "split",
   "⌘C": "copy", "⌘X": "cut", "⌘V": "paste", "⌘D": "duplicate", "⌘A": "selectAll", Escape: "deselect",
   "⌥Y": "selectForward", "⌘⌥Y": "selectBack",
   Q: "rippleStart", E: "rippleEnd",
   S: "rippleDelete", Delete: "rippleDelete", "⇧Delete": "rippleDelete", "⇧Backspace": "rippleDelete", Backspace: "delete",
   D: "enable",
   I: "markIn", O: "markOut", "⌥X": "clearMarks",
-  A: "toolSelect", T: "toolTrim", B: "toolBlade", N: "snap", "⌘⇧L": "linkedSelection",
+  A: "toolSelect", T: "toolTrim", B: "toolBlade", R: "toolStretch", N: "snap", "⌘⇧L": "linkedSelection",
   ",": "nudgeBack", "⇧,": "nudgeBack5", ".": "nudgeOn", "⇧.": "nudgeOn5",
   ArrowLeft: "frameBack", ArrowRight: "frameOn", "⇧ArrowLeft": "secondBack", "⇧ArrowRight": "secondOn",
   ArrowUp: "prevEdit", ArrowDown: "nextEdit", Home: "start", End: "end",
   "=": "zoomIn", "+": "zoomIn", "⇧+": "zoomIn", "⌘=": "zoomIn", "⌘+": "zoomIn", "⌘⇧+": "zoomIn",
   "-": "zoomOut", "⌘-": "zoomOut", "\\": "zoomFit", "⇧Z": "zoomFit",
-  Tab: "mediaPool", "⇧Tab": "inspector",
+  Tab: "mediaPool", "⇧Tab": "inspector", "⌥F": "findInMediaPool",
   ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`⌥⇧${n}`, `lock:V${n}` as const])),
   "⌥I": "clearIn", "⌥O": "clearOut", F9: "insertEdit", F10: "overwriteEdit", "⌘/": "loop",
   M: "addMarker", "⇧ArrowUp": "prevMarker", "⇧ArrowDown": "nextMarker", "⌘T": "addDissolve", "⌘⌥K": "keyboard",
@@ -61,7 +61,7 @@ export const RESOLVE_KEYS: Record<string, KeyAction> = {
   ",": "nudgeBack", "⇧,": "nudgeBack5", ".": "nudgeOn", "⇧.": "nudgeOn5",
   ArrowLeft: "frameBack", ArrowRight: "frameOn", "⇧ArrowLeft": "secondBack", "⇧ArrowRight": "secondOn",
   ArrowUp: "prevEdit", ArrowDown: "nextEdit", Home: "start", End: "end",
-  "⌘=": "zoomIn", "⌘+": "zoomIn", "⌘-": "zoomOut", "⇧Z": "zoomFit",
+  "⌘=": "zoomIn", "⌘+": "zoomIn", "⌘-": "zoomOut", "⇧Z": "zoomFit", "⌥F": "findInMediaPool",
   F9: "insertEdit", F10: "overwriteEdit", "⌘/": "loop",
   M: "addMarker", "⇧ArrowUp": "prevMarker", "⇧ArrowDown": "nextMarker", "⌘T": "addDissolve", "⌘⌥K": "keyboard",
 };

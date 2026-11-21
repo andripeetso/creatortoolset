@@ -105,6 +105,8 @@ describe("timeline edits made into a cut", () => {
     expect(draftView(m).tracks[0]!.items[0]!.window!.crop).toEqual({ x: 0.25 });
 
     expect(() => make(three(), { key: "V1:0", crop: { x: 0.5 } })).toThrow("V1:0 is not reframed");
+    // a speed change: the draft's render plays none, so it's refused by name, never made without it
+    expect(() => make(three(), { key: "V1:0", speed: 1.5 })).toThrow("V1:0: a speed change can't be made into a version here");
     expect(() => make(t, { key: "V1:0", crop: { speaker: 3 } })).toThrow("Speaker 3 can't be followed in this shot");
     // as the server keeps them: a window on a talent shot only, x within the picture
     expect(cleanEdits([edit({ key: "V1:0", crop: { x: 1.5 } }), edit({ key: "A1:0", crop: { speaker: 1 } }), edit({ key: "V1:30", crop: { speaker: 1.5 } as never })])).toEqual([]);

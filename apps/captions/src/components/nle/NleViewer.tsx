@@ -30,7 +30,7 @@ export function NleViewer({ tl, playhead, rate, urlOf, nameOf, onClick, onMenu, 
   /** the playhead's clock */
   playhead: NleClock;
   rate: number;
-  urlOf: (src: string) => NleFile | null;
+  urlOf: (src: string, clip?: string) => NleFile | null;
   nameOf: (src: string) => string;
   /** a click on the frame (play / pause) */
   onClick: () => void;

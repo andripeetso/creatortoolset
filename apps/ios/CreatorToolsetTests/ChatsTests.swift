@@ -75,8 +75,11 @@ final class ChatsTests: XCTestCase {
         func tab(_ path: String, from current: AppTab = .chats) -> AppTab? {
             AppRoute.from(path: path).map { AppNavigator.tab(for: $0, from: current) }
         }
-        // an edit and a Review video open on Projects, from a card, a link in a chat or a notification, whatever tab is in front
-        XCTAssertEqual(tab("/editor/e1"), .projects)
+        // an edit and a Review video open over the chat they came from (back returns to it), else on Projects
+        XCTAssertEqual(tab("/editor/e1"), .chats)
+        XCTAssertEqual(tab("/editor/e1", from: .projects), .projects)
+        XCTAssertEqual(tab("/editor/e1", from: .publish), .projects)
+        XCTAssertEqual(tab("/review/r9", from: .chats), .chats)
         XCTAssertEqual(tab("/review/r9?v=2", from: .tools), .projects)
         XCTAssertEqual(tab("/review/r9", from: .media), .projects)
         // the assistant's chats on Chats, even from Projects

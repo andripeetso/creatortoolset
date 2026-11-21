@@ -95,6 +95,10 @@ final class Shell: NSObject, ObservableObject {
     /// Every other download, by where it goes: shown in Finder when it is there (owner, 2026-11-12: "Okay, downloaded,
     /// but it's like from where and what and how").
     private var plainDownloads: [WKDownload: URL] = [:]
+    /// The screen editor's export: the name the page asked with and where it goes, asked before it is made (askExportPlace)
+    private var exportPlace: (name: String, url: URL, reveal: Bool)?
+    /// Exports on their way to the place asked for, with the name the page asked with: it hears 'mac-saved' when each is there
+    private var exportDownloads: [WKDownload: (name: String, reveal: Bool)] = [:]
     /// The see-through video being made; the page's Stop ends it ("record-alpha-stop").
     private var alphaTask: Task<Void, Never>?
     /// Recordings whose camera file is being searched for the face (findFaces).
@@ -680,9 +684,34 @@ final class Shell: NSObject, ObservableObject {
         case "trash": if let project { recorder.delete(project) }   // the page has asked
         case "delete": if let project { recorder.delete(project, asking: true) }   // a page from before "trash"
         case "alpha-stop": alphaTask?.cancel()   // the editor's Stop while its see-through video is made
+        // the editor's Export, before it is made ("save-for": one the page goes on with, Send to Editor: not shown in Finder)
+        case "save-as", "save-for": askExportPlace(parts.dropFirst().joined(separator: ":"), reveal: parts[0] == "save-as")
+        case "save-drop": exportPlace = nil   // that export stopped or failed before its download
         default: break   // "state": only the answer
         }
         pushRecorderState()
+    }
+
+    /// Where an export goes, asked when Export is pressed (the page's "record-save-as:<file name>"), not after minutes
+    /// of making it: the download of that name is then written there. The page hears 'mac-save-as' {ok}.
+    private func askExportPlace(_ name: String, reveal: Bool) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = name
+        panel.allowedContentTypes = [.mpeg4Movie]
+        let chosen = { [weak self] (response: NSApplication.ModalResponse) in
+            guard let self else { return }
+            let place = response == .OK ? panel.url : nil
+            self.exportPlace = place.map { (name, $0, reveal) }
+            self.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-save-as', {detail: {ok: \(place != nil)}}))")
+        }
+        if let window = webView.window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { panel.begin(completionHandler: chosen) }
+    }
+
+    /// An export asked for with "record-save-as:" is written (path) or failed (nil): 'mac-saved' {name, path}.
+    private func pushSaved(_ name: String, _ path: String?) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["name": name, "path": path as Any? ?? NSNull()] as [String: Any]),
+              let json = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-saved', {detail: \(json)}))")
     }
 
     /// The recordings on this Mac, for the /record page ('mac-recordings').
@@ -1189,6 +1218,14 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
             if let window = webView.window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { panel.begin(completionHandler: chosen) }
             return
         }
+        // the page's next video after the ask is that export (one at a time; WebKit may change the name it was asked with)
+        if let place = exportPlace, suggestedFilename.lowercased().hasSuffix(".mp4") {
+            exportPlace = nil
+            try? FileManager.default.removeItem(at: place.url)   // the panel asked before replacing it
+            plainDownloads[download] = place.url
+            exportDownloads[download] = (place.name, place.reveal)
+            return completionHandler(place.url)
+        }
         let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         let file = uniqueURL(in: folder, named: suggestedFilename)
         plainDownloads[download] = file
@@ -1197,6 +1234,7 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         plainDownloads[download] = nil
+        if let export = exportDownloads.removeValue(forKey: download) { pushSaved(export.name, nil) }
         if let alpha = alphaDownloads.removeValue(forKey: download) { try? FileManager.default.removeItem(at: alpha.file) }
         pushAlpha("failed")   // an editor waiting on its see-through video stops waiting (one that failed before it had a place too)
         _ = dialog("The download failed: \(error.localizedDescription)", buttons: ["OK"])
@@ -1206,7 +1244,9 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     /// there. The editor hears how far it is, and its Stop ends it.
     func downloadDidFinish(_ download: WKDownload) {
         if let file = plainDownloads.removeValue(forKey: download) {
-            NSWorkspace.shared.activateFileViewerSelecting([file])   // the file, picked in its Downloads window
+            let export = exportDownloads.removeValue(forKey: download)
+            if let export { pushSaved(export.name, file.path) }   // the page goes on with it
+            if export?.reveal ?? true { NSWorkspace.shared.activateFileViewerSelecting([file]) }   // the file, picked in its folder
             return
         }
         guard let alpha = alphaDownloads.removeValue(forKey: download) else { return }

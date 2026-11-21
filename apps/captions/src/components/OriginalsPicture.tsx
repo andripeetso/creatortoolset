@@ -22,7 +22,7 @@ export function OriginalsPicture({ video, plan, holding, filter }: {
   hold.current = holding;
   const [shown, setShown] = useState<{ el: 0 | 1; piece: Piece } | null>(null);
   const pieces = plan?.picture;
-  const key = pieces?.length ? JSON.stringify([plan!.fps, plan!.skips, plan!.holds, pieces]) : "";
+  const key = pieces?.length ? JSON.stringify([plan!.fps, plan!.skips, plan!.holds, plan!.rates, pieces]) : "";
 
   useEffect(() => {
     const el = video.current;
@@ -55,12 +55,12 @@ export function OriginalsPicture({ video, plan, holding, filter }: {
       const next = list.find((p) => p.at > f && !bad.has(p.src));
       let on: 0 | 1 | null = null;
       if (now) {
-        const want = now.offset + (c.t - now.at / fps);
+        const want = now.offset + (c.t - now.at / fps) * (now.rate ?? 1);
         on = loaded[0] === now ? 0 : loaded[1] === now ? 1 : last?.el === 0 ? 1 : 0;
         const v = players[on]!;
         if (loaded[on] !== now) load(on, now, want);
         else if (Math.abs(v.currentTime - want) > (c.run ? DRIFT_S : 0.5 / fps)) v.currentTime = want;
-        v.playbackRate = c.rate;
+        v.playbackRate = c.rate * (now.rate ?? 1);
         if (c.run && v.paused) void v.play().catch(() => {});
         if (!c.run && !v.paused) v.pause();
       }

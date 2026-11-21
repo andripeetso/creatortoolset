@@ -1,5 +1,5 @@
 import { Fragment, memo, useContext, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
+import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, SlidersHorizontal, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
@@ -184,7 +184,8 @@ export const NleTracks = memo(function NleTracks({
   /** the timeline's zoom keys (= - \), for the editor's key handler */
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
   /** a source's file here (the player's): sound clips show its waveform, video clips its pictures */
-  fileOf?: (src: string) => NleFile | null;
+  /** `clip`: the clip it is for (its own processing can pick another file of its source) */
+  fileOf?: (src: string, clip?: string) => NleFile | null;
   /** the editor's tools, at the start of the title bar */
   tools?: ReactNode;
   /** at its end, before the track height and zoom (what the save says, Save) */
@@ -811,7 +812,7 @@ export const NleTracks = memo(function NleTracks({
               {t.items.map((it) => {
                 // plain values only: the page hands a new file object every render, and a clip drawn again for every
                 // clip on every frame of playback (or of a drag) is what made the timeline lag
-                const file = fileOf?.(it.src);
+                const file = fileOf?.(it.src, it._k);
                 const sfps = tl.sources[it.src]?.fps || fps;
                 const from = it.in / sfps;
                 const drawW = (it.len / fps) * view.pps;
@@ -826,7 +827,9 @@ export const NleTracks = memo(function NleTracks({
                     offline={fileOf && it.fx !== "flash" && (!file || file.why) ? file?.why || "Media offline" : null}
                     path={String(tl.sources[it.src]?.path ?? "")} from={from} to={from + (it.len / fps) * (it.speed || 1)}
                     url={fileOf ? file?.url || null : undefined} still={!!file?.frame} drawW={drawW} x0={x0} x1={x1} ctl={ctl}
-                    vol={v ? null : volLine(it, fps, sfps)} volTip={volTip && volTip.k === it._k ? dbText(volTip.db) : null} />
+                    vol={v ? null : volLine(it, fps, sfps)} volTip={volTip && volTip.k === it._k ? dbText(volTip.db) : null}
+                    color={it.color ? MARKER_HEX[it.color] : undefined}
+                    own={it.processing ? Object.keys(it.processing).join(", ") : null} />
                 );
               })}
               {t.items.filter((it) => picked.has(it._k!)).flatMap((it) => keyMarks(tl, it._k!).map(({ f, props, ease }, i) => (
@@ -1016,7 +1019,7 @@ const ramp = (side: "left" | "right", px: number) => (
  * waveform, an offline clip dark red with its name (the why on hover). Plain values only, so it is drawn again only when
  * it changes.
  */
-const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl, vol, volTip }: {
+const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl, vol, volTip, color, own }: {
   k: string; track: string; video: boolean; left: number; width: number; height: number; name: string; length: string; on: boolean; dim: boolean;
   tool: Tool; locked: boolean;
   /** the fades, in px */
@@ -1030,12 +1033,17 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
   ctl: MutableRefObject<Ctl>;
   /** a sound clip's volume line (volLine), null on a video clip; the dB it is being dragged to */
   vol?: string | null; volTip?: string | null;
+  /** its Clip Color (a hex), drawn over its usual look; an offline clip keeps the offline red */
+  color?: string;
+  /** the processings it has its own setting of (model.ts processingOf), null when it follows the timeline in all */
+  own?: string | null;
 }) {
   const w = Math.max(2, width);
   const bar = w > 24 ? barOf(height) : 0;
   const body = height - 2 - bar;
   const look = offline ? LOOK.offline : video ? LOOK.video : LOOK.sound;
   const fades = w > 24 && !locked && tool !== "blade";
+  const tint = offline ? undefined : color;
   return (
     <div data-clip={k} role="button" aria-pressed={on} aria-label={`${track} ${name}`} title={offline ?? undefined}
       onPointerDown={(e) => ctl.current.down(e, k, track)}
@@ -1043,14 +1051,14 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
       className={// strict containment and content-visibility: a zoom lays out and paints only the clips that show, each on its own
       cn("group absolute top-px bottom-px overflow-hidden rounded-[3px] border text-[10px] leading-4 select-none [contain:strict] [content-visibility:auto]", look.box,
         dim && "opacity-40", tool === "select" ? "cursor-grab" : tool === "trim" ? "cursor-ew-resize" : "")}
-      style={{ left, width: w }}>
+      style={{ left, width: w, ...(tint ? { borderColor: tint, backgroundColor: `${tint}59` } : {}) }} data-color={tint}>
       <div className="pointer-events-none absolute inset-x-0 top-0" style={{ bottom: bar, ...(offline ? OFFLINE_BG : {}) }}>
         {!offline && url !== undefined && w > 8 && <ClipLook path={path} from={from} to={to} video={video} url={url} still={still} w={drawW} x0={x0} x1={x1} height={Math.max(1, body)} />}
         {fadeIn > 0 && ramp("left", Math.min(fadeIn, w))}
         {fadeOut > 0 && ramp("right", Math.min(fadeOut, w))}
       </div>
       {bar > 0 ? (
-        <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1 px-1", look.bar)} style={{ height: bar }}>
+        <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1 px-1", look.bar)} style={{ height: bar, ...(tint ? { backgroundColor: tint } : {}) }}>
           <span className="min-w-0 flex-1 truncate">{name}</span>
           {w > 70 && <span className="shrink-0 font-mono text-[9px] tabular-nums opacity-80">{length}</span>}
         </div>
@@ -1058,6 +1066,12 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
       <span className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
       <span className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
       {on && <span className="pointer-events-none absolute inset-0 rounded-[3px] border-2 border-[#e8483f]" />}
+      {own && w > 16 && (
+        <span data-own={own} aria-label={`Own setting: ${own}`} title={`Own setting: ${own}`}
+          className="absolute top-0.5 right-1 z-[2] inline-flex size-3.5 items-center justify-center rounded-sm bg-black/70 text-zinc-100">
+          <SlidersHorizontal className="size-2.5" strokeWidth={2} />
+        </span>
+      )}
       {vol && body >= 12 && w > 8 && (
         <svg className="pointer-events-none absolute top-0 left-0 z-[1] overflow-visible" style={{ width: "100%", height: body }} viewBox="0 0 1 1" preserveAspectRatio="none">
           <path d={vol} fill="none" stroke="rgb(0 0 0 / 0.55)" strokeWidth={3} vectorEffect="non-scaling-stroke" />

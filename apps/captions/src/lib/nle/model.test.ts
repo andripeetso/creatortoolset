@@ -3,7 +3,7 @@ import {
   addSource, addTrack, isPlain, partsOf, putParts, resetFields, setFades, blade, clipsFrom, copyOf, duplicate, endOf, extendTo, find, freeTrack, lengthOf, move, rippleToPlayhead, paste, place, remove, deleteTrack, roll,
   fadeAt, setFade, setItems, setSpeed, setTrack, slip, timecode, toSaved, trim, unlink, withKeys, type NleTimeline,
   NO_MARKS, clipOfPart, editTracks, loopNext, loopPart, markedPart, setMark, sourceTimeline, type Marks,
-  closeGap, extract, lift, rateStretch, slide, type NleItem, addMarker, markerAt, markersCsv, removeMarker, setMarker,
+  closeGap, extract, lift, rateStretch, slide, type NleItem, addMarker, framesOfTimecode, freezeFrame, longestOf, setDuration, processingOf, setClipProcessing, setTimelineProcessing, markerAt, markersCsv, removeMarker, setMarker,
 } from "./model";
 import { valueAt } from "./keyframes";
 
@@ -552,5 +552,142 @@ describe("nle model: timeline markers", () => {
   it("exports a CSV: timecode, name, colour, note, duration, quoted where a cell needs it", () => {
     const t = setMarker(addMarker(addMarker(tl(), 3700 * 25 + 3, { name: "End" }), 30, { name: 'Hook, "big"' }), 30, { note: "two\nlines", dur: 50 });
     expect(markersCsv(t)).toBe('Timecode,Name,Colour,Note,Duration\n00:00:01:05,"Hook, ""big""",Blue,"two\nlines",00:00:02:00\n01:01:40:03,End,Blue,,00:00:00:01\n');
+  });
+});
+
+describe("clip menu: duration and freeze frame", () => {
+  // one 3 s shot of a 4 s file with its voice (linked), then a gap, then a second shot
+  const pair = (): NleTimeline =>
+    withKeys({
+      timeline: { fps: 25, name: "Tiny Acrobatics" },
+      sources: { cam: { path: "/m/cam.mp4", fps: 25, dur: 100 } },
+      tracks: {
+        V1: { items: [{ src: "cam", rec: 0, len: 75, in: 0, link: 1 }, { src: "cam", rec: 90, len: 10, in: 0 }] },
+        A1: { items: [{ src: "cam", rec: 0, len: 75, in: 0, link: 1 }] },
+      },
+    } as unknown as NleTimeline);
+
+  it("Change Clip Duration trims the end of a linked picture and voice together, up to the next clip, never on a locked track", () => {
+    const tl = pair();
+    const [v, a] = [key(tl, "V1", 0), key(tl, "A1", 0)];
+    const short = setDuration(tl, [v, a], 50);
+    expect([find(short, v)!.item.len, find(short, a)!.item.len]).toEqual([50, 50]);
+    expect(find(short, v)!.item).toMatchObject({ rec: 0, in: 0 });
+    expect(short.tracks.V1.items[1].rec).toBe(90); // nothing after it moves
+    // longer: the picture stops where the next shot starts, as a drag of its end does
+    expect(find(setDuration(tl, [v], 95), v)!.item.len).toBe(90);
+    expect(find(setDuration(setTrack(tl, "V1", { locked: true }), [v], 50), v)!.item.len).toBe(75);
+  });
+
+  it("the longest a clip can be counts its speed: 50 frames at 200 % use 100 source frames", () => {
+    const tl = pair();
+    const v = key(tl, "V1", 0);
+    expect(longestOf(tl, find(tl, v)!.item)).toBe(100);
+    const fast = setItems(tl, [v], { speed: 2 });
+    expect(longestOf(fast, find(fast, v)!.item)).toBe(50);
+    const late = setItems(tl, [v], { speed: 2, in: 2 });
+    expect(longestOf(late, find(late, v)!.item)).toBe(49);
+  });
+
+  it("reads a length as frames or a timecode, frames last", () => {
+    expect(framesOfTimecode("50", 25)).toBe(50);
+    expect(framesOfTimecode("2:10", 25)).toBe(60);
+    expect(framesOfTimecode("0:01:00:00", 25)).toBe(1500);
+    expect(framesOfTimecode("1:00:00:00", 30)).toBe(108000);
+    expect(framesOfTimecode("1:30", 25)).toBeNull(); // 30 frames at 25 fps
+    // at 29.97 what timecode() writes reads back as the same length
+    for (const f of [1000, 9000, 29, 30]) expect(framesOfTimecode(timecode(f, 29.97), 29.97)).toBe(f);
+    expect(framesOfTimecode("2 s", 25)).toBeNull();
+    expect(framesOfTimecode("", 25)).toBeNull();
+  });
+
+  it("Freeze Frame cuts the V1 clip at the playhead (its voice too) and holds the part after it; nothing off V1 or off the clip", () => {
+    const tl = pair();
+    const [v, a] = [key(tl, "V1", 0), key(tl, "A1", 0)];
+    const held = freezeFrame(tl, [v, a], 30);
+    expect(spans(held, "V1").slice(0, 2)).toEqual([[0, 30, 0], [30, 45, 30]]);
+    expect(held.tracks.V1.items.map((i) => !!i.freeze)).toEqual([false, true, false]);
+    expect(spans(held, "A1")).toEqual([[0, 30, 0], [30, 45, 30]]);
+    // the held part and its voice are linked to each other, apart from the parts before the cut
+    const [vl, vr] = held.tracks.V1.items;
+    const [al, ar] = held.tracks.A1.items;
+    expect([al.link, ar.link]).toEqual([vl.link, vr.link]);
+    expect(vr.link).not.toBe(vl.link);
+    // a held clip runs on past its file's end: its length isn't capped by the source
+    expect(longestOf(held, vr)).toBe(Infinity);
+    expect(find(setDuration(held, [vr._k!], 200), vr._k!)!.item.len).toBe(60); // up to the next shot at 90
+    expect(held.tracks.A1.items.some((i) => i.freeze)).toBe(false);
+    // at its first frame the whole clip is held, no cut
+    expect(freezeFrame(tl, [v], 0).tracks.V1.items.map((i) => !!i.freeze)).toEqual([true, false]);
+    // already held, off the clip, only its voice picked, a locked V1: unchanged
+    expect(freezeFrame(held, [key(held, "V1", 30)], 40)).toBe(held);
+    expect(freezeFrame(tl, [v], 80)).toBe(tl);
+    expect(freezeFrame(tl, [a], 30)).toBe(tl);
+    expect(freezeFrame(setItems(tl, [v], { rev: true }), [v], 30).tracks.V1.items.some((i) => i.freeze)).toBe(false);
+    expect(freezeFrame(setTrack(tl, "V1", { locked: true }), [v], 30).tracks.V1.items.some((i) => i.freeze)).toBe(false);
+  });
+});
+
+describe("nle model: processing, the timeline's setting and a clip's own", () => {
+  const withVoice = () => {
+    const tl = setTimelineProcessing(reel(), "voice", { fx: "a", share: 0.6 });
+    return setClipProcessing(tl, [key(tl, "A1", 0)], "voice", { fx: "b", share: 1 });
+  };
+
+  it("a clip follows the timeline unless it has its own; off again it follows the timeline", () => {
+    const tl = withVoice();
+    const [own, other] = tl.tracks.A1.items;
+    expect(processingOf(tl, own, "voice")).toEqual({ fx: "b", share: 1 });
+    expect(processingOf(tl, other, "voice")).toEqual({ fx: "a", share: 0.6 });
+    expect(processingOf(tl, other, "face")).toBeUndefined();
+    // null is a clip's own value (a page's "off"), never the timeline's
+    expect(processingOf(tl, find(setClipProcessing(tl, [other._k!], "voice", null), other._k!)!.item, "voice")).toBeNull();
+    const back = setClipProcessing(tl, [own._k!], "voice", undefined);
+    expect(find(back, own._k!)!.item.processing).toBeUndefined();
+    expect(processingOf(back, find(back, own._k!)!.item, "voice")).toEqual({ fx: "a", share: 0.6 });
+    // another processing on the same clip stays when one goes
+    const two = setClipProcessing(setClipProcessing(tl, [own._k!], "face", { on: true }), [own._k!], "voice", undefined);
+    expect(find(two, own._k!)!.item.processing).toEqual({ face: { on: true } });
+    expect(setTimelineProcessing(tl, "voice", undefined).timeline.processing).toBeUndefined();
+    expect(toSaved(tl).timeline.processing).toEqual({ voice: { fx: "a", share: 0.6 } });
+  });
+
+  it("a locked track is left alone, and each clip gets its own copy", () => {
+    const tl = withVoice();
+    tl.tracks.A1.locked = true;
+    expect(setClipProcessing(tl, [key(tl, "A1", 75)], "voice", { fx: "c" })).toBe(tl);
+    const v = { fx: "c" };
+    const r = reel();
+    const both = setClipProcessing(r, [key(r, "A1", 0), key(r, "A1", 75)], "voice", v);
+    v.fx = "changed";
+    const [a, b] = both.tracks.A1.items;
+    expect(a.processing).not.toBe(b.processing);
+    expect(a.processing!.voice).not.toBe(b.processing!.voice);
+    expect(a.processing!.voice).toEqual({ fx: "c" });
+  });
+
+  it("every edit keeps a clip's own setting: blade, duplicate, paste, ripple delete, slide, rate stretch, save", () => {
+    const tl = withVoice();
+    const k = key(tl, "A1", 0);
+    const own = { voice: { fx: "b", share: 1 } };
+    const cut = blade(tl, 30, [k]);
+    expect(cut.tracks.A1.items.filter((i) => i.rec < 75).map((i) => i.processing)).toEqual([own, own]);
+    // the right part's setting is its own: changing one never changes the other
+    const right = cut.tracks.A1.items.find((i) => i.rec === 30)!;
+    const changed = setClipProcessing(cut, [right._k!], "voice", { fx: "c" });
+    expect(changed.tracks.A1.items.find((i) => i.rec === 0)!.processing).toEqual(own);
+    const dup = duplicate(tl, [k]);
+    expect(dup.keys.map((d) => find(dup.tl, d)!.item.processing).filter(Boolean)).toEqual([own]);
+    const pasted = paste(tl, copyOf(tl, [k]), 200);
+    expect(pasted.keys.map((p) => find(pasted.tl, p)!.item.processing).filter(Boolean)).toEqual([own]);
+    const after = key(tl, "A1", 75);
+    const rippled = remove(tl, [key(tl, "V1", 0)], true);
+    expect(find(rippled, after)!.item.processing).toBeUndefined();
+    const second = setClipProcessing(tl, [after], "voice", { fx: "c" });
+    expect(find(remove(second, [key(tl, "V1", 0)], true), after)!.item.processing).toEqual({ voice: { fx: "c" } });
+    const slid = setClipProcessing(tl, [key(tl, "V2", 90)], "face", { on: true });
+    expect(find(slide(slid, key(tl, "V2", 90), 5), key(tl, "V2", 90))!.item.processing).toEqual({ face: { on: true } });
+    expect(find(rateStretch(tl, k, "tail", -10), k)!.item.processing).toEqual(own);
+    expect(toSaved(tl).tracks.A1.items[0].processing).toEqual(own);
   });
 });

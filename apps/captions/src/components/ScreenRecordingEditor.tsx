@@ -25,7 +25,7 @@ import {
   type ScreenLook,
 } from "@/lib/screen-recording";
 import { exportBitrate, renderScreenVideo } from "@/lib/screen-export";
-import { canSaveTransparent, transparentVideoMade } from "@/lib/mac-record";
+import { canSaveTransparent, tellRecorder, transparentVideoMade } from "@/lib/mac-record";
 import type { ScreenSource } from "@/lib/screen-source";
 import { Inspector, type InspectorTab } from "@/components/screen-editor/Inspector";
 import { Timeline } from "@/components/screen-editor/Timeline";
@@ -39,7 +39,10 @@ export type EditorAction = {
   label: string;
   title?: string;
   primary?: boolean;
-  run: (out: { blob: Blob; name: string }, progress: (step: string, pct: number) => void) => Promise<void>;
+  /** asked before the video is made (`name` with no extension); false stops there */
+  before?: (name: string) => Promise<boolean>;
+  /** `signal`: the person pressed Stop; nothing should go on after it */
+  run: (out: { blob: Blob; name: string }, progress: (step: string, pct: number) => void, signal: AbortSignal) => Promise<void>;
 };
 
 const SIZE_KEY = "screen-editor-size";
@@ -138,6 +141,7 @@ export function ScreenRecordingEditor({
     }
   });
   const [exporting, setExporting] = useState(false);
+  const asking = useRef(false);
   const [making, setMaking] = useState<{ step: string; pct: number } | null>(null);
   const abort = useRef<AbortController | null>(null);
   // the source is read through a ref: its identity can change on every page render, its url cannot
@@ -405,10 +409,18 @@ export function ScreenRecordingEditor({
     if (!look || !events) return;
     setExporting(false);
     player.pause();
+    const name = `${base} (zoomed)`;
+    if (a?.before) {
+      if (asking.current) return;   // a second click while the save panel is on its way
+      asking.current = true;
+      const go = await a.before(name).finally(() => (asking.current = false));
+      if (!go) return;
+    }
     const ctl = new AbortController();
     abort.current = ctl;
     const out = a ? exportSize(settings, look.shape, width, height) : outputSize(look.shape, width, height, 1080);
     const kept = trimOf(look, duration);
+    let handed = false;
     try {
       setError("");
       setMaking({ step: "Exporting", pct: 0 });
@@ -436,13 +448,16 @@ export function ScreenRecordingEditor({
         download?.(blob, alphaFileName(`${base} (transparent)`, out.width, out.height));
         return await made;
       }
-      await a.run({ blob, name: `${base} (zoomed)` }, (step, pct) => {
+      await a.run({ blob, name }, (step, pct) => {
         if (!ctl.signal.aborted) setMaking({ step, pct: Math.round(pct) });
-      });
+      }, ctl.signal);
+      handed = true;
     } catch (e) {
       if (!ctl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setMaking(null);
+      // stopped or failed before its video went: the place the app asked for waits for no other download
+      if (a?.before && !handed) tellRecorder("save-drop");
     }
   };
 
@@ -464,9 +479,15 @@ export function ScreenRecordingEditor({
       )}
       {extra}
       {making ? (
-        <Button size="sm" variant="outline" onClick={() => abort.current?.abort()}>
-          <Loader2 className="animate-spin" /> {making.step} {making.pct}% · Stop
-        </Button>
+        // the video is made in this window: the count is only a label, Stop its own button (a click on the count stopped it)
+        <>
+          <span className="flex items-center gap-1.5 text-sm text-zinc-300" title="Made in this window: leaving this page stops it">
+            <Loader2 className="size-4 animate-spin" /> {making.step} {making.pct}%
+          </span>
+          <Button size="sm" variant="outline" onClick={() => abort.current?.abort()}>
+            Stop
+          </Button>
+        </>
       ) : (
         <>
           <Button size="sm" disabled={!look} onClick={() => setExporting(true)} className="bg-violet-600 text-white hover:bg-violet-500">

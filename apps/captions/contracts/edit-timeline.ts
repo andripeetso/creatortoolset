@@ -99,9 +99,12 @@ export interface ItemEdit {
   gain?: number;
   /** an overlay switched off */
   off?: boolean;
+  /** a talent shot (V1) played at this rate, its voice with it (1.5 = 150 %, 0.5 to 2): it takes its length / speed
+   *  frames and everything after moves up */
+  speed?: number;
 }
 
-const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade && !e.crop && !e.gain && !e.off;
+const neutral = (e: ItemEdit) => !e.remove && !e.move && !e.head && !e.tail && !e.track && !e.split?.length && !e.copyOf && !e.slip && e.zoom === undefined && !e.grade && !e.crop && !e.gain && !e.off && !e.speed;
 /** Layers an overlay may go to: the same kind, never the talent or its voice. */
 export const layerFor = (from: string, to: string) => to !== from && to[0] === from[0] && /^[VA][2-9]$/.test(to);
 const whole = (v: unknown) => (Number.isInteger(v) && v !== 0 && Math.abs(v as number) <= 100_000 ? (v as number) : undefined);
@@ -141,6 +144,8 @@ export function cleanEdits(v: unknown): ItemEdit[] {
       const gain = e.key[0] === "A" ? real(e.gain, -30, 30) : undefined;
       if (gain) x.gain = gain;
       if (e.off === true && /^[VA][2-9]:/.test(e.key)) x.off = true;
+      const speed = talent ? real(e.speed, 0.5, 2, 100) : undefined;
+      if (speed && speed !== 1) x.speed = speed;
     }
     // cuts stand whatever else the first piece gets (a removed first piece leaves the others)
     const split = Array.isArray(e.split)
@@ -224,6 +229,7 @@ export function describeEdit(e: ItemEdit, fps: number): string {
     e.crop && ("x" in e.crop ? `held at ${Math.round(e.crop.x * 100)}% across` : "subject" in e.crop ? "following what was clicked" : e.crop.speaker ? `following Speaker ${e.crop.speaker}` : "following who talks"),
     e.gain && `${e.gain > 0 ? "+" : ""}${e.gain} dB`,
     e.off && "switched off",
+    e.speed && `plays at ${Math.round(e.speed * 100)} % with its voice, what follows moves up`,
   ].filter(Boolean).join(", ");
 }
 
@@ -317,7 +323,12 @@ export interface PlayPlan {
   frames: { from: number; to: number; box: CropBox }[];
   /** a regraded shot where nothing covers it: `was` is what the render has */
   grades: { from: number; to: number; key: string; was?: Grade; grade: Grade }[];
+  /** a talent shot played faster or slower (ItemEdit.speed): the cut's frames [from, to) play at `rate` */
+  rates?: { from: number; to: number; rate: number }[];
 }
+
+/** The rate the cut's frame `r` plays at (a speed edit's), else 1. */
+export const rateAt = (plan: { rates?: PlayPlan["rates"] }, r: number) => plan.rates?.find((x) => r >= x.from && r < x.to)?.rate ?? 1;
 
 /** [from, to) spans minus the others. */
 function minus(a: [number, number], cuts: [number, number][]): [number, number][] {
@@ -358,6 +369,8 @@ export function playPlan(view: TimelineView, edits: ItemEdit[], holes: PlanHole[
         for (const [from, to] of minus([it.rec, end], covers)) plan.frames.push({ from, to, box });
       }
       if (e.grade) for (const [from, to] of minus([it.rec, end], covers)) plan.grades.push({ from, to, key: it.key, was: it.grade, grade: e.grade });
+      // what's left of the shot plays at its speed (a shot made longer and faster is refused: the frames would not agree)
+      if (e.speed && e.speed !== 1) (plan.rates ??= []).push({ from: it.rec + Math.max(0, -(e.head ?? 0)), to: end - Math.max(0, -(e.tail ?? 0)), rate: e.speed });
       continue;
     }
     const now = editedSpan(it, e);
@@ -451,39 +464,45 @@ export function splitView(view: TimelineView, edits: ItemEdit[]): TimelineView {
 // clock, the edited timeline: the render's frames with every hold put in and every skip taken out. A clip's voice plays
 // from its own recording there, handles included (a longer clip plays the words the cut left out).
 
-type Spans = Pick<PlayPlan, "skips" | "holds">;
+type Spans = Pick<PlayPlan, "skips" | "holds" | "rates">;
 const ms = (s: number) => Math.round(s * 1000) / 1000;
 
 /**
  * A frame of the cut as a frame of the edited timeline: the holds it is past added, the skipped frames before it taken
- * out. The player holds on the middle of a held frame and plays on from there (lib/review-play.ts), so from that middle
- * the hold is behind it.
+ * out, a frame played at a rate counted 1 / rate (so a shot at 2× takes half its frames; fractional then). The player
+ * holds on the middle of a held frame and plays on from there (lib/review-play.ts), so from that middle the hold is
+ * behind it.
  */
 export function editedFrame(plan: Spans, r: number): number {
   let e = r;
   for (const h of plan.holds) if (r >= h.at + 0.5) e += h.frames;
   for (const [a, b] of plan.skips) e -= Math.max(0, Math.min(b, r) - a);
+  for (const x of plan.rates ?? []) e -= Math.max(0, Math.min(x.to, r) - x.from) * (1 - 1 / x.rate);
   return e;
 }
 
-/** [a, b) without the skips, cut after each held frame (the timeline goes on there while the picture waits). */
+/** [a, b) without the skips, cut after each held frame (the timeline goes on there while the picture waits) and where
+ *  a rate starts or ends (a span plays at one rate). */
 function playedSpans(a: number, b: number, plan: Spans): [number, number][] {
   return minus([a, b], plan.skips).flatMap(([x, y]) => {
-    const cuts = plan.holds.map((h) => h.at + 1).filter((c) => c > x && c < y).sort((p, q) => p - q);
+    const cuts = [...plan.holds.map((h) => h.at + 1), ...(plan.rates ?? []).flatMap((r) => [r.from, r.to])]
+      .filter((c, i, all) => c > x && c < y && all.indexOf(c) === i).sort((p, q) => p - q);
     const edges = [x, ...cuts, y];
     return edges.slice(0, -1).map((c, i): [number, number] => [c, edges[i + 1]]);
   });
 }
 
-/** One stretch of a recording on the edited timeline: from frame `at` for `frames`, `offset` seconds into `src`. */
-export type SoundPiece = { src: string; at: number; frames: number; offset: number };
+/** One stretch of a recording on the edited timeline: from frame `at` for `frames`, `offset` seconds into `src`; `rate`
+ *  = seconds of the recording a second of the timeline plays (a speed edit; none = 1), so it covers frames × rate of it. */
+export type SoundPiece = { src: string; at: number; frames: number; offset: number; rate?: number };
 
 /** Pieces that run on from each other, in the timeline and in the recording, as one. */
 function joined(list: SoundPiece[], fps: number): SoundPiece[] {
   const out: SoundPiece[] = [];
   for (const p of list) {
     const q = out.at(-1);
-    if (q && q.src === p.src && q.at + q.frames === p.at && Math.abs(q.offset + q.frames / fps - p.offset) < 1e-6) q.frames += p.frames;
+    if (q && q.src === p.src && q.rate === p.rate && Math.abs(q.at + q.frames - p.at) < 1e-6
+      && Math.abs(q.offset + (q.frames * (q.rate ?? 1)) / fps - p.offset) < 1e-6) q.frames += p.frames;
     else out.push({ ...p });
   }
   return out;
@@ -491,7 +510,13 @@ function joined(list: SoundPiece[], fps: number): SoundPiece[] {
 
 /** The cut's own sound (a stem the length of the render) on the edited timeline: what plays between skips and holds. */
 export function renderPieces(plan: Spans, frames: number, fps: number, src = "render"): SoundPiece[] {
-  return joined(playedSpans(0, frames, plan).map(([a, b]) => ({ src, at: editedFrame(plan, a), frames: b - a, offset: ms(a / fps) })), fps);
+  return joined(playedSpans(0, frames, plan).map(([a, b]) => ({ src, at: editedFrame(plan, a), offset: ms(a / fps), ...spanAt(plan, a, b) })), fps);
+}
+
+/** The edited frames a played span [a, b) of the cut takes, and its rate when that isn't 1. */
+function spanAt(plan: Spans, a: number, b: number): { frames: number; rate?: number } {
+  const k = rateAt(plan, a);
+  return k === 1 ? { frames: b - a } : { frames: (b - a) / k, rate: k };
 }
 
 /** A shot as it plays from its camera original: a sound piece with the shot's framing (its own or the edit's reframe). */
@@ -513,7 +538,7 @@ function trackPieces(view: TimelineView, edits: ItemEdit[], plan: Spans, track: 
     const src = it.src;
     const sec = (r: number) => ms(it.ins! + (r - it.rec + slip) / fps);
     const pieces: SoundPiece[] = playedSpans(it.rec + Math.max(0, -head), it.rec + it.len - Math.max(0, -tail), plan)
-      .map(([a, b]) => ({ src, at: editedFrame(plan, a) + move, frames: b - a, offset: sec(a) }));
+      .map(([a, b]) => ({ src, at: editedFrame(plan, a) + move, offset: sec(a), ...spanAt(plan, a, b) }));
     if (!pieces.length) continue;
     if (head > 0) {
       const first = pieces[0];
@@ -524,11 +549,11 @@ function trackPieces(view: TimelineView, edits: ItemEdit[], plan: Spans, track: 
     }
     if (tail > 0) {
       const p = pieces.at(-1)!;
-      pieces.push({ src, at: p.at + p.frames, frames: tail, offset: ms(p.offset + p.frames / fps) });
+      pieces.push({ src, at: p.at + p.frames, frames: tail, offset: ms(p.offset + (p.frames * (p.rate ?? 1)) / fps) });
     }
     // nothing before the media's first second (an edge pulled out further than it has)
     const inside = pieces.map((p) => {
-      const cut = p.offset < 0 ? Math.round(-p.offset * fps) : 0;
+      const cut = p.offset < 0 ? Math.round(-p.offset * fps) / (p.rate ?? 1) : 0; // in timeline frames
       return cut ? { ...p, at: p.at + cut, frames: p.frames - cut, offset: 0 } : p;
     }).filter((p) => p.frames > 0);
     out.push(...joined(inside, fps).map((p) => ({ ...p, it, e })));
@@ -538,7 +563,7 @@ function trackPieces(view: TimelineView, edits: ItemEdit[], plan: Spans, track: 
 
 /** The clips of these audio tracks on the edited timeline, each from its own file. */
 export const soundPieces = (view: TimelineView, edits: ItemEdit[], plan: Spans, tracks: string[]): SoundPiece[] =>
-  tracks.flatMap((t) => trackPieces(view, edits, plan, t)).map(({ src, at, frames, offset }) => ({ src, at, frames, offset }))
+  tracks.flatMap((t) => trackPieces(view, edits, plan, t)).map(({ src, at, frames, offset, rate }) => ({ src, at, frames, offset, ...(rate ? { rate } : {}) }))
     .sort((a, b) => a.at - b.at);
 
 /** Each voice clip (A1) on the edited timeline, from its recording. */
@@ -556,10 +581,12 @@ export function picturePieces(view: TimelineView, edits: ItemEdit[], plan: Spans
   const out: PicturePiece[] = [];
   for (const lane of lanes) {
     const pieces = trackPieces(view, edits, plan, lane.id);
-    for (const { src, at, frames, offset, it, e } of pieces) {
+    for (const { src, at, frames, offset, rate, it, e } of pieces) {
       if (!playable(src)) continue;
       const f = e?.zoom !== undefined ? { zoom: e.zoom, pan: e.pan ?? 0, tilt: e.tilt ?? 0 } : { zoom: it.zoom ?? 1, pan: it.pan ?? 0, tilt: it.tilt ?? 0 };
-      for (const [a, b] of minus([at, at + frames], taken)) out.push({ key: it.key, src, at: a, frames: b - a, offset: ms(offset + (a - at) / view.fps), ...f });
+      for (const [a, b] of minus([at, at + frames], taken)) {
+        out.push({ key: it.key, src, at: a, frames: b - a, offset: ms(offset + ((a - at) * (rate ?? 1)) / view.fps), ...(rate ? { rate } : {}), ...f });
+      }
     }
     // what this layer covers, played from a file or not, hides the layers under it
     taken.push(...pieces.map((p): [number, number] => [p.at, p.at + p.frames]));

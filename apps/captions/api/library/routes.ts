@@ -18,6 +18,8 @@ import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginal
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
+import { playCopy, pushPlayCopy } from "../lib/play-copies";
+import { isFinal } from "./finals";
 import { BLURRED_UPLOADS, type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
@@ -1414,6 +1416,20 @@ libraryApp.get("/media/:versionId/:kind", (c) =>
     : libraryMedia(c, c.get("user").username, c.req.param("versionId"), c.req.param("kind")),
 );
 
+/** A version's play file on this server's disk, or null (not ready, on a Mac, or in a bucket that signs its own links). */
+async function localPlayFile(versionId: string): Promise<{ path: string; type: string } | null> {
+  const file = mediaFile(versionId, "play");
+  if (!file?.key || file.onMac) return null;
+  const at = await blobs.locate(file.key, 900, { contentType: file.type }).catch(() => null);
+  return at?.kind === "path" ? { path: at.path, type: file.type } : null;
+}
+
+/** A version that just became a Final: its play file is pushed to the playback copies (nothing without a plug-in's store). */
+export async function pushFinalCopy(versionId: string): Promise<void> {
+  const local = await localPlayFile(versionId);
+  if (local) await pushPlayCopy(`library/${versionId}`, local.path, local.type);
+}
+
 /**
  * One item's picture or file for an account: a version the account may see, or an external ref whose source's policies
  * allow it (its own stream answers). Every route that serves library media goes through here, the Finals old-path
@@ -1458,6 +1474,12 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
     enqueueJob(db(), v.library_id, versionId, "proxy", username, true);
     prepareFirst(versionId);
     libraryChanged(v.library_id);
+  }
+  // a Final plays from its playback copy once it is pushed (a plug-in's CDN); the footage never does (lib/play-copies.ts)
+  if (kind === "play" && isFinal(versionId)) {
+    const local = await localPlayFile(versionId);
+    const copy = local ? await playCopy(c, `library/${versionId}`, local.path, local.type) : null;
+    if (copy) return copy;
   }
   return serveBlob(c, file.key, file.type, kind === "source" ? downloadName(versionId) : undefined);
 }

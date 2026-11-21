@@ -12,6 +12,7 @@ import type { ActivityFn, MenuFn } from "../activity";
 import type { FinalsAdd, FinalsOutcome, FinalsSource } from "../library/finals";
 import { readers, registerPublicGridReader, registerReader, type PublicGridReader, type SocialReader } from "./connectors/provider";
 import type { StorageFolder, UploadRelayTus } from "../../contracts/storage";
+import type { BlobStore } from "../library/storage/types";
 import { CARDS_DRAW_KIND, COPY_KIND, CUTOUT_KIND, FOLDER_LIST_KIND, HELPER_CHECK_KIND, LIBRARY_LOOK_KIND, RESOLVE_KIND, SPLIT_KIND, TRANSCRIBE_KIND, type DeviceJob } from "../../contracts/devices";
 import type { SessionUser } from "../users";
 import { PACK_ITEM_KINDS, PACK_LIMITS, PACK_SLOTS, SLOT_TOOL, checkPackSkill, skillNameKey, type PackDesignSystem, type PackItemKind, type PackOrigin, type PackSkill } from "../../contracts/packs";
@@ -100,6 +101,9 @@ export interface ServerPlugin {
   connectors?: { publicGrid?: PublicGridReader; readers?: SocialReader[] };
   // Upload relays for Review's big videos (api/review.ts): the server uses one when CT_UPLOAD_RELAY names it and it is available.
   uploadRelays?: UploadRelay[];
+  // Where Review versions and Finals play from, pushed there when ready (lib/play-copies.ts): a store whose links are
+  // signed (caps.signedUrls), or null while its settings are missing (then the server streams). The first plug-in's is used.
+  playCopies?: { label: string; store: () => BlobStore | null };
   // Where uploads from a phone go in the workspace a request works in (api/library/upload-target.ts): the name of the
   // plug-in's own store, which the phone knows how to send to, or null for that workspace's own library. The first
   // plug-in that answers wins, and the library's own upload without a library id refuses that workspace. { error } refuses
@@ -268,6 +272,7 @@ export function describeServerPlugins(plugins: ServerPlugin[], admin: boolean): 
     for (const pr of p.providers?.presets ?? []) adds.push({ text: `AI provider preset: ${pr.name}`, to: "/settings/providers" });
     for (const r of p.connectors?.readers ?? []) adds.push({ text: `Connector: ${r.session?.label ?? "social reader"}`, to: "/settings/connectors" });
     for (const r of p.uploadRelays ?? []) adds.push({ text: `Upload relay: ${r.label}` });
+    if (p.playCopies) adds.push({ text: `Review and Finals play from: ${p.playCopies.label}` });
     const tools = (p.tools as { defs?: unknown[] } | undefined)?.defs?.length ?? 0;
     if (tools) adds.push({ text: `${tools} ${tools === 1 ? "tool" : "tools"} for your own AI`, to: "/settings/own-ai" });
     for (const f of p.editFlags ?? []) adds.push({ text: `Editor flag: ${f.label}`, to: "/editor" });
@@ -498,6 +503,11 @@ export async function pluginReceiveFile(user: SessionUser, file: ReceivedFile): 
 /** The upload relays every loaded plug-in adds, in load order. */
 export function pluginUploadRelays(): UploadRelay[] {
   return loaded.flatMap((p) => p.uploadRelays ?? []);
+}
+
+/** The store Review versions and Finals play from (lib/play-copies.ts): the first loaded plug-in's, null when none is set up. */
+export function pluginPlayCopies(): BlobStore | null {
+  return loaded.find((p) => p.playCopies)?.playCopies?.store() ?? null;
 }
 
 /** The gates and built-in apps that start switched off for a new role-"user" account, from every loaded plug-in. */

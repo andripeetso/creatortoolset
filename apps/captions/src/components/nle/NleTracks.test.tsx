@@ -36,10 +36,27 @@ const mount = async (props: Partial<Parameters<typeof NleTracks>[0]> = {}) => {
 };
 
 describe("the timeline's clips", () => {
+  it("draws a clip in its Clip Color; an offline clip keeps the offline red", async () => {
+    const coloured = withKeys({ ...tl, tracks: { ...tl.tracks, V1: { items: tl.tracks.V1.items.map((i) => ({ ...i, color: "Cyan" })) } } } as NleTimeline);
+    const { host, root } = await mount({ tl: coloured });
+    const clips = [...host.querySelectorAll("[data-clip]")] as HTMLElement[];
+    expect(clips.map((c) => c.getAttribute("data-color"))).toEqual(["#3ec1d3", null]);
+    act(() => root.unmount());
+  });
+
   it("draws a clip whose file isn't here as offline, saying why", async () => {
     const { host, root } = await mount();
     const clips = [...host.querySelectorAll("[data-clip]")] as HTMLElement[];
     expect(clips.map((c) => c.title)).toEqual(["", "Media offline"]);
+    act(() => root.unmount());
+  });
+
+  it("a clip with its own processing setting has a badge naming it; the others none", async () => {
+    const own = structuredClone(tl);
+    own.tracks.V1.items[0].processing = { face: { on: true } };
+    const { host, root } = await mount({ tl: own });
+    expect([...host.querySelectorAll("[data-own]")].map((b) => b.getAttribute("aria-label"))).toEqual(["Own setting: face"]);
+    expect(host.querySelector("[data-clip] [data-own]")!.closest("[data-clip]")).toBe(host.querySelector("[data-clip]"));
     act(() => root.unmount());
   });
 

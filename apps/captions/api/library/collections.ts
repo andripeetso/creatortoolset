@@ -10,6 +10,9 @@ import { env } from "../lib/env";
 import { sendFile } from "../lib/send-file";
 import { storedZip } from "../lib/workshop/deliveries";
 import { notifyLibraryChanges } from "../lib/events";
+import { sweepPlayCopies } from "../lib/play-copies";
+import { isFinal } from "./finals";
+import { pushFinalCopy } from "./routes";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
 import { mayLeave, mayServe, type Received } from "./upload-gate";
@@ -624,6 +627,11 @@ async function setPieceTrashed(c: Ctx, trash: boolean) {
   const row = await writablePiece(c.get("user").username, libraryId, c.req.param("pid") ?? "");
   if (!row) return notFound(c);
   db().prepare("UPDATE pieces SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, row.id);
+  // its versions' playback copies go at once, unless still a Final in another piece (lib/play-copies.ts)
+  if (trash) {
+    const items = db().prepare("SELECT version_id FROM piece_items WHERE piece_id = ? AND version_id IS NOT NULL").all(row.id) as { version_id: string }[];
+    void sweepPlayCopies(items.map((i) => `library/${i.version_id}/`)).catch(() => {});
+  }
   return c.json(pieceOf({ ...row, trashed_at: trash ? Date.now() : null }));
 }
 
@@ -677,6 +685,7 @@ collectionApp.delete("/:id/pieces/:pid", async (c) => {
   if (!row) return notFound(c);
   db().prepare("DELETE FROM pieces WHERE id = ?").run(row.id);
   if (row.cover_key) await blobs.delete(row.cover_key).catch(() => {});
+  void sweepPlayCopies(["library/"]).catch(() => {}); // its versions' playback copies, unless still Finals in another piece
   return c.json({ ok: true });
 });
 
@@ -700,6 +709,7 @@ collectionApp.post("/:id/pieces/:pid/items", async (c) => {
   db()
     .prepare("INSERT INTO piece_items (id, piece_id, version_id, label, position) VALUES (?, ?, ?, ?, ?)")
     .run(`pci_${randomUUID().replace(/-/g, "").slice(0, 16)}`, piece.id, versionId, itemLabel(body?.label), last + 1);
+  if (isFinal(versionId)) void pushFinalCopy(versionId).catch(() => {});
   return c.json(pieceOf(piece), 201);
 });
 
@@ -738,6 +748,7 @@ collectionApp.delete("/:id/pieces/:pid/items/:iid", async (c) => {
   // the picked cover is a frame of this version: without the version, the cover goes back to automatic
   const next = piece.cover_version_id && piece.cover_version_id === item.version_id ? await dropCover(piece) : piece;
   db().prepare("DELETE FROM piece_items WHERE id = ?").run(item.id);
+  if (item.version_id) void sweepPlayCopies([`library/${item.version_id}/`]).catch(() => {});
   return c.json(pieceOf(next));
 });
 

@@ -56,7 +56,7 @@ export function rendersOf(tl: Timeline): Renders {
     edj_version: RENDERS_EDJ,
     tracks: tl.plan
       ? { V1: ["zoom", "speed"], A1: ["gain_db"], A2: ["gain_db"], A3: SOUND }
-      : { V1: ["zoom", "tilt", "fade_in", "fade_out", "enabled"], V2: ["zoom", "tilt", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND },
+      : { V1: ["zoom", "tilt", "fade_in", "fade_out", "enabled", "freeze"], V2: ["zoom", "tilt", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND },
   };
 }
 
@@ -206,7 +206,12 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         // a cutaway's picture: its own clip from its in point, at its own zoom and tilt, ungraded
         const pic = c
           ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, c) }
-          : vs.w > 0 ? { file: files[v.src]!, at: v.in / vs.fps + off, filter: [shotFilter(tl, v, grade, undefined, off), ...fadeFilter(v, p.at - v.rec, p.frames, tl.fps)].join(",") } : null;
+          : vs.w > 0 ? {
+            file: files[v.src]!,
+            // a freeze holds the shot's first frame: that one frame, repeated
+            at: v.in / vs.fps + (v.freeze ? 0 : off),
+            filter: [...(v.freeze ? ["trim=end_frame=1", "tpad=stop=-1:stop_mode=clone"] : []), shotFilter(tl, v, grade, undefined, off), ...fadeFilter(v, p.at - v.rec, p.frames, tl.fps)].join(","),
+          } : null;
         const voiceAf = a ? [...(a.gainDb ? [`volume=${a.gainDb}dB`] : []), ...fadeFilter(a, p.at - a.rec, p.frames, tl.fps, true)] : [];
         // a take with no picture (a voice recording) under no cutaway: black, as a gap in the picture is
         const picture = pic ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];

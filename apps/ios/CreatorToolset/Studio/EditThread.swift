@@ -139,8 +139,7 @@ enum EditFeed {
                 placed.append((job.at, 0, .done(job)))
             } else if job.status == "error" {
                 // tried again since: the old failure keeps its words, not its button
-                let again = edit.jobs.contains { $0.createdAt > job.createdAt && $0.kind == job.kind && $0.variant == job.variant && $0.draft == job.draft }
-                placed.append((job.at, 0, .failed(job, canRetry: !again && !noRetry.contains(job.kind))))
+                placed.append((job.at, 0, .failed(job, canRetry: !fixed(job, in: edit) && !noRetry.contains(job.kind))))
             }
         }
         for draft in edit.drafts {
@@ -212,9 +211,10 @@ enum EditFeed {
         return page
     }
 
-    /// A failure the same step ran again after (put right, or failed anew and that one is on top): it goes to History.
+    /// A failure the same step of the same version ran again after (put right, or failed anew and that one is on top):
+    /// it goes to History. Not matched by draft name: every run is a new draft number (V5B failed, V6B is its retry).
     static func fixed(_ job: EditorProject.Job, in edit: EditorProject) -> Bool {
-        edit.jobs.contains { $0.createdAt > job.createdAt && $0.kind == job.kind && $0.variant == job.variant && $0.draft == job.draft }
+        edit.jobs.contains { $0.createdAt > job.createdAt && $0.kind == job.kind && $0.variant == job.variant }
     }
 
     /// The checks a cut failed, in plain words, once: "2 checks need a look: your voice is out of sync, you look away."

@@ -146,18 +146,20 @@ export interface ReviewPlayPlan {
   frames: { from: number; to: number; box: { x: number; y: number; k: number } }[];
   /** A look the picture takes over a span: a CSS `filter` value (e.g. `url(#id)` of an SVG filter the panel draws). */
   looks?: { from: number; to: number; filter: string }[];
+  /** a talent shot played faster or slower: the video's frames [from, to) play at `rate` (the page sets its speed) */
+  rates?: { from: number; to: number; rate: number }[];
   /**
    * The edit's sound from its originals, in frames of the edited timeline (the video's frames with the holds put in and
    * the skips taken out): each piece plays `src` (a URL) from `offset` seconds, at frame `at`, for `frames`. While it is
    * set the video is muted and these play instead (lib/synced-sound.ts useEditSound).
    */
-  sound?: { src: string; at: number; frames: number; offset: number }[];
+  sound?: { src: string; at: number; frames: number; offset: number; rate?: number }[];
   /**
    * The talent shots from their camera originals, on the same timeline as `sound`: `src` from `offset` seconds at frame
    * `at` for `frames`, drawn in the box x, y (top-left) and s (size), fractions of the picture (the shot's framing).
    * The page draws them over the render (components/OriginalsPicture.tsx).
    */
-  picture?: { src: string; at: number; frames: number; offset: number; x: number; y: number; s: number }[];
+  picture?: { src: string; at: number; frames: number; offset: number; rate?: number; x: number; y: number; s: number }[];
 }
 
 /**

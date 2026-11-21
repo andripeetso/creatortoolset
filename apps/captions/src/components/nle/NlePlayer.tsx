@@ -52,7 +52,10 @@ type Media = {
  *  or it is converted twice. */
 export type NleFile = { url: string; lead?: number; frame?: (n: number) => string; why?: string; log?: boolean;
   /** what it shows may be drawn into a design (Design on This Frame): a blurred copy, the person's own file, a design */
-  grab?: true };
+  grab?: true;
+  /** a sound heard as a blend of two files of one recording, lined up sample for sample (a voice as recorded and its
+   *  cleaned version): `url` at 1 − share of the clip's gain, this one at `share` */
+  mix?: { url: string; share: number } };
 
 /** The line for a Mac file that didn't load, from the Mac app's answer (HTTP 409 disk_away, 403 not allowed). */
 export async function whyNot(url: string): Promise<string | undefined> {
@@ -89,7 +92,8 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
   /** the J / K / L speed: < 0 plays backwards (picture only) */
   rate: number;
   /** a source's file as the browser plays it; null when it has none here */
-  urlOf: (src: string) => NleFile | null;
+  /** `clip`: a sound clip's key, when it asks (its own processing can pick another file of its source) */
+  urlOf: (src: string, clip?: string) => NleFile | null;
   nameOf: (src: string) => string;
   className?: string;
   /** looping playback's part, seconds: the pictures where it wraps to are opened ahead, so the jump back shows at once */
@@ -584,6 +588,18 @@ const buffers = new Map<string, Promise<{ buf: AudioBuffer; from: number }>>();
 export type Piece = SoundPiece & { url: string; owner: string };
 type Voice = { el: HTMLAudioElement; url: string; owner: string; used: number; gain: GainNode; piece: string; laid: number };
 
+/** The sound clips that play here, each with its file (a blend of two files of one recording: both, each at its share). */
+export function playedPieces(tl: NleTimeline, urlOf: (src: string, clip?: string) => NleFile | null): Piece[] {
+  const chain = chains(tl);
+  const at = (p: Piece, k: number): Piece => ({ ...p, gain: p.gain * k, env: p.env?.map(([t, v]): [number, number] => [t, v * k]) });
+  return soundPieces(tl).flatMap((p): Piece[] => {
+    const f = urlOf(p.src, p.key);
+    if (!f?.url) return [];
+    const one = { ...p, url: f.url, offset: p.offset + (f.lead ?? 0), owner: chain.get(p.key) ?? p.key };
+    return f.mix ? [at(one, 1 - f.mix.share), { ...at(one, f.mix.share), key: `${p.key}+mix`, url: f.mix.url, owner: `${one.owner}+mix` }] : [one];
+  });
+}
+
 /** The pieces heard at `t` and, on each track, the next one about to start (within `ahead` s) that isn't the same run. */
 function piecesNear(pieces: Piece[], t: number, ahead = 2): { p: Piece; now: boolean }[] {
   const out: { p: Piece; now: boolean }[] = [];
@@ -605,14 +621,8 @@ function piecesNear(pieces: Piece[], t: number, ahead = 2): { p: Piece; now: boo
  * from the file's own <audio> element (at most two per file, the next clip's waiting), routed through the engine with
  * the clip's gain and fades, kept on the clock as the pictures are.
  */
-function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => NleFile | null) {
-  const pieces = useMemo(() => {
-    const chain = chains(tl);
-    return soundPieces(tl).flatMap((p): Piece[] => {
-      const f = urlOf(p.src);
-      return f?.url ? [{ ...p, url: f.url, offset: p.offset + (f.lead ?? 0), owner: chain.get(p.key) ?? p.key }] : [];
-    });
-  }, [tl, urlOf]);
+function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string, clip?: string) => NleFile | null) {
+  const pieces = useMemo(() => playedPieces(tl, urlOf), [tl, urlOf]);
   const live = useRef(pieces);
   live.current = pieces;
   const fps = tl.timeline.fps;

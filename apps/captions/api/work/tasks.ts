@@ -478,6 +478,16 @@ type Client = {
   post<T>(p: string, body: unknown, signal?: AbortSignal): Promise<T>;
 };
 
+/** An input's file where the task names it on this computer (`paths`), when it is there and, with its size given
+ *  (`sizes`), still that size: a later render can take the path of the one the task is about. Else the server's copy. */
+export function localInput(input: unknown, name: string): string | undefined {
+  const i = (input ?? {}) as { paths?: Record<string, unknown>; sizes?: Record<string, unknown> };
+  const here = i.paths?.[name];
+  const size = i.sizes?.[name];
+  if (typeof here !== "string" || !existsSync(here)) return undefined;
+  return typeof size !== "number" || statSync(here).size === size ? here : undefined;
+}
+
 /** Runs a claimed task on this computer: inputs read where they are or downloaded, made files sent, then done. */
 export async function runTaskJob(p: TaskPackage, c: Client, o: Pick<WorkerOptions, "beatMs">): Promise<"done" | "failed" | "stopped"> {
   const base = `work/task/${p.task.id}`;
@@ -502,7 +512,6 @@ export async function runTaskJob(p: TaskPackage, c: Client, o: Pick<WorkerOption
     if (r && r.ok === false) ac.abort();
   };
   const timer = setInterval(() => void beat(), o.beatMs ?? 10_000);
-  const paths = ((p.input as { paths?: Record<string, unknown> } | null)?.paths ?? {}) as Record<string, unknown>;
   let release = () => {};
   try {
     // this Mac's other servers' work first, one job at a time (turn.ts); the task stays held and beating meanwhile
@@ -517,8 +526,8 @@ export async function runTaskJob(p: TaskPackage, c: Client, o: Pick<WorkerOption
         line = l;
       },
       file: async (name) => {
-        const here = paths[name];
-        if (typeof here === "string" && existsSync(here)) return here;
+        const here = localInput(p.input, name);
+        if (here) return here;
         const res = await raw(`${base}/file?name=${encodeURIComponent(name)}`, { signal: ac.signal });
         if (!res.ok || !res.body) throw new Error(`Could not get the ${name} from the server (${res.status})`);
         const to = path.join(dir, `in-${name}`);

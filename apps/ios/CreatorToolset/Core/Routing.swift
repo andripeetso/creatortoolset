@@ -71,16 +71,15 @@ final class AppNavigator: ObservableObject {
         if let route = debugArg("OpenPath").flatMap(AppRoute.from(path:)) { open(route) }
     }
 
-    /// The tab a screen opens on: an edit or a Review video on Projects, the assistant's chats on Chats, Finals on
-    /// Publish; a project on the tab in front when it has screens of its own (from a chat it opens over the chat),
+    /// The tab a screen opens on: the assistant's chats on Chats, Finals on Publish; an edit, a Review video or a project
+    /// on the tab in front when it has screens of its own (from a chat it opens over the chat, so back returns to it),
     /// else on Projects; a page on the tab in front, else on Chats.
     nonisolated static func tab(for route: AppRoute, from current: AppTab) -> AppTab {
         let stacked = [AppTab.chats, .projects].contains(current)
         switch route {
         case .finals: return .publish
-        case .edit, .review: return .projects
         case .assistant, .chat: return .chats
-        case .session: return stacked ? current : .projects
+        case .edit, .review, .session: return stacked ? current : .projects
         case .page: return stacked ? current : .chats
         }
     }

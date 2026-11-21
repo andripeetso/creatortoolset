@@ -28,6 +28,8 @@ export interface FrameInput {
   src: string;
   out: string;
   paths?: { src?: string };
+  /** the size of the file at `paths.src` (the version's own): another size there is a later render, and the server's plays */
+  sizes?: { src?: number };
 }
 
 // frames are asked for on public share links: a version keeps this many, the newest

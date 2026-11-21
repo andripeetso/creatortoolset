@@ -22,7 +22,7 @@ const { CLAIM_POLL } = await import("./routes");
 const { client } = await import("./computer");
 const { workWaits } = await import("./place");
 const { writeServerWork } = await import("./server-work");
-const { runTaskJob, startTask, taskFor, taskKind, taskTick } = await import("./tasks");
+const { localInput, runTaskJob, startTask, taskFor, taskKind, taskTick } = await import("./tasks");
 CLAIM_POLL.holdMs = 0;
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -113,5 +113,20 @@ describe("computer tasks", () => {
     expect(said).toMatch(/^Waits for one of your computers/);
     expect(existsSync(to)).toBe(false);
     await expect(frameJpeg(source, 0, 64)).rejects.toThrow(/^Waits for one of your computers/);
+  });
+});
+
+describe("an input's file on this computer", () => {
+  it("is used where the task names it, and with its size given only while the file there is still that size", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "ct-local-input-"));
+    const file = path.join(dir, "Tiny_A_D2.preview.mp4");
+    writeFileSync(file, "tiny cut v1");
+    expect(localInput({ paths: { src: file } }, "src")).toBe(file);
+    expect(localInput({ paths: { src: file }, sizes: { src: 11 } }, "src")).toBe(file);
+    // a voice change rendered the cut again at the same path: the older version's frame comes from the server's copy
+    expect(localInput({ paths: { src: file }, sizes: { src: 9 } }, "src")).toBeUndefined();
+    expect(localInput({ paths: { src: path.join(dir, "gone.mp4") } }, "src")).toBeUndefined();
+    expect(localInput({}, "src")).toBeUndefined();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
