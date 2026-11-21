@@ -316,7 +316,7 @@ describe.skipIf(rootReplaced)("the AI Editor's page buttons as tools", () => {
     expect((await editOf(id)).brollCollectionId).toBeNull();
     // a folder that is someone else's, and a call that changes nothing
     expect(await tool(anaKey, "editor_update", { edit: id, broll_folder: "col_n" })).toMatchObject({ error: true, text: "Not found, or not this account's." });
-    expect(await tool(anaKey, "editor_update", { edit: id })).toMatchObject({ error: true, text: "Nothing to change: give name, brief, script, versions, target_s, broll_folder, flags or add_sources." });
+    expect(await tool(anaKey, "editor_update", { edit: id })).toMatchObject({ error: true, text: "Nothing to change: give name, brief, script, versions, target_s, broll_folder, intro, flags or add_sources." });
 
     // once drafts are cut, a new brief says how it gets used
     standIn();

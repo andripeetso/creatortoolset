@@ -79,3 +79,37 @@ export function withIntro(tl: Timeline, intro: EditIntro, part: IntroPart, src: 
     ...(tl.speakers ? { speakers: tl.speakers.map(shift) } : {}),
   };
 }
+
+/** The intro's length in timeline frames (the V1 clip withIntro laid at 0), 0 for a cut with none. */
+export const introLength = (tl: Timeline): number => tl.tracks?.V1?.items.find((i) => i.link === "intro" && i.rec === 0)?.len ?? 0;
+
+const moved = (tl: Timeline, by: number, keep: (x: { rec: number; len?: number }) => boolean): Timeline => {
+  const shift = <T extends { rec: number }>(x: T): T => ({ ...x, rec: x.rec + by });
+  return {
+    ...tl,
+    tracks: Object.fromEntries(Object.entries(tl.tracks).map(([k, t]) => [k, { ...t, items: t.items.filter(keep).map(shift) }])) as Timeline["tracks"],
+    markers: tl.markers.filter(keep).map(shift),
+    ...(tl.speakers ? { speakers: tl.speakers.filter(keep).map(shift) } : {}),
+  };
+};
+
+/** The person's own cut without the intro, starting at 0: what a step that lays things over the cut (B-roll) works on. */
+export function afterIntro(tl: Timeline): Timeline {
+  const lead = introLength(tl);
+  return lead ? moved(tl, -lead, (x) => x.rec >= lead) : tl;
+}
+
+/** `cut` (a step's work on afterIntro(tl)) with tl's intro, and what lies within it, before it again. */
+export function introAgain(tl: Timeline, cut: Timeline): Timeline {
+  const lead = introLength(tl);
+  if (!lead) return cut;
+  const head = moved(tl, 0, (x) => x.rec < lead);
+  const body = moved(cut, lead, () => true);
+  return {
+    ...body,
+    sources: { ...tl.sources, ...cut.sources },
+    tracks: Object.fromEntries(Object.entries(body.tracks).map(([k, t]) => [k, { ...t, items: [...head.tracks[k as keyof Timeline["tracks"]].items, ...t.items] }])) as Timeline["tracks"],
+    markers: [...head.markers, ...body.markers],
+    ...(body.speakers || head.speakers ? { speakers: [...(head.speakers ?? []), ...(body.speakers ?? [])] } : {}),
+  };
+}

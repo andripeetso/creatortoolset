@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
-import { introParts, pipPlace, PIP_SIZE, secondsOf, withIntro } from "./intro";
+import { afterIntro, introAgain, introLength, introParts, pipPlace, PIP_SIZE, secondsOf, withIntro } from "./intro";
 import { emptyTracks } from "./timeline";
 
 const sents = [
@@ -60,5 +60,18 @@ describe("AI Editor intro", () => {
     expect(tl.tracks.V1.items).toHaveLength(1); // the cut given is left as it was
     // no reaction: the intro alone
     expect(withIntro(tl, { source: "ver_i" }, { a: 2, b: 8, text: "" }, intro).tracks.V2.items).toEqual([]);
+
+    // B-roll is laid on the person's own cut (afterIntro) and the intro with its reaction goes back before it (introAgain)
+    expect(introLength(out)).toBe(150);
+    const own = afterIntro(out);
+    expect(own.tracks.V1.items).toEqual(tl.tracks.V1.items);
+    expect(own.markers).toEqual(tl.markers);
+    expect(own.tracks.V2.items).toEqual([]);
+    const laid = { ...own, tracks: { ...own.tracks, V2: { ...own.tracks.V2, items: [{ src: "ver_b", in: 0, len: 20, rec: 10 }] } } };
+    const back = introAgain(out, laid);
+    expect(back.tracks.V2.items.map((i) => [i.src, i.rec])).toEqual([["ver_r", 50], ["ver_b", 160]]);
+    expect(back.tracks.V1.items).toEqual(out.tracks.V1.items);
+    expect(back.markers).toEqual(out.markers);
+    expect(afterIntro(tl)).toBe(tl); // no intro: as it is
   });
 });

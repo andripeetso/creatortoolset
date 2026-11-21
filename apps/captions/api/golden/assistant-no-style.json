@@ -1134,7 +1134,7 @@
   },
   {
    "name": "editor_update",
-   "description": "Change an Editor edit: name, brief, script, versions (1-5), target_s (seconds, 0 = as long as it needs), broll_folder (a Media Library folder id, or \"none\"), flags ({id: true or false}; a wrong id is answered with the ones this edit has) and add_sources (more footage for it: version_id, as editor_create takes them, up to 50 in all). Footage the user sends after an edit was started (\"and here's some B-roll\") goes into that edit with add_sources, never into a new edit with the first one in the trash: only a different video is a new edit. Drafts already cut stay as they are until the edit runs again.",
+   "description": "Change an Editor edit: name, brief, script, versions (1-5), target_s (seconds, 0 = as long as it needs), broll_folder (a Media Library folder id, or \"none\"), intro (someone else's video that opens each version, a different stretch each: {source: its version_id, seconds: about how long, reaction: the version_id of the user's reaction shown small over its end, corner: bottom-left, bottom-right, top-left or top-right}, or \"none\"), flags ({id: true or false}; a wrong id is answered with the ones this edit has) and add_sources (more footage for it: version_id, as editor_create takes them, up to 50 in all). Footage the user sends after an edit was started (\"and here's some B-roll\") goes into that edit with add_sources, never into a new edit with the first one in the trash: only a different video is a new edit. Drafts already cut stay as they are until the edit runs again.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1159,6 +1159,33 @@
      },
      "broll_folder": {
       "type": "string"
+     },
+     "intro": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "object",
+        "properties": {
+         "source": {
+          "type": "string"
+         },
+         "seconds": {
+          "type": "integer"
+         },
+         "reaction": {
+          "type": "string"
+         },
+         "corner": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "source"
+        ]
+       }
+      ]
      },
      "flags": {
       "type": "object",
