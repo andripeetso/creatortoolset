@@ -587,6 +587,18 @@ const buffers = new Map<string, Promise<{ buf: AudioBuffer; from: number }>>();
 export type Piece = SoundPiece & { url: string; owner: string };
 type Voice = { el: HTMLAudioElement; url: string; owner: string; used: number; gain: GainNode; piece: string; laid: number };
 
+/** The sound clips that play here, each with its file (a blend of two files of one recording: both, each at its share). */
+export function playedPieces(tl: NleTimeline, urlOf: (src: string) => NleFile | null): Piece[] {
+  const chain = chains(tl);
+  const at = (p: Piece, k: number): Piece => ({ ...p, gain: p.gain * k, env: p.env?.map(([t, v]): [number, number] => [t, v * k]) });
+  return soundPieces(tl).flatMap((p): Piece[] => {
+    const f = urlOf(p.src);
+    if (!f?.url) return [];
+    const one = { ...p, url: f.url, offset: p.offset + (f.lead ?? 0), owner: chain.get(p.key) ?? p.key };
+    return f.mix ? [at(one, 1 - f.mix.share), { ...at(one, f.mix.share), key: `${p.key}+mix`, url: f.mix.url, owner: `${one.owner}+mix` }] : [one];
+  });
+}
+
 /** The pieces heard at `t` and, on each track, the next one about to start (within `ahead` s) that isn't the same run. */
 function piecesNear(pieces: Piece[], t: number, ahead = 2): { p: Piece; now: boolean }[] {
   const out: { p: Piece; now: boolean }[] = [];
@@ -609,16 +621,7 @@ function piecesNear(pieces: Piece[], t: number, ahead = 2): { p: Piece; now: boo
  * the clip's gain and fades, kept on the clock as the pictures are.
  */
 function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => NleFile | null) {
-  const pieces = useMemo(() => {
-    const chain = chains(tl);
-    const at = (p: Piece, k: number): Piece => ({ ...p, gain: p.gain * k, env: p.env?.map(([t, v]): [number, number] => [t, v * k]) });
-    return soundPieces(tl).flatMap((p): Piece[] => {
-      const f = urlOf(p.src);
-      if (!f?.url) return [];
-      const one = { ...p, url: f.url, offset: p.offset + (f.lead ?? 0), owner: chain.get(p.key) ?? p.key };
-      return f.mix ? [at(one, 1 - f.mix.share), { ...at(one, f.mix.share), key: `${p.key}+mix`, url: f.mix.url, owner: `${one.owner}+mix` }] : [one];
-    });
-  }, [tl, urlOf]);
+  const pieces = useMemo(() => playedPieces(tl, urlOf), [tl, urlOf]);
   const live = useRef(pieces);
   live.current = pieces;
   const fps = tl.timeline.fps;
