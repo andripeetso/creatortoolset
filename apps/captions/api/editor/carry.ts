@@ -60,7 +60,7 @@ export function motion(tl: Timeline, i: Item): Key[] {
       }
     }
     const slide = whip && t < WHIP_S ? (tl.width / 4) * (1 - t / WHIP_S) : 0;
-    return { zoom: r4((i.zoom ?? 1) * z), x: r4(panAt(Math.round(t * tl.fps)) + slide - dx), y: r4((i.tilt ?? 0) * z + dy) };
+    return { zoom: r4((i.zoom ?? 1) * z), x: r4(panAt(Math.round(t * tl.fps)) + (i.pan ?? 0) * z + slide - dx), y: r4((i.tilt ?? 0) * z + dy) };
   };
   if (!fx.length && !whip && pans.length < 2) return [{ f: 0, ...at(0) }];
   const fps = tl.fps;

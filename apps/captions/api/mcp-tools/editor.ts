@@ -35,7 +35,7 @@ const HOW_TO_CUT = [
 ].join(" ");
 
 /** What the tool calls a field → the route's name for it. */
-const FIELDS = { name: "name", brief: "brief", script: "script", versions: "versions", target_s: "targetS", broll_folder: "brollCollectionId", flags: "flags", add_sources: "addSources" } as const;
+const FIELDS = { name: "name", brief: "brief", script: "script", versions: "versions", target_s: "targetS", broll_folder: "brollCollectionId", intro: "intro", flags: "flags", add_sources: "addSources" } as const;
 
 export const editorTools: ToolModule = {
   defs: [
@@ -48,10 +48,10 @@ export const editorTools: ToolModule = {
     {
       name: "editor_update",
       description:
-        'Change an Editor edit: name, brief, script, versions (1-5), target_s (seconds, 0 = as long as it needs), broll_folder (a Media Library folder id, or "none"), flags ({id: true or false}; a wrong id is answered with the ones this edit has) and add_sources (more footage for it: version_id, as editor_create takes them, up to 50 in all). Footage the user sends after an edit was started ("and here\'s some B-roll") goes into that edit with add_sources, never into a new edit with the first one in the trash: only a different video is a new edit. Drafts already cut stay as they are until the edit runs again.',
+        'Change an Editor edit: name, brief, script, versions (1-5), target_s (seconds, 0 = as long as it needs), broll_folder (a Media Library folder id, or "none"), intro (someone else's video that opens each version, a different stretch each: {source: its version_id, seconds: about how long, reaction: the version_id of the user's reaction shown small over its end, corner: bottom-left, bottom-right, top-left or top-right}, or "none"), flags ({id: true or false}; a wrong id is answered with the ones this edit has) and add_sources (more footage for it: version_id, as editor_create takes them, up to 50 in all). Footage the user sends after an edit was started ("and here\'s some B-roll") goes into that edit with add_sources, never into a new edit with the first one in the trash: only a different video is a new edit. Drafts already cut stay as they are until the edit runs again.',
       inputSchema: {
         type: "object",
-        properties: { edit, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, broll_folder: str, flags: { type: "object", additionalProperties: { type: "boolean" } }, add_sources: { type: "array", items: str } },
+        properties: { edit, name: str, brief: str, script: str, versions: { type: "integer" }, target_s: { type: "integer" }, broll_folder: str, intro: { anyOf: [str, { type: "object", properties: { source: str, seconds: { type: "integer" }, reaction: str, corner: str }, required: ["source"] }] }, flags: { type: "object", additionalProperties: { type: "boolean" } }, add_sources: { type: "array", items: str } },
         required: ["edit"],
       },
     },
@@ -105,6 +105,7 @@ export const editorTools: ToolModule = {
       const before = await ctx.json(path);
       const body: Args = Object.fromEntries(sent.map((k) => [FIELDS[k], a[k]]));
       if (a.broll_folder != null && /^(none)?$/i.test(String(a.broll_folder).trim())) body.brollCollectionId = null;
+      if (typeof a.intro === "string") body.intro = null;
       if (a.flags != null) {
         // the route drops a flag it does not know and says nothing: refused here, with the ones there are
         const defs = (before.flagDefs as Args[] | undefined) ?? [];
@@ -119,7 +120,7 @@ export const editorTools: ToolModule = {
       const changed = sent.filter((k) => JSON.stringify(before[field(k)]) !== JSON.stringify(e[field(k)]));
       const cut = ((e.drafts as unknown[] | undefined) ?? []).length > 0;
       // new footage is read by analyze: in a run that already read the edit's footage it is not, so that run is followed by one from analyze
-      const from = changed.includes("add_sources") ? "analyze" : changed.some((k) => ["brief", "script", "versions", "target_s"].includes(k)) ? "script" : changed.includes("broll_folder") ? "draft" : "";
+      const from = changed.includes("add_sources") ? "analyze" : changed.some((k) => ["brief", "script", "versions", "target_s"].includes(k)) ? "script" : changed.some((k) => k === "broll_folder" || k === "intro") ? "draft" : "";
       const readWithout = !cut && from === "analyze" && jobsOf(e).some((j) => j.kind === "analyze" && j.state !== "queued");
       return {
         ...pick(e, ["id", "name"]),
