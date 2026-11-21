@@ -15,6 +15,8 @@
  *   GET    /api/editor/:id/drafts/:name/export?format=otio|fcpxml|zip   the draft for the user's own editor (a download)
  *   POST   /api/editor/:id/drafts/:name/review   renders the draft's preview again and files it in Review (the creator) → Edit
  *   POST   /api/editor/:id/drafts/:name/cut      { asset?, n?, edits } (the creator): timeline edits cut into the draft, with no AI → Edit; rendered and filed in Review
+ *   POST   /api/editor/:id/drafts/:name/revise   the open comments on its newest Review version: each answered, the cut changed only where they ask (an AI step, revise.ts) → Edit; 400 with none
+ *   POST   /api/editor/:id/drafts/:name/sent-back  { file, text }: a timeline changed in another editing app (OTIO, FCPXML, FCP 7 XML, EDL) as the draft, no AI → Edit; rendered and filed in Review
  *                                                 as that video's next version. With asset/n: edits made on that Review version; without: on the draft as it is
  *                                                 now (Draft.view); `edits` may be [] then, when the draft is not what Review has (clips put on it): it is rendered as it is
  *   POST   /api/editor/:id/drafts/:name/duplicate  (the creator) → 201 { name }: the draft as a new version (next free v1…v9), no AI; its preview is made

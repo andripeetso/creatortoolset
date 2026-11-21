@@ -12,6 +12,7 @@ import { eyelineFile } from "./eyeline";
 import { allBroll, isPlanned } from "./plan";
 import { postStep } from "./post";
 import { fileStep, previewStep } from "./preview";
+import { reviseStep } from "./revise";
 import { scriptStep } from "./script";
 import { speakersFile } from "./speakers";
 import { draftStep, reframeSpan } from "./timeline";
@@ -99,6 +100,8 @@ const KINDS: Record<string, EditKind> = {
   preview: { source: "core", next: ["file"], run: previewStep, place: () => "computer" },
   // the look at a planned cut the AI made, after its preview (nextFor): it files the cut itself, failing shots named on it
   critique: { source: "core", next: [], run: critiqueStep, place: () => "computer" },
+  // a cut revised from its Review comments: an AI reads them, timeline edits are cut in (no decoding); it queues post itself
+  revise: { source: "core", next: [], run: reviseStep, place: () => "server" },
   // marks the cut's library version as made from its sources: rows only, no decoding
   file: { source: "core", next: [], run: fileStep, place: () => "server" },
   // the Resolve bridge (Mac app): handed out only with a Resolve pack installed (api/devices.ts)

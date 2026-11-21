@@ -18,7 +18,6 @@ import { addFeedback, MAX_SOURCES, newestDraft, serial, queueVersion, allEdits, 
 import { fileIntoProjects } from "./projects";
 import { emptyTracks, NATURAL_CUT, sourceOf } from "./timeline";
 import { lineTakes } from "./takes";
-import { wordsOf } from "../library/transcribe";
 import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
 import { statSync } from "node:fs";
@@ -26,6 +25,9 @@ import path from "node:path";
 import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
+import { openComments, wordsFor } from "./revise";
+import { formatOf, fromSentBack, SentBackRefused, sentBackSummary } from "./sent-back";
+import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources } from "../../contracts/timeline-import";
 import { handCheck, refusal } from "../../src/lib/nle/check";
 import { fromNle, toNle } from "../../src/lib/nle/draft";
 import type { NleTimeline } from "../../src/lib/nle/model";
@@ -492,6 +494,22 @@ editorApp.post("/:id/drafts/:name/review", async (c) => {
   return c.json(viewFor(r));
 });
 
+/**
+ * Revise the draft from its Review comments (revise.ts): the open comments on its newest Review version, each answered,
+ * the cut changed only where they ask, as the draft's next version. 409 while the version is being made; 400 with no
+ * open comments or no version in Review.
+ */
+editorApp.post("/:id/drafts/:name/revise", async (c) => {
+  const r = await load(c, true);
+  const name = c.req.param("name");
+  if (!r || !readDraft(r.e.id, name)) return notFound(c);
+  if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return c.json({ error: "This version is still being made", code: "conflict" }, 409);
+  const got = await openComments(r.e.id, name);
+  if (typeof got === "string") return c.json({ error: got, code: "invalid" }, 400);
+  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "revise", r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
+});
+
 /** Notes this route writes start with this, so the next hand cut replaces them. */
 const HAND_NOTE = "Cut by hand";
 const AI_NOTE = "Cut by the AI";
@@ -501,15 +519,6 @@ function filedAs(id: string, name: string, tl: Timeline) {
   const at = readStep(id, "review")?.[name];
   const filed = at && readFiled(id, at.assetId, at.n);
   return at && filed && filed.variant === name && JSON.stringify(filed.timeline) === JSON.stringify(tl) ? at : null;
-}
-
-/** Each library source's transcript, for the words lane and the shots' labels (as preview.ts files them). */
-function wordsFor(tl: Timeline) {
-  const db = libraryDb();
-  return Object.fromEntries(Object.keys(tl.sources).flatMap((id) => {
-    const w = tl.sources[id]!.file ? null : wordsOf(db, id);
-    return w ? [[id, w]] : [];
-  }));
 }
 
 /**
@@ -707,6 +716,38 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   const chunks: Buffer[] = [];
   for await (const ch of zip.outputStream) chunks.push(ch as Buffer);
   return send(Buffer.concat(chunks), `${base}.zip`, "application/zip");
+});
+
+/**
+ * The next round from a timeline sent back ({ file, text }: an OTIO, FCPXML, FCP 7 XML or EDL exported from the person's
+ * editing app after they changed the draft there): the file's cuts become the draft, with no AI (sent-back.ts), the one it
+ * replaces kept as a revision. Then post-processing, its render, and Review, as /cut. `?device=` as the export's.
+ */
+editorApp.post("/:id/drafts/:name/sent-back", async (c) => {
+  const r = await load(c, true);
+  const name = c.req.param("name");
+  const d = r && readDraft(r.e.id, name);
+  if (!r || !d) return notFound(c);
+  const b = await body(c);
+  const bad = (error: string, code: "invalid" | "conflict" = "invalid") => c.json({ error, code }, code === "invalid" ? 400 : 409);
+  const file = typeof b.file === "string" && b.file.trim() ? b.file.trim().slice(0, 200) : "timeline";
+  if (typeof b.text !== "string" || !b.text.trim()) return bad("text is the timeline file's contents");
+  if (b.text.length > MAX_TIMELINE_BYTES) return bad("That timeline file is too big");
+  if (jobsOf(r.e.id).some((j) => j.variant === name && (j.state === "queued" || j.state === "running"))) return bad("This version is still being made", "conflict");
+  const asker = c.req.query("device");
+  const m = await mediaPaths(r.e, Object.keys(d.timeline.sources), d.timeline.sources, false, asker && deviceOf(asker)?.owner === r.user ? asker : undefined);
+  const files = { ...m.files, ...postFiles(r.e.id, name) };
+  let timeline: Timeline;
+  try {
+    const fmt = formatOf(b.text);
+    timeline = fromSentBack(d.timeline, files, importTimeline(file, b.text, d.timeline.fps), timelineSources(file, b.text, d.timeline.fps), fmt);
+  } catch (e) {
+    if (e instanceof SentBackRefused || e instanceof TimelineError) return bad(e.message);
+    throw e;
+  }
+  await saveCutDraft(c, r, name, d, timeline, `in another editing app: ${file} sent back (${sentBackSummary(d.timeline, timeline)})`);
+  enqueueJob(libraryDb(), r.e.workspaceId, `${r.e.id}:${name}`, "post", r.user, true, "edit_jobs");
+  return c.json(viewFor(r));
 });
 
 /** Out of the trash again: the Undo of DELETE, for the same people. */

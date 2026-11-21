@@ -84,7 +84,6 @@ type Entry = {
 const PENDING: Record<string, string> = {
   "editor.worker": "device status replaces the Mac worker endpoint: ed-device-registry, then legacy-sunset-public",
   "editor.draft-preview": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
-  "editor.draft-revise": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
   "editor.jobs": "public editor has no job queue, revise or preview yet: ed-device-registry, then ba-editor-plugin",
   "editor.todo": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",
   "editor.todo-read": "the to-do list is the plug-in editor's: the built-in editor has no job that waits for a go",

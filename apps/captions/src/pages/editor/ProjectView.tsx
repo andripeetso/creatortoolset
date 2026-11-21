@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { CircleAlert, Copy, Download, Eye, Loader2, MonitorPlay, Pencil, Play, RotateCcw, Square, ThumbsUp, Trash2 } from "lucide-react";
+import { CircleAlert, Copy, Download, Eye, Loader2, MessageSquareText, MonitorPlay, Pencil, Play, RotateCcw, Square, ThumbsUp, Trash2, Upload } from "lucide-react";
 import { DEFAULT_EYELINE, type Draft, type Edit, type EditJob, type Sentence } from "@contracts/editor";
 import { STYLE_NAME_MAX } from "@contracts/editor-styles";
+import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
@@ -16,7 +17,7 @@ import { APPROVAL, type Approval, type ReviewView } from "@/lib/review";
 import { canChange, useMe } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
 import {
-  cardStillUrl, carryOn, createStyle, deleteEdit, duplicateVersion, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, markVersion,
+  cardStillUrl, carryOn, createStyle, deleteEdit, duplicateVersion, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, markVersion, reviseDraft, sendBack,
   patchEdit, putLines, restoreEdit, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan,
 } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -41,7 +42,7 @@ const editUrl = (id: string) => `/api/editor/${id}`;
 /** One edit, its saved copy first; every part of the page that shows it reads the same copy and stays current with it. */
 const useEdit = (id: string) => useCachedLoad<Edit>(editUrl(id), () => getEdit(id));
 const busyJob = (j: EditJob) => j.state === "queued" || j.state === "running";
-const STEP_NAME: Record<string, string> = { analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", critique: "Check the cut", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards", post: "Post-processing" };
+const STEP_NAME: Record<string, string> = { revise: "Revise from comments", analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", critique: "Check the cut", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards", post: "Post-processing" };
 /** The setting a needs-key message names: a key in API keys, else (a provider, a Mac that is off) AI providers. */
 const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
@@ -247,6 +248,9 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
   const marks = (m: Edit["marks"]) => onEdit({ ...e, marks: m });
   const run = (f: () => Promise<unknown>) => { onError(null); return f().catch((x) => { onError(message(x)); refresh(); }); };
 
+  const sentBack = useRef<HTMLInputElement>(null);
+  const takeBack = (f: File | undefined) => f && run(async () => onEdit(await sendBack(e.id, n, f.name, await f.text())));
+
   const duplicate = () => run(async () => {
     const made = await duplicateVersion(e.id, n);
     refresh();
@@ -333,6 +337,12 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
           </button>
         )}
         <Link to={`/editor/${e.id}/${n}`} className={cardButton}><Play /> <span className="truncate">Open timeline</span></Link>
+        {pv && (
+          <button type="button" disabled={!editable || !d || !!job} onClick={() => void run(async () => onEdit(await reviseDraft(e.id, n)))} className={cardButton}
+            title="Make the next version from the open comments in Review: only what each asks for changes, each gets a reply, and the ones it changed are resolved">
+            <MessageSquareText /> <span className="truncate">Revise from comments</span>
+          </button>
+        )}
         {editor && (
           <button type="button" disabled={postHeld || !d || opening} onClick={openIn} className={cardButton}>
             {opening ? <Loader2 className="animate-spin" /> : <MonitorPlay />} <span className="truncate">Open in {editor.name.replace(/^DaVinci /, "")}</span>
@@ -351,8 +361,13 @@ function VersionCard({ e, n, d, state, editor, editable, onEdit, refresh, onErro
                 )}
               </DropdownMenuItem>
             ))}
+            <DropdownMenuItem disabled={!editable || !d || !!job} onSelect={() => sentBack.current?.click()}
+              title="A timeline you changed in Resolve, Premiere or Final Cut, exported as OTIO, FCPXML, XML or EDL: its cuts become the next version">
+              <Upload className="h-3.5 w-3.5" /> Send a timeline back…
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <input ref={sentBack} type="file" accept={TIMELINE_ACCEPT} hidden onChange={(x) => { takeBack(x.target.files?.[0]); x.target.value = ""; }} />
       </div>
       {!postHeld && d && editor && <ExportGapsNote gaps={d.exportGaps} editors={[editor.id]} />}
       {cards && (cards.cards.length > 0 || cards.note) && (
