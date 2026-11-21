@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { jobTurn, type AuthVars } from "./auth";
 import type { Expired } from "./retention";
 import { sendFile, servedType } from "./lib/send-file";
-import { playCopy, sweepPlayCopies, wantCopies } from "./lib/play-copies";
+import { copyIsFresh, playCopy, pushPlayCopy, sweepPlayCopies, wantCopies } from "./lib/play-copies";
 import { uploadRelayView } from "./lib/storage";
 import { pluginUploadRelays, type UploadRelay } from "./lib/plugin";
 
@@ -31,7 +31,7 @@ import { findUser, USERNAME_RE, type SessionUser } from "./users";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
-import { addToFinals, belowHd, finalsItemName, libraryOf as libraryFor } from "./library/finals";
+import { addToFinals, belowHd, finalsItemName, isFinal, libraryOf as libraryFor } from "./library/finals";
 import { ensureLibrary, servedByPlugin } from "./library/access";
 import { blursFaces } from "./library/db";
 import { mayLeave, workspaceLibrary } from "./library/upload-gate";
@@ -569,6 +569,7 @@ async function processVersion(id: string, n: number): Promise<void> {
       proxy: existsSync(proxyPath(id, n)),
       error: undefined,
     });
+    void pushCopy(id, n).catch((e) => console.error(`[review] playback copy ${id}/${n}:`, e));
   } catch (e) {
     await rm(proxyPath(id, n), { force: true }).catch(() => {});
     await jobVersion(id, n, {
@@ -787,9 +788,30 @@ async function syncLibrary(...ids: string[]): Promise<void> {
   void sweepPlayCopies(ids.map((id) => `review/${id}/`)).catch((e) => console.error("[review] playback copies:", e));
 }
 
-// A Review version's playback copy (review/<asset>/<createdAt>) stays while the video is live and the version not removed:
-// a trashed video's copy goes at once (a restore copies it again on its next play), a purged one's anyway.
-wantCopies("review", async ([id, createdAt]) => !!(await readMeta(id ?? ""))?.versions.some((x) => String(x.createdAt) === createdAt && !x.removed));
+/** The file a version's /play sends: its proxy when browsers can't play the source. */
+const playFile = (id: string, v: Version): [string, string] => (v.proxy ? [proxyPath(id, v.n), "video/mp4"] : [sourcePath(id, v.n), v.mime]);
+/** A version's playback copy's name: by its createdAt, which stays while `n` changes with order, stack and unstack. */
+const copyName = (id: string, v: Version) => `review/${id}/${v.createdAt}`;
+
+/** The version an approval is about: the newest one when it was given (the route refuses an approval of an older one). */
+const approvedVersion = (m: Meta): Version | undefined =>
+  m.approval?.status === "approved" ? m.versions.filter((x) => x.createdAt <= (m.approval.at ?? Infinity)).at(-1) : undefined;
+
+// A Review version's playback copy (lib/play-copies.ts) goes at once when the version is removed, its video trashed,
+// deleted or Rejected; an approved version's and a Final's stay, every other one for COPY_DAYS from its push. A trashed
+// video restored, or an old version played again, streams and is pushed again.
+wantCopies("review", async ([id, createdAt], pushedAt) => {
+  const m = await readMeta(id ?? "");
+  const v = m?.versions.find((x) => String(x.createdAt) === createdAt);
+  if (!m || !v || v.removed || m.approval?.status === "rejected") return false;
+  return approvedVersion(m) === v || (!!v.versionId && isFinal(v.versionId)) || copyIsFresh(pushedAt);
+});
+
+/** Pushes a ready version's file to the playback copies (nothing without a plug-in's store). */
+async function pushCopy(id: string, n: number): Promise<void> {
+  const v = (await readMeta(id))?.versions.find((x) => x.n === n);
+  if (v?.status === "ready" && !v.removed) await pushPlayCopy(copyName(id, v), ...playFile(id, v));
+}
 
 /** At start: every Review video, the trash too, into the library. Unchanged ones cost a read of their meta. */
 export async function reviewToLibrary(): Promise<void> {
@@ -2445,9 +2467,9 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       return sendFile(c, sourcePath(id, n), version.mime, `${base}${ext}`);
     }
     if (version.status !== "ready") return c.json({ error: "Not ready" }, 409);
-    const [src, type] = version.proxy ? [proxyPath(id, n), "video/mp4"] : [sourcePath(id, n), version.mime];
-    // its playback copy once one is made (a plug-in's CDN), else this server streams it (lib/play-copies.ts)
-    return (await playCopy(c, `review/${id}/${version.createdAt}`, src, type)) ?? sendFile(c, src, type);
+    const [src, type] = playFile(id, version);
+    // its playback copy once it is pushed (a plug-in's CDN), else this server streams it (lib/play-copies.ts)
+    return (await playCopy(c, copyName(id, version), src, type)) ?? sendFile(c, src, type);
   });
 
   /** The frame a comment is on (?c=<comment>, its drawing painted in) or at ?t=
@@ -2686,6 +2708,8 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
       emitEvent("review.approved", { asset: meta.id, owner: meta.owner, by: v.user ?? "", n });
     }
     if (status === "changes") emitEvent("review.changes", { asset: meta.id, owner: meta.owner, by });
+    // a Rejected video's playback copies go at once (the server's files stay)
+    if (status === "rejected") void sweepPlayCopies([`review/${meta.id}/`]).catch((e) => console.error("[review] playback copies:", e));
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }

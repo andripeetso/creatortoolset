@@ -11,6 +11,8 @@ import { sendFile } from "../lib/send-file";
 import { storedZip } from "../lib/workshop/deliveries";
 import { notifyLibraryChanges } from "../lib/events";
 import { sweepPlayCopies } from "../lib/play-copies";
+import { isFinal } from "./finals";
+import { pushFinalCopy } from "./routes";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
 import { mayLeave, mayServe, type Received } from "./upload-gate";
@@ -702,6 +704,7 @@ collectionApp.post("/:id/pieces/:pid/items", async (c) => {
   db()
     .prepare("INSERT INTO piece_items (id, piece_id, version_id, label, position) VALUES (?, ?, ?, ?, ?)")
     .run(`pci_${randomUUID().replace(/-/g, "").slice(0, 16)}`, piece.id, versionId, itemLabel(body?.label), last + 1);
+  if (isFinal(versionId)) void pushFinalCopy(versionId).catch(() => {});
   return c.json(pieceOf(piece), 201);
 });
 

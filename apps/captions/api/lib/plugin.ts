@@ -101,7 +101,7 @@ export interface ServerPlugin {
   connectors?: { publicGrid?: PublicGridReader; readers?: SocialReader[] };
   // Upload relays for Review's big videos (api/review.ts): the server uses one when CT_UPLOAD_RELAY names it and it is available.
   uploadRelays?: UploadRelay[];
-  // Where Review versions and Finals play from once someone has played them (lib/play-copies.ts): a store whose links are
+  // Where Review versions and Finals play from, pushed there when ready (lib/play-copies.ts): a store whose links are
   // signed (caps.signedUrls), or null while its settings are missing (then the server streams). The first plug-in's is used.
   playCopies?: { label: string; store: () => BlobStore | null };
   // Where uploads from a phone go in the workspace a request works in (api/library/upload-target.ts): the name of the

@@ -5,11 +5,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { AuthVars } from "../auth";
 
 // Playback copies (lib/play-copies.ts) through the real Bunny store (library/storage/bunny.ts) against a stand-in Storage
-// API: the first play streams and copies, the next is a signed link, and every way a version goes for good takes its copy.
+// API: a ready version (and a new Final) is pushed at once, /play is then a signed link, and every removal path drops the copy.
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
 const dataDir = mkdtempSync(path.join(scratch, "play-copies-"));
@@ -47,7 +47,8 @@ const store = bunnyBlobs(
   path.join(dataDir, "cache"),
   { cacheBytes: 0 },
 );
-mountPlugins(new Hono(), [definePlugin({ id: "cdn", playCopies: { label: "Tiny CDN", store: () => store } })]);
+const cdn = definePlugin({ id: "cdn", playCopies: { label: "Tiny CDN", store: () => store } });
+mountPlugins(new Hono(), [cdn]);
 
 const { reviewApp, readMeta, purgeExpiredReview } = await import("../review");
 const { libraryApp } = await import("../library/routes");
@@ -55,7 +56,7 @@ const { collectionApp } = await import("../library/collections");
 const { libraryDb } = await import("../library/db");
 const { finalsCollectionId } = await import("../library/finals");
 const { deleteAssets } = await import("../library/trash");
-const { copiesSettled, heldCopies } = await import("./play-copies");
+const { COPY_DAYS, copiesSettled, heldCopies, sweepPlayCopies } = await import("./play-copies");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -94,21 +95,30 @@ const up = async (name: string) => {
 const play = (url: string, headers: Record<string, string> = {}) => app.request(url, { headers });
 const copiesOf = (prefix: string) => [...objects.keys()].filter((k) => k.startsWith(`play-copies/${prefix}`));
 
+const pushed = (prefix: string) => until(() => copiesOf(prefix).length > 0);
+const dropped = (prefix: string) => until(() => copiesOf(prefix).length === 0);
+/** Runs `run` as if COPY_DAYS and a day had passed. */
+const later = async (run: () => Promise<unknown>) => {
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now + (COPY_DAYS + 1) * 86_400_000);
+  try {
+    await run();
+  } finally {
+    clock.mockRestore();
+  }
+};
+
 describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", () => {
-  it("streams the first play, copies it, then answers with a fresh signed link; the server's file stays", async () => {
+  it("pushes a version as soon as it is ready, then /play is a fresh signed link; the server's file stays", async () => {
     const id = await up("Tiny Acrobatics cut.mp4");
-    const first = await play(`/assets/${id}/v/1/play`);
-    expect(first.status).toBe(200);
-    await first.arrayBuffer();
-    await copiesSettled();
-    expect(copiesOf(`review/${id}/`)).toHaveLength(1);
+    expect(await pushed(`review/${id}/`)).toBe(true); // before anyone played it
     expect(objects.get(copiesOf(`review/${id}/`)[0]!)).toBe(readFileSync(mp4).length);
     expect(existsSync(path.join(dataDir, "review", id, "v1", "source"))).toBe(true);
 
-    const next = await play(`/assets/${id}/v/1/play`);
-    expect(next.status).toBe(302);
-    expect(next.headers.get("cache-control")).toBe("no-store");
-    const link = new URL(next.headers.get("location")!);
+    const res = await play(`/assets/${id}/v/1/play`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const link = new URL(res.headers.get("location")!);
     expect(link.host).toBe("tinyacrobatics.b-cdn.net");
     expect(link.pathname).toMatch(new RegExp(`^/play-copies/review/${id}/\\d+/\\d+\\.mp4$`));
     expect(Number(link.searchParams.get("expires")) - Date.now() / 1000).toBeGreaterThan(23 * 3600);
@@ -117,11 +127,24 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     expect((await play(`/assets/${id}/v/1/play`, { "sec-fetch-mode": "cors" })).status).toBe(200);
   });
 
-  it("keeps streaming when the copy can't be made", async () => {
+  it("changes nothing without a store: no push, no sweep, /play streams", async () => {
+    mountPlugins(new Hono(), []);
+    try {
+      const id = await up("Tiny Acrobatics open.mp4");
+      expect((await play(`/assets/${id}/v/1/play`)).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 300));
+      await copiesSettled();
+      expect(copiesOf(`review/${id}/`)).toHaveLength(0);
+    } finally {
+      mountPlugins(new Hono(), [cdn]);
+    }
+  });
+
+  it("streams when the push is refused", async () => {
     refuse = true;
     try {
       const id = await up("Tiny Acrobatics refused.mp4");
-      expect((await play(`/assets/${id}/v/1/play`)).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 300));
       await copiesSettled();
       expect((await play(`/assets/${id}/v/1/play`)).status).toBe(200);
       expect(copiesOf(`review/${id}/`)).toHaveLength(0);
@@ -130,48 +153,82 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     }
   });
 
-  it("deletes the copy when the video is trashed, its trash emptied, or it is purged", async () => {
-    const trashed = await up("Tiny Acrobatics trashed.mp4");
-    const purged = await up("Tiny Acrobatics purged.mp4");
-    for (const id of [trashed, purged]) {
-      await play(`/assets/${id}/v/1/play`);
-      await copiesSettled();
-      expect(copiesOf(`review/${id}/`)).toHaveLength(1);
-    }
-    await app.request(`/assets/${trashed}`, { method: "DELETE" });
-    expect(await until(() => copiesOf(`review/${trashed}/`).length === 0)).toBe(true);
-    await app.request(`/trash/${trashed}`, { method: "DELETE" });
-
-    await purgeExpiredReview((owner) => owner === "owner");
-    expect(await until(() => copiesOf(`review/${purged}/`).length === 0)).toBe(true);
-    expect((await heldCopies()).filter((k) => k.includes(purged) || k.includes(trashed))).toEqual([]);
+  it("drops the copy at once when a version is removed (cleared, or stacked away)", async () => {
+    const a = await up("Tiny Acrobatics a.mp4");
+    const b = await up("Tiny Acrobatics b.mp4");
+    expect((await pushed(`review/${a}/`)) && (await pushed(`review/${b}/`))).toBe(true);
+    await app.request(`/assets/${a}/stack`, json({ from: b }));
+    expect(await dropped(`review/${b}/`)).toBe(true); // b's video is gone: its version lives on in a, under a's name
+    expect(copiesOf(`review/${a}/`)).toHaveLength(1);
+    expect((await app.request(`/assets/${a}/v/2/clear-earlier`, { method: "POST" })).status).toBe(200);
+    expect(await dropped(`review/${a}/`)).toBe(true);
+    expect(existsSync(path.join(dataDir, "review", a, "v2", "source"))).toBe(true);
   });
 
-  it("copies a Final, never the footage, and drops the copy when it leaves Finals or goes", async () => {
-    const id = await up("Tiny Acrobatics final.mp4");
+  it("drops the copy at once when the video is trashed, and when it is Rejected", async () => {
+    const trashed = await up("Tiny Acrobatics trashed.mp4");
+    const rejected = await up("Tiny Acrobatics rejected.mp4");
+    expect((await pushed(`review/${trashed}/`)) && (await pushed(`review/${rejected}/`))).toBe(true);
+    await app.request(`/assets/${trashed}`, { method: "DELETE" });
+    expect(await dropped(`review/${trashed}/`)).toBe(true);
+    expect((await app.request(`/assets/${rejected}/approval`, json({ status: "rejected" }))).status).toBe(200);
+    expect(await dropped(`review/${rejected}/`)).toBe(true);
+    expect(existsSync(path.join(dataDir, "review", rejected, "v1", "source"))).toBe(true);
+  });
+
+  it("drops the copy when the video is purged", async () => {
+    const id = await up("Tiny Acrobatics purged.mp4");
+    expect(await pushed(`review/${id}/`)).toBe(true);
+    await purgeExpiredReview((owner, at) => owner === "owner" && at > 0);
+    expect(await dropped(`review/${id}/`)).toBe(true);
+    expect((await heldCopies()).filter((k) => k.includes(id))).toEqual([]);
+  });
+
+  it(`sweeps copies past ${COPY_DAYS} days but keeps an approved version's and a Final's; a later play pushes again`, async () => {
+    const old = await up("Tiny Acrobatics old.mp4");
+    const approved = await up("Tiny Acrobatics approved.mp4");
+    const final = await up("Tiny Acrobatics final cut.mp4");
+    for (const id of [old, approved, final]) expect(await pushed(`review/${id}/`)).toBe(true);
+    expect((await app.request(`/assets/${approved}/approval`, json({ status: "approved" }))).status).toBe(200);
+    const d = libraryDb();
+    const lib = libraryRow(final)!.library_id;
+    d.prepare("INSERT INTO pieces (id, library_id, collection_id, label, created_by, created_at) VALUES ('pc_sweep', ?, ?, 'Sweep', 'owner', 0)").run(lib, finalsCollectionId(lib));
+    d.prepare("INSERT INTO piece_items (id, piece_id, version_id, position) VALUES ('pi_sweep', 'pc_sweep', ?, 1)").run((await readMeta(final))!.versions[0]!.versionId!);
+
+    await later(() => sweepPlayCopies());
+    expect(copiesOf(`review/${old}/`)).toHaveLength(0);
+    expect(copiesOf(`review/${approved}/`)).toHaveLength(1);
+    expect(copiesOf(`review/${final}/`)).toHaveLength(1);
+
+    expect((await play(`/assets/${old}/v/1/play`)).status).toBe(200); // streams, and is pushed again
+    expect(await pushed(`review/${old}/`)).toBe(true);
+    expect((await play(`/assets/${old}/v/1/play`)).status).toBe(302);
+  });
+
+  it("pushes a version when it becomes a Final, never footage, and drops it when it leaves Finals or goes", async () => {
+    const id = await up("Tiny Acrobatics finals.mp4");
     const versionId = (await readMeta(id))!.versions[0]!.versionId!;
-    const footage = `/api/library/media/${versionId}/play`;
-    await play(footage);
+    const media = `/api/library/media/${versionId}/play`;
+    expect((await play(media)).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 300));
     await copiesSettled();
-    expect(copiesOf(`library/${versionId}/`)).toHaveLength(0); // not a Final: never copied
+    expect(copiesOf(`library/${versionId}/`)).toHaveLength(0); // not a Final: never pushed
 
     const d = libraryDb();
     const lib = libraryRow(id)!.library_id;
     d.prepare("INSERT INTO pieces (id, library_id, collection_id, label, created_by, created_at) VALUES ('pc_tiny', ?, ?, 'Tiny', 'owner', 0)").run(lib, finalsCollectionId(lib));
-    d.prepare("INSERT INTO piece_items (id, piece_id, version_id, position) VALUES ('pi_tiny', 'pc_tiny', ?, 1)").run(versionId);
-    expect((await play(footage)).status).toBe(200);
-    await copiesSettled();
-    expect(copiesOf(`library/${versionId}/`)).toHaveLength(1);
-    expect((await play(footage)).status).toBe(302);
+    const added = await read(app.request(`/api/library/${lib}/pieces/pc_tiny/items`, json({ versionId })));
+    expect(await pushed(`library/${versionId}/`)).toBe(true); // at once, before a play
+    expect((await play(media)).status).toBe(302);
+    await later(() => sweepPlayCopies());
+    expect(copiesOf(`library/${versionId}/`)).toHaveLength(1); // a Final keeps its copy past the days
 
-    await app.request(`/api/library/${lib}/pieces/pc_tiny/items/pi_tiny`, { method: "DELETE" });
-    expect(await until(() => copiesOf(`library/${versionId}/`).length === 0)).toBe(true);
+    const item = (added.items as { id: string }[])[0]!.id;
+    await app.request(`/api/library/${lib}/pieces/pc_tiny/items/${item}`, { method: "DELETE" });
+    expect(await dropped(`library/${versionId}/`)).toBe(true);
 
-    // a Final again, then deleted for good with its asset
-    d.prepare("INSERT INTO piece_items (id, piece_id, version_id, position) VALUES ('pi_tiny2', 'pc_tiny', ?, 1)").run(versionId);
-    await play(footage);
-    await copiesSettled();
-    expect(copiesOf(`library/${versionId}/`)).toHaveLength(1);
+    await app.request(`/api/library/${lib}/pieces/pc_tiny/items`, json({ versionId }));
+    expect(await pushed(`library/${versionId}/`)).toBe(true);
     await deleteAssets([id]);
     expect(copiesOf(`library/${versionId}/`)).toHaveLength(0);
   });

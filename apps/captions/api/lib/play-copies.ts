@@ -7,22 +7,30 @@ import { env } from "./env";
 import { pluginPlayCopies } from "./plugin";
 
 /*
- * Playback copies on a plug-in's CDN (ServerPlugin.playCopies). The first time someone plays a Review version or a Final
- * from this server, the file is copied there in the background, and from then on its /play answers with a fresh signed
- * link to the copy. Until the copy is in, or whenever the store fails, the server streams the file as before.
- * A copy lives only as long as its owner wants it (wantCopies): a sweep deletes the rest, so a version that is deleted,
- * trashed or purged loses its copy too. Nothing else expires.
+ * Playback copies on a plug-in's CDN (ServerPlugin.playCopies). As soon as this server has a new Review version's file, or a
+ * version becomes a Final, the file is pushed there in the background, and from then on its /play answers with a fresh
+ * signed link to the copy. Until the push lands, or whenever the store fails, the server streams the file as before; a
+ * play that finds no copy pushes one again. The server's own file always stays: the copy is only for speed.
+ * A copy lives while its owner wants it (wantCopies): a deleted, trashed or rejected version's copy goes at once, and a
+ * sweep deletes the rest that are no longer wanted, among them copies older than COPY_DAYS that aren't kept for good.
+ * Without a plug-in's store nothing here runs: no push, no sweep, /play as before.
  */
 
+/** Days a copy stays after its push, unless its owner keeps it for good (an approved version, a Final). */
+export const COPY_DAYS = 14;
 /** A signed link lasts a day, so a paused video still resumes; every /play signs a new one. */
 const LINK_SECONDS = 24 * 3600;
 /** How long a copy that was checked is trusted before Storage is asked again whether it is still there. */
 const CHECKED_MS = 10 * 60_000;
-/** A copy that failed waits this long before the next play tries again. */
+/** A push that failed waits this long before the next try. */
 const RETRY_MS = 3600_000;
+const DAY_MS = 86_400_000;
 const ROOT = "play-copies";
 // The pull zone serves a file with the type its name's extension says, so only these go.
 const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm", "video/x-m4v": ".m4v" };
+
+/** Whether a copy pushed at `at` is still inside its COPY_DAYS. */
+export const copyIsFresh = (at: number): boolean => Date.now() - at < COPY_DAYS * DAY_MS;
 
 type Held = Record<string, { bytes: number; at: number }>;
 const recordPath = () => path.join(env.dataDir, "play-copies.json");
@@ -46,39 +54,95 @@ function save(): Promise<void> {
   return saving;
 }
 
-const owners: { prefix: string; wanted: (parts: string[]) => boolean | Promise<boolean> }[] = [];
+type Wanted = (parts: string[], pushedAt: number) => boolean | Promise<boolean>;
+const owners: { prefix: string; wanted: Wanted }[] = [];
 
-/** Who keeps copies under `<prefix>/…`: `wanted` gets the name's parts after the prefix and says whether its copy stays. */
-export function wantCopies(prefix: string, wanted: (parts: string[]) => boolean | Promise<boolean>): void {
+/** Who keeps copies under `<prefix>/…`: `wanted` gets the name's parts after the prefix and when the copy was pushed (now,
+ *  for one not pushed yet) and says whether it stays. */
+export function wantCopies(prefix: string, wanted: Wanted): void {
   owners.push({ prefix, wanted });
 }
 
+/** Whether the owner of `key` wants it; a key no owner claims (its module isn't loaded) is kept and never pushed. */
+async function wants(key: string, pushedAt: number): Promise<boolean | null> {
+  const parts = key.split("/").slice(1, -1); // play-copies/<prefix>/<…>/<size.ext>
+  const owner = owners.find((o) => o.prefix === parts[0]);
+  return owner ? await Promise.resolve(owner.wanted(parts.slice(1), pushedAt)).catch(() => true) : null;
+}
+
 const checked = new Map<string, number>();
-const copying = new Set<string>();
+const pushing = new Set<string>();
 const failed = new Map<string, number>();
 let line: Promise<void> = Promise.resolve();
 
+/** The copy's key: the size is in it, so a file made again (a new proxy) is a new object, never a stale one from the CDN's cache. */
+async function keyOf(name: string, file: string, type: string): Promise<{ key: string; bytes: number } | null> {
+  const ext = EXT[type.split(";")[0]!.trim().toLowerCase()];
+  const st = ext ? await stat(file).catch(() => null) : null;
+  return st ? { key: `${ROOT}/${name}/${st.size}${ext}`, bytes: st.size } : null;
+}
+
+/**
+ * Pushes `file` (what `name`'s /play sends) to the store in the background, one at a time, unless it is there already,
+ * on its way, or not wanted. Does nothing without a store.
+ */
+export async function pushPlayCopy(name: string, file: string, type: string): Promise<void> {
+  const store = pluginPlayCopies();
+  const k = store?.caps.signedUrls ? await keyOf(name, file, type) : null;
+  if (!store || !k || (await record())[k.key]) return;
+  pushLater(store, k.key, file, type, k.bytes);
+}
+
+function pushLater(store: BlobStore, key: string, file: string, type: string, bytes: number): void {
+  if (pushing.has(key) || Date.now() - (failed.get(key) ?? 0) < RETRY_MS) return;
+  pushing.add(key);
+  line = line.then(async () => {
+    const tmp = path.join(env.dataDir, "play-copies-tmp", randomUUID());
+    try {
+      if (!(await wants(key, Date.now()))) return; // rejected, gone or not a Final by now
+      await mkdir(path.dirname(tmp), { recursive: true });
+      // put() takes the file it is given: a hard link, so the server's own file stays and no bytes are copied on disk
+      // shortcut: a file on another disk than DATA_DIR can't be linked, so it is never pushed; copy it to tmp if that matters
+      await link(file, tmp);
+      await store.put(key, tmp, { contentType: type });
+      (await record())[key] = { bytes, at: Date.now() };
+      checked.set(key, Date.now());
+      failed.delete(key);
+      await save();
+      await sweepPlayCopies([key]); // its version may have gone while the push was on its way
+    } catch (e) {
+      failed.set(key, Date.now());
+      console.error(`[play-copies] push ${key}:`, e instanceof Error ? e.message : e);
+    } finally {
+      await rm(tmp, { force: true }).catch(() => {});
+      pushing.delete(key);
+    }
+  });
+}
+
 /**
  * /play's answer from the copy of `file` named `name` (like `review/<asset>/<version>`): a 302 to a fresh signed link when
- * the copy is there, else null (the caller streams the file) and the copy is started. Called only after the route's checks.
+ * the copy is there, else null (the caller streams the file) and a push is started. Called only after the route's checks.
  */
 export async function playCopy(c: Context, name: string, file: string, type: string): Promise<Response | null> {
   const store = pluginPlayCopies();
   // a CORS load (a canvas or sound graph reading the media) stays on this origin: the pull zone may send no CORS headers
   if (!store?.caps.signedUrls || c.req.header("sec-fetch-mode") === "cors") return null;
-  const ext = EXT[type.split(";")[0]!.trim().toLowerCase()];
-  const st = ext ? await stat(file).catch(() => null) : null;
-  if (!st) return null;
-  // the size is in the key: a file made again (a new proxy) is a new object, never a stale one from the CDN's cache
-  const key = `${ROOT}/${name}/${st.size}${ext}`;
+  const k = await keyOf(name, file, type);
+  if (!k) return null;
+  const { key } = k;
   try {
-    if (!(await record())[key]) return copyLater(store, key, file, type, st.size);
+    if (!(await record())[key]) {
+      pushLater(store, key, file, type, k.bytes);
+      return null;
+    }
     if (Date.now() - (checked.get(key) ?? 0) > CHECKED_MS) {
       if (!(await store.stat(key))) {
-        delete held![key]; // gone from Storage (deleted by hand): copied again, streamed meanwhile
+        delete held![key]; // gone from Storage (deleted by hand): pushed again, streamed meanwhile
         checked.delete(key);
         void save();
-        return copyLater(store, key, file, type, st.size);
+        pushLater(store, key, file, type, k.bytes);
+        return null;
       }
       checked.set(key, Date.now());
     }
@@ -92,48 +156,18 @@ export async function playCopy(c: Context, name: string, file: string, type: str
   }
 }
 
-/** Copies the file in the background, one at a time; null, so this play streams. */
-function copyLater(store: BlobStore, key: string, file: string, type: string, bytes: number): null {
-  if (copying.has(key) || Date.now() - (failed.get(key) ?? 0) < RETRY_MS) return null;
-  copying.add(key);
-  line = line.then(async () => {
-    const tmp = path.join(env.dataDir, "play-copies-tmp", randomUUID());
-    try {
-      await mkdir(path.dirname(tmp), { recursive: true });
-      // put() takes the file it is given: a hard link, so the server's own file stays and no bytes are copied on disk
-      // shortcut: a file on another disk than DATA_DIR can't be linked, so it is never copied; copy it to tmp if that matters
-      await link(file, tmp);
-      await store.put(key, tmp, { contentType: type });
-      (await record())[key] = { bytes, at: Date.now() };
-      checked.set(key, Date.now());
-      failed.delete(key);
-      await save();
-      await sweepPlayCopies([key]); // its version may have gone while the copy was on its way
-    } catch (e) {
-      failed.set(key, Date.now());
-      console.error(`[play-copies] copy ${key}:`, e instanceof Error ? e.message : e);
-    } finally {
-      await rm(tmp, { force: true }).catch(() => {});
-      copying.delete(key);
-    }
-  });
-  return null;
-}
-
 /**
  * Deletes every copy whose owner no longer wants it, among the names starting with one of `within` (all when left out).
- * A copy whose delete fails stays in the record and goes on a later sweep; one no owner claims (its module isn't loaded) stays.
+ * Only copies the record holds are ever deleted. One whose delete fails stays in the record and goes on a later sweep.
  */
 export async function sweepPlayCopies(within?: string[]): Promise<void> {
   const store = pluginPlayCopies();
+  if (!store) return;
   const all = await record();
   const keys = Object.keys(all).filter((k) => !within || within.some((w) => k.startsWith(w.startsWith(`${ROOT}/`) ? w : `${ROOT}/${w}`)));
-  if (!store || !keys.length) return;
   let changed = false;
   for (const key of keys) {
-    const parts = key.split("/").slice(1, -1); // play-copies/<prefix>/<…>/<size.ext>
-    const owner = owners.find((o) => o.prefix === parts[0]);
-    if (!owner || (await Promise.resolve(owner.wanted(parts.slice(1))).catch(() => true))) continue;
+    if ((await wants(key, all[key]!.at)) !== false) continue;
     try {
       await store.delete(key);
       delete all[key];
@@ -149,7 +183,14 @@ export async function sweepPlayCopies(within?: string[]): Promise<void> {
 /** The copies the record holds (tests). */
 export const heldCopies = async (): Promise<string[]> => Object.keys(await record());
 
-/** Waits for the copies in flight (tests). */
-export const copiesSettled = (): Promise<void> => line.then(() => saving);
+/** Waits for the pushes in flight (tests). */
+export const copiesSettled = async (): Promise<void> => {
+  await line;
+  await saving;
+};
 
-setInterval(() => void sweepPlayCopies().catch((e) => console.error("[play-copies] sweep:", e)), 3600_000).unref();
+// The daily sweep that ends copies past COPY_DAYS. Deploys restart this server many times a day, so the first one runs
+// ten minutes after a start, not a day later. Without a store it returns at once.
+const sweepAll = () => void sweepPlayCopies().catch((e) => console.error("[play-copies] sweep:", e));
+setTimeout(sweepAll, 10 * 60_000).unref();
+setInterval(sweepAll, DAY_MS).unref();

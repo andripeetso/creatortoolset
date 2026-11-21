@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { homeOf, libraryRole, mayWrite } from "./access";
 import { libraryDb, newLibrarySettings } from "./db";
 import { addExternalItem, externalCanSee, externalRefFor } from "./refs";
-import { saveToLibrary } from "./routes";
+import { pushFinalCopy, saveToLibrary } from "./routes";
 import { pluginFinalsAdded, pluginFinalsRefusal } from "../lib/plugin";
 import { emitEvent } from "../lib/events";
 import { announce } from "../lib/sync";
@@ -27,7 +27,8 @@ export function isFinal(versionId: string): boolean {
     )
     .get(versionId);
 }
-// A Final's playback copy (library/<version>) stays while it is a Final: out of Finals, trashed or deleted, it goes.
+// A Final's playback copy (library/<version>) stays while it is a Final, past COPY_DAYS too: out of Finals, trashed or
+// deleted, it goes.
 wantCopies("library", ([versionId]) => !!versionId && isFinal(versionId));
 
 /** Finals and Content are what gets posted: never below 1080p (2026-10-02: an AI Editor 540×960 preview got captioned and sent). The refusal, or null. */
@@ -167,6 +168,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
         input.item,
         last + 1,
       );
+      void pushFinalCopy(versionId).catch(() => {}); // its playback copy (lib/play-copies.ts), once this has landed
     }
     // the library's item is marked Finals too, so the Media Library's Finals collection lists it
     if (assetId) {
