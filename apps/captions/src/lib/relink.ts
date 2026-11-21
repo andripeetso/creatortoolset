@@ -102,9 +102,13 @@ export function awayLine(o: Originals): string | null {
 /** One source's line when this Mac said why it doesn't play here, for the player's frame (NleFile.why). */
 export const whyOf = (o: Originals | null, src: string) => pathLine(o?.away?.[src]);
 
+/** The files waiting for an OK on this Mac (needs_ok, or not_granted: outside every folder it plays from). */
+const waitingOf = (o: Originals) =>
+  Object.entries(o.away ?? {}).filter(([, a]) => a.state === "needs_ok" || a.state === "not_granted").map(([s]) => o.found[s] ?? o.paths[s]);
+
 /** The Settings → Folders folders on this Mac that hold a file waiting for an OK (empty: none, or outside the app). */
 export async function foldersToAllow(o: Originals): Promise<StorageFolder[]> {
-  const waiting = Object.entries(o.away ?? {}).filter(([, a]) => a.state === "needs_ok" || a.state === "not_granted").map(([s]) => o.found[s] ?? o.paths[s]);
+  const waiting = waitingOf(o);
   if (!waiting.length) return [];
   const r = await fetch("/api/devices/storage").catch(() => null);
   const view = r?.ok ? ((await r.json().catch(() => null)) as StorageView | null) : null;
@@ -112,10 +116,15 @@ export async function foldersToAllow(o: Originals): Promise<StorageFolder[]> {
   return (view?.folders ?? []).filter((f) => (!me || f.origin.host === me) && waiting.some((p) => allGranted([p], [f.origin.path])));
 }
 
-/** "Allow on this Mac", pressed: each folder allowed (the Mac app's own answer), then the files looked at again. */
+/** "Allow on this Mac", pressed: each folder allowed (the Mac app's own answer), then the files looked at again. A file
+ *  in none of them (a voice the AI Editor wrote in its own folder) is allowed through the Mac app's open panel at its
+ *  folder: the press opens it, never the page by itself; cancelled, nothing more is allowed. */
 export async function allowFolders(o: Originals, folders: StorageFolder[], store: string, exists = onDisk): Promise<Originals> {
   for (const f of folders) await folderGrant(f.origin.path, f.id);
-  return { ...o, ...(await look(o.paths, stored(store), exists, o.folders)) };
+  const loose = waitingOf(o).filter((p) => !folders.some((f) => allGranted([p], [f.origin.path])));
+  const asked = loose.length ? await askMediaFolder(commonFolder(loose)) : [];
+  const now = asked.length ? asked : o.folders;
+  return { ...o, ...(await look(o.paths, stored(store), exists, now)), folders: now };
 }
 
 /**

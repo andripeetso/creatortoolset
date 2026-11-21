@@ -116,6 +116,26 @@ describe("an edit's files in a Settings → Folders folder (the Mac's own grant 
     expect(after.found).toEqual(paths);
   });
 
+  it("a file in no Settings → Folders folder (a voice the AI Editor wrote in its own folder): Allow opens the Mac app's panel at its folder", async () => {
+    const VO = "/Volumes/Tiny Drive/AI Editor/VO";
+    const withVo = { ...paths, vo: `${VO}/VO_take_1.wav` };
+    const postMessage = mac({ ...all("here"), [withVo.vo]: "not_granted" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ serverDisks: [], folders: [] }) })));
+    const o = await openOriginals(withVo, "ed.5", on([]).exists);
+    expect(awayLine(o)).toBe("Needs your OK");
+    expect(await foldersToAllow(o)).toEqual([]);
+    // cancelled: still waiting
+    vi.mocked(askMediaFolder).mockResolvedValueOnce([]);
+    expect((await allowFolders(o, [], "ed.5", on([]).exists)).found.vo).toBeUndefined();
+    expect(askMediaFolder).toHaveBeenLastCalledWith(VO);
+    // allowed: plays from then on
+    vi.mocked(askMediaFolder).mockResolvedValueOnce([VO]);
+    postMessage.mockImplementation(async (b) => (b.placesState ? { states: { ...all("here"), [withVo.vo]: "here" }, disks: {} } : null));
+    const after = await allowFolders(o, [], "ed.5", on([]).exists);
+    expect(after.found).toEqual(withVo);
+    expect(after.folders).toEqual([VO]);
+  });
+
   it("an older Mac app that doesn't answer placesState: each file is read through the app", async () => {
     vi.stubGlobal("window", { webkit: { messageHandlers: { mediaAccess: { postMessage: async () => ({ granted: [] }) } } } });
     const { exists } = on([paths.s1]);
