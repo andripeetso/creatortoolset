@@ -28,9 +28,9 @@ describe("where a file plays", () => {
     const file = { path: LOCAL, bytes: 5_000_000 };
     expect(await playFrom(SERVER, file, { said: says("here"), exists: never, serves, size: async () => 5_000_000 })).toBe(localMediaUrl(LOCAL));
     expect(await playFrom(SERVER, file, { said: says("here"), exists: never, serves, size: async () => 5_200_000 })).toBe(SERVER);
-    expect(await playFrom(SERVER, file, { said: says("here"), exists: never, serves, size: async () => null }
+    expect(await playFrom(SERVER, file, { said: says("here"), exists: never, serves, size: async () => null })).toBe(SERVER);
     // not here at all: no size is read
-    expect(await playFrom(SERVER, file, { said: says("not_here"), exists: never, serves, size: never })).toBe(SERVER);)).toBe(SERVER);
+    expect(await playFrom(SERVER, file, { said: says("not_here"), exists: never, serves, size: never })).toBe(SERVER);
   });
 
   it("reads a local file's size from the Mac app's answer to a one-byte read", async () => {
