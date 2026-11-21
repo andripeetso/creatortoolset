@@ -774,7 +774,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   // a track whose renders can't play a speed change says so, as the Inspector's Speed Change does
   const speedOff = fieldOff(selTracks, "speed");
   const lockedWhy = selTracks.some((t) => tl.tracks[t]?.locked) ? "The track is locked" : null;
-  const freezeWhy = lockedWhy ?? fieldOff(["V1"], "freeze") ?? (COMMANDS.freezeFrame.enabled(stateNow()) ? null : "Needs the playhead over a clip on V1");
+  // worked out only while a clip's menu is open: it cuts a copy of the timeline
+  const freezeWhy = menu?.on !== "clip" ? null : lockedWhy ?? fieldOff(["V1"], "freeze") ?? (COMMANDS.freezeFrame.enabled(stateNow()) ? null : "Needs the playhead over a clip on V1");
   const clipOff = !!readOnly || !!lockedWhy;
   const disabled = find(tl, sel[0] ?? "")?.item.enabled === false;
   const enableWhy = lockedWhy ?? fieldOff(selTracks, "enabled");

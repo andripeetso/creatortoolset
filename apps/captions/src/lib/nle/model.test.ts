@@ -594,6 +594,9 @@ describe("clip menu: duration and freeze frame", () => {
     expect(framesOfTimecode("2:10", 25)).toBe(60);
     expect(framesOfTimecode("0:01:00:00", 25)).toBe(1500);
     expect(framesOfTimecode("1:00:00:00", 30)).toBe(108000);
+    expect(framesOfTimecode("1:30", 25)).toBeNull(); // 30 frames at 25 fps
+    // at 29.97 what timecode() writes reads back as the same length
+    for (const f of [1000, 9000, 29, 30]) expect(framesOfTimecode(timecode(f, 29.97), 29.97)).toBe(f);
     expect(framesOfTimecode("2 s", 25)).toBeNull();
     expect(framesOfTimecode("", 25)).toBeNull();
   });
@@ -605,6 +608,14 @@ describe("clip menu: duration and freeze frame", () => {
     expect(spans(held, "V1").slice(0, 2)).toEqual([[0, 30, 0], [30, 45, 30]]);
     expect(held.tracks.V1.items.map((i) => !!i.freeze)).toEqual([false, true, false]);
     expect(spans(held, "A1")).toEqual([[0, 30, 0], [30, 45, 30]]);
+    // the held part and its voice are linked to each other, apart from the parts before the cut
+    const [vl, vr] = held.tracks.V1.items;
+    const [al, ar] = held.tracks.A1.items;
+    expect([al.link, ar.link]).toEqual([vl.link, vr.link]);
+    expect(vr.link).not.toBe(vl.link);
+    // a held clip runs on past its file's end: its length isn't capped by the source
+    expect(longestOf(held, vr)).toBe(Infinity);
+    expect(find(setDuration(held, [vr._k!], 200), vr._k!)!.item.len).toBe(60); // up to the next shot at 90
     expect(held.tracks.A1.items.some((i) => i.freeze)).toBe(false);
     // at its first frame the whole clip is held, no cut
     expect(freezeFrame(tl, [v], 0).tracks.V1.items.map((i) => !!i.freeze)).toEqual([true, false]);
@@ -612,6 +623,7 @@ describe("clip menu: duration and freeze frame", () => {
     expect(freezeFrame(held, [key(held, "V1", 30)], 40)).toBe(held);
     expect(freezeFrame(tl, [v], 80)).toBe(tl);
     expect(freezeFrame(tl, [a], 30)).toBe(tl);
+    expect(freezeFrame(setItems(tl, [v], { rev: true }), [v], 30).tracks.V1.items.some((i) => i.freeze)).toBe(false);
     expect(freezeFrame(setTrack(tl, "V1", { locked: true }), [v], 30).tracks.V1.items.some((i) => i.freeze)).toBe(false);
   });
 });

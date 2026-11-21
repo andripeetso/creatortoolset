@@ -135,7 +135,9 @@ export function framesOfTimecode(text: string, fps: number): number | null {
   const parts = text.trim().split(/[:;.]/);
   if (!parts.every((x) => /^\d+$/.test(x)) || parts.length > 4) return null;
   const [ff, ss = 0, mm = 0, hh = 0] = parts.reverse().map(Number);
-  return ((hh * 60 + mm) * 60 + ss) * Math.round(fps) + ff;
+  if (parts.length > 1 && ff >= Math.round(fps)) return null;
+  // timecode()'s inverse: whole seconds at the real rate (29.97 too), then the frames
+  return Math.round(((hh * 60 + mm) * 60 + ss) * fps) + ff;
 }
 
 /** m:ss:ff, h:mm:ss:ff from an hour. */
@@ -163,7 +165,8 @@ export function roomOf(tl: NleTimeline, it: NleItem): { before: number; after: n
   const dur = tl.sources[it.src]?.dur;
   return {
     before: Math.floor(it.in / r + 1e-6),
-    after: typeof dur === "number" ? Math.max(0, Math.floor((dur - it.in) / r + 1e-6) - it.len) : Infinity,
+    // a held clip shows one source frame however long it runs
+    after: typeof dur === "number" && !it.freeze ? Math.max(0, Math.floor((dur - it.in) / r + 1e-6) - it.len) : Infinity,
   };
 }
 
@@ -362,12 +365,16 @@ export function blade(tl: NleTimeline, f: number, keys?: string[]): NleTimeline 
   const want = keys?.length ? new Set(withLinked(tl, keys)) : null;
   const out = clone(tl);
   let any = false;
+
   for (const t of Object.values(out.tracks)) {
     if (t.locked) continue;
     t.items = t.items.flatMap((i) => {
       if ((want && !want.has(i._k!)) || f <= i.rec || f >= endOf(i)) return [i];
       any = true;
-      return cutAt(out, i, f);
+      const [left, right] = cutAt(out, i, f);
+      // the parts after the cut are linked to each other under a link of their own (one per cut), apart from the parts before it
+      if (right.link !== undefined) right.link = `${right.link}@${f}`;
+      return [left, right];
     });
   }
   return any ? fixTrans(out) : tl;
@@ -465,6 +472,7 @@ export const setDuration = (tl: NleTimeline, keys: string[], len: number): NleTi
 /** The longest a clip can be from its in point before its source runs out, counting its speed (Infinity: length unknown). */
 export function longestOf(tl: NleTimeline, it: NleItem): number {
   const dur = tl.sources[it.src]?.dur;
+  if (it.freeze) return Infinity;
   // not roomOf: a clip already past its source's end (a speed raised in the Inspector) has no room, yet a length to keep
   return typeof dur === "number" ? Math.floor((dur - it.in) / rateOf(tl, it) + 1e-6) : Infinity;
 }
@@ -475,8 +483,8 @@ export function longestOf(tl: NleTimeline, it: NleItem): number {
  */
 export function freezeFrame(tl: NleTimeline, keys: string[], f: number): NleTimeline {
   const hit = keys.map((k) => find(tl, k)).find((h) => h?.track === "V1" && h.item.rec <= f && f < endOf(h.item));
-  // a held clip already shows one frame everywhere
-  if (!hit || hit.item.freeze || tl.tracks.V1.locked) return tl;
+  // a held clip already shows one frame everywhere; a reversed one shows a frame the cut wouldn't hold
+  if (!hit || hit.item.freeze || hit.item.rev || tl.tracks.V1.locked) return tl;
   const cut = hit.item.rec < f ? blade(tl, f, [hit.item._k!]) : tl;
   // a track holds one clip at a frame: the one starting at `f` is the part to hold
   return setItems(cut, [cut.tracks.V1.items.find((i) => i.rec === f)!._k!], { freeze: true });
