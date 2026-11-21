@@ -27,7 +27,7 @@ import {
 } from "./lib/uploads";
 import { env } from "./lib/env";
 import { clipReadyToEdit, createProjectFromFile, linkOrCopy } from "./projects";
-import { findUser, USERNAME_RE, type SessionUser } from "./users";
+import { findUser, mayUse, USERNAME_RE, type SessionUser } from "./users";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
@@ -1395,22 +1395,19 @@ uploadRelayApp.post("/:uid/complete", async (c) => {
 const ownLibrary = (assetId: string, owner: string): string =>
   (libraryDb().prepare("SELECT library_id FROM assets WHERE id = ?").get(assetId) as { library_id: string } | undefined)?.library_id ?? libraryFor(owner);
 
-/** Send a version to Finals (Review's own button): the library's version is linked, never copied. Owners and admins;
- *  a ready version of 1080p or more. The piece is named after the Review project, its item after the version. */
-reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
-  const v = await viewer(c);
-  const ver = v?.manage ? v.meta.versions.find((x) => x.n === Number(c.req.param("n"))) : undefined;
-  if (!v || !ver) return c.json({ error: "Not found" }, 404);
-  if (ver.status !== "ready" || !ver.width) return c.json({ error: "Wait until this version is ready" }, 409);
+/** Send a version to Finals: the library's version is linked, never copied. A ready version of 1080p or more. The piece is
+ *  named after the Review project, its item after the version. Review's own route, and an owner's or admin's Approve. */
+async function versionToFinals(meta: Meta, ver: Version): Promise<{ pieceId: string } | { error: string; code: number }> {
+  if (ver.status !== "ready" || !ver.width) return { error: "Wait until this version is ready", code: 409 };
   const small = belowHd(ver.width, ver.height);
-  if (small) return c.json({ error: small }, 409);
-  if (!ver.versionId) return c.json({ error: "This version is not in the Media Library yet" }, 409);
-  const project = v.meta.projectId ? (await readProjects()).find((p) => p.id === v.meta.projectId) : undefined;
+  if (small) return { error: small, code: 409 };
+  if (!ver.versionId) return { error: "This version is not in the Media Library yet", code: 409 };
+  const project = meta.projectId ? (await readProjects()).find((p) => p.id === meta.projectId) : undefined;
   const out = await addToFinals(
     {
-      owner: v.meta.owner,
-      libraryId: ownLibrary(v.meta.id, v.meta.owner),
-      label: project?.name || v.meta.name,
+      owner: meta.owner,
+      libraryId: ownLibrary(meta.id, meta.owner),
+      label: project?.name || meta.name,
       item: ver.name ? (ver.edit || ver.draft ? finalsItemName(ver.name) : ver.name) : null, // only AI Editor cuts carry a draft mark
       kind: "review",
       width: ver.width,
@@ -1418,9 +1415,19 @@ reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
     },
     { versionId: ver.versionId },
   );
-  if (!out.ok) return c.json({ error: out.error }, out.code === "no_access" || out.code === "not_found" ? 404 : 409);
+  if (!out.ok) return { error: out.error, code: out.code === "no_access" || out.code === "not_found" ? 404 : 409 };
+  return { pieceId: out.pieceId };
+}
+
+/** Send a version to Finals (Review's own button). Owners and admins. */
+reviewApp.post("/assets/:id/v/:n/finals", async (c) => {
+  const v = await viewer(c);
+  const ver = v?.manage ? v.meta.versions.find((x) => x.n === Number(c.req.param("n"))) : undefined;
+  if (!v || !ver) return c.json({ error: "Not found" }, 404);
+  const out = await versionToFinals(v.meta, ver);
+  if ("error" in out) return c.json({ error: out.error }, out.code as 404 | 409);
   emitEvent("review.finished", { asset: v.meta.id, owner: v.meta.owner, by: v.user ?? "", key: !!c.req.header("authorization") });
-  return c.json({ pieceId: out.pieceId });
+  return c.json(out);
 });
 
 /** Save to Content, an older path kept for older clients. A captioned version and the version it
@@ -2719,6 +2726,15 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (status === "approved" || status === "changes") {
       await notify(meta, { name: by, user: v.user }, { kind: status });
     }
-    return c.json(publicAsset(meta, v.manage, v.download));
+    // an owner's or admin's Approve puts the newest version in Finals (owner, 2026-11-19); a reviewer's only says it is good,
+    // and a pass cut's (`next`) starts the next pass: it is not finished. The approval stands whatever Finals answers: the
+    // answer goes back with it. Undo leaves the piece in Finals.
+    const newest = meta.versions.at(-1);   // the one an approval is about
+    // an owner with the Media Library off has no Finals: the approval says nothing about them
+    const owner = findUser(meta.owner);
+    const finals = status === "approved" && v.manage && newest && !newest.next && (!owner || mayUse(owner, "media"))
+      ? await versionToFinals(meta, newest).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }))
+      : undefined;
+    return c.json({ ...publicAsset(meta, v.manage, v.download), ...(finals ? { finals: "error" in finals ? { error: finals.error } : finals } : {}) });
   });
 }

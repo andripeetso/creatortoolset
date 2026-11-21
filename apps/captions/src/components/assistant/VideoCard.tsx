@@ -8,15 +8,16 @@ import type { ReviewView } from "@/lib/review";
 
 type Cut = NonNullable<AssistantMedia["cut"]>;
 
-/** Approve on that Review video and version; a cut with unblurred faces asks its owner first, as Review does. */
-async function approveCut(cut: Cut): Promise<void> {
+/** Approve on that Review video and version; a cut with unblurred faces asks its owner first, as Review does. The answer is
+ *  why it did not go to Finals, when it did not (an owner's Approve sends it there). */
+async function approveCut(cut: Cut): Promise<string | undefined> {
   const post = async (asFilmed: boolean) => {
     const r = await fetch(`/api/review/assets/${cut.asset}/approval`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "approved", version: cut.n, ...(asFilmed ? { asFilmed } : {}) }),
     });
-    return { r, j: (await r.json().catch(() => null)) as { error?: string; code?: string } | null };
+    return { r, j: (await r.json().catch(() => null)) as { error?: string; code?: string; finals?: { error?: string } } | null };
   };
   let { r, j } = await post(false);
   if (r.status === 409 && j?.code === "not_blurred") {
@@ -24,6 +25,7 @@ async function approveCut(cut: Cut): Promise<void> {
     ({ r, j } = await post(true));
   }
   if (!r.ok) throw new Error(j?.error || "Could not approve");
+  return j?.finals?.error;
 }
 
 /** A ready cut's own buttons (owner, 2026-11-20): Open in Review, Open in Editor (that version's timeline), Approve. */
@@ -34,8 +36,9 @@ function CutButtons({ media, cut, open }: { media: AssistantMedia; cut: Cut; ope
     setState("busy");
     setError("");
     try {
-      await approveCut(cut);
+      const notInFinals = await approveCut(cut);
       setState("done");
+      if (notInFinals) setError(`Not in Finals: ${notInFinals}`);
     } catch (e) {
       setState("idle");
       setError((e as Error).message);

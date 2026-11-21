@@ -102,7 +102,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
   const role = libraryRole(input.owner, input.libraryId);
   if (!role) return { ok: false, code: "not_found", error: "The Media Library isn't on for this account" };
   try {
-    const refusal = await pluginFinalsRefusal(input);
+    const refusal = await pluginFinalsRefusal(input, source);
     if (refusal) return { ok: false, code: "refused", error: refusal };
 
     const d = libraryDb();
