@@ -8,7 +8,7 @@ export type KeyAction =
   | "play" | "stop" | "forward" | "reverse"
   | "save" | "undo" | "redo" | "split" | "copy" | "cut" | "paste" | "duplicate" | "selectAll" | "deselect"
   | "selectForward" | "selectBack" | "rippleStart" | "rippleEnd" | "delete" | "rippleDelete" | "enable"
-  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "snap" | "linkedSelection"
+  | "markIn" | "markOut" | "clearMarks" | "toolSelect" | "toolTrim" | "toolBlade" | "toolStretch" | "snap" | "linkedSelection"
   | "nudgeBack" | "nudgeBack5" | "nudgeOn" | "nudgeOn5"
   | "frameBack" | "frameOn" | "secondBack" | "secondOn" | "prevEdit" | "nextEdit" | "start" | "end"
   | "zoomIn" | "zoomOut" | "zoomFit" | "mediaPool" | "inspector"
@@ -30,14 +30,14 @@ export function chordOf(e: KeyLike): string {
 export const KEYS: Record<string, KeyAction> = {
   Space: "play", "2": "play", K: "stop", L: "forward", "3": "forward", J: "reverse", "1": "reverse",
   "⌘S": "save", "⌘Z": "undo", "⌘⇧Z": "redo",
-  W: "split", "⌘B": "split", "⌘\\": "split",
+  W: "split", C: "split", "⌘B": "split", "⌘\\": "split",
   "⌘C": "copy", "⌘X": "cut", "⌘V": "paste", "⌘D": "duplicate", "⌘A": "selectAll", Escape: "deselect",
   "⌥Y": "selectForward", "⌘⌥Y": "selectBack",
   Q: "rippleStart", E: "rippleEnd",
   S: "rippleDelete", Delete: "rippleDelete", "⇧Delete": "rippleDelete", "⇧Backspace": "rippleDelete", Backspace: "delete",
   D: "enable",
   I: "markIn", O: "markOut", "⌥X": "clearMarks",
-  A: "toolSelect", T: "toolTrim", B: "toolBlade", N: "snap", "⌘⇧L": "linkedSelection",
+  A: "toolSelect", T: "toolTrim", B: "toolBlade", R: "toolStretch", N: "snap", "⌘⇧L": "linkedSelection",
   ",": "nudgeBack", "⇧,": "nudgeBack5", ".": "nudgeOn", "⇧.": "nudgeOn5",
   ArrowLeft: "frameBack", ArrowRight: "frameOn", "⇧ArrowLeft": "secondBack", "⇧ArrowRight": "secondOn",
   ArrowUp: "prevEdit", ArrowDown: "nextEdit", Home: "start", End: "end",

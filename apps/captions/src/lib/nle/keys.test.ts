@@ -15,6 +15,7 @@ describe("editor keys", () => {
   it("Q W E ripple start, split, ripple end; 1 2 3 and J K L play", () => {
     expect(["q", "w", "e"].map((c) => keyAction(k(c, `Key${c.toUpperCase()}`)))).toEqual(["rippleStart", "split", "rippleEnd"]);
     expect(["1", "2", "3"].map((d) => keyAction(k(d, `Digit${d}`)))).toEqual(["reverse", "play", "forward"]);
+    expect(["c", "r"].map((c) => keyAction(k(c, `Key${c.toUpperCase()}`)))).toEqual(["split", "toolStretch"]);
     expect(keyAction(k(" ", "Space"))).toBe("play");
     expect(keyAction(k("k", "KeyK"))).toBe("stop");
   });
