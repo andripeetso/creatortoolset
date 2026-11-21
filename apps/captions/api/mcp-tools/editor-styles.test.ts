@@ -351,9 +351,9 @@ describe.skipIf(rootReplaced)("a style that learns, from the chat", () => {
       expect((await tool(t.token, "review_set_approval", { link: added!.meta.id, status: "approved", ...(words ? { words } : {}) })).value).toMatchObject({ id: added!.meta.id, approval: "approved" });
       expect(await learned()).toEqual([]);
     }
-    // the person's own words: it learns, and the answer says nothing about it
+    // the person's own words: it learns, and the answer says nothing about it (an owner's Approve also says where Finals stands)
     const answer = (await tool(t.token, "review_set_approval", { link: added!.meta.id, status: "approved", words: "love it, approve this one" })).value;
-    expect(Object.keys(answer)).toEqual(["id", "name", "approval"]);
+    expect(Object.keys(answer)).toEqual(["id", "name", "approval", "finals"]);
     expect(await learned()).toEqual([{ editId: edit, workspaceId: expect.any(String), at: expect.any(Number), rounds: 1, notes: [], cut: { seconds: 2, shots: 4, avgShotS: 0.5, fxPerShot: 0, sourcesUsed: 1 } }]);
     await t.end();
 
