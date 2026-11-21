@@ -20,24 +20,50 @@ export async function servedTo(url: string): Promise<boolean> {
   }
 }
 
+/** A local file as a player names it: its path, and with a Review version its size, since a later render can take that path. */
+export type Local = string | { path: string; bytes: number };
+
+/** The size of the file at a ctlocal:// URL, from the Mac app's answer to a one-byte read (Content-Range); null when it doesn't play. */
+export async function localBytes(url: string): Promise<number | null> {
+  try {
+    const r = await fetch(url, { headers: { Range: "bytes=0-0" } });
+    void r.body?.cancel();
+    const total = /\/(\d+)$/.exec(r.headers.get("content-range") ?? "")?.[1];
+    return r.status === 206 && total ? Number(total) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The src to play: the Mac app's own URL, or the local path's when the Mac app says it is here (an older app: it answers a
- *  one-byte read) and the server serves it to this person; else `server`. */
-export async function playFrom(server: string, local: string | undefined, said = placesState, exists: Exists = onDisk, serves = servedTo): Promise<string> {
+ *  one-byte read; a path with its size: the file there is that size) and the server serves it to this person; else `server`. */
+export async function playFrom(
+  server: string,
+  local: Local | undefined,
+  { said = placesState, exists = onDisk as Exists, serves = servedTo, size = localBytes } = {},
+): Promise<string> {
   if (!local) return server;
-  if (local.startsWith("ctlocal:")) return local;
+  if (typeof local === "string" && local.startsWith("ctlocal:")) return local;
   if (!localMediaFiles()) return server;
-  const s = await said([local]);
-  const here = s ? s.states[local] === "here" : await exists(local);
-  return here && (await serves(server)) ? localMediaUrl(local) : server;
+  const path = typeof local === "string" ? local : local.path;
+  // a version's own file only: a re-render at the same path that Review never filed as a newer version is another size
+  const here = typeof local !== "string" ? (await size(localMediaUrl(path))) === local.bytes : await isHere(path, said, exists);
+  return here && (await serves(server)) ? localMediaUrl(path) : server;
+}
+
+async function isHere(path: string, said: typeof placesState, exists: Exists): Promise<boolean> {
+  const s = await said([path]);
+  return s ? s.states[path] === "here" : exists(path);
 }
 
 /**
  * A <video>'s src (undefined while the Mac app is asked) and its onError: a local file that fails to load falls back to
  * the server copy. `local` may be looked up first (a chat card asks Review for it). Outside the Mac app: `server` at once.
  */
-export function usePlayFrom(server: string, local: string | undefined | (() => Promise<string | undefined>)) {
+export function usePlayFrom(server: string, local: Local | undefined | (() => Promise<Local | undefined>)) {
   const ask = !!local && (localMediaFiles() || macPlaces());
-  const key = `${server}\n${typeof local === "function" ? "lookup" : (local ?? "")}\n${ask}`;
+  const named = typeof local === "function" ? "lookup" : typeof local === "object" ? `${local.path}\n${local.bytes}` : (local ?? "");
+  const key = `${server}\n${named}\n${ask}`;
   // the src kept with the inputs it was picked for, so a new file never starts loading the last one's
   const [got, setGot] = useState<{ key: string; src: string }>();
   useEffect(() => {
