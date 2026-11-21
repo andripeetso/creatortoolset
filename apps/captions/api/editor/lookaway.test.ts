@@ -86,4 +86,13 @@ describe("B-roll covers the look-aways edge to edge", () => {
     const left = placeBroll(tl, [{ ...pool[0]!, dur: 50 }], [[100, 400]]);
     expect(left.notes).toContain(`${BROLL_NOTE}no clip is left to cover the eyes off the lens at 3.3–13.3 s`);
   });
+
+  it("a cover snapped onto a speaker cut never starts inside the hook", () => {
+    const tl = cut();
+    tl.tracks.V1.items = [{ src: "talk", in: 0, len: 40, rec: 0 }, { src: "talk", in: 40, len: 320, rec: 40 }];
+    // eyes off from 50, a cut at 40 (inside the 44-frame hook) within snapping reach
+    const { timeline } = placeBroll(tl, pool, [[50, 120]]);
+    expect(Math.min(...timeline.tracks.V2.items.map((i) => i.rec))).toBeGreaterThanOrEqual(44);
+    expect(covered(timeline, 50, 120)).toBe(true);
+  });
 });

@@ -112,16 +112,19 @@ describe("rolls: a camera take with its separate mic and second camera", () => {
   ];
 
   it("compares each mic with each camera, and two cameras only when their clocks overlap", () => {
-    expect(pairsToTry(srcs)).toEqual([["cam", "mic"], ["osmo", "mic"], ["far", "mic"], ["cam", "osmo"]]);
+    expect(pairsToTry(srcs)).toEqual([["cam", "osmo"], ["cam", "mic"], ["osmo", "mic"], ["far", "mic"]]);
+    // the same pairs whatever order the sources come in
+    expect(pairsToTry([...srcs].reverse())).toEqual(pairsToTry(srcs));
   });
 
   it("gives a camera the mic and the angle whose sound matched, and marks them as under it", () => {
     const m = (offset_s: number) => ({ offset_s, score: 0.9 });
-    const matched = new Map([["cam~mic", m(12.5)], ["osmo~mic", m(17.5)], ["far~mic", null], ["cam~osmo", m(-5)]]);
-    const { rolls, under } = rollsOf(srcs, matched);
-    // the mic is the first camera's; the angle, being under it, takes no mic of its own
+    const { rolls, under } = rollsOf(srcs, { "cam~mic": m(12.5), "osmo~mic": m(17.5), "far~mic": null, "cam~osmo": m(-5) });
+    // the angle, being under the first camera, takes no mic of its own: it plays with the first camera's
     expect(rolls).toEqual({ cam: { mic: { id: "mic", offset_s: 12.5 }, angles: [{ id: "osmo", offset_s: -5 }] } });
     expect([...under].sort()).toEqual(["mic", "osmo"]);
-    expect(rollsOf(srcs, new Map())).toEqual({ rolls: {}, under: new Set() });
+    expect(rollsOf(srcs, {})).toEqual({ rolls: {}, under: new Set() });
+    // one long mic under two camera takes: each plays it at its own moment
+    expect(rollsOf(srcs, { "cam~mic": m(12.5), "far~mic": m(300) }).rolls).toEqual({ cam: { mic: { id: "mic", offset_s: 12.5 } }, far: { mic: { id: "mic", offset_s: 300 } } });
   });
 });

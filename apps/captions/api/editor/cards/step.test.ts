@@ -358,7 +358,7 @@ describe.skipIf(rootReplaced)("the card step", () => {
 
   it("the rest of the chain takes a cut with cards: post-processing, the preview and its filing all finish", async () => {
     await drain(id);
-    expect(jobs(id)).toEqual(["broll", "cards", "post", "preview", "file"].map((kind) => ({ kind, state: "done", error: null })));
+    expect(jobs(id)).toEqual(["broll", "cards", "post", "preview", "critique", "file"].map((kind) => ({ kind, state: "done", error: null })));
     expect((await view(id)).previews.v1).toBeDefined();
   }, 120_000);
 

@@ -142,7 +142,8 @@ export function coverAways(out: Timeline, aways: [number, number][], clips: Time
   const r = rulesAt(out.fps);
   const v1 = out.tracks.V1.items;
   const end = Math.max(0, ...v1.map((i) => i.rec + i.len));
-  const hold: [number, number][] = [[0, r.hook], [ctaOf(out, end), end]];
+  const cta = ctaOf(out, end);
+  const hold: [number, number][] = [[0, r.hook], [cta, end]];
   const need = subtract(aways, hold);
   const kept = subtract(aways, need);
   const cuts = [...new Set(v1.flatMap((i) => [i.rec, i.rec + i.len]))];
@@ -153,11 +154,14 @@ export function coverAways(out: Timeline, aways: [number, number][], clips: Time
     const lo = Math.max(0, ...v2.map((i) => i.rec + i.len).filter((e) => e <= a0));
     const hi = Math.min(end, ...v2.map((i) => i.rec).filter((s) => s >= b0));
     // onto the cutaway beside it when the face between would be a sliver, else onto a speaker cut near it
-    let a = a0 - lo < r.gap ? lo : Math.max(lo, Math.min(a0, ...cuts.filter((c) => c <= a0 && a0 - c <= r.snap)));
-    let b = hi - b0 < r.gap ? hi : Math.min(hi, Math.max(b0, ...cuts.filter((c) => c >= b0 && c - b0 <= r.snap)));
+    // never into the hook or the CTA, which keep the face
+    const first = Math.max(lo, r.hook);
+    const last = Math.min(hi, cta);
+    let a = Math.max(first, a0 - lo < r.gap ? lo : Math.min(a0, ...cuts.filter((c) => c <= a0 && a0 - c <= r.snap)));
+    let b = Math.min(last, hi - b0 < r.gap ? hi : Math.max(b0, ...cuts.filter((c) => c >= b0 && c - b0 <= r.snap)));
     if (b - a < r.min) {
-      b = Math.min(hi, a + r.min);
-      a = Math.max(lo, b - r.min);
+      b = Math.min(last, a + r.min);
+      a = Math.max(first, b - r.min);
     }
     const n = Math.max(1, Math.ceil((b - a) / r.max));
     for (let j = 0; j < n; j++) {

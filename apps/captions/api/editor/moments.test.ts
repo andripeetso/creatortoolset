@@ -56,8 +56,8 @@ beforeAll(() => {
     mkdirSync(path.dirname(energyFile(v)), { recursive: true });
     writeFileSync(energyFile(v), energy);
   }
-  // the preview and its filing need real files and Review: here they only finish
-  for (const k of ["preview", "file"]) STEPS[k] = async () => {};
+  // the preview, its look and its filing need real files and Review: here they only finish
+  for (const k of ["preview", "critique", "file"]) STEPS[k] = async () => {};
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -166,7 +166,7 @@ describe("short videos from a long recording: the step", () => {
     expect(readStep(e.id, "first")!.plans.map((p) => p.name)).toEqual(["m1", "m2"]);
     // each moment: its own draft, B-roll step, post, preview and filing
     expect(view.jobs.filter((j) => j.variant).map((j) => `${j.kind} ${j.variant} ${j.state}`).sort()).toEqual(
-      ["m1", "m2"].flatMap((m) => ["broll", "draft", "file", "post", "preview"].map((k) => `${k} ${m} done`)).sort(),
+      ["m1", "m2"].flatMap((m) => ["broll", "critique", "draft", "post", "preview"].map((k) => `${k} ${m} done`)).sort(),
     );
     expect(view.drafts).toEqual(["m1", "m2"]);
     // m1 is sentences 32-36 of the second file: about 29 s of it, pauses taken out, in the recording's own shape
@@ -214,8 +214,8 @@ describe("short videos from a long recording: the step", () => {
     vi.mocked(completeWithFallback).mockImplementationOnce(async (_s, _u, _c, parse) => parse(JSON.stringify({ moments: [{ first: 3, last: 7, title: "Tuck the chin", score: 0.9 }] })));
     const view = await run(e.id);
     expect([readDraft(e.id, "m1")!.timeline.width, readDraft(e.id, "m1")!.timeline.height]).toEqual([1920, 1080]);
-    // in passes the first cut goes draft → post → preview → file and nothing waits after it; never the cards
-    expect(view.jobs.filter((j) => j.variant).map((j) => j.kind)).toEqual(["draft", "post", "preview", "file"]);
+    // in passes the first cut goes draft → post → preview → its look and nothing waits after it; never the cards
+    expect(view.jobs.filter((j) => j.variant).map((j) => j.kind)).toEqual(["draft", "post", "preview", "critique"]);
     expect(view.passes).toEqual({ waiting: false, next: null });
     expect(nextFor("broll", { style: { id: "s", name: "s", notes: "", pace: "tight", animation: "an_1" }, moments: 3 }, NEXT)).toEqual(["post"]);
     expect(nextFor("broll", { style: { id: "s", name: "s", notes: "", pace: "tight", animation: "an_1" } }, NEXT)).toEqual(["cards"]);

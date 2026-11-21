@@ -62,8 +62,8 @@ beforeAll(async () => {
   const energy = new Float32Array(4 * ENERGY_PER_SECOND).fill(0.5, Math.round(0.5 * ENERGY_PER_SECOND), Math.round(1.1 * ENERGY_PER_SECOND));
   mkdirSync(path.dirname(energyFile("ver_a")), { recursive: true });
   writeFileSync(energyFile("ver_a"), energy);
-  // the preview, filing and cards need footage, Review and a Mac: here they only finish
-  for (const k of ["preview", "file", "cards"]) STEPS[k] = async () => {};
+  // the preview, its look, filing and cards need footage, Review and a Mac: here they only finish
+  for (const k of ["preview", "critique", "file", "cards"]) STEPS[k] = async () => {};
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -80,9 +80,9 @@ describe.skipIf(rootReplaced)("AI Editor: edit in passes", () => {
     enqueueJob(libraryDb(), "maker", `${id}:`, "draft", "maker", true, "edit_jobs");
     await drain();
 
-    // pass 1: each version's draft → post → preview → file, and no B-roll
+    // pass 1: each version's draft → post → preview → its look (which files it), and no B-roll
     let e = await view(id);
-    expect(since(e, 0)).toEqual(["draft ", "draft v1", "draft v2", "post v1", "post v2", "preview v1", "preview v2", "file v1", "file v2"]);
+    expect(since(e, 0)).toEqual(["draft ", "draft v1", "draft v2", "post v1", "post v2", "preview v1", "preview v2", "critique v1", "critique v2"]);
     expect(e.passes).toEqual({ waiting: true, next: "broll" });
 
     // the creator only: anyone else is told there is no such edit
@@ -97,7 +97,7 @@ describe.skipIf(rootReplaced)("AI Editor: edit in passes", () => {
     e = await view(id);
     expect(since(e, last)).toEqual(["broll v1", "broll v2"]);
     // done rows are queued again in place (one row per kind and version): what ran is in their order of state
-    expect(e.jobs.filter((j) => j.variant === "v1").map((j) => j.kind)).toEqual(["draft", "post", "preview", "file", "broll"]);
+    expect(e.jobs.filter((j) => j.variant === "v1").map((j) => j.kind)).toEqual(["draft", "post", "preview", "critique", "broll"]);
     expect(e.jobs.every((j) => j.state === "done")).toBe(true);
     expect(e.jobs.some((j) => j.kind === "cards")).toBe(false);
     expect(e.passes).toEqual({ waiting: true, next: "cards" });
@@ -177,7 +177,7 @@ describe.skipIf(rootReplaced)("AI Editor: edit in passes", () => {
     enqueueJob(libraryDb(), "maker", `${id}:`, "draft", "maker", true, "edit_jobs");
     await drain();
     const e = await view(id);
-    expect(e.jobs.map((j) => `${j.kind} ${j.variant}`)).toEqual(["draft ", "draft v1", "broll v1", "post v1", "preview v1", "file v1"]);
+    expect(e.jobs.map((j) => `${j.kind} ${j.variant}`)).toEqual(["draft ", "draft v1", "broll v1", "post v1", "preview v1", "critique v1"]);
     expect(e.passes).toBeUndefined();
     expect((await call("maker", "POST", `/api/editor/${id}/pass`)).status).toBe(409);
     expect(readStep(id, "passes")).toBeNull();

@@ -229,12 +229,14 @@ describe("the look at a cut around speech before Review", () => {
   it("reads the shots its picture shows: a cutaway over the speaker plays where it lies", async () => {
     const { pictureShots } = await import("./critique");
     const t: Timeline = { name: "t", fps: 30, width: 320, height: 180, sources: { a: { versionId: "a", name: "A", fps: 60, tc: 0, dur: 9000, w: 320, h: 180 } }, tracks: emptyTracks(), markers: [] };
-    t.tracks.V1.items = [{ src: "a", in: 0, len: 90, rec: 0 }];
-    t.tracks.V2.items = [{ src: "b", in: 30, len: 30, rec: 30 }];
-    expect(pictureShots(t)).toEqual([
-      { at: 0, dur: 1, src: "a", inS: 0, cutaway: false },
-      { at: 1, dur: 1, src: "b", inS: 1, cutaway: true },
-      { at: 2, dur: 1, src: "a", inS: 2, cutaway: false },
+    t.tracks.V1.items = [{ src: "a", in: 0, len: 15, rec: 0 }, { src: "a", in: 30, len: 75, rec: 15 }];
+    // the cutaway runs over his cut at 0.5 s: one shot, 1 s long
+    t.tracks.V2.items = [{ src: "b", in: 30, len: 30, rec: 10 }];
+    const r = (x: number) => Math.round(x * 1000) / 1000;
+    expect(pictureShots(t).map((s) => ({ ...s, at: r(s.at), dur: r(s.dur), inS: r(s.inS) }))).toEqual([
+      { at: 0, dur: 0.333, src: "a", inS: 0, cutaway: false },
+      { at: 0.333, dur: 1, src: "b", inS: 1, cutaway: true },
+      { at: 1.333, dur: 1.667, src: "a", inS: 1.333, cutaway: false },
     ]);
   });
 });

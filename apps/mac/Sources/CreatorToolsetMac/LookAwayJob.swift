@@ -16,6 +16,9 @@ struct LookAwayRefused: Error, Equatable {
     let why: String
 }
 
+/// The app is stopping: the step goes back to the server as it is, no try used up.
+struct LookAwayStopped: Error {}
+
 struct LookAwayJob {
     let api: DeviceAPI
     let step: EditorJob
@@ -74,7 +77,7 @@ struct LookAwayJob {
         var samples: [[Double]?] = []
         let count = Int(duration.seconds * fps) / every + 1
         for k in 0..<count {
-            if stopped() { throw LookAwayRefused(why: "Stopped") }
+            if stopped() { throw LookAwayStopped() }
             let at = CMTime(seconds: Double(k * every) / fps, preferredTimescale: 600)
             // a frame that can't be read counts as no face, as one with nobody in it does
             let image = try? waitAsync { try await make.image(at: at).image }
@@ -109,21 +112,24 @@ struct LookAwayJob {
         let lease = Lease()
         Thread { [api, base] in CardJob.keep(lease, api: api, base: base) }.start()
         defer { lease.end() }
-        let end: CardJob.End
-        do {
-            for f in step.footage {
-                if lease.isLost { return (.gone, false) }
+        // a take that can't be read is left out (its look-aways are not covered); the step fails only when none could be
+        var failed: [String] = []
+        for f in step.footage {
+            if lease.isLost { return (.gone, false) }
+            do {
                 let m = try measure(try file(f))
                 let reply = try api.call("POST", "\(base)/gaze/\(f.id)", ["fps": m.fps, "step": m.step, "samples": m.samples.map { $0 ?? NSNull() as Any }], tries: 3, timeout: 120)
                 if reply.status == 404 || reply.status == 401 { return (.gone, false) }
                 guard reply.status == 200 else { throw LookAwayRefused(why: "The server refused a take's look-aways (HTTP \(reply.status)).") }
+            } catch is LookAwayStopped {
+                return (.gone, false)
+            } catch let refused as LookAwayRefused {
+                failed.append(refused.why)
+            } catch {
+                failed.append("This Mac could not find where the eyes leave the lens: \(error.localizedDescription).")
             }
-            end = .done
-        } catch let refused as LookAwayRefused {
-            end = .failed(refused.why)
-        } catch {
-            end = .failed("This Mac could not find where the eyes leave the lens: \(error.localizedDescription).")
         }
+        let end: CardJob.End = !failed.isEmpty && failed.count == step.footage.count ? .failed(failed[0]) : .done
         let reply = end == .done ? try? api.call("POST", "\(base)/done", tries: 4) : try? api.call("POST", "\(base)/fail", ["error": String((end.why ?? "").prefix(500))], tries: 4)
         return (end, reply.map { $0.status == 200 && RelayRunner.editorWaits($0.data) } ?? false)
     }

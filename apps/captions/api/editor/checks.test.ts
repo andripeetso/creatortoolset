@@ -5,7 +5,8 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { Timeline } from "../../contracts/editor";
 import { ffmpegCommand } from "../ffmpeg-runtime";
-import { cutsOf, endsOnBlack, flashFrames, oddAt, wordSlips, withFound } from "./checks";
+import { cutsOf, oddAt, wordSlips, withFound } from "./checks";
+import { endsOnBlack, flashFrames } from "./critique";
 import { emptyTracks } from "./timeline";
 
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();

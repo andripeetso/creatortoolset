@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -11,10 +12,11 @@ import { libraryDb } from "../library/db";
 import { whoFor } from "../library/describe";
 import { enqueueJob, MAX_ATTEMPTS } from "../library/jobs";
 import { clock, COLS, ROWS, RULE } from "../library/look";
-import { ffmpeg } from "../library/media/run";
+import { ffmpeg, ffmpegSlot } from "../library/media/run";
+import { ffmpegCommand } from "../ffmpeg-runtime";
 import { NeedsKey, wordsOf } from "../library/transcribe";
 import { ask, onComputer } from "../work/on-computer";
-import { renderChecks, withFound } from "./checks";
+import { blackAtEnd, cutsOf, oddAt, TAIL_S, TH, TW, wordSlips, withFound, type Found } from "./checks";
 import { Waiting } from "./analyze";
 import type { StepContext } from "./engine";
 import { knownShots } from "./index";
@@ -121,6 +123,45 @@ export function withFlaws(c: Critique, shown: (IndexShot | undefined)[], shots: 
   return { ...c, ok: !fails.length, fails: fails.sort((a, b) => a.n - b.n) };
 }
 
+/** ffmpeg's output, read through the server's ffmpeg limit. */
+function ffmpegOut(args: string[], signal?: AbortSignal): Promise<{ out: Buffer; err: string }> {
+  return ffmpegSlot(
+    () =>
+      new Promise((resolve, reject) => {
+        const p = spawn(ffmpegCommand(), ["-nostdin", ...args], { signal });
+        const out: Buffer[] = [];
+        let err = "";
+        p.stdout.on("data", (d: Buffer) => out.push(d));
+        p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-20000)));
+        p.on("error", reject);
+        p.on("close", (code) => (code === 0 ? resolve({ out: Buffer.concat(out), err }) : reject(new Error(err.trim().slice(-400) || `ffmpeg exited ${code}`))));
+      }),
+  );
+}
+
+/** Flash frames of the rendered `file` at the cut's own cuts (one decode of a 27×48 copy). */
+export async function flashFrames(file: string, cuts: number[], fps: number, signal?: AbortSignal): Promise<Found[]> {
+  if (!cuts.length) return [];
+  const { out } = await ffmpegOut(["-v", "error", "-i", file, "-an", "-vf", `fps=${fps},scale=${TW}:${TH}`, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"], signal);
+  const size = TW * TH * 3;
+  const frames = Array.from({ length: Math.floor(out.length / size) }, (_, k) => new Uint8Array(out.buffer, out.byteOffset + k * size, size));
+  return [...new Set(cuts.flatMap((c) => oddAt(frames, c)))].map((f) => ({ rec: f, why: `a frame that belongs to neither shot at ${(f / fps).toFixed(2)} s` }));
+}
+
+/** Whether the rendered `file` ends on black (its last frame is no picture). */
+export async function endsOnBlack(file: string, duration: number, signal?: AbortSignal): Promise<boolean> {
+  const { err } = await ffmpegOut(["-v", "info", "-sseof", `-${TAIL_S}`, "-i", file, "-an", "-vf", "blackdetect=d=0.04:pix_th=0.08", "-f", "null", "-"], signal);
+  return blackAtEnd(err, duration);
+}
+
+/** Every check on the rendered `file` of cut `tl`; `words`: each take's transcript, for the word checks. */
+export async function renderChecks(tl: Timeline, file: string, words: Record<string, { w: string; s: number; e: number }[]>, signal?: AbortSignal): Promise<Found[]> {
+  const end = Math.max(0, ...(["V1", "V2", "A1", "A2", "A3"] as const).flatMap((t) => tl.tracks[t].items.map((i) => i.rec + i.len)));
+  const flashes = await flashFrames(file, cutsOf(tl), tl.fps, signal);
+  const black = (await endsOnBlack(file, end / tl.fps, signal)) ? [{ rec: Math.max(0, end - 1), why: "the video ends on black" }] : [];
+  return [...flashes, ...(tl.plan ? [] : wordSlips(tl, words)), ...black].sort((a, b) => a.rec - b.rec);
+}
+
 /** One shot of a cut as the picture shows it: when it plays (seconds), which footage and where in it, and whether it is a cutaway. */
 export interface PictureShot {
   at: number;
@@ -141,7 +182,7 @@ export function pictureShots(tl: Timeline): PictureShot[] {
     if (!item) continue;
     const prev = out.at(-1);
     if (prev?.item === item) {
-      prev.dur = (b - item.rec) / tl.fps - prev.at;
+      prev.dur = b / tl.fps - prev.at;
       continue;
     }
     const sfps = tl.sources[item.src]?.fps || tl.fps;
@@ -162,7 +203,7 @@ export function talkLines(shots: PictureShot[], titles: Record<string, string>, 
 const spokenOf = async (tl: Timeline): Promise<Record<string, { w: string; s: number; e: number }[]>> =>
   onComputer.on
     ? ask("editorWords")
-    : Object.fromEntries([...new Set(tl.tracks.A1.items.map((i) => i.src))].filter((id) => !tl.sources[id]?.file).map((id) => [id, wordsOf(libraryDb(), id) ?? []]));
+    : Object.fromEntries([...new Set([...tl.tracks.A1.items, ...tl.tracks.V1.items].map((i) => i.src))].filter((id) => !tl.sources[id]?.file).map((id) => [id, wordsOf(libraryDb(), id) ?? []]));
 
 export const CRITIQUE_SYSTEM = `You watch a cut of a video before the person who asked for it does. You get what they asked for (the brief), their own words on earlier versions when there are any, the editing style, a line for each shot (when it plays, which footage it is and where in it, what that stretch of footage is described as, and why it was picked), and pictures of the cut: two frames of every shot, one just after it starts and one just before it ends.
 
@@ -305,8 +346,16 @@ export async function critiqueStep({ edit, job, variant, signal }: StepContext):
   if (!due) return file(d.critique);
   // a planned cut is read as its plan; any other cut the AI made (around speech) as the shots its picture shows
   const saved = readStep(edit.id, "shots")?.[variant];
-  const words = saved ? {} : await spokenOf(d.timeline);
-  const cut = saved ? await plannedCut(saved.plan, d) : talkingCut(d.timeline, words);
+  // words for the checks: none when they can't be read (a server too old to give them a computer)
+  const words = saved ? {} : await spokenOf(d.timeline).catch(() => ({}));
+  let cut: LookCut;
+  try {
+    cut = saved ? await plannedCut(saved.plan, d) : talkingCut(d.timeline, words);
+  } catch (e) {
+    const why = await cant(e);
+    if (why) return file(d.critique, `Not checked before Review: ${why}`);
+    throw e;
+  }
   // the checks on the render itself: named on the cut, never a reason to hold it (a check that fails to run is skipped)
   const found = await renderChecks(d.timeline, previewFile(edit.id, variant), words, signal).catch((e: Error) => {
     if (!signal.aborted) console.warn("[editor] render checks:", e.message);
