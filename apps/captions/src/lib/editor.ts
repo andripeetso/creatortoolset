@@ -86,6 +86,8 @@ const stylesAt = (kind: StyleKind) => (kind === "carousel" ? "/api/designs/style
 export const listAnimationStyles = (kind: StyleKind = "animation") => send<AnimationStylesView>(stylesAt(kind));
 export const createAnimationStyle = (body: { name: string; brief: string }, kind: StyleKind = "animation") => send<AnimationStyle>(stylesAt(kind), "POST", body);
 export const updateAnimationStyle = (id: string, body: { name?: string; brief?: string }, kind: StyleKind = "animation") => send<AnimationStyle>(`${stylesAt(kind)}/${id}`, "PUT", body);
+/** An earlier brief of the style (AnimationStyle.earlier, by when it was replaced) as its brief again. */
+export const restoreStyleBrief = (id: string, at: number, kind: StyleKind = "animation") => send<AnimationStyle>(`${stylesAt(kind)}/${id}/restore`, "POST", { at });
 export const deleteAnimationStyle = (id: string, kind: StyleKind = "animation") => send<{ ok: true }>(`${stylesAt(kind)}/${id}`, "DELETE");
 export const stylePictureUrl = (id: string, pictureId: string, kind: StyleKind = "animation") => `${stylesAt(kind)}/${id}/pictures/${pictureId}`;
 export const removeStylePicture = (id: string, pictureId: string, kind: StyleKind = "animation") => send<AnimationStyle>(stylePictureUrl(id, pictureId, kind), "DELETE");

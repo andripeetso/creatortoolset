@@ -73,8 +73,14 @@ beforeAll(async () => {
     INSERT INTO assets (id, library_id, kind, title, created_by, created_at, trashed_at) VALUES ('ast_a1', 'lib_a', 'video', 'Take 1', 'maker', 0, NULL);
     INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at) VALUES
       ('ver_a1', 'ast_a1', 1, 'k1', 1, 'x1', 'ready', 'maker', 0);
+    INSERT INTO assets (id, library_id, kind, title, created_by, created_at) VALUES ('ast_v', 'lib_a', 'video', 'Tiny Acrobatics reference', 'maker', 0);
+    INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe) VALUES
+      ('ver_v', 'ast_v', 1, 'libraries/lib_a/v/ver_v/source', 1, 'xv', 'ready', 'maker', 0, '{"duration":2}');
   `);
-});
+  const video = path.join(dir, "reference.mp4");
+  execFileSync(ffmpegCommand(), ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=360x640:rate=30", "-c:v", "libx264", "-pix_fmt", "yuv420p", video]);
+  await (await import("../library/db")).blobs.put("libraries/lib_a/v/ver_v/source", video);
+}, 60_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe.skipIf(rootReplaced)("animation styles", () => {
@@ -91,6 +97,38 @@ describe.skipIf(rootReplaced)("animation styles", () => {
     expect((await upload("other", s.id, [small])).status).toBe(404);
     expect((await list("maker")).map((x) => x.name)).toEqual(["Bold blue"]);
   });
+
+  it("keeps each brief it replaces, newest first, and puts one back on request (the one it replaces kept in turn)", async () => {
+    const s = await make("maker", { name: "Kept briefs", brief: "First words." });
+    await call("maker", "PUT", `${base}/${s.id}`, { brief: "Second words." });
+    const third = await json<AnimationStyle>(call("maker", "PUT", `${base}/${s.id}`, { brief: "Third words." }));
+    expect(third.earlier!.map((e) => e.brief)).toEqual(["Second words.", "First words."]);
+    // the same brief again, or only a new name: nothing more kept
+    expect((await json<AnimationStyle>(call("maker", "PUT", `${base}/${s.id}`, { brief: "Third words.", name: "Kept" }))).earlier).toHaveLength(2);
+    const back = await json<AnimationStyle>(call("maker", "POST", `${base}/${s.id}/restore`, { at: third.earlier![1]!.at }));
+    expect(back.brief).toBe("First words.");
+    expect(back.earlier!.map((e) => e.brief)).toEqual(["Third words.", "Second words."]);
+    expect((await call("maker", "POST", `${base}/${s.id}/restore`, { at: 1 })).status).toBe(404);
+    expect((await call("other", "POST", `${base}/${s.id}/restore`, { at: back.earlier![0]!.at })).status).toBe(404);
+    await call("maker", "DELETE", `${base}/${s.id}`);
+  });
+
+  it("a reference video gives a style stills spread over it, each moment once, only from a video its maker may read", async () => {
+    const s = await make("maker", { name: "Like the reference" });
+    const r = await json<{ style: AnimationStyle; added: number }>(call("maker", "POST", `${base}/${s.id}/pictures/video`, { clip: "ver_v", count: 3 }));
+    expect(r.added).toBe(3);
+    expect(r.style.pictures.map((p) => [p.kind, p.video])).toEqual([["inspiration", "ver_v@333"], ["inspiration", "ver_v@1000"], ["inspiration", "ver_v@1667"]]);
+    expect(sizeOf(pictureFile("maker", s.id, r.style.pictures[0]!.id)!)).toEqual([360, 640]);
+    // asked again: nothing twice
+    expect((await json<{ added: number }>(call("maker", "POST", `${base}/${s.id}/pictures/video`, { clip: "ver_v", count: 3 }))).added).toBe(0);
+    expect((await call("other", "POST", `${base}/${s.id}/pictures/video`, { clip: "ver_v" })).status).toBe(404);
+    const theirs = await make("other", { name: "Not theirs" });
+    expect((await call("other", "POST", `${base}/${theirs.id}/pictures/video`, { clip: "ver_v" })).status).toBe(404);
+    expect((await call("maker", "POST", `${base}/${s.id}/pictures/video`, {})).status).toBe(400);
+    expect((await call("maker", "POST", `${base}/${s.id}/pictures/video`, { clip: "ver_a1" })).status).toBe(409); // no probe yet
+    await call("maker", "DELETE", `${base}/${s.id}`);
+    await call("other", "DELETE", `${base}/${theirs.id}`);
+  }, 60_000);
 
   it("the caps: a name of 60, a brief of 600, 20 styles", async () => {
     const [s] = await list("maker");

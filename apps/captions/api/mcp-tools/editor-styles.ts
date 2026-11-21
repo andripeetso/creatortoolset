@@ -56,9 +56,10 @@ export const saveStyle = (kind: StyleKind) => async (a: Args, ctx: ToolContext) 
   const name = a.name == null ? undefined : String(a.name);
   const brief = typeof a.brief === "string" ? a.brief.trim() : "";
   const pictures = a.pictures == null ? 0 : Number(a.pictures);
+  const video = typeof a.from_video === "string" && a.from_video.trim() ? a.from_video.trim() : "";
   const was = a.id == null ? null : one((await ctx.json<AnimationStylesView>(at)).styles, a.id, kind, `${kind}_style_save`);
   if (!was && !name) throw new ToolError("Give the new style a name.");
-  if (was && name === undefined && !brief && !pictures) throw new ToolError("Nothing to change: give name, brief or pictures.");
+  if (was && name === undefined && !brief && !pictures && !video) throw new ToolError("Nothing to change: give name, brief, pictures or from_video.");
   let pasted = false;
   const save = async (body: Args) => {
     const r = await saved<AnimationStyle>(ctx, was ? `${at}/${was.id}` : at, was ? "PUT" : "POST", body);
@@ -80,11 +81,20 @@ export const saveStyle = (kind: StyleKind) => async (a: Args, ctx: ToolContext) 
     ({ style: s, added } = r);
     full = !!r.full;
   }
+  // stills of a reference video (a library version id): each moment once; a computer still making some says so
+  let fromVideo: { added: number; waiting?: string; full?: true } | undefined;
+  if (video) {
+    const r = await ctx.json<{ style: AnimationStyle; added: number; waiting?: string; full?: true }>(`${at}/${s.id}/pictures/video`, "POST", { clip: video });
+    ({ style: s } = r);
+    fromVideo = { added: r.added, ...(r.waiting ? { waiting: r.waiting } : {}), ...(r.full ? { full: r.full } : {}) };
+  }
   await ctx.open?.(sheetOf(kind, s.id));
   const notes = [
     unsaid ? "The description was not saved: it is not a whole phrase the user typed in this chat, or a passage of a text they pasted with this message. They write or paste it on the style's sheet." : "",
     pasted ? FROM_PASTE("The description was") : "",
     added !== undefined && added < pictures ? (full ? "The style holds all the pictures it keeps: the rest were not added." : "Fewer pictures were added than asked: the others are already in the style, are not in this chat, or could not be read.") : "",
+    fromVideo?.waiting ? `Stills of the video are still being made (${fromVideo.waiting}): call again with the same from_video later to add the rest.` : "",
+    fromVideo?.full ? "The style holds all the pictures it keeps: not every still of the video went in." : "",
     ctx.open ? "Its sheet is open for the user." : "",
   ].filter(Boolean);
   return {
@@ -94,6 +104,7 @@ export const saveStyle = (kind: StyleKind) => async (a: Args, ctx: ToolContext) 
     pictures: s.pictures.length,
     ...(was ? {} : { made: true }),
     ...(added !== undefined ? { added } : {}),
+    ...(fromVideo ? { from_video_added: fromVideo.added } : {}),
     ...(notes.length ? { note: notes.join(" ") } : {}),
     link: `${ctx.origin}${sheetOf(kind, s.id)}`,
   };
@@ -128,8 +139,8 @@ export const editorStyleTools: ToolModule = {
     },
     {
       name: "animation_style_save",
-      description: "Make or change an Editor animation style, the look of an edit's animated cards (id: change one). brief: only words the user typed in this chat. pictures: how many of the newest pictures they sent in this chat to add.",
-      inputSchema: { type: "object", properties: { id: str, name: str, brief: str, pictures: { type: "integer" } } },
+      description: "Make or change an Editor animation style, the look of an edit's animated cards (id: change one). brief: only words the user typed in this chat. pictures: how many of the newest pictures they sent in this chat to add. from_video: a Media Library video's version_id whose look the style follows (a reference video): stills spread over it are added as pictures.",
+      inputSchema: { type: "object", properties: { id: str, name: str, brief: str, pictures: { type: "integer" }, from_video: str } },
     },
   ],
   handlers: {
