@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { AuthVars } from "../auth";
 import { SOUNDS } from "../../contracts/library";
 import { SFX_TYPES, type SfxManifest, type SfxSound, type SfxType } from "../../contracts/sfx";
-import { ensureLibrary, librariesHere, libraryRole } from "./access";
+import { addRole, ensureLibrary, librariesHere, READ_ONLY } from "./access";
 import { libraryDb } from "./db";
 import { saveToLibrary } from "./routes";
 import { nameWords } from "./sfx-type";
@@ -52,11 +52,19 @@ function liveSounds(lib: string): { id: string; title: string; sha: string }[] {
     .all(lib, EFFECT) as { id: string; title: string; sha: string }[];
 }
 
-/** The library of the workspace this request is in, the one this account may write to (null: none). */
-async function ownLibrary(username: string): Promise<string | null> {
-  const made = await ensureLibrary(username);
-  if (made && libraryRole(username, made)) return made;
-  return (await librariesHere(username)).find((l) => libraryRole(username, l.id))?.id ?? null;
+/** The library of the workspace this request is in (the team owner's in one given this account), and how this account
+ *  may add to it (addRole); null: none. */
+async function ownLibrary(username: string): Promise<{ lib: string; as: "owner" | "member" | "read" } | null> {
+  const lib = await ensureLibrary(username);
+  const as = lib ? await addRole(username, lib) : null;
+  return lib && as ? { lib, as } : null;
+}
+
+/** The library this account adds sounds to, or why it can't. */
+async function addingTo(username: string): Promise<{ lib: string } | { error: string; code: "not_found" | "forbidden" }> {
+  const here = await ownLibrary(username);
+  if (!here) return { error: "No Media Library here to add the sounds to", code: "not_found" };
+  return here.as === "read" ? { error: READ_ONLY, code: "forbidden" } : { lib: here.lib };
 }
 
 /** Puts each sound into the library's Sound effects folder with its type, source and licence. */
@@ -85,8 +93,9 @@ async function addSounds(username: string, lib: string, list: SfxSound[]): Promi
 
 /** Install the starter set into this workspace's library. Twice adds nothing twice. */
 export async function installStarter(username: string) {
-  const lib = await ownLibrary(username);
-  if (!lib) return { error: "No Media Library here to add the sounds to", code: "not_found" as const };
+  const to = await addingTo(username);
+  if ("error" in to) return to;
+  const { lib } = to;
   const r = await addSounds(username, lib, starter());
   return { library: lib, added: r.added.length, already: r.already, failed: r.failed, ...(r.waiting ? { waiting: r.waiting } : {}) };
 }
@@ -128,8 +137,9 @@ export function findSounds(words: string | undefined, type: SfxType | undefined)
 
 /** The assistant's tool: the first matches not yet in the library, added (at most 10). */
 export async function findAndAdd(username: string, o: { words?: string; type?: SfxType; count?: number }) {
-  const lib = await ownLibrary(username);
-  if (!lib) return { error: "No Media Library here to add the sounds to", code: "not_found" as const };
+  const to = await addingTo(username);
+  if ("error" in to) return to;
+  const { lib } = to;
   const n = Math.min(Math.max(Math.round(o.count ?? 5), 1), 10);
   const have = new Set(liveSounds(lib).map((s) => s.sha));
   const matches = findSounds(o.words, o.type);
@@ -147,7 +157,7 @@ export async function findAndAdd(username: string, o: { words?: string; type?: S
 /** Whether a workspace's libraries hold any sound effect (the editor's "From my library" default). */
 export async function libraryHasSounds(username: string, workspace?: string): Promise<boolean> {
   for (const l of await librariesHere(username, workspace)) {
-    if (libraryRole(username, l.id) && liveSounds(l.id).length) return true;
+    if ((await addRole(username, l.id)) && liveSounds(l.id).length) return true;
   }
   return false;
 }
@@ -157,7 +167,7 @@ export const sfxApp = new Hono<{ Variables: AuthVars }>();
 // GET /api/sfx → what Settings → Sound effects shows: the library's count, its folder, the starter set's state, the packs
 sfxApp.get("/", async (c) => {
   const user = c.get("user");
-  const lib = await ownLibrary(user.username);
+  const lib = (await ownLibrary(user.username))?.lib ?? null;
   const live = lib ? liveSounds(lib) : [];
   const have = new Set(live.map((s) => s.sha));
   const st = starter();
@@ -174,12 +184,13 @@ sfxApp.get("/", async (c) => {
 // POST /api/sfx/starter → install the starter set; DELETE → take out the ones not changed since
 sfxApp.post("/starter", async (c) => {
   const r = await installStarter(c.get("user").username);
-  return "error" in r ? c.json({ error: r.error, code: r.code }, 404) : c.json(r);
+  return "error" in r ? c.json({ error: r.error, code: r.code }, r.code === "forbidden" ? 403 : 404) : c.json(r);
 });
 sfxApp.delete("/starter", async (c) => {
-  const lib = await ownLibrary(c.get("user").username);
-  if (!lib) return c.json({ error: "No Media Library here", code: "not_found" }, 404);
-  return c.json(removeStarter(lib));
+  // taking files out is the library owner's alone (a member only adds)
+  const here = await ownLibrary(c.get("user").username);
+  if (here?.as !== "owner") return c.json({ error: "No Media Library here", code: "not_found" }, 404);
+  return c.json(removeStarter(here.lib));
 });
 
 // POST /api/sfx/find {words, type, count} → the assistant's find_sound_effects
@@ -191,5 +202,5 @@ sfxApp.post("/find", async (c) => {
     type,
     count: typeof b.count === "number" ? b.count : undefined,
   });
-  return "error" in r ? c.json({ error: r.error, code: r.code }, 404) : c.json(r);
+  return "error" in r ? c.json({ error: r.error, code: r.code }, r.code === "forbidden" ? 403 : 404) : c.json(r);
 });

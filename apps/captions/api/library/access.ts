@@ -150,8 +150,25 @@ export function libraryRole(username: string, libraryId: string): "owner" | null
  * libraryRole (the owner), and a member's upload is marked as theirs (created_by).
  */
 export async function mayAdd(user: SessionUser, libraryId: string): Promise<boolean> {
-  return !!libraryRole(user.username, libraryId) || ((await givenLibrary(user.username, libraryId)) && mayChange(user, "media"));
+  const as = await addRole(user.username, libraryId, user);
+  return as === "owner" || as === "member";
 }
+
+/**
+ * How the account may add to the library, the one check every add asks (an upload, Send to Finals, a Review video's
+ * copy, a sound effect, a Finals folder): "owner" (its own), "member" (the owner's, in a workspace the owner gave it with
+ * the Media Library on Read & write), "read" (given, on Read only: it may look, never add; READ_ONLY says so), else null.
+ * `user`: the request's account; work outside a request (an export, a Review copy) reads the account's record.
+ */
+export async function addRole(username: string, libraryId: string, user?: Pick<SessionUser, "role" | "off" | "read">): Promise<"owner" | "member" | "read" | null> {
+  if (libraryRole(username, libraryId)) return "owner";
+  const who = user ?? findUser(username);
+  if (!who || !(await givenLibrary(username, libraryId))) return null;
+  return mayChange(who, "media") ? "member" : "read";
+}
+
+/** Why a member on Read only for the Media Library (Settings → Team → Access) adds nothing to the workspace's library. */
+export const READ_ONLY = "The Media Library is Read only for you in this workspace";
 
 /**
  * The workspace this request names (the app's X-CT-Workspace, or a chat's own, which wins: workspaceScope), checked:
@@ -223,7 +240,8 @@ export async function clipsHere(username: string, versionIds: string[]): Promise
 
 /**
  * Whether a workspace's Media Library is set up (setupAt, on the library its owner keeps: the one librariesHere reads,
- * never the asker's home nor another account's). No projectId: the asker's own first library. `owner`: the asker sets it up; a
+ * never the asker's home nor another account's). No projectId: the workspace this request works in, else the asker's
+ * own first library. `owner`: the asker sets it up; a
  * member is told it isn't set up, with no button.
  */
 export async function mediaReady(username: string, projectId?: string): Promise<{ ready: boolean; owner: boolean; libraryId: string | null }> {
@@ -231,6 +249,9 @@ export async function mediaReady(username: string, projectId?: string): Promise<
   const d = libraryDb();
   type Row = { id: string; setupAt: string | null };
   if (projectId === undefined) {
+    // the workspace this request works in, read as librariesHere reads it (a given one is its owner's library)
+    const here = await currentWorkspaceId({ username } as SessionUser);
+    if (here) return mediaReady(username, here);
     const row = d.prepare(`${cols} workspace_id = ? ORDER BY created_at, id LIMIT 1`).get(homeOf(username)) as Row | undefined;
     return settled(row, true, username, undefined);
   }

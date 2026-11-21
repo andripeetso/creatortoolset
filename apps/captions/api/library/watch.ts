@@ -8,7 +8,7 @@ import type { AuthVars } from "../auth";
 import { LIBRARY_WORDS, RAW_FILE, type Blur, type WatchFolder, type WatchStatus } from "../../contracts/library";
 import { env, hostedMode } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
-import { ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
+import { addRole, ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
 import { enqueueJob, folderWalks, takingClips, watchedFolders } from "./jobs";
 import { kindOf, recordVersion } from "./routes";
@@ -566,6 +566,9 @@ export function finalsProjectOf(libraryId: string, file: string): string | null 
 export async function watchFinals(username: string, libraryId: string, root: string, dir: string, session: string, collectionId: string): Promise<string | null> {
   const refused = (why: string) => (console.warn(`[library] finals folder ${root}: ${why}`), null);
   if (!watchAllowed(username)) return null;
+  // the account's own library, or its team owner's on Read & write: a Finals folder adds to it
+  const as = await addRole(username, libraryId);
+  if (as !== "owner" && as !== "member") return refused("this account may not add to that library");
   try {
     await mkdir(path.join(expandHome(root), dir), { recursive: true });
   } catch (e) {
@@ -576,6 +579,8 @@ export async function watchFinals(username: string, libraryId: string, root: str
   const had = current.find((g) => g.path === real);
   if (had && !had.projects) return refused("it is a footage folder of this library");
   if ((await footageOf(username, false)).get(libraryId)?.some((g) => g.path === real)) return refused("it is a footage folder of this library");
+  // a member never points a subfolder another project already reads at their own (the owner's mapping stays)
+  if (as === "member" && had?.projects?.[dir] && had.projects[dir] !== session) return refused("that subfolder is another project's");
   if (had?.projects?.[dir] !== session) {
     let entry = had;
     if (!entry) {

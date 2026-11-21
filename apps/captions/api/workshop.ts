@@ -101,7 +101,7 @@ import { clipContext, externalLibraryRef, libraryRef } from "./library/attach";
 import { addToFinals, finalsCollectionId, finalsLinkedTo, linkFinalsPiece } from "./library/finals";
 import { probe as probeMedia } from "./library/media/probe";
 import { finalsUpload, libraryDb } from "./library/db";
-import { ensureLibrary, libraryRole } from "./library/access";
+import { addRole, ensureLibrary, libraryRole } from "./library/access";
 import { resolveCarouselType, visualizeCarousel } from "../src/lib/carousel-visualize";
 import {
   buildLayoutPrompt,
@@ -3386,7 +3386,11 @@ export async function sessionFinals(meta: SessionMeta, device?: string): Promise
   const mainId = (await mainPiece(meta.id))?.id;
   const own = libraryDb().prepare("SELECT 1 FROM pieces WHERE workshop_session = ? AND trashed_at IS NULL LIMIT 1").get(meta.id);
   let linked = !!own || (mainId ? (await pluginFinalsVersions(meta.id, mainId, mainId)).length > 0 : false);
-  const libraryId = await ensureLibrary(meta.owner, meta.projectId ?? "");
+  const lib = await ensureLibrary(meta.owner, meta.projectId ?? "");
+  // the workspace's library when this account may add to it (its own, or the team owner's on Read & write): else no
+  // place for a final, so nothing is made in a library it may only look at
+  const as = lib ? await addRole(meta.owner, lib) : null;
+  const libraryId = as === "owner" || as === "member" ? lib : null;
   // the upload goes straight into Finals, so the Media Library never lists it as footage
   const finalsId = libraryId ? finalsCollectionId(libraryId) : null;
   const out: SessionFinals = { linked, libraryId, finalsId, upload: libraryId ? finalsUpload(libraryId) : "all" };
@@ -3421,7 +3425,8 @@ async function finalFromVersion(meta: SessionMeta, who: string, video: string, d
         WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.id = ? OR (a.id = ? AND v.id = a.current_version_id))`,
     )
     .get(video, video) as { lib: string; title: string | null; version: string; state: string; w: number | null; h: number | null } | undefined;
-  if (!row || libraryRole(who, row.lib) !== "owner") return { code: 404, body: { error: "No such video of yours" } };
+  // a video of the session's workspace library: the account's own, or its team owner's (addToFinals then asks Read & write)
+  if (!row || !(await addRole(who, row.lib))) return { code: 404, body: { error: "No such video of yours" } };
   if (row.state === "failed" || row.state === "missing") return { code: 409, body: { error: "The library could not read this video" } };
   if (!row.w || !row.h) return { code: 202, body: { waiting: true } };
   const out = await addToFinals(
@@ -3429,7 +3434,7 @@ async function finalFromVersion(meta: SessionMeta, who: string, video: string, d
     { versionId: row.version },
   );
   if (!out.ok) return { code: out.code === "no_access" || out.code === "not_found" ? 404 : 409, body: { error: out.error } };
-  linkFinalsPiece(out.pieceId, meta.id, docId, who);
+  await linkFinalsPiece(out.pieceId, meta.id, docId, who);
   return { code: 200, body: { linked: true, pieceId: out.pieceId } };
 }
 
@@ -3466,7 +3471,7 @@ workshopApp.post("/sessions/:id/finals", async (c) => {
     return c.json(r.body, r.code);
   }
   if (typeof body?.pieceId !== "string" || !body.pieceId) return c.json({ error: "Send the Finals piece's id" }, 400);
-  return linkFinalsPiece(body.pieceId, meta.id, docId, user.username) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
+  return (await linkFinalsPiece(body.pieceId, meta.id, docId, user.username)) ? c.json({ linked: true }) : c.json({ error: "No such Finals piece of yours" }, 404);
 });
 
 workshopApp.post("/sessions/:id/docs/:docId/layouts", async (c) => {
@@ -4938,7 +4943,7 @@ async function finalsOfShare(token: string): Promise<void> {
       pieceId = out.pieceId;
       sent.push(d.id);
     }
-    if (pieceId) linkFinalsPiece(pieceId, meta.id, undefined, share.owner);
+    if (pieceId) await linkFinalsPiece(pieceId, meta.id, undefined, share.owner);
   } catch (e) {
     error = errorMessage(e);
   }
