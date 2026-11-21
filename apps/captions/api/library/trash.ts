@@ -51,7 +51,10 @@ export function setTrashedAt(assetId: string, at: number | null): void {
   // into the trash or back out: no longer only hidden (report.ts, Folders left out)
   libraryDb().prepare("UPDATE assets SET trashed_at = ?, left_hidden_at = NULL, left_hidden_on = NULL, left_trashed_from = NULL WHERE id = ?").run(at, assetId);
   // a trashed Final's playback copy goes at once (lib/play-copies.ts); a restore pushes it again on its next play
-  if (at !== null) void sweepPlayCopies(["library/"]).catch((e) => console.error("[library] playback copies:", e));
+  if (at !== null) {
+    const versions = libraryDb().prepare("SELECT id FROM asset_versions WHERE asset_id = ?").all(assetId) as { id: string }[];
+    void sweepPlayCopies(versions.map((v) => `library/${v.id}/`)).catch((e) => console.error("[library] playback copies:", e));
+  }
 }
 
 const inList = (n: number) => Array(n).fill("?").join(", ");

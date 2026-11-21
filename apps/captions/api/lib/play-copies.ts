@@ -23,18 +23,17 @@ export const COPY_DAYS = 14;
 const LINK_SECONDS = 24 * 3600;
 /** How long a copy that was checked is trusted before Storage is asked again whether it is still there. */
 const CHECKED_MS = 10 * 60_000;
-/** A push that failed waits this long before the next try. */
-const RETRY_MS = 3600_000;
 /** Storage has this long to say whether a copy is there before /play streams instead. */
 const STAT_MS = 3000;
 /** After Storage failed to answer, /play streams at once for this long instead of waiting on it again. */
 const DOWN_MS = 60_000;
-/** A push still going after this is given up, so one stalled upload never holds up the others. */
-const PUT_MS = 30 * 60_000;
+/** `retryMs`: a push that failed waits this long before the next try. `putMs`: a push still going after this is given up,
+ *  so one stalled upload never holds up the others. Tests shorten them. */
+export const pushLimits = { retryMs: 3600_000, putMs: 30 * 60_000 };
 const DAY_MS = 86_400_000;
 const ROOT = "play-copies";
-// The old studio iPhone app sends its login as a Cookie header on every player request, and iOS copies custom headers
-// onto a redirect: never send it to the CDN. Its player says who it is with this User-Agent.
+// A native player that sends its login as a Cookie header it set itself (AVURLAssetHTTPHeaderFieldsKey), which iOS copies
+// onto a redirect: never sent to the CDN. That player says who it is with this User-Agent.
 const KEEPS_LOGIN_ON_REDIRECT = /^CreatorToolset-iOS\//;
 // The pull zone serves a file with the type its name's extension says, so only these go.
 const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm", "video/x-m4v": ".m4v" };
@@ -117,7 +116,7 @@ export async function pushPlayCopy(name: string, file: string, type: string): Pr
 }
 
 function pushLater(store: BlobStore, key: string, file: string, type: string, bytes: number): void {
-  if (pushing.has(key) || Date.now() - (failed.get(key) ?? 0) < RETRY_MS) return;
+  if (pushing.has(key) || Date.now() - (failed.get(key) ?? 0) < pushLimits.retryMs) return;
   pushing.add(key);
   line = line.then(async () => {
     const tmp = path.join(tmpDir(), randomUUID());
@@ -129,7 +128,7 @@ function pushLater(store: BlobStore, key: string, file: string, type: string, by
       // shortcut: a file on another disk than DATA_DIR can't be linked, so it is never pushed; copy it to tmp if that matters
       await link(file, tmp);
       const put = store.put(key, tmp, { contentType: type });
-      await within(put, PUT_MS).catch((e) => {
+      await within(put, pushLimits.putMs).catch((e) => {
         // a push given up leaves nothing behind once it ends, unless a later push of the same key holds it by then
         put
           .then(async () => {
@@ -154,8 +153,8 @@ function pushLater(store: BlobStore, key: string, file: string, type: string, by
       failed.set(key, Date.now());
       console.error(`[play-copies] push ${key}:`, e instanceof Error ? e.message : e);
     } finally {
+      pushing.delete(key); // first: a given-up push that ends during the rm below must not count as a later one
       await rm(tmp, { force: true }).catch(() => {});
-      pushing.delete(key);
     }
   });
 }

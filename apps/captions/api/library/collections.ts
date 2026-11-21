@@ -628,7 +628,10 @@ async function setPieceTrashed(c: Ctx, trash: boolean) {
   if (!row) return notFound(c);
   db().prepare("UPDATE pieces SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, row.id);
   // its versions' playback copies go at once, unless still a Final in another piece (lib/play-copies.ts)
-  if (trash) void sweepPlayCopies(["library/"]).catch(() => {});
+  if (trash) {
+    const items = db().prepare("SELECT version_id FROM piece_items WHERE piece_id = ? AND version_id IS NOT NULL").all(row.id) as { version_id: string }[];
+    void sweepPlayCopies(items.map((i) => `library/${i.version_id}/`)).catch(() => {});
+  }
   return c.json(pieceOf({ ...row, trashed_at: trash ? Date.now() : null }));
 }
 

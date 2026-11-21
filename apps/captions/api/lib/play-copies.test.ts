@@ -20,10 +20,14 @@ mkdirSync(path.dirname(leftover), { recursive: true });
 writeFileSync(leftover, "bytes of a deleted video");
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 
-// the stand-in Storage zone: PUT, HEAD, DELETE by path; `refuse` makes every PUT fail, `hang` leaves every HEAD unanswered
+// the stand-in Storage zone: PUT, HEAD, DELETE by path; `refuse` makes every PUT fail, `hang` leaves every HEAD unanswered,
+// `holdPuts` holds that many next PUTs until their release in `heldPuts` is called
 const objects = new Map<string, number>();
 let refuse = false;
 let hang = false;
+let holdPuts = 0;
+const heldPuts: (() => void)[] = [];
+let putsAnswered = 0;
 const storage = createServer((req, res) => {
   const key = decodeURIComponent((req.url ?? "").replace(/^\/tinyzone\//, ""));
   if (req.method === "HEAD" && hang) return;
@@ -31,8 +35,15 @@ const storage = createServer((req, res) => {
     let n = 0;
     req.on("data", (b: Buffer) => (n += b.length));
     req.on("end", () => {
-      if (!refuse) objects.set(key, n);
-      res.writeHead(refuse ? 500 : 201).end();
+      const answer = () => {
+        putsAnswered++;
+        if (!refuse) objects.set(key, n);
+        res.writeHead(refuse ? 500 : 201).end();
+      };
+      if (holdPuts > 0) {
+        holdPuts--;
+        heldPuts.push(answer);
+      } else answer();
     });
     return;
   }
@@ -63,7 +74,7 @@ const { collectionApp } = await import("../library/collections");
 const { libraryDb } = await import("../library/db");
 const { finalsCollectionId } = await import("../library/finals");
 const { deleteAssets, setTrashedAt } = await import("../library/trash");
-const { COPY_DAYS, copiesSettled, heldCopies, pushPlayCopy, sweepPlayCopies, tmpCleared } = await import("./play-copies");
+const { COPY_DAYS, copiesSettled, heldCopies, pushLimits, pushPlayCopy, sweepPlayCopies, tmpCleared } = await import("./play-copies");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -139,8 +150,40 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=4000-" })).status).toBe(206);
     await later(async () => expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=4000-" })).status).toBe(206), 11 * MIN);
     expect((await play(`/assets/${id}/v/1/play`, { "sec-fetch-mode": "cors" })).status).toBe(200);
-    // the old studio iPhone app's player sends its login as a header that iOS would copy onto the redirect
+    // a native player that sends its login as a header it set itself (iOS would copy it onto the redirect) always streams
     expect((await play(`/assets/${id}/v/1/play`, { "user-agent": "CreatorToolset-iOS/1.0" })).status).toBe(200);
+  });
+
+  it("a push given up deletes its object when it ends late, unless a later push holds the key by then", async () => {
+    const limits = { ...pushLimits };
+    Object.assign(pushLimits, { putMs: 300, retryMs: 0 });
+    try {
+      // nobody pushed again: the late object goes
+      holdPuts = 1;
+      const a = await up("Tiny Acrobatics late.mp4");
+      expect(await until(() => heldPuts.length === 1)).toBe(true);
+      await copiesSettled(); // given up after 300 ms
+      const answered = putsAnswered;
+      heldPuts.shift()!();
+      expect(await until(() => putsAnswered > answered)).toBe(true); // the late PUT lands...
+      expect(await dropped(`review/${a}/`)).toBe(true); // ...and is deleted
+
+      // a play pushed it again meanwhile: the late object is that push's copy too, and stays
+      holdPuts = 1;
+      const b = await up("Tiny Acrobatics late again.mp4");
+      expect(await until(() => heldPuts.length === 1)).toBe(true);
+      await copiesSettled();
+      expect((await play(`/assets/${b}/v/1/play`)).status).toBe(200);
+      await copiesSettled();
+      expect(copiesOf(`review/${b}/`)).toHaveLength(1);
+      heldPuts.shift()!();
+      await new Promise((r) => setTimeout(r, 500));
+      expect(copiesOf(`review/${b}/`)).toHaveLength(1);
+      expect((await heldCopies()).some((k) => k.startsWith(`play-copies/review/${b}/`))).toBe(true);
+    } finally {
+      Object.assign(pushLimits, limits);
+      holdPuts = 0;
+    }
   });
 
   it("clears the hard links a restart cut off, at start", async () => {
