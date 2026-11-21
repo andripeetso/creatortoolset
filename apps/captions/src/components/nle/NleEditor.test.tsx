@@ -538,6 +538,27 @@ describe("the side panel beside the viewer (chat mode)", () => {
     vi.restoreAllMocks();
   });
 
+  it("a try lives through the chat closing: the full editor shows it with Keep and Drop, a clip click says why; the panel gets its tag back", async () => {
+    const { p, s } = await sideOf();
+    act(() => s().preview(two, "Use take 3", { take: "t3" }));
+    act(() => useChatMode.setState({ shown: false }));
+    expect(clips(p.host)).toBe(2);
+    const bar = p.host.querySelector('[role="status"]')!;
+    expect(bar.textContent).toContain("Trying: Use take 3");
+    toasts.length = 0;
+    const clip = p.host.querySelector('[data-clip][aria-label^="V1"]')!;
+    for (const type of ["pointerdown", "pointerup"]) act(() => void clip.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: 50, clientY: 10, button: 0, buttons: 1 })));
+    expect(toasts).toContain("Enter keeps the take you're trying, Esc drops it");
+    act(() => useChatMode.setState({ shown: true }));
+    expect(s().trying).toBe(true);
+    expect(s().tried).toEqual({ take: "t3" });
+    expect(p.host.querySelector('[role="status"]')).toBeNull(); // the panel has its own Keep
+    act(() => useChatMode.setState({ shown: false }));
+    act(() => [...p.host.querySelectorAll("button")].find((b) => b.textContent === "Keep · Enter")!.click());
+    expect(p.length()).toBe(150);
+    p.done();
+  });
+
   it("seek moves the playhead and lets the pick go", async () => {
     const { p, s } = await sideOf();
     await key("a", { metaKey: true, code: "KeyA" });

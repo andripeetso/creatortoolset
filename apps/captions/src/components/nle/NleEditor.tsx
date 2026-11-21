@@ -91,10 +91,13 @@ export interface NleSide {
   commit: (next: NleTimeline, label: string) => void;
   /** a drop with `from` / `to` opens on that part, marked In and Out */
   source: (d: NleDrop) => void;
-  /** shows `next` in place of the timeline until it is kept or dropped (null drops it); `label` names the kept step */
-  preview: (next: NleTimeline | null, label?: string) => void;
+  /** shows `next` in place of the timeline until it is kept or dropped (null drops it); `label` names the kept step;
+   *  `tag`: the panel's own note of what it tried, handed back as `tried` (the panel is made again when the chat closes and opens) */
+  preview: (next: NleTimeline | null, label?: string, tag?: unknown) => void;
   /** a try is on */
   trying: boolean;
+  /** the try's `tag` while it is on */
+  tried?: unknown;
   /** keeps the try as one undo step, as Enter does */
   commitPreview: () => void;
   /** the playhead to this frame, the picked clips let go */
@@ -249,7 +252,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   const [saved, setSaved] = useState<NleTimeline>(first.saved);
   const [live, setLive] = useState<NleTimeline | null>(null);
   // the side panel's try, on the timeline it was made from (an undo or another edit under it drops it)
-  const [tried, setTried] = useState<{ tl: NleTimeline; label?: string; base: NleTimeline } | null>(null);
+  const [tried, setTried] = useState<{ tl: NleTimeline; label?: string; tag?: unknown; base: NleTimeline } | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   // a gap picked on the timeline (its clips' selection let go); any edit lets it go
   const [gap, setGap] = useState<Gap | null>(null);
@@ -389,6 +392,8 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
   // the try as of now, for work that lands later (a text drawn again, captions made): it lands and drops the try, said
   const tryRef = useRef(tryOn);
   tryRef.current = tryOn;
+  // a click on a clip during a try says how to end it (the side panel's own pick still marks the try's clips)
+  const clickPick = (keys: string[]) => (keys.length && tryOn ? void toast(TRYING, { id: TRY_TOAST }) : pick(keys));
   const landed = (what: string) => tryRef.current && toast(`${what}: the take you were trying is dropped`, { id: TRY_TOAST });
   const shown = live ?? tryOn?.tl ?? tl;
   const cachedNow = useMemo(() => stillCached(shown, saved, cached), [shown, saved, cached]);
@@ -875,11 +880,11 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
       <NleLayout panelKeys={panelKeys}
         chat={besideChat ? { bar, foot: foot?.({ changes: hist.past.length, dirty, save }) } : null}
         side={besideChat && side ? side({ tl, picked: sel, playhead: Math.round(tln.time * fps), commit: (next, label) => commit(next, label), source: openSource,
-          preview: (next, label) => {
+          preview: (next, label, tag) => {
             // a try starts from a button: let go of its focus, so Enter keeps the try rather than pressing it again
             if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
-            setTried(next && !readOnly ? { tl: next, label, base: tl } : null);
-          }, trying: !!tryOn, commitPreview: () => void keepTry(),
+            setTried(next && !readOnly ? { tl: next, label, tag, base: tl } : null);
+          }, trying: !!tryOn, tried: tryOn?.tag, commitPreview: () => void keepTry(),
           seek: (f) => (seek(f / fps), pick([])), pick }) : undefined}
         frame={{ w: tl.timeline.width || 1080, h: tl.timeline.height || 1920 }}
         center={
@@ -967,7 +972,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
         timeline={(full) => (
           // a click in the timeline puts the viewer back on it
           <div className="flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => view === "source" && show("timeline")}>
-          <Timeline compact={!full} tl={shown} time={time} clock={tln.clock} selected={shown === tl ? sel : selected.filter((k) => find(shown, k))} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={pick} gap={gap} onGap={setGap}
+          <Timeline compact={!full} tl={shown} time={time} clock={tln.clock} selected={shown === tl ? sel : selected.filter((k) => find(shown, k))} tool={tool} snap={snap} linkedSelection={linkSel} marks={marks} onSeek={seek} onSelect={clickPick} gap={gap} onGap={setGap}
             trans={transPick} onTrans={pickTransAt} onMarker={setMarkerEdit} cached={cachedNow}
             onLive={live_} onCommit={commit} nameOf={nameOf} zoomKeys={zoomKeys} fileOf={urlFor}
             onBlade={(f, key) => commit(blade(tl, f, [key]))}
@@ -1002,6 +1007,13 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
                 {sep}
                 <button type="button" aria-label="Undo" title={`Undo${tip("undo")}`} disabled={!hist.past.length && !tryOn} onClick={undo} className={cn(iconBtn(false), "disabled:opacity-30")}><Undo2 className="size-3.5" /></button>
                 <button type="button" aria-label="Redo" title={`Redo${tip("redo")}`} disabled={!hist.future.length && !tryOn} onClick={redo} className={cn(iconBtn(false), "disabled:opacity-30")}><Redo2 className="size-3.5" /></button>
+                {tryOn && !(besideChat && side) && (
+                  <span role="status" className="ml-1 inline-flex shrink-0 items-center gap-1 rounded bg-sky-500/15 py-0.5 pr-0.5 pl-2 text-sky-200">
+                    Trying{tryOn.label ? `: ${tryOn.label}` : ""}
+                    <button type="button" onClick={keepTry} className="h-5 rounded-[3px] bg-sky-500 px-1.5 font-medium text-black hover:bg-sky-400">Keep · Enter</button>
+                    <button type="button" onClick={() => setTried(null)} className="h-5 rounded-[3px] px-1.5 hover:bg-white/[0.08]">Drop · Esc</button>
+                  </span>
+                )}
                 {full && <button type="button" aria-label="Keyboard Customization" title={`Keyboard Customization${tip("keyboard")}`} onClick={() => setKeysOpen(true)} className={iconBtn(false)}><Keyboard className="size-3.5" /></button>}
               </>
             }
