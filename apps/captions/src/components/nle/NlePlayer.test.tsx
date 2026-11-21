@@ -155,6 +155,10 @@ describe("the sound of a clip from a video file", () => {
     expect([a.at, a.offset, a.dur]).toEqual([b.at, b.offset, b.dur]);   // laid together, sample for sample
     expect(a.key).not.toBe(b.key);
     expect(playedPieces(voice, () => ({ url: "/tiny/VO.original.flac" })).map((p) => p.gain)).toEqual([g]);
+    // each clip asks for its own file: the page may give two clips of one source different ones
+    const asked: (string | undefined)[] = [];
+    playedPieces(voice, (_src, clip) => (asked.push(clip), { url: "/tiny/VO.original.flac" }));
+    expect(asked).toEqual([voice.tracks.A1!.items[0]!._k]);
   });
 });
 

@@ -92,7 +92,8 @@ export function NlePlayer({ tl, clock, rate, urlOf, nameOf, className, loop, onS
   /** the J / K / L speed: < 0 plays backwards (picture only) */
   rate: number;
   /** a source's file as the browser plays it; null when it has none here */
-  urlOf: (src: string) => NleFile | null;
+  /** `clip`: a sound clip's key, when it asks (its own processing can pick another file of its source) */
+  urlOf: (src: string, clip?: string) => NleFile | null;
   nameOf: (src: string) => string;
   className?: string;
   /** looping playback's part, seconds: the pictures where it wraps to are opened ahead, so the jump back shows at once */
@@ -588,11 +589,11 @@ export type Piece = SoundPiece & { url: string; owner: string };
 type Voice = { el: HTMLAudioElement; url: string; owner: string; used: number; gain: GainNode; piece: string; laid: number };
 
 /** The sound clips that play here, each with its file (a blend of two files of one recording: both, each at its share). */
-export function playedPieces(tl: NleTimeline, urlOf: (src: string) => NleFile | null): Piece[] {
+export function playedPieces(tl: NleTimeline, urlOf: (src: string, clip?: string) => NleFile | null): Piece[] {
   const chain = chains(tl);
   const at = (p: Piece, k: number): Piece => ({ ...p, gain: p.gain * k, env: p.env?.map(([t, v]): [number, number] => [t, v * k]) });
   return soundPieces(tl).flatMap((p): Piece[] => {
-    const f = urlOf(p.src);
+    const f = urlOf(p.src, p.key);
     if (!f?.url) return [];
     const one = { ...p, url: f.url, offset: p.offset + (f.lead ?? 0), owner: chain.get(p.key) ?? p.key };
     return f.mix ? [at(one, 1 - f.mix.share), { ...at(one, f.mix.share), key: `${p.key}+mix`, url: f.mix.url, owner: `${one.owner}+mix` }] : [one];
@@ -620,7 +621,7 @@ function piecesNear(pieces: Piece[], t: number, ahead = 2): { p: Piece; now: boo
  * from the file's own <audio> element (at most two per file, the next clip's waiting), routed through the engine with
  * the clip's gain and fades, kept on the clock as the pictures are.
  */
-function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string) => NleFile | null) {
+function useNleSound(tl: NleTimeline, clock: NleClock, urlOf: (src: string, clip?: string) => NleFile | null) {
   const pieces = useMemo(() => playedPieces(tl, urlOf), [tl, urlOf]);
   const live = useRef(pieces);
   live.current = pieces;
