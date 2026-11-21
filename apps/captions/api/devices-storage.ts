@@ -9,7 +9,7 @@ import { actionCard, type FolderAsk } from "../contracts/library";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
 import { env, hostedMode } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
-import { inside, localDisks, mediaFolders, migrateStorage, mountOf, parseStorageFile, storageFilePath, withMounts } from "./lib/storage";
+import { inside, localDisks, mediaFolders, migrateStorage, mountOf, parseStorageFile, readsInto, storageFilePath, withMounts } from "./lib/storage";
 import { mergeStudio, replacedIds, studioRows, type HostLookup } from "./lib/studio-folders";
 import { resolveDevice } from "./library/whereis";
 import { keptApp } from "./kept";
@@ -415,10 +415,10 @@ export async function addFolder(c: C, b: Record<string, unknown> | null): Promis
   const [{ mine: here, workspace, named }, of] = await Promise.all([scopeOf(c), projectOf(u)]);
   // a folder inside one of this workspace's Media folders is in the Media Library already
   const all = (await readStorage(user)).folders;
-  const outer = role === "footage" && all.find((f) => here(f) && f.role === "footage" && f.origin.host === host && !!inside(p, f.origin.path));
+  const outer = role === "footage" && all.find((f) => here(f) && f.role === "footage" && f.origin.host === host && readsInto(p, f.origin.path));
   if (outer) return c.json({ error: `That folder is already in ${outer.name}` }, 400);
   // never Media inside any Projects or Exports folder (the AI Editor's own output), nor inside another workspace's Media folder
-  const owner = role === "footage" && all.find((f) => f.origin.host === host && (f.role === "footage" ? !here(f) && !!inside(p, f.origin.path) : inside(p, f.origin.path) !== null));
+  const owner = role === "footage" && all.find((f) => f.origin.host === host && (f.role === "footage" ? !here(f) && readsInto(p, f.origin.path) : inside(p, f.origin.path) !== null));
   if (owner) return c.json({ error: await insideLine(u, owner, of) }, 400);
   // setup's scratch default is made here, before its row is checked; only under ~/Movies/Creator Toolset on this computer
   if (role === "footage" && b?.make === true && local && !!inside(p, path.join(os.homedir(), "Movies", "Creator Toolset"))) {

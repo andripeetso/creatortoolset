@@ -463,3 +463,25 @@ describe("PUT /api/devices/storage/folders/:id/leave-out", () => {
     expect((await listed())?.leaveOut).toBeUndefined();
   });
 });
+
+describe("a folder kept in a hidden folder of a Media folder", () => {
+  const app = new Hono<{ Variables: AuthVars }>();
+  app.use(async (c, next) => {
+    c.set("user", { username: "tia", role: "admin" } as never);
+    return next();
+  });
+  app.use(inRequestWorkspace);
+  app.route("/api/devices/storage", storageApp);
+  const add = (p: string) =>
+    app.request("/api/devices/storage/folders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ role: "footage", host: mac.id, path: p }) });
+
+  it("is added by itself (the outer folder's scan skips hidden folders), stays listed and its files index; a plain inner one is refused", async () => {
+    const HIDDEN = `${LEFT}/- MASTER B-ROLL/.archive/blurred`;
+    expect((await add(`${LEFT}/- MASTER B-ROLL`)).status).toBe(400);
+    expect((await add(HIDDEN)).status).toBe(200);
+    const kept = (await storageOf("tia")).folders.find((f) => f.origin.path === HIDDEN);
+    expect(kept).toBeTruthy();
+    const answer = await report(kept!.id, HIDDEN, ["roll-blurred.mp4"]);
+    expect(answer.index).toEqual([{ folder: kept!.id, path: `${HIDDEN}/roll-blurred.mp4` }]);
+  });
+});
