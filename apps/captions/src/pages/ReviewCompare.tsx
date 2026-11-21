@@ -46,8 +46,12 @@ export function ReviewCompare({
   const b = useRef<HTMLVideoElement>(null);
   const fps = versions.find((v) => v.n === left)?.fps || 0;
   // each side plays from this computer when it has the version's file (lib/play-here.ts)
-  const playA = usePlayFrom(media(left), versions.find((v) => v.n === left)?.local);
-  const playB = usePlayFrom(media(right), versions.find((v) => v.n === right)?.local);
+  const fileOf = (n: number) => {
+    const v = versions.find((x) => x.n === n);
+    return v?.local ? { path: v.local, bytes: v.bytes } : undefined;
+  };
+  const playA = usePlayFrom(media(left), fileOf(left));
+  const playB = usePlayFrom(media(right), fileOf(right));
 
   // the right player follows the left one's clock
   useEffect(() => {

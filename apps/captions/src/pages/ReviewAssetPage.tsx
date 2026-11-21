@@ -237,7 +237,7 @@ function Review({
   const fps = version.fps;
   const video = useRef<HTMLVideoElement>(null);
   // in the Mac app on the computer that rendered it, the version plays from that file (lib/play-here.ts)
-  const play = usePlayFrom(api.media(version, "play"), version.status === "ready" ? version.local : undefined);
+  const play = usePlayFrom(api.media(version, "play"), version.status === "ready" && version.local ? { path: version.local, bytes: version.bytes } : undefined);
   const player = useRef<HTMLDivElement>(null);
   const composerBox = useRef<HTMLTextAreaElement>(null);
   const [time, setTime] = useState(0);
