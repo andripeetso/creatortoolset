@@ -184,7 +184,8 @@ export const NleTracks = memo(function NleTracks({
   /** the timeline's zoom keys (= - \), for the editor's key handler */
   zoomKeys: MutableRefObject<((e: KeyboardEvent) => boolean) | null>;
   /** a source's file here (the player's): sound clips show its waveform, video clips its pictures */
-  fileOf?: (src: string) => NleFile | null;
+  /** `clip`: the clip it is for (its own processing can pick another file of its source) */
+  fileOf?: (src: string, clip?: string) => NleFile | null;
   /** the editor's tools, at the start of the title bar */
   tools?: ReactNode;
   /** at its end, before the track height and zoom (what the save says, Save) */
@@ -811,7 +812,7 @@ export const NleTracks = memo(function NleTracks({
               {t.items.map((it) => {
                 // plain values only: the page hands a new file object every render, and a clip drawn again for every
                 // clip on every frame of playback (or of a drag) is what made the timeline lag
-                const file = fileOf?.(it.src);
+                const file = fileOf?.(it.src, it._k);
                 const sfps = tl.sources[it.src]?.fps || fps;
                 const from = it.in / sfps;
                 const drawW = (it.len / fps) * view.pps;
