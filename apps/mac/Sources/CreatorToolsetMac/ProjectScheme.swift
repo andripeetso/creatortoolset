@@ -42,8 +42,8 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
     /// the folders the page may play from: its server's, for the clip's workspace (`?ws=` on the media URL; none: any)
     private let granted: @MainActor (_ page: URL?, _ workspace: String?) -> [String]
     /// Tasks still being answered. Holding them keeps their ids unique until they end; `stop` removes one. Read and
-    /// written on the main thread only.
-    private var live: [ObjectIdentifier: WKURLSchemeTask] = [:]
+    /// written on the main thread only (not private: the tests stand in for WebKit).
+    var live: [ObjectIdentifier: WKURLSchemeTask] = [:]
 
     init(root: @escaping @MainActor () -> URL,
          granted: @escaping @MainActor (URL?, String?) -> [String] = { MediaFiles.granted(server: MediaFiles.serverKey($0), workspace: $1) }) {
@@ -86,9 +86,21 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         // with the proxy cache of the account signed in on the page's own server (ProxyCache.swift)
         let workspace = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ws" }?.value
         let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(webView.url, workspace), ProxyCache.allowed(page: webView.url)) }
+        // the account may be unknown (no places check ran yet) or another one (signed in again in this window): a refused
+        // file in its server's proxy cache asks the page's server for its account once, then is judged again
+        let store = webView.configuration.websiteDataStore.httpCookieStore
+        let ask = webView.url.flatMap { page -> (() async -> String?)? in
+            guard let path = MediaFiles.path(from: url), ProxyCache.holds(path, page: page) else { return nil }
+            return {
+                await ProxyCache.allowed(page: page) { @MainActor in
+                    let all = await withCheckedContinuation { c in store.getAllCookies { c.resume(returning: $0) } }
+                    return Site(base: page, cookies: cookies(for: page, in: all))
+                }
+            }
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             self.serve(url, method: request.httpMethod, range: request.value(forHTTPHeaderField: "Range"),
-                       root: root, granted: granted, cache: cache, task: task)
+                       root: root, granted: granted, cache: cache, ask: ask, task: task)
         }
     }
 
@@ -96,11 +108,23 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         live[ObjectIdentifier(urlSchemeTask)] = nil
     }
 
-    private func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?, task: WKURLSchemeTask) {
+    func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?,
+                       ask: (() async -> String?)? = nil, task: WKURLSchemeTask) {
         guard method == "GET" else { return reply(task, url, 405, ["Allow": "GET"]) }
         if url.host == MediaFiles.host {
             guard let path = MediaFiles.path(from: url) else { return reply(task, url, 404) }
             switch MediaFiles.gate(path, granted: granted, cache: cache, firstRead: true) {
+            case .status(403) where ask != nil:
+                // the page marks a refused file bad for good, so the account is asked before answering (off this thread);
+                // the second try has no `ask`, so a file still refused is answered 403
+                nonisolated(unsafe) let task = task   // only answered through deliver, on the main thread
+                Task {
+                    let cache = await ask!()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        self.serve(url, method: method, range: range, root: root, granted: granted, cache: cache, task: task)
+                    }
+                }
+                return
             case .status(let status): return reply(task, url, status)
             case .diskAway(let disk):
                 let body = (try? JSONSerialization.data(withJSONObject: ["state": "disk_away", "disk": disk])) ?? Data()

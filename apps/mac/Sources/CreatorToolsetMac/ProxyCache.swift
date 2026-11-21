@@ -265,6 +265,9 @@ enum ProxyCache {
             return (check.account, false)
         } catch is URLError {
             return (lock.withLock { accounts[key(site.base)] }, true)
+        } catch SiteError.status(let code) where code != 401 && code != 403 {
+            // the server is there but can't answer now (a restart's 502): the same as no answer
+            return (lock.withLock { accounts[key(site.base)] }, true)
         } catch {
             remember(nil, for: site.base)
             return (nil, false)
@@ -284,6 +287,31 @@ enum ProxyCache {
         guard let page, page.scheme == "http" || page.scheme == "https" else { return nil }
         guard let account = lock.withLock({ accounts[key(page)] }) else { return nil }
         return folder(server: page, account: account)?.path
+    }
+
+    /// Whether `path` is in the proxy cache of `page`'s server (any account's folder): only such a refused file asks the
+    /// server for the account, so footage that isn't granted is refused at once (no wait for a server that is away).
+    static func holds(_ path: String, page: URL) -> Bool {
+        (page.scheme == "http" || page.scheme == "https") && path.hasPrefix(root(server: page).path + "/")
+    }
+
+    /// per server: the account check under way, so the many first requests of a page make one
+    private static var asking: [String: Task<Void, Never>] = [:]
+
+    /// `allowed(page:)` after asking the page's server for the window's account again: for a file refused while the
+    /// account was not known yet (no places check ran, as in the editor) or was another one (signed in again in the
+    /// window). One check at a time per server: the requests that come during it share its answer. Nil when signed out.
+    static func allowed(page: URL?, site: @escaping () async -> Site) async -> String? {
+        guard let page, page.scheme == "http" || page.scheme == "https" else { return nil }
+        let k = key(page)
+        let check = lock.withLock {
+            if let running = asking[k] { return running }
+            let running = Task { _ = await account(await site()); lock.withLock { asking[k] = nil } }
+            asking[k] = running
+            return running
+        }
+        await check.value
+        return allowed(page: page)
     }
 
     /// The ctlocal://media address of a version's proxy in `folder`, only when the media gate serves it from there (its
