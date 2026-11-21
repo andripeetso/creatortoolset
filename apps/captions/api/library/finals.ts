@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { homeOf, libraryRole, mayWrite } from "./access";
 import { libraryDb, newLibrarySettings } from "./db";
 import { addExternalItem, externalCanSee, externalRefFor } from "./refs";
-import { saveToLibrary } from "./routes";
+import { pushFinalCopy, saveToLibrary } from "./routes";
 import { pluginFinalsAdded, pluginFinalsRefusal } from "../lib/plugin";
 import { emitEvent } from "../lib/events";
 import { announce } from "../lib/sync";
+import { wantCopies } from "../lib/play-copies";
 
 /**
  * Finals is a view over the Media Library, not a store of its own: a Finals piece is a `pieces` row in the library's
@@ -14,6 +15,21 @@ import { announce } from "../lib/sync";
  * stored once, and only for a file the library does not hold yet. The plug-in's guard (ServerPlugin.finals) can refuse
  * a piece with a reason; a guard that throws refuses too.
  */
+
+/** Whether a library version is a Final now: an item of a piece in the trash-free Finals collection, its asset not trashed. */
+export function isFinal(versionId: string): boolean {
+  return !!libraryDb()
+    .prepare(
+      `SELECT 1 FROM piece_items i JOIN pieces p ON p.id = i.piece_id JOIN collections c ON c.id = p.collection_id
+       JOIN asset_versions v ON v.id = i.version_id JOIN assets a ON a.id = v.asset_id
+       WHERE i.version_id = ? AND p.trashed_at IS NULL AND c.parent_id IS NULL AND c.kind = 'manual' AND c.name = 'Finals'
+         AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL LIMIT 1`,
+    )
+    .get(versionId);
+}
+// A Final's playback copy (library/<version>) stays while it is a Final, past COPY_DAYS too: out of Finals, trashed or
+// deleted, it goes.
+wantCopies("library", ([versionId]) => !!versionId && isFinal(versionId));
 
 /** Finals and Content are what gets posted: never below 1080p (2026-10-02: an AI Editor 540×960 preview got captioned and sent). The refusal, or null. */
 export const belowHd = (w?: number, h?: number) =>
@@ -152,6 +168,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
         input.item,
         last + 1,
       );
+      void pushFinalCopy(versionId).catch(() => {}); // its playback copy (lib/play-copies.ts), once this has landed
     }
     // the library's item is marked Finals too, so the Media Library's Finals collection lists it
     if (assetId) {
