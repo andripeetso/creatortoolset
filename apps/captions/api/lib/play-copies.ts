@@ -27,12 +27,15 @@ const CHECKED_MS = 10 * 60_000;
 const RETRY_MS = 3600_000;
 /** Storage has this long to say whether a copy is there before /play streams instead. */
 const STAT_MS = 3000;
-/** A copy this new may have landed while a player was already reading the file from this server (see playCopy). */
-const LANDING_MS = 10 * 60_000;
+/** After Storage failed to answer, /play streams at once for this long instead of waiting on it again. */
+const DOWN_MS = 60_000;
 /** A push still going after this is given up, so one stalled upload never holds up the others. */
 const PUT_MS = 30 * 60_000;
 const DAY_MS = 86_400_000;
 const ROOT = "play-copies";
+// The old studio iPhone app sends its login as a Cookie header on every player request, and iOS copies custom headers
+// onto a redirect: never send it to the CDN. Its player says who it is with this User-Agent.
+const KEEPS_LOGIN_ON_REDIRECT = /^CreatorToolset-iOS\//;
 // The pull zone serves a file with the type its name's extension says, so only these go.
 const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm", "video/x-m4v": ".m4v" };
 
@@ -85,7 +88,12 @@ async function wants(key: string, pushedAt: number): Promise<boolean | null> {
   return owner ? await Promise.resolve(owner.wanted(parts.slice(1), pushedAt)).catch(() => true) : null;
 }
 
+// Hard links of pushes that a restart cut off would keep a deleted video's bytes on disk unseen: cleared at start.
+const tmpDir = () => path.join(env.dataDir, "play-copies-tmp");
+export const tmpCleared = rm(tmpDir(), { recursive: true, force: true }).catch((e) => console.error("[play-copies] tmp:", e));
+
 const checked = new Map<string, number>();
+let storageDownUntil = 0;
 const pushing = new Set<string>();
 const failed = new Map<string, number>();
 let line: Promise<void> = Promise.resolve();
@@ -112,8 +120,9 @@ function pushLater(store: BlobStore, key: string, file: string, type: string, by
   if (pushing.has(key) || Date.now() - (failed.get(key) ?? 0) < RETRY_MS) return;
   pushing.add(key);
   line = line.then(async () => {
-    const tmp = path.join(env.dataDir, "play-copies-tmp", randomUUID());
+    const tmp = path.join(tmpDir(), randomUUID());
     try {
+      await tmpCleared; // the start's clearing never takes a link made after it
       if (!(await wants(key, Date.now()))) return; // rejected, gone or not a Final by now
       await mkdir(path.dirname(tmp), { recursive: true });
       // put() takes the file it is given: a hard link, so the server's own file stays and no bytes are copied on disk
@@ -121,7 +130,12 @@ function pushLater(store: BlobStore, key: string, file: string, type: string, by
       await link(file, tmp);
       const put = store.put(key, tmp, { contentType: type });
       await within(put, PUT_MS).catch((e) => {
-        put.then(() => store.delete(key)).catch(() => {}); // a push given up leaves nothing behind once it ends
+        // a push given up leaves nothing behind once it ends, unless a later push of the same key holds it by then
+        put
+          .then(async () => {
+            if (!(await record())[key] && !pushing.has(key)) await store.delete(key);
+          })
+          .catch(() => {});
         throw e;
       });
       const all = await record();
@@ -154,6 +168,7 @@ export async function playCopy(c: Context, name: string, file: string, type: str
   const store = pluginPlayCopies();
   // a CORS load (a canvas or sound graph reading the media) stays on this origin: the pull zone may send no CORS headers
   if (!store?.caps.signedUrls || c.req.header("sec-fetch-mode") === "cors") return null;
+  if (KEEPS_LOGIN_ON_REDIRECT.test(c.req.header("user-agent") ?? "")) return null;
   const k = await keyOf(name, file, type);
   if (!k) return null;
   const { key } = k;
@@ -163,11 +178,17 @@ export async function playCopy(c: Context, name: string, file: string, type: str
       pushLater(store, key, file, type, k.bytes);
       return null;
     }
-    // a copy that just landed takes only a load from the start: a player already reading this file from the server keeps
-    // reading here, since a media load may refuse bytes from a second origin midway (not seen in a browser yet)
-    if (Date.now() - got.at < LANDING_MS && !/^bytes=0-/.test(c.req.header("range")?.trim() ?? "bytes=0-")) return null;
+    // only a load from the start moves to the copy: a player already reading this file from the server (it began before
+    // the push landed, or after a failed check) keeps reading here, since a media load may refuse bytes from a second
+    // origin midway. A player that asks /play again for every later range then streams those, as before this existed.
+    if (!/^bytes=0-/.test(c.req.header("range")?.trim() ?? "bytes=0-")) return null;
     if (Date.now() - (checked.get(key) ?? 0) > CHECKED_MS) {
-      if (!(await within(store.stat(key), STAT_MS))) {
+      if (Date.now() < storageDownUntil) return null;
+      const there = await within(store.stat(key), STAT_MS).catch((e) => {
+        storageDownUntil = Date.now() + DOWN_MS; // Storage didn't answer: the next plays stream at once for a while
+        throw e;
+      });
+      if (!there) {
         delete held![key]; // gone from Storage (deleted by hand): pushed again, streamed meanwhile
         checked.delete(key);
         void save();

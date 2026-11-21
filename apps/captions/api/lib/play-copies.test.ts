@@ -14,13 +14,19 @@ const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
 const dataDir = mkdtempSync(path.join(scratch, "play-copies-"));
 process.env.DATA_DIR = dataDir;
+// a push cut off by a restart left its hard link behind: cleared at start
+const leftover = path.join(dataDir, "play-copies-tmp", "cut-off");
+mkdirSync(path.dirname(leftover), { recursive: true });
+writeFileSync(leftover, "bytes of a deleted video");
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
 
-// the stand-in Storage zone: PUT, HEAD, DELETE by path; `refuse` makes every PUT fail
+// the stand-in Storage zone: PUT, HEAD, DELETE by path; `refuse` makes every PUT fail, `hang` leaves every HEAD unanswered
 const objects = new Map<string, number>();
 let refuse = false;
+let hang = false;
 const storage = createServer((req, res) => {
   const key = decodeURIComponent((req.url ?? "").replace(/^\/tinyzone\//, ""));
+  if (req.method === "HEAD" && hang) return;
   if (req.method === "PUT") {
     let n = 0;
     req.on("data", (b: Buffer) => (n += b.length));
@@ -36,6 +42,7 @@ const storage = createServer((req, res) => {
 });
 await new Promise<void>((r) => storage.listen(0, "127.0.0.1", r));
 afterAll(() => {
+  storage.closeAllConnections();
   storage.close();
   rmSync(dataDir, { recursive: true, force: true });
 });
@@ -55,8 +62,8 @@ const { libraryApp } = await import("../library/routes");
 const { collectionApp } = await import("../library/collections");
 const { libraryDb } = await import("../library/db");
 const { finalsCollectionId } = await import("../library/finals");
-const { deleteAssets } = await import("../library/trash");
-const { COPY_DAYS, copiesSettled, heldCopies, pushPlayCopy, sweepPlayCopies } = await import("./play-copies");
+const { deleteAssets, setTrashedAt } = await import("../library/trash");
+const { COPY_DAYS, copiesSettled, heldCopies, pushPlayCopy, sweepPlayCopies, tmpCleared } = await import("./play-copies");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -99,16 +106,17 @@ const pushed = (prefix: string) => until(() => copiesOf(prefix).length > 0);
 /** Gone from Storage and from the record (the record is written right after Storage answers the delete). */
 const dropped = (prefix: string) =>
   until(async () => copiesOf(prefix).length === 0 && !(await heldCopies()).some((k) => k.startsWith(`play-copies/${prefix}`)));
-/** Runs `run` as if COPY_DAYS and a day had passed. */
-const later = async (run: () => Promise<unknown>) => {
+/** Runs `run` as if `ms` had passed (COPY_DAYS and a day when left out). */
+const later = async (run: () => Promise<unknown>, ms = (COPY_DAYS + 1) * 86_400_000) => {
   const now = Date.now();
-  const clock = vi.spyOn(Date, "now").mockReturnValue(now + (COPY_DAYS + 1) * 86_400_000);
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now + ms);
   try {
     await run();
   } finally {
     clock.mockRestore();
   }
 };
+const MIN = 60_000;
 
 describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", () => {
   it("pushes a version as soon as it is ready, then /play is a fresh signed link; the server's file stays", async () => {
@@ -126,16 +134,44 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     expect(Number(link.searchParams.get("expires")) - Date.now() / 1000).toBeGreaterThan(23 * 3600);
     expect(link.searchParams.get("token")).toMatch(/^HS256-/);
     expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=0-1" })).status).toBe(302); // Safari's first probe
-    // a player already reading from this server when the copy landed keeps reading here; a CORS load (a canvas reading
-    // the frames) always does
+    // only a load from the start moves: a player already reading from this server keeps reading here, however old the
+    // copy; a CORS load (a canvas reading the frames) always stays
     expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=4000-" })).status).toBe(206);
-    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11 * 60_000);
-    try {
-      expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=4000-" })).status).toBe(302); // landed a while ago
-    } finally {
-      clock.mockRestore();
-    }
+    await later(async () => expect((await play(`/assets/${id}/v/1/play`, { range: "bytes=4000-" })).status).toBe(206), 11 * MIN);
     expect((await play(`/assets/${id}/v/1/play`, { "sec-fetch-mode": "cors" })).status).toBe(200);
+    // the old studio iPhone app's player sends its login as a header that iOS would copy onto the redirect
+    expect((await play(`/assets/${id}/v/1/play`, { "user-agent": "CreatorToolset-iOS/1.0" })).status).toBe(200);
+  });
+
+  it("clears the hard links a restart cut off, at start", async () => {
+    await tmpCleared;
+    expect(existsSync(leftover)).toBe(false);
+  });
+
+  it("streams at once for a while after Storage didn't answer, and pushes again a copy deleted by hand", async () => {
+    const id = await up("Tiny Acrobatics hang.mp4");
+    expect(await pushed(`review/${id}/`)).toBe(true);
+    const url = `/assets/${id}/v/1/play`;
+    hang = true;
+    try {
+      // the copy's last check is old: Storage is asked, says nothing in 3 s, and the play streams
+      await later(async () => {
+        let t = performance.now();
+        expect((await play(url)).status).toBe(200);
+        expect(performance.now() - t).toBeGreaterThan(2500);
+        t = performance.now();
+        expect((await play(url)).status).toBe(200); // remembered: no second wait
+        expect(performance.now() - t).toBeLessThan(1000);
+      }, 11 * MIN);
+    } finally {
+      hang = false;
+    }
+    // deleted by hand: the next check finds it gone, the play streams and it is pushed again
+    const [key] = copiesOf(`review/${id}/`);
+    objects.delete(key!);
+    await later(async () => expect((await play(url)).status).toBe(200), 30 * MIN);
+    expect(await pushed(`review/${id}/`)).toBe(true);
+    await later(async () => expect((await play(url)).status).toBe(302), 31 * MIN);
   });
 
   it("drops a version's older copy when its play file is pushed again in a new size", async () => {
@@ -207,7 +243,7 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     expect(await dropped(`review/${id}/`)).toBe(true);
   });
 
-  it(`sweeps copies past ${COPY_DAYS} days but keeps an approved version's and a Final's; a later play pushes again`, async () => {
+  it(`sweeps copies past ${COPY_DAYS} days but keeps an approved version's (a Final's own is kept under Finals); a later play pushes again`, async () => {
     const old = await up("Tiny Acrobatics old.mp4");
     const approved = await up("Tiny Acrobatics approved.mp4");
     const final = await up("Tiny Acrobatics final cut.mp4");
@@ -221,7 +257,7 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     await later(() => sweepPlayCopies());
     expect(copiesOf(`review/${old}/`)).toHaveLength(0);
     expect(copiesOf(`review/${approved}/`)).toHaveLength(1);
-    expect(copiesOf(`review/${final}/`)).toHaveLength(1);
+    expect(copiesOf(`review/${final}/`)).toHaveLength(0); // a Final keeps its copy under Finals, not a second one here
 
     expect((await play(`/assets/${old}/v/1/play`)).status).toBe(200); // streams, and is pushed again
     expect(await pushed(`review/${old}/`)).toBe(true);
@@ -250,7 +286,22 @@ describe.skipIf(!hasFfmpeg)("Review and Finals play from their playback copy", (
     await app.request(`/api/library/${lib}/pieces/pc_tiny/items/${item}`, { method: "DELETE" });
     expect(await dropped(`library/${versionId}/`)).toBe(true);
 
+    // its piece trashed: dropped at once; back from the trash and played, pushed again
     await app.request(`/api/library/${lib}/pieces/pc_tiny/items`, json({ versionId }));
+    expect(await pushed(`library/${versionId}/`)).toBe(true);
+    expect((await app.request(`/api/library/${lib}/pieces/pc_tiny/trash`, { method: "POST" })).status).toBe(200);
+    expect(await dropped(`library/${versionId}/`)).toBe(true);
+    await app.request(`/api/library/${lib}/pieces/pc_tiny/restore`, { method: "POST" });
+    await play(media);
+    expect(await pushed(`library/${versionId}/`)).toBe(true);
+
+    // its asset trashed: dropped at once
+    setTrashedAt(id, Date.now());
+    expect(await dropped(`library/${versionId}/`)).toBe(true);
+    setTrashedAt(id, null);
+
+    // out of the trash, a Final again: played, pushed again; then deleted for good with its asset
+    await play(media);
     expect(await pushed(`library/${versionId}/`)).toBe(true);
     await deleteAssets([id]);
     expect(copiesOf(`library/${versionId}/`)).toHaveLength(0);

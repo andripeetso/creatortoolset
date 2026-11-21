@@ -31,7 +31,7 @@ import { findUser, USERNAME_RE, type SessionUser } from "./users";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { inProjectOf } from "./lib/project-of";
 import { canMove, type Moves } from "./lib/transition";
-import { addToFinals, belowHd, finalsItemName, isFinal, libraryOf as libraryFor } from "./library/finals";
+import { addToFinals, belowHd, finalsItemName, libraryOf as libraryFor } from "./library/finals";
 import { ensureLibrary, servedByPlugin } from "./library/access";
 import { blursFaces } from "./library/db";
 import { mayLeave, workspaceLibrary } from "./library/upload-gate";
@@ -802,13 +802,14 @@ const approvedVersion = (m: Meta): Version | undefined => {
 };
 
 // A Review version's playback copy (lib/play-copies.ts) goes at once when the version is removed, its video trashed,
-// deleted or Rejected; an approved version's and a Final's stay, every other one for COPY_DAYS from its push. A trashed
-// video restored, or an old version played again, streams and is pushed again.
+// deleted or Rejected; an approved version's stays, every other one for COPY_DAYS from its push (a Final keeps its own
+// copy under Finals, so one in Finals is not kept twice). A trashed video restored, or an old version played again,
+// streams and is pushed again.
 wantCopies("review", async ([id, createdAt], pushedAt) => {
   const m = await readMeta(id ?? "");
   const v = m?.versions.find((x) => String(x.createdAt) === createdAt);
   if (!m || !v || v.removed || m.approval?.status === "rejected") return false;
-  return approvedVersion(m) === v || (!!v.versionId && isFinal(v.versionId)) || copyIsFresh(pushedAt);
+  return approvedVersion(m) === v || copyIsFresh(pushedAt);
 });
 
 /** Pushes a ready version's file to the playback copies (nothing without a plug-in's store). */

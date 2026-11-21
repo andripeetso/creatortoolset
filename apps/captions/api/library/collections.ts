@@ -627,6 +627,8 @@ async function setPieceTrashed(c: Ctx, trash: boolean) {
   const row = await writablePiece(c.get("user").username, libraryId, c.req.param("pid") ?? "");
   if (!row) return notFound(c);
   db().prepare("UPDATE pieces SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, row.id);
+  // its versions' playback copies go at once, unless still a Final in another piece (lib/play-copies.ts)
+  if (trash) void sweepPlayCopies(["library/"]).catch(() => {});
   return c.json(pieceOf({ ...row, trashed_at: trash ? Date.now() : null }));
 }
 
