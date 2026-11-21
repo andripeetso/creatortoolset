@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isLanguage } from "../../contracts/voice";
-import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionMark, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditVoice, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionMark, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
@@ -162,6 +162,8 @@ export interface StepFiles {
   shots: Record<string, PlannedVersion>;
   /** the newest note from chat the last script or plan step was given (its `at`, 0 with none): a later one is unread (worker.ts) */
   read: { at: number };
+  /** the Audio Enhancer sessions of its recordings' voices, by source version id, then enhancer (voice-mix.ts) */
+  voice: Record<string, Record<string, string>>;
 }
 
 /** A planned version's plan (plan.ts). */
@@ -519,6 +521,8 @@ export async function cleanBrief(body: Record<string, unknown>, username: string
   // a song the person may read in this workspace; anything else is left out
   if (body.song === null) out.song = null;
   else if (typeof body.song === "string" && (await editSources(username, [body.song])) === ws) out.song = body.song;
+  const voice = cleanVoice(body.voice);
+  if (voice) out.voice = voice;
   const punch = num((body.framing as { punch?: unknown } | undefined)?.punch, 1, 2);
   if (punch !== undefined) out.framing = { punch };
   // only the flags a loaded plug-in declares, each one a boolean; the others are ignored
@@ -527,6 +531,17 @@ export async function cleanBrief(body: Record<string, unknown>, username: string
     out.flags = Object.fromEntries(pluginEditFlags().flatMap((f) => (typeof given[f.id] === "boolean" ? [[f.id, given[f.id] as boolean]] : [])));
   }
   return out;
+}
+
+const FX = /^(off|[a-z][a-z0-9]{1,20})$/;
+/** An EditVoice from a body, or undefined: an enhancer id (checked when the voice is made), recordings' picks and shares. */
+export function cleanVoice(v: unknown): EditVoice | undefined {
+  const x = v as { fx?: unknown; per?: unknown; mix?: unknown } | null;
+  if (!x || typeof x !== "object" || typeof x.fx !== "string" || !FX.test(x.fx)) return undefined;
+  const pairs = (o: unknown) => (o && typeof o === "object" && !Array.isArray(o) ? Object.entries(o).slice(0, MAX_SOURCES) : []);
+  const per = Object.fromEntries(pairs(x.per).filter(([, f]) => typeof f === "string" && FX.test(f)));
+  const mix = Object.fromEntries(pairs(x.mix).flatMap(([k, m]) => (typeof m === "number" && Number.isFinite(m) ? [[k, Math.round(Math.min(1, Math.max(0, m)) * 20) / 20]] : [])));
+  return { fx: x.fx, ...(Object.keys(per).length ? { per } : {}), ...(Object.keys(mix).length ? { mix } : {}) };
 }
 
 /**

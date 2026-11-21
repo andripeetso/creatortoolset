@@ -19,6 +19,8 @@
  *   POST   /api/editor/:id/drafts/:name/sent-back  { file, text }: a timeline changed in another editing app (OTIO, FCPXML, FCP 7 XML, EDL) as the draft, no AI → Edit; rendered and filed in Review
  *                                                 as that video's next version. With asset/n: edits made on that Review version; without: on the draft as it is
  *                                                 now (Draft.view); `edits` may be [] then, when the draft is not what Review has (clips put on it): it is rendered as it is
+ *   POST   /api/editor/:id/drafts/:name/voice    { voice?, mix? } (the creator): Review's voice controls kept for the edit (EditVoice; `mix` by
+ *                                                 the stem group's key) → 201 { voice: EditVoice }; the draft is cut again with them, only its sound
  *   POST   /api/editor/:id/drafts/:name/duplicate  (the creator) → 201 { name }: the draft as a new version (next free v1…v9), no AI; its preview is made
  *   PUT    /api/editor/:id/drafts/:name/timeline  { timeline } (the creator): the editor's whole timeline kept as the draft, judged first → Edit; rendered and filed in Review
  *   GET    /api/editor/:id/clips/:clip           → { source, sound }: a Media Library clip as the editor lays it (its rate, length, size; whether it has sound)
@@ -104,6 +106,21 @@ export interface EditBrief {
   plan?: boolean;
   /** the song to cut to: a library version id (a Music item). Absent: one among the sources, else the library's, else none */
   song?: string | null;
+  /** the voice of its recordings (api/editor/voice-mix.ts); absent = as recorded */
+  voice?: EditVoice;
+}
+
+/**
+ * An edit's voice. Nothing is done to the voice until the person picks an enhancer, and the recording as it is stays one
+ * click away (Review's voice controls, "Off"). Every voice, enhanced or not, comes out at one loudness.
+ */
+export interface EditVoice {
+  /** what every recording plays: "off" = as recorded, else an Audio Enhancer engine id (GET /api/enhance/availability) */
+  fx: string;
+  /** a recording's own enhancer over `fx` ("off" = as recorded), by its library version id; only while `fx` is not off */
+  per?: Record<string, string>;
+  /** a recording's share of its enhanced voice against the original, 0..1 in steps of 0.05, by version id; absent = 1 */
+  mix?: Record<string, number>;
 }
 
 /** A per-edit flag a plug-in declares (plug-in `editFlags`): a chip on the edit, saved with it. Shows nothing else. */

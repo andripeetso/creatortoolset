@@ -16,6 +16,7 @@ import { reviseStep } from "./revise";
 import { scriptStep } from "./script";
 import { speakersFile } from "./speakers";
 import { draftStep, reframeSpan } from "./timeline";
+import { soundDue, soundStep } from "./voice-mix";
 import { readEdit, readStep, type EditMeta } from "./store";
 
 /**
@@ -97,6 +98,10 @@ const KINDS: Record<string, EditKind> = {
   // the post-processing steps the edit uses (plug-ins, Settings → AI Editor); with none it only clears its notes
   // with plug-in steps it rewrites the originals, on the computer that has them
   post: { source: "core", next: ["preview"], run: postStep, place: (e) => computerIf(!!e.steps?.length) },
+  // queued after post only for an edit that has something for it (nextFor, voice-mix.ts soundDue): a cut around speech's
+  // music bed and sound effects, and its voice through the enhancer the person picked. The enhancing is the Audio
+  // Enhancer's own session (its own task and engines); the parts for Review are sound only
+  sound: { source: "core", next: ["preview"], run: soundStep, place: () => "server" },
   preview: { source: "core", next: ["file"], run: previewStep, place: () => "computer" },
   // the look at a planned cut the AI made, after its preview (nextFor): it files the cut itself, failing shots named on it
   critique: { source: "core", next: [], run: critiqueStep, place: () => "computer" },
@@ -153,11 +158,14 @@ export function nextKinds(): Record<string, string[]> {
  * B-roll (timeline.ts), so it goes on to it at once: that B-roll is its picture, and the first cut is filed with it.
  * A moment of a long recording is one line with no room for a card (cards/place.ts keeps the last line clear), so an
  * edit of moments never goes to the cards: no AI call and no Mac draw is spent on them. A preview of a cut that waits for
- * its look (`due`, critique.ts) goes to the look, which files it.
+ * its look (`due`, critique.ts) goes to the look, which files it. Post goes to the sound step for an edit with a bed, sound
+ * effects or a voice to make (soundDue), else straight to its preview.
  */
-export const nextFor = (kind: string, edit: Pick<EditMeta, "style" | "moments">, next: Record<string, string[]>, done: string[] = [], due = false): string[] =>
+export const nextFor = (kind: string, edit: Pick<EditMeta, "style" | "moments"> & Partial<EditMeta>, next: Record<string, string[]>, done: string[] = [], due = false): string[] =>
   kind === "preview" && due
     ? ["critique"]
+    : kind === "post" && soundDue(edit)
+    ? ["sound"]
     : edit.style?.passes && ((kind === "draft" && !done.includes("broll")) || (kind === "broll" && !done.includes("cards")))
     ? ["post"]
     : kind === "broll" && edit.style?.animation && !edit.moments ? ["cards"] : (next[kind] ?? []);

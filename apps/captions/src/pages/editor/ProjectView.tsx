@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { CircleAlert, Copy, Download, Eye, Loader2, MessageSquareText, MonitorPlay, Pencil, Play, RotateCcw, Square, ThumbsUp, Trash2, Upload } from "lucide-react";
-import { DEFAULT_EYELINE, type Draft, type Edit, type EditJob, type Sentence } from "@contracts/editor";
+import { DEFAULT_EYELINE, type Draft, type Edit, type EditJob, type EditVoice, type Sentence } from "@contracts/editor";
 import { STYLE_NAME_MAX } from "@contracts/editor-styles";
 import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { AppBar } from "@/components/AppBar";
@@ -14,6 +14,7 @@ import { aboutTime, gbOf } from "@/components/LibraryProcessing";
 import { Picture } from "@/components/Picture";
 import { ExportGapsNote, gapsLine } from "@/components/ExportGapsNote";
 import { APPROVAL, type Approval, type ReviewView } from "@/lib/review";
+import { ENGINES, getAvailability, type EnhanceAvailability } from "@/lib/enhance";
 import { canChange, useMe } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
 import {
@@ -42,7 +43,7 @@ const editUrl = (id: string) => `/api/editor/${id}`;
 /** One edit, its saved copy first; every part of the page that shows it reads the same copy and stays current with it. */
 const useEdit = (id: string) => useCachedLoad<Edit>(editUrl(id), () => getEdit(id));
 const busyJob = (j: EditJob) => j.state === "queued" || j.state === "running";
-const STEP_NAME: Record<string, string> = { revise: "Revise from comments", analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", critique: "Check the cut", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards", post: "Post-processing" };
+const STEP_NAME: Record<string, string> = { revise: "Revise from comments", analyze: "Analyze", script: "Script", draft: "Draft", preview: "Preview", critique: "Check the cut", file: "File in Review", broll: "B-roll", cards: "Cards", "cards-draw": "Draw cards", post: "Post-processing", sound: "Sound" };
 /** The setting a needs-key message names: a key in API keys, else (a provider, a Mac that is off) AI providers. */
 const settingFor = (why: string) => (/Settings → API keys/.test(why) && !/Settings → Providers/.test(why) ? "/settings/keys" : "/settings/providers");
 
@@ -578,11 +579,52 @@ function MediaTab({ e, onEdit }: { e: Edit; onEdit: (e: Edit) => void }) {
             className="rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm" />
         </label>
       )}
+      {editable && <VoicePick e={e} act={act} />}
       {e.notes.length > 0 && (
         <ul className="list-disc pl-5 text-xs text-zinc-500">
           {e.notes.map((x, i) => <li key={i}>{x}</li>)}
         </ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * The edit's voice: Off (as recorded) until the person picks an enhancer, and with several recordings each one's own
+ * pick. A change makes every version's sound again; Review's voice controls then blend it against the original.
+ */
+function VoicePick({ e, act }: { e: Edit; act: (p: Promise<Edit>) => void }) {
+  const [avail, setAvail] = useState<EnhanceAvailability | null>(null);
+  useEffect(() => void getAvailability().then(setAvail, () => {}), []);
+  const fx = e.voice?.fx ?? "off";
+  const usable = ENGINES.filter((x) => avail?.[x.key] === true || x.key === fx || Object.values(e.voice?.per ?? {}).includes(x.key));
+  const set = (voice: EditVoice) => act(patchEdit(e.id, { voice }));
+  const cls = "rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm";
+  const options = usable.map((x) => <option key={x.key} value={x.key}>{x.label}</option>);
+  return (
+    <div className="grid gap-2 text-sm">
+      <label className="flex flex-wrap items-center gap-2">
+        <span className="text-zinc-500">Voice</span>
+        <select aria-label="Voice enhancer" value={fx} onChange={(ev) => set({ ...e.voice, fx: ev.target.value })} className={cls}>
+          <option value="off">As recorded</option>
+          {options}
+        </select>
+        {avail && !usable.length && <span className="text-xs text-zinc-500">Add an Audio Enhancer key in Settings to enhance the voice</span>}
+      </label>
+      {fx !== "off" && e.sources.length > 1 && e.sources.map((v, k) => (
+        <label key={v} className="flex flex-wrap items-center gap-2 pl-4 text-xs">
+          <span className="text-zinc-500">Clip {k + 1}</span>
+          <select aria-label={`Voice of clip ${k + 1}`} value={e.voice?.per?.[v] ?? ""} className={cls}
+            onChange={(ev) => {
+              const { [v]: _, ...per } = e.voice?.per ?? {};
+              set({ ...e.voice!, per: ev.target.value ? { ...per, [v]: ev.target.value } : per });
+            }}>
+            <option value="">Same as the edit</option>
+            <option value="off">As recorded</option>
+            {options}
+          </select>
+        </label>
+      ))}
     </div>
   );
 }

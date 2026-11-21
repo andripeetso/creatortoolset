@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, statSync } from "node:fs";
-import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -632,6 +632,50 @@ async function streamFile(
   });
 }
 
+/** A new session's meta: its length, whether it has a picture and the levelled original for the A/B come with the run (work/tasks/enhance.ts). */
+const newMeta = (id: string, name: string, user: SessionUser, projectId: string | null | undefined, chain: Engine[], bytes: number): Meta => ({
+  id,
+  name,
+  owner: user.username,
+  ...(projectId ? { projectId } : {}),
+  hasVideo: false,
+  duration: 0,
+  bytes,
+  status: "ready",
+  engine: chain[0],
+  chain,
+  progress: 0,
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+
+/** The engines `user` can run now (the built-in ones with a key, a plug-in's that doesn't refuse them), the default first. */
+export const usableEngines = (user: SessionUser): string[] =>
+  [defaultEngine(user), ...allEngines()].filter((e, i, all) => all.indexOf(e) === i && !refusal(e, user));
+
+/**
+ * A session made from a file on this server (the AI Editor's voice, api/editor/voice-mix.ts), run at once on `engine`: the
+ * file is linked in, never copied. Listed in the person's Audio Enhancer like an upload. Returns its id.
+ */
+export async function enhanceFile(user: SessionUser, name: string, file: string, engine: Engine, projectId?: string): Promise<string> {
+  if (!isEngine(engine)) throw new Error(`Engine is one of ${allEngines().join(", ")}`);
+  const id = randomUUID();
+  await mkdir(sesDir(id), { recursive: true });
+  await symlink(path.resolve(file), originalPath(id));
+  const meta = newMeta(id, name.slice(0, 120), user, projectId, [engine], (await stat(file)).size);
+  if (enqueue(meta, user)) bumpUsage(user.username, { enhanceRuns: 1 });
+  await persist(meta);
+  return id;
+}
+
+/** Where session `id` stands, and its levelled original and result once done (both at LOUDNESS, lined up from the file's start). */
+export async function enhanceResult(id: string): Promise<{ status: EnhanceStatus | "gone"; error?: string; original?: string; enhanced?: string }> {
+  const meta = okId(id) ? await readMeta(id) : null;
+  if (!meta) return { status: "gone" };
+  const done = meta.status === "done" && existsSync(enhancedAudio(id)) && existsSync(sourceAudio(id));
+  return { status: meta.status, ...(meta.error ? { error: meta.error } : {}), ...(done ? { original: sourceAudio(id), enhanced: enhancedAudio(id) } : {}) };
+}
+
 /* ---- routes (mounted at /api/enhance) ---- */
 
 /* engine availability — registered before /:id so "availability" never
@@ -697,22 +741,7 @@ enhanceApp.post("/", async (c) => {
     await pipeline(Readable.fromWeb(body as never), createWriteStream(originalPath(id)));
     const st = await stat(originalPath(id));
     if (!st.size) throw new Error("Empty file");
-    // its length, whether it has a picture and the levelled original for the A/B come with the run (work/tasks/enhance.ts)
-    const meta: Meta = {
-      id,
-      name,
-      owner: user.username,
-      ...(projectId ? { projectId } : {}),
-      hasVideo: false,
-      duration: 0,
-      bytes: st.size,
-      status: "ready",
-      engine: chain[0],
-      chain,
-      progress: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    const meta = newMeta(id, name, user, projectId, chain, st.size);
     // enhanced in the same go — no separate "run" click
     const queued = enqueue(meta, user);
     await persist(meta);

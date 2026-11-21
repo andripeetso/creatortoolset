@@ -18,6 +18,7 @@ const ffmpegFiles = [
   "api/editor/finished-finals.test.ts",
   "api/editor/grade.test.ts",
   "api/editor/preview.test.ts",
+  "api/editor/voice-mix.test.ts",
   "api/editor/sync.test.ts",
   "api/enhance.test.ts",
   "api/lib/folder-plugins.test.ts",

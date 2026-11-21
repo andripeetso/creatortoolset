@@ -2,7 +2,8 @@ import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Critique } from "../../contracts/edit-plan";
 import type { Item, Renders, Timeline } from "../../contracts/editor";
-import { addVersion, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
+import { addVersion, attachStems, fileTimelineView, readMeta, setApproval, toLibrary } from "../review";
+import { placeStems, stemsFor, withMix } from "./voice-mix";
 import { wordsOf } from "../library/transcribe";
 import { draftView } from "./edits";
 import { blobs, fileBlur, isBlurred, libraryDb, playOf, SOUND_ONLY_SQL } from "../library/db";
@@ -427,6 +428,9 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   // an edit in passes: approving this cut starts the version's next pass (passes.ts approvePass)
   const pass = nextPass(edit, variant);
   const title = edit.moments ? readStep(edit.id, "plan")?.plans.find((p) => p.name === variant)?.title.replace(/[/\\]/g, " ") : undefined;
+  // a cut whose voice is in parts (voice-mix.ts) plays their mix, and Review gets the parts for its voice controls
+  const stems = await stemsFor(edit, variant, timeline);
+  if (stems) await withMix(out, stems.dir);
   // a new Review video is in the edit's workspace (a step runs outside the window's request)
   const v = { owner: ownerOf(edit), name: `${edit.name} ${title || variant}.mp4`, mime: "video/mp4", bytes: (await stat(out)).size, draft: { edit: edit.id, name: variant, ...(by ? { by } : {}), ...(fails.length ? { fails } : {}) }, workspace: edit.projectId, ...(pass ? { next: PASS_WORD[pass] } : {}),
     // honest marks (SPEC), computed here, never a computer's word: blurred only when every picture is a blurred render;
@@ -443,6 +447,7 @@ export async function fileInReview(edit: EditMeta, variant: string, timeline: Ti
   // the same Review video every time, so a re-run is its next version; one deleted from Review gets a new video
   const added = (filed[variant] && (await addVersion(filed[variant].assetId, v, place))) || (await addVersion(undefined, v, place));
   if (!added) throw new Error("Could not file the preview in Review");
+  if (stems) await attachStems(added.meta.id, added.n, stems.set, placeStems(stems.dir, stems.set)).catch((e) => console.warn(`[editor] stems ${edit.id} ${variant}: ${e}`));
   // a new cut after Approve (its next pass) or Request changes waits for review again, as the new version it is
   if (added.n > 1 && (added.meta.approval.status === "approved" || added.meta.approval.status === "changes")) await setApproval(added.meta.id, "needs_review", ownerOf(edit));
   // the timeline this version shows: kept as it is now (a later cut of the draft doesn't change what this version's keys name)

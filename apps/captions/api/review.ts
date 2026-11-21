@@ -202,6 +202,8 @@ const NOT_NEWEST = "A newer version is in Review: open it there";
 export type VersionSource = { kind: string; id: string; label: string; href: string };
 
 /** An AI Editor preview's sound in parts (its voice groups, the enhancers they were made with, the voice picked). */
+/** A stem's file name: the cut's other sound, or one voice group (8 hex) as recorded or through an enhancer. */
+export const STEM_FILE = /^(rest|[0-9a-f]{8}\.[a-z][a-z0-9]{1,20})\.m4a$/;
 export type StemSet = { groups: { key: string; label: string; mix: number }[]; fx: string[]; voice: string; duration: number };
 
 interface Meta {
@@ -2458,6 +2460,19 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     const version = v?.meta.versions.find((x) => x.n === Number(c.req.param("n")));
     const view = version?.timelineFile && (await fileTimeline(v!.meta.id, version));
     return view ? c.json(view) : c.json({ error: "Not found" }, 404);
+  });
+
+  // a version's sound in parts (attachStems), for the player's voice controls: as its video is seen
+  reviewApp.get(`${base}/v/:n/stems/:file`, async (c) => {
+    const v = await viewer(c);
+    const n = Number(c.req.param("n"));
+    const version = v?.meta.versions.find((x) => x.n === n);
+    const file = c.req.param("file");
+    if (!v || !version?.stems || !STEM_FILE.test(file)) return c.json({ error: "Not found" }, 404);
+    const seen = version.blurred || (c.req.param("token") === undefined && version.asFilmed);
+    if (!v.manage && !seen && (await blurFacesIn(v.meta.owner, v.meta.workspace))) return c.json({ error: "Not found" }, 404);
+    if (version.removed) return c.json(REMOVED, 410);
+    return sendFile(c, path.join(versionDir(v.meta.id, n), "stems", file), "audio/mp4");
   });
 
   reviewApp.get(`${base}/v/:n/:file{play|thumb|download}`, async (c) => {
