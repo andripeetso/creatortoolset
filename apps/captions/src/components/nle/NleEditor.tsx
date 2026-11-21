@@ -99,6 +99,8 @@ export interface NleSide {
   commitPreview: () => void;
   /** the playhead to this frame, the picked clips let go */
   seek: (frame: number) => void;
+  /** picks these clips on the timeline (none: lets the pick go) */
+  pick: (keys: string[]) => void;
 }
 
 export interface NleControl {
@@ -878,7 +880,7 @@ export function NleEditor({ initial, resetKey, urlOf: pageUrlOf, onSave, saving,
             if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
             setTried(next && !readOnly ? { tl: next, label, base: tl } : null);
           }, trying: !!tryOn, commitPreview: () => void keepTry(),
-          seek: (f) => (seek(f / fps), pick([])) }) : undefined}
+          seek: (f) => (seek(f / fps), pick([])), pick }) : undefined}
         frame={{ w: tl.timeline.width || 1080, h: tl.timeline.height || 1920 }}
         center={
           <>

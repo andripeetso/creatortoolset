@@ -274,6 +274,16 @@ describe("the side panel beside the viewer (chat mode)", () => {
     p.done();
   });
 
+  it("the side panel picks clips, as a click on the timeline does, and seek lets them go", async () => {
+    const { p, s } = await sideOf();
+    const k = s().tl.tracks.V1.items[0]._k!;
+    act(() => s().pick([k]));
+    expect(s().picked).toEqual([k]);
+    act(() => s().seek(10));
+    expect(s().picked).toEqual([]);
+    p.done();
+  });
+
   it("the kept try's step carries its name in History", async () => {
     const { p, s } = await sideOf();
     act(() => s().preview(two, "Use take 3"));
