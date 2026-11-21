@@ -1,5 +1,5 @@
 import { Fragment, memo, useContext, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
+import { ChevronRight, Eye, EyeOff, Lock, LockOpen, Rows3, SlidersHorizontal, Volume2, VolumeX, X, ZoomIn } from "lucide-react";
 import { TimelineFrame } from "@/components/timeline/TimelineFrame";
 import { SNAP_PX, snapDelta } from "@/lib/clip-drag";
 import { useTimeAxis } from "@/lib/use-time-axis";
@@ -826,7 +826,8 @@ export const NleTracks = memo(function NleTracks({
                     offline={fileOf && it.fx !== "flash" && (!file || file.why) ? file?.why || "Media offline" : null}
                     path={String(tl.sources[it.src]?.path ?? "")} from={from} to={from + (it.len / fps) * (it.speed || 1)}
                     url={fileOf ? file?.url || null : undefined} still={!!file?.frame} drawW={drawW} x0={x0} x1={x1} ctl={ctl}
-                    vol={v ? null : volLine(it, fps, sfps)} volTip={volTip && volTip.k === it._k ? dbText(volTip.db) : null} />
+                    vol={v ? null : volLine(it, fps, sfps)} volTip={volTip && volTip.k === it._k ? dbText(volTip.db) : null}
+                    own={it.processing ? Object.keys(it.processing).join(", ") : null} />
                 );
               })}
               {t.items.filter((it) => picked.has(it._k!)).flatMap((it) => keyMarks(tl, it._k!).map(({ f, props, ease }, i) => (
@@ -1016,7 +1017,7 @@ const ramp = (side: "left" | "right", px: number) => (
  * waveform, an offline clip dark red with its name (the why on hover). Plain values only, so it is drawn again only when
  * it changes.
  */
-const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl, vol, volTip }: {
+const Clip = memo(function Clip({ k, track, video, left, width, height, name, length, on, dim, tool, locked, fadeIn, fadeOut, offline, path, from, to, url, still, drawW, x0, x1, ctl, vol, volTip, own }: {
   k: string; track: string; video: boolean; left: number; width: number; height: number; name: string; length: string; on: boolean; dim: boolean;
   tool: Tool; locked: boolean;
   /** the fades, in px */
@@ -1030,6 +1031,8 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
   ctl: MutableRefObject<Ctl>;
   /** a sound clip's volume line (volLine), null on a video clip; the dB it is being dragged to */
   vol?: string | null; volTip?: string | null;
+  /** the processings it has its own setting of (model.ts processingOf), null when it follows the timeline in all */
+  own?: string | null;
 }) {
   const w = Math.max(2, width);
   const bar = w > 24 ? barOf(height) : 0;
@@ -1058,6 +1061,12 @@ const Clip = memo(function Clip({ k, track, video, left, width, height, name, le
       <span className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
       <span className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/30" />
       {on && <span className="pointer-events-none absolute inset-0 rounded-[3px] border-2 border-[#e8483f]" />}
+      {own && w > 16 && (
+        <span data-own={own} aria-label={`Own setting: ${own}`} title={`Own setting: ${own}`}
+          className="absolute top-0.5 right-1 z-[2] inline-flex size-3.5 items-center justify-center rounded-sm bg-black/70 text-zinc-100">
+          <SlidersHorizontal className="size-2.5" strokeWidth={2} />
+        </span>
+      )}
       {vol && body >= 12 && w > 8 && (
         <svg className="pointer-events-none absolute top-0 left-0 z-[1] overflow-visible" style={{ width: "100%", height: body }} viewBox="0 0 1 1" preserveAspectRatio="none">
           <path d={vol} fill="none" stroke="rgb(0 0 0 / 0.55)" strokeWidth={3} vectorEffect="non-scaling-stroke" />

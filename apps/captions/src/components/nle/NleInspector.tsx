@@ -8,8 +8,8 @@ import { PROFILES, type CameraLut, type Profile } from "@contracts/camera";
 import type { TimelineItem, TimelineView } from "@contracts/edit-timeline";
 import type { Grade } from "@contracts/grade";
 import {
-  find, handlesAt, isPlain, isVideo, lengthOf, maxLen, move, NO_MARKS, partsOf, putParts, rateOf, resetFields, setFades, setItems, setSpeed, slip,
-  timecode, trim, withLinked, type Flip, type NleItem, type NleTimeline,
+  find, handlesAt, isPlain, isVideo, lengthOf, maxLen, move, NO_MARKS, partsOf, processingOf, putParts, rateOf, resetFields, setClipProcessing, setFades,
+  setItems, setSpeed, setTimelineProcessing, slip, timecode, trim, withLinked, type Flip, type NleItem, type NleTimeline,
 } from "@/lib/nle/model";
 import { runAll, type NleRun } from "@/lib/nle/commands";
 import { onKey, soundsAtCut } from "@/lib/nle/inspector-commands";
@@ -80,7 +80,7 @@ export type NleProcessingView = {
   keys: string[];
 };
 
-export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave, text, audio }: {
+export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhead = 0, transKey = null, onRun, hist, onHistory, autosaves = [], onAutosave, text, audio, processing = [], readOnly = false }: {
   /** the timeline as committed (what a change is made from) */
   tl: NleTimeline;
   keys: string[];
@@ -105,6 +105,10 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
   text?: ReactNode;
   /** at the top of the Audio tab: the page's own controls for the selection's sound */
   audio?: (s: NleAudioSlot) => ReactNode;
+  /** the page's processings: a section each in the Timeline tab and in its clip tab */
+  processing?: NleProcessing[];
+  /** the processings' values shown, no controls */
+  readOnly?: boolean;
 }) {
   const [pref, setPref] = useState<Tab>(lastTab);
   const fps = tl.timeline.fps;
@@ -123,6 +127,10 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
     setPref(t);
   };
   const first = hits[0];
+  const pe: ProcEdit = { tl, onLive, onCommit, readOnly, toTimeline: () => pick("timeline") };
+  const own = (t: "video" | "audio", on: string[]) => processing.filter((p) => p.tab === t).map((p) => (
+    <ClipProcessing key={p.name} p={p} e={pe} keys={on.filter((k) => { const h = find(tl, k); return !!h && (p.applies?.(h.item, h.track, tl) ?? true); })} />
+  ));
 
   return (
     <Panel title="Inspector" className="flex-1" bar={first ? (
@@ -142,10 +150,14 @@ export function NleInspector({ tl, keys, nameOf, onLive, onCommit, notes, playhe
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-scroll bg-[#19191c] pb-4 text-[11.5px]" role="tabpanel">
-        {tab === "timeline" ? <TimelineTab tl={tl} onCommit={onCommit} notes={notes} onRun={e.onRun} />
+        {tab === "timeline" ? (
+          <TimelineTab tl={tl} onCommit={onCommit} notes={notes} onRun={e.onRun}>
+            {processing.map((p) => <TimelineProcessing key={p.name} p={p} e={pe} />)}
+          </TimelineTab>
+        )
           : tab === "history" ? <HistoryTab hist={hist!} onHistory={onHistory ?? (() => {})} autosaves={autosaves} onAutosave={onAutosave ?? (() => {})} />
-          : tab === "video" ? (trans ? <TransitionTab {...e} k={trans} /> : <>{text}<VideoTab {...e} keys={videos} /></>)
-          : tab === "audio" ? <>{audio?.({ tl, keys: sounds, onLive, onCommit })}<AudioTab {...e} keys={sounds} /></>
+          : tab === "video" ? (trans ? <TransitionTab {...e} k={trans} /> : <>{text}{own("video", videos)}<VideoTab {...e} keys={videos} /></>)
+          : tab === "audio" ? <>{audio?.({ tl, keys: sounds, onLive, onCommit })}{own("audio", sounds)}<AudioTab {...e} keys={sounds} /></>
           : tab === "color" ? <ColorTab {...e} keys={videos} nameOf={nameOf} onClose={() => pick("video")} />
           : <FileTab {...e} item={first!.item} keys={hits.map((h) => h.item._k!)} fps={fps} />}
       </div>
@@ -354,7 +366,7 @@ function FileTab({ item, keys, fps, ...e }: Edit & { item: NleItem; keys: string
   );
 }
 
-function TimelineTab({ tl, onCommit, notes, onRun }: { tl: NleTimeline; onCommit: (tl: NleTimeline) => void; notes?: ReactNode; onRun: Edit["onRun"] }) {
+function TimelineTab({ tl, onCommit, notes, onRun, children }: { tl: NleTimeline; onCommit: (tl: NleTimeline) => void; notes?: ReactNode; onRun: Edit["onRun"]; children?: ReactNode }) {
   const t = tl.timeline;
   const fps = t.fps;
   const n = Object.values(tl.tracks).reduce((a, x) => a + x.items.length, 0);
@@ -372,6 +384,7 @@ function TimelineTab({ tl, onCommit, notes, onRun }: { tl: NleTimeline; onCommit
         <Row label="Length"><span className="font-mono tabular-nums text-zinc-300">{(len / fps).toFixed(2)} s · {len} f</span></Row>
         <Row label="Clips"><span className="tabular-nums text-zinc-400">{n} on {Object.keys(tl.tracks).length} tracks</span></Row>
       </Section>
+      {children}
       <Section title="Markers">
         {tl.markers?.length ? [...tl.markers].sort((a, b) => a.frame - b.frame).map((m, i) => (
           <button key={i} type="button" title={typeof m.note === "string" && m.note ? m.note : undefined}
@@ -385,6 +398,75 @@ function TimelineTab({ tl, onCommit, notes, onRun }: { tl: NleTimeline; onCommit
       </Section>
       {notes && <div className="px-3 pt-2 text-zinc-500">{notes}</div>}
     </>
+  );
+}
+
+type ProcEdit = Pick<Edit, "tl" | "onLive" | "onCommit"> & { readOnly: boolean; toTimeline: () => void };
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** A processing's section in the Timeline tab: the timeline's setting, what every clip without its own follows. */
+function TimelineProcessing({ p, e }: { p: NleProcessing; e: ProcEdit }) {
+  const put = (v: unknown) => setTimelineProcessing(e.tl, p.name, v);
+  return (
+    <Section title={p.title}>
+      {p.render({
+        value: e.tl.timeline.processing?.[p.name] ?? p.def, mixed: false, readOnly: e.readOnly, scope: "timeline", tl: e.tl, keys: [],
+        set: (v, done) => (done ? e.onCommit(put(v), p.title) : e.onLive(put(v))),
+      })}
+    </Section>
+  );
+}
+
+/**
+ * A processing's section in a clip tab, for clips `keys` (the ones it applies to): "Same as timeline" shows the
+ * timeline's setting, read only; "This clip only" gives each clip its own, starting from what it followed.
+ */
+function ClipProcessing({ p, e, keys }: { p: NleProcessing; e: ProcEdit; keys: string[] }) {
+  if (!keys.length) return null;
+  const items = keys.map((k) => find(e.tl, k)!.item);
+  const owned = items.filter((i) => i.processing?.[p.name] !== undefined).length;
+  const ownAll = owned === items.length;
+  const values = items.map((i) => processingOf(e.tl, i, p.name) ?? p.def);
+  const mixed = values.some((v) => !same(v, values[0]));
+  const tlValue = e.tl.timeline.processing?.[p.name] ?? p.def;
+  const only = keys.length > 1 ? "These clips only" : "This clip only";
+  const choose = (mine: boolean) =>
+    mine ? e.onCommit(setClipProcessing(e.tl, keys.filter((_, i) => items[i].processing?.[p.name] === undefined), p.name, tlValue), `${p.title}: ${only.toLowerCase()}`)
+      : e.onCommit(setClipProcessing(e.tl, keys, p.name, undefined), `${p.title}: same as timeline`);
+  const put = (v: unknown) => setClipProcessing(e.tl, keys, p.name, v);
+  const states: [boolean, string][] = [[false, "Same as timeline"], [true, only]];
+  return (
+    <Section title={p.title}>
+      {e.readOnly ? (
+        <p className="px-2 text-zinc-400">{owned === 0 ? "Same as timeline" : ownAll ? only : "Mixed"}</p>
+      ) : (
+        <div role="radiogroup" aria-label={`${p.title} setting`} className="flex gap-1 px-2">
+          {states.map(([mine, label]) => {
+            const on = mine ? ownAll : owned === 0;
+            return (
+              <button key={label} type="button" role="radio" aria-checked={on} onClick={() => !on && choose(mine)}
+                className={cn("rounded-sm px-2 py-1", on ? "bg-zinc-700 text-zinc-50" : "bg-white/5 text-zinc-300 hover:bg-white/10 hover:text-zinc-100")}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {mixed && <p className="px-2 text-zinc-400">Mixed</p>}
+      {owned === 0 ? (
+        <>
+          {p.render({ value: tlValue, mixed: false, readOnly: true, scope: "timeline", tl: e.tl, keys, set: () => {} })}
+          {!e.readOnly && (
+            <button type="button" onClick={e.toTimeline} className="justify-self-start px-2 text-zinc-300 underline-offset-2 hover:text-zinc-50 hover:underline">
+              Edit timeline setting
+            </button>
+          )}
+        </>
+      ) : p.render({
+        value: values[0], mixed, readOnly: e.readOnly, scope: "clip", tl: e.tl, keys,
+        set: (v, done) => (done ? e.onCommit(put(v), p.title) : e.onLive(put(v))),
+      })}
+    </Section>
   );
 }
 
