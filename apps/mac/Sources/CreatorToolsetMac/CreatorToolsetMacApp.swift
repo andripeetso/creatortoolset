@@ -251,7 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the last window closed: out of the Dock and the app switcher, still in the menu bar (Shell.showWindow brings it back)
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
             let closing = note.object as? NSWindow
-            DispatchQueue.main.async {
+            RunLoop.main.perform {   // not a main-queue block: its runModal would hold dictation back (UpdateDriver)
                 guard !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) else { return }
                 NSApp.setActivationPolicy(.accessory)
                 let key = "keepsRunningSaid"
