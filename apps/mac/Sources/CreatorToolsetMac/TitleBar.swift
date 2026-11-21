@@ -355,6 +355,8 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // a download named "….ctalpha.mp4" becomes a see-through video (AlphaVideo.swift): the editor offers no
         // background only where this is set (mac-record.ts)
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macRecordAlpha = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // "record-save-as:<file name>" asks where the screen editor's Export goes before it is made (mac-record.ts askSavePlace)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macSaveAs = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // ctlocal:// takes several requests at once from '2' on (ProjectScheme.swift); in an older app the page reads a
         // recording's files one after another instead. '3': it also serves ctlocal://media/ (an edit's originals from
         // the granted folders, MediaFiles.swift). src/lib/local-files.ts

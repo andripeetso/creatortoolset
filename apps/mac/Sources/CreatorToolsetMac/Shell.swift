@@ -95,6 +95,8 @@ final class Shell: NSObject, ObservableObject {
     /// Every other download, by where it goes: shown in Finder when it is there (owner, 2026-11-12: "Okay, downloaded,
     /// but it's like from where and what and how").
     private var plainDownloads: [WKDownload: URL] = [:]
+    /// The screen editor's exports, by file name: where each goes, asked before it is made (askExportPlace)
+    private var exportPlaces: [String: URL] = [:]
     /// The see-through video being made; the page's Stop ends it ("record-alpha-stop").
     private var alphaTask: Task<Void, Never>?
     /// Recordings whose camera file is being searched for the face (findFaces).
@@ -680,9 +682,25 @@ final class Shell: NSObject, ObservableObject {
         case "trash": if let project { recorder.delete(project) }   // the page has asked
         case "delete": if let project { recorder.delete(project, asking: true) }   // a page from before "trash"
         case "alpha-stop": alphaTask?.cancel()   // the editor's Stop while its see-through video is made
+        case "save-as": askExportPlace(parts.dropFirst().joined(separator: ":"))   // the editor's Export, before it is made
         default: break   // "state": only the answer
         }
         pushRecorderState()
+    }
+
+    /// Where an export goes, asked when Export is pressed (the page's "record-save-as:<file name>"), not after minutes
+    /// of making it: the download of that name is then written there. The page hears 'mac-save-as' {ok}.
+    private func askExportPlace(_ name: String) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = name
+        panel.allowedContentTypes = [.mpeg4Movie]
+        let chosen = { [weak self] (response: NSApplication.ModalResponse) in
+            guard let self else { return }
+            let place = response == .OK ? panel.url : nil
+            if let place { self.exportPlaces[name] = place }
+            self.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('mac-save-as', {detail: {ok: \(place != nil)}}))")
+        }
+        if let window = webView.window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { panel.begin(completionHandler: chosen) }
     }
 
     /// The recordings on this Mac, for the /record page ('mac-recordings').
@@ -1188,6 +1206,11 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
             }
             if let window = webView.window { panel.beginSheetModal(for: window, completionHandler: chosen) } else { panel.begin(completionHandler: chosen) }
             return
+        }
+        if let place = exportPlaces.removeValue(forKey: suggestedFilename) {
+            try? FileManager.default.removeItem(at: place)   // the panel asked before replacing it
+            plainDownloads[download] = place
+            return completionHandler(place)
         }
         let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         let file = uniqueURL(in: folder, named: suggestedFilename)
