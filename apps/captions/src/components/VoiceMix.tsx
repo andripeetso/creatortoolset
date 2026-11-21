@@ -12,7 +12,8 @@ import { SyncedSound } from "@/lib/synced-sound";
  * `save` keeps the choice for the edit (only for an AI Editor version).
  */
 /** The choices a version's sound offers: Off, then each enhanced voice its stems list (keys set by the editor that made them). */
-const label = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
+// "chain": an editor's own cleanup chain (filters, no AI), said as what it does
+const label = (key: string) => (key === "chain" ? "Cleanup" : key.charAt(0).toUpperCase() + key.slice(1));
 
 export function VoiceMix({ video, stems: given, url, muted, onLive, save }: {
   video: RefObject<HTMLVideoElement | null>;
