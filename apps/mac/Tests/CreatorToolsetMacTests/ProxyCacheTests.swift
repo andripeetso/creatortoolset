@@ -84,6 +84,43 @@ final class ProxyCacheTests: XCTestCase {
         XCTAssertNil(ProxyCache.allowed(page: page))
     }
 
+    /// A page that plays proxies before any places check (the editor on a fresh launch): its server is asked for the
+    /// account on the first request, once for all the requests that come together, and signed out nothing is served.
+    func testTheFirstProxyRequestAsksForTheAccountOnce() async throws {
+        let site = FakeSite()
+        let mine = try proxy(site.url, "alice", "v1")
+        site.answer = { r in
+            if r.path == "/api/auth/check" {
+                Thread.sleep(forTimeInterval: 0.3)   // still asking while the others arrive
+                return (200, #"{"authed":true,"user":{"username":"alice"},"viewedBy":null}"#)
+            }
+            return (404, "{}")
+        }
+        let page = site.url.appendingPathComponent("editor/p1")
+        XCTAssertNil(ProxyCache.allowed(page: page))
+        let answers = await withTaskGroup(of: String?.self) { group in
+            for _ in 0..<22 { group.addTask { await ProxyCache.allowed(page: page) { Site(base: page, cookies: []) } } }
+            return await group.reduce(into: [String?]()) { $0.append($1) }
+        }
+        XCTAssertEqual(answers.count, 22)
+        for cache in answers { XCTAssertEqual(MediaFiles.gate(mine, granted: [], roots: [], cache: cache), .file(mine, type: "video/mp4")) }
+        XCTAssertEqual(site.requests.filter { $0.path == "/api/auth/check" }.count, 1)
+        // known now: no more asking
+        site.forget()
+        let again = await ProxyCache.allowed(page: page) { Site(base: page, cookies: []) }
+        XCTAssertNotNil(again)
+        XCTAssertTrue(site.requests.isEmpty)
+
+        // signed out: still refused
+        let out = FakeSite()
+        let theirs = try proxy(out.url, "alice", "v1")
+        out.answer = { _ in (200, #"{"authed":false,"user":null}"#) }
+        let outPage = out.url.appendingPathComponent("editor/p1")
+        let cache = await ProxyCache.allowed(page: outPage) { Site(base: outPage, cookies: []) }
+        XCTAssertNil(cache)
+        XCTAssertEqual(MediaFiles.gate(theirs, granted: [], roots: [], cache: cache), .status(403))
+    }
+
     func testOnlyAPlainAccountNameIsAFolder() {
         let server = URL(string: "https://studio.example.com")!
         for name in ["", "..", "../bob", "a/b", ".hidden", "tïny"] { XCTAssertNil(ProxyCache.folder(server: server, account: name), name) }

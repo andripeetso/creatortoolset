@@ -86,9 +86,17 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         // with the proxy cache of the account signed in on the page's own server (ProxyCache.swift)
         let workspace = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ws" }?.value
         let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(webView.url, workspace), ProxyCache.allowed(page: webView.url)) }
+        // no account known yet for the page's server (no places check ran): a refused file is asked again once it is
+        let store = webView.configuration.websiteDataStore.httpCookieStore
+        let ask: (() async -> String?)? = cache != nil ? nil : webView.url.map { page in {
+            await ProxyCache.allowed(page: page) { @MainActor in
+                let all = await withCheckedContinuation { c in store.getAllCookies { c.resume(returning: $0) } }
+                return Site(base: page, cookies: cookies(for: page, in: all))
+            }
+        } }
         DispatchQueue.global(qos: .userInitiated).async {
             self.serve(url, method: request.httpMethod, range: request.value(forHTTPHeaderField: "Range"),
-                       root: root, granted: granted, cache: cache, task: task)
+                       root: root, granted: granted, cache: cache, ask: ask, task: task)
         }
     }
 
@@ -96,11 +104,21 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         live[ObjectIdentifier(urlSchemeTask)] = nil
     }
 
-    private func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?, task: WKURLSchemeTask) {
+    private func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?,
+                       ask: (() async -> String?)? = nil, task: WKURLSchemeTask) {
         guard method == "GET" else { return reply(task, url, 405, ["Allow": "GET"]) }
         if url.host == MediaFiles.host {
             guard let path = MediaFiles.path(from: url) else { return reply(task, url, 404) }
             switch MediaFiles.gate(path, granted: granted, cache: cache, firstRead: true) {
+            case .status(403) where ask != nil:
+                // the page marks a refused file bad for good, so the account is asked before answering (off this thread)
+                Task {
+                    let cache = await ask!()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        self.serve(url, method: method, range: range, root: root, granted: granted, cache: cache, task: task)
+                    }
+                }
+                return
             case .status(let status): return reply(task, url, status)
             case .diskAway(let disk):
                 let body = (try? JSONSerialization.data(withJSONObject: ["state": "disk_away", "disk": disk])) ?? Data()

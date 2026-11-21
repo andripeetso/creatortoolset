@@ -286,6 +286,25 @@ enum ProxyCache {
         return folder(server: page, account: account)?.path
     }
 
+    /// per server: the account check under way, so the many first requests of a page make one
+    private static var asking: [String: Task<Void, Never>] = [:]
+
+    /// `allowed(page:)`, with the page's server asked for the window's account first when none is known yet (a page
+    /// that plays proxies before any places check, such as the editor). Nil when signed out.
+    static func allowed(page: URL?, site: @escaping () async -> Site) async -> String? {
+        if let known = allowed(page: page) { return known }
+        guard let page, page.scheme == "http" || page.scheme == "https" else { return nil }
+        let k = key(page)
+        let check = lock.withLock {
+            if let running = asking[k] { return running }
+            let running = Task { _ = await account(await site()); lock.withLock { asking[k] = nil } }
+            asking[k] = running
+            return running
+        }
+        await check.value
+        return allowed(page: page)
+    }
+
     /// The ctlocal://media address of a version's proxy in `folder`, only when the media gate serves it from there (its
     /// real path inside the folder); nil when it isn't there (a download still going is a .part).
     static func url(_ version: String, in folder: URL) -> String? {
