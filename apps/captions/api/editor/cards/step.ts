@@ -288,7 +288,8 @@ async function place(editId: string, variant: string, st: CardsState): Promise<v
   if (clips.length || had) {
     const laid = placeCards(draft.timeline, clips);
     left.push(...laid.notes);
-    await saveDraft(editId, variant, { ...draft, timeline: laid.timeline });
+    // a new cut the AI made: looked at again before Review (critique.ts), an earlier look's verdict gone with the old cut
+    await saveDraft(editId, variant, { timeline: laid.timeline, notes: draft.notes, due: 1 });
   }
   if (left.join("\n") !== (st.left ?? []).join("\n")) await saveCards(editId, variant, { ...st, left });
 }

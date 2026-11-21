@@ -164,7 +164,7 @@ describe("the look at a planned cut before Review", () => {
     expect([d.due, d.critique]).toEqual([undefined, { ok: false, fails: [{ n: 2, why: TOWN, at: 1, dur: 1 }], round: 1 }]);
   }, 120_000);
 
-  it("a talking-head cut is never looked at: its preview is filed as before", async () => {
+  it("a cut the person saved (not the AI's) is never looked at: its preview is filed as before", async () => {
     expect(nextFor("preview", {}, NEXT)).toEqual(["file"]);
     expect(nextFor("preview", {}, NEXT, [], true)).toEqual(["critique"]);
     const e = (await createEdit("mem-a", { name: "Tiny Acrobatics talk", sources: ["ver_a"] }))!;
@@ -203,6 +203,40 @@ describe("the look at a planned cut before Review", () => {
       rmSync(file);
     }
   }, 120_000);
+});
+
+describe("the look at a cut around speech before Review", () => {
+  it("is looked at shot by shot with what is said, and the render's own problems are named on it", async () => {
+    const e = (await createEdit("mem-a", { name: "Tiny Acrobatics talk", sources: ["ver_a"] }))!;
+    const src = { versionId: "ver_a", name: "Tiny Acrobatics arena", fps: 30, tc: 0, dur: 300, w: 320, h: 180 };
+    // the last shot is a take with no picture (as a recorder's is): the render ends on black
+    const t: Timeline = { name: "Talk v1", fps: 30, width: 320, height: 180, sources: { ver_a: src, ver_b: { ...src, versionId: "ver_b", name: "Recorder", w: 0, h: 0 } }, tracks: emptyTracks(), markers: [] };
+    const shots = [["ver_a", 0], ["ver_a", 100], ["ver_b", 0]] as const;
+    t.tracks.V1.items = shots.map(([s, i], k) => ({ src: s, in: i, len: 30, rec: 30 * k, link: `c${k + 1}` }));
+    t.tracks.A1.items = shots.map(([s, i], k) => ({ src: s, in: i, len: 30, rec: 30 * k, link: `c${k + 1}` }));
+    await saveDraft(e.id, "v1", { timeline: t, notes: [], due: 1 });
+    expect(await run(e, "preview")).toEqual(doneAll(["preview", "critique", "file"]));
+    expect(looks).toHaveLength(1);
+    expect(looks[0]!.user).toContain('1. 0.00–1.00 s · speaker · "Tiny Acrobatics arena" at 0:00');
+    expect(looks[0]!.user).toContain('2. 1.00–2.00 s · speaker · "Tiny Acrobatics arena" at 0:03');
+    expect(looks[0]!.user).toContain('3. 2.00–3.00 s · speaker · "Recorder" at 0:00');
+    const black = { n: 3, why: "the video ends on black", at: 2, dur: 1 };
+    const v = (await readMeta(readStep(e.id, "review")!.v1!.assetId))!.versions;
+    expect(v[0]!.draft).toEqual({ edit: e.id, name: "v1", by: "mem-a", fails: [black] });
+    expect(readDraft(e.id, "v1")).toMatchObject({ critique: { ok: false, fails: [black] } });
+  }, 120_000);
+
+  it("reads the shots its picture shows: a cutaway over the speaker plays where it lies", async () => {
+    const { pictureShots } = await import("./critique");
+    const t: Timeline = { name: "t", fps: 30, width: 320, height: 180, sources: { a: { versionId: "a", name: "A", fps: 60, tc: 0, dur: 9000, w: 320, h: 180 } }, tracks: emptyTracks(), markers: [] };
+    t.tracks.V1.items = [{ src: "a", in: 0, len: 90, rec: 0 }];
+    t.tracks.V2.items = [{ src: "b", in: 30, len: 30, rec: 30 }];
+    expect(pictureShots(t)).toEqual([
+      { at: 0, dur: 1, src: "a", inS: 0, cutaway: false },
+      { at: 1, dur: 1, src: "b", inS: 1, cutaway: true },
+      { at: 2, dur: 1, src: "a", inS: 2, cutaway: false },
+    ]);
+  });
 });
 
 describe("the look's parts", () => {
