@@ -83,10 +83,12 @@ final class ResolveBridgeTests: XCTestCase {
         let fake = """
         local function folder(n) return { n = n, subs = {}, clips = {}, GetName = function(s) return s.n end,
           GetSubFolderList = function(s) return s.subs end, GetClipList = function(s) return s.clips end } end
-        local function clip(n, kind) return { n = n, GetName = function(s) return s.n end, GetClipProperty = function(s, k) return { Type = kind } end } end
+        local ids = 0
+        local function clip(n, kind) ids = ids + 1; local id = "id" .. ids
+          return { n = n, GetName = function(s) return s.n end, GetUniqueId = function() return id end, GetClipProperty = function(s, k) return { Type = kind } end } end
         local master, timelines = folder("Master"), folder("Timelines")
         master.subs[1] = timelines
-        timelines.clips = { clip("Cut", "Timeline"), clip("Cut (2)", "Timeline"), clip("Cut (2) old", "Timeline"), clip("Other", "Timeline") }
+        timelines.clips = { clip("Cut", "Timeline"), clip("Cut (2)", "Timeline"), clip("Cut (2) old", "Timeline"), clip("Other", "Timeline"), clip("My still", "Still") }
         local current = master
         local pool = {
           GetRootFolder = function() return master end, GetCurrentFolder = function() return current end,

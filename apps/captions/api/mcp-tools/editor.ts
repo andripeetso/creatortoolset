@@ -105,7 +105,7 @@ export const editorTools: ToolModule = {
       const before = await ctx.json(path);
       const body: Args = Object.fromEntries(sent.map((k) => [FIELDS[k], a[k]]));
       if (a.broll_folder != null && /^(none)?$/i.test(String(a.broll_folder).trim())) body.brollCollectionId = null;
-      if (typeof a.intro === "string") body.intro = null;
+      if (typeof a.intro === "string") body.intro = /^(none)?$/i.test(a.intro.trim()) ? null : { source: a.intro.trim() };
       if (a.flags != null) {
         // the route drops a flag it does not know and says nothing: refused here, with the ones there are
         const defs = (before.flagDefs as Args[] | undefined) ?? [];

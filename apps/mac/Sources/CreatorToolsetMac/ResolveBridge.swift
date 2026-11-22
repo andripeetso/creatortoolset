@@ -195,7 +195,13 @@ end
 local was = pool:GetCurrentFolder()
 local root = pool:GetRootFolder()
 local timelines = root and bin(root, "Timelines")
-if timelines then pool:SetCurrentFolder(timelines) end
+-- the clips the bin holds before the import, by id: only what the import adds is moved (the person's own stay put)
+local function uid(c) local ok, id = pcall(function() return c:GetUniqueId() end); return ok and id or nil end
+local before = {}
+if timelines then
+  pool:SetCurrentFolder(timelines)
+  for _, c in pairs(timelines:GetClipList() or {}) do local id = uid(c); if id then before[id] = true end end
+end
 local options = { timelineName = title, importSourceClips = true }
 if media ~= "" then options.sourceClipsPath = media end
 local timeline = pool:ImportTimelineFromFile(otio, options)
@@ -205,15 +211,18 @@ if not timeline then
 end
 project:SetCurrentTimeline(timeline)
 if timelines then
-  -- the clips the import made land beside the timeline: footage goes to Footage, the draft's earlier imports
-  -- (its name, or its name numbered) to Earlier cuts. Nothing is deleted.
+  -- the clips the import added land beside the timeline: footage goes to Footage; the draft's earlier imports (its
+  -- name, or its name numbered) go to Earlier cuts. A clip whose id can't be read stays where it is. Nothing is deleted.
   local older, footage = {}, {}
   for _, c in pairs(timelines:GetClipList() or {}) do
-    local kind = c:GetClipProperty("Type")
-    if type(kind) == "table" then kind = kind.Type end
-    local n = c:GetName()
-    if kind ~= "Timeline" then footage[#footage + 1] = c
-    elseif n ~= title and (n == name or n:sub(1, #name + 2) == name .. " (" and n:sub(#name + 3):match("^%d+%)$")) then older[#older + 1] = c end
+    local id, n = uid(c), c:GetName()
+    if id and not before[id] then
+      if n ~= title then footage[#footage + 1] = c end
+    elseif id then
+      local kind = c:GetClipProperty("Type")
+      if type(kind) == "table" then kind = kind.Type end
+      if kind == "Timeline" and n ~= title and (n == name or n:sub(1, #name + 2) == name .. " (" and n:sub(#name + 3):match("^%d+%)$")) then older[#older + 1] = c end
+    end
   end
   if #older > 0 then local earlier = bin(timelines, "Earlier cuts"); if earlier then pool:MoveClips(older, earlier) end end
   if #footage > 0 then local f = bin(root, "Footage"); if f then pool:MoveClips(footage, f) end end

@@ -90,6 +90,8 @@ function linked(draft: Timeline, v1: Item[], a1: Item[]): { V1: Item[]; A1: Item
   const V1: Item[] = [];
   const A1: Item[] = [];
   let n = 0;
+  // the draft's intro (intro.ts): the piece of its video that still opens the cut stays the intro
+  const intro = draft.tracks.V1.items.find((i) => i.link === "intro" && i.rec === 0)?.src;
   for (const v of v1) {
     const edges = [...new Set([v.rec, end(v), ...a1.flatMap((a) => [a.rec, end(a)]).filter((f) => f > v.rec && f < end(v))])].sort((x, y) => x - y);
     for (let k = 1; k < edges.length; k++) {
@@ -98,7 +100,7 @@ function linked(draft: Timeline, v1: Item[], a1: Item[]): { V1: Item[]; A1: Item
       const { link: _l, ...pic } = cutAt(v, a, b);
       if (!voice) V1.push(pic);
       else {
-        const link = `c${++n}`;
+        const link = a === 0 && v.src === intro ? "intro" : `c${++n}`;
         V1.push({ ...pic, link });
         A1.push({ ...cutAt(voice, a, b), link });
       }

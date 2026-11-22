@@ -139,7 +139,7 @@ export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number,
     "setsar=1",
     `fps=${den}/${num}`,
     ...(colour ? [colour] : []),
-    "format=yuv420p",
+    clear ? "format=yuva420p" : "format=yuv420p",
   ].join(",");
 }
 

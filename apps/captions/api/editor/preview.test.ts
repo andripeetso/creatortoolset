@@ -208,7 +208,11 @@ describe("AI Editor preview", () => {
     const at = (x: number, y: number) => f[y * 360 + x]!;
     const blueGrey = frame(blue, 0)[0]!;
     expect(Math.abs(at(60, 520) - blueGrey)).toBeLessThanOrEqual(3); // inside the corner: the reaction
-    expect(new Set([at(300, 100), at(200, 300), at(300, 600)].map((v) => Math.abs(v - blueGrey) <= 3)).has(false)).toBe(true); // his picture around it
+    // around it, his picture as it is without the reaction (never a black frame the corner sits in)
+    const plain = path.join(dir, "reaction-none.mp4");
+    await renderPreview(timeline(), { ver_a: fixture }, plain);
+    const g = frame(plain, 25);
+    for (const [x, y] of [[300, 100], [200, 300], [300, 600], [20, 300]] as const) expect(Math.abs(at(x, y) - g[y * 360 + x]!)).toBeLessThanOrEqual(12);
   }, 60_000);
 
   it("an edit's intro is kept only with clips the person may read, and its clips count as the edit's", async () => {

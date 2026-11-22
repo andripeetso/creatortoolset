@@ -179,7 +179,8 @@ export function applyEdits(tl: Timeline, edits: ItemEdit[]): Timeline {
       const here = { in: srcAt(k0), len: k - k0, rec: rec + k0, ...(path?.length ? { path } : {}), ...hand };
       if (silent(k0)) tracks.V1.items.push({ ...shot, ...here });
       else {
-        const link = `c${++links}`;
+        // the intro (intro.ts) stays the intro while it still opens the cut
+        const link = orig.link === "intro" && rec + k0 === 0 ? "intro" : `c${++links}`;
         tracks.V1.items.push({ ...shot, ...here, link });
         tracks.A1.items.push({ ...voice!, in: voice!.in + toSrc(start + k0 - voice!.rec, voice!.src), len: k - k0, rec: rec + k0, link });
       }

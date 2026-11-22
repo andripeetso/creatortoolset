@@ -4,6 +4,7 @@ import { importTimeline, timelineSources } from "../../contracts/timeline-import
 import { toEdl } from "./edl";
 import { toFcp7Xml, toFcpxml } from "./fcpxml";
 import { otioText, toOtio } from "./otio";
+import { introLength, withIntro } from "./intro";
 import { formatOf, fromSentBack, SentBackRefused, sentBackSummary } from "./sent-back";
 import { emptyTracks, sourceOf } from "./timeline";
 
@@ -34,7 +35,7 @@ function draft(): Timeline {
   tl.tracks.V2.items = [{ src: "ver_c", in: 30, len: 20, rec: 50, zoom: 1.2 }];
   return tl;
 }
-const files: Record<string, string> = { ver_a: "/Users/tiny/Footage/Take A.mov", ver_b: "/Users/tiny/Footage/Take B.mov", ver_c: "/Users/tiny/Footage/Crash mat.mov" };
+const files: Record<string, string> = { ver_a: "/Users/tiny/Footage/Take A.mov", ver_b: "/Users/tiny/Footage/Take B.mov", ver_c: "/Users/tiny/Footage/Crash mat.mov", ver_i: "/Users/tiny/Footage/Their video.mov" };
 const writers = {
   "Tiny.otio": (tl: Timeline) => otioText(toOtio(tl, files)),
   "Tiny.fcpxml": (tl: Timeline) => toFcpxml(tl, files),
@@ -55,6 +56,15 @@ describe("next round from a timeline sent back", () => {
   for (const [name, write] of Object.entries(writers)) {
     it(`${name}: a draft sent back unchanged reads back as the same draft`, () => {
       expect(shape(back(name, write(draft())))).toEqual(shape(draft()));
+    });
+  }
+
+  for (const [name, write] of Object.entries(writers)) {
+    it(`${name}: an intro sent back is still the intro, so B-roll later stays off it`, () => {
+      const src = { versionId: "ver_i", name: "Their video", fps: 29.97, tc: 0, dur: 900, w: 1920, h: 1080 };
+      const tl = withIntro(draft(), { source: "ver_i" }, { a: 1, b: 3, text: "" }, src);
+      const back1 = back(name, write(tl), tl);
+      expect(introLength(back1)).toBe(introLength(tl));
     });
   }
 
