@@ -13,10 +13,12 @@ Only when the maintainer asked for it in this conversation. AGENTS.md, "Releases
 2. **Wait for the other agents.** `git status --short`: every change not committed is another agent's work in
    progress. Ask the maintainer which features are done; wait until those are committed. Never commit, stash or
    reset another agent's files.
-3. **Test.** `git pull --rebase --autostash`, then `pnpm test` and `pnpm check`. A failure in your own change: fix
-   it. Anything else: stop and tell the maintainer which test and which commit.
+3. **Pull.** `git pull --ff-only`. It leaves the other agents' changes as they are, and stops without touching
+   anything when one is in the way or main has gone two ways: then ask. No stash, no rebase.
 4. **Push and wait for CI.** `git push`, then wait until `gh run list --commit "$(git rev-parse HEAD)" --workflow
-   ci.yml` shows `success`. Red: fix, push, wait again. `release.sh` refuses a commit CI has not passed.
+   ci.yml` shows `success`. CI is the test: it runs `pnpm check` and `pnpm test` on the commit itself, where a run
+   in this folder would also test the other agents' unfinished changes. Red: fix what is yours, push, wait again;
+   anything else, tell the maintainer which test and which commit. `release.sh` refuses a commit CI has not passed.
 5. **Notes.** `git log v<last>..HEAD --format=%s` and write what a person gets, in plain words, one line each, into a
    file outside the repository.
 6. **Build.** From this checkout, with HEAD on the pushed commit, in the background (it takes a while):

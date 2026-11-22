@@ -153,7 +153,10 @@ Often several agents work in this one folder on `main` at once, each on its own 
 that are not yours are another agent's unfinished work.
 
 - Commit only what you changed, by path: `git commit -- <your files>`. Never `git add -A`, `commit -a`, a stash, a
-  checkout or a reset of files you did not change. In a file another agent also changed, commit your own lines only.
+  checkout or a reset of files you did not change. In a file another agent also changed, commit your own lines only,
+  through an index of your own, so what another agent staged stays out: `export GIT_INDEX_FILE=<scratch>/index`,
+  `git read-tree HEAD`, `git apply --cached <a patch of your lines>`, `git commit`, then `unset GIT_INDEX_FILE` and
+  `git reset -q -- <the file>`.
 - Run the tests of the files you changed before you commit. A failure in a file you did not touch may be another
   agent halfway through: say so rather than change it.
 - After a push, check CI on your commit (`gh run list --commit <sha>`) and fix what you broke. A server that deploys
