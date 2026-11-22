@@ -147,6 +147,21 @@ dedicated external disk when there is one, not in the repository or the home fol
 repository root) and `Caddyfile`; `apps/captions/scripts/setup-server.sh <domain>` writes `.env` and starts it. Do not change the image's user, its read-only root or its dropped capabilities without a reason
 written in the pull request.
 
+## Several agents in one checkout
+
+Often several agents work in this one folder on `main` at once, each on its own feature. The changes in the folder
+that are not yours are another agent's unfinished work.
+
+- Commit only what you changed, by path: `git commit -- <your files>`. Never `git add -A`, `commit -a`, a stash, a
+  checkout or a reset of files you did not change. In a file another agent also changed, commit your own lines only.
+- Run the tests of the files you changed before you commit. A failure in a file you did not touch may be another
+  agent halfway through: say so rather than change it.
+- After a push, check CI on your commit (`gh run list --commit <sha>`) and fix what you broke. A server that deploys
+  from `main` takes a push live without a release.
+- Never make a release unless the maintainer asked you to. One agent makes it, by the `ship` skill
+  (`.claude/skills/ship/SKILL.md`).
+- When you are done, say which commits are yours and stop.
+
 ## Releases
 
 The Mac app is released on this repository's GitHub Releases, and every installed copy updates itself from the
@@ -159,6 +174,7 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
   move a tag. The build number (the commit count) is what the updater compares, so release from `main` only.
 - Each release carries the disk image, `appcast.xml` (the update feed) and the source of the bundled FFmpeg
   (GPL). Don't drop any of the three.
+- `release.sh` refuses a commit CI has not passed and a version that has a release already, a draft included.
 - The notes list what a person gets, in plain words; `release.sh` drafts them from the commit subjects.
 - `CRITICAL=1` marks a release people must not skip (data loss, a broken link to the server): installed copies ask
   for the restart in a card at once. Keep it for those; everything else waits in the corner's Restart to update.

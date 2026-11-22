@@ -27,6 +27,11 @@ sha="$(git rev-parse HEAD)"
 git fetch -q origin --tags
 git merge-base --is-ancestor "$sha" origin/main || { echo "Push $sha to main first: a release is built from a pushed commit" >&2; exit 1; }
 ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null || { echo "$tag already exists" >&2; exit 1; }
+# a draft has no tag yet, so the line above misses one another run already made
+[ -z "$(gh release list --repo "$repo" --json tagName -q ".[] | select(.tagName == \"$tag\") | .tagName")" ] \
+  || { echo "A release $tag exists already (a draft?): gh release list --repo $repo" >&2; exit 1; }
+gh run list --repo "$repo" --workflow ci.yml --commit "$sha" --json conclusion -q '.[].conclusion' | grep -qx success \
+  || { echo "CI has not passed on $sha: wait for it to finish green (gh run list --commit $sha)" >&2; exit 1; }
 
 work="${CT_RELEASE_DIR:-$root/apps/mac/build/release}/$tag"
 rm -rf "$work" && mkdir -p "$work"
