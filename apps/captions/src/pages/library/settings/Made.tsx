@@ -7,7 +7,7 @@ import { confirmDialog } from "@/lib/dialogs";
 import { getMade, makeMissing } from "@/lib/library";
 
 const n = (x: number) => x.toLocaleString();
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const LOAD_FAILED = "Could not load what's made";
 
 /** The cost line of a confirm: what pays, and about how much when it is known. */
 export function costLine(m: Pick<LibraryMade, "cost" | "usd">): string {
@@ -27,13 +27,13 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
   const [busy, setBusy] = useState<string | null>(null);
   const load = useCallback(() => {
     setError(null);
-    return getMade(library.id).then(setMade, (e: unknown) => setError(message(e)));
+    return getMade(library.id).then(setMade, () => setError(LOAD_FAILED));
   }, [library.id]);
   useEffect(() => {
     let live = true;
     getMade(library.id).then(
       (m) => live && setMade(m),
-      (e: unknown) => live && setError(message(e)),
+      () => live && setError(LOAD_FAILED),
     );
     return () => {
       live = false;
@@ -46,8 +46,8 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
     try {
       await makeMissing(library.id, m.kind);
       await load();
-    } catch (e) {
-      setError(`Could not make ${label.toLowerCase()}: ${message(e)}`);
+    } catch {
+      setError(`Could not make ${label.toLowerCase()}`);
     } finally {
       setBusy(null);
     }

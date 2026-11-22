@@ -136,7 +136,7 @@ export default function LibraryPage() {
     setSort(v);
     persistSort(SORT_KEY, v);
   };
-  const [view, setView] = useLibraryView();
+  const [pickedView, setView] = useLibraryView();
   const [cardSize, setCardSize] = useCardSize();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const columns = cardSize === null ? undefined : cardColumns(cardSize);
@@ -159,6 +159,8 @@ export default function LibraryPage() {
    *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
   const me = useMe();
   const readOnly = !!library?.readOnly || (!!me && !canChange(me, "media"));
+  // Status is the owner's (its counts are the owner's routes): a library given to look at opens as Folders
+  const view = readOnly && pickedView === "status" ? "folders" : pickedView;
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!), { own: true });
@@ -999,7 +1001,7 @@ export default function LibraryPage() {
                       </Button>
                     )}
                     {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
-                    <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} />
+                    <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} status={!readOnly} />
                     <SortControls sort={sort} onSort={pickSort} />
                     {(watch || (changing && !firstScreen)) && (
                       <DropdownMenu modal={false}>
@@ -1022,9 +1024,11 @@ export default function LibraryPage() {
                               {needsAttention(watch) && <span aria-hidden className="ml-auto h-2 w-2 rounded-full bg-amber-500" />}
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem onSelect={() => setView("status")}>
-                            <Activity /> Library status
-                          </DropdownMenuItem>
+                          {!readOnly && (
+                            <DropdownMenuItem onSelect={() => setView("status")}>
+                              <Activity /> Library status
+                            </DropdownMenuItem>
+                          )}
                           {!trash && <SourceMediaItems canLook={canLook} onLook={() => void lookNow()} onError={setError} />}
                           {watch && !readOnly && !trash && library && redoKinds(library.settings).length > 0 && (
                             <>

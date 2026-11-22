@@ -8,7 +8,6 @@ import { Made } from "./settings/Made";
 
 const n = (x: number) => x.toLocaleString();
 const files = (x: number) => `${n(x)} ${x === 1 ? "file" : "files"}`;
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * The library's Status view (the View menu's Status, and the More menu's Library status): its files against what its
@@ -22,13 +21,13 @@ export function LibraryHealth({ library, watch, onSettings }: { library: Library
   const [busy, setBusy] = useState<string | null>(null);
   const load = useCallback(() => {
     setError(null);
-    return getStatus(library.id).then(setS, (e: unknown) => setError(message(e)));
+    return getStatus(library.id).then(setS, () => setError("Could not load the status"));
   }, [library.id]);
   useEffect(() => {
     let live = true;
     getStatus(library.id).then(
       (x) => live && setS(x),
-      (e: unknown) => live && setError(message(e)),
+      () => live && setError("Could not load the status"),
     );
     return () => {
       live = false;
@@ -39,8 +38,8 @@ export function LibraryHealth({ library, watch, onSettings }: { library: Library
     try {
       await retryFailed(library.id, kind);
       await load();
-    } catch (e) {
-      setError(`Could not retry: ${message(e)}`);
+    } catch {
+      setError("Could not retry");
     } finally {
       setBusy(null);
     }
@@ -59,7 +58,7 @@ export function LibraryHealth({ library, watch, onSettings }: { library: Library
               {adding > 0 && <Row title="Still to add" description={files(adding)} />}
               {!!watch?.missing && <Row title="Missing here" status={<Status tone="attention">{`${files(watch.missing)} not found in their folders`}</Status>} />}
               {s.unreadable > 0 && <Row title="Unreadable" status={<Status tone="broken">{`${files(s.unreadable)} could not be read as video or sound`}</Status>} />}
-              {s.leftOut?.map((x) => <Row key={x.computer} title="In the trash" description={leftOutLine(x)} />)}
+              {s.leftOut?.map((x) => <Row key={x.computer} title="Trash" description={leftOutLine(x)} />)}
               {s.hidden?.map((x) => <Row key={`h-${x.computer}`} title="Hidden" description={hiddenLine(x)} />)}
             </>
           )}

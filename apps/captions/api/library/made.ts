@@ -2,11 +2,12 @@ import { MADE_KINDS, SOUNDS, type LibraryMade, type MadeKind } from "../../contr
 import { PICTURE_MODEL } from "../lib/device-picture";
 import { keepsOnlyOriginals, libraryDb } from "./db";
 import { makeCost } from "./estimate";
+import { modelFor } from "./embed";
 import { enqueueJob } from "./jobs";
 import { wantsProxy } from "./media/proxy";
 import type { ProbeSummary } from "./media/probe";
 import { wakePictures } from "./pictures";
-import { LOOK_MIN_S } from "./shots";
+import { LOOK_MIN_S, queueLook } from "./shots";
 import { mayLeave } from "./upload-gate";
 
 /**
@@ -27,25 +28,57 @@ const LINES = has("stretches", " AND x.text != ''");
 /** Only a file this server holds: a file kept on a Mac has its pictures, waveform and fingerprint sent by that Mac. */
 const HERE = "v.source_key NOT LIKE 'mac:%'";
 
-/** Per kind: the job that makes it (none: a catch-up does), the files that can have it, what having it is, and which of the missing this server can queue. */
-const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: string }> = {
+/** SQL: `job` is queued or running for the version `v`. */
+function open(job?: string): string {
+  return job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = '${job}' AND j.state IN ('queued', 'running'))` : "0";
+}
+/** A file in the library when Make for the missing was pressed for `kind` (search by picture, timelines: their catch-ups make them). */
+const pressed = (kind: "pictures" | "timeline") => `v.created_at <= IFNULL(json_extract(l.settings, '$.${kind}Asked'), -1)`;
+
+/**
+ * Per kind: the job that makes it (none: a catch-up does), the files that can have it, what having it is, which of the
+ * missing this server can queue, and what counts as on its way (default: its job queued or running).
+ */
+const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: string; open?: string }> = {
   thumb: { job: "thumb", of: "a.kind IN ('video', 'image')", have: derived("thumb"), can: HERE },
   sprite: { job: "sprite", of: `a.kind = 'video' AND NOT ${MUSIC}`, have: derived("sprite"), can: HERE },
   wave: { job: "wave", of: "a.kind IN ('video', 'audio')", have: derived("wave"), can: HERE },
   fingerprint: { job: "fingerprint", of: `a.kind = 'video' AND NOT ${MUSIC}`, have: derived("fingerprint"), can: HERE },
   proxy: { job: "proxy", of: "a.kind = 'video'", have: derived("proxy") },
-  transcribe: { job: "transcribe", of: `a.kind IN ('video', 'audio') AND json_extract(v.probe, '$.acodec') IS NOT NULL AND NOT ${MUSIC}`, have: has("transcripts") },
+  // a video indexed on a Mac: its probe has no sound codec (on-mac.ts), and it gets a transcript all the same
+  transcribe: {
+    job: "transcribe",
+    of: `(a.kind = 'video' OR a.kind = 'audio') AND (json_extract(v.probe, '$.acodec') IS NOT NULL OR (a.kind = 'video' AND v.source_key LIKE 'mac:%')) AND NOT ${MUSIC}`,
+    have: has("transcripts"),
+  },
   describe: { job: "describe", of: `a.kind IN ('video', 'image') AND NOT ${MUSIC}`, have: has("descriptions") },
   embed: { job: "embed", of: `(${has("transcripts")} OR ${has("descriptions")})`, have: has("embeddings") },
-  pictures: { of: `a.kind IN ('video', 'image') AND ${derived("thumb", " AND x.storage_key IS NOT NULL")}`, have: has("pictures", ` AND x.seg = -1 AND x.model = '${PICTURE_MODEL}'`) },
-  look: { job: "look", of: LOOKABLE, have: LINES },
-  timeline: { job: "look", of: `${LOOKABLE} AND ${LINES}`, have: has("timelines", " AND x.error IS NULL") },
+  pictures: {
+    of: `a.kind IN ('video', 'image') AND ${derived("thumb", " AND x.storage_key IS NOT NULL")}`,
+    have: has("pictures", ` AND x.seg = -1 AND x.model = '${PICTURE_MODEL}'`),
+    open: pressed("pictures"),
+  },
+  // a look that ran and wrote no line counts as made: pressed again it would only spend again
+  look: { job: "look", of: LOOKABLE, have: `(${LINES} OR ${has("jobs", " AND x.kind = 'look' AND x.state = 'done'")})` },
+  // on its way: its look running, or pressed for with no watch since (one that failed after the press is missing again)
+  timeline: {
+    job: "look",
+    of: `${LOOKABLE} AND ${LINES}`,
+    have: has("timelines", " AND x.error IS NULL"),
+    open: `(${open("look")} OR (${pressed("timeline")} AND NOT ${has("timelines", " AND x.at >= json_extract(l.settings, '$.timelineAsked')")}))`,
+  },
 };
 
 /** The library's files now: current versions read, out of the trash, not hidden. */
 const LIVE = `FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
   WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.probe IS NOT NULL AND v.state NOT IN ('failed', 'missing')`;
-const open = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = '${job}' AND j.state IN ('queued', 'running'))` : "0");
+
+/** `kind`'s spec for `username`: search by meaning counts only vectors of the model their route makes now (a search compares only those). */
+function specOf(kind: MadeKind, username: string) {
+  const s = SPEC[kind];
+  const model = kind === "embed" ? modelFor(username) : null;
+  return { ...s, have: model ? has("embeddings", ` AND x.model = '${model.replace(/'/g, "''")}'`) : s.have, open: s.open ?? open(s.job) };
+}
 
 interface Missing {
   id: string;
@@ -53,11 +86,11 @@ interface Missing {
 }
 
 /** The files missing `kind` that this server can queue it for. A proxy only where one is wanted (media/proxy.ts) and may be kept. */
-function missingOf(libraryId: string, kind: MadeKind): Missing[] {
-  const s = SPEC[kind];
+function missingOf(libraryId: string, kind: MadeKind, username: string): Missing[] {
+  const s = specOf(kind, username);
   const rows = libraryDb()
     .prepare(
-      `SELECT v.id, v.probe, v.source_key, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of} AND NOT ${s.have} AND NOT ${open(s.job)}${s.can ? ` AND ${s.can}` : ""}`,
+      `SELECT v.id, v.probe, v.source_key, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of} AND NOT ${s.have} AND NOT ${s.open}${s.can ? ` AND ${s.can}` : ""}`,
     )
     .all(libraryId) as { id: string; probe: string; source_key: string; seconds: number }[];
   if (kind !== "proxy") return rows;
@@ -70,16 +103,16 @@ export async function libraryMade(libraryId: string, username: string): Promise<
   const db = libraryDb();
   const out: LibraryMade[] = [];
   for (const { kind } of MADE_KINDS) {
-    const s = SPEC[kind];
+    const s = specOf(kind, username);
     const r = db
       .prepare(
         `SELECT IFNULL(SUM(have), 0) AS have, IFNULL(SUM(NOT have AND open), 0) AS queued, IFNULL(SUM(NOT have AND NOT open AND can), 0) AS missing,
            IFNULL(AVG(CASE WHEN NOT have AND NOT open AND can THEN seconds END), 0) AS seconds
-         FROM (SELECT ${s.have} AS have, ${open(s.job)} AS open, ${s.can ?? "1"} AS can, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of})`,
+         FROM (SELECT ${s.have} AS have, ${s.open} AS open, ${s.can ?? "1"} AS can, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of})`,
       )
       .get(libraryId) as { have: number; queued: number; missing: number; seconds: number };
     // a proxy is missing only where one is wanted: the rows read once more, filtered as the worker would
-    const missing = kind === "proxy" ? missingOf(libraryId, kind) : null;
+    const missing = kind === "proxy" ? missingOf(libraryId, kind, username) : null;
     const n = missing ? missing.length : r.missing;
     const seconds = missing ? missing.reduce((t, m) => t + m.seconds, 0) / Math.max(1, n) : r.seconds;
     out.push({ kind, have: r.have, missing: n, queued: r.queued, ...(await makeCost(libraryId, username, kind, n, seconds)) });
@@ -94,14 +127,18 @@ export async function libraryMade(libraryId: string, username: string): Promise<
  */
 export function makeMissing(libraryId: string, kind: MadeKind, username: string, now = Date.now()): number {
   const db = libraryDb();
-  const files = missingOf(libraryId, kind);
+  const files = missingOf(libraryId, kind, username);
   if (kind === "pictures" || kind === "timeline") {
     db.prepare(`UPDATE libraries SET settings = json_set(settings, '$.${kind}Asked', ?) WHERE id = ?`).run(now, libraryId);
     if (kind === "pictures") wakePictures();
     return files.length;
   }
-  // asked for by name: a done job whose output is not there (removed since) runs again too
-  for (const f of files) enqueueJob(db, libraryId, f.id, SPEC[kind].job!, username, true);
+  // asked for by name: a done job whose output is not there (removed since) runs again too. A look goes through queueLook,
+  // which keeps a talking take to Max, whatever the switch says
+  for (const f of files) {
+    if (kind === "look") queueLook(db, f.id, username, true, true);
+    else enqueueJob(db, libraryId, f.id, SPEC[kind].job!, username, true);
+  }
   return files.length;
 }
 

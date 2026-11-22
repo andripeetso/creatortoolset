@@ -1194,7 +1194,7 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   for (const key of ["describe", "look", "timeline", "embed", "pictures", "transcribe", "lookTalking"] as const) {
     const on = b?.settings?.[key];
     // switched on: the catch-ups fill files added from now on, never the ones already here (db.ts SINCE)
-    if (on === true && key in SINCE && !librarySetting(libraryId, key as keyof typeof SINCE)) put(SINCE[key as keyof typeof SINCE], Date.now());
+    if (on === true && key in SINCE && !settingOn(libraryId, key)) put(SINCE[key as keyof typeof SINCE], Date.now());
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
@@ -1250,6 +1250,12 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings), mayKeepAsFilmed: mayKeepAsFilmed(c.get("user").username, libraryId) };
   return c.json(updated);
 }
+
+/** A switch's stored value, or its default (SETTING_DEFAULTS; lookTalking is off until set). */
+const settingOn = (libraryId: string, key: string): boolean => {
+  const v = (db().prepare(`SELECT json_extract(settings, '$.${key}') AS v FROM libraries WHERE id = ?`).get(libraryId) as { v: number | null } | undefined)?.v;
+  return v === null || v === undefined ? !!SETTING_DEFAULTS[key as keyof typeof SETTING_DEFAULTS] : !!v;
+};
 
 /** The library is set up: the setup cards of its workspace go, in the owner's chats (the ask carries on) and its members'. */
 function setUp(c: Context<{ Variables: AuthVars }>, libraryId: string): void {

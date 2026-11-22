@@ -223,19 +223,32 @@ const rowOf = (db: DatabaseSync, versionId: string) => db.prepare("SELECT events
  */
 export const askedWatch = new Set<string>();
 
-/** SQL on the library `l` and the version `v`: `v` was in the library when someone pressed Make for the missing timelines (made.ts). */
-const ASKED = "v.created_at <= IFNULL(json_extract(l.settings, '$.timelineAsked'), -1)";
+const PRESSED_AT = "IFNULL(json_extract(l.settings, '$.timelineAsked'), -1)";
+/**
+ * SQL on the library `l`, the version `v` and its timeline `t` (LEFT JOIN): Make for the missing timelines (made.ts) covers
+ * `v`: it was in the library then, with no timeline or one whose watch had failed. A watch that fails after it is not tried again.
+ */
+const PRESSED = `(v.created_at <= ${PRESSED_AT} AND (t.version_id IS NULL OR (t.error IS NOT NULL AND t.at < ${PRESSED_AT})))`;
+/** SQL, the same: Timelines is on and `v` was added since it went on (db.ts SINCE). */
+const AUTO = `(IFNULL(json_extract(l.settings, '$.timeline'), 1) AND ${sinceSql("timeline")})`;
 
-/** Whether `versionId` should be watched now as `actor`: Timelines on (or asked for, askedWatch, or Make for the missing), what watches (canWatch), and no timeline at the library's level (one that failed: RETRY_MS later). */
+/**
+ * Whether `versionId` should be watched now as `actor`: asked for by name (askedWatch), covered by Make for the missing,
+ * or added since Timelines went on; what watches (canWatch); and no timeline at the library's level (one that failed:
+ * RETRY_MS later, or at once when Make for the missing was pressed since).
+ */
 export function wantsWatch(db: DatabaseSync, versionId: string, actor: string | null, now = Date.now()): boolean {
   const r = db
-    .prepare(`SELECT a.library_id, ${ASKED} AS missing FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ?`)
-    .get(versionId) as { library_id: string; missing: number } | undefined;
+    .prepare(
+      `SELECT a.library_id, ${PRESSED} AS pressed, ${AUTO} AS auto FROM asset_versions v JOIN assets a ON a.id = v.asset_id
+         JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id WHERE v.id = ?`,
+    )
+    .get(versionId) as { library_id: string; pressed: number; auto: number } | undefined;
   const asked = askedWatch.has(versionId);
-  if (!r || !(asked || r.missing || librarySetting(r.library_id, "timeline")) || !canWatch(db, r.library_id, actor)) return false;
+  if (!r || !(asked || r.pressed || r.auto) || !canWatch(db, r.library_id, actor)) return false;
   const t = rowOf(db, versionId);
   if (!t) return true;
-  if (t.error) return asked || now - t.at >= RETRY_MS;
+  if (t.error) return asked || !!r.pressed || now - t.at >= RETRY_MS;
   // a picture-only timeline is made again with its sound once the library watches on a Gemini key that has credit
   return (
     t.level !== libraryLookLevel(r.library_id) ||
@@ -712,8 +725,8 @@ const swept = new Map<string, number>();
  * Timelines as a background index: the next video whose look is done that wants a timeline (Timelines switched on, or a
  * key or Antigravity added, after its look; a level changed; a picture-only timeline once the library watches on a key;
  * a failed watch whose wait is over) gets its look queued again as its
- * uploader: the look finds its lines current and goes on to the watch. Only a file added since Timelines went on, or one
- * whose watch failed (db.ts SINCE); the older ones take Make for the missing (made.ts). True when it queued one.
+ * uploader: the look finds its lines current and goes on to the watch. Only a file added since Timelines went on (db.ts
+ * SINCE), or one Make for the missing covers (PRESSED). True when it queued one.
  */
 export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, actor: string) => boolean, now = Date.now()): boolean {
   if (watching.size >= WATCHES_AT_ONCE) return false;
@@ -722,10 +735,9 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
       `SELECT v.id, v.created_by AS actor, a.library_id AS lib FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
          JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
-       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (IFNULL(json_extract(l.settings, '$.timeline'), 1) OR ${ASKED})
+       WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (${AUTO} OR ${PRESSED})
          AND (t.version_id IS NULL OR (t.error IS NOT NULL AND t.at <= ?) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
               OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
-         AND (t.error IS NOT NULL OR ${sinceSql("timeline")} OR ${ASKED})
        ORDER BY v.created_at DESC LIMIT 50`,
     )
     .all(now - RETRY_MS) as { id: string; actor: string; lib: string }[];

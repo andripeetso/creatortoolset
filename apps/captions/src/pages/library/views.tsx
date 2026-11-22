@@ -49,10 +49,10 @@ const ICONS = { folders: Folder, gallery: LayoutGrid, list: List, status: Activi
 const TITLES = { folders: "Folders", gallery: "Gallery", list: "List", status: "Status" } as const;
 
 /**
- * The View button: one control for how the clips are shown. Its panel holds the three views as rows and, for the
+ * The View button: one control for how the clips are shown (and Status, the owner's: `status`). Its panel holds the three views as rows and, for the
  * cards, their size. The panel stays open between picks, so a view and a size take one visit.
  */
-export function LibraryViewMenu({ view, onChange, size, onSize }: { view: LibraryView; onChange: (v: LibraryView) => void; size: number | null; onSize: (n: number) => void }) {
+export function LibraryViewMenu({ view, onChange, size, onSize, status = true }: { view: LibraryView; onChange: (v: LibraryView) => void; size: number | null; onSize: (n: number) => void; status?: boolean }) {
   const Current = ICONS[view];
   return (
     <Popover>
@@ -65,7 +65,7 @@ export function LibraryViewMenu({ view, onChange, size, onSize }: { view: Librar
       </PopoverTrigger>
       <PopoverContent align="start" className="flex w-56 flex-col gap-3 p-2">
         <div role="group" aria-label="Layout" className="flex flex-col">
-          {VIEWS.map((v) => {
+          {VIEWS.filter((v) => status || v !== "status").map((v) => {
             const Icon = ICONS[v];
             return (
               <button

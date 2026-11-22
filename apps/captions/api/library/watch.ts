@@ -1003,8 +1003,9 @@ async function refreshMissing(): Promise<void> {
       const jobs = db().prepare("SELECT kind, state, actor FROM jobs WHERE version_id = ?").all(v.id) as { kind: string; state: string; actor: string | null }[];
       for (const j of jobs) if (j.state === "failed") enqueueJob(db(), v.library_id, v.id, j.kind, j.actor);
       if (!jobs.length) enqueueJob(db(), v.library_id, v.id, "probe", v.created_by);
-      // done and needs_key jobs don't hold a version back; the worker sets `ready` when the rest are through
-      const open = !jobs.length || jobs.some((j) => j.state === "failed" || j.state === "queued" || j.state === "running");
+      // done and needs_key jobs don't hold a version back; the worker sets `ready` when the rest are through. Read after the
+      // queueing: a failed job whose output is there now reads done (jobs.ts HAVE), and holds nothing back
+      const open = !jobs.length || !!db().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND state IN ('queued', 'running')").get(v.id);
       db().prepare("UPDATE asset_versions SET state = ? WHERE id = ?").run(open ? "processing" : "ready", v.id);
       libraryChanged(v.library_id);
     }

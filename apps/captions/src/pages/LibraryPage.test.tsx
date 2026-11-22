@@ -293,7 +293,7 @@ describe("Media Library page", () => {
     server.readOnly = true;
     const host = await mount();
     await openMore(host);
-    expect(moreItem("Library status")).toBeTruthy();
+    expect(moreItem("Library status")).toBeUndefined(); // its counts are the owner's
     expect(moreItem("Look for new files")).toBeUndefined();
   });
 

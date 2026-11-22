@@ -20,7 +20,7 @@ delete process.env.APP_SECRET; // the solo install: "local" is the admin
 const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
 const { libraryMade, makeMissing, retryFailed } = await import("./made");
-const { sweepLook } = await import("./shots");
+const { queueLook, sweepLook } = await import("./shots");
 const { libraryApp } = await import("./routes");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -96,6 +96,8 @@ describe("what's made", () => {
       /* the sweep queues what it may */
     }
     expect(job(bare, "look")).toBeUndefined();
+    // a description made for an older file (Make for the missing) brings no look with it
+    expect(queueLook(d, bare, "local")).toBe(false);
     const fresh = clip("ast-new", { at: Date.now() + 1000 });
     while (await sweepLook(d, Date.now() + 2000)) {
       /* the new file gets its look */
@@ -104,5 +106,26 @@ describe("what's made", () => {
     // and the old one only when asked
     expect(makeMissing("lib_m", "look", "local")).toBe(2);
     expect(job(bare, "look")?.state).toBe("queued");
+  });
+
+  it("timelines: a press covers the files with none once; a watch that fails after it is missing again", async () => {
+    const v = clip("ast-tl", { at: 5 });
+    d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, created_at) VALUES (?, 0, 0, 4, 0.5, 'A jump.', 1)").run(v);
+    const before = await row("timeline");
+    expect(before.missing).toBeGreaterThanOrEqual(1);
+    makeMissing("lib_m", "timeline", "local", Date.now() - 10);
+    expect(await row("timeline")).toMatchObject({ missing: 0, queued: before.queued + before.missing });
+    d.prepare("INSERT INTO timelines (version_id, events, error, at) VALUES (?, '[]', 'failed', ?)").run(v, Date.now());
+    expect((await row("timeline")).missing).toBe(1);
+  });
+
+  it("a video indexed on a Mac counts for transcripts (its probe has no sound codec)", async () => {
+    const before = (await row("transcribe")).missing;
+    const v = "ver-ast-mac";
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('ast-mac', 'lib_m', 'video', 'mac', ?, 'local', 1)").run(v);
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, 'ast-mac', 1, 'mac:/Movies/a.mov', 1000, 'sha-mac', ?, 'ready', 'local', 1)`,
+    ).run(v, JSON.stringify({ duration: 3, format: "mov,mp4,m4a,3gp,3g2,mj2", vcodec: "h264", width: 1280, height: 720 }));
+    expect((await row("transcribe")).missing).toBe(before + 1);
   });
 });

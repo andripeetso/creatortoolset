@@ -185,7 +185,7 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
 export async function makeCost(libraryId: string, username: string, kind: MadeKind, n: number, seconds: number): Promise<Pick<LibraryMade, "cost" | "usd" | "needs">> {
   const db = libraryDb();
   if (kind === "timeline") {
-    if (!canWatch(db, libraryId, username)) return { cost: "tokens", needs: "Needs a Gemini API key or Antigravity" };
+    if (!canWatch(db, libraryId, username)) return { cost: "tokens", needs: "Needs a Gemini API key" };
     const model = libraryWatchModel(db, libraryId);
     return { cost: "tokens", usd: model === "antigravity" ? 0 : ((n * seconds) / 3600) * watchUsdPerHour(libraryLookLevel(libraryId), model) };
   }

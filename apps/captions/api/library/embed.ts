@@ -66,7 +66,7 @@ export function embedRoute(actor: string | null): EmbedRoute {
 }
 
 /** The model `actor`'s vectors are made with now, or null when they have no route. */
-const modelFor = (actor: string | null): string | null => {
+export const modelFor = (actor: string | null): string | null => {
   try {
     return embedRoute(actor).model;
   } catch {

@@ -10,7 +10,7 @@ import { ffmpegCommand } from "../ffmpeg-runtime";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { mayRead } from "../work/offline";
 import { stampOf } from "../lib/workshop/context";
-import { blobs, libraryLookBudget, libraryLookLevel, librarySetting, sinceSql } from "./db";
+import { blobs, libraryLookBudget, libraryLookLevel, librarySetting, LOOK_SINCE } from "./db";
 import { mayLeave } from "./upload-gate";
 import { DESCRIBE_LABEL, libraryWorkspaceId, whoFor, workspaceOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -111,6 +111,9 @@ interface KeptSheets {
 export function queueLook(db: DatabaseSync, versionId: string, actor: string | null, again = false, asked = false): boolean {
   const libraryId = lookable(db, versionId, asked);
   if (!libraryId) return false;
+  // unasked (after a first description), only a file added since Shot descriptions went on (db.ts SINCE): a description
+  // made for an older file never brings a look with it
+  if (!asked && !again && !db.prepare(`SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id JOIN libraries l ON l.id = a.library_id WHERE v.id = ? AND ${LOOK_SINCE}`).get(versionId)) return false;
   enqueueJob(db, libraryId, versionId, "look", actor, again);
   return true;
 }
@@ -154,7 +157,7 @@ export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boo
          AND IFNULL(json_extract(l.settings, '$.look'), 1) AND IFNULL(json_extract(v.probe, '$.duration'), 0) > ?
          AND (j.id IS NULL OR (j.state = 'needs_key' AND IFNULL(j.error, '') != ?))
          -- never queued: only a file added since Shot descriptions went on (db.ts SINCE)
-         AND (j.id IS NOT NULL OR ${sinceSql("look")})
+         AND (j.id IS NOT NULL OR ${LOOK_SINCE})
          AND NOT EXISTS (SELECT 1 FROM jobs p WHERE p.version_id = v.id AND p.state IN ('queued', 'running'))
        ORDER BY v.created_at DESC LIMIT 50`,
     )
@@ -164,7 +167,8 @@ export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boo
     swept.set(r.id, now + SWEEP_AGAIN_MS);
     if (r.state && aiFor(whoFor(r.actor), "library", LOOK_LABEL).off) continue;
     if (!(await lookAllowed(db, r.id, r.actor))) continue;
-    if (queueLook(db, r.id, r.actor)) return true;
+    // `again`: the query above already holds it to the files added since (LOOK_SINCE) and the looks parked for an AI
+    if (queueLook(db, r.id, r.actor, true)) return true;
   }
   return false;
 }
