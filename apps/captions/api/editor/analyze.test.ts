@@ -51,8 +51,8 @@ async function analyze(sources: string[], now: number, extra: Record<string, unk
 const transcribeJob = (v: string) => libraryDb().prepare("SELECT state, actor FROM jobs WHERE version_id = ? AND kind = 'transcribe'").get(v) as { state: string; actor: string } | undefined;
 
 beforeAll(async () => {
-  // tone 0-1 s, silence 1-2 s, tone 2-3 s: "speech" with one pause; a .wav so no encoder delay moves the edges
-  execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "aevalsrc=if(between(t\\,1\\,2)\\,0\\,0.5*sin(2*PI*440*t)):s=8000:d=3", "-y", wav]);
+  // tone 0-1 s, silence 1-2 s, tone 2-3 s: "speech" with one pause; a .wav so no encoder delay moves the edges; 48 kHz as a camera records (at 8 kHz an AAC proxy pads its end by up to 128 ms)
+  execFileSync(ffmpegCommand(), ["-v", "error", "-f", "lavfi", "-i", "aevalsrc=if(between(t\\,1\\,2)\\,0\\,0.5*sin(2*PI*440*t)):s=48000:d=3", "-y", wav]);
   libraryDb().exec("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'mem-a', 'A', 'local', 0)");
   const p = { duration: 3, width: 0, height: 0, fps: 30, rotation: 0, format: "wav", vcodec: "", pixFmt: "", acodec: "pcm_s16le" };
   await seed("ver_late", "Take B", { ...p, capturedAt: 2000 });

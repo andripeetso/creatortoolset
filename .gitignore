@@ -7,3 +7,4 @@ node_modules/
 *.db-wal
 *.db-shm
 .claude/worktrees/
+__pycache__/

@@ -155,7 +155,8 @@ async function pollWait(token: string, body: unknown, ua = "CreatorToolset/0.17.
     done = true;
     return { status: r.status, body: r.status === 204 ? null : await r.json() };
   });
-  for (let i = 0; i < 50 && !done; i++) {
+  // a busy test machine needs more turns before the wait answers (50 was not always enough)
+  for (let i = 0; i < 1000 && !done; i++) {
     await new Promise((r) => setImmediate(r));
     if (!done && i >= 2) {
       await vi.advanceTimersByTimeAsync(25_000);

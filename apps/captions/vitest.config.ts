@@ -91,6 +91,9 @@ export default defineConfig({
     // card would fetch it, and the readings tests pin are cutsOf's. No proxy floor (api/work/cache.ts roomFor): a test's
     // scratch disk is small; api/work/computer-proxies.test.ts sets one where it tests it.
     env: { LIBRARY_DISK_RESERVE_GB: "0", CT_PROXY_FLOOR: "0", CT_CUT_MODEL: "0", CT_PICTURE_MODEL: "0" },
+    // a server's background loops can still log or load a file while a test file's worker closes; that is no failure
+    // of any test (a different file each run), so only that error is let through, every other one still fails the run
+    onUnhandledError: (e) => (e.name === "EnvironmentTeardownError" ? false : undefined),
     projects: [
       {
         extends: true,

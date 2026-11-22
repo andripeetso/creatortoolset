@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -6,8 +7,8 @@ import type { ProviderSettings, ProvidersView } from "../contracts/providers";
 import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 
-// Scratch on the external SSD, not the Mac's disk (like the other provider tests).
-const scratch = process.env.CT_SCRATCH_DIR ?? "/Volumes/WinningFriends/ct-wt/scratch";
+// Scratch where CT_SCRATCH_DIR says (an external disk), else the system temp folder.
+const scratch = process.env.CT_SCRATCH_DIR ?? os.tmpdir();
 mkdirSync(scratch, { recursive: true });
 process.env.DATA_DIR = mkdtempSync(path.join(scratch, "provider-checks-"));
 process.env.APP_SECRET = "test-secret";

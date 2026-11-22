@@ -5,8 +5,7 @@
 #   scripts/public/check-public.test.sh
 set -uo pipefail
 src="$(cd "$(dirname "$0")/../.." && pwd)"
-base="${CT_TEST_TMP:-/Volumes/WinningFriends/ct-tmp}"
-[ -d "$(dirname "$base")" ] || base="${TMPDIR:-/tmp}"
+base="${CT_TEST_TMP:-${TMPDIR:-/tmp}}"
 mkdir -p "$base" && T=$(mktemp -d "$base/check-public.XXXXXX") || exit 1
 trap 'rm -rf "$T" "$T.lists"' EXIT
 

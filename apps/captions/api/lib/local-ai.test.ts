@@ -6,8 +6,8 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ProviderCheck } from "../../contracts/providers";
 
-// Scratch on the external SSD, not the Mac's disk.
-const scratch = process.env.CT_SCRATCH_DIR ?? "/Volumes/WinningFriends/ct-wt/scratch";
+// Scratch where CT_SCRATCH_DIR says (an external disk), else the system temp folder.
+const scratch = process.env.CT_SCRATCH_DIR ?? os.tmpdir();
 mkdirSync(scratch, { recursive: true });
 const root = mkdtempSync(path.join(scratch, "local-ai-"));
 process.env.DATA_DIR = path.join(root, "data");

@@ -74,7 +74,7 @@ describe("the library settings PATCH", () => {
       timelineModel: "antigravity",
       lookLevel: "detailed",
       describe: false,
-      copyTo: "/Volumes/WinningFriends/Media",
+      copyTo: "/Volumes/Tiny/Media",
       places: [{ path: "/Users/x/Movies", mode: "in-place" }],
     });
     expect(r.status).toBe(200);

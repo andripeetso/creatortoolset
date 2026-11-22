@@ -6,8 +6,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 
-// Scratch on the external SSD, not the Mac's disk. HOME is a fake home: every install and sign-in lands in it.
-const scratch = process.env.CT_SCRATCH_DIR ?? "/Volumes/WinningFriends/ct-wt/scratch";
+// Scratch where CT_SCRATCH_DIR says (an external disk), else the system temp folder. HOME is a fake home: every install and sign-in lands in it.
+const scratch = process.env.CT_SCRATCH_DIR ?? os.tmpdir();
 mkdirSync(scratch, { recursive: true });
 const root = mkdtempSync(path.join(scratch, "local-install-"));
 const home = path.join(root, "home");
