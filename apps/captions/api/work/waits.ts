@@ -6,7 +6,6 @@ import {
   addAgain,
   addComputer,
   aheadOf,
-  behind,
   fileUnchecked,
   keptFor,
   lowDiskOn,
@@ -643,7 +642,8 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
     ctx.now - jobSince >= STUCK_MS &&
     (ctx.now - pickFreeAt >= STUCK_MS || ctx.tookNewerAfter(pick.id, isLook, job.id, jobSince));
 
-  if (!isStuck) {
+  // A job past the computer's batch waits behind its other library work: queued, nothing for the person to change.
+  if (!isStuck || !(isLook ? ctx.lookWindowFor(owner) : ctx.queuedIdsFor(pick, b)).has(job.id)) {
     // the computer that takes it next, for the Media Library's What's made (library/made.ts)
     const out: WaitClass = { wait: "queued", device: pick.id, actor: owner };
     seenInPass.set(job.id, out);
@@ -652,9 +652,7 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
 
   let reason: string;
   if (isLook) {
-    if (!ctx.lookWindowFor(owner).has(job.id)) {
-      reason = behind(pick.name);
-    } else if (!placedOn(pick.id, owner, pr, ctx.now, folders)) {
+    if (!placedOn(pick.id, owner, pr, ctx.now, folders)) {
       const winner =
         L.find((d) => d.id !== pick.id && placedOn(d.id, owner, pr, ctx.now, folders)) ??
         L.find((d) => d.id !== pick.id) ??
@@ -664,21 +662,17 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
       reason = notTaking(pick.name);
     }
   } else {
-    if (!ctx.queuedIdsFor(pick, b).has(job.id)) {
-      reason = behind(pick.name);
+    const me = takesLibrary(pick) ? pick : lift(pick, ctx.now);
+    const peers = peersOf(owner, me, ctx.now);
+    const dec = ctx.decideFn(me, job, r, peers, folders, b, ctx.now);
+    if ("skip" in dec && dec.by && dec.skip === "rank") {
+      reason = aheadOf(pick.name, dec.by.name);
+    } else if ("skip" in dec && dec.by && dec.skip === "balance") {
+      reason = keptFor(dec.by.name);
+    } else if (claimsFresh(pick, ctx.now)) {
+      reason = notTaking(pick.name);
     } else {
-      const me = takesLibrary(pick) ? pick : lift(pick, ctx.now);
-      const peers = peersOf(owner, me, ctx.now);
-      const dec = ctx.decideFn(me, job, r, peers, folders, b, ctx.now);
-      if ("skip" in dec && dec.by && dec.skip === "rank") {
-        reason = aheadOf(pick.name, dec.by.name);
-      } else if ("skip" in dec && dec.by && dec.skip === "balance") {
-        reason = keptFor(dec.by.name);
-      } else if (claimsFresh(pick, ctx.now)) {
-        reason = notTaking(pick.name);
-      } else {
-        reason = notStarted(pick.name);
-      }
+      reason = notStarted(pick.name);
     }
   }
 

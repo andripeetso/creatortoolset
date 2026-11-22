@@ -12,12 +12,13 @@ import type { EnhanceStatus } from "../contracts/enhance";
 import { env } from "./lib/env";
 import { keyFor, type Actor } from "./my-keys";
 import { enhancePiece, NvidiaRefused, SR as NV_SR } from "./lib/nvidia-voice";
-import { type SessionUser, bumpUsage } from "./users";
+import { type SessionUser, bumpUsage, canSee } from "./users";
 import { type Moves, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
 import { serverWorks } from "./work/server-work";
+import { okId } from "./lib/ids";
 
 /**
  * Standalone audio enhancement — its own tool, fully separate from
@@ -89,7 +90,6 @@ const isEngine = (v: unknown): v is Engine =>
   typeof v === "string" && ((ENGINES as readonly string[]).includes(v) || engines.has(v));
 const allEngines = (): string[] => [...ENGINES, ...engines.keys()];
 
-const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const sesDir = (id: string) => path.join(ENHANCE_DIR, id);
 const sourceAudio = (id: string) => path.join(sesDir(id), "source.m4a");
 const enhancedAudio = (id: string) => path.join(sesDir(id), "enhanced.m4a");
@@ -226,8 +226,6 @@ async function reconcileInterrupted(): Promise<void> {
   }
 }
 
-const canSee = (meta: Meta, user: SessionUser) =>
-  user.role === "admin" || meta.owner === user.username;
 
 async function ownedMeta(id: string, user: SessionUser): Promise<Meta | null> {
   if (!okId(id)) return null;

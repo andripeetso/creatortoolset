@@ -16,23 +16,23 @@ const { serverNameOf } = await import("./server-work-routes");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("serverNameOf", () => {
-  it("is the first admin's on a server, hosted or not, none on This Mac, and the plug-in's where one names it", () => {
+  it("is the first admin's on a Server or Cloud, none on This Mac, and the plug-in's where one names it", () => {
     createUser("tiny", "password1", { role: "admin" });
     mountPlugins(new Hono(), []);
-    expect(serverNameOf("hosted")).toBe("tiny's server");
+    expect(serverNameOf("cloud")).toBe("tiny's server");
     expect(serverNameOf("server")).toBe("tiny's server");
-    expect(serverNameOf("local")).toBeUndefined();
+    expect(serverNameOf("mac")).toBeUndefined();
     mountPlugins(new Hono(), [{ id: "cloud", serverName: "Creator Toolset Cloud" }]);
-    expect(serverNameOf("hosted")).toBe("Creator Toolset Cloud");
+    expect(serverNameOf("cloud")).toBe("Creator Toolset Cloud");
     expect(serverNameOf("server")).toBe("Creator Toolset Cloud");
-    expect(serverNameOf("local")).toBeUndefined(); // This Mac: unchanged, whatever a plug-in says
+    expect(serverNameOf("mac")).toBeUndefined(); // This Mac: unchanged, whatever a plug-in says
   });
 
   it("is the owner's display name before the username", () => {
     mountPlugins(new Hono(), []);
     setDisplayName(createUser("later", "password1", { role: "admin" }), "Later Admin"); // not the first admin
-    expect(serverNameOf("hosted")).toBe("tiny's server");
+    expect(serverNameOf("cloud")).toBe("tiny's server");
     setDisplayName(users.findUser("tiny")!, "Tiny Acrobatics");
-    expect(serverNameOf("hosted")).toBe("Tiny Acrobatics's server");
+    expect(serverNameOf("cloud")).toBe("Tiny Acrobatics's server");
   });
 });

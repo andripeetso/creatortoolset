@@ -137,4 +137,24 @@ final class ConsentTests: XCTestCase {
         }
         XCTAssertEqual(done.wait(timeout: .now() + 2), .success)
     }
+
+    func testAnEndpointAndTheKeychainSettingsItPassNeedThisMacsYes() throws {
+        let json = #"{"id":"j","system":"","user":"","driver":"claude","instance":"gw","envNames":["ANTHROPIC_KEY","NOT A NAME"],"baseUrl":"https://gw.example.com:8443/v1/messages"}"#
+        let req = request(json)
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        let opts = try requestOptions(req, root: root, read: { $0 == "gw/ANTHROPIC_KEY" ? "secret" : nil })
+        XCTAssertEqual(launchNeeds(req, opts), [ConsentItem(kind: .endpoint, text: "https://gw.example.com:8443"),
+                                                ConsentItem(kind: .environment, text: "ANTHROPIC_KEY")])
+        // no value kept here for the name: only the endpoint is asked
+        let bare = try requestOptions(req, root: root, read: { _ in nil })
+        XCTAssertEqual(launchNeeds(req, bare), [ConsentItem(kind: .endpoint, text: "https://gw.example.com:8443")])
+        // the default Claude setup asks nothing
+        XCTAssertEqual(try needs(#"{"id":"j","system":"","user":"","driver":"claude"}"#), [])
+    }
+
+    func testAnEndpointIsAskedByItsOriginOnly() {
+        XCTAssertEqual(endpointOrigin("https://gw.example.com/v1/messages?x=1"), "https://gw.example.com")
+        XCTAssertEqual(endpointOrigin("http://localhost:4000/anthropic"), "http://localhost:4000")
+        XCTAssertNil(endpointOrigin("not an address"))
+    }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Activity, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, FolderCog, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySort, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS, uploadSent } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
@@ -74,13 +74,14 @@ import { canReveal } from "./library/clip";
 import type { LibraryFilters } from "@/lib/library";
 import { restoreFolder, tabCounts, type TabCounts } from "./library/api";
 import { GalleryGrid, GalleryTile } from "./library/Gallery";
+import { Near } from "./library/Near";
 import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll } from "./library/moves";
 import { CLIP_CARDS, type DraggedClip } from "@/lib/chat-clips";
-import { LibrarySidebar, SidebarSheet, sidebarPicked } from "./library/Sidebar";
+import { ActiveFilters, LibrarySidebar, SidebarSheet, sidebarPicked } from "./library/Sidebar";
 import { ListHeader, SORT_IDS, SortControls } from "./library/SortControls";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
 import { LibraryTabs, type Tab } from "./library/Tabs";
-import { ReorganizeDialog, SmartFolderDialog } from "./library/SmartFolders";
+import { automaticAbout, NewFolderDialog, ReorganizeDialog, SmartFolderDialog } from "./library/SmartFolders";
 import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./library/views";
 
 /**
@@ -90,13 +91,14 @@ import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./lib
  * Left: the sidebar (./library/Sidebar.tsx: sort, when, where, tags, kinds, a plug-in's own filters; a sheet on a
  * narrow window). Above the grid: the page's own row (left: search, View with the layout and card size, More with Library
  * settings and the Trash; right: New folder and Upload), then the
- * tabs (./library/Tabs.tsx: All, A-roll, B-roll, Photos, the top-level folders), each a place to drop clips on. Three
+ * tabs (./library/Tabs.tsx: All, A-roll, B-roll, Photos, the top-level folders), each a place to drop clips on;
+ * a right-click on the tab row makes a new top-level folder, whatever is open. Three
  * views (./library/views.tsx): Folders (the folder cards, components/browse/, then the clips in none), Gallery (the
  * clips, ./library/Gallery.tsx; inside a folder, its folders above them) and List. `?f=` opens a folder, `?trash=1` the Trash. Search looks in the whole library
  * from the top, in the folder when one is open: titles and tags (FTS5, api/library/query.ts) and what is said in the
  * clips (api/library/search.ts), where a moment found (a line said, a shot, a timeline moment) opens the preview at its second. A card opens its preview; dragged
  * onto a folder or a tab it moves there, at once on screen (./library/moves.ts), with Undo. Right-click on the empty
- * space: New folder, Upload. Uploads go in one at a time, from the tray. A card being prepared updates when the server
+ * space: New folder (in the folder open), Upload. Uploads go in one at a time, from the tray. A card being prepared updates when the server
  * finishes it (the change stream), without polling. Finals has its own tool (/finals): its folder is not shown here.
  */
 
@@ -138,6 +140,10 @@ export default function LibraryPage() {
     persistSort(SORT_KEY, v);
   };
   const [view, setView] = useLibraryView();
+  // the kind and roll are the Gallery's tabs: no other view shows them, so none keeps them
+  useEffect(() => {
+    if (view !== "gallery") (setKind("all"), setRoll(null));
+  }, [view]);
   const [cardSize, setCardSize] = useCardSize();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -210,16 +216,16 @@ export default function LibraryPage() {
   }, [q]);
 
   // the first page for the current library, search, kind and folder, kept per view; "Load more" pages add to it. The top
-  // level lists the clips in no folder; narrowed there (a kind, a roll, a facet), the whole library
+  // level lists the clips in no folder, of the kind picked; narrowed there (a roll, a facet, a filter), the whole library.
   // The Gallery shows only clips, so at the top it shows every clip in the library
-  const picked = kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || anyFilter(filters);
+  const picked = !!roll || Object.values(facets).some((v) => v.length) || anyFilter(filters);
   const folder: { trashed?: true; collectionId?: string; unfiled?: true } = trash
     ? { trashed: true }
     : open
       ? { collectionId: open }
-      : picked || view === "gallery"
-        ? {}
-        : { unfiled: true };
+      : !(picked || view === "gallery")
+        ? { unfiled: true }
+        : {};
   // Available offline (M14): the person's own list of clips, as `versions` (the filter is on this computer only)
   const offline = useOffline();
   const query = {
@@ -455,9 +461,21 @@ export default function LibraryPage() {
   };
 
   // a new folder goes in the open one, or in the folder whose menu asked
-  const newFolder = async (parent: string | null = into) => {
+  // a new folder goes in the open one, or in the folder whose menu asked: plain, with a rule, or automatic (NewFolderDialog)
+  const [creating, setCreating] = useState<string | null | undefined>(undefined); // the new folder's parent; undefined: closed
+  const newFolder = (parent: string | null = into) => setCreating(parent);
+  // Finder's New folder with selection: made where the clips are, then they move into it (with the move's Undo)
+  const folderWith = async (ids: string[]) => {
     const name = await askFolderName();
-    if (name && libId) await createCollection(libId, { name, ...(parent ? { parentId: parent } : {}) }).then(reloadFolders, (e) => setError(message(e)));
+    if (!name || !libId) return;
+    try {
+      const c = await createCollection(libId, { name, ...(into ? { parentId: into } : {}) });
+      folderList.set((all) => all && [...all, c]);
+      await move(ids, c.id, into, c.name);
+      reloadFolders();
+    } catch (e) {
+      setError(message(e));
+    }
   };
   const renameFolder = async (c: Collection) => {
     const name = await askRename("Rename folder", c.name);
@@ -515,7 +533,8 @@ export default function LibraryPage() {
   // clips dragged onto a folder or a tab, moved from their window, the bar or their menu: into that folder, out of the
   // one open (`from`). The view changes the moment they are dropped and the notice shows with Undo; Undo puts them back
   // the moment it is pressed, then asks the server. A request that fails puts them back and says so
-  const move = (ids: string[], to: string | null, from: string | null = into): Promise<void> => {
+  /** `toName`: the folder's name when it is too new for the list on screen (New folder with clips) */
+  const move = (ids: string[], to: string | null, from: string | null = into, toName?: string): Promise<void> => {
     if (!libId || readOnly) return Promise.resolve();
     const lib = libId;
     const r = rollOfFolder(collections.find((c) => c.id === to));
@@ -536,7 +555,7 @@ export default function LibraryPage() {
       setError(`Could not move the clips: ${message(e)}`);
       reloadFolders();
     });
-    const name = to ? collections.find((c) => c.id === to)?.name : null;
+    const name = toName ?? (to ? collections.find((c) => c.id === to)?.name : null);
     undoable(
       name ? `moved to ${name}` : "moved",
       async () => {
@@ -632,8 +651,10 @@ export default function LibraryPage() {
   const folderProps = (c: Collection): FolderProps => ({
     name: c.name,
     to: folderTo(c.id),
-    icon: c.rule ? CtMark : rollOfFolder(c) ? undefined : c.kind === "smart" ? Search : c.sounds?.length ? Music : undefined,
-    meta: c.sorting ? "Sorting" : holdsClips(c) ? (c.count ?? 0) + collections.filter((x) => x.parentId === c.id).length : rollOfFolder(c) ? c.count : undefined,
+    // an automatic folder (a rule, or a saved search: the A-roll and B-roll folders too) has its own sign and says what fills it
+    icon: c.rule || c.kind === "smart" ? FolderCog : c.sounds?.length ? Music : undefined,
+    note: automaticAbout(c),
+    meta: c.sorting ? "Sorting" : holdsClips(c) || rollOfFolder(c) ? c.count : undefined, // every clip inside, its folders' too: the same number as its tab
     drop:
       !readOnly && (holdsClips(c) || rollOfFolder(c))
         ? { type: DRAG, onItems: (ids) => void move(ids, c.id), label: rollOfFolder(c) ? `File as ${c.name}` : "Move into this folder" }
@@ -693,6 +714,7 @@ export default function LibraryPage() {
                     onOpen: () => go(f.id),
                     onItems: readOnly ? undefined : (ids) => void fileAs(ids, r),
                     menu: folderMenu(f),
+                    icon: FolderCog,
                   },
                 ]
               : [];
@@ -708,16 +730,18 @@ export default function LibraryPage() {
               ? [{ id: k === "image" ? "photos" : "videos", label, count, active: !open && kind === k && !roll, onOpen: () => go(null, k) }]
               : [],
           ),
+          // the top-level folders, automatic ones too (the A-roll and B-roll folders have theirs above)
           ...collections
-            .filter((c) => c.parentId === null && holdsClips(c))
+            .filter((c) => c.parentId === null && (holdsClips(c) || (c.kind === "smart" && !rollOfFolder(c))))
             .map(
               (c): Tab => ({
                 id: c.id,
                 label: c.name,
                 count: c.count,
+                icon: c.rule || c.kind === "smart" ? FolderCog : undefined,
                 active: topOpen === c.id,
                 onOpen: () => go(c.id),
-                onItems: readOnly ? undefined : (ids) => void move(ids, c.id),
+                onItems: readOnly || !holdsClips(c) ? undefined : (ids) => void move(ids, c.id),
                 menu: folderMenu(c),
                 movable: !readOnly,
               }),
@@ -851,12 +875,14 @@ export default function LibraryPage() {
         offline={thisMacDevice() ? { on: offline.versions.includes(a.versionId), set: (on) => void keepOffline({ version: a.versionId }, on) } : undefined}
         moveTo={moveOptions(collections, into)}
         tags={tags}
+        count={carried(a).length}
         on={{
           open: () => openClip(a),
           share: () => setSharing(a),
           download: () => download(carried(a)),
           copyLink: () => void copyLink(a),
           move: (to) => void move(carried(a).map((x) => x.id), to),
+          folder: smart ? undefined : () => void folderWith(carried(a).map((x) => x.id)),
           tag: (t) => void tagMany(carried(a), t),
           trash: () => void trashMany(carried(a)),
           restore: () => void trashMany(carried(a), false),
@@ -916,21 +942,17 @@ export default function LibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once a library, when the owner's view and the Mac are known
   }, [library?.id, !!watch, macRemote]);
 
-  const sidebar = library && (
-    <LibrarySidebar
-      libraryId={library.id}
-      kind={kind}
-      onKind={setKind}
-      filters={filters}
-      onFilters={setFilters}
-      sources={sources}
-      source={source}
-      onSource={setSource}
-      facets={libraryFacets("library")}
-      facetValue={facets}
-      onFacets={setFacets}
-    />
-  );
+  const narrowing = {
+    filters,
+    onFilters: setFilters,
+    sources,
+    source,
+    onSource: setSource,
+    facets: libraryFacets("library"),
+    facetValue: facets,
+    onFacets: setFacets,
+  };
+  const sidebar = library && <LibrarySidebar libraryId={library.id} {...narrowing} />;
   // the trail back up, where the tabs don't already say it: the Trash, a folder inside another, a saved search
   const trail = trailOf(collections, open, trash);
   // the tabs are the Gallery's way into top-level folders; the folders inside one show as cards
@@ -960,7 +982,7 @@ export default function LibraryPage() {
         <AppBar tool="Media Library" trail={library.name}>
           <ProjectSwitcher />
         </AppBar>
-        <LibrarySetup inline library={library} watchAllowed={!!watch.allowed} onDone={saved} onClose={() => {}} />
+        <LibrarySetup inline library={library} onDone={saved} onClose={() => {}} />
       </div>
     );
 
@@ -1037,10 +1059,8 @@ export default function LibraryPage() {
                         Save as folder
                       </Button>
                     )}
-                    {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
+                    {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
                     <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} />
-                    {/* Status is the owner's (its counts are the owner's routes) */}
-                    {library && !readOnly && <LibraryHealthButton library={library} open={statusOpen} onOpen={() => setStatusOpen(true)} />}
                     <SortControls sort={sort} onSort={pickSort} />
                     {(watch || (changing && !firstScreen)) && (
                       <DropdownMenu modal={false}>
@@ -1121,6 +1141,8 @@ export default function LibraryPage() {
                     Reorganize
                   </Button>
                 )}
+                {/* Status is the owner's (its counts are the owner's routes) */}
+                {library && !readOnly && <LibraryHealthButton library={library} open={statusOpen} onOpen={() => setStatusOpen(true)} />}
                 {changing && !smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
                 {blurChoice && (
                   <label className="flex h-8 items-center gap-1.5 text-sm">
@@ -1144,11 +1166,22 @@ export default function LibraryPage() {
                     <>
                       {changing && !smart && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
                       <ContextMenuItem onSelect={chooseFiles}>Upload…</ContextMenuItem>
+                      {(pickable.length > 0 || canLook) && <ContextMenuSeparator />}
+                      {pickable.length > 0 && <ContextMenuItem onSelect={() => void pickAll()}>Select all</ContextMenuItem>}
+                      {canLook && <ContextMenuItem onSelect={() => void lookNow()}>Look for new files</ContextMenuItem>}
                     </>
                   )
                 }
               >
-                {view === "gallery" && tabs.length > 1 && !firstScreen && <LibraryTabs tabs={tabs} onReorder={readOnly ? undefined : reorderFolders} />}
+                {view === "gallery" && tabs.length > 1 && !firstScreen && (
+                  <LibraryTabs
+                    tabs={tabs}
+                    onReorder={readOnly ? undefined : reorderFolders}
+                    // the tab row is its own place: a new folder from it is a new tab, whatever is open below
+                    menu={changing && <ContextMenuItem onSelect={() => void newFolder(null)}>New tab</ContextMenuItem>}
+                  />
+                )}
+                {!firstScreen && sidebar && <ActiveFilters {...narrowing} />}
 
                 {/* one line while a drop goes in; the library's own progress line otherwise */}
                 {lookLine && !importLine && (
@@ -1192,9 +1225,13 @@ export default function LibraryPage() {
                         <ListHeader sort={sort} onSort={pickSort} />
                       )}
                       {shown.map((a) => (
-                        <ClipPick key={a.id} row picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
-                          <AssetRow asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
-                        </ClipPick>
+                        <Near key={a.id} same="row">
+                          {() => (
+                            <ClipPick row picked={picks.picked.has(a.id)} onPick={pickOf(a)} menu={menuFor(a)}>
+                              <AssetRow asset={a} onOpen={() => openClip(a)} drag={dragOf(a)} />
+                            </ClipPick>
+                          )}
+                        </Near>
                       ))}
                     </div>
                   ) : view === "gallery" ? (
@@ -1224,7 +1261,11 @@ export default function LibraryPage() {
                         <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} lines={c.sounds} />
                       ))}
                       {placeholders}
-                      {shown.map(tile)}
+                      {shown.map((a) => (
+                        <Near key={a.id} className="min-w-0" same="tile">
+                          {() => tile(a)}
+                        </Near>
+                      ))}
                     </FolderGrid>
                   )
                 ) : firstScreen ? null : (
@@ -1244,7 +1285,7 @@ export default function LibraryPage() {
                 )}
 
                 {firstScreen && <EmptyDrop canAdd={mayAdd} onChoose={chooseFiles} waiting={waitingFolders} />}
-                {setupOpen && library && <LibrarySetup library={library} watchAllowed={!!watch?.allowed} onDone={(l) => (saved(l), closeSetup())} onClose={closeSetup} />}
+                {setupOpen && library && <LibrarySetup library={library} onDone={(l) => (saved(l), closeSetup())} onClose={closeSetup} />}
 
                 {next &&
                   (watchesEnd() ? (
@@ -1289,6 +1330,7 @@ export default function LibraryPage() {
         <ClipShare libraryId={libId} assetId={sharing.id} versionId={sharing.versionId} title={sharing.title} open onOpenChange={(o) => !o && setSharing(null)} />
       )}
       {libId && <SmartFolderDialog libraryId={libId} folder={ruling} onClose={() => setRuling(null)} onSaved={reloadFolders} />}
+      {libId && <NewFolderDialog libraryId={libId} parentId={creating} folders={collections} onClose={() => setCreating(undefined)} onCreated={reloadFolders} />}
       {libId && <ReorganizeDialog libraryId={libId} open={reorganizing} folders={collections} onClose={() => setReorganizing(false)} onDone={reloadFolders} />}
       {drop.dropping && mayAdd && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center border-4 border-dashed border-violet-500/70 bg-violet-950/30">

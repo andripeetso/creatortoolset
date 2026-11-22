@@ -46,7 +46,8 @@ export function useSelectAll(all: () => void) {
 export const watchesEnd = () => typeof IntersectionObserver !== "undefined";
 
 /**
- * The element to put after the list: when it comes within a screen of view, `more` loads the next page. Watched again
+ * The element to put after the list: when it comes within two screens of view, `more` loads the next page (before the
+ * clips near the screen are drawn, Near.tsx, so the next ones are in by the time they are needed). Watched again
  * for each new cursor, so a short page (some clips left out for this viewer) that leaves it in view loads the one after.
  */
 export function useEndOfList(more: () => void, cursor: string | undefined) {
@@ -56,7 +57,7 @@ export function useEndOfList(more: () => void, cursor: string | undefined) {
   useEffect(() => {
     const el = ref.current;
     if (!el || !cursor || !watchesEnd()) return;
-    const io = new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && live.current(), { rootMargin: "800px 0px" });
+    const io = new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && live.current(), { rootMargin: "200% 0px" });
     io.observe(el);
     return () => io.disconnect();
   }, [cursor]);

@@ -86,10 +86,12 @@ it("every sign-in route answers as it did before the sign-in code, for accounts 
   out["password, changed"] = await seen(changed);
   out["check, the old cookie after the change"] = await seen(await req("GET", "/api/auth/check", { cookie: owner }));
   out["login, from the LAN with the owner's password"] = await seen(await req("POST", "/api/auth/login", { address: "203.0.113.7", body: { username: "admin", password: "tinyacrobatics-owner" } }));
-  const minted = (await (await req("POST", "/api/auth/link", { cookie: owner2 })).json()) as { url: unknown; path: string; expiresAt: number };
+  const minted = (await (await req("POST", "/api/auth/link", { cookie: owner2, body: {} })).json()) as { url: unknown; path: string; expiresAt: number };
   out["link, minted"] = { url: minted.url, path: /^\/api\/auth\/link\/[A-Za-z0-9_-]{43}$/.test(minted.path), expiresAt: typeof minted.expiresAt };
-  const link = await req("GET", minted.path, { address: "203.0.113.7" });
-  out["link, opened on a phone"] = { ...(await seen(link)), referrer: link.headers.get("referrer-policy") };
+  // the page names the account and signs nothing in (its body holds the code, so only the status and headers are kept)
+  const page = await req("GET", minted.path, { address: "203.0.113.7", headers: { "sec-fetch-mode": "navigate" } });
+  out["link, opened on a phone"] = { status: page.status, cookie: page.headers.get("set-cookie"), referrer: page.headers.get("referrer-policy") };
+  out["link, pressed on a phone"] = await seen(await req("POST", minted.path, { address: "203.0.113.7", body: {} }));
   out["link, opened again"] = await seen(await req("GET", minted.path, { address: "203.0.113.7" }));
   out["ticket, not a tunnel address"] = await seen(await req("POST", "/api/auth/ticket", { body: { ticket: "x", password: "y" } }));
   out["logout"] = await seen(await req("POST", "/api/auth/logout", { cookie: owner2 }));

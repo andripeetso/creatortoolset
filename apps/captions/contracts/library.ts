@@ -128,6 +128,8 @@ export interface SearchQuery {
   sort?: LibrarySort;
   /** only clips filmed in this country (`?place=`, ISO 3166-1 alpha-2) */
   place?: string;
+  /** only clips that stand upright taller than wide (`vertical`) or wider than tall (`horizontal`), as shown (`?orientation=`) */
+  orientation?: "vertical" | "horizontal";
   /** the asker's own computer (`?device=`, the Mac app's id on this server): cards on it get `here` */
   device?: string;
   /** only clips on that computer (`?here=1`) */

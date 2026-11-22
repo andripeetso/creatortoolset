@@ -93,7 +93,7 @@ export function AgentsStepView({
 /** Stage 2 container: the computers (their saved copy first), with this computer's AI panel passed in as its section. */
 export function AgentsStep({ picked, onConnectedChange }: { picked: ReadonlySet<string>; onConnectedChange?: (on: boolean) => void }) {
   const { data: view, error } = useComputers();
-  const hosted = useAuth((s) => s.hosted);
+  const hosted = useAuth((s) => s.kind === "cloud");
   // hosted: the computers are the whole screen, so nothing is said about them ("No computer is connected yet") until they are known
   if (hosted && !view && !error) return null;
   return (

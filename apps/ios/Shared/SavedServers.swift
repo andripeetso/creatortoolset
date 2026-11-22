@@ -1,3 +1,4 @@
+import CreatorToolsetShared
 import Foundation
 import Security
 
@@ -52,11 +53,7 @@ enum Keychain {
     }
 
     static func get(_ account: String) -> String? {
-        var q = query(account)
-        q[kSecReturnData as String] = true
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        KeychainItem.read(service: service, account: account).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Saves (nil deletes), in place when the item exists, so a refused write never leaves it deleted. False when the
@@ -64,15 +61,10 @@ enum Keychain {
     @discardableResult
     static func set(_ account: String, _ value: String?) -> Bool {
         guard let value else {
-            SecItemDelete(query(account) as CFDictionary)
+            KeychainItem.delete(service: service, account: account)
             return true
         }
-        let update = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
-        if update != errSecItemNotFound { return update == errSecSuccess }
-        var q = query(account)
-        q[kSecValueData as String] = Data(value.utf8)
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+        return KeychainItem.write(Data(value.utf8), service: service, account: account, accessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly) == errSecSuccess
     }
 
     /// Items saved before the shared group existed sit in the app's own group, where the Share extension can't read

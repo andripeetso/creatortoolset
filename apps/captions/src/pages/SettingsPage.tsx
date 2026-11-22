@@ -17,7 +17,7 @@ import { hasThisMac, useMacRecorder } from "@/components/settings/ThisMacSection
 import { useToolPages } from "@/components/settings/ToolsSection";
 import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { HOME_TILE_NAMES, isHomeTile } from "@contracts/tools";
-import { logout, useAuth, useMe } from "@/lib/auth";
+import { logout, hasTeam, useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 const inDock = (t: EventTarget | null) => t instanceof Element && !!t.closest("[data-assistant-dock]");
@@ -44,9 +44,9 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const [, , section = "general", sub] = pathname.split("/");
   const me = useMe();
-  const hosted = useAuth((s) => s.hosted);
+  const team = useAuth((s) => hasTeam(s.kind));
   const required = useAuth((s) => s.required);
-  const ctx: NavContext = { hosted, admin: me?.role === "admin", mac: hasThisMac() };
+  const ctx: NavContext = { team, admin: me?.role === "admin", mac: hasThisMac() };
   const macRecorder = useMacRecorder() === true;
   const toolPages = useToolPages();
 
@@ -122,7 +122,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   const navList = withToolPages(navListFor(ctx), toolPages.map((t) => ({ id: t, title: HOME_TILE_NAMES[t], icon: t === "record" ? ScreenShare : TOOL_ICONS[t] })));
   const needle = query.trim();
-  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required, ctx.mac, macRecorder, ctx.hosted && ctx.admin) : [];
+  const hits = needle ? searchSettings(needle, new Map(entries.map((s) => [s.id, s.title])), undefined, required, ctx.mac, macRecorder, ctx.team && ctx.admin) : [];
   const activeIdx = Math.min(active, Math.max(hits.length - 1, 0));
   const name = me?.name ?? me?.username ?? "";
   const initial = (name.trim()[0] ?? "?").toUpperCase();

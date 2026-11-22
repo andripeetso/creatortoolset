@@ -3,14 +3,14 @@ import { hostname, networkInterfaces } from "node:os";
 import { routeAddress, type AuthVars } from "./auth";
 import { computerKey } from "./connect/keys";
 import { connectState } from "./connect/state";
-import { hostedMode } from "./lib/env";
+import { hasTeam, hostedPlatform, isCloud, serverKind } from "./lib/env";
 import { accountTicketHost } from "./sign-in";
 import type { ServerDescriptor, ServerEndpoint } from "./lib/clients";
 
 /** Who this server is, for a phone to check before it sends a code or a token. Public: it holds nothing secret. */
 export function descriptor(): ServerDescriptor {
   let label = hostname().replace(/\.local$/, "");
-  if (hostedMode() && process.env.PUBLIC_ORIGIN) {
+  if (hasTeam() && process.env.PUBLIC_ORIGIN) {
     try {
       label = new URL(process.env.PUBLIC_ORIGIN).hostname;
     } catch { /* not a URL: the machine's name */ }
@@ -18,7 +18,8 @@ export function descriptor(): ServerDescriptor {
   return {
     serverId: computerKey().id,
     label,
-    platform: hostedMode() ? "hosted" : process.platform === "darwin" ? "mac" : "linux",
+    kind: serverKind(),
+    platform: hostedPlatform() ? "hosted" : process.platform === "darwin" ? "mac" : "linux",
     version: process.env.CT_VERSION ?? "",
     protocol: 1,
     capabilities: { pairing: true, dpop: true, connect: !!connectState(), account: !!accountTicketHost() },
@@ -54,7 +55,7 @@ const TAILNET = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./; // 100.64.0.0/10
  * and none in hosted mode: there the container's own addresses reach nobody.
  */
 export async function endpoints(port: string): Promise<ServerEndpoint[]> {
-  if (hostedMode() || !listensEverywhere()) return [];
+  if (isCloud() || !listensEverywhere()) return [];
   const out: ServerEndpoint[] = [];
   const lan = await routeAddress();
   if (lan && !/^127\./.test(lan) && !TAILNET.test(lan)) out.push({ kind: "lan", httpBaseUrl: `http://${lan}:${port}` });

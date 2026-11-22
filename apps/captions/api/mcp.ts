@@ -6,6 +6,7 @@ import { MY_KEYS } from "../contracts/service-keys";
 import { TOOLS as APP_TOOLS, TOOL_NAMES, readiness, type SetupView } from "../contracts/tools";
 import { CHECK, EDITORS, JOBS, MAKES, TALK } from "../contracts/work-prefs";
 import { EDIT_STEPS } from "../contracts/editor";
+import { serverKind } from "./lib/env";
 import { routeFor } from "./lib/providers";
 import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
@@ -656,7 +657,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
     }
     // a file dropped in the Mac app, from the dock, on a server that isn't on that computer: the dock sends that one file
     const turn = jobTurn(auth.get("authorization") ?? undefined);
-    const name = a.path && turn && process.env.CT_LOCAL !== "1" ? await askSend(user, turn, `${origin}/api/mcp`, String(a.path), a.to as AssistantFileUse) : null;
+    const name = a.path && turn && serverKind() !== "mac" ? await askSend(user, turn, `${origin}/api/mcp`, String(a.path), a.to as AssistantFileUse) : null;
     if (name) return { sending: name, note: "It has to be on this server first, and the chat is sending it now: say so in one line and end your reply. The chat carries on with it once it is here." };
     if (a.to === "library") return toLibrary(a);
     if (!a.file && !a.path) throw new ToolError("Give the dropped file's id, or a path on this computer.");
@@ -930,7 +931,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const s = r.share as { token: string; enabled: boolean; download: boolean };
       if (!s.enabled) return { name: r.name, shared: false };
       // a server on this Mac with no address on the internet: the link opens here only
-      const here = process.env.CT_LOCAL === "1" && !process.env.PUBLIC_ORIGIN;
+      const here = serverKind() === "mac" && !process.env.PUBLIC_ORIGIN;
       return { name: r.name, share_link: `${origin}/r/${s.token}`, download: s.download, ...(here ? { note: "This link opens only on this computer and its network. For other people the server needs an address on the internet (PUBLIC_ORIGIN: the name of a tunnel that points at it)." } : {}) };
     },
     instagram_refresh: async (a) => {
@@ -1557,7 +1558,11 @@ const MATERIAL_ANSWER = "Write the piece's words yourself from this material, th
 const given = new Map<string, number>();
 const GIVEN_MS = 2 * 3_600_000;
 // ponytail: in memory, per process: after a restart the caller is asked to read the material again
-const materialGiven = (username: string, piece: string) => given.set(`${username}:${piece}`, Date.now());
+const materialGiven = (username: string, piece: string) => {
+  // drop what is past its window, so the map holds only live entries
+  for (const [k, t] of given) if (Date.now() - t >= GIVEN_MS) given.delete(k);
+  given.set(`${username}:${piece}`, Date.now());
+};
 const hadMaterial = (username: string, piece: string | undefined) => !!piece && Date.now() - (given.get(`${username}:${piece}`) ?? 0) < GIVEN_MS;
 
 /**

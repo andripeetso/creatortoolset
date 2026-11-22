@@ -26,8 +26,21 @@ struct AddServerView: View {
 
     private enum Field { case address, code }
 
+    /// The host (and port) of a pairing link's server when no saved server has it: nil for a known one or no link.
+    private var unsavedLinkHost: String? {
+        guard let link, let host = link.origin.host(percentEncoded: false) else { return nil }
+        let known = Servers.shared.list.contains { $0.url.host(percentEncoded: false) == host && $0.url.port == link.origin.port }
+        return known ? nil : host + (link.origin.port.map { ":\($0)" } ?? "")
+    }
+
     var body: some View {
         Form {
+            if let host = unsavedLinkHost {
+                // a link from outside names a host the phone doesn't know yet: say it before Connect is tapped
+                Section {
+                    Text("Connect to \(host)?").font(.headline)
+                }
+            }
             Section {
                 ScanCard(scanning: $scanning) { scanned in
                     guard let target = PairingTarget.parse(scanned), target.code != nil else {

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import type { Route } from "./lib/providers";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "automations-"));
 process.env.APP_SECRET = "automations-test-secret";
+process.env.CT_SERVER = "mac"; // an install of one's own: every account is its own admin here (assistant.ts isAdminHere)
 
 // the Mac's AI: each call answers with a numbered line and the prompt it got is kept, so a test reads what the AI saw
 const prompts: string[] = [];
@@ -222,6 +223,34 @@ describe("the scheduler", () => {
     await vi.waitFor(async () => expect((await find("alice", a.id))?.running).toBe(false));
     expect(mine()).toBeGreaterThan(started);
     void run;
+  });
+
+  it("an interval task keeps its grid: a tick a little late does not move the time it is recorded at", async () => {
+    const a = await make("alice", { name: "Grid", schedule: { kind: "interval", everyMinutes: 5 }, prompt: "p" });
+    const anchor = a.createdAt as number;
+    const started: string[] = [];
+    const runner = async (_u: string, x: Automation) => void started.push(x.id);
+    await tick(anchor + 5 * 60_000 + 20_000, runner, always);
+    await tick(anchor + 10 * 60_000 + 20_000, runner, always);
+    expect(started.filter((id) => id === a.id)).toHaveLength(2);
+    expect((await find("alice", a.id))!.lastRun).toBe(anchor + 10 * 60_000);
+  });
+
+  it("a task a live process holds is not run here; a lock left by a process that is gone is taken, and released when the run ends", async () => {
+    const { env } = await import("./lib/env");
+    const a = await make("alice", { name: "Locked", schedule: everyHour, prompt: "p" });
+    const later = Date.now() + 5 * 3_600_000;
+    const lock = path.join(env.dataDir, "automations-locks", `${a.id}.lock`);
+    const started: string[] = [];
+    const runner = async (_u: string, x: Automation) => void started.push(x.id);
+    mkdirSync(path.dirname(lock), { recursive: true });
+    writeFileSync(lock, JSON.stringify({ pid: process.pid }));
+    await tick(later, runner, always);
+    expect(started).not.toContain(a.id);
+    writeFileSync(lock, JSON.stringify({ pid: 2147483646 })); // no such process
+    await tick(later, runner, always);
+    expect(started).toContain(a.id);
+    expect(existsSync(lock)).toBe(false);
   });
 
   it("a disabled task is never started", async () => {

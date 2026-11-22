@@ -18,6 +18,19 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+describe("a stopped job", () => {
+  it("stays stopped when its step's late finish or failure arrives: neither marks it done nor queues it again", () => {
+    enqueueJob(db, "lib_1", "ver_stop", "stoptest", "u1");
+    const id = (db.prepare("SELECT id FROM jobs WHERE kind = 'stoptest'").get() as { id: number }).id;
+    claimJob(db, 300, 1000, "jobs", undefined, id);
+    db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = 'Stopped' WHERE id = ?").run(id); // what stopEdit does
+    finishJob(db, id, true, undefined, 2000);
+    expect(state("stoptest").state).toBe("failed");
+    finishJob(db, id, false, "late", 2000);
+    expect(state("stoptest")).toMatchObject({ state: "failed", error: "Stopped" });
+  });
+});
+
 describe("job queue", () => {
   it("a second enqueue of the same version and kind is a no-op while the job is queued or done", () => {
     enqueueJob(db, "lib_1", "ver_a", "probe", "u1");

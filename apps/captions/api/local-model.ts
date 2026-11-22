@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 import { Hono } from "hono";
 import type { AuthVars } from "./auth";
-import { env, hostedMode } from "./lib/env";
+import { env, isCloud } from "./lib/env";
 import { findUser, LOCAL_USER, USERNAME_RE } from "./users";
 import type { LocalModel } from "../contracts/service-keys";
 
@@ -23,7 +23,7 @@ const fileOf = (username: string) => {
 
 /** An install's own admin, or the one account of an install with no sign-in. Never on a hosted server. */
 const mayHave = (username: string) =>
-  !hostedMode() && (findUser(username)?.role === "admin" || (!env.appSecret && username === LOCAL_USER.username));
+  !isCloud() && (findUser(username)?.role === "admin" || (!env.appSecret && username === LOCAL_USER.username));
 
 /**
  * A typed address as the requests use it: http or https, with no sign-in part and no query. "localhost:11434" gets
@@ -125,7 +125,7 @@ async function modelsAt(url: string): Promise<string[]> {
 export const localModelApp = new Hono<{ Variables: AuthVars }>();
 
 localModelApp.use("*", async (c, next) =>
-  hostedMode()
+  isCloud()
     ? c.json({ error: "A local model is for an install on your own computer: this server has none" }, 403)
     : mayHave(c.get("user").username)
       ? next()

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AuthVars } from "../auth";
 import { LIBRARY_WORDS, RAW_FILE, type Blur, type WatchFolder, type WatchStatus } from "../../contracts/library";
-import { env, hostedMode } from "../lib/env";
+import { env, isCloud } from "../lib/env";
 import { freeBytes, sha256File } from "../lib/uploads";
 import { addRole, ensureLibrary, givenLibrary, librariesHere, libraryChanged, libraryRole } from "./access";
 import { blobs, libraryDb } from "./db";
@@ -65,9 +65,9 @@ const stagingDir = () => path.join(env.dataDir, "library", "staging");
 export function watchAllowed(username?: string): boolean {
   const v = process.env.LIBRARY_WATCH_FOLDERS?.trim();
   if (v === "1" || v === "0") return v === "1";
-  if (hostedMode()) return false;
+  if (isCloud()) return false;
   if (!process.env.APP_SECRET) return true;
-  return process.env.CT_LOCAL === "1" && (username === undefined || findUser(username)?.role === "admin");
+  return username === undefined || findUser(username)?.role === "admin";
 }
 
 const foldersOf = (libraryId: string): WatchFolder[] => {

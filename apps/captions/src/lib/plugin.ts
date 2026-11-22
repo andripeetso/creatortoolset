@@ -413,14 +413,14 @@ const linkable = (to: string) => (/[:*]/.test(to) ? undefined : to);
  * What a web plug-in adds, one line per place, each linked to where it lives. Only what this person can open: admin tabs
  * need the hosted server and an admin; a gated tile or menu item is left out while its gate is off for the account.
  */
-export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolean }): PluginAdd[] {
+export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; team: boolean }): PluginAdd[] {
   const admin = ctx.me?.role === "admin";
   const out: PluginAdd[] = [];
   for (const t of p.tiles ?? []) if (canUse(ctx.me, t.gate)) out.push({ text: `Home: ${t.name}`, to: linkable(t.to) });
   for (const s of p.settings ?? []) {
     if (s.adminOnly && !admin) continue;
     if (s.adminTab) {
-      if (admin && ctx.hosted) out.push({ text: `Settings → ${PLUGINS_GROUP}: ${s.title}`, to: `/settings/${s.id}` });
+      if (admin && ctx.team) out.push({ text: `Settings → ${PLUGINS_GROUP}: ${s.title}`, to: `/settings/${s.id}` });
     } else out.push({ text: s.group ? `Settings → ${s.group}: ${s.title}` : `Settings: ${s.title}`, to: `/settings/${s.id}` });
   }
   for (const d of p.devices ?? []) if (!d.adminOnly || admin) {
@@ -462,7 +462,7 @@ export function webPluginAdds(p: WebPlugin, ctx: { me: Me | null; hosted: boolea
  * The plug-ins Community lists: every web plug-in and every server plug-in, merged by id (web first, then server-only ones).
  * A name and about come from the web definition, then the server's. The adds are both halves, without repeats.
  */
-export function mergePluginInfo(web: WebPlugin[], server: ServerPluginInfo[], ctx: { me: Me | null; hosted: boolean }): PluginInfo[] {
+export function mergePluginInfo(web: WebPlugin[], server: ServerPluginInfo[], ctx: { me: Me | null; team: boolean }): PluginInfo[] {
   const byId = new Map<string, PluginInfo>();
   for (const p of web) byId.set(p.id, { id: p.id, name: p.name ?? p.id, about: p.about, adds: webPluginAdds(p, ctx) });
   for (const s of server) {

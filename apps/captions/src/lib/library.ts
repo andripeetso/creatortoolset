@@ -250,7 +250,7 @@ export const searchLibrary = async (
 
 /** The library's own filters (src/pages/library/Filters.tsx): tags, when it was filmed, where, on this computer. */
 /** Available offline (M14) is the person's own list of clips, sent as `versions`: never saved with a search. */
-export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "here" | "missing"> & { offline?: true };
+export type LibraryFilters = Pick<SearchQuery, "tags" | "filmedFrom" | "filmedTo" | "place" | "orientation" | "here" | "missing"> & { offline?: true };
 
 /**
  * Those filters as query parameters (api/library/query.ts parseSearch reads them back). In the Mac app the page also
@@ -265,6 +265,7 @@ function setFilters(p: URLSearchParams, f: LibraryFilters) {
   if (f.filmedFrom !== undefined) p.set("filmedFrom", String(f.filmedFrom));
   if (f.filmedTo !== undefined) p.set("filmedTo", String(f.filmedTo));
   if (f.place) p.set("place", f.place);
+  if (f.orientation) p.set("orientation", f.orientation);
 }
 
 /** Plug-in facet picks as `f.<key>=a,b` (api/library/query.ts reads them back). */

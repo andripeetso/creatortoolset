@@ -256,6 +256,7 @@ function dropGrant(db: DatabaseSync, id: string) {
 }
 /** A computer that leaves its account takes its connections with it (link.ts removeComputer). */
 export function dropGrantsOf(db: DatabaseSync, computer: string) {
+  for (const { id } of db.prepare('SELECT id FROM ai_grants WHERE computer_id = ?').all(computer) as { id: string }[]) lists.delete(id);
   db.prepare('DELETE FROM ai_tokens WHERE grant_id IN (SELECT id FROM ai_grants WHERE computer_id = ?)').run(computer);
   db.prepare('DELETE FROM ai_grants WHERE computer_id = ?').run(computer);
 }

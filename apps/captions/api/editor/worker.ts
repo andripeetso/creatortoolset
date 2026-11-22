@@ -7,7 +7,7 @@ import { isOnline } from "../lib/devices";
 import { projectOf } from "../lib/project-of";
 import { announce } from "../lib/sync";
 import { libraryDb } from "../library/db";
-import { defer, enqueueJob, extendLease, finishJob, type JobRow, parkJob, requeueExpired } from "../library/jobs";
+import { defer, enqueueJob, extendLease, finishJob, heldBy, type JobRow, parkJob, requeueExpired } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
 import type { SessionUser } from "../users";
 import { Waiting } from "./analyze";
@@ -161,6 +161,8 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
     await usageIn(workspace, () => spending(job, () => step({ edit, job, variant, signal: ctl.signal })));
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
     if (job.kind === "script") await markRead(edit);
+    // stopped while the note was saved: stopEdit already marked the row failed, so it is not finished or queued on
+    if (ctl.signal.aborted) return true;
     finishJob(db, job.id, true, undefined, Date.now(), T);
     queueNext(db, job, edit, variant);
   } catch (e) {
@@ -253,10 +255,6 @@ export function waitsForDevice(owner: string, kinds: string[], now = Date.now(),
   const k = claimableBy(kinds);
   return !!k.length && (libraryDb().prepare(`SELECT * FROM ${T} WHERE state = 'queued' AND run_after <= ? AND actor = ? AND kind IN (${k.map(() => "?").join(", ")}) ORDER BY id LIMIT 200`).all(now, owner, ...k) as unknown as JobRow[]).some(fits);
 }
-
-/** The job row this device holds (claimed by it and still running), or undefined. */
-const heldBy = (db: DatabaseSync, id: number, device: string): JobRow | undefined =>
-  db.prepare("SELECT * FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(id, device) as JobRow | undefined;
 
 /** A device's heartbeat for a step it runs: renews the lease. False when it does not hold the step. */
 export function beatForDevice(device: string, id: number, now = Date.now()): boolean {

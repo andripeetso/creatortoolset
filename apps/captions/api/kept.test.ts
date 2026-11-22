@@ -205,10 +205,10 @@ it("Storage › Workspaces: an owner's library counts under the owner's first wo
     return next();
   });
   app.route("/api/devices/storage", storageApp);
-  process.env.CT_MODE = "hosted";
+  process.env.CT_SERVER = "cloud";
   try {
     expect((await app.request("/api/devices/storage/kept/workspaces")).status).toBe(403);
   } finally {
-    delete process.env.CT_MODE;
+    delete process.env.CT_SERVER;
   }
 });

@@ -811,8 +811,24 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(buttons(host)).toEqual(expect.arrayContaining(["Upload", "New folder"]));
     await openMore(host);
     expect(moreItem("Trash")).toBeDefined();
-    expect(host.querySelector('[aria-label="Kind"]')).toBeNull(); // the kinds are in the sidebar now
-    expect(host.querySelector('aside [aria-label="Kinds"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Kind"]')).toBeNull(); // the tabs pick the kind
+    expect(host.querySelector('aside [aria-label="Kinds"]')).toBeNull();
+    expect(host.querySelector('aside [aria-label="Orientation"]')).not.toBeNull();
+  });
+
+  it("names what the sidebar narrows to above the list, each with its X, and Clear lets go of all", async () => {
+    const host = await mount();
+    const pill = (text: string) => [...host.querySelectorAll<HTMLButtonElement>("aside button")].find((b) => b.textContent === text)!;
+    const row = () => host.querySelector('[role="group"][aria-label="Filters"]');
+    expect(row()).toBeNull();
+    await act(async () => pill("Vertical").click());
+    await act(async () => pill("This year").click());
+    expect(row()!.textContent).toContain("Vertical");
+    expect(row()!.textContent).toContain("This year");
+    await act(async () => row()!.querySelector<HTMLButtonElement>('[aria-label="Remove Vertical"]')!.click());
+    expect(pill("Vertical").getAttribute("aria-pressed")).toBe("false");
+    await act(async () => [...row()!.querySelectorAll("button")].find((b) => b.textContent === "Clear")!.click());
+    expect(row()).toBeNull();
   });
 
   it("the tabs are All, A-roll, B-roll, Videos, Photos, then the top folders, with counts", async () => {
@@ -827,6 +843,16 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(server.asked.at(-1)).toMatchObject({ kind: ["image"] });
     await act(async () => tab(host, "a")!.click());
     expect(where()).toBe("?f=col_a");
+  });
+
+  it("a kind picked on a Gallery tab goes with the tabs when the view changes", async () => {
+    localStorage.setItem("library:view", "gallery");
+    const host = await mount();
+    await act(async () => tab(host, "videos")!.click());
+    expect(server.asked.at(-1)).toMatchObject({ kind: ["video"] });
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "View")!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="List"]')!.click());
+    expect(server.asked.at(-1)?.kind).toBeUndefined();
   });
 
   it("a top folder called Photos is the only Photos tab", async () => {

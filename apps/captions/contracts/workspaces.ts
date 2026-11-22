@@ -1,8 +1,9 @@
+import type { JobId } from "./providers";
 import type { PluginGateId, Tool } from "./tools";
 
 /**
- * Teams (workspaces): an owner and members, invite links and each member's AI. Hosted mode only (CT_MODE=hosted;
- * api/boot.ts mounts /api/workspace there, so on one person's Mac none of this exists).
+ * Teams (workspaces): an owner and members, invite links and each member's AI. A Server or Creator Toolset Cloud only
+ * (api/lib/env.ts hasTeam; api/boot.ts mounts /api/workspace there, so on This Mac none of this exists).
  *
  * An account is a person; a workspace is a team. The account's role in `users.json` (admin) is the platform operator
  * who runs the server; a workspace role is what that person may do inside the team.
@@ -12,7 +13,8 @@ import type { PluginGateId, Tool } from "./tools";
  *
  * Contract (Settings → Team; api/workspace.ts mounted at /api/workspace):
  *   GET    /api/workspace                      → WorkspaceView | null (no workspace)
- *   PATCH  /api/workspace                      { name } (owner) → WorkspaceView
+ *   PATCH  /api/workspace                      { name?, signInWith?, budgetUsd?, aiTools? } (owner; null clears a
+ *                                               limit) → WorkspaceView
  *   POST   /api/workspace/invites              InviteInput (owner) → { invite, token } (token shown once; with `email`
  *                                               the link is also emailed, api/lib/mail.ts)
  *   PATCH  /api/workspace/invites/:id          InvitePatch (owner) → WorkspaceView: what the person gets once they join
@@ -50,6 +52,10 @@ export interface Workspace {
   comped: boolean;
   /** Settings → Team: everyone signs in with one of these instead of a password; unset or empty = any way */
   signInWith?: ("google" | "apple" | "github")[];
+  /** dollars a month the whole team may spend on the server's AI key; unset = no team limit, 0 = none at all */
+  budgetUsd?: number;
+  /** the tools that may run on the server's AI key (TEAM_AI_TOOLS); unset = all of them */
+  aiTools?: JobId[];
   members: Member[];
   createdAt: number;
 }
@@ -92,7 +98,9 @@ export interface MemberView extends Member {
 }
 
 export interface WorkspaceView {
-  workspace: Pick<Workspace, "id" | "name" | "plan" | "comped" | "createdAt" | "signInWith">;
+  workspace: Pick<Workspace, "id" | "name" | "plan" | "comped" | "createdAt" | "signInWith" | "budgetUsd" | "aiTools">;
+  /** the owner only: what the whole team spent on the server's AI key this month (UTC), dollars */
+  spentUsd?: number;
   me: WorkspaceRole;
   /** the owner sees everything; a member sees names and roles, and their own row in full */
   members: MemberView[];
@@ -135,3 +143,6 @@ export interface WorkspaceContents {
   items: Array<{ n: number; what: string }>;
   ownFiles: boolean;
 }
+
+/** The tools a team's budget may run on the server's key. Never the Content Workshop: it needs a member's own AI provider. */
+export const TEAM_AI_TOOLS: readonly Exclude<JobId, "workshop">[] = ["captions", "analyzer", "notes", "editor", "library"];

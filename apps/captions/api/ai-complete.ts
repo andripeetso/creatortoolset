@@ -8,9 +8,9 @@ import { DRIVERS, type JobId, type Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacErrorKind, type MacOpts, type MacUsage } from "./lib/mac-claude";
 import { instanceIn, limitFallbacks, ownSettings, routeFor, runFields } from "./lib/providers";
 import { completeLocal } from "./lib/local-claude";
-import { hostedMode } from "./lib/env";
+import { hasTeam } from "./lib/env";
 import { addSpend, budgetLeft } from "./lib/workspaces";
-import { keyFor } from "./my-keys";
+import { keyFor, teamAiKey } from "./my-keys";
 import { fewestTokens, localModelOf, tooLongFor } from "./local-model";
 import type { LocalModel } from "../contracts/service-keys";
 import { findUser, type SessionUser } from "./users";
@@ -143,19 +143,17 @@ function onLocalModel(name: string, job: JobId, label: string): ProviderOpts | n
 }
 
 /**
- * A member on a monthly API budget (hosted only, Settings → Team), with no provider or key of their own: the server's
- * Anthropic key, billed to them. Never the Workshop: a Workshop turn reads the session's folder, which a plain API call
- * can't (it needs their own AI).
+ * A member on a monthly API budget (a Server or Cloud, Settings → Team), with no provider or key of their own: the server's
+ * Anthropic key, billed to them, when the admin's Team use switch is on (teamAiKey). Never the Workshop: a Workshop turn
+ * reads the session's folder, which a plain API call can't (it needs their own AI).
  */
 function onBudget(name: string, job: JobId, label: string): ProviderOpts | null {
-  if (!hostedMode()) return null;
-  const left = budgetLeft(name);
-  if (left === null) return null;
+  if (!hasTeam()) return null;
+  if (budgetLeft(name) === null) return null;
   if (job === "workshop") return { only: [], off: "Content Workshop runs on your own AI (it reads the whole project folder): connect yours in Settings → Providers" };
-  if (left <= 0) return { only: [], off: "Your AI budget for this month is used up: ask your team's owner or an admin for more" };
-  const apiKey = process.env.ANTHROPIC_API_KEY || "";
-  if (!apiKey) return { only: [], off: "The team's API key isn't set up: ask the owner" };
-  return { only: ["anthropic"], retries: 1, apiKey, bill: name, mac: { label } };
+  const route = teamAiKey(name, job);
+  if (route.missing) return { only: [], off: route.missing };
+  return { only: ["anthropic"], retries: 1, apiKey: route.key, bill: name, mac: { label } };
 }
 
 /** Order the configured providers: exactly `only`, in its order. */

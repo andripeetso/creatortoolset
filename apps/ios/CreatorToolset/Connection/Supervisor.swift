@@ -804,7 +804,7 @@ final class Connections: ObservableObject {
         } else {
             saved.servers.append(ServerEntry(serverId: serverId, label: label, routes: [route], updateRequired: updateRequired ? true : nil,
                                              username: username, version: descriptor?.version, platform: descriptor?.platform,
-                                             home: route.url))
+                                             kind: descriptor?.kind, home: route.url))
         }
         if let credential { ServerRegistry.setCredential(serverId, routeId: route.authorization == .account ? Route.accountId : route.id, credential) }
         if shown || !saved.servers.contains(where: { $0.key == saved.currentKey }) { saved.currentKey = entry(serverId)?.key }
@@ -885,6 +885,7 @@ final class Connections: ObservableObject {
         update(serverId, signal: false) {
             $0.version = d.version
             $0.platform = d.platform
+            $0.kind = d.kind
             $0.updateRequired = d.protocolVersion < ServerDescriptor.supportedProtocol ? true : nil
         }
     }

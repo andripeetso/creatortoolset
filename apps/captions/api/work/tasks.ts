@@ -15,7 +15,8 @@ import { MAX_ATTEMPTS, WAITS_FOR_COMPUTER } from "../library/jobs";
 import type { WorkerOptions } from "./computer";
 import { mayRunHere } from "./may-run";
 import { takeTurn, TURN_LINE } from "./turn";
-import { serverKind, serverWeight, serverWorks } from "./server-work";
+import { serverWeight, serverWorks } from "./server-work";
+import { serverKind } from "../lib/env";
 
 /**
  * Computer tasks (local-first plan D7, P3): the processing a tool does outside the Media Library and the AI Editor (a
@@ -129,7 +130,7 @@ function takers(t: TaskRow): Device[] {
 
 /** Where task `t` runs now (the one rule, place.ts mayRunHere). This Mac is the person's own computer: always here. */
 export function placeTask(t: Pick<TaskRow, "kind" | "actor" | "workspace"> & Partial<TaskRow>): "server" | "computer" | "wait" {
-  if (serverKind() === "local") return "server";
+  if (serverKind() === "mac") return "server";
   const row = { id: 0, ref: "", input: null, state: "queued", attempts: 0, held_by: null, claim_id: null, error: null, line: null, ...t } as TaskRow;
   return mayRunHere({
     reads: kinds.get(t.kind)?.reads !== false,

@@ -178,7 +178,7 @@ function ToolsList() {
  */
 function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; recorder: boolean }) {
   const me = useMe();
-  const hosted = useAuth((s) => s.hosted);
+  const cloud = useAuth((s) => s.kind === "cloud");
   const packs = useCachedLoad<InstalledPack[]>("/api/packs", listInstalled, { topic: ["packs"], own: true });
   const mine = (packs.data ?? []).filter((p) => reachesTool(containsOf(p), tile));
   const places = skillPlacesOf(tile);
@@ -196,7 +196,7 @@ function ToolPage({ tile, steps, recorder }: { tile: HomeTile; steps: Steps; rec
           {s.body}
         </Section>
       ))}
-      <ToolPlugins steps={steps} tool={tile} switches={tile === "editor" && hasThisMac() && !hosted} />
+      <ToolPlugins steps={steps} tool={tile} switches={tile === "editor" && hasThisMac() && !cloud} />
       {mine.length > 0 && (
         <Section title="Packs">
           <Card>

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { PACK_SLOTS, isPackSkillSlot, type InstalledPack, type Pack, type PackEditorItems, type PackLevel, type PackOrigin, type PackSlot } from "../../contracts/packs";
 import { readOfficialPacks } from "../official-packs";
@@ -12,6 +12,7 @@ import { INSTRUCTIONS_MAX } from "./workshop/prompt";
 import type { Framework } from "./workshop/types";
 import type { ProviderOpts } from "../ai-complete";
 import { ask, onComputer } from "../work/on-computer";
+import { writeJsonAtomic } from "./write-json";
 
 /**
  * Installed packs. Install copies a pack's frameworks and caption styles into the person's account with
@@ -50,12 +51,6 @@ async function readJson<T>(file: string): Promise<T | null> {
   }
 }
 
-async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await writeFile(tmp, JSON.stringify(data));
-  await rename(tmp, file);
-}
 
 // one writer per person: install, update, toggle and remove read-modify-write the same file
 const locks = new Map<string, Promise<unknown>>();

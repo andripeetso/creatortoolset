@@ -83,6 +83,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         guard let url = request.url else { return urlSchemeTask.didFailWithError(CocoaError(.fileReadUnknown)) }
         let task = urlSchemeTask
         live[ObjectIdentifier(task)] = task
+        if url.host == ThumbCache.host { return serveThumb(url, page: webView.url, store: webView.configuration.websiteDataStore.httpCookieStore, task: task) }
         // with the proxy cache of the account signed in on the page's own server (ProxyCache.swift)
         let workspace = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ws" }?.value
         let (root, granted, cache) = MainActor.assumeIsolated { (self.root(), self.granted(webView.url, workspace), ProxyCache.allowed(page: webView.url)) }
@@ -106,6 +107,56 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
         live[ObjectIdentifier(urlSchemeTask)] = nil
+    }
+
+    /// A Media Library thumb (ThumbCache.swift). Runs on the main thread, so every answer is made from a background queue:
+    /// `deliver` waits for the main thread. Only the page's own server; the account is asked once per server, as ProxyCache does.
+    private func serveThumb(_ url: URL, page: URL?, store: WKHTTPCookieStore, task: WKURLSchemeTask) {
+        nonisolated(unsafe) let task = task   // only answered through reply, deliver or answer, off the main thread
+        guard let target = ThumbCache.target(from: url), let page, page.scheme == "http" || page.scheme == "https",
+              let origin = ThumbCache.origin(page) else {
+            return DispatchQueue.global(qos: .userInitiated).async { self.reply(task, url, 404) }
+        }
+        // the window's cookies only when the server is asked: a kept thumb is read with no trip to WebKit for them
+        let jar: @MainActor () async -> [HTTPCookie] = {
+            cookies(for: origin, in: await withCheckedContinuation { c in store.getAllCookies { c.resume(returning: $0) } })
+        }
+        Task { @MainActor in
+            var account = ProxyCache.allowed(page: page)
+            if account == nil { account = await ProxyCache.allowed(page: page) { Site(base: origin, cookies: await jar()) } }
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.thumb(url, target: target, origin: origin, cookies: jar, account: account, task: task)
+            }
+        }
+    }
+
+    /// The kept file when the window's account has it, else the server's answer; a 200 is kept, nothing else is. With no
+    /// account known (signed out, or the server did not say), the server answers and nothing is kept.
+    private func thumb(_ url: URL, target: String, origin: URL, cookies: @escaping @MainActor () async -> [HTTPCookie], account: String?, task: WKURLSchemeTask) {
+        nonisolated(unsafe) let task = task
+        let file = account.map { ThumbCache.file(in: ThumbCache.dir, origin: origin, account: $0, target: target) }
+        if let file, let data = ThumbCache.read(file) { return answer(url, 200, data, task) }
+        Task {
+            do {
+                let (status, data) = try await ThumbCache.fetch(origin: origin, target: target, cookies: await cookies())
+                if status == 200, let file {
+                    try? ThumbCache.write(data, to: file)
+                    ThumbCache.pruneIfDue(ThumbCache.dir)
+                }
+                self.answer(url, status, data, task)
+            } catch {
+                self.deliver(task, last: true) { $0.didFailWithError(error) }
+            }
+        }
+    }
+
+    private func answer(_ url: URL, _ status: Int, _ data: Data, _ task: WKURLSchemeTask) {
+        guard status == 200 else { return reply(task, url, status) }
+        deliver(task, last: true) { t in
+            t.didReceive(Self.response(url, 200, ["Content-Type": "image/jpeg", "Content-Length": "\(data.count)"]))
+            t.didReceive(data)
+            t.didFinish()
+        }
     }
 
     func serve(_ url: URL, method: String?, range: String?, root: URL, granted: [String], cache: String?,

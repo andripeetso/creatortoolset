@@ -243,7 +243,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         AppDelegate.quitting = true
-        return .terminateNow
+        // the server on this Mac exits before the app does (its stop returns once the process has ended)
+        guard let server = Self.shell?.server else { return .terminateNow }
+        Task { await server.stop(); NSApp.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
     }
 
     @MainActor func applicationDidFinishLaunching(_ notification: Notification) {

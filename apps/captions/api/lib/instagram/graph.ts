@@ -3,7 +3,7 @@ import { anyInstagramLogin, instagramLogin } from "../connectors/store";
 import { parseInstagramUrl } from "./url";
 import type { CatalogItem, CatalogPage, CatalogVisibility, Comment, ProfileInfo, VisibilityBasis } from "./types";
 import { InstagramError } from "./base";
-import { env, hostedMode } from "../env";
+import { env, hasTeam } from "../env";
 import { pluginInstallMetaLogin } from "../plugin";
 import { publicGridReader, type PublicGridOptions } from "../connectors/provider";
 import {
@@ -20,7 +20,7 @@ export type { MineAccountStats } from "./account-insights";
  * Official Instagram Graph API for the Toolset user's own professional
  * account (Analyzer `mine` only). Other creators stay on the user's own Apify key.
  * Credentials are install-wide: META_ACCESS_TOKEN + INSTAGRAM_USER_ID,
- * read from the .env, and used only on a hosted server (CT_MODE=hosted) or when a plug-in turns them on
+ * read from the .env, and used only on a Server or Cloud (hasTeam) or when a plug-in turns them on
  * (installLoginAllowed). They read one Instagram account, so only the
  * owner's (SOCIAL_FEED_OWNER) Mine account uses them. Never persist paging.next — it embeds the token.
  */
@@ -75,12 +75,12 @@ type GraphCreds = { token: string; userId: string };
 const scoped = new AsyncLocalStorage<GraphCreds>();
 
 /**
- * May the install's own login read Instagram for every account? Only on a hosted server (CT_MODE=hosted, the owner's
+ * May the install's own login read Instagram for every account? Only on a Server or Cloud (hasTeam, the owner's
  * studio) or when a loaded plug-in turns it on. A public install with no login of its own never reads through the
  * token that happens to sit in its .env.
  */
 function installLoginAllowed(): boolean {
-  return hostedMode() || pluginInstallMetaLogin();
+  return hasTeam() || pluginInstallMetaLogin();
 }
 
 /** The install's own login (META_ACCESS_TOKEN + INSTAGRAM_USER_ID): the owner's account and the social feed. */

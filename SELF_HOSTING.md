@@ -74,7 +74,7 @@ from that folder.
 scripts/setup-server.sh tools.example.com
 ```
 
-It copies `.env.example` to `.env` (mode 600) if there is none, sets `DOMAIN`, writes a random `APP_SECRET` unless one
+It copies `.env.example` to `.env` (mode 600) if there is none, sets `DOMAIN` and `CT_SERVER=server`, writes a random `APP_SECRET` unless one
 is set (it never prints it), and runs `docker compose up -d --build`. Run it again after a change; it keeps `.env`.
 Then go on with step 4 (optional) and step 5's checks. The steps below do the same by hand.
 
@@ -96,6 +96,8 @@ Set these in `.env` (edit the file, or use `sed`):
   ```
 
 - `ADMIN_USERNAME`: optional. Leave it empty for `admin`.
+- `CT_SERVER=server`: says this is a server run for you or your team. It turns on Settings → Team, the server's
+  keys and team budgets. `setup-server.sh` sets it.
 
 Optional, now or later (see step 4 and `.env.example` for every variable):
 

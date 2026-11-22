@@ -5,6 +5,7 @@ import { HttpError } from './errors.ts';
 import type { LimitFor } from './limits.ts';
 import { keyId, parsePublicKey, publicKeyB64 } from './keys.ts';
 import { computerName, TYP, verifyJwt } from './connect.ts';
+import { dropGrantsOf } from './gateway.ts';
 import type { KeyObject } from 'node:crypto';
 
 export const CHALLENGE_TTL = 120; // seconds
@@ -240,8 +241,7 @@ export async function removeComputer(d: { db: DatabaseSync; cf: Cloudflare }, ro
   if (row.dns_id) await d.cf.deleteDns(row.dns_id);
   if (row.tunnel_id) await d.cf.deleteTunnel(row.tunnel_id);
   // its AI app connections go with it (gateway.ts)
-  d.db.prepare('DELETE FROM ai_tokens WHERE grant_id IN (SELECT id FROM ai_grants WHERE computer_id = ?)').run(row.id);
-  d.db.prepare('DELETE FROM ai_grants WHERE computer_id = ?').run(row.id);
+  dropGrantsOf(d.db, row.id);
   d.db.prepare('DELETE FROM computers WHERE id = ?').run(row.id);
 }
 

@@ -1,11 +1,12 @@
 import { Hono, type Context } from "hono";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import type { AuthVars } from "./auth";
 import { FOLDER_TOOLS, isFolderTool, SHAREABLE_TOOLS, type FolderTool, type ToolFolder, type ToolFolders } from "../contracts/folders";
 import { env } from "./lib/env";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
+import { writeJsonAtomic } from "./lib/write-json";
 
 /**
  * Folders for the tools with none of their own (contracts/folders.ts): $DATA_DIR/folders/<tool>/<username>.json holds
@@ -22,21 +23,19 @@ const MAX_MOVE = 500;
 
 const fileOf = (tool: FolderTool, username: string) => path.join(env.dataDir, "folders", tool, `${username}.json`);
 
+// only a missing file is an empty list: any other read error, or a file that is not JSON, throws, so change() never saves
+// an empty list over the person's folders
 export async function read(tool: FolderTool, username: string): Promise<ToolFolders> {
-  try {
-    const v = JSON.parse(await readFile(fileOf(tool, username), "utf-8")) as Partial<ToolFolders>;
-    return { folders: Array.isArray(v.folders) ? v.folders : [], items: v.items && typeof v.items === "object" ? v.items : {} };
-  } catch {
-    return { folders: [], items: {} };
-  }
+  const raw = await readFile(fileOf(tool, username), "utf-8").catch((e: NodeJS.ErrnoException) => {
+    if (e.code === "ENOENT") return "{}";
+    throw e;
+  });
+  const v = JSON.parse(raw) as Partial<ToolFolders>;
+  return { folders: Array.isArray(v.folders) ? v.folders : [], items: v.items && typeof v.items === "object" ? v.items : {} };
 }
 
 async function save(tool: FolderTool, username: string, data: ToolFolders) {
-  const file = fileOf(tool, username);
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await writeFile(tmp, JSON.stringify(data));
-  await rename(tmp, file);
+  await writeJsonAtomic(fileOf(tool, username), data);
 }
 
 // one writer per file: every change reads, changes and writes the whole file. Exported for a plug-in that files its own
@@ -200,7 +199,9 @@ export async function sharedFolder(tool: FolderTool, token: string): Promise<{ u
   for (const file of files) {
     const username = file.endsWith(".json") ? file.slice(0, -5) : "";
     if (!USER.test(username)) continue;
-    const data = await read(tool, username);
+    // one person's unreadable file must not hide everyone else's shared folders
+    const data = await read(tool, username).catch(() => null);
+    if (!data) continue;
     const folder = data.folders.find((f) => f.share === token);
     if (folder) return { username, data, folder };
   }

@@ -2,12 +2,14 @@ import { Hono } from "hono";
 import type { ProviderCheck, ProviderInstance, ProviderSettings, ProvidersView, Scope } from "../contracts/providers";
 import type { AuthVars } from "./auth";
 import { limitLine } from "../contracts/plans";
+import { TEAM_AI_TOOLS } from "../contracts/workspaces";
 import { MacClaudeError, streamMacClaude, macUsageLines } from "./lib/mac-claude";
 import { forViewer, isOnline, listDevices } from "./lib/devices";
 import { deviceIdOf, driverCatalog, dropOwnSettings, instanceIn, modelsFor, ownSettings, parseSettings, providerChecks, providerSettings, recordCheck, routeFor, runFields, saveSettings } from "./lib/providers";
 import { limitsFor, type LimitRef } from "./lib/limits";
-import { hostedMode } from "./lib/env";
+import { hasTeam } from "./lib/env";
 import { budgetLeft, spentThisMonth } from "./lib/workspaces";
+import { teamAiKey } from "./my-keys";
 import { findUser, type SessionUser } from "./users";
 
 /**
@@ -92,7 +94,7 @@ async function viewFor(u: SessionUser): Promise<ProvidersView> {
 
   // a member on the team's API budget (ai-complete.ts onBudget): only their own numbers, and whether the team's key is set
   const left = admin ? null : budgetLeft(u.username);
-  const teamAi = left === null ? null : { budgetUsd: left + spentThisMonth(u.username), spentUsd: spentThisMonth(u.username), left, ready: hostedMode() && !!process.env.ANTHROPIC_API_KEY };
+  const teamAi = left === null ? null : { budgetUsd: left + spentThisMonth(u.username), spentUsd: spentThisMonth(u.username), left, ready: hasTeam() && TEAM_AI_TOOLS.some((t) => !!teamAiKey(u.username, t).key) };
 
   return { workspace, own: own && forPage(own), using, devices, checks, models, usage, limits, teamAi };
 }

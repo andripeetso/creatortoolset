@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "mac:build": "scripts/build-app.sh",
-    "mac:test": "swift test",
+    "mac:test": "swift test && swift test --package-path ../swift-shared",
     "mac:open": "open 'build/Creator Toolset.app'"
   }
 }

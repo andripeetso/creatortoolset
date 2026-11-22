@@ -127,9 +127,9 @@ final class PluginsTests: XCTestCase {
         XCTAssertEqual(pluginChange(prepared("tiny", "nonsense"), id: "tiny", on: on), PluginChange.none)
     }
 
-    /// A change never gets more than the person agreed to: the alert of a plug-in with pages only never said it runs on
-    /// the Mac, so a version that adds a server half waits for their click, whatever Update automatically says.
-    func testAChangeThatAddsAServerHalfWaitsForAClick() {
+    /// A change never gets more than the person agreed to, and web code is never loaded into the signed-in window unasked:
+    /// a version with web code, or one that adds a server half, waits for their click, whatever Update automatically says.
+    func testAChangeWithWebCodeOrANewServerHalfWaitsForAClick() {
         let a = String(repeating: "a", count: 64), b = String(repeating: "b", count: 64)
         func prepared(server: Bool, web: Bool) -> PluginPrepared {
             PluginPrepared(id: "tiny", name: "Tiny", fingerprint: b, server: server, web: web)
@@ -137,10 +137,11 @@ final class PluginsTests: XCTestCase {
         let pagesOnly = PluginApproval(fingerprint: a, folder: "tiny", server: false)
         XCTAssertEqual(pluginChange(prepared(server: true, web: true), id: "tiny", on: pagesOnly), .asks)
         XCTAssertEqual(pluginChange(prepared(server: true, web: false), id: "tiny", on: pagesOnly), .asks)
-        XCTAssertEqual(pluginChange(prepared(server: false, web: true), id: "tiny", on: pagesOnly), .takes)   // still pages only
+        XCTAssertEqual(pluginChange(prepared(server: false, web: true), id: "tiny", on: pagesOnly), .asks)   // web changed: the window's code
         let runsHere = PluginApproval(fingerprint: a, folder: "tiny", server: true)
-        XCTAssertEqual(pluginChange(prepared(server: true, web: true), id: "tiny", on: runsHere), .takes)     // pages added: no more reach
-        XCTAssertEqual(pluginChange(prepared(server: false, web: true), id: "tiny", on: runsHere), .takes)    // less reach
+        XCTAssertEqual(pluginChange(prepared(server: true, web: true), id: "tiny", on: runsHere), .asks)     // web changed again
+        XCTAssertEqual(pluginChange(prepared(server: true, web: false), id: "tiny", on: runsHere), .takes)   // server-only change
+        XCTAssertEqual(pluginChange(prepared(server: false, web: false), id: "tiny", on: runsHere), .takes)  // less reach
         // a record that does not say (none was ever shipped): the lesser agreement
         let old = PluginRecord.decode(Data(#"{"on":{"tiny":{"fingerprint":"\#(a)","folder":"tiny"}}}"#.utf8))
         XCTAssertEqual(old?.on["tiny"]?.server, false)

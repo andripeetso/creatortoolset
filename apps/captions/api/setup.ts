@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { aiFor, anyAiConfigured } from "./ai-complete";
-import { env, hostedMode } from "./lib/env";
+import { env, hasTeam, isCloud } from "./lib/env";
 import { isOnline, listDevices } from "./lib/devices";
 import { connectState } from "./connect/state";
 import { joinServer, saveJoin } from "./lib/server-join";
@@ -152,7 +152,7 @@ setupApp.get("/computers", async (c) => {
     drivers: d.report?.drivers ?? [],
   }));
   // a hosted server is shared: only its admin sees the machine's own name and address
-  const hide = hostedMode() && c.get("user").role !== "admin";
+  const hide = hasTeam() && c.get("user").role !== "admin";
   return c.json({
     here: hide ? { name: "This server", linked: !!s, hostname: null } : { name: s?.name ?? hostname(), linked: !!s, hostname: s?.hostname ?? null },
     others,
@@ -161,8 +161,9 @@ setupApp.get("/computers", async (c) => {
 
 /** "I already have a server": joins another server behind a one-time link it showed (lib/server-join.ts). */
 setupApp.post("/join", async (c) => {
-  // a hosted server must not fetch addresses on a visitor's say-so, and a request through a tunnel is refused the same way
-  if (hostedMode() || viaTunnel(c)) return c.json({ ok: false, message: "Joining a server is done from this computer's own app." }, 403);
+  // the server must not fetch addresses on a member's say-so (it would read what an inside address answers), nor on
+  // Cloud at all; a request through a tunnel is refused the same way
+  if (!ownComputer(c.get("user")) || viaTunnel(c)) return c.json({ ok: false, message: "Joining a server is done from this computer's own app." }, 403);
   const user = c.get("user");
   const b = (await c.req.json().catch(() => null)) as { link?: unknown } | null;
   const r = await joinServer(b?.link);
@@ -209,7 +210,7 @@ setupApp.put("/", async (c) => {
  * The AI CLIs on this computer are the owner's: only the owner's own account on a server that runs on a computer
  * (not hosted) can see or connect them. Anyone else's subscription is never run for another account.
  */
-const ownComputer = (u: SessionUser): boolean => !hostedMode() && u.role === "admin";
+const ownComputer = (u: SessionUser): boolean => !isCloud() && u.role === "admin";
 const port = () => Number(process.env.PORT || 3000);
 const cliOf = (v: unknown): CliId | null =>
   typeof v === "string" && (CLI_IDS as string[]).includes(v) ? (v as CliId) : null;

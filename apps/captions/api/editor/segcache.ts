@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { open, readdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { env } from "../lib/env";
+import { env, serverKind } from "../lib/env";
 import { segmentsDir } from "../work/cache";
 import { onComputer } from "../work/on-computer";
 
@@ -26,7 +26,7 @@ const IN_USE_MS = 3600_000;
 /** Where segments are kept here, or null for none. */
 export function segDir(): string | null {
   if (onComputer.on) return segmentsDir();
-  return process.env.CT_LOCAL === "1" ? path.join(env.dataDir, "render-cache") : null;
+  return serverKind() === "mac" ? path.join(env.dataDir, "render-cache") : null;
 }
 
 /** A file as the key knows it (size, first and last MiB), read once per render: `seen`. */

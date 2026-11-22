@@ -3,17 +3,18 @@ import { readFileSync, renameSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "./env";
-import { INVITE_DAYS, type AiRoute, type Invite, type InviteInput, type Member, type Workspace, type WorkspaceRole } from "../../contracts/workspaces";
+import { INVITE_DAYS, TEAM_AI_TOOLS, type AiRoute, type Invite, type InviteInput, type Member, type Workspace, type WorkspaceRole } from "../../contracts/workspaces";
 import { SIGNIN_NAME, findUser, listUsers, setOff, setRead } from "../users";
 import { pluginDefaultOff } from "./plugin";
 import type { PluginGateId, Tool } from "../../contracts/tools";
+import type { JobId } from "../../contracts/providers";
 
 /**
  * Teams: workspaces, members, invites and each member's API spend (contracts/workspaces.ts).
  * $DATA_DIR/workspaces.json { workspaces, invites (token sha256), spend { "<user>": { "<YYYY-MM>": usd } } }.
  *
- * First load on a server that has accounts but no file: one workspace from them, the first admin (ADMIN_USERNAME
- * first) its owner, everyone else a member on their own AI (`own`). Comped: it is the server owner's own team.
+ * First load on a server that has accounts but no file: a team of one, the first admin (ADMIN_USERNAME first) its
+ * owner. Other accounts join by invite, never by an update. Comped: it is the server owner's own team.
  *
  * Decision: owning a team grants nothing on the platform. The platform role (users.ts) alone decides admin routes,
  * the server's keys, and who may use the server's providers; canManage() here is the workspace role only. The
@@ -51,10 +52,7 @@ function migrate(): Store {
         plan: "team",
         comped: true,
         createdAt: now,
-        members: [
-          member(owner.username, "owner"),
-          ...accounts.filter((u) => u !== owner).map((u) => member(u.username, "member")),
-        ],
+        members: [member(owner.username, "owner")],
       },
     ],
     invites: [],
@@ -156,6 +154,24 @@ const budget = (x: unknown): number => {
   if (n < 0 || n > 10_000) throw new Error("Enter a budget from $0 to $10,000 a month.");
   return Math.round(n * 100) / 100;
 };
+
+/**
+ * Settings → Team, the owner: the team's monthly limit on the server's AI key (null = none, 0 = no spending) and the
+ * tools that may use it (null = all). Values on the team record, never constants, so a plan can set them later.
+ */
+export function setTeamAi(w: Workspace, patch: { budgetUsd?: unknown; aiTools?: unknown }): void {
+  if (patch.budgetUsd === null) delete w.budgetUsd;
+  else if (patch.budgetUsd !== undefined) {
+    if (typeof patch.budgetUsd !== "number") throw new Error("Enter a budget from $0 to $10,000 a month.");
+    w.budgetUsd = budget(patch.budgetUsd);
+  }
+  if (patch.aiTools === null) delete w.aiTools;
+  else if (patch.aiTools !== undefined) {
+    if (!Array.isArray(patch.aiTools)) throw new Error("Tools is a list");
+    w.aiTools = TEAM_AI_TOOLS.filter((t) => (patch.aiTools as unknown[]).includes(t));
+  }
+  persist();
+}
 
 /** Change a member's AI route or budget. `by` is the role of whoever asks: only the owner changes anyone. */
 export function updateMember(w: Workspace, username: string, by: WorkspaceRole, patch: { ai?: unknown; budgetUsd?: unknown; scripts?: unknown; workspaces?: string[] }): Member {
@@ -329,6 +345,21 @@ export function addSpend(username: string, usd: number): void {
   persist();
 }
 
+/** What the whole team spent this month: the sum of its members, no second counter. */
+export const teamSpentThisMonth = (w: Workspace): number => w.members.reduce((sum, m) => sum + spentThisMonth(m.username), 0);
+
+/**
+ * Whether this account's call may run on the server's key, past its own budget: the tool is one the team allows, and the
+ * team's monthly limit has money left. The words say what stops it; null = it may.
+ */
+export function teamRefusal(username: string, job: JobId): "tool" | "team budget" | null {
+  const w = workspaceOf(username);
+  if (!w) return null;
+  if (job === "workshop" || (w.aiTools && !w.aiTools.includes(job))) return "tool";
+  if (w.budgetUsd !== undefined && w.budgetUsd - teamSpentThisMonth(w) <= 0) return "team budget";
+  return null;
+}
+
 /**
  * A member's monthly API budget, when that is their AI route: what is left this month (≤ 0 = used up).
  * Null = no budget route (their own AI, or not in a workspace).
@@ -337,6 +368,6 @@ export function budgetLeft(username: string): number | null {
   const w = workspaceOf(username);
   const m = w && memberIn(w, username);
   if (!m || m.ai !== "budget") return null;
-  // ponytail: checked when a call starts, so one long call can go a little over; a hold per call if that matters
+  // shortcut: checked when a call starts, so one long call can go a little over; a hold per call if that matters
   return m.budgetUsd - spentThisMonth(username);
 }

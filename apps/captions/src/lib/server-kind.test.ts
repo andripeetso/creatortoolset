@@ -6,25 +6,25 @@ const admin: Me = { username: "owner", role: "admin", cloud: true, off: [] };
 const member: Me = { username: "member", role: "user", cloud: true, off: [] };
 
 beforeEach(() => {
-  useAuth.setState({ required: false, me: null, hosted: false, viewedBy: null });
+  useAuth.setState({ required: false, me: null, kind: "mac", viewedBy: null });
 });
 
-describe("hosted and view-as state", () => {
-  it("takes hosted and view-as from the server's check", () => {
-    useAuth.getState().setAuth(true, member, { hosted: true, viewedBy: "owner" });
-    expect(useAuth.getState().hosted).toBe(true);
+describe("server kind and view-as state", () => {
+  it("takes the kind and view-as from the server's check", () => {
+    useAuth.getState().setAuth(true, member, { kind: "server", viewedBy: "owner" });
+    expect(useAuth.getState().kind).toBe("server");
     expect(useAuth.getState().viewedBy).toBe("owner");
   });
 
-  it("keeps hosted across a sign-in, and a sign-in ends a view", () => {
-    useAuth.getState().setAuth(true, admin, { hosted: true, viewedBy: "owner" });
+  it("keeps the kind across a sign-in, and a sign-in ends a view", () => {
+    useAuth.getState().setAuth(true, admin, { kind: "server", viewedBy: "owner" });
     useAuth.getState().setAuth(true, admin);
-    expect(useAuth.getState().hosted).toBe(true);
+    expect(useAuth.getState().kind).toBe("server");
     expect(useAuth.getState().viewedBy).toBeNull();
   });
 
-  it("is off by default, so a local server shows no hosted screens", () => {
-    expect(useAuth.getState().hosted).toBe(false);
+  it("is This Mac by default, so no team screens show", () => {
+    expect(useAuth.getState().kind).toBe("mac");
     expect(useAuth.getState().viewedBy).toBeNull();
   });
 });

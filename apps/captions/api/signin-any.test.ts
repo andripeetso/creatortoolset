@@ -11,7 +11,9 @@ process.env.APP_SECRET = "signin-any-test-secret";
 const { createUser, findUser } = await import("./users");
 createUser("boss", "bosspass1", { role: "admin" });
 createUser("sam", "otherpass1", { role: "user" });
-const { workspaceOf, setSignInWith } = await import("./lib/workspaces");
+const { addMember, workspaceOf, setSignInWith } = await import("./lib/workspaces");
+// the update makes a team of one (the server's admin): boss and sam join it as an invite would add them
+for (const u of ["boss", "sam"]) addMember(workspaceOf("admin")!, u);
 const { ruleFor } = await import("./auth");
 
 describe("the team's sign-in can be any of Google, Apple and GitHub", () => {

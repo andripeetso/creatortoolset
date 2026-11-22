@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { createWriteStream, existsSync, statSync, createReadStream } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, rename, rm, stat, utimes } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -21,7 +20,8 @@ export const hfApp = new Hono();
 
 const UPSTREAMS = ["https://huggingface.co", "https://hf-mirror.com"];
 const HEADER_TIMEOUT_MS = 30000;
-const CACHE_DIR = path.join(tmpdir(), "caption-studio-hf-cache");
+const CACHE_MAX_BYTES = 20 * 1024 ** 3;
+const cacheDir = () => path.join(env.dataDir, "hf-cache");
 
 // in-flight downloads, deduped by cache path (each settles, never rejects)
 const inflight = new Map<string, Promise<void>>();
@@ -72,13 +72,42 @@ const ownCopy = (sub: string) => {
 };
 const typeOf = (sub: string) => (sub.endsWith(".json") ? "application/json" : sub.endsWith(".txt") ? "text/plain" : "application/octet-stream");
 
+type CacheFile = { file: string; size: number; used: number };
+/** Every file under `dir` with its size and last use (mtime: a hit touches it). */
+async function cacheFiles(dir: string): Promise<CacheFile[]> {
+  const out: CacheFile[] = [];
+  for (const e of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const file = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...(await cacheFiles(file)));
+    else {
+      const s = await stat(file).catch(() => null);
+      if (s) out.push({ file, size: s.size, used: s.mtimeMs });
+    }
+  }
+  return out;
+}
+
+/** Removes the least recently used files until the cache is within `max` bytes. A download in progress (.part) counts but is never removed. */
+export async function trimCache(dir: string, max = CACHE_MAX_BYTES): Promise<void> {
+  const files = await cacheFiles(dir);
+  let total = files.reduce((n, f) => n + f.size, 0);
+  for (const f of files.filter((f) => !f.file.endsWith(".part")).sort((a, b) => a.used - b.used)) {
+    if (total <= max) break;
+    await rm(f.file, { force: true });
+    total -= f.size;
+  }
+}
+
+// a download cut off by a restart leaves its .part file behind
+void cacheFiles(cacheDir()).then((fs) => Promise.all(fs.filter((f) => f.file.endsWith(".part")).map((f) => rm(f.file, { force: true }))));
+
 hfApp.all("/*", async (c) => {
   const sub = c.req.path.replace(/^\/api\/hf/, "");
   if (!sub || sub.includes("..")) {
     return c.json({ error: "bad path" }, 400);
   }
   const own = ownCopy(sub);
-  const dest = own && cached(own) ? own : path.join(CACHE_DIR, sub);
+  const dest = own && cached(own) ? own : path.join(cacheDir(), sub);
   if (c.req.method !== "GET" && !cached(dest)) {
     // a size probe (HEAD) for a file that is not here yet: the upstream's own answer, and nothing is fetched for it
     // (fetching it here made the real request wait behind a download nobody could watch)
@@ -115,12 +144,14 @@ hfApp.all("/*", async (c) => {
     void mkdir(path.dirname(dest), { recursive: true })
       .then(() => pipeline(Readable.fromWeb(toDisk as never), createWriteStream(tmp)))
       .then(() => rename(tmp, dest))
+      .then(() => trimCache(cacheDir()))
       .catch(() => rm(tmp, { force: true }).catch(() => {}))
       .finally(release);
     return new Response(toBrowser, { status: 200, headers });
   }
   const size = statSync(dest).size;
-  const web = Readable.toWeb(createReadStream(dest)) as unknown as ReadableStream;
+  if (dest !== own) void utimes(dest, new Date(), new Date()).catch(() => {}); // a hit is recent for trimCache
+  const web =Readable.toWeb(createReadStream(dest)) as unknown as ReadableStream;
   const headers = new Headers({
     "Content-Type": typeOf(sub),
     "Content-Length": String(size),

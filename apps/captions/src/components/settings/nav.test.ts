@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { navBlocks, navListFor, resolveSection, withToolPages, type NavContext } from "./nav";
 
-const at = (hosted: boolean, admin: boolean, mac = false): NavContext => ({ hosted, admin, mac });
+const at = (team: boolean, admin: boolean, mac = false): NavContext => ({ team, admin, mac });
 const listed = (ctx: NavContext) => navListFor(ctx, []).map((s) => s.id);
 
 describe("the sidebar per install and role", () => {

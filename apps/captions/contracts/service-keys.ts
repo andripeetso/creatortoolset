@@ -16,6 +16,8 @@
  */
 
 export const SERVICE_KEYS = [
+  // never an admin's own AI (my-keys.ts serverKeyOf): only the team budgets' while Team use is on (teamAiKey)
+  { env: "ANTHROPIC_API_KEY", name: "Anthropic API", what: "Team budgets, while Team use is on", where: "https://console.anthropic.com/settings/keys" },
   { env: "NVIDIA_API_KEY", name: "NVIDIA", what: "Studio Voice in the Audio Enhancer", where: "https://build.nvidia.com" },
   { env: "ELEVENLABS_API_KEY", name: "ElevenLabs", what: "Voice isolation in the Audio Enhancer, and a voice made from a script in the Editor", where: "https://elevenlabs.io/app/settings/api-keys" },
   { env: "DEEPGRAM_API_KEY", name: "Deepgram", what: "Captions and transcripts in Caption Studio and the Media Library", where: "https://console.deepgram.com" },

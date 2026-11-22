@@ -221,7 +221,7 @@ export const macLookJob: DeviceJobSlot = {
     const db = libraryDb();
     const now = Date.now();
     // the lane's claim that parked it counted this try
-    db.prepare("UPDATE jobs SET state = 'running', lease_until = ?, started_at = ?, error = NULL WHERE id = ?").run(now + LEASE_S * 1000, now, r.id);
+    db.prepare("UPDATE jobs SET state = 'running', lease_until = ?, started_at = ?, error = NULL WHERE id = ? AND state = 'needs_key'").run(now + LEASE_S * 1000, now, r.id);
     const duration = Number((JSON.parse(r.probe ?? "null") as { duration?: number } | null)?.duration) || 0;
     // stretches found at another level than the library's are found again: the Mac reads the picture (none sent)
     const level = libraryLookLevel(r.library_id);
@@ -270,7 +270,7 @@ export const macLookJob: DeviceJobSlot = {
         // for good: the file would send the same sheets again; Retry or Describe again on the clip asks once more
         dropCopy(h.copy);
         held.delete(id);
-        db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ?").run(TOO_BIG, id);
+        db.prepare("UPDATE jobs SET state = 'failed', lease_until = NULL, error = ? WHERE id = ? AND state = 'running'").run(TOO_BIG, id);
         libraryChanged(h.libraryId);
         void wakeEditorPolls();
         return { error: TOO_BIG, status: 413 };

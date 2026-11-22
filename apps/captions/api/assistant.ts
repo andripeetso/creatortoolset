@@ -11,7 +11,7 @@ import { cleanTitle, sourceOf, TITLE_SYSTEM, titlePrompt, type TitleSource } fro
 import { findUser } from "./users";
 import { jobTurn, mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
-import { env, hostedMode } from "./lib/env";
+import { env, hasTeam, serverKind } from "./lib/env";
 import { MODEL_RE, routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
 import { EFFORTS, type Selection } from "../contracts/providers";
 import { validTimezone } from "../contracts/automations";
@@ -113,7 +113,7 @@ export const MAC_NOTE = `
 
 You also run on the user's own Mac, in a folder of your own there (the current folder), with Claude Code's tools: Bash, Read, Glob, Grep, Edit and Write. What Claude Code treats as safe runs at once; anything else (a command that changes something, a file write, a read outside your folder) is asked of the user in the chat first, and they allow or deny it. When they deny something, don't try it another way: say what you wanted to do and ask.
 
-${process.env.CT_LOCAL === "1" ? LINK_LOCAL : LINK_AWAY}
+${serverKind() === "mac" ? LINK_LOCAL : LINK_AWAY}
 
 Where this workspace keeps its files on the user's computers is listed below when it has any folders (${FOLDER_LABELS.footage}; ${FOLDER_LABELS.library} for finished videos). Look for its footage and music there first, and save what you make on the Mac (a cut, a render) in its ${FOLDER_LABELS.library} folder. With no folders listed, don't search the user's drives for footage, and don't ask for a folder: a tool that needs the Media Library answers with the setup card, so stop there in one line (see the tools' answers).
 
@@ -776,11 +776,11 @@ export function workEnded(username: string, idStart: string, end: WorkEnd & { sa
 }
 
 /** True for an admin, and for every account on an install of one's own (no team to be a member of). */
-export const isAdminHere = (username: string) => !hostedMode() || findUser(username)?.role === "admin";
+export const isAdminHere = (username: string) => !hasTeam() || findUser(username)?.role === "admin";
 
 /** The tools' address: PUBLIC_ORIGIN, else the Mac app's own server on this Mac (CT_LOCAL), where the Mac's AI runs too. */
 export const toolsUrl = () => {
-  const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || (process.env.CT_LOCAL === "1" && process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : "");
+  const origin = process.env.PUBLIC_ORIGIN?.replace(/\/$/, "") || (serverKind() === "mac" && process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : "");
   return origin ? `${origin}/api/mcp` : null;
 };
 
@@ -2197,8 +2197,9 @@ const TITLE_LABEL = "Chat names";
 // tests take the Mac's requests in order: a name's request is only made in one that asks for it
 const namesOn = () => process.env.NODE_ENV !== "test" || !!process.env.CHAT_NAMES;
 /** Names asked for per chat since the server started: the first message's, then again after an answer or on opening. */
-const nameAsks = new Map<string, number>();
+const nameAsks = new Map<string, { asks: number; at: number }>();
 const MAX_NAME_ASKS = 3;
+const NAME_ASKS_MS = 24 * 3_600_000; // the cap counts a day's asks; older entries are dropped
 const naming = new Set<string>();
 
 /** A chat still under its first words is asked a name again (its first ask failed: the Mac was busy; or it's from before names). */
@@ -2210,11 +2211,13 @@ function nameIfUnnamed(username: string, chat: Chat | null | undefined): void {
 
 /** A chat's name, written by its AI (lib/chat-title.ts). A name given by hand meanwhile wins; a failure keeps its first words and is logged. */
 async function nameChat(username: string, id: string, source: TitleSource, ai?: Selection): Promise<void> {
-  const asks = nameAsks.get(id) ?? 0;
+  const now = Date.now();
+  for (const [k, v] of nameAsks) if (now - v.at >= NAME_ASKS_MS) nameAsks.delete(k);
+  const asks = nameAsks.get(id)?.asks ?? 0;
   if (naming.has(id) || asks >= MAX_NAME_ASKS) return;
   const route = aiFor(username, JOB, TITLE_LABEL, ai);
   if (route.off) return;
-  nameAsks.set(id, asks + 1);
+  nameAsks.set(id, { asks: asks + 1, at: now });
   naming.add(id);
   try {
     // a name needs no long thinking, whatever effort the chat itself runs at, and waits behind the person's own turns

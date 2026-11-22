@@ -19,7 +19,8 @@ import { ownedProjects, sharedProjects } from "../lib/workshop/workspace";
 import type { Project } from "../lib/workshop/types";
 import { listUsers } from "../users";
 import { pluginServerName } from "../lib/plugin";
-import { readServerWork, serverKind, serverWeight, serverWorks, writeServerWork, type ServerKind } from "./server-work";
+import { readServerWork, serverWeight, serverWorks, writeServerWork } from "./server-work";
+import { serverKind, type ServerKind } from "../lib/env";
 
 export const serverWorkApp = new Hono<{ Variables: AuthVars }>();
 
@@ -52,7 +53,7 @@ async function adminView(): Promise<NonNullable<ServerWorkView["admin"]>> {
  * none on This Mac.
  */
 export function serverNameOf(kind: ServerKind): string | undefined {
-  if (kind === "local") return undefined;
+  if (kind === "mac") return undefined;
   const named = pluginServerName();
   if (named) return named;
   const admin = listUsers().filter((x) => x.role === "admin").sort((a, b) => a.createdAt - b.createdAt)[0];
@@ -68,7 +69,7 @@ serverWorkApp.get("/", async (c) => {
   const view: ServerWorkView = {
     kind,
     // This Mac has no server row: the server is this computer
-    place: kind === "local" ? null : { allowed: [null, ...mine].some((w) => serverWorks(w, u.username)), weight: serverWeight(u.username) },
+    place: kind === "mac" ? null : { allowed: [null, ...mine].some((w) => serverWorks(w, u.username)), weight: serverWeight(u.username) },
     serverName: serverNameOf(kind),
     ...(ws ? { workspace: { id: ws, rendering: serverWorks(ws, u.username) } } : {}),
   };

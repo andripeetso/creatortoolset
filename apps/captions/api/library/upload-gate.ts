@@ -15,7 +15,7 @@ import { workspaceOf } from "../lib/workspaces";
 import { projectOf } from "../lib/project-of";
 import { findUser, type SessionUser } from "../users";
 import type { Blur } from "../../contracts/library";
-import { serverKind } from "../work/server-work";
+import { serverKind } from "../lib/env";
 
 /**
  * original: the file itself; proxy: a smaller copy made of it; derivative: a picture or sheet the Library shows; serving:
@@ -159,7 +159,7 @@ export function mayReceive(
   opts: { sender?: Pick<Device, "work"> | null; proof?: ProxyProof } = {},
 ): Received {
   // This Mac: the server is the owner's computer, so nothing leaves it
-  if (kind === "data" || kind === "held" || serverKind() === "local") return { ok: true };
+  if (kind === "data" || kind === "held" || serverKind() === "mac") return { ok: true };
   // a blurred render is a computer's own (the job that blurred it), never a person's or a phone's declaration
   const left = mayLeave(library.id, { ...(library.versionId ? { versionId: library.versionId } : {}), blurredOf: origin === "computer" ? library.blurredOf : null, ...(library.blur ? { blur: library.blur } : {}) });
   if (!left.ok) return left;
@@ -200,7 +200,7 @@ export async function mayServe(
   // under Blur faces only a blurred render is handed out, on This Mac too (its owner sees the blurred one in the app)
   const left = mayLeave(version.id, { versionId: version.versionId });
   if (!left.ok) return left;
-  if (serverKind() === "local") return { ok: true };
+  if (serverKind() === "mac") return { ok: true };
   const upload = uploadFor(version);
   if (blursFaces(version.id) && fileBlur(version.versionId)?.blur !== "no") return hostsNone(upload) ? refuse(REFUSED_NONE) : { ok: true };
   if (what === "original" ? hostsOriginals(upload) : hostsProxies(upload)) return { ok: true };

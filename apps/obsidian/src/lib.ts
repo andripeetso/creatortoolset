@@ -62,7 +62,7 @@ export function safeVaultPath(input: string): string | null {
     .split("/")
     .map((part) => part.trim())
     .filter((part) => part !== "" && part !== ".");
-  if (parts.length === 0 || parts.includes("..") || parts[0].startsWith(".")) return null;
+  if (parts.length === 0 || parts.some((part) => part === ".." || part.startsWith("."))) return null;
   const clean = parts.map((part) => part.replace(/[\u0000-\u001f*"\\/<>:|?]/g, "-"));
   const last = clean.length - 1;
   if (!/\.md$/i.test(clean[last])) clean[last] += ".md";

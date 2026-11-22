@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEdits, blocksFromMarkdown, currentVersionId, docToMarkdown, keep, markEditsSeen, mergePage, newDocument, onBase, revert, setVersionKept, snapshot, undoTurn, userEdit } from "./doc";
+import { applyEdits, blocksFromMarkdown, captionTakes, currentVersionId, docToMarkdown, keep, markEditsSeen, mergePage, newDocument, onBase, restoreCaption, revert, setVersionKept, snapshot, undoTurn, userEdit } from "./doc";
 
 const make = () => {
   const doc = newDocument("d1", "s1", "reel", "Reel", { text: "Hook line", author: "ai", now: 1 });
@@ -311,5 +311,34 @@ describe("the author types while a turn writes", () => {
     userEdit(doc, [{ id: "b1", text: "Mine before" }, { id: "b2", text: "Mine during" }, { id: "b3", text: "Third beat" }], 20);
     markEditsSeen(doc, 10);
     expect(doc.userEdits?.map((e) => [e.blockId, !!e.seen])).toEqual([["b1", true], ["b2", false]]);
+  });
+});
+
+describe("post description history", () => {
+  it("lists each earlier take once and brings one back without touching the script", () => {
+    const doc = make();
+    doc.caption = { text: "First take", author: "ai", at: 1 };
+    snapshot(doc, "a", 1);
+    doc.caption = { text: "Second take", author: "ai", at: 2 };
+    snapshot(doc, "b", 2);
+    snapshot(doc, "c", 3);
+    doc.caption = { text: "Typed by hand", author: "user", at: 4 };
+    doc.blocks[0]!.text = "Edited hook";
+    doc.dirty = true;
+    doc.headVersion = undefined;
+    expect(captionTakes(doc).map((t) => t.text)).toEqual(["Second take", "First take"]);
+
+    expect(restoreCaption(doc, "v1", 5)).toBe(true);
+    expect(doc.caption?.text).toBe("First take");
+    expect(doc.blocks[0]!.text).toBe("Edited hook");
+    // the hand-typed one was saved first, so it is in the history now
+    expect(captionTakes(doc).map((t) => t.text)).toEqual(["Typed by hand", "Second take"]);
+    expect(doc.dirty).toBe(true);
+    const saved = doc.versions.length;
+    // trying another take saves the restored one first
+    expect(restoreCaption(doc, "v2", 6)).toBe(true);
+    expect(doc.versions.length).toBe(saved + 1);
+    expect(captionTakes(doc).map((t) => t.text)).toEqual(["First take", "Typed by hand"]);
+    expect(restoreCaption(doc, "v99")).toBe(false);
   });
 });

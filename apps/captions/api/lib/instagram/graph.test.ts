@@ -57,28 +57,28 @@ describe("graphConfigured", () => {
   });
 });
 
-describe("install-wide Meta login is off on a public install", () => {
+describe("install-wide Meta login is off on This Mac", () => {
   afterEach(async () => {
     vi.unstubAllEnvs();
     const { mountPlugins } = await import("../plugin");
     mountPlugins(new Hono(), []);
   });
 
-  it("a public install with no login of its own never reads through the .env token", async () => {
-    vi.stubEnv("CT_MODE", "");
+  it("This Mac with no login of its own never reads through the .env token", async () => {
+    vi.stubEnv("CT_SERVER", "mac");
     expect(graphConfigured()).toBe(false);
     const fetchImpl = vi.fn();
     await expect(fetchMineProfile({ fetchImpl: fetchImpl as unknown as typeof fetch })).rejects.toThrow(GRAPH_MISSING_MSG);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("a hosted server keeps the install's login", () => {
+  it("a Server keeps the install's login", () => {
     vi.stubEnv("CT_MODE", "hosted");
     expect(graphConfigured()).toBe(true);
   });
 
-  it("a plug-in that turns the install login on keeps it on a public install, and one that does not leaves it off", async () => {
-    vi.stubEnv("CT_MODE", "");
+  it("a plug-in that turns the install login on keeps it on This Mac, and one that does not leaves it off", async () => {
+    vi.stubEnv("CT_SERVER", "mac");
     const { definePlugin, mountPlugins } = await import("../plugin");
     mountPlugins(new Hono(), [definePlugin({ id: "tiny-acrobatics" })]);
     expect(graphConfigured()).toBe(false);

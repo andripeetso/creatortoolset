@@ -43,6 +43,10 @@ struct ServerEntry: Codable, Identifiable, Hashable {
     var username: String?
     var version: String?
     var platform: String?
+    /// "mac", "server" or "cloud" as the server says; nil for an older server.
+    var kind: String?
+    /// The words the server list shows under the name; nil when the server doesn't say.
+    var kindName: String? { kind.flatMap { ["mac": "This Mac", "server": "Server", "cloud": "Creator Toolset Cloud"][$0] } }
     /// The route the app last connected over: the Share extension uses it.
     var activeRouteId: String?
     /// The address it was first added by. Other parts of the app know the server by it (`Server.id`), so it never

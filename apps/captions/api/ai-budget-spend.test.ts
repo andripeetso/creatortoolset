@@ -32,6 +32,8 @@ const SEED = {
   spend: {},
 };
 writeFileSync(path.join(dir, "workspaces.json"), JSON.stringify(SEED));
+// the admin's Team use switch is on (service-keys.ts), read at import
+writeFileSync(path.join(dir, "service-keys.json"), JSON.stringify({ teamUse: true }));
 
 const { aiFor, completeWithFallback, streamWithFallback } = await import("./ai-complete");
 const { budgetLeft, spentThisMonth } = await import("./lib/workspaces");

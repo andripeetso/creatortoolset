@@ -14,6 +14,7 @@ afterEach(() => {
   ai = false;
   delete process.env.CT_LOCAL;
   delete process.env.CT_MODE;
+  delete process.env.CT_SERVER;
 });
 
 // the speech model is not loaded in a test: this stands in for it, and says which clips reached it
@@ -69,9 +70,9 @@ describe("Video Notes with no transcription key", () => {
     expect(words).toEqual([{ text: "Tiny", start: 0.1, end: 0.4 }, { text: "Acrobatics.", start: 0.4, end: 1 }]);
   });
 
-  it("on a hosted server it waits for one of the person's computers, and the clip never reaches the model", async () => {
+  it("on Cloud it waits for one of the person's computers, and the clip never reaches the model", async () => {
     process.env.CT_LOCAL = "1";
-    process.env.CT_MODE = "hosted";
+    process.env.CT_SERVER = "cloud";
     heard.length = 0;
     const { id } = (await (await app.request("/api/clips?name=Walk&mime=audio/wav", { method: "POST", body: readFileSync(recording) })).json()) as { id: string };
     await vi.waitFor(async () => expect(((await (await app.request(`/api/clips/${id}`)).json()) as { note?: string }).note).toMatch(/^Waits for one of your computers/), { timeout: 5000, interval: 50 });

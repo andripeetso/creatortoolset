@@ -88,7 +88,16 @@ class Removed(Exception):
     pass
 
 
+def checked_server(server):
+    """The server's address, when it may get the token and the code: https, or http to this computer only (as the Mac app)."""
+    u = urllib.parse.urlsplit(server)
+    if (u.scheme == "https" and u.hostname) or (u.scheme == "http" and u.hostname in ("localhost", "127.0.0.1", "::1")):
+        return server
+    raise ValueError("the server address must be https:// (http:// only for localhost)")
+
+
 def call(server, token, method, path, body=None, raw=False, timeout=60):
+    server = checked_server(server)
     headers = {"content-type": "application/json", "user-agent": f"creator-toolset-helper/{VERSION}"}
     if token:
         headers["authorization"] = f"Bearer {token}"
@@ -115,13 +124,8 @@ def read_config():
 
 
 def write_config(c):
-    """config.json written whole, mode 0600 (it holds the token)."""
     os.makedirs(HOME, exist_ok=True)
-    tmp = CONFIG + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(c, f, indent=1)
-    os.replace(tmp, CONFIG)
+    write_json(CONFIG, c)
 
 
 def machine_id(c):
@@ -138,7 +142,7 @@ def pair(server, code):
     c = read_config()
     try:
         r = call(server, None, "POST", "/api/devices/pair", {"code": code, "name": name, "version": VERSION, "machineId": machine_id(c)})
-    except (RuntimeError, OSError) as e:
+    except (RuntimeError, OSError, ValueError) as e:
         sys.exit(f"Not paired: {e}")
     c.update(server=server, token=r["token"])
     write_config(c)
@@ -345,7 +349,7 @@ def read_wav(data):
 
 class Helper:
     def __init__(self, server, token, config=None):
-        self.server, self.token = server, token
+        self.server, self.token = checked_server(server), token
         self.config = config if config is not None else {"server": server, "token": token}
         self.server_folders = []  # GET /api/devices/relay/folders, at each report
         self.known = dict(self.config.get("disks") or {})  # every disk this computer has had: path → name
@@ -998,6 +1002,7 @@ class _NoTokenElsewhere(urllib.request.HTTPRedirectHandler):
     """Follows a redirect (a stored original may be on another host), with the token only on the server's own host."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        checked_server(newurl)  # the token never goes in clear, even on a redirect
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
             new.remove_header("Authorization")
@@ -1084,10 +1089,12 @@ def read_json(p):
     return v if isinstance(v, dict) else None
 
 
-def write_json(p, v, device):
-    """`v` written whole as `p`: a temp file renamed over it."""
-    tmp = f"{p}.{device}.tmp"
-    with open(tmp, "w") as f:
+def write_json(p, v, device=""):
+    """`v` written whole as `p`: a temp file, always mode 0600 (config.json holds the token), renamed over it."""
+    tmp = f"{p}.{device}.tmp" if device else f"{p}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        os.fchmod(f.fileno(), 0o600)  # a temp file left by a crash keeps its old mode otherwise
         json.dump(v, f, indent=1)
         f.flush()
         os.fsync(f.fileno())

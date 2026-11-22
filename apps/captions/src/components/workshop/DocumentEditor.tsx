@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GripVertical, Loader2, Lock, LockOpen, MessageCircleQuestion, Plus, Shuffle, X } from "lucide-react";
-import { ConfirmButton } from "@/components/instagram/ConfirmButton";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { CarouselVisualizeModal, type LayoutPass } from "./CarouselVisualizeModal";
+import { CaptionHistory } from "./CaptionHistory";
 import { CopyButton } from "./CopyButton";
 import { InlinePicture } from "./PiecePictures";
 import type { CarouselTypeId } from "@/lib/carousel-visualize";
-import { askUsageText, documentMarkdown, docUnit, uploadPicture, type AskUsage, type WorkshopDocument } from "@/lib/workshop";
+import { askUsageText, documentMarkdown, docUnit, uploadPicture, type AskUsage, type CaptionTake, type WorkshopDocument } from "@/lib/workshop";
 import { joinParts, pictureToken, pictureUrl, rangesIn, splitPictures, withPictureUrls } from "@/lib/workshop-markdown";
 import { foreignSpans } from "@/lib/mine";
 import { markdownToPlain, toggleMark } from "@/lib/inline-markdown";
@@ -367,6 +367,7 @@ export function DocumentEditor({
   aiAvailable = true,
   onChange,
   onGenerateCaption,
+  captionHistory,
   onCarouselType,
   onLayouts,
   preview = false,
@@ -408,6 +409,8 @@ export function DocumentEditor({
   ) => void;
   /** Caption-only turn: Generate when empty, Another when a caption is already saved. */
   onGenerateCaption?: (another: boolean, version?: string) => void;
+  /** The post description's earlier takes and bringing one back (CaptionHistory). */
+  captionHistory?: { load: () => Promise<CaptionTake[]>; onUse: (versionId: string) => Promise<void> };
   /** Persist the visual carousel recipe (explainer, conversation, …). */
   onCarouselType?: (id: CarouselTypeId) => void;
   onLayouts?: (opts: LayoutPass) => Promise<void>;
@@ -430,6 +433,7 @@ export function DocumentEditor({
       aiAvailable={aiAvailable}
       onChange={onChange}
       onGenerateCaption={onGenerateCaption}
+      captionHistory={captionHistory}
       onCarouselType={onCarouselType}
       onLayouts={onLayouts}
       preview={preview}
@@ -620,6 +624,7 @@ function PieceEditor({
   aiAvailable = true,
   onChange,
   onGenerateCaption,
+  captionHistory,
   onCarouselType,
   onLayouts,
   preview,
@@ -653,6 +658,8 @@ function PieceEditor({
     companions: { caption: string; pinned: string; hooks?: Array<{ id?: string; text: string }> },
   ) => void;
   onGenerateCaption?: (another: boolean, version?: string) => void;
+  /** The post description's earlier takes and bringing one back (CaptionHistory). */
+  captionHistory?: { load: () => Promise<CaptionTake[]>; onUse: (versionId: string) => Promise<void> };
   onCarouselType?: (id: CarouselTypeId) => void;
   onLayouts?: (opts: LayoutPass) => Promise<void>;
   preview: boolean;
@@ -1116,29 +1123,19 @@ function PieceEditor({
                         className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
                       />
                     ) : null}
-                    {showCaptionGenerate &&
-                      (captionAnother ? (
-                        <ConfirmButton
-                          label="Rewrite"
-                          confirmLabel="Replace"
-                          disabled={locked || writing || !aiAvailable || !hasPiece}
-                          onConfirm={() => onGenerateCaption?.(true)}
-                          title={captionGenerateWhy}
-                          className="invisible text-[11px] text-muted-foreground hover:text-foreground group-hover:visible group-focus-within:visible disabled:opacity-40"
-                          armedClassName="!visible text-foreground"
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={locked || writing || !aiAvailable || !hasPiece}
-                          onClick={() => onGenerateCaption?.(false)}
-                          title={captionGenerateWhy}
-                          aria-label="Write post description"
-                          className="invisible text-[11px] text-muted-foreground hover:text-foreground group-hover:visible group-focus-within:visible disabled:opacity-40"
-                        >
-                          Write
-                        </button>
-                      ))}
+                    {showCaptionGenerate && (
+                      <button
+                        type="button"
+                        disabled={locked || writing || !aiAvailable || !hasPiece}
+                        onClick={() => onGenerateCaption?.(captionAnother)}
+                        title={captionGenerateWhy}
+                        aria-label={captionAnother ? "Rewrite post description" : "Write post description"}
+                        className="invisible text-[11px] text-muted-foreground hover:text-foreground group-hover:visible group-focus-within:visible disabled:opacity-40"
+                      >
+                        {captionAnother ? "Rewrite" : "Write"}
+                      </button>
+                    )}
+                    {captionHistory ? <CaptionHistory disabled={locked || writing} load={captionHistory.load} onUse={captionHistory.onUse} /> : null}
                   </div>
                   <AutoTextarea
                     value={caption}

@@ -274,7 +274,7 @@ export interface WorkResult {
 /** GET /api/work/server-work (api/work/server-work-routes.ts): where video work may run, for Settings. */
 export interface ServerWorkView {
   /** local: This Mac (no switch, no server row); hosted: Creator Toolset Cloud; server: a server by address */
-  kind: "local" | "hosted" | "server";
+  kind: ServerKind;
   /** the server's row in the person's Load balancing; null on This Mac. `allowed`: it may work for one of their workspaces */
   place: { allowed: boolean; weight: number } | null;
   /**
@@ -287,3 +287,6 @@ export interface ServerWorkView {
   /** the current workspace's Server rendering, for any member of it */
   workspace?: { id: string; rendering: boolean };
 }
+
+/** What a server is (api/lib/env.ts serverKind): This Mac, a Server run by someone, or Creator Toolset Cloud. */
+export type ServerKind = "mac" | "server" | "cloud";

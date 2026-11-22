@@ -6,6 +6,25 @@ import XCTest
 final class SiteSignInTests: XCTestCase {
     private let site = URL(string: "https://creatortoolset.com")!
 
+    /// A page's `next` is only ever a path on this site: anything else, control characters included, comes back as the root.
+    func testTheReturnPageIsASamePathOrTheRoot() {
+        XCTAssertEqual(sameSiteBack("/admin?tab=2", site: site), "/admin?tab=2")
+        for bad in ["//evil.example", "/\\evil.example", "https://evil.example", "evil.example", "/\t/evil.example", "/\n/evil.example", ""] {
+            XCTAssertEqual(sameSiteBack(bad, site: site), "/", bad)
+        }
+        XCTAssertTrue(sameSiteBack("/a b%zz", site: site).hasPrefix("/"))   // a malformed path does not crash
+    }
+
+    /// Links the page hands to macOS: web and mail only.
+    func testOnlyWebAndMailLeaveTheWindowForMacOS() {
+        for ok in ["https://example.com/a", "http://example.com", "mailto:someone@example.com", "HTTPS://example.com"] {
+            XCTAssertTrue(opensOutside(URL(string: ok)!), ok)
+        }
+        for no in ["smb://server/share", "file:///etc/hosts", "creatortoolset://account?code=x", "tel:+1555", "vscode://file/x"] {
+            XCTAssertFalse(opensOutside(URL(string: no)!), no)
+        }
+    }
+
     func testOnlyTheLoginScreensStartOnThisSiteIsTaken() {
         let start = siteSignInStart(URL(string: "https://creatortoolset.com/api/account/login/google?for=site&next=%2Fadmin")!, site: site)
         XCTAssertEqual(start?.provider, "google")

@@ -3,7 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { clientAddress, getSessionUser, sessionOf } from "./auth";
 import { endpoints } from "./descriptor";
 import { tunnelHostname } from "./connect/state";
-import { env, hostedMode } from "./lib/env";
+import { env, hasTeam, isCloud } from "./lib/env";
 import { onLeave } from "./lib/sync";
 import { spendJti, verifyDpop } from "./lib/dpop";
 import { ticketCaller } from "./media-ticket";
@@ -128,7 +128,7 @@ export function scopeRefused(c: Context, need: Scope) {
 const scopesOf = (k: Caller): readonly Scope[] => (k.kind === "token" ? k.row.scopes : k.kind === "cookie" ? SCOPES : []);
 
 /** An admin sees and revokes every account's links and sessions on its own server; anyone else only their own. */
-const mayFor = (user: SessionUser) => (subject: string) => subject === user.username || (!hostedMode() && user.role === "admin");
+const mayFor = (user: SessionUser) => (subject: string) => subject === user.username || (!isCloud() && user.role === "admin");
 
 type Signed = { user: SessionUser; scopes: readonly Scope[]; sessionId?: string; expiresAt?: number };
 /** The caller of an access route: signed in and holding `access`, or the answer to send instead. */
@@ -153,7 +153,7 @@ async function pairingUrls(c: Context, credential: string): Promise<PairingLinkU
   };
   const tunnel = tunnelHostname();
   if (tunnel) add("public", `https://${tunnel}`);
-  else if (hostedMode() && process.env.PUBLIC_ORIGIN) add("public", process.env.PUBLIC_ORIGIN);
+  else if (hasTeam() && process.env.PUBLIC_ORIGIN) add("public", process.env.PUBLIC_ORIGIN);
   else {
     const here = new URL(requestUrl(c));
     const h = here.hostname.replace(/^\[|\]$/g, "");

@@ -1,12 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { hfApp, OWN_COPY } from "./hfproxy";
+import { hfApp, OWN_COPY, trimCache } from "./hfproxy";
 import { env } from "./lib/env";
 
 const file = "/test-model/resolve/main/weights.bin";
-const kept = path.join(tmpdir(), "caption-studio-hf-cache", "test-model");
+const kept = path.join(env.dataDir, "hf-cache", "test-model");
 afterEach(() => {
   vi.unstubAllGlobals();
   rmSync(kept, { recursive: true, force: true });
@@ -65,5 +65,24 @@ it("one copy: a file the server's model library keeps is served from there, and 
   } finally {
     Object.assign(env, { dataDir: was });
     rmSync(data, { recursive: true, force: true });
+  }
+});
+
+it("over the cap, the least recently used files go first; a download in progress is never removed", async () => {
+  const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "hfcache-"));
+  try {
+    const put = (name: string, age: number) => {
+      writeFileSync(path.join(dir, name), Uint8Array.from({ length: 10 }));
+      utimesSync(path.join(dir, name), new Date(Date.now() - age), new Date(Date.now() - age));
+    };
+    put("old.bin", 3000);
+    put("new.bin", 1000);
+    put("loading.bin.part", 9000);
+    await trimCache(dir, 25); // 30 bytes: only the oldest finished file goes
+    expect(existsSync(path.join(dir, "old.bin"))).toBe(false);
+    expect(existsSync(path.join(dir, "new.bin"))).toBe(true);
+    expect(existsSync(path.join(dir, "loading.bin.part"))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

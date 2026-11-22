@@ -23,6 +23,14 @@ const list = async (who: { cookie: string }, tool = "notes") => (await (await se
 createUser("ana", "password1");
 createUser("ben", "password1");
 const ana = await login("ana");
+
+it("a folder file that cannot be read throws, so no empty list is saved over it; a missing file is empty", async () => {
+  const { read } = await import("./folders");
+  const file = path.join(process.env.DATA_DIR!, "folders", "notes", "broken.json");
+  mkdirSync(file, { recursive: true }); // a directory where the file should be: a read error that is not "no file"
+  await expect(read("notes", "broken")).rejects.toThrow();
+  await expect(read("notes", "nobody")).resolves.toEqual({ folders: [], items: {} });
+});
 const ben = await login("ben");
 
 describe("folders in the tools with none of their own", () => {

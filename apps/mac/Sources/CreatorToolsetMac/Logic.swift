@@ -1,5 +1,6 @@
 // The parts that are plain functions of their inputs, so the unit tests can check them
 // without a window, a site or a worker.
+import CreatorToolsetShared
 import Foundation
 
 /// Settings text to a site address (https, or http for localhost only: the session cookie is sent by hand, so
@@ -8,8 +9,7 @@ func siteURL(from text: String) -> URL? {
     guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
           let host = url.host else { return nil }
-    let local = ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host.lowercased())
-    guard scheme == "https" || local else { return nil }
+    guard scheme == "https" || HostClass.isLoopback(host) else { return nil }
     let port = url.port.map { ":\($0)" } ?? ""
     return URL(string: "\(scheme)://\(host)\(port)")
 }
@@ -22,6 +22,11 @@ func isSite(_ url: URL, _ site: URL) -> Bool {
         u.port ?? ["https": 443, "http": 80][u.scheme?.lowercased() ?? ""]
     }
     return url.host?.lowercased() == site.host?.lowercased() && port(url) == port(site)
+}
+
+/// Links the page hands to macOS: web and mail only. A page's own link to smb://, file:// or another app's scheme is refused.
+func opensOutside(_ url: URL) -> Bool {
+    ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "")
 }
 
 /// A team invite from a server's join page: creatortoolset://join?link=https://tools.example.com/join/<token>. The

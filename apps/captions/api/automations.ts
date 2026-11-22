@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { jobTurn, type AuthVars } from "./auth";
 import { chatBusy, chatOfTurn, isAdminHere, routeOf, runInChat, setRunEnded, toolsUrl } from "./assistant";
@@ -187,13 +187,71 @@ export async function runAutomation(username: string, a: Automation, ready: { ro
   }
 }
 
-/** Starts the run: sets lastRun and the running flag, clears the flag when it ends. Never rejects (a timer must not crash the server). */
-function start(username: string, a: Automation, now: number, go: () => Promise<void>): Promise<void> {
+/**
+ * An interval task's latest slot at or before `now` on its grid (from its last run, or its creation). A slot missed while
+ * the server was off is skipped, not run in a burst, and the next one is a whole interval after this one.
+ */
+const latestSlot = (a: Automation, now: number): number => {
+  const every = (a.schedule as { everyMinutes: number }).everyMinutes * 60_000;
+  const anchor = a.lastRun ?? a.createdAt;
+  return anchor + Math.floor((now - anchor) / every) * every;
+};
+
+/* ---- one run at a time across processes: two servers on one data folder would both run a due task ---- */
+
+/** A run is minutes long; a lock older than this, or whose process is gone, was left by a crash and is taken. */
+const RUN_LOCK_STALE_MS = 6 * 3_600_000;
+const lockOf = (id: string) => path.join(env.dataDir, "automations-locks", `${id}.lock`);
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/** Takes task `id`'s run lock for this process, or false when a live process holds it. Released by releaseRunLock. */
+function takeRunLock(id: string, now = Date.now()): boolean {
+  const file = lockOf(id);
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const make = (): boolean => {
+    try {
+      writeFileSync(file, JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw e;
+    }
+  };
+  if (make()) return true;
+  // an unreadable or just-written lock is judged by its age; a gone one is retried on the next tick
+  let age = 0;
+  let held: { pid?: number } = {};
+  try {
+    age = now - statSync(file).mtimeMs;
+    held = JSON.parse(readFileSync(file, "utf-8")) ?? {};
+  } catch {
+    // empty, unreadable or gone: decided by age below
+  }
+  if (age < RUN_LOCK_STALE_MS && (!held.pid || alive(held.pid))) return false;
+  rmSync(file, { force: true });
+  return make();
+}
+
+const releaseRunLock = (id: string): void => rmSync(lockOf(id), { force: true });
+
+/**
+ * Starts the run: sets lastRun to `at` (the slot an interval task runs for, else now) and the running flag, and clears the
+ * flag and the run lock when it ends. Never rejects (a timer must not crash the server).
+ */
+function start(username: string, a: Automation, at: number, go: () => Promise<void>): Promise<void> {
   running.add(a.id);
   try {
-    update(username, a.id, (x) => (x.lastRun = now));
+    update(username, a.id, (x) => (x.lastRun = at));
   } catch (e) {
     running.delete(a.id);
+    releaseRunLock(a.id);
     console.error("[automations]", e);
     return Promise.resolve();
   }
@@ -202,6 +260,7 @@ function start(username: string, a: Automation, now: number, go: () => Promise<v
     .catch((e) => console.error("[automations]", e))
     .finally(() => {
       running.delete(a.id);
+      releaseRunLock(a.id);
       announceSoon(username, "automations"); // told once the flag is down, so the row leaves Running now
     });
 }
@@ -221,18 +280,26 @@ export async function tick(now = Date.now(), run: Runner = runAutomation, ready:
     try {
       for (const a of readAll(u.username)) {
         const due = nextRunOf(a);
-        if (running.has(a.id) || due === null || due > now) continue;
-        const r = ready(u.username, a);
-        const late = a.schedule.kind === "fixed" && now - due > MISSED_MS;
-        if ("route" in r && !late) {
-          starts.push(start(u.username, a, now, () => run(u.username, a, r)));
-          continue;
+        if (running.has(a.id) || due === null || due > now || !takeRunLock(a.id, now)) continue;
+        // an interval task is recorded at the slot it runs for, not at this tick: a tick a few seconds late does not move its times
+        const at = a.schedule.kind === "interval" ? latestSlot(a, now) : now;
+        let handed = false;
+        try {
+          const r = ready(u.username, a);
+          const late = a.schedule.kind === "fixed" && now - due > MISSED_MS;
+          if ("route" in r && !late) {
+            handed = true; // start() releases the lock when the run ends
+            starts.push(start(u.username, a, at, () => run(u.username, a, r)));
+            continue;
+          }
+          if ("wait" in r && !late) continue;
+          const when = new Intl.DateTimeFormat("en-GB", { timeZone: a.timezone, hour: "2-digit", minute: "2-digit" }).format(new Date(due));
+          const why = "skip" in r ? r.skip : `Missed the ${when} run (${"wait" in r ? r.wait : "the server was off"})`;
+          update(u.username, a.id, (x) => (x.lastRun = at));
+          starts.push(finish(u.username, a.id, { status: "skipped", text: why }));
+        } finally {
+          if (!handed) releaseRunLock(a.id);
         }
-        if ("wait" in r && !late) continue;
-        const at = new Intl.DateTimeFormat("en-GB", { timeZone: a.timezone, hour: "2-digit", minute: "2-digit" }).format(new Date(due));
-        const why = "skip" in r ? r.skip : `Missed the ${at} run (${"wait" in r ? r.wait : "the server was off"})`;
-        update(u.username, a.id, (x) => (x.lastRun = now));
-        starts.push(finish(u.username, a.id, { status: "skipped", text: why }));
       }
     } catch (e) {
       console.error("[automations]", u.username, e);

@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { SessionUser } from "../../users";
 import { IG_ROOT } from "./base";
+import { okId } from "../ids";
 import type { AccountMeta } from "./types";
 
 /**
@@ -14,7 +15,6 @@ import type { AccountMeta } from "./types";
 export const accountsRoot = () => path.join(IG_ROOT, "accounts");
 export const accountDir = (id: string) => path.join(accountsRoot(), id);
 export const accountMetaPath = (id: string) => path.join(accountDir(id), "meta.json");
-export const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 
 /** Accounts being read right now, newer than their meta.json (api/instagram.ts keeps them here while a job runs). */
 export const accountActive = new Map<string, AccountMeta>();

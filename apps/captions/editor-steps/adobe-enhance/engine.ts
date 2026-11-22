@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { BrowserContext, Response as PageResponse } from "playwright-chromium";
 import { registerEnhanceEngine, type EnhanceHost, type Meta } from "../../api/enhance";
-import { env, hostedMode } from "../../api/lib/env";
+import { env, isCloud } from "../../api/lib/env";
 import { announce } from "../../api/lib/sync";
 import { announceSoon } from "../../api/lib/announce-soon";
 import type { SessionUser } from "../../api/users";
@@ -59,7 +59,7 @@ const offFile = (u: string) => path.join(home(u), "off.json");
 
 /** The person whose Mac this server runs on: the sign-in opens a window on its screen, and runs use its Chrome. */
 export const NOT_MINE = "Only this Mac's owner can use it";
-export const mine = (u: SessionUser) => u.role === "admin" && !hostedMode();
+export const mine = (u: SessionUser) => u.role === "admin" && !isCloud();
 const signedIn = (u: string) => existsSync(signedFile(u));
 function heldOff(u: string): { reason: string; until: number } | null {
   try {

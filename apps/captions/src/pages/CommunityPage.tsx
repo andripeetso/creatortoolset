@@ -15,7 +15,7 @@ import { HOME_TILES, HOME_TILE_NAMES, isHomeTile, type HomeTile } from "@contrac
 import { PackDetailView } from "@/components/community/PackDetailView";
 import { SkillsView } from "@/components/community/SkillsView";
 import { useCommunityData } from "@/components/community/useCommunityData";
-import { useAuth, useMe } from "@/lib/auth";
+import { hasTeam, useAuth, useMe } from "@/lib/auth";
 import { mergePluginInfo } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -51,7 +51,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const data = useCommunityData();
   const me = useMe();
-  const hosted = useAuth((s) => s.hosted);
+  const team = useAuth((s) => hasTeam(s.kind));
   const [q, setQ] = useState("");
   const steps = useSteps();
   const isCatalog = ["explore", "tool", "home", "other"].includes(section);
@@ -62,7 +62,7 @@ export default function CommunityPage({ onClose }: { onClose: () => void }) {
   const tools = HOME_TILES.filter((t) => PACK_TOOLS.includes(t) || stepsFor(steps.view, t).length > 0);
   const others = stepsFor(steps.view, null).length;
   const installed = data.installed ?? [];
-  const plugins = mergePluginInfo(webPlugins, data.serverPlugins, { me, hosted });
+  const plugins = mergePluginInfo(webPlugins, data.serverPlugins, { me, team });
   const waiting = data.updates.length;
   const title =
     section === "pack" ? "Pack" : section === "installed" ? "Installed" : section === "skills" ? "Skills" : section === "explore" ? "Explore" : section === "home" ? PACK_KINDS.home : section === "other" ? "Other" : HOME_TILE_NAMES[sub as HomeTile];

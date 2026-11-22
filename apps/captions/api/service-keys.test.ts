@@ -8,7 +8,7 @@ import type { AuthVars } from "./auth";
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "service-keys-"));
 process.env.NVIDIA_API_KEY = "server-env-key-1234";
 delete process.env.DEEPGRAM_API_KEY;
-const { serviceKeysApp } = await import("./service-keys");
+const { serviceKeysApp, teamUseOn } = await import("./service-keys");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -41,4 +41,20 @@ it("a key pasted in Settings wins over the .env, Forget puts the .env's back; ad
 
   expect((await put("STRIPE_SECRET_KEY", "x")).status).toBe(404);
   expect((await put("NVIDIA_API_KEY", "two words")).status).toBe(400);
+});
+
+it("Team use is off until an admin turns it on; admins only, and it is not a key", async () => {
+  const team = (on: unknown, role = "admin") =>
+    app.request("/team-use", { method: "PUT", headers: { "x-role": role, "content-type": "application/json" }, body: JSON.stringify({ on }) });
+  expect(teamUseOn()).toBe(false);
+  expect((await team(true, "user")).status).toBe(403);
+  expect((await app.request("/team-use", { headers: { "x-role": "user" } })).status).toBe(403);
+  expect((await team("yes")).status).toBe(400);
+
+  expect((await team(true)).status).toBe(200);
+  expect(teamUseOn()).toBe(true);
+  expect(await (await app.request("/team-use", { headers: { "x-role": "admin" } })).json()).toEqual({ on: true });
+
+  await team(false);
+  expect(teamUseOn()).toBe(false);
 });

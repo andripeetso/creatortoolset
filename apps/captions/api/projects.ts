@@ -23,7 +23,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { deleteExportsForProject } from "./exports";
-import { env, hostedMode } from "./lib/env";
+import { env, hasTeam } from "./lib/env";
 import {
   abortSourceMultipart,
   completeSourceMultipart,
@@ -40,7 +40,7 @@ import { copyProjectName, mediaOwnerProjectId } from "./lib/project-copy";
 import { MAX_SCRIPT_CHARS } from "../src/lib/script-check";
 import type { AuthVars } from "./auth";
 import type { Expired } from "./retention";
-import { type SessionUser, bumpUsage } from "./users";
+import { type SessionUser, bumpUsage, canSee as canAccess } from "./users";
 import { announceSoon } from "./lib/announce-soon";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { deviceOf } from "./lib/devices";
@@ -49,6 +49,8 @@ import { mayReceive } from "./library/upload-gate";
 import { keep, startTask, taskFor, taskWaitLine, type Started } from "./work/tasks";
 import "./work/task-kinds";
 import type { IngestInput, Probe } from "./work/tasks/caption-studio";
+import { okId } from "./lib/ids";
+import { writeJsonAtomic as writeJson } from "./lib/write-json";
 
 /**
  * File-based project persistence. A project is a POOL of clips: one
@@ -101,7 +103,6 @@ const PROJECTS_DIR = path.join(DATA_DIR, "projects");
 const TRASH_KEEP_DAYS = 5;
 const TRASH_KEEP_MS = TRASH_KEEP_DAYS * 24 * 3600 * 1000;
 
-const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const projDir = (id: string) => path.join(PROJECTS_DIR, id);
 const clipDir = (id: string, clipId: string) =>
   path.join(projDir(id), "clips", clipId);
@@ -270,20 +271,7 @@ interface ProjectUpdate {
   >;
 }
 
-const canAccess = (meta: Meta, user: SessionUser) =>
-  user.role === "admin" || meta.owner === user.username;
 
-/**
- * Atomic JSON write: tmp file + rename, so a crash mid-write can never
- * leave a truncated file behind (readers only ever see whole JSON).
- */
-async function writeJson(file: string, value: unknown): Promise<void> {
-  // Multiple autosaves/uploads can finish in the same process at once. A
-  // unique temp name keeps one atomic write from renaming another's file.
-  const tmp = `${file}.tmp-${process.pid}-${randomUUID()}`;
-  await writeFile(tmp, JSON.stringify(value));
-  await rename(tmp, file);
-}
 
 interface DraftRequest {
   name?: unknown;
@@ -1149,7 +1137,7 @@ projectsApp.patch("/:id", async (c) => {
 projectsApp.post("/:id/copy", async (c) => {
   const id = c.req.param("id");
   const user = c.get("user");
-  if (!hostedMode() || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+  if (!hasTeam() || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
   const meta = await ownedMeta(id, user);
   if (!meta) return c.json({ error: "Not found" }, 404);
 

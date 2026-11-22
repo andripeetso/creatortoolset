@@ -1059,6 +1059,17 @@ export const generateCarouselLayouts = (
 ) => fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}/layouts`, jsonInit(input)).then((r) => json<WorkshopDocument>(r));
 export const revertDocument = (sessionId: string, docId: string, versionId: string) =>
   fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}/revert`, jsonInit({ versionId })).then((r) => json<WorkshopDocument>(r));
+/** The earlier post descriptions in the piece's versions, newest first. */
+export interface CaptionTake {
+  versionId: string;
+  at: number;
+  author: "ai" | "user";
+  text: string;
+}
+export const listCaptionTakes = (sessionId: string, docId: string) =>
+  fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}/captions`).then((r) => json<CaptionTake[]>(r));
+export const restoreCaptionTake = (sessionId: string, docId: string, versionId: string) =>
+  fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}/caption/restore`, jsonInit({ versionId })).then((r) => json<WorkshopDocument>(r));
 export const keepDocument = (sessionId: string, docId: string, input: { name?: string; versionId?: string; kept?: boolean } = {}) =>
   fetch(`/api/workshop/sessions/${sessionId}/docs/${docId}/keep`, jsonInit(input)).then((r) => json<WorkshopDocument>(r));
 export const deleteDocument = (sessionId: string, docId: string) =>

@@ -22,6 +22,7 @@ umask 077
 [ -f .env ] || cp .env.example .env
 chmod 600 .env
 sed -i "s|^DOMAIN=.*|DOMAIN=$domain|" .env
+sed -i "s|^CT_SERVER=.*|CT_SERVER=server|" .env
 # the sign-in secret and the first password: made here, never printed
 grep -q '^APP_SECRET=.\{16,\}' .env || sed -i "s|^APP_SECRET=.*|APP_SECRET=$(openssl rand -base64 32)|" .env
 

@@ -17,7 +17,7 @@ import {
   type Selection,
 } from "@contracts/providers";
 import type { CliId } from "@contracts/local-ai";
-import { useAuth } from "@/lib/auth";
+import { hasTeam, useAuth } from "@/lib/auth";
 import { aiInstallProgressOnMac, installAiOnMac } from "@/lib/thisMac";
 import { autoTestDue, checkProvider, deviceOf, effectiveSelection, effortLabel, modelChoices, modelName, modelsOf, saveOwn, saveWorkspace, thisMacDevice, useProviders } from "@/lib/providers";
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,7 @@ export const shortVersion = (v: string | undefined): string | undefined => v?.ma
 export function ProvidersSection({ sub }: { sub?: string }) {
   const navigate = useNavigate();
   const me = useAuth((s) => s.me);
-  const hosted = useAuth((s) => s.hosted);
+  const team = useAuth((s) => hasTeam(s.kind));
   const isAdmin = me?.role === "admin";
   const providers = useProviders();
   // the change being saved, shown at once: a read that lands meanwhile never puts the old set back
@@ -190,7 +190,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   const shown: ProviderSettings | null = editing ?? (readOnly ? (view.workspace?.settings ?? null) : null);
   const scope: Scope = toOwn ? me.username : "workspace";
   // the set the server shares (it runs the admins' jobs and the background work) is named, so it is not taken for the admin's own
-  const title = hosted && !toOwn ? "Server providers" : "Providers";
+  const title = team && !toOwn ? "Server providers" : "Providers";
   // one tab per Mac: a Mac that paired twice (the app and the worker) is one tab holding the AIs of both records
   const allGroups = groupComputers(devices, me.username);
   // a tab is a computer that can do something here: it is online, or it already holds an AI of this set. A computer that

@@ -4,10 +4,11 @@ import path from "node:path";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
-// Hosted mode (CT_MODE=hosted, with accounts): teams, invites, member roles, view-as and the admin API.
+// Creator Toolset Cloud (with accounts): teams, invites, member roles, view-as and the admin API. A Server has all
+// but view-as (hosted-mode.test.ts, This Mac, has none).
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "hosted-team-"));
 process.env.APP_SECRET = "hosted-team-secret";
-process.env.CT_MODE = "hosted";
+process.env.CT_SERVER = "cloud";
 
 const { default: app } = await import("./boot");
 const { env } = await import("./lib/env");
@@ -72,6 +73,17 @@ describe("hosted team", () => {
 
     expect((await call("PATCH", "/api/workspace/members/ann", annCookie, { off: [] })).status).toBe(403);
     expect((await call("GET", "/api/admin/users", annCookie)).status).toBe(403);
+  });
+
+  it("view-as is Cloud's only: a Server's admin can neither start one nor read as a member with its cookie", async () => {
+    process.env.CT_SERVER = "server";
+    try {
+      expect((await call("POST", "/api/admin/view-as/ann", adminCookie)).status).toBe(404);
+      const ws = (await (await call("GET", "/api/workspace", `${adminCookie}; ct_view_as=ann`)).json()) as { me: string };
+      expect(ws.me).toBe("owner");
+    } finally {
+      process.env.CT_SERVER = "cloud";
+    }
   });
 
   it("view-as: the admin reads as a member, read-only, and the admin API stays the admin's", async () => {

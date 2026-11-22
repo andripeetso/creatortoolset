@@ -24,21 +24,21 @@ const tiny = defineWebPlugin({
 
 describe("webPluginAdds", () => {
   it("names what a plug-in adds, each with the path it lives at", () => {
-    const adds = webPluginAdds(hello, { me: admin, hosted: true });
+    const adds = webPluginAdds(hello, { me: admin, team: true });
     expect(adds).toContainEqual({ text: "Home: Hello", to: "/hello" });
     expect(adds).toContainEqual({ text: "Settings: Hello plug-in", to: "/settings/hello" });
     // its page is the one its Home tile opens: named once
     expect(adds.filter((a) => a.to === "/hello")).toHaveLength(1);
     // a page that needs something picked first (/tiny/:id) is not offered as a place to go
-    expect(webPluginAdds(tiny, { me: admin, hosted: true }).some((a) => a.text.includes(":id"))).toBe(false);
+    expect(webPluginAdds(tiny, { me: admin, team: true }).some((a) => a.text.includes(":id"))).toBe(false);
   });
 
   it("leaves out admin tabs off a hosted server, gated tiles while the gate is off, and admin-only items for members", () => {
-    const local = webPluginAdds(tiny, { me: admin, hosted: false }).map((a) => a.text);
+    const local = webPluginAdds(tiny, { me: admin, team: false }).map((a) => a.text);
     expect(local).not.toContain("Settings → Tool settings: Tiny admin");
-    expect(webPluginAdds(tiny, { me: admin, hosted: true })).toContainEqual({ text: "Settings → Tool settings: Tiny admin", to: "/settings/tiny-admin" });
-    expect(webPluginAdds(tiny, { me: member(["tiny-gate"]), hosted: true }).map((a) => a.text)).not.toContain("Home: Tiny");
-    const asMember = webPluginAdds(tiny, { me: member(), hosted: true }).map((a) => a.text);
+    expect(webPluginAdds(tiny, { me: admin, team: true })).toContainEqual({ text: "Settings → Tool settings: Tiny admin", to: "/settings/tiny-admin" });
+    expect(webPluginAdds(tiny, { me: member(["tiny-gate"]), team: true }).map((a) => a.text)).not.toContain("Home: Tiny");
+    const asMember = webPluginAdds(tiny, { me: member(), team: true }).map((a) => a.text);
     expect(asMember).toContain("Settings → AI: Tiny section");
     expect(asMember).not.toContain("Settings → Storage: Tiny drive");
     expect(asMember).not.toContain("Settings → Tool settings: Tiny admin");
@@ -47,14 +47,14 @@ describe("webPluginAdds", () => {
   it("gives every Settings link a page this install and person can open", () => {
     const plugins = [hello, tiny];
     const contexts: Array<[NavContext, Me]> = [
-      [{ hosted: true, admin: true, mac: false }, admin],
-      [{ hosted: true, admin: false, mac: false }, member()],
-      [{ hosted: false, admin: true, mac: false }, admin],
-      [{ hosted: false, admin: false, mac: false }, member()],
+      [{ team: true, admin: true, mac: false }, admin],
+      [{ team: true, admin: false, mac: false }, member()],
+      [{ team: false, admin: true, mac: false }, admin],
+      [{ team: false, admin: false, mac: false }, member()],
     ];
     for (const [ctx, me] of contexts) {
       for (const p of plugins) {
-        for (const a of webPluginAdds(p, { me, hosted: ctx.hosted })) {
+        for (const a of webPluginAdds(p, { me, team: ctx.team })) {
           if (!a.to?.startsWith("/settings/")) continue;
           const section = a.to.split("/")[2];
           expect(resolveSection(section, ctx, plugins).kind, `${a.text} (${section})`).toBe("page");
@@ -72,7 +72,7 @@ describe("mergePluginInfo", () => {
         { id: "tiny", name: "tiny", about: "server line", adds: [{ text: "Connector: Tiny reader", to: "/settings/connectors" }] },
         { id: "server-only", name: "Server only", about: "no web part", adds: [{ text: "1 tool for your own AI", to: "/settings/own-ai" }] },
       ],
-      { me: admin, hosted: false },
+      { me: admin, team: false },
     );
     expect(merged.map((p) => [p.id, p.name])).toEqual([
       ["tiny", "Tiny Tools"],

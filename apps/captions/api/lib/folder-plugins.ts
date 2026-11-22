@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Hono } from "hono";
-import { hostedMode } from "./env";
+import { serverKind } from "./env";
 import { admissionProblem, type ServerPlugin } from "./plugin";
 import { forgetPluginWorkspaces } from "./plugin-workspaces";
 
@@ -42,7 +42,7 @@ const appFolder = () => process.env.CT_APP_FOLDER ?? "";
  * True on the Mac app's own server. Everything in this file does nothing anywhere else: never on a hosted server,
  * whatever its variables say, because there a plug-in would see every account's data.
  */
-export const folderPluginsEnabled = (): boolean => process.env.CT_LOCAL === "1" && !!appFolder() && !hostedMode();
+export const folderPluginsEnabled = (): boolean => serverKind() === "mac" && !!appFolder();
 const dir = (name: "plugins" | "plugins-approved" | "plugins-run") => path.join(appFolder(), name);
 /** The person's plug-ins folder (<app folder>/plugins), where a folder put in is only switched on by the Mac app. */
 export const pluginsFolder = () => dir("plugins");

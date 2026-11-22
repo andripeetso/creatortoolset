@@ -151,6 +151,8 @@ export interface ClipMoves {
   download: () => void;
   copyLink: () => void;
   move: (to: string | null) => void;
+  /** a new folder, here, with the clips in it (a clip's menu only) */
+  folder?: () => void;
   tag: (tag: string) => void;
   trash: () => void;
   restore: () => void;
@@ -168,8 +170,11 @@ export function ClipMenu({
   on,
   extra,
   offline,
+  count = 1,
 }: {
   inTrash: boolean;
+  /** how many clips it acts on: the picked ones when the clip is one of them */
+  count?: number;
   /** someone else's library to look at: open, download, copy the link */
   readOnly?: boolean;
   moveTo: MoveTarget[];
@@ -206,6 +211,7 @@ export function ClipMenu({
       <ContextMenuItem onSelect={on.copyLink}>Copy link</ContextMenuItem>
       {extra}
       <ContextMenuSeparator />
+      {on.folder && <ContextMenuItem onSelect={on.folder}>{count > 1 ? `New folder with ${count.toLocaleString()} clips` : "New folder with clip"}</ContextMenuItem>}
       {moveTo.length > 0 && (
         <ContextMenuSub>
           <ContextMenuSubTrigger>Move to</ContextMenuSubTrigger>

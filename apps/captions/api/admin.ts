@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { env } from "./lib/env";
+import { env, isCloud } from "./lib/env";
 import { secureAttr, type AuthVars } from "./auth";
 import { VIEW_AS } from "./lib/view-as";
 import { addMember, forgetAccount, ownedTeamWithMembers, workspaceOf } from "./lib/workspaces";
@@ -219,6 +219,7 @@ adminApp.put("/sign-in-code", async (c) => {
  * is on. The cookie is honoured for a platform admin only, so it is no way in for anyone else.
  */
 adminApp.post("/view-as/:username", (c) => {
+  if (!isCloud()) return c.json({ error: "Not Found" }, 404); // view-as is Creator Toolset Cloud's, never a Server's
   const target = findUser(c.req.param("username"));
   if (!target) return c.json({ error: "Account not found" }, 404);
   setCookie(c, VIEW_AS, target.username, { path: "/", httpOnly: true, sameSite: "Lax", secure: !!secureAttr(c) });

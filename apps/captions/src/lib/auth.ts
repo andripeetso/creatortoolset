@@ -51,24 +51,29 @@ export const canChange = (me: Me | null, tool: Tool): boolean => canUse(me, tool
 export const canUseTile = (me: Me | null, tile: HomeTile): boolean =>
   tile === "record" ? canUse(me, "review") || canUse(me, "notes") : canUse(me, tile);
 
+export type { ServerKind } from "@contracts/work";
+import type { ServerKind } from "@contracts/work";
+/** The server has accounts and a team (a Server or Creator Toolset Cloud). */
+export const hasTeam = (kind: ServerKind): boolean => kind !== "mac";
+
 interface AuthState {
   required: boolean;
   me: Me | null;
-  /** The server runs in hosted mode (CT_MODE=hosted): teams, admin, view-as and invite links exist. */
-  hosted: boolean;
+  /** What the server is (/api/auth/check `kind`): a Server or Cloud has teams, admin and invite links; Cloud view-as. */
+  kind: ServerKind;
   /** Set while a platform admin reads the app as `me` (view-as): that admin's username. */
   viewedBy: string | null;
-  /** `server` comes from /api/auth/check; a sign-in leaves `hosted` as it was. */
-  setAuth: (required: boolean, me: Me | null, server?: { hosted: boolean; viewedBy: string | null }) => void;
+  /** `server` comes from /api/auth/check; a sign-in leaves `kind` as it was. */
+  setAuth: (required: boolean, me: Me | null, server?: { kind: ServerKind; viewedBy: string | null }) => void;
 }
 
 export const useAuth = create<AuthState>((set) => ({
   required: false,
   me: null,
-  hosted: false,
+  kind: "mac",
   viewedBy: null,
   setAuth: (required, me, server) =>
-    set((s) => ({ required, me, hosted: server?.hosted ?? s.hosted, viewedBy: server?.viewedBy ?? null })),
+    set((s) => ({ required, me, kind: server?.kind ?? s.kind, viewedBy: server?.viewedBy ?? null })),
 }));
 
 /** The signed-in account, reactive. */

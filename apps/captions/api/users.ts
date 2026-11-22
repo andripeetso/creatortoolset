@@ -122,6 +122,10 @@ export const mayUse = (user: SessionUser, tool: Tool | PluginGateId): boolean =>
 export const mayChange = (user: Pick<SessionUser, "role" | "off" | "read">, tool: Tool): boolean =>
   user.role === "admin" || (!user.off.includes(tool) && !user.read?.includes(tool));
 
+/** A thing an account owns (a project, clip, document, export, post): its owner sees it, and so does an admin. */
+export const canSee = (thing: { owner?: string }, user: Pick<SessionUser, "username" | "role">): boolean =>
+  user.role === "admin" || thing.owner === user.username;
+
 /** Stand-in identity when auth is disabled (no APP_SECRET, local use). */
 export const LOCAL_USER: SessionUser = {
   username: "local",
@@ -416,7 +420,12 @@ export interface AiKey {
   usedAt?: number;
   /** made by an AI app's sign-in (api/oauth.ts), not by Install: a name it chose itself never touches Install's keys */
   oauth?: true;
+  /** when it stops working (a sign-in's key: OAUTH_KEY_MS, the app signs in again); unset = never */
+  expires?: number;
 }
+
+/** A sign-in's key lasts 90 days: the AI app has no refresh token, so it signs in again once it has expired. */
+const OAUTH_KEY_MS = 90 * 24 * 3600_000;
 
 /** A new Full key for one AI app (`name` is what the page lists, e.g. "Claude Code"); shown once, stored hashed. */
 export function newAiKey(user: UserRecord, name: string, oauth = false): { id: string; key: string } {
@@ -426,7 +435,8 @@ export function newAiKey(user: UserRecord, name: string, oauth = false): { id: s
   // Install: a key of the same name that was never used is one whose command was not run (asked for twice), it goes.
   // A sign-in: connecting the app again replaces its key, so no old one stays working out of sight.
   const kept = (user.aiKeys ?? []).filter((k) => !same(k) || (!oauth && k.usedAt));
-  user.aiKeys = [...kept, { id, name: name.trim().slice(0, 60) || "AI app", hash: sha256(key), at: Date.now(), last4: key.slice(-4), ...(oauth ? { oauth: true as const } : {}) }];
+  const now = Date.now();
+  user.aiKeys = [...kept, { id, name: name.trim().slice(0, 60) || "AI app", hash: sha256(key), at: now, last4: key.slice(-4), ...(oauth ? { oauth: true as const, expires: now + OAUTH_KEY_MS } : {}) }];
   persist();
   return { id, key };
 }
@@ -444,6 +454,12 @@ export const isAiAppKey = (key: string): boolean => {
 
 /** The AI apps' keys as the page lists them: never the hash. */
 export const aiKeysOf = (user: UserRecord) => (user.aiKeys ?? []).map(({ hash: _hash, ...k }) => k);
+
+/** Signs out every browser of the account (its cookies are signed over the stamp): no copy of a cookie works after it. */
+export function signOutEverywhere(user: UserRecord): void {
+  user.session = randomBytes(16).toString("hex");
+  persist();
+}
 
 /** Turns a key off; making a new one is the only way back. */
 export function dropApiKey(user: UserRecord, level: KeyLevel): void {
@@ -465,6 +481,8 @@ export function userForApiKey(key: string, level: KeyLevel = "review"): UserReco
   const named = users.find((u) => u.aiKeys?.some((k) => k.hash === hash));
   if (named) {
     const k = named.aiKeys!.find((x) => x.hash === hash)!;
+    // an expired sign-in key answers like an unknown one: boot.ts sends the AI app its sign-in challenge
+    if (k.expires && k.expires <= Date.now()) return null;
     if (Date.now() - (k.usedAt ?? 0) > ACTIVE_WRITE_INTERVAL) {
       k.usedAt = Date.now();
       persist();

@@ -7,6 +7,13 @@ set -eu
 SERVER=${1:?usage: install.sh <server> <code>}
 CODE=${2:?usage: install.sh <server> <code>}
 SERVER=${SERVER%/}
+# https only (http for this computer's own loopback): the code and the token must not travel in clear
+refuse() { echo "The server address must be https:// (http:// only for localhost)." >&2; exit 1; }
+case "$SERVER" in
+  https://?*) ;;
+  http://*) printf '%s' "${SERVER#http://}" | cut -d/ -f1 | grep -Eq '^(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$' || refuse ;;
+  *) refuse ;;
+esac
 DIR=${CT_HELPER_HOME:-$HOME/.local/share/creator-toolset-helper}
 mkdir -p "$DIR"
 for f in helper.py requirements.txt creator-toolset-helper.service; do

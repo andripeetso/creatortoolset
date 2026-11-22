@@ -4,7 +4,7 @@ import path from "node:path";
 import { spokenLanguage } from "../../src/workers/spoken-language";
 import { hfApp, OWN_COPY } from "../hfproxy";
 import { ffmpegSlot } from "../library/media/run";
-import { serverKind } from "../work/server-work";
+import { serverKind } from "./env";
 import { env } from "./env";
 
 /**
@@ -34,7 +34,7 @@ export class ModelNotReady extends Error {}
  * Whether this server transcribes by itself: only This Mac, the person's own computer (work/place.ts mayRunHere, rule 1).
  * Every other server leaves the speech model to the person's computers (lib/computer-transcribe.ts).
  */
-export const deviceTranscribes = (): boolean => serverKind() === "local";
+export const deviceTranscribes = (): boolean => serverKind() === "mac";
 
 export interface DeviceWord {
   text: string;

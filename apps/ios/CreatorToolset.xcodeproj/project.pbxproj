@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		C700000000000000000000E3 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = C700000000000000000000E2 /* Sentry */; };
+		C700000000000000000000E7 /* CreatorToolsetShared in Frameworks */ = {isa = PBXBuildFile; productRef = C700000000000000000000E5 /* CreatorToolsetShared */; };
+		C700000000000000000000E8 /* CreatorToolsetShared in Frameworks */ = {isa = PBXBuildFile; productRef = C700000000000000000000E6 /* CreatorToolsetShared */; };
 		C70000000000000000000079 /* ShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C70000000000000000000071 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -102,6 +104,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C700000000000000000000E3 /* Sentry in Frameworks */,
+				C700000000000000000000E7 /* CreatorToolsetShared in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -116,6 +119,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C700000000000000000000E8 /* CreatorToolsetShared in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -167,6 +171,7 @@
 			name = CreatorToolset;
 			packageProductDependencies = (
 				C700000000000000000000E2 /* Sentry */,
+				C700000000000000000000E5 /* CreatorToolsetShared */,
 			);
 			productName = CreatorToolset;
 			productReference = C70000000000000000000011 /* CreatorToolset.app */;
@@ -213,6 +218,7 @@
 			);
 			name = ShareExtension;
 			packageProductDependencies = (
+				C700000000000000000000E6 /* CreatorToolsetShared */,
 			);
 			productName = ShareExtension;
 			productReference = C70000000000000000000071 /* ShareExtension.appex */;
@@ -251,6 +257,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C700000000000000000000E1 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+				C700000000000000000000E4 /* XCLocalSwiftPackageReference "../swift-shared" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C70000000000000000000003 /* Products */;
@@ -572,6 +579,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C700000000000000000000E4 /* XCLocalSwiftPackageReference "../swift-shared" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../swift-shared";
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		C700000000000000000000E1 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -588,6 +602,14 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C700000000000000000000E1 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
 			productName = Sentry;
+		};
+		C700000000000000000000E5 /* CreatorToolsetShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CreatorToolsetShared;
+		};
+		C700000000000000000000E6 /* CreatorToolsetShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CreatorToolsetShared;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

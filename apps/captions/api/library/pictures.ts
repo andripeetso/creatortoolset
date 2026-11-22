@@ -9,7 +9,8 @@ import { offOf } from "../lib/balance";
 import { embedPictureQuery, embedPictures, PICTURE_MODEL, PICTURE_PX, pictureText, pictureTextKept, readsAsEnglish } from "../lib/device-picture";
 import { isOnline, listDevices } from "../lib/devices";
 import { mayRunHere } from "../work/may-run";
-import { libraryWorkspace, serverKind, serverWorks } from "../work/server-work";
+import { libraryWorkspace, serverWorks } from "../work/server-work";
+import { serverKind } from "../lib/env";
 import { wakeEditorPolls } from "../lib/mac-claude";
 import { blobs, libraryDb, librarySetting, SINCE } from "./db";
 import { whoFor } from "./describe";
@@ -38,7 +39,7 @@ import { stretchesOf } from "./stretches";
  */
 export function picturesHere(libraryId: string, account: string | null): boolean {
   if (process.env.CT_PICTURE_MODEL === "0") return false;
-  if (serverKind() === "local") return true;
+  if (serverKind() === "mac") return true;
   return (
     mayRunHere({
       reads: true,

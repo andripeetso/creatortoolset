@@ -2,6 +2,7 @@
 // device token in the Keychain, long-polls the site for jobs whose provider runs here, runs each
 // with the CLI for its driver (ClaudeRun.swift) and posts the answer back. The same bodies as the Mac relay, on
 // /api/devices/relay/* with `Authorization: Bearer <device token>`.
+import CreatorToolsetShared
 import Foundation
 import Security
 
@@ -163,31 +164,18 @@ struct PairReply: Decodable {
 enum DeviceVault {
     static let service = AppIdentity.keychain("device")
 
-    private static func query(_ host: String, _ service: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: host]
-    }
-
     /// `service`: the device tokens by default; Server.swift keeps the local server's APP_SECRET under its own.
     static func token(for host: String, service: String = DeviceVault.service) -> String? {
-        var q = query(host, service)
-        q[kSecReturnData as String] = true
-        q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        KeychainItem.read(service: service, account: host).map { String(decoding: $0, as: UTF8.self) }
     }
 
     @discardableResult
     static func save(_ token: String, for host: String, service: String = DeviceVault.service) -> Bool {
-        remove(for: host, service: service)
-        var item = query(host, service)
-        item[kSecValueData as String] = Data(token.utf8)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+        KeychainItem.write(Data(token.utf8), service: service, account: host, accessible: kSecAttrAccessibleAfterFirstUnlock) == errSecSuccess
     }
 
     static func remove(for host: String, service: String = DeviceVault.service) {
-        SecItemDelete(query(host, service) as CFDictionary)
+        KeychainItem.delete(service: service, account: host)
     }
 
     static func deviceID(for host: String) -> String? {

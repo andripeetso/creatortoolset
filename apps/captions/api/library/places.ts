@@ -15,6 +15,7 @@ import { mergeSamePath } from "./place-rows";
 import { readerOf } from "./reader";
 import { externalCanSee, externalRefById } from "./refs";
 import { assetRef, canSee, sourceById } from "./sources";
+import { isId } from "../lib/ids";
 
 /**
  * Here or away (contracts/places.ts): where each computer reads a version's original. The version keeps its root and root
@@ -266,7 +267,6 @@ export function backfillRoots(): boolean {
   return n > 0;
 }
 
-const isId = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 100;
 const isPath = (p: unknown): p is string =>
   typeof p === "string" && p.length <= 2048 && (p.startsWith("/") || /^[A-Za-z]:\\|^\\\\/.test(p)) && !p.split(/[\\/]/).includes("..") && !p.includes("\0");
 

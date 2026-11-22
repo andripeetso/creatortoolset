@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { navListFor } from "@/components/settings/nav";
-import { useAuth, useMe } from "@/lib/auth";
+import { hasTeam, useAuth, useMe } from "@/lib/auth";
 import { playIntroBeat, stopIntroSound } from "@/lib/intro-sound";
 import { endIntro, useIntro } from "@/lib/setup";
 import { cn } from "@/lib/utils";
@@ -73,10 +73,10 @@ const letters = (word: string, from: number) =>
 
 /** Over and behind Home while it plays: the drifting colour, the two beats that take the middle of the window, and Skip. */
 export function HomeIntro({ beat }: { beat: Beat }) {
-  const hosted = useAuth((s) => s.hosted);
+  const team = useAuth((s) => hasTeam(s.kind));
   const me = useMe();
   // the Mac app's own mark on <html> (settings/ThisMacSection hasThisMac), read here so Home loads no Settings page for it
-  const pages = navListFor({ hosted, admin: me?.role === "admin", mac: document.documentElement.dataset.macThisMac === "1" });
+  const pages = navListFor({ team, admin: me?.role === "admin", mac: document.documentElement.dataset.macThisMac === "1" });
   const chips = CONNECT.flatMap((id) => pages.filter((p) => p.id === id));
   // each beat's sounds as it starts: one note for each tool and tile on the page
   const chipCount = chips.length;

@@ -1,5 +1,5 @@
 import type { Provider } from "@/components/setup/AccountStep";
-import { canUse, useAuth, type Me } from "./auth";
+import { canUse, hasTeam, useAuth, type Me } from "./auth";
 import { listAutomations } from "./automations";
 import { getConnectors } from "./connectors";
 import { getProviders } from "./providers";
@@ -25,8 +25,8 @@ const get = (url: string) => () => fetch(url).then((r) => (r.ok ? (r.json() as P
  * hosted server, the admin pages for its admins. Social accounts is among them: its read asks no other server (the
  * sign-in service is asked only when the person presses Add, api/lib/connectors/signin-service.ts).
  */
-export function settingsLists(me: Pick<Me, "role">, hosted: boolean): Array<[string, () => Promise<unknown>]> {
-  const admin = hosted && me.role === "admin";
+export function settingsLists(me: Pick<Me, "role">, team: boolean): Array<[string, () => Promise<unknown>]> {
+  const admin = team && me.role === "admin";
   return [
     ["/api/providers", getProviders], // Providers, Usage, Devices, Storage, Scheduled tasks
     ["/api/setup/ai", get("/api/setup/ai")], // Providers, Headless access
@@ -40,7 +40,7 @@ export function settingsLists(me: Pick<Me, "role">, hosted: boolean): Array<[str
     ["/api/auth/account", () => fetch("/api/auth/account").then((r) => (r.status === 401 ? "none" : r.ok ? (r.json() as Promise<unknown>) : Promise.reject(new Error(String(r.status)))))],
     // Account, Team: the sign-in apps this server has. One that does not answer has none (an own-computer server: 404)
     ["/api/account/providers", () => fetch("/api/account/providers").then((r) => (r.ok ? (r.json() as Promise<unknown>) : NO_SIGN_INS))],
-    ...(hosted ? [["/api/workspace", () => getWorkspace().then((team) => ({ team }))] as [string, () => Promise<unknown>]] : []), // Team
+    ...(team ? [["/api/workspace", () => getWorkspace().then((team) => ({ team }))] as [string, () => Promise<unknown>]] : []), // Team
     ...(admin ? ["/api/service-keys", "/api/admin/users", "/api/admin/projects"].map((url) => [url, get(url)] as [string, () => Promise<unknown>]) : []), // Admin
   ];
 }
@@ -96,7 +96,7 @@ export async function warmScreens(): Promise<void> {
   // Settings, last (nothing above waits for it): only the lists this device has no copy of yet, so the first-ever open
   // of a section paints like every later one (each section reads its own list again when it opens) and an app start
   // adds no requests after that
-  const missing = settingsLists(me, useAuth.getState().hosted).filter(([url]) => readCached(me.username, url) === null);
+  const missing = settingsLists(me, hasTeam(useAuth.getState().kind)).filter(([url]) => readCached(me.username, url) === null);
   await Promise.all(missing.map(([url, load]) => warmCached(url, load).catch(() => {})));
 }
 

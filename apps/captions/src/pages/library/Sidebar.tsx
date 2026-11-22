@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Download, FileX, SlidersHorizontal } from "lucide-react";
-import type { AssetKind } from "@contracts/library";
+import { Download, FileX, SlidersHorizontal, X } from "lucide-react";
 import { LibraryFacetBar, type FacetChoice } from "@/components/LibraryFacetBar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -9,28 +8,23 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacDevice } from "@/lib/providers";
 import { macPlaces } from "@/lib/thisMac";
 import { cn } from "@/lib/utils";
-import { anyFilter, countryName, HereFilter, WhenPicker } from "./Filters";
+import { anyFilter, countryName, HereFilter, presets, WhenPicker } from "./Filters";
 import { Missing } from "./Missing";
 
 /**
- * The Media Library's sidebar (LibraryPage.tsx): When, Where (the countries clips were filmed in, with counts), Tags
- * (with counts, every one picked; its own small search), Kinds, then a plug-in's own groups. On a desktop it stands left
+ * The Media Library's sidebar (LibraryPage.tsx): When, Where (the countries clips were filmed in, with counts), Orientation, Tags
+ * (with counts, every one picked; its own small search), then a plug-in's own groups. On a desktop it stands left
  * of the grid and scrolls by itself; on a narrow window and a phone the Filters button opens it as a sheet.
  */
 
 
-export const KINDS: { value: AssetKind | "all"; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "video", label: "Videos" },
-  { value: "audio", label: "Audio" },
-  { value: "image", label: "Photos" },
-  { value: "doc", label: "Documents" },
-];
+const ORIENTATIONS = [
+  { value: "vertical", label: "Vertical" },
+  { value: "horizontal", label: "Horizontal" },
+] as const;
 
 export interface SidebarProps {
   libraryId: string;
-  kind: AssetKind | "all";
-  onKind: (k: AssetKind | "all") => void;
   filters: LibraryFilters;
   onFilters: (f: LibraryFilters) => void;
   /** the plug-in sources this library offers, and the one shown ("": the library itself) */
@@ -43,8 +37,8 @@ export interface SidebarProps {
 }
 
 /** Anything narrowed from the sidebar: its Clear shows. */
-export const sidebarPicked = (p: Pick<SidebarProps, "kind" | "filters" | "facetValue" | "source">) =>
-  p.kind !== "all" || anyFilter(p.filters) || Object.values(p.facetValue).some((v) => v.length) || !!p.source;
+export const sidebarPicked = (p: Pick<SidebarProps, "filters" | "facetValue" | "source">) =>
+  anyFilter(p.filters) || Object.values(p.facetValue).some((v) => v.length) || !!p.source;
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -116,6 +110,16 @@ export function LibrarySidebar(p: SidebarProps) {
         </Section>
       )}
 
+      <Section title="Orientation">
+        <div className="flex flex-wrap gap-1.5">
+          {ORIENTATIONS.map((o) => (
+            <Pill key={o.value} on={f.orientation === o.value} onClick={() => set({ orientation: f.orientation === o.value ? undefined : o.value })}>
+              {o.label}
+            </Pill>
+          ))}
+        </div>
+      </Section>
+
       {thisMacDevice() && (
         <Section title="Computer">
           <div className="flex flex-wrap gap-1.5">
@@ -161,16 +165,6 @@ export function LibrarySidebar(p: SidebarProps) {
         </Section>
       )}
 
-      <Section title="Kinds">
-        <div className="flex flex-wrap gap-1.5">
-          {KINDS.map((k) => (
-            <Pill key={k.value} on={p.kind === k.value} onClick={() => p.onKind(k.value)}>
-              {k.label}
-            </Pill>
-          ))}
-        </div>
-      </Section>
-
       {plugin && (
         <Section title="Source">
           <div className="flex flex-wrap gap-1.5">
@@ -192,20 +186,72 @@ export function LibrarySidebar(p: SidebarProps) {
       )}
 
       {sidebarPicked(p) && (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="w-fit"
-          onClick={() => {
-            p.onFilters({});
-            p.onKind("all");
-            p.onFacets({});
-            p.onSource("");
-          }}
-        >
+        <Button size="sm" variant="ghost" className="w-fit" onClick={() => clearAll(p)}>
           Clear
         </Button>
       )}
+    </div>
+  );
+}
+
+type Picks = Omit<SidebarProps, "libraryId">;
+
+const clearAll = (p: Picks) => {
+  p.onFilters({});
+  p.onFacets({});
+  p.onSource("");
+};
+
+const dayWord = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+/** When as the sidebar picked it: a preset's name, else the days (filmedTo is the midnight after the last day). */
+function whenWord(from?: number, to?: number) {
+  const preset = to === undefined && presets().find((x) => x.from === from);
+  if (preset) return preset.label;
+  if (from !== undefined && to !== undefined) return `${dayWord(from)} – ${dayWord(to - 1)}`;
+  return from !== undefined ? `From ${dayWord(from)}` : `To ${dayWord(to! - 1)}`;
+}
+
+/**
+ * What the sidebar narrows the list to, as one row under the tabs: each pick with its X, then Clear. The sidebar can be
+ * scrolled away or folded into a sheet, so without this an empty list would not say why.
+ */
+export function ActiveFilters(p: Picks) {
+  const f = p.filters;
+  const set = (patch: Partial<LibraryFilters>) => p.onFilters({ ...f, ...patch });
+  const chips: { key: string; label: string; off: () => void }[] = [
+    ...(p.source ? [{ key: "source", label: p.sources.find((s) => s.id === p.source)?.label ?? p.source, off: () => p.onSource("") }] : []),
+    ...(f.filmedFrom !== undefined || f.filmedTo !== undefined
+      ? [{ key: "when", label: whenWord(f.filmedFrom, f.filmedTo), off: () => set({ filmedFrom: undefined, filmedTo: undefined }) }]
+      : []),
+    ...(f.place ? [{ key: "place", label: countryName(f.place), off: () => set({ place: undefined }) }] : []),
+    ...(f.orientation ? [{ key: "orientation", label: ORIENTATIONS.find((o) => o.value === f.orientation)!.label, off: () => set({ orientation: undefined }) }] : []),
+    ...(f.here ? [{ key: "here", label: "On this computer", off: () => set({ here: undefined }) }] : []),
+    ...(f.offline ? [{ key: "offline", label: "Available offline", off: () => set({ offline: undefined }) }] : []),
+    ...(f.missing ? [{ key: "missing", label: "Missing on this computer", off: () => set({ missing: undefined }) }] : []),
+    ...(f.tags ?? []).map((t) => ({ key: `tag:${t}`, label: t, off: () => set({ tags: f.tags!.filter((x) => x !== t) }) })),
+    ...Object.entries(p.facetValue).flatMap(([k, vs]) =>
+      vs.map((v) => ({
+        key: `f:${k}:${v}`,
+        label: p.facets.find((x) => x.key === k)?.values.find((x) => x.value === v)?.label ?? v,
+        off: () => p.onFacets({ ...p.facetValue, [k]: vs.filter((x) => x !== v) }),
+      })),
+    ),
+  ];
+  if (!chips.length) return null;
+  return (
+    <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-1.5">
+      {chips.map((c) => (
+        <span key={c.key} className="flex h-7 max-w-full items-center gap-1 rounded-full border border-violet-500 bg-violet-500/15 pl-2.5 pr-1 text-[12px] text-zinc-100">
+          <span className="truncate">{c.label}</span>
+          <button type="button" aria-label={`Remove ${c.label}`} onClick={c.off} className="rounded-full p-0.5 text-zinc-400 hover:text-zinc-100">
+            <X aria-hidden className="h-3.5 w-3.5" />
+          </button>
+        </span>
+      ))}
+      <Button size="sm" variant="ghost" className="h-7 px-2 text-[12px]" onClick={() => clearAll(p)}>
+        Clear
+      </Button>
     </div>
   );
 }

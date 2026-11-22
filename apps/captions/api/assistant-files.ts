@@ -4,7 +4,7 @@ import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promis
 import path from "node:path";
 import { jobTurn, type AuthVars } from "./auth";
 import { env } from "./lib/env";
-import { assembleParts, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, readUploadState, receivedParts, receivePart, startUpload } from "./lib/uploads";
+import { assembleParts, freeBytes, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, readUploadState, receivedParts, receivePart, shortOfReserve, startUpload } from "./lib/uploads";
 import { mayUse, type SessionUser } from "./users";
 import { notesFromFile } from "./clips";
 import { probe } from "./library/media/probe";
@@ -93,6 +93,8 @@ assistantFilesApp.post("/", async (c) => {
   const mime = (typeof b?.mime === "string" ? b.mime : "").slice(0, 80);
   if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_UPLOAD_BYTES) return c.json({ error: "Invalid size" }, 400);
   if (!isMedia(mime, name)) return c.json({ error: `${name} isn't a video or a recording` }, 400);
+  // shortcut: uploads started together each see the same free space; the reserve is a floor, not a lock
+  if (shortOfReserve(await freeBytes(env.dataDir), size)) return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
   await sweep(user.username);
   const id = randomUUID();
   // the type it is kept and later served under: a footage type, else the name's (never what an upload claims, e.g. text/html)

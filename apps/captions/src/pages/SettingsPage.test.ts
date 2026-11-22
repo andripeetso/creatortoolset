@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { resolveSection, sectionsFor, type NavContext } from "@/components/settings/nav";
 
-const local: NavContext = { hosted: false, admin: true, mac: false };
-const localMember: NavContext = { hosted: false, admin: false, mac: false };
-const hostedAdmin: NavContext = { hosted: true, admin: true, mac: false };
-const hostedMember: NavContext = { hosted: true, admin: false, mac: false };
+const local: NavContext = { team: false, admin: true, mac: false };
+const localMember: NavContext = { team: false, admin: false, mac: false };
+const hostedAdmin: NavContext = { team: true, admin: true, mac: false };
+const hostedMember: NavContext = { team: true, admin: false, mac: false };
 const ids = (ctx: NavContext) => sectionsFor(ctx, []).map((s) => s.id);
 
 describe("Settings sections by server mode", () => {

@@ -4,6 +4,7 @@ import type { Timeline } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { LOOKAWAY_KIND } from "../../contracts/devices";
 import { libraryDb } from "../library/db";
+import { heldBy } from "../library/jobs";
 import { writeJsonAtomic } from "../library/media/run";
 import { readDraft } from "./store";
 
@@ -126,8 +127,8 @@ export function gazeWanted(tl: Timeline): string[] {
  * a take that step reads. Returns why not, or null when they are kept.
  */
 export async function gazeFromDevice(device: string, job: number, version: string, body: unknown): Promise<string | null> {
-  const row = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running' AND kind = ?").get(job, device, LOOKAWAY_KIND) as { version_id: string } | undefined;
-  if (!row) return "Not found";
+  const row = heldBy(libraryDb(), job, device);
+  if (!row || row.kind !== LOOKAWAY_KIND || !row.version_id) return "Not found";
   const cut = row.version_id.indexOf(":");
   const d = readDraft(row.version_id.slice(0, cut), row.version_id.slice(cut + 1));
   if (!d || !d.timeline.tracks.V1.items.some((i) => i.src === version)) return "Not found";

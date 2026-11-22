@@ -126,6 +126,24 @@ describe("folders and collections", () => {
     // finished work is not in the Videos tab's list, so not in its count
     d.prepare("UPDATE assets SET filed_roll = 'none' WHERE id = 'r1'").run();
     expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ video: 3 });
+    // a folder inside the A-roll folder: its clips count as the A-roll's, on the tab and on the folder's card
+    seed("r2", "Roll two", "owner-a");
+    const inside = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Takes", parentId: a.id }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${inside.id}/items`, { assetIds: ["r2"] });
+    expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ a: 1 });
+    const folders = (await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections as { id: string; count?: number }[];
+    expect(folders.find((f) => f.id === a.id)?.count).toBe(1);
+    // a plain folder counts the clips in the folders inside it, each once
+    const top = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "A-Roll" }));
+    const deep = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Apology", parentId: top.id }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${deep.id}/items`, { assetIds: ["r2"] });
+    seed("r3", "Roll three", "owner-a");
+    const count = async (id: string) => ((await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections as { id: string; count?: number }[]).find((f) => f.id === id)?.count;
+    expect(await count(top.id)).toBe(1); // only in the folder inside
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${top.id}/items`, { assetIds: ["r2", "r3"] });
+    const after = (await data(call("owner-a", "GET", "/api/library/lib_a/collections"))).collections as { id: string; count?: number }[];
+    expect(after.find((f) => f.id === top.id)?.count).toBe(2); // r2 in both: counted once
+    expect(after.find((f) => f.id === deep.id)?.count).toBe(1);
     expect((await call("stranger", "GET", "/api/library/lib_a/counts")).status).toBe(404);
   });
 
@@ -156,6 +174,18 @@ describe("folders and collections", () => {
     expect(await data(call("owner-a", "GET", `/api/library/lib_a/assets?collectionId=${smart.id}&q=cut`))).toMatchObject({ items: [{ id: "e3" }] });
     // a smart collection takes no items of its own
     expect((await call("owner-a", "POST", `/api/library/lib_a/collections/${smart.id}/items`, { assetIds: ["e2"] })).status).toBe(409);
+  });
+
+  it("the Unsorted automatic folder lists the clips in no folder, and keeps doing so as they are filed", async () => {
+    const unsorted = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Unsorted", kind: "smart", query: { unfiled: true } }));
+    expect(unsorted.query).toEqual({ unfiled: true });
+    const listed = async () => ids(await data(call("owner-a", "GET", `/api/library/lib_a/assets?collectionId=${unsorted.id}&limit=200`)));
+    expect(await listed()).toContain("e2");
+    const box = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Box" }));
+    await call("owner-a", "POST", `/api/library/lib_a/collections/${box.id}/items`, { assetIds: ["e2"] });
+    expect(await listed()).not.toContain("e2");
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${box.id}`);
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${unsorted.id}`);
   });
 
   it("the top level lists the clips in no folder: Finals and a saved search's item rows don't count", async () => {

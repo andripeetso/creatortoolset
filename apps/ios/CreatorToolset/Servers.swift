@@ -305,7 +305,8 @@ enum SignIn {
     /// sign-in, else the person gives a username and password.
     static func connect(_ target: Target) async throws -> Outcome {
         if let linkPath = target.linkPath {
-            var request = URLRequest(url: API(server: target.origin, cookie: nil).url(linkPath))
+            // a POST (JSON, as the server requires): a GET only shows the link's confirm page now, it signs nothing in
+            var request = API(server: target.origin, cookie: nil).request(linkPath, method: "POST", json: [String: String]())
             request.httpShouldHandleCookies = false
             let (data, response) = try await NoRedirect.session.data(for: request)
             let http = response as? HTTPURLResponse

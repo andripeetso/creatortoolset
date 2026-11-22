@@ -152,13 +152,9 @@ final class LocalServer: ObservableObject {
     private var process: Process?
     private var input: Pipe?
     private var stopping = false
+    /// The stop in progress: its process is still exiting.
+    private var exiting: Task<Void, Never>?
     private var crashes: [Date] = []
-
-    init() {
-        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.stop() }
-        }
-    }
 
     /// This Mac can change it (stop first); saved phone and browser addresses carry it, so it never hops by itself.
     var port: Int {
@@ -216,6 +212,7 @@ final class LocalServer: ObservableObject {
     }
 
     func start() {
+        if let exiting { Task { await exiting.value; start() }; return }   // the old process still holds the port
         guard process == nil, let folder = Self.folder else { return }
         stopping = false
         if let problem = dataProblem() {
@@ -239,14 +236,32 @@ final class LocalServer: ObservableObject {
     /// then SIGTERM, up to 10 s, then SIGKILL. The half second is for a plug-in that is loading right then: the server
     /// takes down the mark that would blame it at the next start (api/boot.ts), which SIGTERM sent in the same instant
     /// never let it do. A server that is stuck does not end by itself and gets the SIGTERM as before, mark and all.
-    func stop() {
+    /// Returns once the process has exited (the wait runs off the main actor). A start asked for meanwhile waits for it,
+    /// so the port is free; quitting awaits this too (AppDelegate.applicationShouldTerminate).
+    func stop() async {
         stopping = true
+        if let exiting { return await exiting.value }
         guard let p = process else {
             // stopped during the port check or the wait after a crash: nothing starts now, so it is off, not starting
             if state == .starting { state = .off }
             return
         }
         try? input?.fileHandleForWriting.close()
+        let task = Task {
+            await Task.detached { Self.waitForExit(p) }.value
+            ServerLog.note("stopped")
+            process = nil
+            input = nil
+            try? FileManager.default.removeItem(at: pidFile)
+            state = .off
+            exiting = nil
+        }
+        exiting = task
+        await task.value
+    }
+
+    /// Off the main actor: the half second for the server to end by itself, then SIGTERM, up to 10 s, then SIGKILL.
+    private nonisolated static func waitForExit(_ p: Process) {
         let grace = Date().addingTimeInterval(0.5)
         while p.isRunning && Date() < grace { usleep(20_000) }
         if p.isRunning { p.terminate() }
@@ -256,11 +271,6 @@ final class LocalServer: ObservableObject {
             kill(p.processIdentifier, SIGKILL)
             p.waitUntilExit()
         }
-        ServerLog.note("stopped")
-        process = nil
-        input = nil
-        try? FileManager.default.removeItem(at: pidFile)
-        state = .off
     }
 
     private struct Health: Decodable {
@@ -377,8 +387,8 @@ final class LocalServer: ObservableObject {
     var runsPrograms: Bool { process.map { hasChildPrograms($0.processIdentifier) } ?? false }
 
     /// Stop, then start again, for a change of settings (plug-ins). It is not a crash, so the crash list stays as it is.
-    func restart() {
-        stop()
+    func restart() async {
+        await stop()
         start()
     }
 
@@ -413,8 +423,8 @@ final class LocalServer: ObservableObject {
     // MARK: data location
 
     /// A folder for the data without copying anything (the old one is on a disk that's gone): the server starts there.
-    func useFolder(_ url: URL) {
-        stop()
+    func useFolder(_ url: URL) async {
+        await stop()
         UserDefaults.standard.set(url.path, forKey: "dataFolder")
         start()
     }
@@ -429,7 +439,7 @@ final class LocalServer: ObservableObject {
         let entries = (try? fm.contentsOfDirectory(atPath: dest.path)) ?? []
         if let problem = moveProblem(from: from, to: dest, entries: entries, size: 0, free: nil) { return problem }
         // stopped before counting: a running server writes (its pid file, users.json) and the copy would never match
-        stop()
+        await stop()
         state = .starting
         let before = await Task.detached { folderStats(from) }.value
         if let problem = moveProblem(from: from, to: dest, entries: entries, size: before.bytes, free: freeBytes(dest)) {

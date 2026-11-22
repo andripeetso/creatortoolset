@@ -1,6 +1,7 @@
 import type { AssetDetail, Collection, ShareCreated } from "../../contracts/library";
 import { SFX_TYPES } from "../../contracts/sfx";
 import { pick, str, ToolError, when, type Args, type ToolContext, type ToolModule } from "./types";
+import { serverKind } from "../lib/env";
 
 // The Media Library's tools for one clip: read it, change its words, file it in a folder, share it. Search, the folder
 // list and bringing a folder in are in api/mcp.ts (media_search, media_folders, media_import_folder).
@@ -191,7 +192,7 @@ export const libraryTools: ToolModule = {
       }
       const download = a.download === true;
       // a server on this computer with no address on the internet: the link opens here only
-      const here = process.env.CT_LOCAL === "1" && !process.env.PUBLIC_ORIGIN;
+      const here = serverKind() === "mac" && !process.env.PUBLIC_ORIGIN;
       const can = `Anyone with the link can watch${download ? " and download the files" : ""}, no account needed, for ${days} ${days === 1 ? "day" : "days"}`;
       await ctx.sure(`Share ${what}? ${can}.${here ? " The link opens only on this computer and its network." : ""}`);
       const made = await ctx.json<ShareCreated>(`/api/library/${enc(lib)}/shares`, "POST", {

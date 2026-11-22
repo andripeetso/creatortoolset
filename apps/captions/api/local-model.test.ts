@@ -79,10 +79,10 @@ afterEach(async () => {
 });
 
 describe("who may set a local model", () => {
-  it("a hosted server refuses the routes, an admin's too, and does not read a file saved before", async () => {
+  it("Cloud refuses the routes, an admin's too, and does not read a file saved before", async () => {
     expect((await as(admin).put({ url: address, model: "small-one" })).status).toBe(200);
     expect(aiFor(admin, "captions", "Caption Studio").only).toEqual(["localModel"]);
-    vi.stubEnv("CT_MODE", "hosted");
+    vi.stubEnv("CT_SERVER", "cloud");
     for (const r of [await as(admin).get(), await as(admin).get(`/models?url=${encodeURIComponent(address)}`), await as(admin).put({ url: address, model: "small-one" }), await as(admin).put({ url: null })])
       expect(r.status).toBe(403);
     expect(got).toEqual([]); // no request left for the typed address

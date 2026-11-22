@@ -32,7 +32,7 @@ const modelsAt = (url: string) =>
  * saved (until the setup is known, too).
  */
 export function LocalModelRow() {
-  const mine = useAuth((s) => !s.hosted && s.me?.role === "admin");
+  const mine = useAuth((s) => s.kind !== "cloud" && s.me?.role === "admin");
   const ownAi = useSetup((s) => s.view?.have.includes("ownAi") ?? true);
   const { data, refresh } = useCachedLoad<Partial<LocalModel>>(mine ? ROUTE : null, getLocalModel, { own: true });
   const [open, setOpen] = useState(false);

@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { DRAG } from "./moves";
@@ -21,6 +22,8 @@ export interface Tab {
   menu?: ReactNode;
   /** dragged along the row into another order (LibraryTabs' onReorder) */
   movable?: boolean;
+  /** its sign before the name (an automatic folder's) */
+  icon?: LucideIcon;
 }
 
 type Mark = { id: string; after: boolean };
@@ -34,8 +37,8 @@ export function reordered(ids: string[], from: string, target: string, after: bo
   return next.join() === ids.join() ? null : next;
 }
 
-/** `onReorder`: the movable tabs' ids in their new order */
-export function LibraryTabs({ tabs, onReorder }: { tabs: Tab[]; onReorder?: (ids: string[]) => void }) {
+/** `onReorder`: the movable tabs' ids in their new order; `menu`: the row's own right-click menu, for the space between tabs */
+export function LibraryTabs({ tabs, onReorder, menu }: { tabs: Tab[]; onReorder?: (ids: string[]) => void; menu?: ReactNode }) {
   // the tab being moved: a ref, since some browsers list a page's own drag type only at the drop
   const moving = useRef<string | null>(null);
   const [mark, setMark] = useState<Mark | null>(null);
@@ -44,7 +47,7 @@ export function LibraryTabs({ tabs, onReorder }: { tabs: Tab[]; onReorder?: (ids
     moving.current = null;
     setMark(null);
   };
-  return (
+  const row = (
     // its own sideways scroll on a narrow screen; the page never scrolls sideways
     <nav aria-label="Library tabs" className="flex min-w-0 gap-1 overflow-x-auto border-b border-zinc-500/20 [scrollbar-width:none]">
       {tabs.map((t) => (
@@ -70,6 +73,14 @@ export function LibraryTabs({ tabs, onReorder }: { tabs: Tab[]; onReorder?: (ids
         />
       ))}
     </nav>
+  );
+  if (!menu) return row;
+  // a tab's own menu is opened first, and this one is then left closed (Radix skips a handled right-click)
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent className="w-48">{menu}</ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -138,6 +149,7 @@ function TabButton({ tab: t, moving, move, line }: { tab: Tab; moving: React.Ref
       )}
     >
       {line && <span aria-hidden className={cn("pointer-events-none absolute inset-y-1.5 w-0.5 rounded bg-violet-500", line.after ? "right-0" : "left-0")} />}
+      {t.icon && <t.icon aria-hidden className="h-3.5 w-3.5 shrink-0 text-violet-400" />}
       {t.label}
       {t.count !== undefined && <span className="tabular-nums text-xs text-zinc-500">{t.count.toLocaleString()}</span>}
     </button>

@@ -1,3 +1,4 @@
+import type { ServerKind } from "../../contracts/work";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -19,6 +20,8 @@ export interface ServerDescriptor {
   serverId: string;
   label: string;
   platform: "mac" | "linux" | "hosted";
+  /** What the server is (lib/env.ts serverKind); newer than `platform`, which keeps its values for older apps. */
+  kind: ServerKind;
   version: string;
   protocol: 1;
   /** `account`: takes an account ticket at /oauth/token (a hosted server that names an account sign-in service). */

@@ -59,6 +59,13 @@ const SHOWN = (version: string) =>
  */
 export const FINISHED = `(a.filed_roll IS 'none' OR EXISTS (SELECT 1 FROM piece_items fp JOIN asset_versions fv ON fv.id = fp.version_id WHERE fv.asset_id = a.id))`;
 
+/** In no folder: a folder is a plain collection (Finals, finals.ts, and a saved search's old item rows are not), and not
+ * listed by the A-roll or B-roll folder either (filed there, the top level would show it twice). */
+const UNFILED = `(a.id NOT IN (SELECT fi.asset_id FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
+      WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))
+    AND NOT (a.roll IS NOT NULL AND EXISTS (SELECT 1 FROM collections rc WHERE rc.library_id = a.library_id AND rc.kind = 'smart'
+      AND json_extract(rc.query, '$.roll') = a.roll AND (SELECT COUNT(*) FROM json_each(rc.query)) = 1)))`;
+
 /** Rewrites an asset's search row (FTS5 has no upsert): its title, tags and the shown description of its current version. */
 export function indexAsset(db: DatabaseSync, assetId: string): void {
   const a = db.prepare(`SELECT library_id, title, ${SHOWN("assets.current_version_id")} AS description FROM assets WHERE id = ?`).get(assetId) as
@@ -101,6 +108,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
     ...(num(p.filmedFrom) !== undefined ? { filmedFrom: num(p.filmedFrom) } : {}),
     ...(num(p.filmedTo) !== undefined ? { filmedTo: num(p.filmedTo) } : {}),
     ...(p.place && /^[A-Z]{2}$/.test(p.place) ? { place: p.place } : {}),
+    ...(p.orientation === "vertical" || p.orientation === "horizontal" ? { orientation: p.orientation } : {}),
     ...(device ? { device, ...(p.here === "1" ? { here: true as const } : {}), ...(p.missing === "1" ? { missing: true as const } : {}) } : {}),
     ...(num(p.from) !== undefined ? { from: num(p.from) } : {}),
     ...(num(p.to) !== undefined ? { to: num(p.to) } : {}),
@@ -121,6 +129,8 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   ${BLUR_SQL} AS blur, (v.blurred_of IS NULL AND ${BLUR_SQL} = 'yes') AS not_blurred,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS has_sprite,
+  (SELECT d.bytes FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS thumb_v,
+  (SELECT d.bytes FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS sprite_v,
   (SELECT d.cell_w || 'x' || d.cell_h FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS sprite_cell,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id) AS tags,
   (SELECT group_concat(tag, char(31)) FROM asset_tags t WHERE t.asset_id = a.id AND t.source = 'ai') AS ai_tags,
@@ -147,6 +157,9 @@ export interface CardRow {
   probe: string | null;
   has_thumb: number;
   has_sprite?: number;
+  /** the picture's and the strip's size in bytes: their address's version, so a browser keeps each until it is made again */
+  thumb_v?: number | null;
+  sprite_v?: number | null;
   /** the strip's frame size as "WxH" (media/sprite.ts noteStrip), null for an old strip */
   sprite_cell?: string | null;
   tags: string | null;
@@ -169,6 +182,11 @@ const FILMED = "COALESCE((SELECT json_extract(fv.probe, '$.capturedAt') FROM ass
 /** Filmed in this country: the current version's probe (media/probe.ts countryOf). */
 const PLACE = "(SELECT json_extract(pv.probe, '$.country') FROM asset_versions pv WHERE pv.id = a.current_version_id) = ?";
 
+/** Height minus width as shown: the current version's probe, its sides swapped when the file's rotation and the library's turn stand it on its side. NULL when not probed yet. */
+const TALLER = `(SELECT CASE WHEN (COALESCE(json_extract(ov.probe, '$.rotation'), 0) + COALESCE(json_extract(ov.probe, '$.turn'), 0)) % 180 = 90
+  THEN json_extract(ov.probe, '$.width') - json_extract(ov.probe, '$.height') ELSE json_extract(ov.probe, '$.height') - json_extract(ov.probe, '$.width') END
+  FROM asset_versions ov WHERE ov.id = a.current_version_id)`;
+
 /** Where the current version is, from the place rows only (whereis.ts): `v.id` read as `a.current_version_id`, since search by meaning has no `v`. */
 const atCurrent = (sql: string) => sql.replaceAll("= v.id", "= a.current_version_id");
 
@@ -189,6 +207,7 @@ export function filterClauses(query: SearchQuery): { sql: string; params: (strin
     ...(query.filmedFrom !== undefined ? [{ sql: `${FILMED} >= ?`, params: [query.filmedFrom] }] : []),
     ...(query.filmedTo !== undefined ? [{ sql: `${FILMED} < ?`, params: [query.filmedTo] }] : []),
     ...(query.place ? [{ sql: PLACE, params: [query.place] }] : []),
+    ...(query.orientation ? [{ sql: `${TALLER} ${query.orientation === "vertical" ? ">" : "<"} 0`, params: [] }] : []),
   ];
 }
 
@@ -232,14 +251,7 @@ export function buildAssetQuery(libraryId: string, query: SearchQuery = {}): { s
     where.push("a.id IN (SELECT asset_id FROM collection_items WHERE collection_id = ?)");
     params.push(query.collectionId);
   }
-  if (query.unfiled) {
-    // a folder is a plain collection; Finals (finals.ts) and a saved search's old item rows are not
-    where.push(`a.id NOT IN (SELECT fi.asset_id FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id
-      WHERE fc.kind = 'manual' AND NOT (fc.parent_id IS NULL AND fc.name = 'Finals'))`);
-    // nor a clip the A-roll or B-roll folder lists: it is filed there, the top level would show it twice
-    where.push(`NOT (a.roll IS NOT NULL AND EXISTS (SELECT 1 FROM collections rc WHERE rc.library_id = a.library_id AND rc.kind = 'smart'
-      AND json_extract(rc.query, '$.roll') = a.roll AND (SELECT COUNT(*) FROM json_each(rc.query)) = 1))`);
-  }
+  if (query.unfiled) where.push(UNFILED);
   for (const f of facetClauses(query.facets ?? {})) {
     where.push(f.sql);
     params.push(...f.params);
@@ -308,9 +320,9 @@ export function toCard(r: CardRow): AssetCard {
     // a turned clip's pictures were made again: a new address, so no window shows the one it kept
     ...(notBlurred ? { notBlurred: true as const } : {}),
     ...(r.blur ? { blur: r.blur } : {}),
-    ...(r.has_thumb && !notBlurred ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${turn ? `?t=${turn}` : ""}` } : {}),
+    ...(r.has_thumb && !notBlurred ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${query({ t: turn || undefined, v: r.thumb_v || undefined })}` } : {}),
     // a strip made again in the clip's shape has a new address too (its frame size), so no window keeps the old one
-    ...(r.has_sprite && !notBlurred ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined })}` } : {}),
+    ...(r.has_sprite && !notBlurred ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined, v: r.sprite_v || undefined })}` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),

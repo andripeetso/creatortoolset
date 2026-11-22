@@ -51,11 +51,11 @@ describe("endpoints", () => {
     }
   });
 
-  it("lists nothing in hosted mode, where the container's addresses reach nobody", async (ctx) => {
+  it("lists nothing on Cloud, where the container's addresses reach nobody", async (ctx) => {
     vi.stubEnv("HOST", "");
     // a machine with no network address of its own can't show the difference
     if ((await endpoints("3000")).length === 0) ctx.skip();
-    vi.stubEnv("CT_MODE", "hosted");
+    vi.stubEnv("CT_SERVER", "cloud");
     expect(await endpoints("3000")).toEqual([]);
   });
 

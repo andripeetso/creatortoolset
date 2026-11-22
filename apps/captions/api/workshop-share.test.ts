@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -131,6 +131,55 @@ describe("comments on a session with several posts", () => {
       expect(got.post.shortcode).toBe("DfdJozjPjT2");
     } finally {
       writeFileSync(path.join(sdir, "meta.json"), JSON.stringify(meta));
+    }
+  });
+});
+
+describe("Workshop share progress and uploads", () => {
+  const sharesFile = path.join(dataDir, "workshop", "shares.json");
+  const makeAll = async () => ((await (await call("POST", `/api/workshop/sessions/${session}/shares`, { all: true })).json()) as { token: string }).token;
+  type Shares = Record<string, { deliveries?: Array<{ size: number }> }>;
+
+  it("a share revoked while its progress is still being sent stays revoked", async () => {
+    const token = await makeAll();
+    let started!: () => void;
+    const reading = new Promise<void>((r) => (started = r));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    // highWaterMark 0: the body is read only when the route asks for it, after its first share read
+    const body = new ReadableStream<Uint8Array>(
+      { pull: async (ctrl) => { started(); await gate; ctrl.enqueue(new TextEncoder().encode('{"state":"done"}')); ctrl.close(); } },
+      { highWaterMark: 0 },
+    );
+    const sent = app.request(`/api/workshop-share/${token}/progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body, duplex: "half" } as RequestInit);
+    await reading;
+    expect((await call("DELETE", `/api/workshop/sessions/${session}/shares/${token}`)).status).toBe(200);
+    release();
+    expect((await sent).status).toBe(404);
+    expect(JSON.parse(readFileSync(sharesFile, "utf8"))[token]).toBeUndefined();
+  });
+
+  it("caps a share's files by count and total bytes, and refuses uploads below the disk reserve", async () => {
+    const token = await makeAll();
+    const seed = (deliveries: Array<{ size: number }>) => {
+      const shares = JSON.parse(readFileSync(sharesFile, "utf8")) as Shares;
+      shares[token]!.deliveries = deliveries.map((d) => ({ id: "x", name: "f", type: "text/plain", at: 1, ...d }) as never);
+      writeFileSync(sharesFile, JSON.stringify(shares));
+    };
+    const up = () => app.request(`/api/workshop-share/${token}/deliveries?name=a.txt`, { method: "POST", headers: { "Content-Type": "text/plain", "Content-Length": "1" }, body: "x" });
+    process.env.LIBRARY_DISK_RESERVE_GB = "0";
+    try {
+      seed(Array.from({ length: 100 }, () => ({ size: 1 })));
+      expect((await up()).status).toBe(413);
+      seed([{ size: 20 * 1024 ** 3 }]);
+      expect((await up()).status).toBe(413);
+      seed([]);
+      process.env.LIBRARY_DISK_RESERVE_GB = "1000000";
+      expect((await up()).status).toBe(507);
+      process.env.LIBRARY_DISK_RESERVE_GB = "0";
+      expect((await up()).status).toBe(200);
+    } finally {
+      delete process.env.LIBRARY_DISK_RESERVE_GB;
     }
   });
 });

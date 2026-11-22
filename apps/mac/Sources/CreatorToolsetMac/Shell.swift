@@ -411,7 +411,7 @@ final class Shell: NSObject, ObservableObject {
         current = id
         UserDefaults.standard.set(id, forKey: currentKey)
         let here = id == thisMacID && server != nil
-        if runsHere && !here { server?.stop() }
+        if runsHere && !here { Task { await server?.stop() } }
         runsHere = here
         switchTo(Self.url(of: id, in: listed, local: server))
         if here {
@@ -528,7 +528,7 @@ final class Shell: NSObject, ObservableObject {
         server.otherDevices = on
         // another server is open: the one here starts with this when it is opened
         guard runsHere else { return nil }
-        server.stop()
+        await server.stop()
         startServer()
         return nil
     }
@@ -564,7 +564,7 @@ final class Shell: NSObject, ObservableObject {
         webView.loadHTMLString(splashPage("Moving your data…"), baseURL: nil)
         let problem = await server.move(to: dest)
         // another server was opened during the move: the one here stays stopped, and the window stays on that server
-        guard runsHere else { server.stop(); return problem }
+        guard runsHere else { await server.stop(); return problem }
         if problem != nil, server.state == .running { open("/") }
         return problem
     }
@@ -576,7 +576,7 @@ final class Shell: NSObject, ObservableObject {
         DeviceVault.remove(for: host)
         DeviceVault.setDeviceID(nil, for: host)
         markDevice()
-        server?.useFolder(url)
+        Task { await server?.useFolder(url) }
     }
 
     private func serverChanged(_ state: LocalServer.State) {
@@ -609,10 +609,12 @@ final class Shell: NSObject, ObservableObject {
 
     func setServerPort(_ port: Int) {
         guard let server, port != server.port else { return }
-        server.stop()
-        server.port = port
-        switchTo(server.url)
-        startServer()
+        Task {
+            await server.stop()
+            server.port = port
+            switchTo(server.url)
+            startServer()
+        }
     }
 
     func openServerLog() {
@@ -658,7 +660,7 @@ final class Shell: NSObject, ObservableObject {
         guard hasServer, let url = URL(string: href, relativeTo: base)?.absoluteURL else { return }
         if isSite(url, base) {
             webView.load(URLRequest(url: url))
-        } else {
+        } else if opensOutside(url) {
             NSWorkspace.shared.open(url)
         }
     }
@@ -1171,7 +1173,8 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
             siteSignIn.start(provider: start.provider, site: base, back: start.back,
                              run: { [weak self] script in self?.webView.evaluateJavaScript(script) },
                              show: { [weak self] back, error in
-                                 guard let self, var parts = URLComponents(url: URL(string: back, relativeTo: self.base)!.absoluteURL, resolvingAgainstBaseURL: false) else { return }
+                                 guard let self, let target = URL(string: back, relativeTo: self.base)?.absoluteURL,
+                                       var parts = URLComponents(url: target, resolvingAgainstBaseURL: false) else { return }
                                  parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "error" } + [URLQueryItem(name: "error", value: error)]
                                  if let to = parts.url, isSite(to, self.base) { self.webView.load(URLRequest(url: to)) }
                              })
@@ -1181,7 +1184,7 @@ extension Shell: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         if inside {
             decisionHandler(.allow)
         } else {
-            NSWorkspace.shared.open(url)
+            if opensOutside(url) { NSWorkspace.shared.open(url) }
             decisionHandler(.cancel)
         }
     }

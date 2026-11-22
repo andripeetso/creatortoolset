@@ -6,7 +6,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isPhoneSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
-import { appendBody, freeBytes, sha256File } from "../lib/uploads";
+import { appendBody, freeBytes, gbSetting, sha256File, shortOfReserve } from "../lib/uploads";
 import { blurAtIntake, BLUR_UPLOADS, hasMembers, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
 import { readerOf } from "./reader";
 import { accountOf, addRole, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
@@ -52,7 +52,8 @@ import { addFolder } from "../devices-storage";
 import { workspaceById } from "../lib/workspaces";
 import { EVERY_WORKSPACE, FOLDER_LABELS, finalsDirName, importTarget, libraryBase, THIS_COMPUTER } from "../../contracts/storage";
 import { quickPrint } from "../work/files";
-import { libraryWorkspace, serverKind } from "../work/server-work";
+import { libraryWorkspace } from "../work/server-work";
+import { serverKind } from "../lib/env";
 import { WORK_MIN } from "../../contracts/work";
 
 /**
@@ -84,13 +85,6 @@ const GiB = 1024 ** 3;
 const stagingDir = () => path.join(env.dataDir, "library", "staging");
 // one writer per upload in this process; the finish also claims it in the database (state finishing), across processes
 const busy = new Set<string>();
-
-/** Read per call (AGENTS: process.env at the point of use). */
-function gbSetting(name: string, fallback: number): number {
-  const raw = process.env[name];
-  const v = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
-  return Number.isFinite(v) && v >= 0 ? v : fallback;
-}
 
 /** Bytes as people read them: "12.4 GB", "8 GB", "300 MB". */
 const gb = (bytes: number) => (bytes >= GiB ? `${Number((bytes / GiB).toFixed(1))} GB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`);
@@ -288,7 +282,7 @@ export async function saveToLibrary(
   if (RAW_FILE.test(filename)) return { error: RAW_FROM_COMPUTER, code: "failed" };
   const { size } = await stat(file);
   await mkdir(stagingDir(), { recursive: true });
-  if ((await freeBytes(stagingDir())) - (await pendingBytes(username)) - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
+  if (shortOfReserve(await freeBytes(stagingDir()), size, await pendingBytes(username))) {
     return { error: "Not enough free disk space for this file", code: "disk_reserve" };
   }
   const { blurredOf } = opts;
@@ -303,14 +297,14 @@ export async function saveToLibrary(
   // reads none for anything not blurred, so it goes there too); a file kept as filmed, and a blurred render, follow the
   // Upload the owner chose (upload-gate.ts uploadFor)
   const upload = opts.finals ? finalsUpload(lib) : opts.blur === "no" || blurredOf ? libraryUploadStored(lib) : libraryUpload(lib);
-  if (serverKind() !== "local" && hostsNone(upload)) {
+  if (serverKind() !== "mac" && hostsNone(upload)) {
     // a member's computer is not where the owner keeps this library's files: refused, as a member's upload is (startUpload)
     if (as === "member") return { error: REFUSED_COMPUTER_OFF, code: "failed" };
     return saveOnComputer(username, lib, file, filename, from, footage, sound, opts.after, opts.importName, opts.blur, blurredOf);
   }
   // kept here: under Blur faces only a file made wholly of blurred renders (a sound has no picture); the rule said once more
   // where the routing above changes. This Mac keeps its own (the server is the owner's computer, as mayReceive reads it)
-  if (serverKind() !== "local" && kindOf(filename) !== "audio") {
+  if (serverKind() !== "mac" && kindOf(filename) !== "audio") {
     const left = mayLeave(lib, blurredOf ? { blurredOf } : { blurred: sources.length > 0 && sources.every((v) => isBlurred(v)), ...(opts.blur ? { blur: opts.blur } : {}) });
     if (!left.ok) return { error: left.body.message, code: "failed" };
   }
@@ -772,7 +766,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
     await mkdir(stagingDir(), { recursive: true });
     // what the open uploads may still write counts too (pendingBytes)
     const pending = await pendingBytes(user.username);
-    if ((await freeBytes(stagingDir())) - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * GiB) {
+    if (shortOfReserve(await freeBytes(stagingDir()), size, pending)) {
       return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
     }
     await writeFile(staging, "");
@@ -1455,10 +1449,10 @@ export const hasProxy = (versionId: string): boolean =>
   !!(db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as { storage_key: string | null } | undefined)?.storage_key;
 
 /** A blob as a response: streamed with Range from local disk, or a 302 to a 15-minute signed URL on a bucket. */
-export async function serveBlob(c: Context, key: string, type: string, download?: string): Promise<Response> {
+export async function serveBlob(c: Context, key: string, type: string, download?: string, cache?: string): Promise<Response> {
   try {
     const at = await blobs.locate(key, 900, { contentType: type, download });
-    return at.kind === "url" ? c.redirect(at.url, 302) : await sendFile(c, at.path, type, download);
+    return at.kind === "url" ? c.redirect(at.url, 302) : await sendFile(c, at.path, type, download, cache);
   } catch {
     return c.json({ error: "Not ready", code: "conflict" }, 409);
   }
@@ -1537,7 +1531,9 @@ export async function libraryMedia(c: Context, username: string, versionId: stri
     const copy = local ? await playCopy(c, `library/${versionId}`, local.path, local.type) : null;
     if (copy) return copy;
   }
-  return serveBlob(c, file.key, file.type, kind === "source" ? downloadName(versionId) : undefined);
+  // a picture or strip asked for by its version (query.ts toCard `v`): a new one gets a new address, so this copy is kept for good
+  const kept = (kind === "thumb" || kind === "sprite") && c.req.query("v") ? "private, max-age=31536000, immutable" : undefined;
+  return serveBlob(c, file.key, file.type, kind === "source" ? downloadName(versionId) : undefined, kept);
 }
 
 // GET /api/library/versions/:versionId/similar → the videos in the caller's libraries of this workspace that share its pictures

@@ -486,6 +486,12 @@ describe("the chat dock under Blur faces", () => {
     const card = toCard(d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?`).get(assetId) as never);
     expect(card).toMatchObject({ blur: "no" });
     expect(card.notBlurred).toBeUndefined();
+    // a picture's address carries its version, so a browser that keeps it for good still gets one made again
+    const cardOf = () => toCard(d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?`).get(assetId) as never);
+    d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'thumb', 'k-pic', 100)").run(versionId);
+    expect(cardOf().thumbUrl).toContain("v=100");
+    d.prepare("UPDATE derivatives SET bytes = 200 WHERE version_id = ? AND kind = 'thumb'").run(versionId);
+    expect(cardOf().thumbUrl).toContain("v=200");
     rmSync(file);
   });
 });

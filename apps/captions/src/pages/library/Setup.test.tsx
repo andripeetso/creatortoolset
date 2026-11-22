@@ -14,6 +14,7 @@ import { LibrarySetup, rowsOf, type Kind } from "./Setup";
 const h = vi.hoisted(() => ({
   mac: true,
   hosted: false,
+  kind: "mac" as "mac" | "server" | "cloud",
   calls: [] as { url: string; body: Record<string, unknown>; workspace?: string | null }[],
   updates: [] as { id: string; settings: Record<string, unknown> }[],
   events: [] as CustomEvent[],
@@ -72,7 +73,7 @@ vi.mock("@/lib/library", () => ({
   getEstimate: async () => ({}),
 }));
 vi.mock("@/lib/auth", () => ({
-  useAuth: (sel: (s: { hosted: boolean }) => unknown) => sel({ hosted: h.hosted }),
+  useAuth: (sel: (s: { kind: Kind }) => unknown) => sel({ kind: h.hosted ? "cloud" : h.kind }),
   useMe: () => ({ username: "tiny", name: "Tiny" }),
 }));
 // the Models rows read the model in use from the AI and Voice pages, as the owner page does (settings/Models.tsx)
@@ -127,6 +128,7 @@ afterEach(() => {
 });
 
 async function mount(kind: Kind, inline = false) {
+  h.kind = kind;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -134,7 +136,7 @@ async function mount(kind: Kind, inline = false) {
   act(() => {
     root!.render(
       <MemoryRouter>
-        <LibrarySetup library={library} watchAllowed={kind === "mac"} inline={inline} onDone={onDone} onClose={onClose} />
+        <LibrarySetup library={library} inline={inline} onDone={onDone} onClose={onClose} />
       </MemoryRouter>,
     );
   });
@@ -262,7 +264,7 @@ describe("Media Library setup: scratch, This Mac", () => {
     root = createRoot(host);
     const library = { id: "lib_1", name: "Tiny", storage: "local" as const, mayKeepAsFilmed: true, settings: {} };
     // the Library page behind it takes drops as imports (its onDrop)
-    act(() => root!.render(<MemoryRouter><div onDrop={behind}><LibrarySetup inline library={library as never} watchAllowed onDone={onDone} onClose={onClose} /></div></MemoryRouter>));
+    act(() => root!.render(<MemoryRouter><div onDrop={behind}><LibrarySetup inline library={library as never} onDone={onDone} onClose={onClose} /></div></MemoryRouter>));
     await flush();
     await next();
     h.dropped = [{ path: "/Volumes/NAS/Trips", folder: true }, { path: "/Users/tiny/a.mp4", folder: false }];

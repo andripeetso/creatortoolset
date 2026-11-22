@@ -162,7 +162,7 @@ export function AccountSection() {
       {required && (
         <Section title="Session">
           <Card>
-            <Row id="sign-out" title="This server" control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
+            <Row id="sign-out" title="This server" description="Signs out every browser signed in to this account." control={<Button size="sm" variant="outline" onClick={() => void logout()}>Sign out</Button>} />
           </Card>
         </Section>
       )}

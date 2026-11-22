@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 /** A saved search keeps its filters but never Available offline: that names this person's list, not the search. */
 export const savable = ({ offline: _offline, ...f }: LibraryFilters): LibraryFilters => f;
 
-export const anyFilter =(f: LibraryFilters) => !!f.tags?.length || f.filmedFrom !== undefined || f.filmedTo !== undefined || !!f.place || !!f.here || !!f.missing || !!f.offline;
+export const anyFilter =(f: LibraryFilters) => !!f.tags?.length || f.filmedFrom !== undefined || f.filmedTo !== undefined || !!f.place || !!f.orientation || !!f.here || !!f.missing || !!f.offline;
 
 /** A saved search's own filters, with the ones picked now in their place (as the server merges a smart folder's). On this computer and Missing on this computer are never saved: they name one computer. */
 export const withSaved = (f: LibraryFilters, saved?: SearchQuery): LibraryFilters => ({
@@ -22,6 +22,7 @@ export const withSaved = (f: LibraryFilters, saved?: SearchQuery): LibraryFilter
   filmedFrom: f.filmedFrom ?? saved?.filmedFrom,
   filmedTo: f.filmedTo ?? saved?.filmedTo,
   place: f.place ?? saved?.place,
+  orientation: f.orientation ?? saved?.orientation,
   ...(f.here ? { here: true as const } : {}),
   ...(f.missing ? { missing: true as const } : {}),
 });
@@ -62,7 +63,7 @@ const nextDay = (ms: number) => {
 };
 
 /** This week (from Monday), this month, this year: each from its first day on. */
-function presets(now = new Date()) {
+export function presets(now = new Date()) {
   const [y, m, d] = [now.getFullYear(), now.getMonth(), now.getDate()];
   return [
     { label: "This week", from: new Date(y, m, d - ((now.getDay() + 6) % 7)).getTime() },

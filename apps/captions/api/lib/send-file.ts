@@ -28,7 +28,7 @@ export const FILE_HEADERS = { "X-Content-Type-Options": "nosniff", "Content-Secu
 /** Range-aware file response. An open range (`bytes=0-` on a 20 GB
  *  master) is capped; a closed one is answered exactly, since Apple's
  *  player (the iPhone app, Safari) rejects any other length. */
-export async function sendFile(c: Context, p: string, type: string, download?: string) {
+export async function sendFile(c: Context, p: string, type: string, download?: string, cache = "private, max-age=3600") {
   const st = await stat(p).catch(() => null);
   if (!st) return c.json({ error: "Not ready" }, 409);
   const size = st.size;
@@ -36,9 +36,12 @@ export async function sendFile(c: Context, p: string, type: string, download?: s
     ...FILE_HEADERS,
     "Content-Type": servedType(type),
     "Accept-Ranges": "bytes",
-    "Cache-Control": "private, max-age=3600",
+    "Cache-Control": cache,
     "Last-Modified": new Date(st.mtimeMs).toUTCString(),
   };
+  // the browser's copy is still this file: no body (HTTP dates are whole seconds)
+  const since = Date.parse(c.req.header("if-modified-since") ?? "");
+  if (!c.req.header("range") && since >= Math.floor(st.mtimeMs / 1000) * 1000) return new Response(null, { status: 304, headers });
   if (download) {
     headers["Content-Disposition"] = attachment(download);
   }

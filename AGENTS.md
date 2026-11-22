@@ -13,9 +13,10 @@ and signed in to with their own subscription.
 
 | Folder | What | Stack |
 |---|---|---|
-| `apps/captions/` | The web app and its server: UI in `src/`, API in `api/`, shared types in `contracts/`, the database schema in `db/` | React, Vite, Hono, tRPC, TypeScript |
+| `apps/captions/` | The web app and its server: UI in `src/`, API in `api/`, shared types in `contracts/` | React, Vite, Hono, tRPC, TypeScript |
 | `apps/mac/` | The Mac app: a native shell around the web app, the server it runs on this Mac (bundled by `scripts/build-app.sh`), the list of servers it can open (This Mac and yours, by address), plus the local AI runner and its menu bar item | SwiftUI, Swift Package Manager, Sparkle |
 | `apps/ios/` | The iPhone app: the Assistant, uploads into the Media Library (background, resumable), Finals, scripts to film, and the web app for the rest. Talks to any server by address or one-time sign-in link | SwiftUI, Xcode project |
+| `apps/swift-shared/` | What the Mac and iPhone apps both use (the Keychain item helper, the host rules), as a local Swift package; `pnpm test:mac` runs its tests | Swift Package Manager |
 | `apps/captions/public/helper/` | The helper for a Linux computer (with or without an NVIDIA card): pairs with a one-time code and runs speech-to-text models for its owner's server. The server hands these files out at `/helper/` | Python 3, faster-whisper, onnx-asr, systemd --user |
 | `apps/obsidian/` | An Obsidian plugin: a vault folder's notes and the Content Workshop in step (status both ways, Send, exports). Its own npm lockfile, outside the pnpm workspace | TypeScript, esbuild |
 | `scripts/` | Repository checks (`check-public.sh`) and the public-repo patterns in `scripts/public/` | Bash |
@@ -83,7 +84,7 @@ signed in with their own subscription, paired through the Mac app. They answer o
 of the account that owns them. Never add a path that runs one person's subscription for another person, and never
 let a request from one account reach another account's provider. The one other AI is a model the admin of their own
 install runs themselves and types in by address (Settings → API keys → Local model, `apps/captions/api/local-model.ts`):
-text jobs only, refused on a hosted server, and the app never downloads, detects or suggests a model.
+text jobs only, refused on Creator Toolset Cloud, and the app never downloads, detects or suggests a model.
 
 **What other people share carries no code.** What people share with each other through Community is text and
 settings: packs (prompts, frameworks, caption styles, a Home layout), each read as data. Never add a way for someone
@@ -96,7 +97,7 @@ app's full access. Code that Community offers is the team's own, reviewed like t
 gets its key from `keyFor` in `apps/captions/api/my-keys.ts`; never read a service key from `process.env` in a
 feature. Each user adds their own keys, Apify included, in Settings → API keys and pays their
 provider. The server's keys serve only the admin's own work, never their AI (an admin's AI is their own provider or
-own key). AI with no provider and no own key fails with a message saying what to add; the Workshop has no
+own key), with one exception: the admin's Team use switch (Settings → API keys → Server keys) gives the admin's own team the server's keys, and members on a team budget run their AI on its Anthropic key, billed to that budget (`serverKeyOf`, `teamAiKey`). AI with no provider and no own key fails with a message saying what to add; the Workshop has no
 API-key path at all.
 
 **No scraping.** Social platforms come only from the official logins and the user's own Apify key, never from
@@ -216,10 +217,13 @@ Where a clip's original is, for each computer (`contracts/places.ts`):
 Where the data lives and which machine does the work are two questions. Keep them apart in comments, docs, prompts
 and answers:
 
-- A **server** comes in three kinds. **This Mac** is the server built into the Mac app (`apps/mac` `Server.swift`,
-  `CT_LOCAL=1`): one person's, and it is their own computer. **Your own server** is one somebody runs on a box and
-  opens by its address. **Creator Toolset Cloud** is ours (`CT_MODE=hosted`). "The server does X" says which kind: on
-  This Mac it means the person's own computer.
+- A **server** comes in three kinds, named by `CT_SERVER` and read only through `api/lib/env.ts`. **This Mac**
+  (`mac`) is the server built into the Mac app (`apps/mac` `Server.swift`, which sets `CT_LOCAL=1`): one person's,
+  and it is their own computer. **A Server** (`server`) is one somebody runs on a box for themselves or their team
+  and opens by its address. **Creator Toolset Cloud** (`cloud`) is ours, for many separate teams. "The server does
+  X" says which kind: on This Mac it means the person's own computer. In code: `serverKind()`, `hasTeam()` (Server
+  and Cloud: Team, invites, server keys, budgets) and `isCloud()` (guards against tenants who don't trust each other);
+  never read `CT_SERVER`, `CT_MODE` or `CT_LOCAL` for the kind anywhere else.
 - A **computer** is a Mac or PC signed in to a server through the app, or a Linux helper. In code: `device`,
   "paired Mac", `relay`, `helper`. It is the machine its person sits at, not a second one. On screen and in prose say
   "computer" or "their Mac", never "paired Mac" or "device".

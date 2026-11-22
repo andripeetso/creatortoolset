@@ -21,7 +21,7 @@ it("warms a Settings list under the key its section reads (a renamed key would w
   for (const url of keys("admin", true)) expect(read, url).toContain(`"${url}"`);
 });
 
-it("warms only what the account may read: the team on a hosted server, the admin pages for its admins", () => {
+it("warms only what the account may read: the team on a Server, the admin pages for its admins", () => {
   expect(keys("user", false)).not.toContain("/api/workspace");
   expect(keys("admin", false)).not.toContain("/api/admin/users");
   expect(keys("user", true)).toContain("/api/workspace");
@@ -40,7 +40,7 @@ it("saves \"no sign-in apps\" for a server that has none, so that read is not as
 it("reads a Settings list once per device, while the app's own lists are read on every start", async () => {
   const asked: string[] = [];
   vi.stubGlobal("fetch", async (url: string) => (asked.push(String(url).split("?")[0]), new Response("[]", { status: 200 })));
-  useAuth.setState({ me: admin as never, hosted: true });
+  useAuth.setState({ me: admin as never, kind: "server" });
   await warmScreens();
   expect(asked).toEqual(expect.arrayContaining(["/api/my-keys", "/api/providers", "/api/admin/users", "/api/review"]));
   asked.length = 0;

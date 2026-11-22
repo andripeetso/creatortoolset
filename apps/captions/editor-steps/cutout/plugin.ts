@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AssistantView } from "../../contracts/assistant";
 import type { AuthVars } from "../../api/auth";
 import { CUTOUT_LIMITS, cutOut } from "../../api/lib/cutouts";
-import { env } from "../../api/lib/env";
+import { env, serverKind } from "../../api/lib/env";
 import { definePlugin } from "../../api/lib/plugin";
 import { ToolError, type Args, type ToolContext } from "../../api/mcp-tools/types";
 
@@ -25,7 +25,7 @@ const tooBig = `The picture is over ${CUTOUT_LIMITS.bytes / 1e6} MB.`;
 /** The picture a call names: a file on this computer by its path, or the bytes sent. A sentence when there is none. */
 async function pictureOf(b: Record<string, unknown> | null): Promise<Buffer | string> {
   if (typeof b?.path === "string") {
-    if (process.env.CT_LOCAL !== "1") return "This server isn't on your computer: send the picture in the chat.";
+    if (serverKind() !== "mac") return "This server isn't on your computer: send the picture in the chat.";
     if (!path.isAbsolute(b.path)) return "Give the picture's full path, such as /Users/you/Pictures/photo.heic.";
     const st = await stat(b.path).catch(() => null);
     if (!st?.isFile()) return `There's no file at ${b.path}.`;

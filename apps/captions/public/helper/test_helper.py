@@ -1,5 +1,7 @@
 """The helper's folder list, container paths, fingerprint and scans. From this folder: python3 -I -m unittest"""
+import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -34,7 +36,7 @@ class Fake(helper.Helper):
     """A Helper whose server calls are written down."""
 
     def __init__(self, folders=(), config=None):
-        super().__init__("http://server.invalid", "ctd_test", config or {"server": "x", "token": "ctd_test"})
+        super().__init__("https://server.invalid", "ctd_test", config or {"server": "x", "token": "ctd_test"})
         self.server_folders, self.sent = list(folders), []
 
     def call(self, method, path, body=None, **k):
@@ -240,6 +242,26 @@ class Machine(unittest.TestCase):
         h.report()
         post = next(b for m, p, b in h.sent if p == "/api/devices/relay/report")
         self.assertEqual((post["reportVersion"], post["machineId"]), (2, h.config["machineId"]))
+
+
+class Security(unittest.TestCase):
+    def test_token_only_to_https_or_this_computer(self):
+        for ok in ("https://tools.example.test", "http://localhost:43127", "http://127.0.0.1", "http://[::1]:8080"):
+            self.assertEqual(helper.checked_server(ok), ok)
+        for bad in ("http://tools.example.test", "http://localhost.example.test", "http://localhost@tools.example.test",
+                    "ftp://tools.example.test", "https://", "tools.example.test"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                helper.checked_server(bad)
+
+    def test_config_is_0600_even_over_an_old_temp_file(self):
+        p = os.path.join(SCRATCH, "config.json")
+        with open(p + ".tmp", "w") as f:
+            f.write("old")
+        os.chmod(p + ".tmp", 0o644)
+        helper.write_json(p, {"token": "ctd_test"})
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
+        with open(p) as f:
+            self.assertEqual(json.load(f), {"token": "ctd_test"})
 
 
 if __name__ == "__main__":

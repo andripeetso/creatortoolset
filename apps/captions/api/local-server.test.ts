@@ -24,14 +24,22 @@ afterEach(() => {
 });
 
 describe("one-time sign-in links", () => {
-  it("signs a browser in once, then never again", async () => {
+  it("names the account on a page that signs nothing in, then signs in once on its press", async () => {
     const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
     const minted = await post("127.0.0.1", "/api/auth/link", {}, cookie);
     expect(minted.status).toBe(200);
     const { path: link } = (await minted.json()) as { path: string };
     expect(link).toMatch(/^\/api\/auth\/link\/[A-Za-z0-9_-]{43}$/);
 
-    const first = await from("127.0.0.1", link);
+    const shown = await from("127.0.0.1", link, { headers: { "sec-fetch-mode": "navigate" } });
+    expect(shown.status).toBe(200);
+    expect(shown.headers.get("set-cookie")).toBeNull();
+    expect(await shown.text()).toContain("<b>admin</b>");
+    // a press sent from another site is refused, and the link still works for the person's own press
+    const cross = await from("127.0.0.1", link, { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example" }, body: "{}" });
+    expect(cross.status).toBe(403);
+
+    const first = await post("127.0.0.1", link, {});
     expect(first.status).toBe(302);
     expect(first.headers.get("location")).toBe("/");
     expect(first.headers.get("cache-control")).toBe("no-store");
@@ -39,6 +47,22 @@ describe("one-time sign-in links", () => {
     const check = (await (await from("127.0.0.1", "/api/auth/check", { headers: { cookie: browser } })).json()) as { authed: boolean };
     expect(check.authed).toBe(true);
 
+    expect((await post("127.0.0.1", link, {})).status).toBe(410);
+    expect((await from("127.0.0.1", link)).status).toBe(410);
+  });
+
+  it("a password sign-in sent by a form on another site is refused (it would sign this browser in to that account)", async () => {
+    const form = await from("127.0.0.1", "/api/auth/login", { method: "POST", headers: { "content-type": "text/plain" }, body: JSON.stringify({ username: "admin", password: "local-sign-in-test-secret" }) });
+    expect(form.status).toBe(403);
+    expect(form.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("an app's own request (no Sec-Fetch-Mode, which every browser sends) still signs in on the link at once", async () => {
+    const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
+    const { path: link } = (await (await post("127.0.0.1", "/api/auth/link", {}, cookie)).json()) as { path: string };
+    const app = await from("127.0.0.1", link);
+    expect(app.status).toBe(302);
+    expect(cookieOf(app)).toMatch(/=./);
     expect((await from("127.0.0.1", link)).status).toBe(410);
   });
 
@@ -46,7 +70,7 @@ describe("one-time sign-in links", () => {
     const cookie = cookieOf(await login("127.0.0.1", "local-sign-in-test-secret"));
     const mint = (url: string, headers: Record<string, string> = {}) =>
       Promise.resolve(
-        app.request(url, { method: "POST", headers: { cookie, ...headers } }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } }),
+        app.request(url, { method: "POST", headers: { cookie, "content-type": "application/json", ...headers }, body: "{}" }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } }),
       ).then((r: Response) => r.json() as Promise<{ url: string | null }>);
     expect((await mint("http://studio.example.com/api/auth/link", { "x-forwarded-proto": "https" })).url).toBe("https://studio.example.com");
     expect((await mint(`http://${LAN}:3000/api/auth/link`)).url).toBe(`http://${LAN}:3000`);
@@ -72,9 +96,9 @@ describe("a hosted server behind a CDN is not held to the own-computer password 
   it("signs a phone in with the code it scanned, and the account's own password works", async () => {
     const signIn = await from("127.0.0.1", "/api/auth/login", { method: "POST", headers: { "content-type": "application/json", ...cdn }, body: JSON.stringify({ username: "admin", password: "local-sign-in-test-secret" }) });
     expect(signIn.status).toBe(200);
-    const minted = await from("127.0.0.1", "/api/auth/link", { method: "POST", headers: { cookie: cookieOf(signIn), ...cdn } });
+    const minted = await from("127.0.0.1", "/api/auth/link", { method: "POST", headers: { "content-type": "application/json", cookie: cookieOf(signIn), ...cdn } });
     const { path: link } = (await minted.json()) as { path: string };
-    const phone = await from("127.0.0.1", link, { headers: cdn });
+    const phone = await from("127.0.0.1", link, { method: "POST", headers: { "content-type": "application/json", ...cdn } });
     expect(phone.status).toBe(302);
     expect(cookieOf(phone)).toMatch(/=/);
   });
@@ -118,7 +142,7 @@ describe("a server on this Mac signs in from other devices only once a password 
     expect((await login(LAN, "tinyacrobatics1")).status).toBe(200);
     // with the password chosen, the code is made and another device signs in with it
     const { path: link } = (await (await post("127.0.0.1", "/api/auth/link", {}, fresh)).json()) as { path: string };
-    expect((await from(LAN, link)).status).toBe(302);
+    expect((await post(LAN, link, {})).status).toBe(302);
   });
 });
 
@@ -173,15 +197,42 @@ describe("the phone's code", () => {
     const older = await mintPath();
     const newer = await mintPath();
     expect((await from("127.0.0.1", older)).status).toBe(410);
-    expect((await from("127.0.0.1", newer)).status).toBe(302);
+    expect((await post("127.0.0.1", newer, {})).status).toBe(302);
   });
 
   it("gives the port this server is reached on, not a guessed one", async () => {
     const cookie = await ownerCookie();
-    const res = await app.request("http://localhost:3773/api/auth/link", { method: "POST", headers: { cookie } }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } });
+    const res = await app.request("http://localhost:3773/api/auth/link", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" }, { incoming: { socket: { remoteAddress: "127.0.0.1", remotePort: 50000, remoteFamily: "IPv4" } } });
     expect(res.status).toBe(200);
     const { url } = (await res.json()) as { url: string | null };
     // no network route in some sandboxes: then there is no address to offer, and nothing is guessed
     if (url) expect(url).toMatch(/:3773$/);
+  });
+});
+
+describe("sign-out, and the writes a page on another site can't make", () => {
+  const authed = async (cookie: string) => ((await (await from("127.0.0.1", "/api/auth/check", { headers: { cookie } })).json()) as { authed: boolean }).authed;
+  const evil = "https://evil.example";
+
+  it("signing out ends every copy of the account's cookie, not only this browser's", async () => {
+    const here = cookieOf(await login("127.0.0.1", "tinyacrobatics1"));
+    const there = cookieOf(await login("127.0.0.1", "tinyacrobatics1"));
+    expect(await authed(there)).toBe(true);
+    expect((await post("127.0.0.1", "/api/auth/logout", {}, here)).status).toBe(200);
+    expect(await authed(here)).toBe(false);
+    expect(await authed(there)).toBe(false);
+  });
+
+  it("refuses a page on another site, with its form or its JSON, the password, keys and sign-in-link changes and the unlink", async () => {
+    const cookie = cookieOf(await login("127.0.0.1", "tinyacrobatics1"));
+    const form = { "content-type": "application/x-www-form-urlencoded", origin: evil, cookie };
+    const json = { "content-type": "application/json", origin: evil, cookie };
+    expect((await from("127.0.0.1", "/api/auth/password", { method: "POST", headers: form, body: "current=x&password=y" })).status).toBe(403);
+    expect((await from("127.0.0.1", "/api/auth/password", { method: "POST", headers: json, body: "{}" })).status).toBe(403);
+    expect((await from("127.0.0.1", "/api/auth/api-key", { method: "POST", headers: json, body: "{}" })).status).toBe(403);
+    expect((await from("127.0.0.1", "/api/auth/api-key?level=full", { method: "DELETE", headers: { origin: evil, cookie } })).status).toBe(403);
+    expect((await from("127.0.0.1", "/api/auth/identity/google", { method: "DELETE", headers: { origin: evil, cookie } })).status).toBe(403);
+    expect((await from("127.0.0.1", "/api/auth/link", { method: "POST", headers: json, body: "{}" })).status).toBe(403);
+    expect(await authed(cookie)).toBe(true);
   });
 });

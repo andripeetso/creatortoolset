@@ -233,7 +233,7 @@ With a bad token: 401 as above.
 
 `[{ "kind": "lan" | "tailnet", "httpBaseUrl": "http://192.0.2.10:43128" }]`. LAN: the default route's address, when the
 server listens on every interface (`HOST` unset, `0.0.0.0` or `::`). Tailnet: an interface address in 100.64.0.0/10, same condition. Never
-loopback, and none in hosted mode (`CT_MODE=hosted`: a container's addresses reach nobody; pairing links carry the
+loopback, and none on Creator Toolset Cloud (`CT_SERVER=cloud`: a container's addresses reach nobody; pairing links carry the
 public origin only). The phone learns these after each connect; addresses it stops seeing are dropped.
 
 ### `POST /api/connect/health` (connect service, through the tunnel; no sign-in)

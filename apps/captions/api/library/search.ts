@@ -11,7 +11,7 @@ import type { AssetDetail, SearchHit, SearchQuery, StretchLines } from "../../co
 import { deviceOf } from "../lib/devices";
 import { OWN } from "./places";
 import { deviceEmbedStatus } from "../lib/device-embed";
-import { env, hostedMode } from "../lib/env";
+import { env, serverKind } from "../lib/env";
 import type { SessionUser } from "../users";
 import { keyParts } from "./storage/types";
 import { deviceStatus } from "../lib/device-transcribe";
@@ -137,7 +137,7 @@ export function sourcePathFor(libraryId: string, versionId: string, user: Pick<S
 
 /** The server's own stored copy, on the Mac app's own server on this Mac (CT_LOCAL=1, never hosted), when it is on disk. */
 function storedCopyPath(v: { source_key: string; storage_kind: string }): string | undefined {
-  if (v.storage_kind !== "local" || process.env.CT_LOCAL !== "1" || process.platform !== "darwin" || hostedMode()) return undefined;
+  if (v.storage_kind !== "local" || serverKind() !== "mac" || process.platform !== "darwin") return undefined;
   const file = path.join(env.dataDir, "library", "blobs", ...keyParts(v.source_key)); // the local store's layout (storage/local.ts)
   return existsSync(file) ? file : undefined;
 }

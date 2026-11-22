@@ -5,8 +5,8 @@
  * where its video work is off, the rest waits with its one line until one of the asker's computers takes it, and never
  * falls through to the server.
  *
- * - This Mac (CT_LOCAL=1): no switch, the server is the person's computer: always on.
- * - Creator Toolset Cloud (CT_MODE=hosted): off, unless a plug-in's `serverWork` grants it for the account (7C).
+ * - This Mac (serverKind "mac"): no switch, the server is the person's computer: always on.
+ * - Creator Toolset Cloud (serverKind "cloud"): off, unless a plug-in's `serverWork` grants it for the account (7C).
  * - Any other server: Settings → Server, the admin: `$DATA_DIR/server-work.json { on, projectIds? }` (no list = every
  *   workspace). No file = off: the work runs on each person's own computers unless the admin turns it on. The first start
  *   of this version writes it off once on every server (settleServerWork), saying so in Settings → Server where it was on.
@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import path from "node:path";
 import { DEFAULT_WEIGHT, type Balance } from "../../contracts/providers";
 import { balanceFile } from "../lib/balance";
-import { env, hostedMode } from "../lib/env";
+import { env, serverKind } from "../lib/env";
 import { pluginServerWork } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import { listUsers } from "../users";
@@ -40,8 +40,6 @@ export const SERVER_PLACE = "server";
 /** Prefer (contracts/providers.ts LOAD_PREFERENCES). */
 const PREFER = 100;
 
-export type ServerKind = "local" | "hosted" | "server";
-export const serverKind = (): ServerKind => (hostedMode() ? "hosted" : process.env.CT_LOCAL === "1" ? "local" : "server");
 
 const file = () => path.join(env.dataDir, "server-work.json");
 const ID = /^[\w-]{1,100}$/;
@@ -112,9 +110,9 @@ export function migrateOwnerChoices(): void {
 /** Whether the server lets video work run on it for `workspace` (a Workshop project id; none = filed in no workspace), asked by `account`. */
 export function serverAllows(workspace: string | null | undefined, account: string | null): boolean {
   const kind = serverKind();
-  if (kind === "local") return true;
+  if (kind === "mac") return true;
   const grant = pluginServerWork({ account, workspace: workspace ?? null });
-  if (kind === "hosted") return grant === true;
+  if (kind === "cloud") return grant === true;
   if (grant !== undefined) return grant;
   const s = readServerWork();
   if (!s) return false;
@@ -127,7 +125,7 @@ export const serverWorks = (workspace: string | null | undefined, account: strin
 
 /** The person's Load balancing weight for this server (DEFAULT_WEIGHT unless set; balancing off = Normal). This Mac has no row. */
 export function serverWeight(account: string | null): number {
-  if (!account || serverKind() === "local") return DEFAULT_WEIGHT;
+  if (!account || serverKind() === "mac") return DEFAULT_WEIGHT;
   const b = readJson<Partial<Balance>>(balanceFile(account));
   const w = b?.on === false ? undefined : b?.weights?.[SERVER_PLACE];
   return typeof w === "number" ? w : DEFAULT_WEIGHT;
@@ -135,7 +133,7 @@ export function serverWeight(account: string | null): number {
 
 /** The person set the server to Prefer, and it may work here. */
 export const serverPreferred = (workspace: string | null | undefined, account: string | null): boolean =>
-  serverKind() !== "local" && serverWeight(account) >= PREFER && serverWorks(workspace, account);
+  serverKind() !== "mac" && serverWeight(account) >= PREFER && serverWorks(workspace, account);
 
 /** The workspace an edit's step is in (its Workshop project). */
 // the edit's own file (editor/store.ts), read here directly: the library's loop imports this file, and the editor's store

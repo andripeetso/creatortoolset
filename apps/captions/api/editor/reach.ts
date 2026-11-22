@@ -13,7 +13,7 @@ import { mayLeave } from "../library/upload-gate";
 import { triesOn } from "../library/places";
 import { needsProxy } from "../library/media/proxy";
 import type { ProbeSummary } from "../library/media/probe";
-import type { JobRow } from "../library/jobs";
+import { heldBy, type JobRow } from "../library/jobs";
 import { usesFootage } from "./engine";
 import { readDraft, readEdit } from "./store";
 import { serverOpen, workWaitLine } from "../work/place";
@@ -153,7 +153,7 @@ export async function footageFor(d: Pick<Device, "id" | "owner">, editId: string
  * the file is not its own, or there is no such copy.
  */
 export function heldCopy(device: string, jobId: number, versionId: string, original = false): string | null {
-  const job = libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(jobId, device) as Pick<JobRow, "version_id"> | undefined;
+  const job = heldBy(libraryDb(), jobId, device);
   const r = job && jobFiles(job).find((f) => f.id === versionId);
   if (!r) return null;
   if (original && !r.source_key.startsWith("mac:") && r.source_key !== r.proxy && r.library_id && hostsOriginals(libraryUpload(r.library_id)) && mayLeave(r.library_id, { versionId: r.play ?? versionId }).ok) return r.source_key;

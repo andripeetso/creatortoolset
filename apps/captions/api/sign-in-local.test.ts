@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// On one person's Mac (CT_MODE unset) the site sign-in and identity unlink don't exist: sign-in.test.ts sets CT_MODE=hosted.
+// On This Mac the site sign-in and identity unlink don't exist: sign-in.test.ts runs on a Server.
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "sign-in-local-"));
 process.env.APP_SECRET = "sign-in-local-test-secret";
 delete process.env.CT_MODE;
+process.env.CT_SERVER = "mac";
 
 const app = (await import("./boot")).default;
 

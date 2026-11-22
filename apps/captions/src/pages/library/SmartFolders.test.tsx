@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Collection } from "@contracts/library";
 import { suggestWays } from "./api";
-import { ReorganizeDialog } from "./SmartFolders";
+import { AUTOMATIC, automaticAbout, ReorganizeDialog } from "./SmartFolders";
 
 vi.mock("./api", () => ({ suggestWays: vi.fn(), setFolderRule: vi.fn() }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -73,5 +73,15 @@ describe("Reorganize", () => {
     await act(async () => garden.click());
     expect(document.body.textContent).toContain("Days in the garden.");
     expect([...document.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Photos"))!.textContent).toBe("Photosexists5");
+  });
+});
+
+describe("automaticAbout", () => {
+  it("finds an automatic folder's line whatever order the server keeps its query's keys in", () => {
+    for (const a of AUTOMATIC.filter((x) => x.query)) {
+      const reversed = Object.fromEntries(Object.entries(a.query!).reverse());
+      expect(automaticAbout({ id: "c", name: "x", parentId: null, kind: "smart", createdBy: "admin", query: reversed } as Collection)).toBe(a.about);
+    }
+    expect(automaticAbout({ id: "c", name: "x", parentId: null, kind: "manual", createdBy: "admin", rule: "Beach days" } as Collection)).toBe("Beach days");
   });
 });

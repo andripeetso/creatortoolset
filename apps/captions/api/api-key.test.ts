@@ -117,6 +117,6 @@ describe("AI access key", () => {
   });
 
   it("is made only for a signed-in account", async () => {
-    expect((await app.request("/api/auth/api-key", { method: "POST" })).status).toBe(401);
+    expect((await app.request("/api/auth/api-key", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
   });
 });

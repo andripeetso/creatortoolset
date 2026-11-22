@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 
 /**
@@ -98,12 +101,27 @@ export async function documentText(name: string, bytes: Buffer): Promise<string>
   }
 }
 
+/** IPv6 as eight 16-bit words; a dotted IPv4 tail (::ffff:1.2.3.4) becomes two of them. */
+function ipv6Words(ip: string): number[] {
+  const m = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
+  const s = m ? `${ip.slice(0, m.index)}${((Number(m[1]) << 8) | Number(m[2])).toString(16)}:${((Number(m[3]) << 8) | Number(m[4])).toString(16)}` : ip;
+  const [head = "", rest] = s.split("::");
+  const words = (x: string) => (x ? x.split(":") : []);
+  const h = words(head);
+  const t = rest === undefined ? [] : words(rest);
+  return [...h, ...Array(8 - h.length - t.length).fill("0"), ...t].map((x) => parseInt(x, 16));
+}
+
 /** Loopback, private, link-local, CGNAT and the like: a link may never make the server reach inside. */
 export function privateAddress(ip: string): boolean {
   if (isIP(ip) === 6) {
-    const v = ip.toLowerCase();
-    if (v.startsWith("::ffff:")) return privateAddress(v.slice(7));
-    return v === "::1" || v === "::" || v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80");
+    const w = ipv6Words(ip);
+    const zeros = (n: number) => w.slice(0, n).every((x) => x === 0);
+    // ::/96 (loopback, unspecified, IPv4-compatible), ::ffff:0:0/96 (every IPv4-mapped address, hex or dotted), 64:ff9b::/96 (NAT64)
+    if (zeros(6) || (zeros(5) && w[5] === 0xffff) || (w[0] === 0x64 && w[1] === 0xff9b && w.slice(2, 6).every((x) => x === 0))) return true;
+    const first = w[0] ?? 0;
+    // fc00::/7 unique local, fe80::/10 link-local, fec0::/10 site-local, ff00::/8 multicast
+    return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xffc0) === 0xfec0 || (first & 0xff00) === 0xff00;
   }
   const [a = 0, b = 0] = ip.split(".").map(Number);
   return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
@@ -112,7 +130,8 @@ export function privateAddress(ip: string): boolean {
 // social platforms are read only through their official APIs or the user's own Apify key, never as web pages
 const SOCIAL_HOST = /(^|\.)(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.watch|threads\.net|threads\.com|tiktok\.com|x\.com|twitter\.com|youtube\.com|youtu\.be)$/i;
 
-async function publicUrl(raw: string): Promise<URL> {
+/** The link and the addresses it was checked at; the fetch connects to one of those, never a second lookup. */
+async function publicUrl(raw: string): Promise<{ url: URL; addresses: string[] }> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -125,23 +144,40 @@ async function publicUrl(raw: string): Promise<URL> {
   if (SOCIAL_HOST.test(host)) throw new Error("Social posts go in the Content Analyzer, which reads them through the official logins and your own Apify key");
   const ips = isIP(host) ? [host] : (await lookup(host, { all: true })).map((r) => r.address);
   if (!ips.length || ips.some(privateAddress)) throw new Error("That address isn't on the public internet");
-  return url;
+  return { url, addresses: ips };
+}
+
+/**
+ * GET that connects only to the given addresses: the ones publicUrl checked. All of them are offered, so a host whose
+ * first address is IPv6 still answers on a network without IPv6. Redirects are returned, not followed.
+ */
+export function pinnedFetch(url: URL, init: { headers: Record<string, string>; signal: AbortSignal }, addresses: string[]): Promise<Response> {
+  const send = url.protocol === "https:" ? httpsRequest : httpRequest;
+  const all = addresses.map((address) => ({ address, family: isIP(address) }));
+  const first = all.find((a) => a.family === 4) ?? all[0]!;
+  return new Promise((resolve, reject) => {
+    const req = send(url, { method: "GET", headers: init.headers, signal: init.signal, lookup: (_host, opts, cb) => (opts.all ? cb(null, all) : cb(null, first.address, first.family)) }, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400) res.resume();
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(res.headers)) for (const x of [v ?? []].flat()) headers.append(k, x);
+      resolve(new Response(Readable.toWeb(res) as ReadableStream, { status: res.statusCode, headers }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 const PAGE_MAX = 8 * 1024 * 1024;
 
-/**
- * A web page's title and text. Redirects are followed by hand so every hop is checked.
- * ponytail: DNS is checked before fetch, not pinned; a rebinding host could still slip through between the two.
- */
-export async function webPageText(raw: string, fetchImpl: typeof fetch = fetch): Promise<{ title: string; text: string }> {
-  let url = await publicUrl(raw);
+/** A web page's title and text. Redirects are followed by hand so every hop is checked and pinned. */
+export async function webPageText(raw: string, fetchImpl: typeof pinnedFetch = pinnedFetch): Promise<{ title: string; text: string }> {
+  let { url, addresses } = await publicUrl(raw);
   let res: Response | undefined;
   for (let hop = 0; hop < 5; hop++) {
-    res = await fetchImpl(url, { redirect: "manual", signal: AbortSignal.timeout(20_000), headers: { "User-Agent": "Mozilla/5.0 CreatorToolset", Accept: "text/html,text/plain;q=0.9" } });
+    res = await fetchImpl(url, { signal: AbortSignal.timeout(20_000), headers: { "User-Agent": "Mozilla/5.0 CreatorToolset", Accept: "text/html,text/plain;q=0.9" } }, addresses);
     const next = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
     if (!next) break;
-    url = await publicUrl(new URL(next, url).toString());
+    ({ url, addresses } = await publicUrl(new URL(next, url).toString()));
   }
   if (!res?.ok) throw new Error(`The page answered ${res?.status ?? "nothing"}`);
   const type = res.headers.get("content-type") ?? "";

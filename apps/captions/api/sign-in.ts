@@ -4,13 +4,13 @@ import { createHash, createPrivateKey, randomBytes, sign as cryptoSign } from "n
 import { APP_CHALLENGE, getSessionUser, mintAppCode, passwordsOff, setLoginCookie, type AuthVars } from "./auth";
 import { writeFileSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
-import { env, hostedMode } from "./lib/env";
+import { env, hasTeam } from "./lib/env";
 import { escHtml, plainPage } from "./lib/plain-page";
 import { SIGNIN_NAME, bumpUsage, createUser, findByIdentity, findByLogin, findUser, isSignInProvider, linkIdentity, listUsers, refreshPicture, type SignInProvider, type UserRecord } from "./users";
 
 /**
  * Sign in with Apple, Google and GitHub to a site account, and linking one to an account (Settings → Account). A hosted
- * server only (CT_MODE=hosted): on one person's Mac there are no providers to sign in with. The keys live in the
+ * Server or Cloud only (hasTeam): on This Mac there are no providers to sign in with. The keys live in the
  * server's .env only. A first sign-in with no account here is refused: an account is one the server's owner made, or an
  * invite. Only a server whose .env says SIGN_UPS=open makes an account for a newcomer (newAccountFor). The free Mac app's
  * own sign-in is a separate service (a hosted plug-in), with its own state.
@@ -206,13 +206,13 @@ export const signInStartApp = new Hono<{ Variables: AuthVars }>();
 signInStartApp.get("/providers", (c) => {
   const origin = originOf(c);
   const linked = (kind: Kind) => c.req.query("login") !== "1" || process.env.SIGN_UPS === "open" || listUsers().some((u) => u.identities?.some((i) => i.provider === kind));
-  const on = (kind: Kind) => hostedMode() && !!signinVia(origin, kind) && linked(kind);
+  const on = (kind: Kind) => hasTeam() && !!signinVia(origin, kind) && linked(kind);
   // `password`: whether the login screen offers the password form at all (passwordsOff)
   return c.json({ apple: on("apple"), google: on("google"), github: on("github"), ...(c.req.query("login") === "1" ? { password: !passwordsOff() } : {}) });
 });
 
 signInStartApp.get("/login/:kind", (c, next) => {
-  if (!hostedMode()) return next();
+  if (!hasTeam()) return next();
   const kind = c.req.param("kind");
   if (!isSignInProvider(kind)) return next();
   const forWhat = c.req.query("for");
@@ -256,7 +256,7 @@ signInStartApp.get("/login/:kind", (c, next) => {
 export const signInCallbackApp = new Hono<{ Variables: AuthVars }>();
 
 signInCallbackApp.post("/apple/callback", async (c, next) => {
-  if (!hostedMode()) return next();
+  if (!hasTeam()) return next();
   const f = await c.req.parseBody();
   const s = (k: string) => (typeof f[k] === "string" ? (f[k] as string) : "");
   if (!states.has(s("state"))) return next();
@@ -264,14 +264,14 @@ signInCallbackApp.post("/apple/callback", async (c, next) => {
 });
 
 signInCallbackApp.get("/google/callback", (c, next) => {
-  if (!hostedMode()) return next();
+  if (!hasTeam()) return next();
   const state = c.req.query("state") ?? "";
   if (!states.has(state)) return next();
   return callback(c, "google", { code: c.req.query("code") ?? "", state, error: c.req.query("error") });
 });
 
 signInCallbackApp.get("/github/callback", (c, next) => {
-  if (!hostedMode()) return next();
+  if (!hasTeam()) return next();
   const state = c.req.query("state") ?? "";
   if (!states.has(state)) return next();
   return callback(c, "github", { code: c.req.query("code") ?? "", state, error: c.req.query("error") });
@@ -282,7 +282,7 @@ signInCallbackApp.get("/github/callback", (c, next) => {
  * the verifier it kept, once, and from there it is the same sign-in or link as with its own client.
  */
 signInCallbackApp.get(SERVICE_RETURN.replace("/api/auth", ""), async (c, next) => {
-  if (!hostedMode()) return next();
+  if (!hasTeam()) return next();
   const state = c.req.query("state") ?? "";
   const st = states.get(state);
   // a sign-in this server has no record of (expired, or used already): say so, rather than a bare Not Found
@@ -316,7 +316,7 @@ signInCallbackApp.get(SERVICE_RETURN.replace("/api/auth", ""), async (c, next) =
  * unless this is a hosted server that names a sign-in service and its own address.
  */
 export function accountTicketHost(): string | null {
-  if (!hostedMode() || !signinService()) return null;
+  if (!hasTeam() || !signinService()) return null;
   try {
     return new URL(process.env.PUBLIC_ORIGIN ?? "").host.toLowerCase() || null;
   } catch {
@@ -361,7 +361,7 @@ export async function accountTicketUser(o: { ticket: string; verifier: string; j
 
 /** The press on a link's page above: the link is made, and the person goes back to the app (its window reloads on focus). */
 signInCallbackApp.post("/link-confirm", async (c) => {
-  if (!hostedMode()) return c.notFound();
+  if (!hasTeam()) return c.notFound();
   const f = await c.req.parseBody();
   const id = typeof f.id === "string" ? f.id : "";
   const p = pendingLinks.get(id);

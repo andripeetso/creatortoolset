@@ -1,10 +1,12 @@
-import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { AudioLines, FileText, Image as ImageIcon, Laptop, Video } from "lucide-react";
 import { SPRITE_FRAMES, type AssetCard, type AssetKind } from "@contracts/library";
 import { ClipStage } from "@/components/LibraryProcessing";
 import { libraryBadges } from "@/lib/library-slots";
+import { localThumb } from "@/lib/local-thumbs";
 import { cn } from "@/lib/utils";
 import { placeLine } from "@/lib/wording";
+import { Near, ThumbImg } from "./Near";
 
 /** The Media Library's clips as cards and as list rows (LibraryPage.tsx), and their frames before the list is known. */
 
@@ -70,7 +72,7 @@ export const frameAt = (frac: number) => Math.min(SPRITE_FRAMES - 1, Math.max(0,
  * request per frame. `cell`: a frame's width / height (useStrip); `box`: the box's.
  */
 export const frameStyle = (url: string, i: number, cell: number, box: number): CSSProperties => {
-  const backgroundImage = `url("${url}")`;
+  const backgroundImage = `url("${localThumb(url) ?? url}")`;
   // the frame wider than the box: the strip as tall as the box, frame i's middle at the box's middle
   if (cell >= box) return { backgroundImage, backgroundSize: "auto 100%", backgroundPosition: `${((box / 2 - (i + 0.5) * cell) / (box - SPRITE_FRAMES * cell)) * 100}% 0` };
   return { backgroundImage, backgroundSize: `${SPRITE_FRAMES * 100}% auto`, backgroundPosition: `${(i / (SPRITE_FRAMES - 1)) * 100}% 50%` };
@@ -78,8 +80,9 @@ export const frameStyle = (url: string, i: number, cell: number, box: number): C
 
 const cells = new Map<string, number>();
 /**
- * A strip's frame shape (width / height) once its picture is here, null before. With `near` the picture loads once that
- * element comes within a screen of view, so a card's first hover shows frames at once; without it, at once.
+ * A strip's frame shape (width / height) once its picture is here, null before. With `near` the picture loads when the
+ * pointer first comes over that element (the picture shows until then); without it, at once. Strips are about three
+ * times a picture's size: loading one for every card scrolled past took the bandwidth the pictures needed.
  */
 export function useStrip(url: string | undefined, near?: RefObject<Element | null>): number | null {
   const [cell, setCell] = useState<number | null>(null);
@@ -94,23 +97,13 @@ export function useStrip(url: string | undefined, near?: RefObject<Element | nul
         cells.set(url, c);
         setCell(c);
       };
-      img.src = url;
+      img.src = localThumb(url) ?? url;
     };
     const el = near?.current;
-    let io: IntersectionObserver | undefined;
-    if (el && typeof IntersectionObserver !== "undefined") {
-      io = new IntersectionObserver(
-        (es) => {
-          if (!es.some((e) => e.isIntersecting)) return;
-          io?.disconnect();
-          load();
-        },
-        { rootMargin: "100%" },
-      );
-      io.observe(el);
-    } else load();
+    if (el) el.addEventListener("pointerenter", load, { once: true });
+    else load();
     return () => {
-      io?.disconnect();
+      el?.removeEventListener("pointerenter", load);
       if (img) img.onload = null;
     };
   }, [url, near]);
@@ -156,12 +149,11 @@ export function AssetTile({ asset: a, onOpen, drag, ownShape = false }: { asset:
         className={cn("relative w-full overflow-hidden rounded-lg bg-zinc-900 ring-1 ring-zinc-500/20 transition group-hover:ring-zinc-400/60", !ownShape && "aspect-video")}
       >
         {a.thumbUrl ? (
-          <img
+          <ThumbImg
             src={a.thumbUrl}
-            alt=""
-            loading="lazy"
+            dim={a.state === "missing"}
             style={ownShape ? { aspectRatio: `auto ${shape}` } : undefined}
-            className={cn(ownShape ? "block h-auto w-full" : "h-full w-full object-cover", a.state === "missing" && "opacity-40")}
+            className={ownShape ? "block h-auto w-full" : "h-full w-full object-cover"}
           />
         ) : (
           <div className={cn("flex h-full w-full flex-col items-center justify-center gap-1.5 text-zinc-600", preparing && "motion-safe:animate-pulse")}>
@@ -240,7 +232,7 @@ export function AssetRow({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen:
     >
       <span className="flex min-w-0 items-center gap-3">
         <span className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-zinc-950 text-zinc-600">
-          {a.thumbUrl ? <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} /> : <Icon className="h-4 w-4" />}
+          {a.thumbUrl ? <ThumbImg src={a.thumbUrl} dim={a.state === "missing"} className="h-full w-full object-cover" /> : <Icon className="h-4 w-4" />}
         </span>
         <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
         {isHere(a) && <HereMark className="shrink-0 text-zinc-500" />}
@@ -292,13 +284,16 @@ export function intoColumns<T>(items: readonly T[], cols: number, tall: (t: T) =
 export function PhotoMasonry({ assets, tile }: { assets: readonly AssetCard[]; tile: (a: AssetCard) => ReactNode }) {
   const cols = useSyncExternalStore(onColumns, columnCount, () => 2);
   // the name under each picture counts as a fifth of a width
-  const columns = intoColumns(assets, cols, (a) => (a.width && a.height ? a.height / a.width : 0.75) + 0.2);
+  const tall = (a: AssetCard) => (a.width && a.height ? a.height / a.width : 0.75) + 0.2;
+  const columns = intoColumns(assets, cols, tall);
   return (
     <div className="flex items-start gap-3">
       {columns.map((c, i) => (
         <div key={i} className="flex min-w-0 flex-1 flex-col gap-3">
           {c.map((a) => (
-            <Fragment key={a.id}>{tile(a)}</Fragment>
+            <Near key={a.id} size={{ aspectRatio: String(1 / tall(a)) }}>
+              {() => tile(a)}
+            </Near>
           ))}
         </div>
       ))}

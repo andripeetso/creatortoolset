@@ -97,7 +97,7 @@ import { mcpChallenge, oauthApp } from "./oauth";
 import { cardApp } from "./mcp-cards";
 import { activityApp } from "./activity";
 import { VISITOR, mayChange, mayUse, touchActive, type Tool } from "./users";
-import { env, hostedMode } from "./lib/env";
+import { env, hasTeam, isCloud, serverKind } from "./lib/env";
 import { disableRequestTimeouts } from "./lib/incoming";
 import { randomUUID } from "node:crypto";
 import { TOOL_NAMES } from "../contracts/tools";
@@ -148,7 +148,7 @@ export function crossOriginWrite(method: string, url: string, origin: string | u
 }
 app.use(async (c, next) => {
   // on for a Mac server (CT_LOCAL=1) and for any computer linked to the connect broker: its tunnel must not answer other names
-  if (process.env.CT_LOCAL !== "1" && !tunnelHostname()) return next();
+  if (serverKind() !== "mac" && !tunnelHostname()) return next();
   if (!localHostAllowed(new URL(c.req.url).hostname)) return c.json({ error: "Unknown host" }, 400);
   // without APP_SECRET every request is the admin (getSessionUser): a tunnel must never serve that to the internet
   if (!env.appSecret && viaTunnel(c)) return c.json({ error: "Set APP_SECRET on this computer before it answers on the tunnel" }, 403);
@@ -325,7 +325,7 @@ if (process.env.CT_EXIT_WITH_PARENT === "1") {
 serverPlugins.push(...(await loadFolderPlugins(serverPlugins, (all) => void pluginToolsOf(all))));
 mountOpenRoutes(app, serverPlugins);
 // hosted mode only: Apple / Google sign-in to a site account and linking one (sign-in.ts). A sign-in a plug-in started falls through.
-if (hostedMode()) {
+if (hasTeam()) {
   app.route("/api/account", signInStartApp);
   app.route("/api/auth", signInCallbackApp);
 }
@@ -381,7 +381,7 @@ app.use("/api/*", async (c, next) => {
   // view-as (hosted): a platform admin reads the app as another account, read-only. The admin's own routes and the
   // sign-in routes stay the admin's; any write while viewing is refused.
   const viewed =
-    hostedMode() && signedIn?.role === "admin" && !/^\/api\/(?:admin|auth)(?:\/|$)/.test(c.req.path)
+    isCloud() && signedIn?.role === "admin" && !/^\/api\/(?:admin|auth)(?:\/|$)/.test(c.req.path)
       ? viewAsTarget(c.req.header("cookie"))
       : null;
   if (viewed && c.req.method !== "GET" && c.req.method !== "HEAD") {
@@ -448,12 +448,14 @@ app.use("/api/*", inRequestWorkspace);
 app.use("/api/*", announceWrites);
 app.route("/api/sync", syncApp);
 // who has access, and how this computer is reached, are changed by a browser's cookie in every mode, so a page from
-// another site never reaches them: the browser must say it came from here and send JSON (which no plain form can).
-// A device's own token is exempt; the connect service's signed calls carry JSON and no Origin, so they pass.
-const ACCESS_WRITE = /^\/api\/(?:auth\/(?:pairing-links|clients)|connect)(?:\/|$)/;
+// another site never reaches them: the browser must say it came from here and, for a POST, send JSON (which no plain
+// form can). A device's own token is exempt; the connect service's signed calls carry JSON and no Origin, so they pass.
+// DELETE and PATCH from another site need a CORS preflight, which nothing here answers, so the Origin check is enough.
+const ACCESS_WRITE = /^\/api\/(?:auth\/(?:pairing-links|clients|login|ticket|api-key|password|identity\/[a-z]+|link(?:\/[\w-]+)?|code(?:\/(?:new|on|off))?|account)|connect)(?:\/|$)/;
 const sameSiteWrites: MiddlewareHandler = async (c, next) => {
-  if (c.req.method !== "POST" || !ACCESS_WRITE.test(c.req.path) || c.req.header("authorization")) return next();
-  if (crossOriginWrite(c.req.method, c.req.url, c.req.header("origin"), undefined) || !/^application\/json\b/i.test(c.req.header("content-type") ?? "")) {
+  const method = c.req.method;
+  if (!["POST", "PATCH", "DELETE"].includes(method) || !ACCESS_WRITE.test(c.req.path) || c.req.header("authorization")) return next();
+  if (crossOriginWrite(method, c.req.url, c.req.header("origin"), undefined) || (method === "POST" && !/^application\/json\b/i.test(c.req.header("content-type") ?? ""))) {
     return c.json({ error: "Sent from another site" }, 403);
   }
   return next();
@@ -623,11 +625,11 @@ mountPluginsList(app);
 app.route("/api/plugins", pluginWorkspacesApp);
 mountFolderPlugins(app);
 mountGatedRoutes(app, serverPlugins);
-// hosted mode only (CT_MODE=hosted): the platform admin, the team and invite links. On one person's Mac they don't exist.
-if (hostedMode()) {
+// a Server or Cloud only (hasTeam): the admin API, the team and invite links. On This Mac they don't exist.
+if (hasTeam()) {
   // Unset, the pack catalog proxies to creatortoolset.com, which may be this server calling itself. A warning, not a refusal.
   if (process.env.PACK_CATALOG_URL === undefined && process.env.NODE_ENV !== "test") {
-    console.warn("CT_MODE=hosted but PACK_CATALOG_URL is unset: set it empty on a server that serves the pack catalog itself");
+    console.warn("A Server with no PACK_CATALOG_URL is unset: set it empty on a server that serves the pack catalog itself");
   }
   mountAdminRoutes(app, serverPlugins);
   app.route("/api/admin", adminApp);
@@ -699,7 +701,7 @@ if (workerFor) {
   );
   if ("requestTimeout" in server) disableRequestTimeouts(server);
   // listening on every interface on someone's own computer: only its own networks may connect (descriptor.ts)
-  if (host && listensEverywhere(host) && !hostedMode()) server.on("connection", (sock) => void (allowedPeer(sock.remoteAddress) || sock.destroy()));
+  if (host && listensEverywhere(host) && !isCloud()) server.on("connection", (sock) => void (allowedPeer(sock.remoteAddress) || sock.destroy()));
   // Under pm2 a reload sends SIGINT to the old process once the new one listens: take no new requests and let the ones
   // in flight finish, so a deploy drops none (pm2's kill_timeout ends a long video stream; the player asks again).
   // The requests held open (the change stream, the computers' and workers' long polls) end at once and their callers

@@ -25,7 +25,7 @@ import {
   type Scope,
   type Selection,
 } from "../../contracts/providers";
-import { env } from "./env";
+import { env, serverKind } from "./env";
 import { deviceExists, deviceOf } from "./devices";
 import { USERNAME_RE, announceAdmins, findUser } from "../users";
 import { driverKinds, providerPresets } from "./plugin";
@@ -201,7 +201,7 @@ export function codexLoginModels(home?: string): string[] {
 
 /** The models an instance offers: its driver's list (Codex: the login's own list on the Mac's server). */
 export function modelsFor(inst: ProviderInstance): string[] {
-  if (inst.driver === "codex" && process.env.CT_LOCAL === "1") {
+  if (inst.driver === "codex" && serverKind() === "mac") {
     const own = codexLoginModels(inst.home);
     if (own.length) return own;
   }

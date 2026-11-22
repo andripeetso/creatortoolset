@@ -13,6 +13,8 @@ import {
   revokeInvite,
   updateInvite,
   setSignInWith,
+  setTeamAi,
+  teamSpentThisMonth,
   spentThisMonth,
   updateMember,
   workspaceOf,
@@ -56,7 +58,8 @@ async function viewFor(u: SessionUser): Promise<WorkspaceView | null> {
     return memberView(m, findUser(m.username), full, full ? spentThisMonth(m.username) : 0);
   });
   return {
-    workspace: { id: w.id, name: w.name, plan: w.plan, comped: w.comped, createdAt: w.createdAt, signInWith: w.signInWith },
+    workspace: { id: w.id, name: w.name, plan: w.plan, comped: w.comped, createdAt: w.createdAt, signInWith: w.signInWith, budgetUsd: w.budgetUsd, aiTools: w.aiTools },
+    ...(manager ? { spentUsd: teamSpentThisMonth(w) } : {}),
     me: me.role,
     members,
     invites: manager ? invitesOf(w) : [],
@@ -90,6 +93,7 @@ workspaceApp.patch("/", async (c) => {
   try {
     if (typeof b.name === "string") renameWorkspace(m.w, b.name);
     if (Array.isArray(b.signInWith)) setSignInWith(m.w, m.u.username, b.signInWith);
+    if ("budgetUsd" in b || "aiTools" in b) setTeamAi(m.w, { budgetUsd: b.budgetUsd, aiTools: b.aiTools });
   } catch (e) {
     return bad(c, e);
   }

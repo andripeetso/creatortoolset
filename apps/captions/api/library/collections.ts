@@ -77,6 +77,8 @@ export function savedQuery(raw: unknown): SearchQuery {
     ...(num(r.filmedFrom) !== undefined ? { filmedFrom: num(r.filmedFrom) } : {}),
     ...(num(r.filmedTo) !== undefined ? { filmedTo: num(r.filmedTo) } : {}),
     ...(typeof r.place === "string" && /^[A-Z]{2}$/.test(r.place) ? { place: r.place } : {}),
+    ...(r.orientation === "vertical" || r.orientation === "horizontal" ? { orientation: r.orientation } : {}),
+    ...(r.unfiled === true ? { unfiled: true } : {}),
   };
 }
 
@@ -104,6 +106,16 @@ const toCollection = (r: Row, count?: number, covers?: string[], sounds?: string
   ...(sounds?.length ? { sounds } : {}),
 });
 
+/** The ids of the folders `start` (SQL giving folder ids) names and every folder inside them, at any depth. */
+const under = (start: string) =>
+  `(WITH RECURSIVE sub(id) AS (${start} UNION SELECT k.id FROM collections k JOIN sub ON k.parent_id = sub.id) SELECT id FROM sub)`;
+
+/** The clips the A-roll or B-roll folder holds: filed as its roll, or in a folder inside it (owner, 2026-11-22: its
+ * count is all of them). Params: the roll, the library id, the roll. */
+const IN_ROLL = `(a.roll = ? OR a.id IN (SELECT asset_id FROM collection_items WHERE collection_id IN ${under(
+  "SELECT id FROM collections WHERE library_id = ? AND kind = 'smart' AND json_extract(query, '$.roll') = ? AND (SELECT COUNT(*) FROM json_each(query)) = 1",
+)}))`;
+
 // GET /api/library/:id/collections → every folder and collection, flat; the client nests them by parentId. A folder's
 // card shows up to four pictures of its clips (the media route checks each viewer, as it does for the grid)
 collectionApp.get("/:id/collections", async (c) => {
@@ -111,26 +123,29 @@ collectionApp.get("/:id/collections", async (c) => {
   if (!(await readerOf(c.get("user").username, libraryId))) return notFound(c);
   const rows = db()
     .prepare(
-      `SELECT c.*, (SELECT COUNT(*) FROM collection_items i JOIN assets a ON a.id = i.asset_id
-          WHERE i.collection_id = c.id AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}) AS n
+      // a folder counts the clips in the folders inside it too (owner, 2026-11-22: "A-roll should show the total count")
+      `SELECT c.*, (SELECT COUNT(DISTINCT i.asset_id) FROM collection_items i JOIN assets a ON a.id = i.asset_id
+          WHERE i.collection_id IN ${under("SELECT c.id")}
+            AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}) AS n
        FROM collections c WHERE c.library_id = ? ORDER BY c.position IS NULL, c.position, c.created_at, c.id`,
     )
     .all(libraryId) as unknown as (Row & { n: number })[];
   const pictures = db().prepare(
-    `SELECT a.current_version_id AS v FROM collection_items i JOIN assets a ON a.id = i.asset_id
-     WHERE i.collection_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}
+    `SELECT DISTINCT a.current_version_id AS v FROM collection_items i JOIN assets a ON a.id = i.asset_id
+     WHERE i.collection_id IN ${under("SELECT ?")}
+       AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}
        AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
-     ORDER BY i.position, i.asset_id LIMIT 4`,
+     ORDER BY i.collection_id <> ?, i.position, i.asset_id LIMIT 4`,
   );
   // a folder of songs or sounds has no pictures: its card names a few of them instead
   const soundRows = db().prepare(
     `SELECT a.title FROM collection_items i JOIN assets a ON a.id = i.asset_id
      WHERE i.collection_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind = 'audio' ORDER BY i.position, i.asset_id LIMIT 3`,
   );
-  // the A-roll and B-roll folders list their roll: their count and pictures are the roll's
-  const rollCount = db().prepare(`SELECT COUNT(*) AS n FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}`);
+  // the A-roll and B-roll folders list their roll: their count and pictures are the roll's and their folders'
+  const rollCount = db().prepare(`SELECT COUNT(*) AS n FROM assets a WHERE a.library_id = ? AND ${IN_ROLL} AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}`);
   const rollPictures = db().prepare(
-    `SELECT a.current_version_id AS v FROM assets a WHERE a.library_id = ? AND a.roll = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}
+    `SELECT a.current_version_id AS v FROM assets a WHERE a.library_id = ? AND ${IN_ROLL} AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND NOT ${FINISHED}
        AND EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = a.current_version_id AND d.kind = 'thumb')
      ORDER BY a.created_at DESC, a.id LIMIT 4`,
   );
@@ -138,12 +153,12 @@ collectionApp.get("/:id/collections", async (c) => {
   return c.json({
     collections: rows.map((r) => {
       if (r.kind === "manual") {
-        const covers = thumbs(pictures.all(r.id) as { v: string }[]);
+        const covers = thumbs(pictures.all(r.id, r.id) as { v: string }[]);
         return toCollection(r, r.n, covers, covers.length ? undefined : (soundRows.all(r.id) as { title: string }[]).map((x) => x.title));
       }
       const roll = rollOf(r.query);
       if (!roll) return toCollection(r);
-      return toCollection(r, (rollCount.get(libraryId, roll) as { n: number }).n, thumbs(rollPictures.all(libraryId, roll) as { v: string }[]));
+      return toCollection(r, (rollCount.get(libraryId, roll, libraryId, roll) as { n: number }).n, thumbs(rollPictures.all(libraryId, roll, libraryId, roll) as { v: string }[]));
     }),
   });
 });
@@ -332,11 +347,11 @@ collectionApp.get("/:id/counts", (c) => {
   if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
   const r = db()
     .prepare(
-      `SELECT SUM(a.roll = 'a') AS a, SUM(a.roll = 'b') AS b, SUM(a.kind = 'image' AND NOT ${FINISHED}) AS image,
+      `SELECT SUM(${IN_ROLL} AND NOT ${FINISHED}) AS a, SUM(${IN_ROLL} AND NOT ${FINISHED}) AS b, SUM(a.kind = 'image' AND NOT ${FINISHED}) AS image,
               SUM(a.kind = 'video' AND NOT ${FINISHED}) AS video
        FROM assets a WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
-    .get(libraryId) as { a: number | null; b: number | null; image: number | null; video: number | null };
+    .get("a", libraryId, "a", "b", libraryId, "b", libraryId) as { a: number | null; b: number | null; image: number | null; video: number | null };
   return c.json({ a: r.a ?? 0, b: r.b ?? 0, image: r.image ?? 0, video: r.video ?? 0 });
 });
 

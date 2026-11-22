@@ -28,6 +28,19 @@ final class OneSignInTests: XCTestCase {
         XCTAssertFalse(try descriptor(#"{"serverId":"s1","label":"a","platform":"mac","protocol":1,"capabilities":{"account":true}}"#).takesAccount)
     }
 
+    func testTheServerKindIsOptionalAndSavedEntriesWithoutItStillDecode() throws {
+        XCTAssertEqual(try descriptor(#"{"serverId":"s1","label":"a","platform":"mac","protocol":1,"kind":"mac"}"#).kind, "mac")
+        XCTAssertNil(try descriptor(#"{"serverId":"s1","label":"a","platform":"mac","protocol":1}"#).kind)
+        // an entry saved before the field existed has no "kind" key
+        let home = URL(string: "https://a.example/")!
+        let saved = try JSONEncoder().encode(ServerEntry(serverId: "s1", label: "a", routes: [.paired(home)], home: home))
+        XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains("\"kind\""))
+        XCTAssertNil(try JSONDecoder().decode(ServerEntry.self, from: saved).kindName)
+        var cloud = try JSONDecoder().decode(ServerEntry.self, from: saved)
+        cloud.kind = "cloud"
+        XCTAssertEqual(cloud.kindName, "Creator Toolset Cloud")
+    }
+
     func testTheTicketIsForTheHostAndItsPort() {
         XCTAssertEqual(AccountServers.host(URL(string: "https://Studio.Example.com/")!), "studio.example.com")
         XCTAssertEqual(AccountServers.host(URL(string: "https://studio.example.com:8443")!), "studio.example.com:8443")

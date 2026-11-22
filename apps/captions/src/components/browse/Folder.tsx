@@ -32,6 +32,8 @@ export interface FolderProps {
   menu?: ReactNode;
   /** Its sign in place of the folder (a saved search's magnifier). */
   icon?: LucideIcon;
+  /** One line under the card's name (an automatic folder's rule). */
+  note?: string;
 }
 
 export interface FolderDrop {
@@ -169,6 +171,7 @@ export function FolderCard({ covers, lines, aspect = "video", ...p }: FolderProp
           <p className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">{p.name}</p>
           {p.meta !== undefined && <span className="text-xs tabular-nums text-zinc-500">{p.meta}</span>}
         </div>
+        {p.note && <p className="-mt-2 truncate px-3.5 pb-3 pl-9 text-xs text-zinc-500">{p.note}</p>}
       </Link>
     </FolderMenu>
   );

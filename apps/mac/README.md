@@ -77,7 +77,7 @@ address. The list is `servers` in UserDefaults, `[{id, name, url}]` for the adde
   This Mac starts the server here; switching away stops it, and the AI runner follows the window (one runner at a time).
 - **Add server:** an address (`https://tools.example.com`; a bare name gets `https://`; http only for this Mac's
   loopback, because the session cookie goes by hand) or a one-time sign-in link from a server you are signed in to
-  elsewhere (`…/api/auth/link/<code>`): the window opens the server and loads the link, which signs it in. Otherwise
+  elsewhere (`…/api/auth/link/<code>`): the window opens the server and loads the link's page, which names the account and signs in on its Sign in press. Otherwise
   sign in on the server's own page. A server already in the list is opened, not added twice. **Rename** and
   **Remove** are in This Mac → Servers.
 - **Cookies:** WebKit keeps one store, keyed by host, so each server's sign-in stays its own. Two servers on the same
@@ -145,7 +145,7 @@ and opens `http://127.0.0.1:43128` once `/api/health` answers (polled every 200 
 The optional account sign-in is not part of this: the server on your Mac works without one.
 
 The app's window is the way in: it has no "open in browser". The server keeps one-time sign-in links
-(`POST /api/auth/link`, `GET /api/auth/link/<code>`: one use, 60 s, memory only, never logged) for pairing a phone
+(`POST /api/auth/link`, then `GET /api/auth/link/<code>` shows the page and `POST` on it signs in: one use, 60 s, memory only, never logged) for pairing a phone
 later; nothing in the app uses them yet.
 
 ### Plug-ins

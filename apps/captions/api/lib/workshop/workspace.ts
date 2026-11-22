@@ -1,11 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "../env";
 import type { SessionUser } from "../../users";
 import type { Project } from "./types";
 import { okId } from "./validate";
 import { sharedWith } from "../workspaces";
+import { writeJsonAtomic } from "../write-json";
 
 /**
  * Account-level current project: the brand profile Analyzer and Workshop
@@ -71,12 +72,6 @@ async function readJson<T>(file: string): Promise<T | null> {
   }
 }
 
-async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-  await writeFile(tmp, JSON.stringify(data));
-  await rename(tmp, file);
-}
 
 export async function readUserMarker(username: string): Promise<UserMarker | null> {
   return readJson<UserMarker>(markerPath(username));

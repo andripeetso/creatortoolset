@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { env, hostedMode } from "./env";
+import { env, hasTeam } from "./env";
 import type { SignInCode } from "../users";
 
 /**
@@ -116,17 +116,23 @@ export const stepFor = (token: unknown) => {
 export const spendStep = (token: string) => void steps.delete(token);
 
 // the lock: wrong tries by account and address ("?<typed name>" for a name no account has, so the answer is the same
-// either way), and by account alone for the delay
+// either way), and by account alone for the delay. The account's own count locks every address once ACCOUNT_TRIES
+// wrong tries land in one hour, from any mix of addresses: each later wrong try locks it again for ACCOUNT_WAIT.
 const FREE = 5;
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const ACCOUNT_TRIES = 30;
+const ACCOUNT_WAIT = 15 * 60_000;
 const locks = new Map<string, { n: number; at: number; until: number }>();
-const slow = new Map<string, { n: number; at: number }>();
+// n: wrong tries; at: the hour the count started; until: the lock on every address (0 = none)
+const slow = new Map<string, { n: number; at: number; until: number }>();
 const pair = (account: string, address: string) => `${account}\n${address}`;
 
 /** Ms until this account may be tried again from this address; 0 = now. */
 export function waitFor(account: string, address: string, now = Date.now()): number {
   const t = locks.get(pair(account, address));
-  return t && now - t.at < DAY ? Math.max(0, t.until - now) : 0;
+  const own = t && now - t.at < DAY ? Math.max(0, t.until - now) : 0;
+  return Math.max(own, Math.max(0, (slow.get(account)?.until ?? 0) - now));
 }
 
 /** Whether some address is locked out of this account (Settings → Admin). */
@@ -141,9 +147,10 @@ export function wrongTry(account: string, address: string, now = Date.now()): nu
   locks.delete(k); // set again below, so the oldest stay first
   locks.set(k, { n, at: now, until: n >= FREE ? now + Math.min(60, 2 ** (n - FREE)) * 60_000 : 0 });
   const s = slow.get(account);
-  const all = (s && now - s.at < DAY ? s.n : 0) + 1;
+  const fresh = !s || now - s.at >= HOUR;
+  const all = (fresh ? 0 : s.n) + 1;
   slow.delete(account);
-  slow.set(account, { n: all, at: now });
+  slow.set(account, { n: all, at: fresh ? now : s.at, until: all >= ACCOUNT_TRIES ? now + ACCOUNT_WAIT : 0 });
   // ponytail: past 50,000 entries the oldest goes first; a lock only holds back the address that guessed, so losing one frees only it
   for (const m of [locks, slow]) if (m.size > 50_000) m.delete(m.keys().next().value!);
   return all;
@@ -166,7 +173,7 @@ let required = (() => {
   }
 })();
 
-export const codeRequired = () => hostedMode() && required;
+export const codeRequired = () => hasTeam() && required;
 
 export function setCodeRequired(on: boolean): void {
   required = on;

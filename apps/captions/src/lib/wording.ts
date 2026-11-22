@@ -36,7 +36,6 @@ export const lowDiskOn = (computer: string) => `${computer} is short of disk spa
 export const noLooksOn = (computer: string) => `${computer}'s app doesn't make shot descriptions`;
 export const notOnComputers = WORDS.notOnComputers;
 export const fileUnchecked = WORDS.fileUnchecked;
-export const behind = (computer: string) => `${computer} has other library work to do first`;
 export const aheadOf = (computer: string, peer: string) => `${peer} takes these before ${computer}`;
 export const keptFor = (computer: string) => `Load balancing gives these to ${computer}`;
 export const notStarted = (computer: string) => `${computer} hasn't started on these`;

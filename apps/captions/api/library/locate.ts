@@ -11,6 +11,7 @@ import { blobs, libraryDb } from "./db";
 import { confirmPlaces } from "./places";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
+import { isId } from "../lib/ids";
 
 /**
  * Each version's quick fingerprint (asset_versions.quick: size + first and last MiB, work/files.ts quickPrint), and
@@ -172,7 +173,6 @@ export async function pointSource(versionId: string, sourceKey: string, file: st
 }
 
 const isPath = (p: unknown): p is string => typeof p === "string" && p.startsWith("/") && p.length <= 2048 && !p.split("/").includes("..");
-const isId = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 100;
 
 /** The body of POST …/locate checked, or what is wrong with it. */
 export function parseLocate(body: unknown): { asked: string; gone: string[]; files: Found[]; device?: string } | string {

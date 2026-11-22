@@ -13,7 +13,7 @@ process.env.APP_SECRET = "sign-in-code-test-secret";
 process.env.CT_LOCAL = "1";
 delete process.env.CT_MODE;
 
-const { base32, codeAt, stepOf } = await import("./lib/sign-in-code");
+const { base32, codeAt, stepOf, waitFor, wrongTry } = await import("./lib/sign-in-code");
 const { createUser, findUser } = await import("./users");
 const app = (await import("./boot")).default;
 
@@ -178,8 +178,8 @@ describe("signing in with the code on", () => {
 
   it("a one-time link from a signed-in browser carries its session to a phone", async () => {
     vi.stubEnv("HOST", "127.0.0.1");
-    const minted = (await (await req("POST", "/api/auth/link", { address: LAN, cookie: lanCookie })).json()) as { path: string };
-    const opened = await req("GET", minted.path, { address: LAN });
+    const minted = (await (await req("POST", "/api/auth/link", { address: LAN, cookie: lanCookie, body: {} })).json()) as { path: string };
+    const opened = await req("POST", minted.path, { address: LAN, body: {} });
     expect(opened.status).toBe(302);
     expect(await authed(cookieOf(opened))).toBe(true);
     vi.unstubAllEnvs();
@@ -290,6 +290,15 @@ describe("the lock on wrong tries", { timeout: 60_000 }, () => {
       expect(ok.value.status).toBe(200);
       expect(ok.ms).toBeLessThan(1000);
     }
+  });
+
+  it("thirty wrong tries in an hour from any addresses lock the account for 15 minutes on every address", () => {
+    const t = clock;
+    for (let i = 1; i <= 29; i++) wrongTry("quinn", `198.51.100.${i}`, t);
+    expect(waitFor("quinn", LAN, t)).toBe(0);
+    wrongTry("quinn", "198.51.100.200", t);
+    expect(waitFor("quinn", LAN, t)).toBe(15 * 60_000);
+    expect(waitFor("quinn", LAN, t + 15 * 60_000)).toBe(0);
   });
 
   it("a name no account has is held the same way, so the answer says nothing about which names exist", async () => {

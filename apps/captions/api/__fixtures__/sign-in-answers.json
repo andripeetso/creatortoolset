@@ -5,7 +5,7 @@
       "required": true,
       "authed": false,
       "user": null,
-      "hosted": false,
+      "kind": "mac",
       "viewedBy": null,
       "mustLink": null
     },
@@ -83,7 +83,7 @@
         "logins": 1,
         "picture": null
       },
-      "hosted": false,
+      "kind": "mac",
       "viewedBy": null,
       "mustLink": null
     },
@@ -129,7 +129,7 @@
       "required": true,
       "authed": false,
       "user": null,
-      "hosted": false,
+      "kind": "mac",
       "viewedBy": null,
       "mustLink": null
     },
@@ -162,12 +162,16 @@
     "expiresAt": "number"
   },
   "link, opened on a phone": {
+    "status": 200,
+    "cookie": null,
+    "referrer": "no-referrer"
+  },
+  "link, pressed on a phone": {
     "status": 302,
     "body": "",
     "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
     "location": "/",
-    "cacheControl": "no-store",
-    "referrer": "no-referrer"
+    "cacheControl": "no-store"
   },
   "link, opened again": {
     "status": 410,
@@ -206,8 +210,7 @@
         "off": [],
         "read": [],
         "logins": 1,
-        "picture": null,
-        "member": true
+        "picture": null
       }
     },
     "cookie": "cap_auth=<signed>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",
@@ -235,8 +238,7 @@
         "off": [],
         "read": [],
         "logins": 2,
-        "picture": null,
-        "member": true
+        "picture": null
       }
     },
     "cookie": "cap_auth=<signed>.<app>; HttpOnly; Path=/; Max-Age=15552000; SameSite=Lax",

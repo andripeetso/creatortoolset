@@ -53,6 +53,7 @@ const point = (type: string, clientX: number, pointerType = "mouse") =>
 function show(a: AssetCard) {
   act(() => root.render(<AssetTile asset={a} onOpen={() => {}} />));
   picture().getBoundingClientRect = () => ({ left: 100, width: 200, top: 0, height: 112, right: 300, bottom: 112, x: 100, y: 0, toJSON() {} });
+  act(() => void picture().dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }))); // the strip loads on the first hover
 }
 
 describe("a card's hover scrub", () => {
@@ -104,6 +105,7 @@ describe("a card's hover scrub", () => {
     const tile = host.querySelector("button")!;
     expect(tile.hasAttribute("title")).toBe(false);
     tile.getBoundingClientRect = () => ({ left: 0, width: 150, top: 0, height: 200, right: 150, bottom: 200, x: 0, y: 0, toJSON() {} });
+    act(() => void tile.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" })));
     act(() => void tile.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 0, pointerType: "mouse" })));
     expect(scrub()!.style.backgroundSize).toBe(`${SPRITE_FRAMES * 100}% auto`);
   });

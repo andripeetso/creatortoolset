@@ -21,13 +21,14 @@ import { ensureProjectOriginal, projectOriginalExists, readProjectClip } from ".
 import { saveToLibrary } from "./library/routes";
 import { addToFinals, belowHd, type FinalsOutcome } from "./library/finals";
 import { ensureLibrary } from "./library/access";
-import { type SessionUser, bumpUsage } from "./users";
+import { type SessionUser, bumpUsage, canSee } from "./users";
 import type { ExportStatus } from "../contracts/exports";
 import { type Moves, canMove, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
 import { currentWorkspaceId, inCurrentWorkspace } from "./lib/workspace-scope";
 import { dropTask, keep, startTask, taskFor, taskWaitLine } from "./work/tasks";
 import type { ExportInput } from "./work/tasks/export";
+import { okId } from "./lib/ids";
 
 /** The computer task kind that renders an export (work/tasks/export.ts). */
 const EXPORT_TASK = "export";
@@ -46,7 +47,6 @@ export const exportsApp = new Hono<{ Variables: AuthVars }>();
 const EXPORTS_DIR = path.join(env.dataDir, "exports");
 const MAX_CONCURRENT = Math.max(1, Number(process.env.EXPORT_CONCURRENCY || 1));
 
-const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const jobDir = (id: string) => path.join(EXPORTS_DIR, id);
 const outPath = (job: Job) => path.join(jobDir(job.id), `out.${job.ext}`);
 const projectOriginal = (id: string, clipId?: string) =>
@@ -106,8 +106,6 @@ interface Job {
   params: JobParams;
 }
 
-const canSee = (job: Job, user: SessionUser) =>
-  user.role === "admin" || job.owner === user.username;
 
 /** Client-facing shape (params stay server-side, but for the project a render was made from). */
 function publicJob(j: Job): Omit<Job, "params"> & { projectId?: string } {

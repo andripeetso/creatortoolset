@@ -8,7 +8,7 @@ import path from "node:path";
 export const CODE = /\.(ts|tsx)$/;
 const SKIP = /\.(test|spec|gen)\.|\.d\.ts$/;
 // vite.config.ts and vitest.config.ts name these: the app's own folders, never packages
-const ALIASES = new Set(["@contracts", "@db", "@assets", "db", "ort-dist"]);
+const ALIASES = new Set(["@contracts", "@assets", "ort-dist"]);
 const PACKAGE = /^((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)(\/[A-Za-z0-9._/-]+)?$/;
 
 const read = (file) => readFileSync(file, "utf8");
@@ -63,7 +63,7 @@ export function hostLists(root) {
   const pkg = JSON.parse(read(path.join(root, "package.json")));
   const installed = new Set(Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }));
   return {
-    server: side(root, ["api", "contracts", "db"], new Set(["api/boot", "api/connect/cli-bin"]), installed),
+    server: side(root, ["api", "contracts"], new Set(["api/boot", "api/connect/cli-bin"]), installed),
     web: side(root, ["src", "contracts"], htmlEntries(root), installed, ["react/jsx-runtime"]),
   };
 }

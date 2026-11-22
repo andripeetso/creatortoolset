@@ -1,9 +1,12 @@
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { documentText, markupToText, privateAddress, webPageText } from "./source-files";
+import { documentText, markupToText, pinnedFetch, privateAddress, webPageText } from "./source-files";
 
 function zip(files: Record<string, string>): Buffer {
   const dir = mkdtempSync(path.join(tmpdir(), "zip-"));
@@ -41,6 +44,24 @@ describe("knowledge files and links", () => {
     expect(got.text).toContain("## Price");
     expect(got.text).not.toContain("menu");
     expect(markupToText("<p>a&nbsp;b &#8212; c</p>")).toBe("a b — c");
+  });
+
+  it("treats every IPv4-mapped or IPv4-embedding IPv6 address as private, hex or dotted", async () => {
+    for (const ip of ["::ffff:169.254.169.254", "::ffff:a9fe:a9fe", "::ffff:0:0", "::ffff:8.8.8.8", "64:ff9b::1.1.1.1", "::8.8.8.8", "fec0::1", "ff02::1"]) expect(privateAddress(ip), ip).toBe(true);
+    expect(privateAddress("2606:4700:4700::1111")).toBe(false);
+    await expect(webPageText("http://[::ffff:169.254.169.254]/")).rejects.toThrow(/public internet/);
+  });
+
+  it("connects to the address it was given, never to what the name resolves to now", async () => {
+    const server = createServer((_req, res) => res.end("pinned")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const res = await pinnedFetch(new URL(`http://pinned.invalid:${port}/`), { headers: {}, signal: AbortSignal.timeout(5_000) }, ["127.0.0.1"]);
+      expect(await res.text()).toBe("pinned");
+    } finally {
+      server.close();
+    }
   });
 
   it("never reads a social platform's web pages, not even after a redirect", async () => {

@@ -80,5 +80,4 @@ caption and Workshop writing.
 - `src/`: the React app. `src/App.tsx` lists the routes.
 - `api/`: the Hono server. `api/lib/` holds the logic shared by the routes.
 - `contracts/`: types shared by the client and the server.
-- `db/`: schema and seed data for the optional database tooling (not needed to run the tools).
 - `public/`: static files (fonts, icons, the web app manifest, the service worker).

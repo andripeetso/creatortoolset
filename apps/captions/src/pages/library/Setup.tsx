@@ -256,14 +256,13 @@ function FolderRow({ title, tip, path, made, empty = LIBRARY_WORDS.notSet, tight
 }
 
 /**
- * The setup. `watchAllowed`: the server reads this computer's folders (This Mac). `onDone` gets the saved library.
+ * The setup. `onDone` gets the saved library.
  * `inline`: the Library page itself until the library is set up, with nothing to close it.
  */
-export function LibrarySetup({ library, watchAllowed, inline = false, onDone, onClose }: { library: LibrarySummary; watchAllowed: boolean; inline?: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
-  const hosted = useAuth((s) => s.hosted);
+export function LibrarySetup({ library, inline = false, onDone, onClose }: { library: LibrarySummary; inline?: boolean; onDone: (l: LibrarySummary) => void; onClose: () => void }) {
   const project = useWorkspace((s) => currentProject(s));
   const workspace = { id: project?.id ?? "", name: project?.name ?? "Media Library" };
-  const kind: Kind = hosted ? "cloud" : watchAllowed ? "mac" : "server";
+  const kind: Kind = useAuth((s) => s.kind);
   // the server's own name, as the member page's Server row shows it (api/work/server-work-routes.ts serverNameOf)
   const [serverName, setServerName] = useState<string | null>(null);
   useEffect(() => {

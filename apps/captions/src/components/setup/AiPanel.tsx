@@ -322,7 +322,7 @@ export function nextStep(state: ConnectResult["state"], did: { installed: boolea
 export function AiPanel({ onConnectedChange }: { onConnectedChange?: (on: boolean) => void }) {
   const user = useAuth((s) => s.me?.username ?? null);
   // what the server decides the rows by (api/setup.ts ownComputer), known here before it answers
-  const own = useAuth((s) => !s.hosted && s.me?.role === "admin");
+  const own = useAuth((s) => s.kind !== "cloud" && s.me?.role === "admin");
   // the list and the answering AI open with what they showed last (the same saved copies Settings reads)
   const [view, setView] = useState<LocalAiView | null>(() => readCached<LocalAiView>(user, LOCAL_AI));
   const [results, setResults] = useState<Results>({});

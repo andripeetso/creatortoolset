@@ -8,7 +8,6 @@ import { WORK_V } from "../../contracts/work";
 import {
   addComputer,
   aheadOf,
-  behind,
   fileUnchecked,
   keptFor,
   lowDiskOn,
@@ -1166,7 +1165,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     });
     expect(aheadOf("Mac Studio", "Linux box")).toBe("Linux box takes these before Mac Studio");
 
-    // 5) The job outside the window (100) -> "Mac Studio has other library work to do first"
+    // 5) The job outside the window (100) -> queued: it waits behind the Mac's other work, nothing to change
     await revokeDevice(linux.device.id);
     libraryDb().exec("DELETE FROM jobs;");
     const windowJobs: JobRow[] = [];
@@ -1179,13 +1178,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     freeSince.set(mac.device.id, Date.now() - STUCK_MS);
     notePoll(mac.device.id, Date.now());
     const snapBehind = status("lib_tiny", Date.now() + 2 * FRESH_MS);
-    expect(snapBehind.byJob.get(outsideJob.id)).toEqual({
-      wait: "stuck",
-      reason: behind("Mac Studio"),
-      device: mac.device.id,
-      actor: "tiny",
-    });
-    expect(behind("Mac Studio")).toBe("Mac Studio has other library work to do first");
+    expect(snapBehind.byJob.get(outsideJob.id)).toEqual({ wait: "queued", device: mac.device.id, actor: "tiny" });
 
     // 6) A job skipped while the Mac keeps taking newer ones -> stuck after 10 min even when freeSince(Mac) < 10 min
     libraryDb().exec("DELETE FROM jobs;");

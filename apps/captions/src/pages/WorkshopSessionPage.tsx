@@ -55,6 +55,8 @@ import {
   patchSession,
   respondProposal,
   revertDocument,
+  listCaptionTakes,
+  restoreCaptionTake,
   keepDocument,
   readComposerContext,
   saveComposerContext,
@@ -92,7 +94,7 @@ import {
   statusSteps,
 } from "@/lib/workshop";
 import { exportFilename } from "@/lib/workshop-markdown";
-import { enterFocus, useDeskLayout } from "@/lib/workshop-desk";
+import { enterFocus, useDeskLayout, visibleIslands } from "@/lib/workshop-desk";
 import { useChatShown } from "@/lib/chat-mode";
 import { mineIndex } from "@/lib/mine";
 import { SharePopover } from "@/components/workshop/SharePopover";
@@ -392,6 +394,17 @@ export default function WorkshopSessionPage() {
       window.removeEventListener("focus", look);
     };
   }, [sessionId, latestReply?.id, latestReply?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A reply this window asked for that fails while the Chat panel is hidden (beside the assistant, Writing only)
+  // shows its error on the page, or a button like Rewrite looks like it did nothing.
+  const sentReplies = useRef(new Set<string>());
+  const chatHidden = !visibleIslands(desk).includes("cowork");
+  useEffect(() => {
+    for (const m of messages) {
+      if (!sentReplies.current.has(m.id) || m.status === "thinking") continue;
+      sentReplies.current.delete(m.id);
+      if (m.status === "error" && chatHidden) setError(m.text || "Could not write the reply");
+    }
+  }, [messages, chatHidden]);
   // a turn that made a new piece opens it when it ends
   const running = useRef<string | null>(null);
   useEffect(() => {
@@ -624,6 +637,15 @@ export default function WorkshopSessionPage() {
       fail(e);
     }
   };
+  const bringBackCaption = async (docId: string, versionId: string) => {
+    if (!session) return;
+    await flushBlocks();
+    try {
+      replaceDoc(await restoreCaptionTake(session.id, docId, versionId));
+    } catch (e) {
+      fail(e);
+    }
+  };
   const setStatus = (status: SessionStatus) => {
     if (!session) return;
     const id = session.id;
@@ -738,6 +760,7 @@ export default function WorkshopSessionPage() {
         images: opts?.images,
         files: opts?.files,
       });
+      sentReplies.current.add(reply.id);
       setMessages((ms) => [...ms, ask, reply]);
       patchSummary(session.id, { working: true, ready: false });
       if (wordsOnly && opts?.deep !== false && !notMine) toggleNotMine();
@@ -772,8 +795,11 @@ export default function WorkshopSessionPage() {
       }
     }
   };
+  // Write/Rewrite stay off from the click until the reply runs, so a double-click sends once
+  const [captionSending, setCaptionSending] = useState(false);
   const generateCaption = (another: boolean) => {
-    void send(another ? ANOTHER_POST_DESCRIPTION : WRITE_POST_DESCRIPTION, { deep: false, keepContext: true });
+    setCaptionSending(true);
+    void send(another ? ANOTHER_POST_DESCRIPTION : WRITE_POST_DESCRIPTION, { deep: false, keepContext: true }).finally(() => setCaptionSending(false));
   };
   // Retry sends the question once more and removes the failed pair in the same server write, so a failed retry loses nothing.
   const retry = async (m: ChatMessage) => {
@@ -1251,12 +1277,17 @@ export default function WorkshopSessionPage() {
                       key={activeDoc.id}
                       doc={activeDoc}
                       locked={!fresh || readOnly}
-                      writing={thinking}
+                      writing={thinking || captionSending}
                       quiet={!thinking}
                       saving={docSaving}
                       aiAvailable={aiAvailable}
                       onChange={(b, c) => onBlocks(activeDoc.id, b, c)}
                       onGenerateCaption={readOnly ? undefined : generateCaption}
+                      captionHistory={
+                        readOnly
+                          ? undefined
+                          : { load: () => listCaptionTakes(session.id, activeDoc.id), onUse: (versionId) => bringBackCaption(activeDoc.id, versionId) }
+                      }
                       finalsVersions={finalsTabs?.docId === activeDoc.id && finalsTabs.versions.length ? finalsTabs.versions : undefined}
                       onVersionCaption={readOnly ? undefined : saveVersionCaption}
                       onCarouselType={readOnly ? undefined : (id) => void patchSettings({ carouselType: id })}

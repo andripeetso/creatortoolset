@@ -2,6 +2,7 @@
 // with its plug-ins' pages) sends AI jobs; the Mac runs them. With the app's own programs and their own setup, nothing is
 // asked. Anything past that is this Mac's yes, given once in its own alert and kept here, never the server's:
 // - a program the server names (a local ACP command, a manual setup's program, extra launch arguments),
+// - an address the server names for an AI (its origin), and the Keychain settings it asks to pass to that program,
 // - a settings folder the server names (a Claude, Codex or Gemini home: its hooks and settings can start programs),
 // - who answers the assistant's questions before it runs a command or changes a file: the server's chat only once this
 //   Mac said so for that server; otherwise each question is asked here.
@@ -20,11 +21,14 @@ func launchNeeds(_ req: RelayRequest, _ opts: RelayOptions, resolve: (String) ->
         needs.append(ConsentItem(kind: .program, text: ([program] + acp.args).joined(separator: " ")))
     }
     if !opts.home.isEmpty { needs.append(ConsentItem(kind: .folder, text: opts.home)) }
+    // a plug-in instance's address, and its settings from this Mac's Keychain, go to the program the server names
+    if !opts.baseUrl.isEmpty, let origin = endpointOrigin(opts.baseUrl) { needs.append(ConsentItem(kind: .endpoint, text: origin)) }
+    if !opts.keychain.isEmpty { needs.append(ConsentItem(kind: .environment, text: opts.keychain.joined(separator: ", "))) }
     return needs
 }
 
 struct ConsentItem: Equatable, Hashable {
-    enum Kind: String { case program, folder }
+    enum Kind: String { case program, folder, endpoint, environment }
     let kind: Kind
     /// The exact program and arguments, or the folder: what the alert shows and what the yes is kept for.
     let text: String
@@ -47,6 +51,14 @@ enum ConsentWords {
     static func folder(_ host: String, _ path: String) -> (String, String) {
         ("Let \(host) use this settings folder on this Mac?",
          "\(path)\n\nA settings folder can make the AI start programs. Allow it only if you set it up yourself, in Settings → Providers.")
+    }
+    static func endpoint(_ host: String, _ origin: String) -> (String, String) {
+        ("Let \(host) send AI requests to another address?",
+         "\(origin)\n\nThe requests and their content go to this address, not to the AI's own. Allow it only if you set it up yourself, in Settings → Providers.")
+    }
+    static func environment(_ host: String, _ names: String) -> (String, String) {
+        ("Let \(host) pass settings from this Mac's Keychain to the AI?",
+         "\(names)\n\nThe values are kept on this Mac and given to the AI program it starts. Allow it only if you set it up yourself, in Settings → Providers.")
     }
     static func askTrust(_ host: String) -> (String, String) {
         ("Let \(host) answer the assistant's questions?",
@@ -116,7 +128,13 @@ final class Consent {
         for item in needs where !kept.contains(item.key) {
             guard isShown else { throw refused(item, when: "\(host) is open in Creator Toolset") }
             guard !isSilenced, let line = alertLine(item.text) else { throw refused(item) }
-            let words = item.kind == .program ? ConsentWords.program(host, line) : ConsentWords.folder(host, line)
+            let words: (String, String)
+            switch item.kind {
+            case .program: words = ConsentWords.program(host, line)
+            case .folder: words = ConsentWords.folder(host, line)
+            case .endpoint: words = ConsentWords.endpoint(host, line)
+            case .environment: words = ConsentWords.environment(host, line)
+            }
             guard show(words, yes: "Allow", no: "Don't Allow") else {
                 silence()
                 throw refused(item)
@@ -126,9 +144,14 @@ final class Consent {
     }
 
     private func refused(_ item: ConsentItem, when: String = "it asks") -> RelayError {
-        RelayError(message: item.kind == .program
-            ? "This Mac did not allow \(host) to start that program. Allow it on the Mac when \(when), or pick another AI in Settings → Providers."
-            : "This Mac did not allow \(host) to use that settings folder. Allow it on the Mac when \(when), or clear the folder in Settings → Providers.")
+        let (what, fix): (String, String)
+        switch item.kind {
+        case .program: (what, fix) = ("to start that program", "pick another AI")
+        case .folder: (what, fix) = ("to use that settings folder", "clear the folder")
+        case .endpoint: (what, fix) = ("to send AI requests to that address", "change the AI")
+        case .environment: (what, fix) = ("to pass those settings from this Mac's Keychain", "change the AI")
+        }
+        return RelayError(message: "This Mac did not allow \(host) \(what). Allow it on the Mac when \(when), or \(fix) in Settings → Providers.")
     }
 
     /// Whether the server's chat answers the assistant's questions: asked on this Mac the first time, then kept. A server

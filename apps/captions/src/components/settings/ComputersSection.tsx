@@ -47,7 +47,7 @@ const hardware = (d: Listed): string | null => {
  */
 export function ComputersSection() {
   const me = useAuth((s) => s.me);
-  const hosted = useAuth((s) => s.hosted);
+  const cloud = useAuth((s) => s.kind === "cloud");
   const [params, setParams] = useSearchParams();
   const [adding, setAdding] = useState(false);
   const [phoning, setPhoning] = useState(false);
@@ -81,7 +81,7 @@ export function ComputersSection() {
   );
   const phones = (
     <>
-      {!hosted && <ConnectionsCard inMac={inMac} mac={bridge} />}
+      {!cloud && <ConnectionsCard inMac={inMac} mac={bridge} />}
       <PhonesSection create={phoning} onCreateChange={setPhoning} />
     </>
   );

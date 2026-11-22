@@ -16,17 +16,17 @@ export const SETTINGS_PAGE_IDS = [
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
 
-/** What decides which sections show: the server (hosted or not), the person's role, and whether this is the Mac app. */
+/** What decides which sections show: the server (with a team or not), the person's role, and whether this is the Mac app. */
 export interface NavContext {
-  hosted: boolean;
+  team: boolean;
   admin: boolean;
   mac: boolean;
 }
 
 interface BuiltinEntry extends SettingsEntry {
   id: SettingsPageId;
-  /** Only on a hosted server (team and admin). */
-  hostedOnly?: boolean;
+  /** Only on a server with a team (a Server or Cloud). */
+  teamOnly?: boolean;
   /** Only in the Mac app, where this computer's own settings are (servers). */
   macOnly?: boolean;
   /** False: routable but not in the sidebar (account: the account button is its entry). */
@@ -60,7 +60,7 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "automations", title: "Scheduled tasks", icon: CalendarClock, group: "Workspace" },
   { id: "memory", title: "Memory", icon: Bookmark, group: "Workspace" },
   { id: "policies", title: "Workspace policies", icon: Settings2, group: "Server", adminOnly: true },
-  { id: "team", title: "Team", icon: Users, group: "Server", hostedOnly: true },
+  { id: "team", title: "Team", icon: Users, group: "Server", teamOnly: true },
   { id: "storage", title: "Storage", icon: HardDrive, group: "Server" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Server" },
   { id: "account", title: "Account", icon: UserRound, listed: false },
@@ -85,10 +85,10 @@ export function sectionsFor(ctx: NavContext, plugins: PluginList = webPlugins): 
   // a plug-in that keeps the server's folders (`replaces.storage`) has only admins edit them: a member has no Folders page
   const pluginFolders = plugins.some((p) => !!p.replaces?.storage);
   const allowed = BUILTIN.filter(
-    (s) => (ctx.hosted || !s.hostedOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly) && (s.id !== "folders" || ctx.admin || !pluginFolders),
+    (s) => (ctx.team || !s.teamOnly) && (ctx.mac || !s.macOnly) && (ctx.admin || !s.adminOnly) && (s.id !== "folders" || ctx.admin || !pluginFolders),
   );
-  // a plug-in's server-wide page (adminTab, was an Admin tab): admins on a hosted server only, as Admin was
-  const shown = settingsWithPlugins(allowed, plugins).filter((s) => (ctx.hosted && ctx.admin) || !("adminTab" in s && s.adminTab));
+  // a plug-in's server-wide page (adminTab, was an Admin tab): admins on a server with a team only, as Admin was
+  const shown = settingsWithPlugins(allowed, plugins).filter((s) => (ctx.team && ctx.admin) || !("adminTab" in s && s.adminTab));
   return visibleSettings(shown, { role: ctx.admin ? "admin" : "user" });
 }
 

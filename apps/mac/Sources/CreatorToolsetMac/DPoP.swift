@@ -1,4 +1,5 @@
 import CryptoKit
+import CreatorToolsetShared
 import Foundation
 import Security
 
@@ -57,25 +58,14 @@ enum KeyItem {
     static let service = Account.vault, account = "dpop-key"
 
     static func query(dataProtection: Bool) -> [String: Any] {
-        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-        if dataProtection { q[kSecUseDataProtectionKeychain as String] = true }
-        return q
+        KeychainItem.query(service: service, account: account, dataProtection: dataProtection)
     }
 
-    /// Whether the data-protection Keychain can be used: only a write or delete there says no (errSecMissingEntitlement).
-    static var protected: Bool {
-        var q = query(dataProtection: true)
-        q[kSecAttrAccount as String] = "probe"
-        return SecItemDelete(q as CFDictionary) != errSecMissingEntitlement
-    }
+    /// Whether the data-protection Keychain can be used (KeychainItem.dataProtectionAvailable).
+    static var protected: Bool { KeychainItem.dataProtectionAvailable(service: service) }
 
     static func read() -> String? {
-        var q = query(dataProtection: protected)
-        q[kSecReturnData as String] = true
-        q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        KeychainItem.read(service: service, account: account, dataProtection: protected).map { String(decoding: $0, as: UTF8.self) }
     }
 
     /// The new item: readable after the first unlock, on this device only.
@@ -88,7 +78,7 @@ enum KeyItem {
 
     static func save(_ value: String) -> Bool {
         let dp = protected
-        SecItemDelete(query(dataProtection: dp) as CFDictionary)
+        KeychainItem.delete(service: service, account: account, dataProtection: dp)
         return SecItemAdd(adding(value, dataProtection: dp) as CFDictionary, nil) == errSecSuccess
     }
 

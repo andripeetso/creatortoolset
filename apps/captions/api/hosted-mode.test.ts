@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Local mode (the default, one person's Mac): no CT_MODE, no APP_SECRET. The hosted-only routes must not exist.
+// This Mac (CT_SERVER=mac), no APP_SECRET: the team-only routes must not exist.
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "hosted-local-"));
 delete process.env.CT_MODE;
+process.env.CT_SERVER = "mac";
 delete process.env.APP_SECRET;
 
 const { default: app } = await import("./boot");
@@ -13,7 +14,7 @@ const { default: app } = await import("./boot");
 const HOSTED_ROUTES = ["/api/admin", "/api/workspace", "/api/auth/invite"];
 const mounted = (prefix: string) => app.routes.some((r) => r.path === prefix || r.path.startsWith(prefix + "/"));
 
-describe("local mode", () => {
+describe("This Mac", () => {
   it("mounts no admin, team or invite routes", () => {
     for (const prefix of HOSTED_ROUTES) expect(mounted(prefix), prefix).toBe(false);
   });

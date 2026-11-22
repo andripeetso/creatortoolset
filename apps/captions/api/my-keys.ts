@@ -4,8 +4,10 @@ import { Hono } from "hono";
 import type { AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { findUser, LOCAL_USER, USERNAME_RE, type SessionUser } from "./users";
-import { serverKeyFrom } from "./service-keys";
+import { serverKeyFrom, teamUseOn } from "./service-keys";
 import { localModelApp } from "./local-model";
+import { budgetLeft, teamRefusal, workspaceOf } from "./lib/workspaces";
+import { JOBS, type JobId } from "../contracts/providers";
 import { MY_KEYS, type MyKeyEnv, type MyKeyView } from "../contracts/service-keys";
 
 /**
@@ -66,14 +68,44 @@ export const addKeyMessage = (name: MyKeyEnv) => `Add your ${nameOf(name)} key i
 /** A platform admin, or the solo install's own account (APP_SECRET unset): the server's keys are theirs. */
 export const isAdminActor = (name: string) => findUser(name)?.role === "admin" || (!env.appSecret && name === LOCAL_USER.username);
 
-/** The server's key (the .env's, or the one pasted in Admin → Server keys) that serves this actor. Admins only; "" otherwise. */
+/**
+ * The server's key (the .env's, or the one pasted in Server keys) that serves this actor: an admin, or a member of an
+ * admin's team while the Team use switch is on; "" otherwise.
+ */
 export function serverKeyOf(actor: Actor, name: MyKeyEnv): string {
   const username = (typeof actor === "string" ? actor : actor?.username) ?? "";
   const role = typeof actor === "object" && actor ? actor.role : undefined;
   if (!username || role === "visitor") return "";
   // the server's Anthropic key is never the admin's AI: their AI is their own provider or their own key (ai-complete.ts aiFor)
   if (name === "ANTHROPIC_API_KEY") return "";
-  return role === "admin" || isAdminActor(username) ? process.env[name] || "" : "";
+  return role === "admin" || isAdminActor(username) || hostsTeam(username) ? process.env[name] || "" : "";
+}
+
+/**
+ * Team use is on and this account is on a team an admin of this server owns. A customer's team on a hosted server never
+ * gets the server's keys: only its AI budget, which is billed (teamAiKey).
+ */
+function hostsTeam(username: string): boolean {
+  if (!teamUseOn()) return false;
+  const owner = workspaceOf(username)?.members.find((m) => m.role === "owner")?.username;
+  return !!owner && owner !== username && isAdminActor(owner);
+}
+
+/**
+ * The server's Anthropic key for one call of a member on a team budget (ai-complete.ts onBudget, its only caller): only
+ * while the admin's Team use switch is on (Settings → API keys → Server keys), the team allows the tool, and both the
+ * member's and the team's monthly budgets have money left; else what is missing. Its own AI never gets it.
+ */
+export function teamAiKey(username: string, job: JobId): KeyRoute {
+  const left = budgetLeft(username);
+  if (left === null) return { key: "", missing: "No team budget for this account" };
+  if (!teamUseOn()) return { key: "", missing: "Needs Team use on this server: ask the admin" };
+  const refused = teamRefusal(username, job);
+  if (refused === "tool") return { key: "", missing: `${JOBS.find((j) => j.id === job)?.label ?? job} can't use the server's key: ask the admin` };
+  if (left <= 0) return { key: "", missing: "Budget used up this month: ask the admin" };
+  if (refused === "team budget") return { key: "", missing: "Team budget used up this month: ask the admin" };
+  const key = process.env.ANTHROPIC_API_KEY || "";
+  return key ? { key } : { key: "", missing: "Needs an Anthropic key on this server: ask the admin" };
 }
 
 export function keyFor(actor: Actor, name: MyKeyEnv): KeyRoute {

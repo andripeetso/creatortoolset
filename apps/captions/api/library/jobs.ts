@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { move, type Moves } from "../../contracts/transition";
 
 /**
  * The library's job queue (tasks/media-library-plan.md, section 5): one row per (version, kind) in `jobs`.
@@ -23,12 +24,23 @@ const BACKOFF_MS = 60_000;
 /** The tables these functions run on: interpolated into SQL, so never a free string. */
 export type JobTable = "jobs" | "edit_jobs";
 
+export type JobState = "queued" | "running" | "done" | "failed" | "needs_key";
+
+/** The moves between job states, for both tables. Each UPDATE names the state it expects in its WHERE, and a JS-chosen state is checked here. */
+export const JOB_MOVES: Moves<JobState> = {
+  queued: ["running", "failed"], // claimed; stopped (stopEdit, failUnseen)
+  running: ["done", "queued", "failed", "needs_key"], // finished, tried again, lease ran out, parked, failed for good
+  done: ["queued"], // queued again (enqueueJob's `again`)
+  failed: ["queued", "done"], // Retry; done when the output is there already (enqueueJob)
+  needs_key: ["queued", "done", "failed", "running"], // queued again, taken by the Mac (mac-look), failed once unseen
+};
+
 export interface JobRow {
   id: number;
   library_id: string;
   version_id: string | null;
   kind: string;
-  state: "queued" | "running" | "done" | "failed" | "needs_key";
+  state: JobState;
   attempts: number;
   run_after: number;
   lease_until: number | null;
@@ -130,14 +142,19 @@ export const firstClips = (now = Date.now()): string[] => [...waitedOn].filter((
  */
 export function finishJob(db: DatabaseSync, id: number, ok: boolean, error?: string, now = Date.now(), table: JobTable = "jobs"): void {
   if (ok) {
-    db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ?`).run(now, id);
+    db.prepare(`UPDATE ${table} SET state = 'done', lease_until = NULL, error = NULL, done_at = ? WHERE id = ? AND state = 'running'`).run(now, id);
     return;
   }
-  db.prepare(
-    `UPDATE ${table} SET state = CASE WHEN attempts >= ? THEN 'failed' ELSE 'queued' END, lease_until = NULL, error = ?,
-       run_after = CASE WHEN attempts >= ? THEN run_after ELSE ? + ? * attempts END
-     WHERE id = ? AND state = 'running'`,
-  ).run(MAX_ATTEMPTS, error ?? "failed", MAX_ATTEMPTS, now, BACKOFF_MS, id);
+  // the next state is chosen here (checked against JOB_MOVES); the read and the write are one synchronous run, so nothing moves the row between them
+  const row = db.prepare(`SELECT attempts, run_after FROM ${table} WHERE id = ? AND state = 'running'`).get(id) as Pick<JobRow, "attempts" | "run_after"> | undefined;
+  if (!row) return;
+  const to = move(JOB_MOVES, "running", row.attempts >= MAX_ATTEMPTS ? "failed" : "queued", `${table} job ${id}`);
+  db.prepare(`UPDATE ${table} SET state = ?, lease_until = NULL, error = ?, run_after = ? WHERE id = ? AND state = 'running'`).run(
+    to,
+    error ?? "failed",
+    to === "failed" ? row.run_after : now + BACKOFF_MS * row.attempts,
+    id,
+  );
 }
 
 /** Puts running jobs whose lease ran out back in the queue (or fails them after MAX_ATTEMPTS). Returns how many. */
@@ -166,6 +183,10 @@ export function graceHeld(db: DatabaseSync, seconds: number, now = Date.now()): 
 export function parkJob(db: DatabaseSync, id: number, why: string, table: JobTable = "jobs"): void {
   db.prepare(`UPDATE ${table} SET state = 'needs_key', lease_until = NULL, error = ? WHERE id = ? AND state = 'running'`).run(why, id);
 }
+
+/** The AI Editor's job row (edit_jobs) this device holds (claimed by it and still running), or undefined. */
+export const heldBy = (db: DatabaseSync, id: number, device: string): JobRow | undefined =>
+  db.prepare("SELECT * FROM edit_jobs WHERE id = ? AND device = ? AND state = 'running'").get(id, device) as JobRow | undefined;
 
 /** A long step's heartbeat: a running job's lease runs `seconds` from now, so requeueExpired leaves it alone. */
 export function extendLease(db: DatabaseSync, id: number, seconds: number, now = Date.now(), table: JobTable = "jobs"): void {

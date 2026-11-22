@@ -1,13 +1,13 @@
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { EVERY_WORKSPACE, FOLDER_LABELS, LEAVE_OUT_MAX, libraryBase, parseLeaveOut, STORAGE_ROLES, STORAGE_SCHEMA, THIS_COMPUTER, exportsOf, folderIn, okFolderPath, type StorageFolder, type StorageState, type StorageView } from "../contracts/storage";
 import type { AuthVars } from "./auth";
 import { actionCard, type FolderAsk } from "../contracts/library";
 import { deviceOf, isThisMachine, listDevices } from "./lib/devices";
-import { env, hostedMode } from "./lib/env";
+import { env, isCloud } from "./lib/env";
 import { addWatchFolder, removeWatchFolder, watchAllowed } from "./library/watch";
 import { inside, localDisks, mediaFolders, migrateStorage, mountOf, parseStorageFile, readsInto, storageFilePath, withMounts } from "./lib/storage";
 import { mergeStudio, replacedIds, studioRows, type HostLookup } from "./lib/studio-folders";
@@ -21,6 +21,7 @@ import { ownedProjects, sharedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, setupNeeded } from "./library/access";
 import { workspaceById } from "./lib/workspaces";
 import { actionDone } from "./lib/action-done";
+import { writeJsonAtomic } from "./lib/write-json";
 
 /**
  * Settings → Folders (contracts/storage.ts), mounted at /api/devices/storage by devices.ts:
@@ -57,15 +58,22 @@ function chained<T>(user: string, fn: () => Promise<T>): Promise<T> {
  * No file yet, or a file that is not valid JSON: an empty list (parseStorageFile logs the bad one). A file from before
  * schema 2 is moved on read (lib/storage.ts migrateStorage) and written back in the account's queue.
  */
+/** The account's file as text, or "{}" when there is none. Any other read error throws: the empty list would be saved over it. */
+const readRaw = (user: string) =>
+  readFile(file(user), "utf-8").catch((e: NodeJS.ErrnoException) => {
+    if (e.code === "ENOENT") return "{}";
+    throw e;
+  });
+
 async function readStorage(user: string): Promise<StorageState> {
-  const raw = await readFile(file(user), "utf-8").catch(() => "{}");
+  const raw = await readRaw(user);
   const parsed = parseStorageFile(raw);
   // nothing to migrate: the first folder saved onto it is written as the current schema, so no read rewrites it later
   if (!parsed.folders.length) return { ...parsed, schemaVersion: STORAGE_SCHEMA };
   const here = listDevices((d) => d.owner === user && isThisMachine(d.id))[0]?.id;
   const { st, changed } = migrateStorage(parsed, here, resolveDevice);
   if (changed) void chained(user, async () => {
-    const now = parseStorageFile(await readFile(file(user), "utf-8").catch(() => "{}"));
+    const now = parseStorageFile(await readRaw(user));
     const again = migrateStorage(now, here, resolveDevice);
     if (again.changed) await writeStorage(user, again.st);
   }).catch((e: unknown) => console.warn(`[devices-storage] schema 2 not saved: ${e instanceof Error ? e.message : e}`));
@@ -193,10 +201,7 @@ export function changeStorage(user: string, fn: (st: StorageState) => void | "ke
 }
 
 async function writeStorage(user: string, st: StorageState): Promise<void> {
-  await mkdir(path.dirname(file(user)), { recursive: true });
-  const tmp = `${file(user)}.tmp-${process.pid}`;
-  await writeFile(tmp, JSON.stringify({ ...st, folders: mediaFolders(st.folders) }, null, 2));
-  await rename(tmp, file(user));
+  await writeJsonAtomic(file(user), { ...st, folders: mediaFolders(st.folders) }, 2);
 }
 
 /**
@@ -267,7 +272,7 @@ const mine = (c: C, host: string) => {
   return d && (d.owner === u.username || (u.role === "admin" && d.owner === "workspace")) ? d : undefined;
 };
 /** This computer, for the owner of a server that runs on one (not hosted): setup's Folders step records against it. */
-const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !hostedMode() && c.get("user").role === "admin";
+const thisComputer = (c: C, host: string) => host === THIS_COMPUTER && !isCloud() && c.get("user").role === "admin";
 
 /**
  * A folder this server reads in place, so it joins the Media Library's watch list: "this computer" by name (setup's
@@ -378,7 +383,7 @@ storageApp.get("/", async (c) => {
   const lib = exportsOf(st.folders);
   const reported = lib ? deviceOf(lib.origin.host)?.report?.machine?.disks ?? [] : [];
   const libraryPath = lib && !reported.length ? lib.origin.path : undefined;
-  const local = process.env.CT_LOCAL === "1" && u.role === "admin";
+  const local = !isCloud() && u.role === "admin";
   // which of this account's computers is this machine: a folder added on it goes into the Library (the page asks first when it is big)
   const here = watchAllowed(u.username) ? listDevices((d) => !!mine(c, d.id) && isThisMachine(d.id)).map((d) => d.id) : [];
   const view: StorageView = { ...st, serverDisks: local ? await localDisks(libraryPath) : [], here, copies: keepsCopies(scope.workspace ?? u.username), ...(all ? { copied: await copiedFolders(u, st.folders) } : {}) };

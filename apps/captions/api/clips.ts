@@ -44,7 +44,8 @@ import {
 import { announceSoon } from "./lib/announce-soon";
 import { workEnded } from "./assistant";
 import { capChapters, chapterCountRange, timedTranscript } from "./lib/timed-transcript";
-import { findUser, LOCAL_USER, type SessionUser } from "./users";
+import { canSee, findUser, LOCAL_USER, type SessionUser } from "./users";
+import { okId } from "./lib/ids";
 import {
   cloudTranscribeBlock,
   transcribeWav,
@@ -73,7 +74,6 @@ clipsApp.use("*", async (_c, next) => {
 });
 
 const CLIPS_DIR = path.join(env.dataDir, "clips");
-const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const sesDir = (id: string) => path.join(CLIPS_DIR, id);
 export const recordingPath = (id: string) => path.join(sesDir(id), "recording");
 const transcriptPath = (id: string) => path.join(sesDir(id), "transcript.json");
@@ -342,8 +342,6 @@ async function readMeta(id: string): Promise<Meta | null> {
   }
 }
 
-const canSee = (meta: Meta, user: SessionUser) =>
-  user.role === "admin" || meta.owner === user.username;
 
 async function publishedMeta(id: string): Promise<Meta | null> {
   if (!okId(id)) return null;

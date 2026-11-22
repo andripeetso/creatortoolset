@@ -62,6 +62,8 @@ test("safeVaultPath keeps folders, adds .md, and refuses escapes and hidden fold
   assert.equal(safeVaultPath("A\\..\\..\\x.md"), null);
   assert.equal(safeVaultPath("/abs/x.md"), "abs/x.md");
   assert.equal(safeVaultPath(".obsidian/plugins/x/main.js"), null);
+  assert.equal(safeVaultPath("Notes/.obsidian/plugins/x/main"), null);
+  assert.equal(safeVaultPath("Notes/.trash/Old"), null);
   assert.equal(safeVaultPath(""), null);
 });
 

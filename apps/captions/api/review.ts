@@ -17,7 +17,9 @@ import {
   assembleParts,
   MAX_UPLOAD_BYTES,
   PART_SIZE,
+  freeBytes,
   readUploadState,
+  shortOfReserve,
   receivedParts,
   receivePart,
   sha256File,
@@ -48,6 +50,7 @@ import type { FrameInput, REVIEW_FRAME, Stroke } from "./work/tasks/review";
 import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources, type TimelineView } from "../contracts/timeline-import";
 import { payloadError } from "../contracts/review-payload";
 import type { Critique } from "../contracts/edit-plan";
+import { writeJsonAtomic as writeJson } from "./lib/write-json";
 
 export { sendFile };
 
@@ -297,11 +300,6 @@ function withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-async function writeJson(p: string, data: unknown): Promise<void> {
-  const tmp = `${p}.tmp-${process.pid}-${randomUUID()}`;
-  await writeFile(tmp, JSON.stringify(data));
-  await rename(tmp, p);
-}
 
 export async function readMeta(id: string): Promise<Meta | null> {
   if (!UUID.test(id)) return null;
@@ -1105,6 +1103,8 @@ export async function uploadInit(c: Context<{ Variables: AuthVars }>): Promise<R
   if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_UPLOAD_BYTES) {
     return c.json({ error: "Invalid size" }, 400);
   }
+  // shortcut: uploads started together each see the same free space; the reserve is a floor, not a lock
+  if (shortOfReserve(await freeBytes(env.dataDir), size)) return c.json({ error: "Not enough free disk space for this upload", code: "disk_reserve" }, 507);
   const user = c.get("user");
   const assetId = typeof body?.assetId === "string" ? body.assetId : undefined;
   if (assetId) {

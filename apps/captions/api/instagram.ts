@@ -127,7 +127,7 @@ import type {
 } from "./lib/instagram/types";
 import { POST_STATUS_MOVES } from "./lib/instagram/types";
 // the stored accounts, readable without this module (lib/instagram/accounts.ts); re-exported for the Analyzer's callers
-import { accountActive, accountDir, accountMetaPath, allAccountIds, allAccounts, accountsRoot, mineAccountId, okId, ownerMine, readAccount } from "./lib/instagram/accounts";
+import { accountActive, accountDir, accountMetaPath, allAccountIds, allAccounts, accountsRoot, mineAccountId, ownerMine, readAccount } from "./lib/instagram/accounts";
 export { accountActive, allAccounts, mineAccountId, readAccount } from "./lib/instagram/accounts";
 import { canMove, move } from "./lib/transition";
 import {
@@ -159,9 +159,11 @@ import { keyFor, type Actor } from "./my-keys";
 
 /** The TypeSafe key that serves `who` (my-keys.ts), or "": its features fall back without one. */
 const typesafeFor = (who: Actor) => keyFor(who, "TYPESAFE_API_KEY").key;
-import { LOCAL_USER, bumpUsage, findUser, type SessionUser } from "./users";
+import { LOCAL_USER, bumpUsage, canSee, findUser, type SessionUser } from "./users";
 import type { LibraryPost, OwnPost } from "./lib/workshop/folder";
 import { announceSoon } from "./lib/announce-soon";
+import { okId } from "./lib/ids";
+import { writeJsonAtomic } from "./lib/write-json";
 
 /**
  * Instagram Analyzer — library of accounts and posts. Jobs (stats, media,
@@ -585,17 +587,6 @@ export async function loadCatalog(id: string): Promise<CatalogItem[]> {
   }
 }
 
-/** Temp file + rename in the same directory: readers see the old file or the new one, never half. */
-async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
-  const tmp = `${file}.tmp-${process.pid}-${randomUUID()}`;
-  try {
-    await writeFile(tmp, JSON.stringify(data));
-    await rename(tmp, file);
-  } catch (e) {
-    await rm(tmp, { force: true }).catch(() => {});
-    throw e;
-  }
-}
 
 export async function saveCatalog(id: string, items: CatalogItem[]): Promise<void> {
   await mkdir(accountDir(id), { recursive: true });
@@ -686,8 +677,6 @@ async function readMeta(id: string): Promise<PostMeta | null> {
   }
 }
 
-const canSee = (meta: PostMeta, user: SessionUser) =>
-  user.role === "admin" || meta.owner === user.username;
 
 async function ownedMeta(id: string, user: SessionUser): Promise<PostMeta | null> {
   if (!okId(id)) return null;

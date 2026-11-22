@@ -158,6 +158,18 @@ it("names a known app's key after its Settings row, and connecting again replace
   expect((await mcp(`Bearer ${installed}`)).status).toBe(200);
 });
 
+it("a sign-in's key lasts 90 days, then the AI app is challenged to sign in again", async () => {
+  const owner = findUser("oauthowner")!;
+  const key = newAiKey(owner, "Expiring app", true).key;
+  const entry = owner.aiKeys!.find((k) => k.name === "Expiring app")!;
+  expect(entry.expires! - Date.now()).toBeCloseTo(90 * 24 * 3600_000, -4);
+  expect((await mcp(`Bearer ${key}`)).status).toBe(200);
+  entry.expires = Date.now() - 1;
+  const late = await mcp(`Bearer ${key}`);
+  expect(late.status).toBe(401);
+  expect(late.headers.get("www-authenticate")).toBeTruthy();
+});
+
 describe("MCP tool labels", () => {
   it("every built-in tool is labelled read, add or replace, with a title", async () => {
     type Listed = { result: { tools: Array<{ name: string; title?: string; annotations?: Record<string, unknown> }> } };

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { Collection, ReorganizeWay } from "@contracts/library";
+import type { Collection, ReorganizeWay, SearchQuery } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { createCollection, deleteCollection } from "@/lib/library";
@@ -21,6 +22,140 @@ type Read = { ways: ReorganizeWay[]; about: boolean; at: number };
  * the page never loses a paid read (owner, 2026-11-19: a stray click made him read the library three times) */
 const reads = new Map<string, Promise<Read>>();
 const STRIP = ["bg-lime-500", "bg-sky-500", "bg-amber-500", "bg-violet-500", "bg-rose-500", "bg-teal-500", "bg-orange-500", "bg-fuchsia-500"];
+
+/**
+ * The automatic folders New folder offers (owner, 2026-11-22: offered, never made for everyone). Each fills itself: a
+ * saved search (`query`, at once and free) or a rule (`rule`, each clip read to file it, smart.ts).
+ */
+export const AUTOMATIC: { name: string; about: string; query?: SearchQuery; rule?: string }[] = [
+  { name: "A-roll", about: "Clips marked A-roll: someone talking to camera", query: { roll: "a" } },
+  { name: "B-roll", about: "Clips marked B-roll: no one talking to camera", query: { roll: "b" } },
+  { name: "Unsorted", about: "Videos in no folder", query: { kind: ["video"], unfiled: true } },
+  { name: "Vertical", about: "Clips taller than wide", query: { orientation: "vertical" } },
+  { name: "Horizontal", about: "Clips wider than tall", query: { orientation: "horizontal" } },
+  { name: "Audio", about: "Songs, sound effects and recordings", query: { kind: ["audio"] } },
+  { name: "Screen recordings", about: "Each clip is read to file it", rule: "Screen recordings and screenshots of a computer or phone" },
+];
+
+/** Two saved searches the same, whatever order the server keeps their keys in */
+const sameQuery = (a: SearchQuery | undefined, b: SearchQuery | undefined) =>
+  !!a && !!b && JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
+
+/** The line under an automatic folder's name: its rule, or what its saved search is when it is one of AUTOMATIC */
+export const automaticAbout = (c: Collection): string | undefined => c.rule ?? AUTOMATIC.find((a) => sameQuery(a.query, c.query))?.about;
+
+/** New folder: a plain one, one with a rule, or one of AUTOMATIC. `parentId` undefined: closed */
+export function NewFolderDialog({
+  libraryId,
+  parentId,
+  folders,
+  onClose,
+  onCreated,
+}: {
+  libraryId: string;
+  parentId: string | null | undefined;
+  folders: Collection[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [rule, setRule] = useState("");
+  const [preset, setPreset] = useState<(typeof AUTOMATIC)[number] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const open = parentId !== undefined;
+  useEffect(() => {
+    setName("");
+    setRule("");
+    setPreset(null);
+    setError(null);
+  }, [open]);
+  // the A-roll or B-roll folder is the library's one place for that mark: offered once
+  const offered = AUTOMATIC.filter((a) => !a.query?.roll || !folders.some((f) => sameQuery(f.query, a.query)));
+  const pick = (a: (typeof AUTOMATIC)[number]) => {
+    const off = preset === a;
+    setPreset(off ? null : a);
+    // the name follows the button only while it is the button's own (empty, or the last one's name); a typed name stays
+    const ours = !name.trim() || name === preset?.name;
+    if (ours) setName(off ? "" : a.name);
+    setRule(off || !a.rule ? "" : a.rule);
+  };
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const n = name.trim();
+    if (!n || busy) return;
+    const r = rule.trim();
+    const parent = parentId ? { parentId } : {};
+    setBusy(true);
+    try {
+      await createCollection(libraryId, preset?.query ? { name: n, kind: "smart", query: preset.query, ...parent } : { name: n, ...(r ? { rule: r } : {}), ...parent });
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md">
+        <form onSubmit={(e) => void create(e)} className="flex flex-col gap-3">
+          <DialogTitle className="text-base">New folder</DialogTitle>
+          <label className="flex flex-col gap-1.5 text-sm font-medium">
+            Name
+            {/* no leading spaces: a name of spaces is empty, and `required` says so at the field */}
+            <Input autoFocus required value={name} maxLength={80} onChange={(e) => setName(e.target.value.trimStart())} />
+          </label>
+          <label className="flex flex-col gap-1.5 text-sm font-medium">
+            What goes here
+            <Textarea
+              rows={2}
+              value={preset?.query ? preset.about : rule}
+              disabled={!!preset?.query}
+              maxLength={600}
+              placeholder="Optional"
+              onChange={(e) => {
+                setRule(e.target.value);
+                if (preset) setPreset(null);
+              }}
+            />
+          </label>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm font-medium">Automatic folders</p>
+            <div className="flex flex-wrap gap-1.5">
+              {offered.map((a) => (
+                <button
+                  key={a.name}
+                  type="button"
+                  aria-pressed={preset === a}
+                  onClick={() => pick(a)}
+                  className={
+                    preset === a
+                      ? "rounded-full border border-violet-500 bg-violet-500/15 px-2.5 py-1 text-xs text-violet-300"
+                      : "rounded-full border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:border-zinc-500"
+                  }
+                >
+                  {a.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">
+              {busy && <Spinner />}
+              Create
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 /** What goes in one folder, in the person's own words. Saving sorts the library into it again. */
 export function SmartFolderDialog({

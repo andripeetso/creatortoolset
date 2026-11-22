@@ -379,6 +379,35 @@ export function revert(doc: Document, versionId: string, now = Date.now()): bool
   return true;
 }
 
+/** The earlier post descriptions saved in the versions, newest first, one per text; the current one left out. */
+export function captionTakes(doc: Document): Array<{ versionId: string; at: number; author: Companion["author"]; text: string }> {
+  const seen = new Set([doc.caption?.text.trim() ?? ""]);
+  const out: Array<{ versionId: string; at: number; author: Companion["author"]; text: string }> = [];
+  for (const v of [...doc.versions].reverse()) {
+    const text = v.caption?.text.trim() ?? "";
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push({ versionId: v.id, at: v.caption!.at, author: v.caption!.author, text: v.caption!.text });
+  }
+  return out;
+}
+
+/**
+ * Bring back one version's post description and nothing else. The current text is saved as a version first when it
+ * is not one; the result is saved with the next version, so this can be taken back from either history.
+ */
+export function restoreCaption(doc: Document, versionId: string, now = Date.now()): boolean {
+  const v = doc.kind === "notes" ? undefined : doc.versions.find((x) => x.id === versionId);
+  if (!v?.caption?.text.trim()) return false;
+  if (doc.caption?.text === v.caption.text) return true;
+  if (doc.dirty || !doc.headVersion) snapshot(doc, "your edits before restoring a post description", now);
+  doc.caption = { ...v.caption };
+  doc.dirty = true;
+  delete doc.headVersion;
+  doc.updatedAt = now;
+  return true;
+}
+
 /**
  * Take a turn's edits back out (a Stop, a failure): the piece as `versionId` had it, with what the author wrote since
  * the turn read it (`since`) left in place. With nothing of theirs since, this is `revert`.

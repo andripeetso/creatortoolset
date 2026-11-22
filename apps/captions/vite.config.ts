@@ -77,8 +77,6 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
       "@contracts": path.resolve(__dirname, "./contracts"),
-      "@db": path.resolve(__dirname, "./db"),
-      "db": path.resolve(__dirname, "./db"),
       // The speech runtime's own files, at the version the speech library bundles: the transcription worker
       // imports them with ?url, so the build copies them and the app serves them itself (no CDN).
       "ort-dist": path.dirname(

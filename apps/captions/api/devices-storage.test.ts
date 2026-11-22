@@ -18,6 +18,14 @@ const { createEdit } = await import("./editor/store");
 const { mediaPaths } = await import("./editor/media");
 const { inRequestWorkspace } = await import("./lib/workspace-scope");
 
+it("a storage file that cannot be read throws, so an empty list is not saved over it", async () => {
+  const { storageOf } = await import("./devices-storage");
+  const { storageFilePath } = await import("./lib/storage");
+  mkdirSync(storageFilePath(process.env.DATA_DIR!, "owner-r"), { recursive: true }); // a directory where the file should be
+  await expect(storageOf("owner-r")).rejects.toThrow();
+  await expect(storageOf("owner-none")).resolves.toMatchObject({ folders: [] });
+});
+
 afterAll(() => {
   delete process.env.LIBRARY_WATCH_FOLDERS;
   delete process.env.LIBRARY_DISK_RESERVE_GB;

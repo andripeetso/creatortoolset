@@ -13,6 +13,8 @@ let package = Package(
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.1.0"),
         // FluidAudio (dictation's Parakeet models, on the Neural Engine), pinned like WhisperKit.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.18.3"),
+        // what the iPhone app uses too: the Keychain item helper and the host rules
+        .package(path: "../swift-shared"),
     ],
     targets: [
         .executableTarget(
@@ -21,6 +23,7 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "CreatorToolsetShared", package: "swift-shared"),
             ],
             path: "Sources/CreatorToolsetMac"
         ),

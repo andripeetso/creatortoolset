@@ -172,14 +172,14 @@ describe("your AI on this computer: only the owner's account, on a server that r
     }
   });
 
-  it("is closed on a hosted server, even for its admin: the server is not the person's computer", async () => {
+  it("is closed on Cloud, even for its admin: the server is not the person's computer", async () => {
     who = { username: "owner", role: "admin", cloud: true, off: [] };
-    process.env.CT_MODE = "hosted";
+    process.env.CT_SERVER = "cloud";
     try {
       expect(await (await app.request("/api/setup/ai")).json()).toEqual({ local: false, rows: [] });
       expect((await app.request("/api/setup/folders/scan")).status).toBe(404); // no folder scan exists at all
     } finally {
-      delete process.env.CT_MODE;
+      delete process.env.CT_SERVER;
     }
   });
 
@@ -195,12 +195,15 @@ describe("your AI on this computer: only the owner's account, on a server that r
   });
 });
 
-it("refuses to join a server through a tunnel, and a link that is not a sign-in link, before anything is fetched", async () => {
+it("refuses to join a server through a tunnel, for a member, and a link that is not a sign-in link, before anything is fetched", async () => {
   who = { username: "sam", role: "user", cloud: true, off: [] };
   const link = `https://studio.example.com/api/auth/link/${"a".repeat(30)}`;
   const json = { "content-type": "application/json" };
   const tunnel = await app.request("/api/setup/join", { method: "POST", headers: { ...json, "cf-ray": "1-SIN" }, body: JSON.stringify({ link }) });
   expect(tunnel.status).toBe(403);
+  // a member never makes the server fetch an address: it would read what an inside address answers
+  expect((await app.request("/api/setup/join", { method: "POST", headers: json, body: JSON.stringify({ link }) })).status).toBe(403);
+  who = { username: "admin", role: "admin", cloud: true, off: [] };
   const junk = await app.request("/api/setup/join", { method: "POST", headers: json, body: JSON.stringify({ link: "ftp://studio.example.com/api/auth/link/x" }) });
   expect(junk.status).toBe(400);
 });

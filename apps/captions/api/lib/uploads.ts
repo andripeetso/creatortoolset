@@ -201,3 +201,15 @@ export async function freeBytes(dir: string): Promise<number> {
   const s = await statfs(dir);
   return Number(s.bavail) * Number(s.bsize);
 }
+
+/** Read per call (AGENTS: process.env at the point of use). */
+export function gbSetting(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const v = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(v) && v >= 0 ? v : fallback;
+}
+
+/** True when a file of `size` (plus what open uploads still write, `pending`) would leave `free` bytes under LIBRARY_DISK_RESERVE_GB. */
+export function shortOfReserve(free: number, size: number, pending = 0): boolean {
+  return free - pending - size < gbSetting("LIBRARY_DISK_RESERVE_GB", 20) * 1024 ** 3;
+}

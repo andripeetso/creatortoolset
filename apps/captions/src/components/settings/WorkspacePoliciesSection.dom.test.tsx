@@ -51,7 +51,7 @@ it("All workspaces on hides the per-workspace switches", async () => {
 });
 
 it("This Mac: the master is on and disabled, with its status, and there is no list", async () => {
-  const { text, switches } = await show({ kind: "local", place: null });
+  const { text, switches } = await show({ kind: "mac", place: null });
   expect(text()).toContain("This Mac does all video work");
   expect(switches()).toHaveLength(1);
   expect(switches()[0]!.disabled).toBe(true);
@@ -59,7 +59,7 @@ it("This Mac: the master is on and disabled, with its status, and there is no li
 });
 
 it("Creator Toolset Cloud: the master is read-only and there are no per-workspace rows", async () => {
-  const { text, switches } = await show({ kind: "hosted", place: { allowed: true, weight: 50 }, serverName: "Creator Toolset Cloud" });
+  const { text, switches } = await show({ kind: "cloud", place: { allowed: true, weight: 50 }, serverName: "Creator Toolset Cloud" });
   expect(text()).not.toContain("All workspaces");
   expect(switches()).toHaveLength(1);
   expect(switches()[0]!.disabled).toBe(true);

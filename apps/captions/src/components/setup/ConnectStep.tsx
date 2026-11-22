@@ -365,7 +365,7 @@ export function ConnectStepView({
  * code, and the folded Add another computer row. `picked` is the set the next stages work on.
  */
 export function ConnectStep({ picked, onPick }: { picked: ReadonlySet<string>; onPick: (id: string, on: boolean) => void }) {
-  const hosted = useAuth((s) => s.hosted);
+  const hosted = useAuth((s) => s.kind === "cloud");
   const { data: view, error, refresh } = useComputers();
   const [expanded, setExpanded] = useState(false);
   const [server, setServer] = useState("");

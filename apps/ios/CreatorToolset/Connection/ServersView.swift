@@ -64,6 +64,7 @@ struct ServersView: View {
             ConnectionDot(state: state)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.label)
+                if let kind = entry.kindName { Text(kind).font(.caption).foregroundStyle(.secondary) }
                 Text(ConnectionWords.status(entry, state, account: accountServers.computers.first { $0.id == entry.serverId }))
                     .font(.caption)
                     .foregroundStyle(.secondary)

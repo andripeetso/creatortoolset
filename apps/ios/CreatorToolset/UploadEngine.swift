@@ -409,10 +409,12 @@ final class UploadEngine: ObservableObject {
         let proxies = libraries.libraries.first?.settings?.upload == "proxies"
         let made = (libraries.uploadTakes ?? 0) >= 1 ? await made(id, proxies: proxies) : [:]
         guard let item = store.item(id) else { return }
-        var request = api.request("/api/library/here/uploads", method: "POST", json: Self.startBody(item, made: made))
+        // the copy above can take a while: the server may have been removed (or signed out) meanwhile
+        guard let current = self.api(for: item) else { return fail(id, "Its server was removed") }
+        var request = current.request("/api/library/here/uploads", method: "POST", json: Self.startBody(item, made: made))
         // the person's own file, sent to their computers: the server takes it under Upload none too (routes.ts x-ct-origin)
         request.setValue("phone", forHTTPHeaderField: "x-ct-origin")
-        let data = try await api.data(request, session: session)
+        let data = try await current.data(request, session: session)
         let created = try JSONDecoder().decode(Created.self, from: data)
         store.update(id) {
             $0.uploadId = created.id

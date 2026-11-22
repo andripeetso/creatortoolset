@@ -3,7 +3,7 @@ import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { EMPTIED, KEPT_KINDS, type KeptKind, type KeptRow, type KeptView, type WorkspaceStorage } from "../contracts/storage";
 import type { AuthVars } from "./auth";
-import { env, hostedMode } from "./lib/env";
+import { env, isCloud, serverKind } from "./lib/env";
 import type { SessionUser } from "./users";
 
 /**
@@ -231,7 +231,7 @@ async function measure(u: Who, stores: Stores = new Map()): Promise<Array<KeptRo
 
 /** `stores`: shared by a request that asks about several accounts (the admin's list), so each store is read once. */
 export async function keptView(u: Who, stores?: Stores): Promise<KeptView> {
-  return { rows: (await measure(u, stores)).map(({ listed: _, ...row }) => row), here: process.env.CT_LOCAL === "1" };
+  return { rows: (await measure(u, stores)).map(({ listed: _, ...row }) => row), here: serverKind() === "mac" };
 }
 
 /**
@@ -265,7 +265,7 @@ export async function workspaceStorage(): Promise<WorkspaceStorage[]> {
 }
 
 /** Storage › Workspaces is never listed on Creator Toolset Cloud: it would show every customer's workspaces. */
-export const workspaceStorageAllowed = (user: SessionUser): boolean => user.role === "admin" && !hostedMode();
+export const workspaceStorageAllowed = (user: SessionUser): boolean => user.role === "admin" && !isCloud();
 
 /** Empty one kind: exactly the items its row counts go, each the way its own tool deletes it. */
 export async function emptyKept(kind: KeptKind, u: Who, device?: string): Promise<void> {

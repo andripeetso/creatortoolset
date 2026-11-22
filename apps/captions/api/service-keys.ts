@@ -8,7 +8,8 @@ import { SERVICE_KEYS, type ServiceKeyEnv, type ServiceKeyView } from "../contra
 /**
  * Settings → Admin → Server keys (contracts/service-keys.ts): $DATA_DIR/service-keys.json (0600). A saved key is put into
  * process.env under its own name, so every place that already reads the env (read at each call, never cached) uses it.
- * Forgetting one puts the .env's own value back. Platform admins only (the middleware below checks it).
+ * Forgetting one puts the .env's own value back. Platform admins only (the middleware below checks it). The same file keeps
+ * the Team use switch (teamUse), which is never a key.
  */
 
 const FILE = () => path.join(env.dataDir, "service-keys.json");
@@ -16,7 +17,10 @@ const NAMES = new Set<string>(SERVICE_KEYS.map((k) => k.env));
 // the .env's own values, before any saved key replaced them
 const fromServer = Object.fromEntries(SERVICE_KEYS.map((k) => [k.env, process.env[k.env] ?? ""])) as Record<ServiceKeyEnv, string>;
 
-function readSaved(): Partial<Record<ServiceKeyEnv, string>> {
+// the same file keeps the admin's Team use switch beside the keys (off until saved)
+type Saved = Partial<Record<ServiceKeyEnv, string>> & { teamUse?: boolean };
+
+function readSaved(): Saved {
   try {
     return JSON.parse(readFileSync(FILE(), "utf-8"));
   } catch {
@@ -24,7 +28,10 @@ function readSaved(): Partial<Record<ServiceKeyEnv, string>> {
   }
 }
 
-let saved = readSaved();
+/** Team use: the team uses the server's keys, and team budgets its Anthropic key (api/my-keys.ts serverKeyOf, teamAiKey). */
+export const teamUseOn = (): boolean => saved.teamUse === true;
+
+let saved: Saved = readSaved();
 const apply = () => {
   for (const k of SERVICE_KEYS) {
     const v = saved[k.env] || fromServer[k.env];
@@ -54,6 +61,24 @@ serviceKeysApp.get("/", (c) =>
   ),
 );
 
+function persist(next: Saved): void {
+  mkdirSync(env.dataDir, { recursive: true });
+  const tmp = `${FILE()}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
+  renameSync(tmp, FILE());
+  saved = next;
+  apply();
+}
+
+// before /:env, so "team-use" is not read as a key name
+serviceKeysApp.get("/team-use", (c) => c.json({ on: teamUseOn() }));
+serviceKeysApp.put("/team-use", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as { on?: unknown } | null;
+  if (typeof b?.on !== "boolean") return c.json({ error: "Turn Team use on or off" }, 400);
+  persist({ ...saved, teamUse: b.on });
+  return c.json({ ok: true });
+});
+
 serviceKeysApp.put("/:env", async (c) => {
   const name = c.req.param("env");
   if (!NAMES.has(name)) return c.json({ error: "No such key" }, 404);
@@ -64,11 +89,6 @@ serviceKeysApp.put("/:env", async (c) => {
   const next = { ...saved };
   if (value) next[name as ServiceKeyEnv] = value;
   else delete next[name as ServiceKeyEnv];
-  mkdirSync(env.dataDir, { recursive: true });
-  const tmp = `${FILE()}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
-  renameSync(tmp, FILE());
-  saved = next;
-  apply();
+  persist(next);
   return c.json({ ok: true });
 });

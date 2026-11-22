@@ -33,3 +33,17 @@ it("a stored file is never sniffed or run as a page, and an empty one is an empt
   expect(none.status).toBe(200);
   expect(await none.text()).toBe("");
 });
+
+it("a browser whose copy is current gets no body, and a kept picture says so", async () => {
+  const pic = path.join(dir, "pic.jpg");
+  writeFileSync(pic, "jpeg");
+  const app = new Hono();
+  app.get("/pic", (c) => sendFile(c, pic, "image/jpeg", undefined, "private, max-age=31536000, immutable"));
+  const first = await app.request("/pic");
+  expect(first.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+  const again = await app.request("/pic", { headers: { "if-modified-since": first.headers.get("last-modified")! } });
+  expect(again.status).toBe(304);
+  const older = await app.request("/pic", { headers: { "if-modified-since": new Date(0).toUTCString() } });
+  expect(older.status).toBe(200);
+  expect(await older.text()).toBe("jpeg");
+});

@@ -19,9 +19,6 @@
       ],
       "@contracts/*": [
         "./contracts/*"
-      ],
-      "@db/*": [
-        "./db/*"
       ]
     }
   }

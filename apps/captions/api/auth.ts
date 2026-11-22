@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createSocket } from "node:dgram";
 import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { env, hostedMode, keepsOverRestart } from "./lib/env";
+import { env, keepsOverRestart, hasTeam, isCloud, serverKind } from "./lib/env";
 import { viewAsTarget } from "./lib/view-as";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
@@ -30,6 +30,7 @@ import {
   setDisplayName,
   setPassword,
   setSignInCode,
+  signOutEverywhere,
   passwordProblem,
   SIGNIN_NAME,
   isSignInProvider,
@@ -47,6 +48,7 @@ import { originOf } from "./sign-in";
 import { inviteTarget } from "./lib/workshop/workspace";
 import { ticketUser } from "./media-ticket";
 import { checkCode, clearTries, codeRequired, confirmSecret, mintStep, newSecret, spendStep, stepFor, waitFor, wrongTry } from "./lib/sign-in-code";
+import { escHtml, plainPage } from "./lib/plain-page";
 
 /**
  * Account login for public hosting. When APP_SECRET is set, every /api
@@ -248,23 +250,23 @@ const withLogins = (u: SessionUser) => ({
   picture: findUser(u.username) ? pictureOf(findUser(u.username)!) : null,
   // a team member (an admin account too): the pages hide what deletes the owner's footage, which the server refuses them.
   // Teams are hosted only: elsewhere workspaces.json would be made from users.json just to answer this
-  ...(hostedMode() && isTeamMember(u.username) ? { member: true as const } : {}),
+  ...(hasTeam() && isTeamMember(u.username) ? { member: true as const } : {}),
   // an install without sign-in has one fixed session user: its saved display name comes from its account record
   ...(u.name ? {} : findUser(u.username)?.displayName ? { name: findUser(u.username)!.displayName } : {}),
 });
 
-// hosted: says whether this server is a hosted one (the web shows team, admin and join screens only then). While a
+// kind: what this server is (lib/env.ts serverKind); the web shows team, admin and join screens on a Server or Cloud. While a
 // platform admin is viewing as an account (view-as, admin.ts), `user` is that account and `viewedBy` the admin.
 authApp.get("/check", (c) => {
   // a phone's web view is signed in by its session's media ticket (media-ticket.ts), never by a cookie of its own
   const session = getSessionUser(c.req.header("cookie")) ?? ticketUser(c);
-  const viewed = hostedMode() && session?.role === "admin" ? viewAsTarget(c.req.header("cookie")) : null;
+  const viewed = isCloud() && session?.role === "admin" ? viewAsTarget(c.req.header("cookie")) : null;
   const user = viewed ? sessionOf(viewed) : session;
   return c.json({
     required: !!env.appSecret,
     authed: !!user,
     user: user ? withLogins(user) : null,
-    hosted: hostedMode(),
+    kind: serverKind(),
     viewedBy: viewed && session ? session.username : null,
     // a team that signs in with Google / Apple, and this account has neither linked yet: link one before anything else
     mustLink: user ? (ruleFor(user.username)?.missing ?? null) : null,
@@ -279,7 +281,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * one more thing to guess. A server with any account that has no linked sign-in keeps them for everyone.
  */
 export const passwordsOff = (): boolean => {
-  if (!hostedMode() || !env.appSecret) return false;
+  if (!hasTeam() || !env.appSecret) return false;
   const all = listUsers();
   return all.length > 0 && all.every((u) => !!u.identities?.length);
 };
@@ -428,7 +430,7 @@ export function clientAddress(c: Context): string {
   const tunnel = tunnelHostname();
   let a = peer;
   if (isLoopback(c) && tunnel && hostOf(c) === tunnel.toLowerCase()) a = c.req.header("cf-connecting-ip")?.trim() || "tunnel";
-  else if (isLoopback(c) || (process.env.CT_LOCAL !== "1" && PRIVATE.test(peer))) a = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() || peer;
+  else if (isLoopback(c) || (serverKind() !== "mac" && PRIVATE.test(peer))) a = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() || peer;
   return per64(a.slice(0, 64));
 }
 /**
@@ -447,7 +449,7 @@ const hostOf = (c: Context) => new URL(c.req.url).hostname.toLowerCase();
  * one that runs its own tunnel) reached from anywhere but itself. A hosted server is never: there APP_SECRET is the
  * operator's own password, and a CDN in front of it (Cloudflare) puts the same headers on every request as our tunnel.
  */
-const ownComputer = () => process.env.CT_LOCAL === "1" || !!tunnelHostname();
+const ownComputer = () => serverKind() === "mac" || !!tunnelHostname();
 /**
  * The Mac app's own window (or a browser on this Mac) signing in to the server the app runs here: CT_LOCAL=1, not
  * hosted, a loopback socket, addressed to loopback, and nothing that says the request was passed on (the tunnel's
@@ -455,20 +457,19 @@ const ownComputer = () => process.env.CT_LOCAL === "1" || !!tunnelHostname();
  * the network fails one of these; a relay that adds none of them (one the person sets up on this Mac) can't be told apart.
  */
 export const fromThisMac = (c: Context) =>
-  process.env.CT_LOCAL === "1" &&
-  !hostedMode() &&
+  serverKind() === "mac" &&
   isLoopback(c) &&
   /^(127\.0\.0\.1|localhost|\[::1\])$/.test(hostOf(c)) &&
   !viaTunnel(c) &&
   !["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "via"].some((h) => c.req.header(h) !== undefined);
-const localOnly = (c: Context) => (process.env.CT_LOCAL === "1" && !isLoopback(c)) || (ownComputer() && viaTunnel(c));
+const localOnly = (c: Context) => (serverKind() === "mac" && !isLoopback(c)) || (ownComputer() && viaTunnel(c));
 const remoteRefused = (c: Context, user: UserRecord) => localOnly(c) && !!env.appSecret && verifyPassword(user, env.appSecret);
 const NO_PASSWORD_YET = "This computer's password isn't set yet. In Creator Toolset on this computer, turn on Network access and choose it, then try again.";
 
 /**
  * One-time sign-in links, for a phone (Setup → Add your phone, as a QR code) or another computer. POST mints one for
  * the account signed in here, with `url`: the address a phone can open this server at (null: it listens on this
- * computer only). GET /api/auth/link/<code> signs that browser in and goes home. A code works once, within 60 s, and
+ * computer only). GET /api/auth/link/<code> asks to confirm; POST on it signs that browser in and goes home. A code works once, within 60 s, and
  * dies with a password change. Kept in memory only and never logged.
  */
 export async function phoneOrigin(c: Context): Promise<string | null> {
@@ -522,19 +523,48 @@ authApp.post("/link", async (c) => {
   return c.json({ url: await phoneOrigin(c), path: `/api/auth/link/${code}`, expiresAt: now + LINK_TTL });
 });
 
+// GET only shows whose account the link would sign in (a link someone else sent must not sign this browser in unseen);
+// the sign-in is the POST below, which a page on another site can't make (boot.ts sameSiteWrites). The code is used there.
+const LINK_USED = "This sign-in link has expired or was used. Ask for a new one.";
 authApp.get("/link/:code", (c) => {
   const code = c.req.param("code");
+  // an app's own request (an iPhone app before it sent the POST) carries no Sec-Fetch-Mode, which every browser sends:
+  // no page on another site can make it, so it still signs in at once
+  if (!c.req.header("sec-fetch-mode")) return signInByLink(c, code);
+  const link = links.get(code);
+  c.header("Cache-Control", "no-store");
+  c.header("Referrer-Policy", "no-referrer");
+  const user = link && link.expiresAt > Date.now() ? findUser(link.username) : null;
+  if (!user || stamp(user) !== link!.hash) {
+    links.delete(code);
+    return c.text(LINK_USED, 410);
+  }
+  if (remoteRefused(c, user)) return c.text(NO_PASSWORD_YET, 403);
+  const name = escHtml(user.displayName || user.username);
+  // the press sends JSON (a page can't send it cross-site); a page that failed reloads and says why
+  const press = `<script>document.forms[0].onsubmit=async(e)=>{e.preventDefault();const r=await fetch(e.target.action,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});location.replace(r.ok?"/":location.href)}</script>`;
+  return c.html(
+    plainPage(
+      "Sign in here?",
+      `This browser will sign in to <b>${name}</b> on ${escHtml(new URL(c.req.url).host)}. Not you? Close this page.`,
+      `<form method="post" action="/api/auth/link/${code}"><button type="submit">Sign in</button></form>${press}`,
+    ),
+  );
+});
+
+authApp.post("/link/:code", (c) => signInByLink(c, c.req.param("code")));
+function signInByLink(c: Context, code: string) {
   const link = links.get(code);
   links.delete(code); // single use, whatever happens next
   c.header("Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
   const user = link && link.expiresAt > Date.now() ? findUser(link.username) : null;
-  if (!user || stamp(user) !== link!.hash) return c.text("This sign-in link has expired or was used. Ask for a new one.", 410);
+  if (!user || stamp(user) !== link!.hash) return c.text(LINK_USED, 410);
   if (remoteRefused(c, user)) return c.text(NO_PASSWORD_YET, 403);
   bumpUsage(user.username, { logins: 1 });
   setLoginCookie(c, user);
   return c.redirect("/", 302);
-});
+}
 
 /**
  * A provider sign-in an app started (sign-in.ts, `app=1`): the sign-in ends on the app's own link with a one-time code,
@@ -559,7 +589,7 @@ export function mintAppCode(user: UserRecord, challenge: string): string {
 }
 
 authApp.post("/app", async (c) => {
-  if (!hostedMode()) return c.json({ error: "Not Found" }, 404);
+  if (!hasTeam()) return c.json({ error: "Not Found" }, 404);
   const asJson = /^application\/json\b/i.test(c.req.header("content-type") ?? "");
   const b = asJson ? ((await c.req.json().catch(() => null)) as { code?: unknown; verifier?: unknown } | null) : null;
   const code = typeof b?.code === "string" ? b.code : "";
@@ -874,7 +904,7 @@ authApp.delete("/api-key", (c) => {
 
 /** Settings → Account → Sign-ins: disconnects a Google, Apple or GitHub sign-in (hosted only, the one place the page lists them; a team's required provider can't be removed). */
 authApp.delete("/identity/:provider", (c) => {
-  if (!hostedMode()) return c.json({ error: "Not Found" }, 404);
+  if (!hasTeam()) return c.json({ error: "Not Found" }, 404);
   const session = getSessionUser(c.req.header("cookie"));
   const user = session && findUser(session.username);
   if (!user) return c.json({ error: "Sign in with an account first" }, 401);
@@ -900,6 +930,9 @@ authApp.post("/api-key", async (c) => {
 });
 
 authApp.post("/logout", (c) => {
+  // a copy of the cookie (another browser, an old one) would still sign in: the account's stamp changes, so none works
+  const me = accountHere(c);
+  if (me) signOutEverywhere(me);
   const secure = secureAttr(c);
   c.header(
     "Set-Cookie",

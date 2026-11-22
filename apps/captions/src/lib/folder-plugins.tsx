@@ -127,7 +127,7 @@ export function webAdmissionProblem(admitted: WebPlugin[], candidate: WebPlugin,
     if (shape) throw new Error(shape);
     for (const slot of Object.keys(candidate.replaces ?? {}) as ReplaceSlot[]) replacementFor([...admitted, candidate], slot);
     withPluginTiles([candidate]);
-    sectionsFor({ hosted: true, admin: true, mac: true }, [candidate]);
+    sectionsFor({ team: true, admin: true, mac: true }, [candidate]);
     return null;
   } catch (e) {
     return message(e);

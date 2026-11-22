@@ -9,6 +9,7 @@
 // server half: in the builds that are released, the record is in the file-based Keychain, and such a program can
 // write the approved copy and the record itself (see PluginRecord). Closing that needs a provisioning profile.
 import AppKit
+import CreatorToolsetShared
 import Foundation
 import Security
 
@@ -76,7 +77,8 @@ func isPluginFingerprint(_ fingerprint: String) -> Bool {
 /// One plug-in the person switched on: the fingerprint of the copy that runs, the folder in plugins/ it was taken
 /// from, and whether the alert they agreed to said it runs on this Mac (it had a server half). Only that folder's later
 /// changes are taken up by themselves: another folder that states the same id is a folder nobody switched on. And a
-/// change never gets more than they agreed to: one that adds a server half waits for their click (pluginChange).
+/// change never gets more than they agreed to: one with web code, or one that adds a server half, waits for their click
+/// (pluginChange).
 struct PluginApproval: Codable, Equatable {
     var fingerprint: String
     var folder: String
@@ -141,55 +143,25 @@ struct PluginRecord {
     /// file-based Keychain is never read or written: a record another program planted there must not count.
     /// A build without the entitlement is told "not found" when it reads there and errSecMissingEntitlement only when
     /// it writes or deletes (measured), so the question is asked with a delete of an item that is never made.
-    var protected: Bool {
-        var q = query(dataProtection: true)
-        q[kSecAttrAccount as String] = "probe"
-        return SecItemDelete(q as CFDictionary) != errSecMissingEntitlement
-    }
+    var protected: Bool { KeychainItem.dataProtectionAvailable(service: service) }
 
     /// The record, or nothing approved when it can't be read (fewer plug-ins run, never more).
     func load() -> PluginApprovals {
-        read(dataProtection: protected).flatMap(Self.decode) ?? PluginApprovals()
+        KeychainItem.read(service: service, account: Self.account, dataProtection: protected).flatMap(Self.decode) ?? PluginApprovals()
     }
 
     @discardableResult
     func save(_ approved: PluginApprovals) -> Bool {
         guard let data = Self.encode(approved) else { return false }
-        return write(data, dataProtection: protected) == errSecSuccess
+        return KeychainItem.write(data, service: service, account: Self.account, accessible: kSecAttrAccessibleAfterFirstUnlock,
+                                  dataProtection: protected) == errSecSuccess
     }
 
     /// Deletes the record from both Keychains (the tests use it on their own service).
     func remove() {
         for dataProtection in [true, false] {
-            SecItemDelete(query(dataProtection: dataProtection) as CFDictionary)
+            KeychainItem.delete(service: service, account: Self.account, dataProtection: dataProtection)
         }
-    }
-
-    private func query(dataProtection: Bool) -> [String: Any] {
-        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                kSecAttrService as String: service,
-                                kSecAttrAccount as String: Self.account]
-        if dataProtection { q[kSecUseDataProtectionKeychain as String] = true }
-        return q
-    }
-
-    private func read(dataProtection: Bool) -> Data? {
-        var q = query(dataProtection: dataProtection)
-        q[kSecReturnData as String] = true
-        q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess else { return nil }
-        return item as? Data
-    }
-
-    private func write(_ data: Data, dataProtection: Bool) -> OSStatus {
-        let q = query(dataProtection: dataProtection)
-        let updated = SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        guard updated == errSecItemNotFound else { return updated }
-        var item = q
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(item as CFDictionary, nil)
     }
 }
 
@@ -309,17 +281,17 @@ enum PluginChange: Equatable {
     case asks
 }
 
-/// A prepared copy comes in by itself only as another version of a plug-in that is on, and only when it can reach no
-/// more than the person agreed to. The Switch On alert of a plug-in with pages only says "It adds pages to the app"; a
-/// version that adds a server half runs on the Mac with the app's access to files, keys and the internet, which that
-/// alert never said. (Pages added to a plug-in that already runs on the Mac reach nothing it could not.)
+/// A prepared copy comes in by itself only as another version of a plug-in that is on, and only when it carries no web
+/// code and adds no server half. Web code runs in the person's signed-in window, and a server half runs on the Mac with
+/// the app's access to files, keys and the internet; neither is taken up without the person's click, whatever Update
+/// automatically says.
 func pluginChange(_ prepared: PluginPrepared, id: String, on: PluginApproval) -> PluginChange {
     guard prepared.id == id, isPluginFingerprint(prepared.fingerprint), prepared.fingerprint != on.fingerprint else { return .none }
-    return prepared.server && !on.server ? .asks : .takes
+    return prepared.web || (prepared.server && !on.server) ? .asks : .takes
 }
 
 /// What the row of a changed plug-in says when its change does not come in by itself (the page shows it as it is).
-let pluginAsksNote = "The new version would run on this Mac, so it waits for you."
+let pluginAsksNote = "The new version waits for you."
 func pluginLeftOutNote(_ why: String) -> String { "The new version was left out: \(why)" }
 
 /// Seconds after which a folder state that was refused is looked into once more. A refusal can be the moment's doing
@@ -454,7 +426,7 @@ extension Shell {
         guard runsHere, let server else { return }
         if let url = webView.url, isSite(url, base) { pluginWatch.returnTo = url }
         webView.loadHTMLString(splashPage(), baseURL: nil)
-        server.restart()
+        Task { await server.restart() }
     }
 
     /// Switch On, in two steps: the server takes a copy and builds it (nothing runs), then this app's own alert asks the

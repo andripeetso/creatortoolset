@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { LIBRARY_WORDS, type AssetCard } from "@contracts/library";
 import { cn } from "@/lib/utils";
+import { Near, ThumbImg } from "./Near";
 import { cardColumns } from "./views";
 import { across, clock, frameAt, frameStyle, KIND_ICON, NoPictureChip, noPictureYet, PhotoMasonry, useStrip, type Drag } from "./ClipCards";
 
@@ -29,9 +30,10 @@ export function GalleryGrid({ assets, size, tile, lead = [] }: { assets: readonl
         </div>
       ))}
       {assets.map((a) => (
-        <div key={a.id} className={cn("min-w-0", wide(a) && "col-span-2")}>
-          {tile(a, false)}
-        </div>
+        // the tile's own shape (GalleryTile): a place not drawn yet is exactly as big as the tile it stands for
+        <Near key={a.id} className={cn("min-w-0", wide(a) && "col-span-2")} size={{ aspectRatio: wide(a) ? "3 / 2" : "3 / 4" }}>
+          {() => tile(a, false)}
+        </Near>
       ))}
     </div>
   );
@@ -65,7 +67,7 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
       )}
     >
       {a.thumbUrl ? (
-        <img src={a.thumbUrl} alt="" loading="lazy" className={cn("h-full w-full object-cover", a.state === "missing" && "opacity-40")} />
+        <ThumbImg src={a.thumbUrl} dim={a.state === "missing"} className="h-full w-full object-cover" />
       ) : (
         <div className={cn("flex h-full w-full flex-col items-center justify-center gap-1.5 text-zinc-600", a.state === "processing" && "motion-safe:animate-pulse")}>
           <Icon className="h-7 w-7" />

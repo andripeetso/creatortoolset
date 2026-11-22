@@ -38,7 +38,7 @@ final class ServerTests: XCTestCase {
     func testSignInLink() async throws {
         let cookie = try await signIn()
         struct Link: Decodable { let path: String? }
-        let link: Link = try JSONDecoder().decode(Link.self, from: try await API(server: origin, cookie: cookie).send("/api/auth/link"))
+        let link: Link = try JSONDecoder().decode(Link.self, from: try await API(server: origin, cookie: cookie).send("/api/auth/link", json: [String: String]()))
         guard let path = link.path else { throw XCTSkip("a server without sign-in has no link") }
         let target = SignIn.parse(origin.absoluteString + path.dropFirst())!
         guard case .signedIn(let fresh, let name) = try await SignIn.connect(target) else { return XCTFail("link refused") }

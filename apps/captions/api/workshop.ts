@@ -16,6 +16,7 @@ import { CONTEXT_CAPACITY_CHARS } from "../contracts/knowledge";
 import { limitResetAt } from "../contracts/plans";
 import { MAC_MISS, MacClaudeError, streamMacClaude, type MacErrorKind, type MacOpts, type MacSession, type MacUsage } from "./lib/mac-claude";
 import { env } from "./lib/env";
+import { freeBytes, shortOfReserve } from "./lib/uploads";
 import type { SessionUser, UserRecord } from "./users";
 import { findOwnPost, findPostsForUser, libraryCountFor, libraryForWorkshop, mineAccountId, scopeOldAnalyzer, ownAccountContextFor, ownPostComments, ownPostsForWorkshop, packPostsForUser, postsForUser, sourceIndexForUser, transcribeForUser } from "./instagram";
 import { liveEnd, listen, liveText } from "./lib/workshop/live";
@@ -38,7 +39,7 @@ import { perplexityComplete, type ResearchAnswer, type ResearchDepth } from "./l
 import { keyFor } from "./my-keys";
 import { AUDIT_JSON_SCHEMA, AUDIT_SYSTEM, MAC_RESEARCH, MAX_AUDIT_CHARS, RESEARCH_QUESTION_SYSTEM, auditEdits, auditSummaryText, documentAudit, parseAuditResult, postAuditText, splitSources } from "./lib/workshop/audit";
 import { partialTurn } from "./lib/workshop/stream-json";
-import { bumpUsage, findUser } from "./users";
+import { bumpUsage, canSee, findUser } from "./users";
 import { scriptsOwnerFor, sharedWith } from "./lib/workspaces";
 import { currentWorkspaceId, inCurrentWorkspace, listWorkspaceId } from "./lib/workspace-scope";
 import { mayLeave, workspaceLibrary } from "./library/upload-gate";
@@ -87,7 +88,7 @@ import { channelFiles } from "./connectors";
 import { fetchYoutubeViaApify } from "./lib/youtube/fetch";
 import { PLAN_PARSERS } from "./lib/workshop/plans";
 import { renderDraft } from "./lib/workshop/render";
-import { applyEdits, docToMarkdown, isHookId, keep, markEditsSeen, newDocument, onBase, onVersion, revert, setVersionKept, snapshot, undoTurn, userEdit } from "./lib/workshop/doc";
+import { applyEdits, captionTakes, docToMarkdown, isHookId, keep, markEditsSeen, newDocument, onBase, onVersion, restoreCaption, revert, setVersionKept, snapshot, undoTurn, userEdit } from "./lib/workshop/doc";
 import { captionExamplesFor } from "./lib/workshop/caption-examples";
 import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFetchSource, gateCompanionEdits, parseTurn, type TurnPlan } from "./lib/workshop/chat-plans";
 import { packInstructions, runsWithoutTools } from "./lib/packs";
@@ -112,6 +113,7 @@ import {
   type CarouselLayoutSet,
   type SlideCompose,
 } from "../src/lib/carousel-layout";
+import { writeJsonAtomic as writeJsonFile } from "./lib/write-json";
 
 /**
  * Every Workshop call goes to the Workshop's AI provider (Admin → Your AI; the session's own pick first),
@@ -228,7 +230,6 @@ const DIRS = {
 for (const dir of Object.values(DIRS)) void mkdir(dir, { recursive: true }).catch(() => {});
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const canSee = (owner: string, user: SessionUser) => user.role === "admin" || owner === user.username;
 
 async function readJson<T>(file: string): Promise<T | null> {
   try {
@@ -239,10 +240,7 @@ async function readJson<T>(file: string): Promise<T | null> {
 }
 
 async function writeJsonAtomic(file: string, data: unknown): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-  await writeFile(tmp, JSON.stringify(data));
-  await rename(tmp, file);
+  await writeJsonFile(file, data);
   saved(); // inside background work, the account's open tabs hear of it
 }
 
@@ -260,7 +258,7 @@ async function listRecords<T extends { owner: string; updatedAt: number }>(
   const out: T[] = [];
   for (const name of names) {
     const rec = await readJson<T>(path.join(dir, name));
-    if (rec && canSee(rec.owner, user)) out.push(rec);
+    if (rec && canSee(rec, user)) out.push(rec);
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -272,7 +270,7 @@ const projectPath = (id: string) => path.join(DIRS.projects, `${id}.json`);
 async function readProject(id: string, user: SessionUser): Promise<Project | null> {
   if (!okId(id)) return null;
   const p = await readJson<Project>(projectPath(id));
-  return p && canSee(p.owner, user) ? p : null;
+  return p && canSee(p, user) ? p : null;
 }
 
 /* ---- knowledge: the account's sources, every project reads them unless kept to one or switched off ---- */
@@ -542,7 +540,7 @@ function withRole(f: Framework): Framework {
 async function readFramework(id: string, user: SessionUser): Promise<Framework | null> {
   if (!okId(id)) return null;
   const f = await readJson<Framework>(frameworkPath(id));
-  return f && canSee(f.owner, user) ? withRole(f) : null;
+  return f && canSee(f, user) ? withRole(f) : null;
 }
 
 /** The seeded frameworks this user still has. */
@@ -606,7 +604,7 @@ const rulePath = (id: string) => path.join(DIRS.rules, `${id}.json`);
 async function readRule(id: string, user: SessionUser): Promise<Rule | null> {
   if (!okId(id)) return null;
   const r = await readJson<Rule>(rulePath(id));
-  return r && canSee(r.owner, user) ? r : null;
+  return r && canSee(r, user) ? r : null;
 }
 
 async function ownedRules(username: string): Promise<Rule[]> {
@@ -794,7 +792,7 @@ function reconcileRestart(): Promise<void> {
 
 export async function ownedSession(id: string, user: SessionUser): Promise<SessionMeta | null> {
   const meta = await readSession(id);
-  if (!meta || !canSee(meta.owner, user)) return null;
+  if (!meta || !canSee(meta, user)) return null;
   // a chat's tools (mcp.ts, a scope with its turn) open only the projects of the chat's own workspace, whatever id
   // they are given: another client's script is never read or written from this chat (owner, 2026-11-16)
   const chat = workspaceScope.getStore();
@@ -3588,6 +3586,30 @@ workshopApp.post("/sessions/:id/docs/:docId/revert", async (c) => {
   return c.json(publicDoc(doc));
 });
 
+workshopApp.get("/sessions/:id/docs/:docId/captions", async (c) => {
+  const meta = await ownedSession(c.req.param("id"), c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const doc = await readDoc(meta.id, c.req.param("docId"));
+  if (!doc) return c.json({ error: "Not found" }, 404);
+  c.header("Cache-Control", "no-store");
+  return c.json(captionTakes(doc));
+});
+
+workshopApp.post("/sessions/:id/docs/:docId/caption/restore", async (c) => {
+  const meta = await ownedSession(c.req.param("id"), c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { versionId?: unknown } | null;
+  const versionId = typeof body?.versionId === "string" && /^v\d{1,5}$/.test(body.versionId) ? body.versionId : "";
+  if (!versionId) return c.json({ error: "Which version?" }, 400);
+  let ok = false;
+  const doc = await updateDoc(meta.id, c.req.param("docId"), (d) => {
+    ok = restoreCaption(d, versionId);
+  });
+  if (!doc) return c.json({ error: "Not found" }, 404);
+  if (!ok) return c.json({ error: "Post description not found" }, 404);
+  return c.json(publicDoc(doc));
+});
+
 workshopApp.post("/sessions/:id/docs/:docId/keep", async (c) => {
   const meta = await ownedSession(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
@@ -4838,19 +4860,25 @@ workshopShareApp.post("/:token/answers/ask", async (c) => {
 
 const deliveryDir = (sessionId: string, did: string) => path.join(sessionDir(sessionId), "deliveries", did);
 const DELIVERY_MAX = 2 * 1024 ** 3;
+// a share link is open to anyone who has it: its files are capped in count and total bytes
+const DELIVERIES_MAX_FILES = 100;
+const DELIVERIES_MAX_BYTES = 20 * 1024 ** 3;
 const cleanName = (s: string) => s.replace(/[/\\\u0000-\u001f]/g, "").trim().slice(0, 120) || "file";
 
 /** The freelancer marks the work: "producing" (the session goes In Production) or "done". */
 workshopShareApp.post("/:token/progress", async (c) => {
   const token = c.req.param("token");
-  const shares = await readShares();
-  const share = shares[token];
-  const meta = share ? await readSession(share.sessionId) : null;
-  if (!share || !meta) return c.json({ error: "Not found" }, 404);
+  const sessionId = (await readShares())[token]?.sessionId;
+  const meta = sessionId ? await readSession(sessionId) : null;
+  if (!meta) return c.json({ error: "Not found" }, 404);
   const body = (await c.req.json().catch(() => null)) as { state?: unknown; by?: unknown } | null;
   const state = body?.state === "producing" || body?.state === "done" ? body.state : null;
   if (!state) return c.json({ error: "producing or done?" }, 400);
   const by = typeof body?.by === "string" ? body.by.trim().slice(0, 60) : "";
+  // re-read after the awaits, then write with no await in between: a share revoked meanwhile stays gone, a delivery added meanwhile stays
+  const shares = await readShares();
+  const share = shares[token];
+  if (!share || share.sessionId !== meta.id) return c.json({ error: "Not found" }, 404);
   share.progress = { state, ...(by ? { by } : {}), at: Date.now() };
   await writeJsonAtomic(SHARES_FILE, shares);
   // the editor making it = Editing; "It's done" = Ready to post; published or shelved stay
@@ -4872,9 +4900,14 @@ workshopShareApp.post("/:token/deliveries", async (c) => {
   const length = Number(c.req.header("content-length") ?? "0");
   if (!length) return c.json({ error: "Send the file as the request body" }, 411);
   if (length > DELIVERY_MAX) return c.json({ error: "A file can be up to 2 GB" }, 413);
+  const held = share.deliveries ?? [];
+  if (held.length >= DELIVERIES_MAX_FILES) return c.json({ error: `A share takes up to ${DELIVERIES_MAX_FILES} files` }, 413);
+  if (held.reduce((n, d) => n + d.size, 0) + length > DELIVERIES_MAX_BYTES) return c.json({ error: `This share is full (${DELIVERIES_MAX_BYTES / 1024 ** 3} GB)` }, 413);
   const id = randomUUID();
   const name = cleanName(c.req.query("name") ?? "file");
   const dir = deliveryDir(meta.id, id);
+  // shortcut: two uploads started together each see the same count and free space; the caps are floors, not locks
+  if (shortOfReserve(await freeBytes(env.dataDir), length)) return c.json({ error: "Not enough free disk space for this file", code: "disk_reserve" }, 507);
   await mkdir(dir, { recursive: true });
   let size = 0;
   const count = new Transform({

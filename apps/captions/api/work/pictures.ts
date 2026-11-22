@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import type { Device } from "../../contracts/providers";
 import { WORK_MIN, WORK_V, type PictureInput, type PicturePackage, type PictureResult } from "../../contracts/work";
 import { PICTURE_DIM, PICTURE_MODEL } from "../lib/device-picture";
-import { serverKind } from "./server-work";
+import { serverKind } from "../lib/env";
 import { offOf } from "../lib/balance";
 import { deviceForToken, touchDevice } from "../lib/devices";
 import { libraryChanged } from "../library/access";
@@ -84,11 +84,11 @@ const aiStretches = (versionId: string): number[][] =>
   (libraryDb().prepare("SELECT a, b FROM stretches WHERE version_id = ? AND source = 'ai' ORDER BY seg").all(versionId) as { a: number; b: number }[]).map((s) => [s.a, s.b]);
 
 /** Whether picture work waits that `d` would be handed now: its device runner's long poll starts the worker. */
-export const picturesWait = (d: Device): boolean => serverKind() !== "local" && takesPictures(d) && !busy(d.id) && todo(d).length > 0;
+export const picturesWait = (d: Device): boolean => serverKind() !== "mac" && takesPictures(d) && !busy(d.id) && todo(d).length > 0;
 
 /** The clip computer `d` makes vectors for now, or null: one at a time, only what its account may read. */
 export async function claimPictures(d: Device, now = Date.now()): Promise<PicturePackage | null> {
-  if (serverKind() === "local" || !takesPictures(d) || busy(d.id)) return null;
+  if (serverKind() === "mac" || !takesPictures(d) || busy(d.id)) return null;
   for (const r of todo(d, now)) {
     if (!(await mayRead(d.owner, r.library_id, r.asset_id, r.version_id))) {
       tried.set(r.version_id, now + RETRY_MS);

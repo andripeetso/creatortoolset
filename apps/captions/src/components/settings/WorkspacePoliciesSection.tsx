@@ -52,8 +52,8 @@ export function WorkspacePoliciesSection() {
           <Row
             title="Server rendering"
             tip={RENDERING_TIP}
-            status={view.kind === "local" ? "This Mac does all video work" : undefined}
-            control={<Switch checked={view.kind === "local" || !!view.place?.allowed} disabled aria-label="Server rendering" />}
+            status={view.kind === "mac" ? "This Mac does all video work" : undefined}
+            control={<Switch checked={view.kind === "mac" || !!view.place?.allowed} disabled aria-label="Server rendering" />}
           />
         )}
         {a?.on && a.workspaces.length > 0 && (

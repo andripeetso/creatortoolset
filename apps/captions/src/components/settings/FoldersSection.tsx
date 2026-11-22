@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { HardDrive } from "lucide-react";
 import { ServerUpdateSection } from "./ServerUpdateSection";
-import { useAuth } from "@/lib/auth";
+import { hasTeam, useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { useProviders } from "@/lib/providers";
 import type { StorageView } from "@contracts/storage";
@@ -30,12 +30,12 @@ export function FoldersSection() {
  */
 export function StorageSection() {
   const me = useAuth((s) => s.me);
-  const hosted = useAuth((s) => s.hosted);
+  const kind = useAuth((s) => s.kind);
   return (
     <>
       {me?.role === "admin" && <ServerUpdateSection />}
       <KeptSection />
-      {me?.role === "admin" && !hosted && <WorkspaceStorageSection />}
+      {me?.role === "admin" && kind !== "cloud" && <WorkspaceStorageSection />}
       <ThisComputerSection />
       {me?.role === "admin" && <RenderCacheSection />}
       {me?.role === "admin" && <Drives />}
@@ -45,7 +45,7 @@ export function StorageSection() {
             {s.body}
           </Section>
         ))}
-      {hosted && me?.role === "admin" && <ServerProjects />}
+      {hasTeam(kind) && me?.role === "admin" && <ServerProjects />}
     </>
   );
 }
@@ -78,7 +78,7 @@ function Drives() {
 
 function Folders() {
   const me = useAuth((s) => s.me);
-  const hosted = useAuth((s) => s.hosted);
+  const kind = useAuth((s) => s.kind);
   const providers = useProviders();
   const w = useSettingsWorkspace("list");
   const url = w.all ? STORAGE_ALL : STORAGE_API;
@@ -122,7 +122,7 @@ function Folders() {
   // the computers a folder can go on: this account's own, and for an admin the team's AI worker (the server takes both)
   const own = devices.filter((d) => d.owner === me.username || (me.role === "admin" && d.owner === "workspace"));
   // a hosted member with no computer has nothing to put a folder on: said once, instead of three Add folder buttons
-  if (hosted && own.length === 0 && storage.folders.length === 0) {
+  if (hasTeam(kind) && own.length === 0 && storage.folders.length === 0) {
     return (
       <Section title="Folders">
         {pick}

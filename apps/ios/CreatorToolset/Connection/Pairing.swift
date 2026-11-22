@@ -1,3 +1,4 @@
+import CreatorToolsetShared
 import Foundation
 import UIKit
 
@@ -9,6 +10,8 @@ struct ServerDescriptor: Codable, Equatable {
     let serverId: String
     let label: String
     let platform: String?
+    /// What the server is: "mac", "server" or "cloud". Older servers don't send it.
+    var kind: String?
     let version: String?
     let protocolVersion: Int
     var capabilities: Capabilities?
@@ -17,7 +20,7 @@ struct ServerDescriptor: Codable, Equatable {
     struct Capabilities: Codable, Equatable { var account: Bool? }
 
     enum CodingKeys: String, CodingKey {
-        case serverId, label, platform, version, capabilities
+        case serverId, label, platform, kind, version, capabilities
         case protocolVersion = "protocol"
     }
 

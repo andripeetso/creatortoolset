@@ -145,6 +145,8 @@ struct RelayOptions: Equatable {
     var env: [String: String] = [:]
     /// the ACP kinds: the program and its arguments, launch arguments included (nil for the other drivers)
     var acp: AcpLaunch? = nil
+    /// the names of the `env` values read from this Mac's Keychain (not the app's own runtime values): what the owner allows
+    var keychain: [String] = []
 }
 
 /// The Keychain service that keeps provider environment values, one item per instance and variable. Its account is
@@ -218,8 +220,16 @@ func requestOptions(_ req: RelayRequest, root: URL = FileManager.default.homeDir
     if !req.baseUrl.isEmpty && !matches(req.baseUrl, "^https?://[^\\s]{1,300}\\z") {
         throw RelayError(message: "not an endpoint address: \(req.baseUrl)")
     }
-    let env = isClaude || acp != nil ? providerEnv(instance: req.instance, names: req.envNames, read: read).merging(own) { _, mine in mine } : [:]
-    return RelayOptions(model: model, effort: req.effort, home: home, resume: req.resume, driver: req.driver, baseUrl: isClaude ? req.baseUrl : "", env: env, acp: acp)
+    let kept = isClaude || acp != nil ? providerEnv(instance: req.instance, names: req.envNames, read: read) : [:]
+    let env = kept.merging(own) { _, mine in mine }
+    return RelayOptions(model: model, effort: req.effort, home: home, resume: req.resume, driver: req.driver, baseUrl: isClaude ? req.baseUrl : "", env: env, acp: acp,
+                        keychain: kept.keys.sorted())
+}
+
+/// The origin (scheme, host, port) of a plug-in instance's endpoint: what the owner allows, not its path; nil when none.
+func endpointOrigin(_ baseUrl: String) -> String? {
+    guard let url = URL(string: baseUrl), let scheme = url.scheme, let host = url.host else { return nil }
+    return "\(scheme)://\(host)" + (url.port.map { ":\($0)" } ?? "")
 }
 
 /// The name a driver shows in messages and the Mac report ("Codex"); the id itself when unknown.

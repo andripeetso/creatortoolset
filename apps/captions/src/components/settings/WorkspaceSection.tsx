@@ -3,7 +3,8 @@ import { Check, Eye, Plus } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { TOOLS, TOOL_NAMES, type Tool } from "@contracts/tools";
-import type { AiRoute, InvitePatch, MemberPatch, MemberView, WorkspaceView } from "@contracts/workspaces";
+import { TEAM_AI_TOOLS, type AiRoute, type InvitePatch, type MemberPatch, type MemberView, type WorkspaceView } from "@contracts/workspaces";
+import { JOBS } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -13,7 +14,7 @@ import { PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
 import { webPlugins } from "@/plugins.gen";
 import { useCachedLoad } from "@/lib/local-cache";
-import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, updateInvite, updateMember } from "@/lib/workspaces";
+import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, setTeamAi, updateInvite, updateMember } from "@/lib/workspaces";
 import { AskEveryone, Tick, useServerAccounts } from "@/components/AdminPanel";
 import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
 import { useSignInApps } from "./AccountSection";
@@ -69,6 +70,8 @@ export function WorkspaceSection() {
     setParams((p) => (p.delete("add"), p), { replace: true });
   }, [params, setParams, view]);
   const [aiFor, setAiFor] = useState<MemberView | null>(null);
+  // a tool switch sends the whole list: the others wait until it is saved, or a second one would undo the first
+  const [savingTools, setSavingTools] = useState(false);
   const [spacesFor, setSpacesFor] = useState<{ who: string; given: string[]; save: (ids: string[]) => Promise<unknown> } | null>(null);
   // the sign-ins this server has switched on (the Account page's list): the team can only be set to these
   const apps = useSignInApps();
@@ -211,6 +214,50 @@ export function WorkspaceSection() {
         </Card>
       </Section>
 
+      {view.me === "owner" && (
+        <Section id="team-key" title="Server key">
+          <Card>
+            <Row
+              title="Monthly limit"
+              description={`$${(view.spentUsd ?? 0).toFixed(2)} spent this month by the team.`}
+              control={
+                <TextField
+                  label="Monthly limit in dollars"
+                  placeholder="No limit"
+                  value={view.workspace.budgetUsd === undefined ? "" : String(view.workspace.budgetUsd)}
+                  onCommit={async (next) => {
+                    const b = next.trim() ? budgetFrom(next, 0) : null;
+                    if (b && !b.ok) throw new Error(b.error);
+                    await act(setTeamAi({ budgetUsd: b ? b.usd : null }));
+                  }}
+                />
+              }
+            />
+            {TEAM_AI_TOOLS.map((t) => {
+              const allowed = view.workspace.aiTools ?? TEAM_AI_TOOLS;
+              const name = JOBS.find((j) => j.id === t)?.label ?? t;
+              return (
+                <Row
+                  key={t}
+                  title={name}
+                  control={
+                    <Switch
+                      aria-label={name}
+                      checked={allowed.includes(t)}
+                      disabled={savingTools}
+                      onCheckedChange={(on) => {
+                        setSavingTools(true);
+                        void attempt(setTeamAi({ aiTools: on ? [...allowed, t] : allowed.filter((x) => x !== t) })).finally(() => setSavingTools(false));
+                      }}
+                    />
+                  }
+                />
+              );
+            })}
+          </Card>
+        </Section>
+      )}
+
       {view.invites.length > 0 && (
         <Section id="team-invite" title="Pending invites">
           <Card>
@@ -322,10 +369,10 @@ const AI_CHOICES: { id: AiRoute; label: string }[] = [
   { id: "budget", label: "Team budget" },
 ];
 
-/** The budget a person typed: dollars, $1 to $10,000 a month (the server keeps it to cents and the same range). */
-export function budgetFrom(text: string): { ok: true; usd: number } | { ok: false; error: string } {
+/** The budget a person typed: dollars, `min` ($1, or $0 for the team's limit) to $10,000 a month (the server keeps it to cents). */
+export function budgetFrom(text: string, min = 1): { ok: true; usd: number } | { ok: false; error: string } {
   const n = Number(text.replace(/[$,\s]/g, ""));
-  if (!text.trim() || !Number.isFinite(n) || n < 1 || n > 10_000) return { ok: false, error: "Enter a budget from $1 to $10,000 a month." };
+  if (!text.trim() || !Number.isFinite(n) || n < min || n > 10_000) return { ok: false, error: `Enter a budget from $${min} to $10,000 a month.` };
   return { ok: true, usd: Math.round(n * 100) / 100 };
 }
 

@@ -1,3 +1,4 @@
+import type { JobId } from "@contracts/providers";
 /**
  * Client for the team (api/workspace.ts) and invite links (api/auth.ts /invite): Settings → Team and the
  * /join/<token> page. Hosted servers only. Shapes: contracts/workspaces.ts.
@@ -17,6 +18,8 @@ export const getWorkspace = () => fetch("/api/workspace").then((r) => json<Works
 export const renameWorkspace = (name: string) => send("/api/workspace", "PATCH", { name }).then((r) => json<WorkspaceView>(r));
 export const setSignInWith = (signInWith: ("google" | "apple" | "github")[]) =>
   send("/api/workspace", "PATCH", { signInWith }).then((r) => json<WorkspaceView>(r));
+/** The team's monthly limit on the server's key and the tools that may use it; null clears either. */
+export const setTeamAi = (patch: { budgetUsd?: number | null; aiTools?: JobId[] | null }) => send("/api/workspace", "PATCH", patch).then((r) => json<WorkspaceView>(r));
 export const createInvite = (input: InviteInput) => send("/api/workspace/invites", "POST", input).then((r) => json<{ invite: Invite; token: string }>(r));
 export const updateInvite = (id: string, patch: InvitePatch) => send(`/api/workspace/invites/${id}`, "PATCH", patch).then((r) => json<WorkspaceView>(r));
 export const revokeInvite = (id: string) => send(`/api/workspace/invites/${id}`, "DELETE").then((r) => json<{ ok: true }>(r));

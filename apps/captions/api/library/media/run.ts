@@ -1,7 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
-import { rename, rm, writeFile } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 
@@ -118,13 +117,4 @@ export function ffmpegTo(out: string, args: string[], soon = false): Promise<voi
 
 /** A JSON file written whole or not at all. Its temp name is its own: two writers of one file at once (two computers'
  *  results for one edit, api/work/result.ts) never rename each other's temp away. */
-export async function writeJsonAtomic(out: string, value: unknown): Promise<void> {
-  const tmp = `${out}.${randomUUID()}.part`;
-  try {
-    await writeFile(tmp, JSON.stringify(value));
-    await rename(tmp, out);
-  } catch (e) {
-    await rm(tmp, { force: true });
-    throw e;
-  }
-}
+export { writeJsonAtomic } from "../../lib/write-json";

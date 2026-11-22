@@ -17,10 +17,16 @@ func siteSignInStart(_ url: URL, site: URL) -> (provider: String, back: String)?
     guard accountProviders.contains(provider) else { return nil }
     let q = parts.queryItems ?? []
     guard q.first(where: { $0.name == "for" })?.value == "site", q.first(where: { $0.name == "app" }) == nil else { return nil }
-    let next = q.first(where: { $0.name == "next" })?.value ?? "/"
-    // only a path on this site (the server checks it again): never another site
-    let back = next.hasPrefix("/") && !next.hasPrefix("//") && !next.contains("\\") ? next : "/"
-    return (provider, back)
+    return (provider, sameSiteBack(q.first(where: { $0.name == "next" })?.value ?? "/", site: site))
+}
+
+/// The page to come back to: `next` when it is a path on this site, else the site's root. Control characters are refused
+/// too, since URL parsing drops them ("/\t/evil.example" would become a protocol-relative address).
+func sameSiteBack(_ next: String, site: URL) -> String {
+    let controls = next.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f }
+    guard next.hasPrefix("/"), !next.hasPrefix("//"), !next.contains("\\"), !controls,
+          let url = URL(string: next, relativeTo: site)?.absoluteURL, isSite(url, site) else { return "/" }
+    return next
 }
 
 /// The sheet's address: the same start, as an app's sign-in with this challenge.

@@ -205,7 +205,7 @@ function SignInLink() {
   const mint = () => {
     setBusy(true);
     setError(null);
-    fetch("/api/auth/link", { method: "POST" })
+    fetch("/api/auth/link", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
       .then((r) => (r.ok ? (r.json() as Promise<{ path: string | null }>) : Promise.reject(new Error(String(r.status)))))
       // path null: a server with no sign-in, where the address alone opens it
       .then((j) => setLink(`${window.location.origin}${j.path ?? ""}`))

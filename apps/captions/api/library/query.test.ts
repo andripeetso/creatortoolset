@@ -43,6 +43,17 @@ describe("library asset query", () => {
     expect(ids(page(seed(), "lib_a"))).toEqual(["a3", "a2", "a1"]);
   });
 
+  it("narrows to vertical or horizontal clips as shown, after the file's rotation and the library's turn", () => {
+    const db = seed();
+    const probe = (v: string, p: object) => db.prepare("UPDATE asset_versions SET probe = ? WHERE id = ?").run(JSON.stringify(p), v);
+    probe("v_a1", { width: 1920, height: 1080, rotation: 90 }); // a phone's tall clip, stored on its side
+    probe("v_a2", { width: 1920, height: 1080, rotation: 90, turn: 90 }); // turned back to wide
+    probe("v_a3", { width: 0, height: 0, rotation: 0 }); // sound: neither
+    expect(ids(page(db, "lib_a", { orientation: "vertical" }))).toEqual(["a1"]);
+    expect(ids(page(db, "lib_a", { orientation: "horizontal" }))).toEqual(["a2"]);
+    expect(ids(page(db, "lib_a", { orientation: "sideways" }))).toEqual(["a3", "a2", "a1"]);
+  });
+
   it("says which clips are read in place from a computer's folder (Show in Finder), and leaves finished work out", () => {
     const db = seed();
     db.prepare("UPDATE asset_versions SET source_path = '/Users/someone/Footage/beach.mov' WHERE id = 'v_a1'").run();

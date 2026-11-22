@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { Lock, UserRound } from "lucide-react";
 import { ToolsetLogo } from "@/components/HomeLink";
-import { returnTo, useAuth, type Me } from "@/lib/auth";
+import { hasTeam, returnTo, useAuth, type Me, type ServerKind } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
 import { JoinPage } from "@/pages/JoinPage";
 import { joinToken } from "@/lib/workspaces";
@@ -95,7 +95,7 @@ export function ProviderButtons({ providers }: { providers: SignInProviders }) {
 
 /** The last answer from /api/auth/check, kept on this device. Under the local-cache prefix, so sign-out clears it. */
 const SNAP_KEY = "ct-swr:auth";
-type Snap = { required: boolean; user: Me | null; hosted: boolean; viewedBy: string | null };
+type Snap = { required: boolean; user: Me | null; kind?: ServerKind; viewedBy: string | null };
 function readSnap(): Snap | null {
   try {
     const v = JSON.parse(localStorage.getItem(SNAP_KEY) ?? "null");
@@ -116,7 +116,7 @@ function writeSnap(s: Snap | null) {
 // Before the first render: a returning account's last sign-in, so the app paints on its first frame. The check below
 // confirms it, and a server that disagrees sends the page to sign-in.
 const snap = readSnap();
-if (snap) useAuth.getState().setAuth(snap.required, snap.user, { hosted: snap.hosted, viewedBy: snap.viewedBy });
+if (snap) useAuth.getState().setAuth(snap.required, snap.user, { kind: snap.kind ?? "mac", viewedBy: snap.viewedBy });
 
 /**
  * Blocks the app behind an account login when the server has
@@ -141,14 +141,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   // the password was right and the sign-in code comes next (api/auth.ts codeStep): its one-time step token
   const [step, setStep] = useState<{ token: string; setup: boolean } | null>(null);
   const setAuth = useAuth((s) => s.setAuth);
-  const hosted = useAuth((s) => s.hosted);
-  // /join/<token> is an invite to a team: hosted servers only (elsewhere the path is just an unknown page)
+  const team = useAuth((s) => hasTeam(s.kind));
+  // /join/<token> is an invite to a team: a Server or Cloud only (elsewhere the path is just an unknown page)
   const invite = joinToken(pathname);
 
   useEffect(() => {
     fetch("/api/auth/check")
       .then((r) => r.json())
-      .then((d: { required: boolean; authed: boolean; user: Me | null; hosted?: boolean; viewedBy?: string | null; mustLink?: ("apple" | "google")[] | null }) => {
+      .then((d: { required: boolean; authed: boolean; user: Me | null; kind?: ServerKind; viewedBy?: string | null; mustLink?: ("apple" | "google")[] | null }) => {
         // Signed in with an account and sent here to sign in (?next=): go back.
         const back = returnTo(window.location.search, window.location.origin);
         if (back && d.authed) {
@@ -156,10 +156,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           return;
         }
         // a re-check with the same answer leaves the store alone (a new `me` object would re-run the loads keyed on it)
-        const next: Snap = { required: d.required, user: d.user, hosted: !!d.hosted, viewedBy: d.viewedBy ?? null };
+        const next: Snap = { required: d.required, user: d.user, kind: d.kind ?? "mac", viewedBy: d.viewedBy ?? null };
         const cur = useAuth.getState();
-        if (cur.required !== next.required || cur.hosted !== next.hosted || cur.viewedBy !== next.viewedBy || JSON.stringify(cur.me) !== JSON.stringify(next.user))
-          setAuth(next.required, next.user, { hosted: next.hosted, viewedBy: next.viewedBy });
+        if (cur.required !== next.required || cur.kind !== next.kind || cur.viewedBy !== next.viewedBy || JSON.stringify(cur.me) !== JSON.stringify(next.user))
+          setAuth(next.required, next.user, { kind: next.kind ?? "mac", viewedBy: next.viewedBy });
         writeSnap(d.user ? next : null);
         // the projects follow the account (App.tsx WorkspaceSync)
         if (!d.user) useWorkspace.getState().reset();
@@ -188,7 +188,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const site = siteFrameFor(window.location.hostname, pathname, window.location.search, webPlugins);
   if (site) return <>{site.element}</>;
   if (state === "checking") return <div className="h-screen bg-background" />;
-  if (invite && hosted) return <JoinPage token={invite} />;
+  if (invite && team) return <JoinPage token={invite} />;
   if (state === "ok") return <>{children}</>;
   if (state === "link") {
     return (
@@ -239,7 +239,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       return;
     }
     setAuth(true, user);
-    writeSnap(user ? { required: true, user, hosted: useAuth.getState().hosted, viewedBy: null } : null);
+    writeSnap(user ? { required: true, user, kind: useAuth.getState().kind, viewedBy: null } : null);
     setStep(null);
     setState("ok");
   }

@@ -210,7 +210,7 @@ describe("item actions", () => {
     void itemActionsFor(member(), [clips], "captions")[0]!.onRun("p1");
     expect(got).toEqual(["p1"]);
     expect(itemActionsFor(member(["tiny-gate"]), [clips], "captions")).toEqual([]);
-    expect(webPluginAdds(clips, { me: member(), hosted: false })).toEqual([{ text: "Button on Caption Studio projects: Tiny edit", to: "/captions" }]);
+    expect(webPluginAdds(clips, { me: member(), team: false })).toEqual([{ text: "Button on Caption Studio projects: Tiny edit", to: "/captions" }]);
   });
 });
 

@@ -19,9 +19,10 @@ import {
   splitDocumentTitle,
   withDocumentTitle,
 } from "../src/lib/document-markdown";
-import { type SessionUser } from "./users";
+import { canSee, type SessionUser } from "./users";
 import { generateGuideFromClip } from "./lib/guide-pipeline";
 import { announce } from "./lib/sync";
+import { okId } from "./lib/ids";
 import {
   guideToMarkdown,
   isGuideAssetName,
@@ -45,7 +46,6 @@ export const documentsApp = new Hono<{ Variables: AuthVars }>();
 const DOCS_DIR = path.join(env.dataDir, "documents");
 const CLIPS_DIR = path.join(env.dataDir, "clips");
 const PROJECTS_DIR = path.join(env.dataDir, "projects");
-const okId = (id: string) => /^[a-z0-9-]{6,40}$/.test(id);
 const docDir = (id: string) => path.join(DOCS_DIR, id);
 const MAX_SOURCES = 8;
 const PACK_CHARS = 7500;
@@ -79,8 +79,6 @@ interface Meta {
 
 void mkdir(DOCS_DIR, { recursive: true }).catch(() => {});
 
-const canSee = (meta: Meta, user: SessionUser) =>
-  user.role === "admin" || meta.owner === user.username;
 
 const ownsSource = (owner: string | undefined, user: SessionUser) =>
   owner === user.username || (user.role === "admin" && !owner);
