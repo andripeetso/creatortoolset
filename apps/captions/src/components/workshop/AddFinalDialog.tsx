@@ -128,34 +128,46 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
   const input = useRef<HTMLInputElement>(null);
   const stop = useRef<AbortController | null>(null);
 
-  const send = async (f: File | undefined) => {
-    if (!f || stage !== "pick") return;
-    const ctl = new AbortController();
-    stop.current = ctl;
-    setFile(f);
-    setError("");
-    setSent(0);
+  const [at, setAt] = useState({ i: 0, n: 1 });
+
+  /** One final: copied into the project's folder on this Mac where it can be, sent to the server, put in Finals. */
+  const one = async (f: File, signal: AbortSignal) => {
     const { finals } = ask;
     const finalsId = finals.finalsId ?? undefined;
+    setFile(f);
+    setSent(0);
     setStage(onMac(finals) ? "copy" : "upload");
-    try {
-      // in the Mac app with the project's folder on this Mac: a copy goes there, and the folder is where it is read from
-      const copied = onMac(finals) ? await copyIn(f, finals.folder!, ctl.signal, setSent) : null;
-      if (copied && finals.reads) return setStage("done"); // the server reads the folder itself
-      // the copy on this Mac is extra: the server still gets the final, under Upload none too (uploadFinal)
-      setSent(0);
-      setStage(copied && !hostsOriginals(finals.upload) && !hostsProxies(finals.upload) ? "finals" : "upload");
-      const up = await uploadFinal(ask.libraryId, f, copied, finals.upload, finalsId, (n) => setSent(n), ctl.signal);
-      const id = up.assetId ?? up.duplicateOf;
-      if (!id) throw new Error("The upload did not finish");
-      setStage("finals");
-      await putFinal(ask.id, id);
-      setStage("done");
-    } catch (e) {
-      if (ctl.signal.aborted) return;
-      setError(e instanceof Error ? e.message : String(e));
-      setStage("pick");
+    // in the Mac app with the project's folder on this Mac: a copy goes there, and the folder is where it is read from
+    const copied = onMac(finals) ? await copyIn(f, finals.folder!, signal, setSent) : null;
+    if (copied && finals.reads) return; // the server reads the folder itself
+    // the copy on this Mac is extra: the server still gets the final, under Upload none too (uploadFinal)
+    setSent(0);
+    setStage(copied && !hostsOriginals(finals.upload) && !hostsProxies(finals.upload) ? "finals" : "upload");
+    const up = await uploadFinal(ask.libraryId, f, copied, finals.upload, finalsId, (n) => setSent(n), signal);
+    const id = up.assetId ?? up.duplicateOf;
+    if (!id) throw new Error("The upload did not finish");
+    setStage("finals");
+    await putFinal(ask.id, id);
+  };
+
+  // several finals (versions A, B, C) go one after another; one that fails doesn't stop the rest
+  const send = async (files: File[]) => {
+    if (!files.length || stage !== "pick") return;
+    const ctl = new AbortController();
+    stop.current = ctl;
+    setError("");
+    const failed: string[] = [];
+    for (const [i, f] of files.entries()) {
+      setAt({ i, n: files.length });
+      try {
+        await one(f, ctl.signal);
+      } catch (e) {
+        if (ctl.signal.aborted) return;
+        failed.push(`${files.length > 1 ? `${f.name}: ` : ""}${e instanceof Error ? e.message : String(e)}`);
+      }
     }
+    setError(failed.join("\n"));
+    setStage(failed.length ? "pick" : "done");
   };
   const close = () => {
     stop.current?.abort();
@@ -177,7 +189,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
           e.preventDefault();
           e.stopPropagation();
           setOver(false);
-          void send(e.dataTransfer.files[0]);
+          void send([...e.dataTransfer.files]);
         }}
       >
         <DialogTitle>Add the final video</DialogTitle>
@@ -195,14 +207,15 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
             )}
           >
             <UploadCloud className="h-6 w-6 text-zinc-500" />
-            <span className="font-medium text-zinc-200">Drop the final video here</span>
-            <span className="text-xs text-zinc-500">or click to pick it</span>
+            <span className="font-medium text-zinc-200">Drop the final videos here</span>
+            <span className="text-xs text-zinc-500">or click to pick</span>
           </button>
         ) : (
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5 text-sm">
             <div className="truncate">{file?.name}</div>
             <div className="mt-1 text-xs text-zinc-500">
-              {stage === "copy" ? `Copying ${pct}%` : stage === "upload" ? `Uploading ${pct}%` : stage === "finals" ? "Adding to Finals" : "In Finals"}
+              {at.n > 1 && stage !== "done" && `${at.i + 1} of ${at.n} · `}
+              {stage === "copy" ? `Copying ${pct}%` : stage === "upload" ? `Uploading ${pct}%` : stage === "finals" ? "Adding to Finals" : at.n > 1 ? `${at.n} in Finals` : "In Finals"}
             </div>
             {(stage === "upload" || stage === "copy") && (
               <div className="mt-2 h-1 overflow-hidden rounded bg-zinc-800">
@@ -211,7 +224,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
             )}
           </div>
         )}
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="whitespace-pre-line text-xs text-red-400">{error}</p>}
         <div className="flex justify-end">
           <Button variant="outline" onClick={close} className="border-zinc-800 bg-transparent">
             {stage === "done" ? "Done" : stage === "pick" ? "Not now" : "Cancel"}
@@ -221,9 +234,10 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
           ref={input}
           type="file"
           accept="video/*,.mov,.mxf,.mkv"
+          multiple
           hidden
           onChange={(e) => {
-            void send(e.target.files?.[0]);
+            void send([...(e.target.files ?? [])]);
             e.target.value = "";
           }}
         />
