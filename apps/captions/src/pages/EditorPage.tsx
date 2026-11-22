@@ -8,7 +8,7 @@ import { Check, ChevronRight, Clapperboard, Folder, Loader2, PanelLeft, Plus } f
 import { toast } from "sonner";
 import type { EditSummary } from "@contracts/editor";
 import { MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape } from "@contracts/editor";
-import type { AnimationStylesView, EditingStylesView } from "@contracts/editor-styles";
+import type { AnimationStylesView, EditingStylesView, StyleProposal } from "@contracts/editor-styles";
 import type { AssetCard, Collection, LibrarySummary } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +40,7 @@ import { FolderGrid, GridFrame, ItemCard } from "@/components/browse/Grid";
 import { undoable } from "@/lib/undo";
 import { byName, matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
 import { AnimationStyles, type OpenAnimation } from "./editor/AnimationStyles";
-import { EditingStyles, StyleSheet, type OpenStyle } from "./editor/EditingStyles";
+import { EditingStyles, StyleSheet, SuggestButton, type OpenStyle } from "./editor/EditingStyles";
 import { FirstWay } from "./editor/FirstWay";
 import { FromScript } from "./editor/FromScript";
 import { ProjectPage } from "./editor/ProjectView";
@@ -64,6 +64,7 @@ const footageOf = (files: FileList | null | undefined): File[] => Array.from(fil
 const STYLE_CHAT = {
   editing: { about: "New editing style", ask: "Describe how you like your videos edited: the pace, what stays in and what goes, how long, how many versions. Say it your way and I'll set up the style." },
   animation: { about: "New animation style", ask: "Describe the animation style you want, and drop in pictures of animations you like. Say it your way and I'll set up the style." },
+  suggest: { about: "Suggest a style", ask: "Paste a link to a video whose style you like, or name one in your Media Library. I'll look at it and suggest a style for you to keep or change." },
 } as const;
 function styleChat(kind: keyof typeof STYLE_CHAT): void {
   useAssistant.getState().setQuote(STYLE_CHAT[kind].about);
@@ -187,6 +188,7 @@ function EditorList() {
   // the person's editing styles: the second tab (/editor?tab=styles), and New project's Style select. `own`: it is read again after this window's own saves
   const styleList = useCachedLoad<EditingStylesView>("/api/editor/styles", listStyles, { own: true });
   const [openStyle, setOpenStyle] = useState<OpenStyle>(null);
+  const [openProposal, setOpenProposal] = useState<StyleProposal | null>(null);
   // the person's animation styles: the third tab (/editor?tab=animation)
   const animationList = useCachedLoad<AnimationStylesView>("/api/editor/animation-styles", listAnimationStyles, { own: true });
   const [openAnimation, setOpenAnimation] = useState<OpenAnimation>(null);
@@ -198,6 +200,21 @@ function EditorList() {
   // read from the server then, never from the saved list, so the sheet shows what was just saved; then the address is
   // the tab's own again
   const wanted = tab === "edits" ? null : params.get("style");
+  // /editor?tab=styles&proposal=<id>: a suggestion's sheet (the assistant, after it suggested one)
+  const wantedProposal = tab === "styles" ? params.get("proposal") : null;
+  useEffect(() => {
+    if (!wantedProposal) return;
+    let live = true;
+    const done = () => live && setParams({ tab }, { replace: true });
+    void listStyles().then((v) => {
+      const found = v.proposals?.find((x) => x.id === wantedProposal);
+      if (live && found) setOpenProposal(found);
+      void styleList.refresh();
+      done();
+    }, done);
+    return () => void (live = false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantedProposal]);
   useEffect(() => {
     if (!wanted) return;
     let live = true;
@@ -289,6 +306,7 @@ function EditorList() {
     return (
       <div className="flex min-h-dvh flex-col">
         <AppBar tool="Editor">
+          {editable && <SuggestButton onMade={(p) => void styleList.refresh().then(() => setOpenProposal(p))} onVideo={chat ? () => styleChat("suggest") : undefined} />}
           {editable && !!styleList.data?.styles.length && (
             <Button size="sm" onClick={() => setOpenStyle("new")}>
               <Plus className="h-4 w-4" />
@@ -298,7 +316,20 @@ function EditorList() {
         </AppBar>
         <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
           {tabs}
-          {styleList.data && <EditingStyles styles={styleList.data.styles} open={openStyle} onOpen={setOpenStyle} onChanged={styleList.refresh} onChat={chat ? () => styleChat("editing") : undefined} editable={editable} />}
+          {styleList.data && (
+            <EditingStyles
+              styles={styleList.data.styles}
+              open={openStyle}
+              onOpen={setOpenStyle}
+              onChanged={styleList.refresh}
+              onChat={chat ? () => styleChat("editing") : undefined}
+              defaultId={styleList.data.default ?? null}
+              proposals={styleList.data.proposals}
+              proposal={openProposal}
+              onProposal={setOpenProposal}
+              editable={editable}
+            />
+          )}
           {!styleList.data && styleList.error && <p className="text-sm text-red-400">{styleList.error}</p>}
         </main>
       </div>
@@ -538,8 +569,8 @@ export function NewEditSheet({ open, onClose, start, styles, onStyles, dropped }
     setVersions(s.versions);
     setTargetS(s.targetS ? String(s.targetS) : "");
   };
-  // the sheet opens on the style the last edit was made with
-  const last = styles?.last;
+  // the sheet opens on this workspace's default style, else the one the last edit was made with
+  const last = styles?.default ?? styles?.last;
   useEffect(() => {
     if (open && styleId === null && last) pickStyle(last);
     // eslint-disable-next-line react-hooks/exhaustive-deps
