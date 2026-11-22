@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
 import { allGranted, folderGrant, listMediaFolders } from "@/lib/local-files";
 import { indexOnMac, quickPrint } from "@/lib/onMac";
-import { thisMacDevice } from "@/lib/providers";
+import { thisMacDevice, useProviders } from "@/lib/providers";
 import { importCopy, importPrint, importScan, macImports, macMediaUrl, NOT_A_COPY_FOLDER, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { WORDS } from "@/lib/wording";
 
@@ -177,48 +177,86 @@ export async function lookForNew(library: LibrarySummary, onStep: (line: string)
   return { added, reconnected, refused };
 }
 
-/** "Creator Toolset can't read MOO" with its Allow button: folders this Mac may not read yet. Opens nothing by itself. */
-export function CantRead({ folders, onAllow, busy }: { folders: string[]; onAllow: () => void; busy?: boolean }) {
-  if (!folders.length) return null;
-  return (
-    <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-      <span>Creator Toolset can't read {folders.map(folderName).join(", ")}</span>
-      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy} onClick={onAllow}>
-        {WORDS.allowOnThisMac}
-      </Button>
-    </p>
-  );
-}
-
-/** This Mac's Settings → Folders folders (the window's workspace's) that wait for its OK: their location agent reads nothing there yet. */
-export const waitingFolders = (view: Pick<StorageView, "folders"> | null, me: string | undefined) =>
-  me ? (view?.folders ?? []).filter((f) => f.origin.host === me && f.folderState === "needs_ok") : [];
+/** This workspace's Media folders that wait for an OK on their Mac (Settings → Folders' "Needs your OK"): in the Mac app
+ *  this Mac's own; with `anyMac` (a browser, no Mac app) every computer's, as the page then names the Mac. */
+export const waitingFolders = (view: Pick<StorageView, "folders"> | null, me: string | undefined, anyMac = false) =>
+  (view?.folders ?? []).filter((f) => f.role === "footage" && f.folderState === "needs_ok" && !f.missing && (anyMac || (!!me && f.origin.host === me)));
 
 /**
- * On the Library page in the Mac app: the folders of this Mac that wait for an OK, one quiet line. Allow is the same
- * press as Settings → Folders' (folderGrant); the Mac's location agent then reads the folder and connects the clips
- * uploaded from it to their files here.
+ * The Media folders the Library page says can't be read yet (`key`: read again for another library), and Allow: the
+ * same press as Settings → Folders' (folderGrant), only when pressed. The Mac's location agent then reads the folder and
+ * its files come into the library (the page's list refreshes as they are added).
  */
-export function FoldersToAllow() {
+export function useWaitingFolders(key?: string) {
   const [waiting, setWaiting] = useState<StorageFolder[]>([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const me = thisMacDevice();
-    if (!me) return;
+    const anyMac = !thisMacBridge();
+    if (!me && !anyMac) return;
     let live = true;
     void fetch("/api/devices/storage")
       .then((r) => (r.ok ? (r.json() as Promise<StorageView>) : null))
-      .then((v) => live && setWaiting(waitingFolders(v, me)), () => undefined);
+      .then((v) => live && setWaiting(waitingFolders(v, me, anyMac)), () => undefined);
     return () => void (live = false);
-  }, []);
+  }, [key]);
   const allow = async () => {
     setBusy(true);
+    const asked = waiting;
     const left: StorageFolder[] = [];
-    for (const f of waiting) if (!(await folderGrant(f.origin.path, f.id))) left.push(f);
-    setWaiting(left);
-    setBusy(false);
+    try {
+      for (const f of asked) if (!(await folderGrant(f.origin.path, f.id).catch(() => false))) left.push(f);
+    } finally {
+      setWaiting((now) => (now === asked ? left : now)); // read again meanwhile (another library or workspace): keep that list
+      setBusy(false);
+    }
   };
-  return <CantRead folders={waiting.map((f) => f.origin.path)} onAllow={() => void allow()} busy={busy} />;
+  return { waiting, busy, allow: () => void allow() };
+}
+export type WaitingFolders = ReturnType<typeof useWaitingFolders>;
+
+/**
+ * "Creator Toolset can't read Media yet" where it can't be missed (owner, 2026-11-21: "more visible, center"): in the
+ * middle of an empty Media Library (`centred`), else a bar at the top of the page. In the Mac app with Allow on this
+ * Mac; in a browser it names the Mac that has to allow it. Nothing when no folder waits.
+ */
+export function CantRead({ waiting, busy, allow, centred }: WaitingFolders & { centred?: boolean }) {
+  if (!waiting.length) return null;
+  const names = waiting.map((f) => folderName(f.origin.path)).join(", ");
+  const its = waiting.length === 1 ? "its" : "their";
+  const here = !!thisMacBridge();
+  return (
+    <div
+      role="status"
+      className={
+        centred
+          ? "m-auto flex w-full max-w-md flex-col items-center gap-3 rounded-2xl border border-amber-400/60 bg-amber-500/10 px-6 py-7 text-center"
+          : "flex flex-wrap items-center gap-3 rounded-lg border border-amber-400/60 bg-amber-500/10 px-4 py-2.5"
+      }
+    >
+      <span className={centred ? "text-base" : "text-sm"}>
+        Creator Toolset can't read {names} yet;{" "}
+        {here ? (
+          `once allowed, ${its} files are added to the Media Library.`
+        ) : (
+          <>
+            open the Mac app on <MacNames hosts={waiting.map((f) => f.origin.host)} /> and press {WORDS.allowOnThisMac} to add {its} files to the Media Library.
+          </>
+        )}
+      </span>
+      {here && (
+        <Button size="sm" disabled={busy} onClick={allow}>
+          {WORDS.allowOnThisMac}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The computers' names, as Settings → Computers lists them ("its Mac" for one not found). */
+function MacNames({ hosts }: { hosts: string[] }) {
+  const devices = useProviders().data?.devices ?? [];
+  return <>{[...new Set(hosts.map((h) => devices.find((d) => d.id === h)?.name ?? "its Mac"))].join(" or ")}</>;
 }
 
 /** What Look for new files did, in one line: "Added 3 · reconnected 12", or "No new files"; `coming`: new files still being copied in ("2 coming in"). */
