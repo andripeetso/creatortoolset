@@ -39,6 +39,8 @@ const patches: unknown[] = [];
 const asked: Array<[string, string | null]> = [];
 let serverHere = false;
 let storageFolders: unknown[] = [];
+/** what GET /made answers (api/library/made.ts) */
+let made: unknown[] = [];
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
@@ -47,6 +49,7 @@ beforeEach(() => {
   asked.length = 0;
   serverHere = false;
   storageFolders = [];
+  made = [];
   // the Mac app: the bridge is there, so the Mac-only rows show
   vi.stubGlobal("webkit", { messageHandlers: { thisMac: { postMessage: async () => ({}) } } });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -62,6 +65,7 @@ beforeEach(() => {
     if (url.endsWith("/collections")) return ok({ collections: [] });
     if (url.endsWith("/space")) return ok({ videos: { onMac: 0, inPlace: 0, stored: { bytes: 0, files: 0 } }, proxies: { bytes: 0, files: 0 }, pictures: { bytes: 0, files: 0 }, models: null });
     if (url.endsWith("/status")) return ok({ clips: 0, unreadable: 0, stages: [] });
+    if (url.endsWith("/made")) return ok(made);
     if (url.includes("/estimate")) return ok({ steps: [], lookSpent: 0, lookLevels: [], timelineModels: [] });
     if (url.startsWith("/api/devices/storage")) return ok({ folders: storageFolders, serverDisks: [], here: [] });
     if (url.startsWith("/api/providers")) return ok({ devices: [] });
@@ -104,7 +108,7 @@ async function render(el: ReactNode) {
 }
 
 /** The owner page's sections, in the order the page draws them (the §3.1 order). */
-const SECTION_TITLES = [LIBRARY_WORDS.foldersTitle, LIBRARY_WORDS.organizationTitle, LIBRARY_WORDS.proxyTitle, LIBRARY_WORDS.hostedTitle, LIBRARY_WORDS.analysisTitle, LIBRARY_WORDS.modelsTitle];
+const SECTION_TITLES = [LIBRARY_WORDS.foldersTitle, LIBRARY_WORDS.organizationTitle, LIBRARY_WORDS.proxyTitle, LIBRARY_WORDS.hostedTitle, LIBRARY_WORDS.analysisTitle, LIBRARY_WORDS.madeTitle, LIBRARY_WORDS.modelsTitle];
 const headings = () => [...host!.querySelectorAll("h2")].map((h) => h.textContent ?? "");
 const bodyText = () => document.body.textContent ?? "";
 /** a radio input by its label (RadioList gives each its label as aria-label) */
@@ -214,6 +218,26 @@ describe("Settings → Media Library, the owner's page", () => {
     const off: LibrarySummary = { ...library, settings: { ...SETTINGS, describe: false, look: false, timeline: false, embed: false, transcribe: false, lookLevel: "standard" } };
     await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(headings()).not.toContain(LIBRARY_WORDS.modelsTitle);
+  });
+
+  it("What's made: a switch saves only its setting and queues nothing; Make for the missing says its cost first", async () => {
+    made = [
+      { kind: "describe", have: 10, missing: 4, queued: 0, cost: "tokens", usd: 2 },
+      { kind: "thumb", have: 14, missing: 0, queued: 0, cost: "free" },
+    ];
+    const asks: string[] = [];
+    vi.stubGlobal("confirm", (m: string) => (asks.push(m), false));
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    expect(bodyText()).toContain("Made for 10 · 4 missing · Uses tokens");
+    const sw = host!.querySelector('[aria-label="Descriptions and tags for new files"]') as HTMLButtonElement;
+    await act(async () => sw.click());
+    expect(patches.at(-1)).toEqual({ settings: { describe: !library.settings.describe } });
+    expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false);
+    const button = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Make for 4 missing")!;
+    await act(async () => button.click());
+    expect(asks[0]).toContain("Uses tokens on the AI provider, about $2.");
+    expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false); // Cancel queues nothing
+    expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make for 0"))).toBe(false);
   });
 
   it("asks nothing about how to import: where a file is decides", async () => {

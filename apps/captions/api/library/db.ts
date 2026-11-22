@@ -200,6 +200,13 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  */
 export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true, transcribe: true } as const;
 /**
+ * The settings key holding when each background catch-up's switch went on (ms): the catch-up fills only files added since,
+ * so turning a switch on never fills the files already there (those take "Make for the missing", made.ts). Absent: every file.
+ */
+export const SINCE = { look: "lookSince", timeline: "timelineSince", embed: "embedSince", pictures: "picturesSince" } as const;
+/** SQL on the library `l` and the version `v`: the catch-up of `key` may fill `v`. */
+export const sinceSql = (key: keyof typeof SINCE): string => `v.created_at >= IFNULL(json_extract(l.settings, '$.${SINCE[key]}'), 0)`;
+/**
  * A new library's stored settings (UNIFIED-PRD §2 M4, M9): Smart folders, no monthly limit. Existing libraries keep
  * what they store (none of these is written to them).
  */

@@ -359,7 +359,7 @@ describe("the background index", () => {
 
   it("a held description waits for the budget, and is released with the looks", async () => {
     const d = libraryDb();
-    const v = await seed("ast-bud-03");
+    const v = await seed("ast-bud-03", { described: false }); // one described already would read done (jobs.ts HAVE)
     await recordUsage(DESCRIBE_LABEL, { tokens: 1000, costUsd: 5 }, undefined, "workspace", (await libraryWorkspaceId(d, "lib_s")) ?? null);
     d.prepare(`UPDATE libraries SET settings = json_set(settings, '$.lookBudget', 1) WHERE id = 'lib_s'`).run();
     enqueueJob(d, "lib_s", v, "describe", "local");

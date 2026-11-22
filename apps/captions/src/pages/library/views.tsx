@@ -1,17 +1,17 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
-import { Check, ChevronDown, Folder, LayoutGrid, List } from "lucide-react";
+import { Activity, Check, ChevronDown, Folder, LayoutGrid, List } from "lucide-react";
 import { pageView } from "@/components/browse/views";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /**
- * The Media Library's three views, kept on this device under its own key: Folders (the folder cards, then the clips),
- * Gallery (only the clips, big and edge to edge) and List (rows). Before a pick here it opens as Settings → Appearance
+ * The Media Library's views, kept on this device under its own key: Folders (the folder cards, then the clips),
+ * Gallery (only the clips, big and edge to edge), List (rows) and Status (the library's health, ./Health.tsx). Before a pick here it opens as Settings → Appearance
  * says for the Media Library (cards: Folders, rows: List). The other tools' views (components/browse/views.ts) keep
  * their two.
  */
-export type LibraryView = "folders" | "gallery" | "list";
-const VIEWS: LibraryView[] = ["folders", "gallery", "list"];
+export type LibraryView = "folders" | "gallery" | "list" | "status";
+const VIEWS: LibraryView[] = ["folders", "gallery", "list", "status"];
 const KEY = "library:view";
 const EVENT = "library-view-change";
 
@@ -45,8 +45,8 @@ export function useLibraryView(): [LibraryView, (v: LibraryView) => void] {
   return [view, set];
 }
 
-const ICONS = { folders: Folder, gallery: LayoutGrid, list: List } as const;
-const TITLES = { folders: "Folders", gallery: "Gallery", list: "List" } as const;
+const ICONS = { folders: Folder, gallery: LayoutGrid, list: List, status: Activity } as const;
+const TITLES = { folders: "Folders", gallery: "Gallery", list: "List", status: "Status" } as const;
 
 /**
  * The View button: one control for how the clips are shown. Its panel holds the three views as rows and, for the
@@ -83,7 +83,7 @@ export function LibraryViewMenu({ view, onChange, size, onSize }: { view: Librar
             );
           })}
         </div>
-        {view !== "list" && (
+        {view !== "list" && view !== "status" && (
           <label className="flex flex-col gap-1.5 border-t px-2 pt-3 text-xs text-muted-foreground">
             Card size
             <CardSizeSlider size={size} onChange={onSize} />

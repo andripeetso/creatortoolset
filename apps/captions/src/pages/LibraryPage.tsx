@@ -13,7 +13,8 @@ import { FolderGrid } from "@/components/browse/Grid";
 import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
 import { LibrarySetup } from "./library/Setup";
-import { LibraryProgressBar, LibraryStatusDialog } from "@/components/LibraryProcessing";
+import { LibraryProgressBar } from "@/components/LibraryProcessing";
+import { LibraryHealth } from "./library/Health";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -138,7 +139,6 @@ export default function LibraryPage() {
   const [view, setView] = useLibraryView();
   const [cardSize, setCardSize] = useCardSize();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(false);
   const columns = cardSize === null ? undefined : cardColumns(cardSize);
   const navigate = useNavigate();
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
@@ -1022,7 +1022,7 @@ export default function LibraryPage() {
                               {needsAttention(watch) && <span aria-hidden className="ml-auto h-2 w-2 rounded-full bg-amber-500" />}
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem onSelect={() => setStatusOpen(true)}>
+                          <DropdownMenuItem onSelect={() => setView("status")}>
                             <Activity /> Library status
                           </DropdownMenuItem>
                           {!trash && <SourceMediaItems canLook={canLook} onLook={() => void lookNow()} onError={setError} />}
@@ -1113,16 +1113,17 @@ export default function LibraryPage() {
                     {lookLine}
                   </p>
                 )}
-                {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancelImports(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} />}
+                {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancelImports(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} all={view === "status"} />}
                 {!firstScreen && !settling && <CantRead {...waitingFolders} />}
-                {statusOpen && <LibraryStatusDialog libraryId={library.id} onClose={() => setStatusOpen(false)} />}
 
 
                 {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Preparing search by meaning</p>}
 
-                {said.length > 0 && <FoundInClips hits={said} words={words} onOpen={(h) => openClip(h.asset, h.seconds)} />}
+                {view !== "status" && said.length > 0 && <FoundInClips hits={said} words={words} onOpen={(h) => openClip(h.asset, h.seconds)} />}
 
-                {(searching ? !found : !first.data) || settling ? (
+                {view === "status" ? (
+                  <LibraryHealth library={library} watch={watch ?? null} onSettings={watch ? () => setSettingsOpen(true) : undefined} />
+                ) : (searching ? !found : !first.data) || settling ? (
                   view === "list" ? <RowFrame /> : <TileFrame columns={columns} />
                 ) : shown.length > 0 || shownFolders.length > 0 || placeholders.length > 0 ? (
                   view === "list" ? (

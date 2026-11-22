@@ -702,4 +702,8 @@ export const MIGRATIONS: string[] = [
   // what an AI Editor version's pictures were made of when its steps started (editor/preview.ts markStart), the server's
   // own record (a computer's result never writes it): a cut is filed blurred only when its start and its end say so
   `CREATE TABLE render_marks (edit_id TEXT NOT NULL, variant TEXT NOT NULL, mark TEXT NOT NULL, PRIMARY KEY (edit_id, variant));`,
+  // "Make for new files" (made.ts): the background catch-ups fill only files added since each switch went on, so the
+  // files already in a library get these only from "Make for the missing". Libraries from before start from now
+  `UPDATE libraries SET settings = json_set(settings, '$.lookSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000, '$.timelineSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+    '$.embedSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000, '$.picturesSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000);`,
 ];

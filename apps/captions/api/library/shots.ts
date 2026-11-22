@@ -10,7 +10,7 @@ import { ffmpegCommand } from "../ffmpeg-runtime";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { mayRead } from "../work/offline";
 import { stampOf } from "../lib/workshop/context";
-import { blobs, libraryLookBudget, libraryLookLevel, librarySetting } from "./db";
+import { blobs, libraryLookBudget, libraryLookLevel, librarySetting, sinceSql } from "./db";
 import { mayLeave } from "./upload-gate";
 import { DESCRIBE_LABEL, libraryWorkspaceId, whoFor, workspaceOf } from "./describe";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -153,6 +153,8 @@ export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boo
          AND (a.roll = 'b' OR (a.roll = 'a' AND IFNULL(json_extract(l.settings, '$.lookTalking'), 0)))
          AND IFNULL(json_extract(l.settings, '$.look'), 1) AND IFNULL(json_extract(v.probe, '$.duration'), 0) > ?
          AND (j.id IS NULL OR (j.state = 'needs_key' AND IFNULL(j.error, '') != ?))
+         -- never queued: only a file added since Shot descriptions went on (db.ts SINCE)
+         AND (j.id IS NOT NULL OR ${sinceSql("look")})
          AND NOT EXISTS (SELECT 1 FROM jobs p WHERE p.version_id = v.id AND p.state IN ('queued', 'running'))
        ORDER BY v.created_at DESC LIMIT 50`,
     )
