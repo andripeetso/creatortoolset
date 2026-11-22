@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-// The Media Library's thumbnails and sprites, kept on this Mac: `ctlocal://thumb/<base64url of the server path with its
+// The Media Library's thumbnails and sprites and Review's thumbnails, kept on this Mac: `ctlocal://thumb/<base64url of the server path with its
 // query>` (the page's localThumb, src/lib/local-thumbs.ts). ProjectScheme answers it: from Caches/Thumbs when the cache
 // holds the file, else from the page's own server with the window's cookies, and a 200 is kept. A file is keyed by the
 // server's origin, the account's proxy folder there (ProxyCache.allowed: one per server and account) and the path with
@@ -35,15 +35,18 @@ enum ThumbCache {
         return target
     }
 
-    /// Only a Media Library thumb or sprite of one version: /api/library/media/<id>/(thumb|sprite), and after a `?` only
-    /// plain query characters. Nothing else reaches the server through this scheme.
+    /// Only a Media Library thumb or sprite of one version, /api/library/media/<id>/(thumb|sprite), or a Review version's
+    /// thumb, /api/review/assets/<id>/v/<n>/thumb, and after a `?` only plain query characters. Nothing else reaches the
+    /// server through this scheme.
     static func accepts(_ target: String) -> Bool {
         let parts = target.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 1 || parts[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_=&.-".contains($0)) }) else { return false }
-        let segments = parts[0].split(separator: "/", omittingEmptySubsequences: false)
-        return segments.count == 6 && segments[0].isEmpty && segments[1] == "api" && segments[2] == "library" && segments[3] == "media"
-            && !segments[4].isEmpty && segments[4].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
-            && (segments[5] == "thumb" || segments[5] == "sprite")
+        let s = parts[0].split(separator: "/", omittingEmptySubsequences: false)
+        let id = { (x: Substring) in !x.isEmpty && x.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) }
+        guard s.count >= 6, s[0].isEmpty, s[1] == "api" else { return false }
+        if s.count == 6 { return s[2] == "library" && s[3] == "media" && id(s[4]) && (s[5] == "thumb" || s[5] == "sprite") }
+        return s.count == 8 && s[2] == "review" && s[3] == "assets" && id(s[4]) && s[5] == "v"
+            && !s[6].isEmpty && s[6].allSatisfy({ $0.isASCII && $0.isNumber }) && s[7] == "thumb"
     }
 
     /// The page's server as an origin (scheme, host, port): the base the target is asked of.

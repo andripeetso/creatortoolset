@@ -4,6 +4,7 @@ import type { TimelineView } from "@contracts/timeline-import";
 import type { UploadRelayTus, UploadRelayView } from "@contracts/storage";
 import type { Critique } from "@contracts/edit-plan";
 import { whenSaid } from "./when-said";
+import { localThumb } from "./local-thumbs";
 
 /** Review — Frame.io-style video review. Server: api/review.ts. */
 
@@ -526,7 +527,10 @@ export function reviewApi(base: string) {
 /** Stacking reuses version numbers for other files, and media is cached for
  *  an hour: the version's createdAt (it moves with the file) keeps URLs apart. */
 type FileRef = { n: number; createdAt: number };
-const mediaUrl = (base: string, v: FileRef, file: string) => `${base}/v/${v.n}/${file}?c=${v.createdAt}`;
+const mediaUrl = (base: string, v: FileRef, file: string) => {
+  const url = `${base}/v/${v.n}/${file}?c=${v.createdAt}`;
+  return file === "thumb" ? localThumb(url)! : url; // the Mac app keeps a thumb on this Mac (local-thumbs.ts)
+};
 
 export const thumbUrl = (a: ReviewAsset, base = `/api/review/assets/${a.id}`) => {
   const v = a.versions.at(-1);

@@ -18,7 +18,13 @@ final class ThumbCacheTests: XCTestCase {
     func testOnlyAMediaLibraryThumbOrSpriteIsAccepted() {
         XCTAssertTrue(ThumbCache.accepts("/api/library/media/v1-abc/sprite"))
         XCTAssertTrue(ThumbCache.accepts(thumb))
+        XCTAssertTrue(ThumbCache.accepts("/api/review/assets/3f2a-b_c/v/12/thumb?c=1763840000000"))
         for bad in [
+            "/api/review/assets/a1/v/1/play",
+            "/api/review/assets/a1/v/x/thumb",
+            "/api/review/assets/a1/v/1/thumb/extra",
+            "/api/review/trash/a1/v/1/thumb",
+            "/api/review/assets/../v/1/thumb",
             "/api/library/media/v1/play",
             "/api/library/media/v1/source",
             "/api/library/media//thumb",

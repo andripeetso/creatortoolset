@@ -23,6 +23,16 @@ describe("localThumb", () => {
     expect(localThumb(undefined)).toBeUndefined();
   });
 
+  it("turns a Review thumb from mark 2 on only", () => {
+    const url = "/api/review/assets/3f2a-b_c/v/12/thumb?c=1763840000000";
+    inMacApp("1");
+    expect(localThumb(url)).toBe(url);
+    inMacApp("2");
+    expect(localThumb(url)).toMatch(/^ctlocal:\/\/thumb\//);
+    expect(localThumb("/api/library/media/v1/thumb")).toMatch(/^ctlocal:\/\/thumb\//);
+    for (const other of ["/api/review/assets/a1/v/1/play?c=1", "/api/review/trash/a1/thumb", "/api/review/s/tok/v/1/thumb?c=1"]) expect(localThumb(other)).toBe(other);
+  });
+
   it("leaves every other path as it is, even in the Mac app", () => {
     inMacApp("1");
     for (const url of [
