@@ -131,6 +131,8 @@ mkdir -p "$server/bin" "$server/runtime"
 # CT_PLUGIN_HOST=1: the build lists every module of the app (scripts/plugins.mjs), so a plug-in from the person's own
 # plug-ins folder, built by itself on their Mac, can use the app's one copy of each (api/lib/folder-plugins.ts)
 (cd "$repo" && CT_PLUGIN_HOST=1 pnpm --filter @creator-toolset/captions build)
+# the page must draw before it ships: a script that stops as it loads keeps every new window on the CT mark
+(cd "$captions" && node scripts/check-page-opens.mjs)
 ditto "$captions/dist" "$server/dist"
 # that build wrote the two lists into the checkout (api/ and src/plugin-host.gen.ts): the empty ones go back, so a test
 # run that follows in this checkout is not the Mac build's by accident (a web build writes them again itself)
