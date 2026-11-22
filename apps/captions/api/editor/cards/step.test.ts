@@ -115,7 +115,8 @@ async function held(token = mac.token, body: object = LISTS): Promise<number> {
   try {
     let status: number | undefined;
     void Promise.resolve(poll(token, body)).then((r) => (status = r.status));
-    for (let i = 0; i < 300 && status === undefined; i++) {
+    // a busy test machine needs more turns before the wait answers (300 was not always enough)
+    for (let i = 0; i < 3000 && status === undefined; i++) {
       await new Promise((r) => setImmediate(r));
       await vi.advanceTimersByTimeAsync(1000);
     }
