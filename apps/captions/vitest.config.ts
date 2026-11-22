@@ -97,7 +97,8 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: "unit", include, exclude: [...configDefaults.exclude, ...ffmpegFiles, "editor-steps/adobe-enhance/**"] },   // its own config (its README)
+        // CI shares a small machine across every file at once: 15 s there before a test counts as hung, 5 s here
+        test: { name: "unit", include, exclude: [...configDefaults.exclude, ...ffmpegFiles, "editor-steps/adobe-enhance/**"], testTimeout: process.env.CI ? 15_000 : 5_000 },   // its own config (its README)
       },
       {
         extends: true,

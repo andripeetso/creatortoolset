@@ -444,8 +444,10 @@ describe("stop and the Mac fallback", () => {
     const done = await settled(id, body.reply!.id);
 
     const inbox = path.join(dataDir, "review", "notifications", "alex.json");
+    // the inbox is shared with the tests before, whose notifications can land late: this turn's is the one with its link
     let items: Array<{ kind: string; text?: string; href: string }> = [];
-    for (let i = 0; i < 200 && !items.length; i++) {
+    const mine = () => items.find((x) => x.href === `/workshop/sessions/${id}`);
+    for (let i = 0; i < 200 && !mine(); i++) {
       await new Promise((r) => setTimeout(r, 10));
       try {
         items = JSON.parse(readFileSync(inbox, "utf-8"));
@@ -453,7 +455,7 @@ describe("stop and the Mac fallback", () => {
         /* not written yet */
       }
     }
-    expect(items[0]).toMatchObject({ kind: "workshop", text: "Reply ready: Strength training", href: `/workshop/sessions/${id}` });
+    expect(mine()).toMatchObject({ kind: "workshop", text: "Reply ready: Strength training", href: `/workshop/sessions/${id}` });
   });
 });
 
