@@ -18,7 +18,7 @@ import { libraryChanged } from "../library/access";
 import { blobs, LEAVES_SQL, libraryDb } from "../library/db";
 import { mayLeave } from "../library/upload-gate";
 import { firstClips } from "../library/jobs";
-import { CARD_SEG, storePictures, storeShots } from "../library/pictures";
+import { CARD_SEG, PICTURES_WANTED, storePictures, storeShots } from "../library/pictures";
 import { keptSheets } from "../library/shots";
 import { stretchesOf } from "../library/stretches";
 import { mayRead } from "./offline";
@@ -65,7 +65,7 @@ function todo(d: Device, now = Date.now()): Todo[] {
          EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'thumb' AND x.storage_key IS NOT NULL) AS card,
          EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'looksheets' AND x.storage_key IS NOT NULL) AS sheets
        FROM asset_versions v JOIN assets a ON a.current_version_id = v.id JOIN libraries l ON l.id = a.library_id
-       WHERE v.created_by = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind IN ('video', 'image') AND COALESCE(json_extract(l.settings, '$.pictures'), 1)
+       WHERE v.created_by = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind IN ('video', 'image') AND ${PICTURES_WANTED}
          AND (v.source_key NOT LIKE 'mac:%' OR v.mac_device = ?)
          -- Blur faces: a clip the server holds that is not blurred hands out no card picture or sheets (a Mac's are its own)
          AND (v.source_key LIKE 'mac:%' OR ${LEAVES_SQL})

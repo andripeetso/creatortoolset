@@ -1,5 +1,7 @@
 import { hostsOriginals, hostsProxies, uploadSent } from "@contracts/library";
 import type {
+  LibraryMade,
+  MadeKind,
   Blur,
   TagCount,
   AssetKind,
@@ -102,6 +104,13 @@ export const createLibrary = (name: string) =>
   fetch("/api/library", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then(
     (r) => json<LibrarySummary>(r),
   );
+
+/** Each kind the library makes, with how many of its files have it and lack it (api/library/made.ts). */
+export const getMade = (libraryId: string) => send<LibraryMade[]>(`/api/library/${libraryId}/made`, "GET");
+/** Make for the missing: `kind` for every file of the library that lacks it. */
+export const makeMissing = (libraryId: string, kind: MadeKind) => send<{ files: number }>(`/api/library/${libraryId}/made/${kind}`, "POST");
+/** A step's failed jobs queued again. */
+export const retryFailed = (libraryId: string, kind: string) => send<{ files: number }>(`/api/library/${libraryId}/retry/${kind}`, "POST");
 
 /** The owner's switches for a library: AI descriptions, shot descriptions, search by meaning. */
 export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> }) =>

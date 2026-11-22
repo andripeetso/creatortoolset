@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { LOOK_LEVELS, WATCH_MODELS, type LibraryEstimate, type LibraryProgress, type LibraryStage, type LibraryStatus, type LibraryStep, type LibraryStepEstimate, type LibraryStepRoute } from "../../contracts/library";
+import { LOOK_LEVELS, WATCH_MODELS, type LibraryEstimate, type LibraryMade, type MadeKind, type LibraryProgress, type LibraryStage, type LibraryStatus, type LibraryStep, type LibraryStepEstimate, type LibraryStepRoute } from "../../contracts/library";
 import { aiFor, onApiKey } from "../ai-complete";
 import { BACKGROUND_SLOTS, macUsageSince } from "../lib/mac-claude";
 import { libraryDb, libraryLookLevel, librarySetting } from "./db";
@@ -101,15 +101,15 @@ function footageOf(db: DatabaseSync, libraryId: string) {
 
 type Route = { route: LibraryStepRoute; missing?: string };
 
-/** What each step runs on for `username` in this library, as the worker would pick it. */
-export function routesOf(libraryId: string, username: string): Record<LibraryStep, Route> {
+/** What each step runs on for `username` in this library, as the worker would pick it. `all`: a step switched off too. */
+export function routesOf(libraryId: string, username: string, all = false): Record<LibraryStep, Route> {
   let describe: Route = { route: "off" };
-  if (librarySetting(libraryId, "describe")) {
+  if (all || librarySetting(libraryId, "describe")) {
     const r = onApiKey(username, "library", DESCRIBE_LABEL) ?? aiFor(whoFor(username), "library", DESCRIBE_LABEL);
     describe = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
   }
   let look: Route = { route: "off" };
-  if (librarySetting(libraryId, "look")) {
+  if (all || librarySetting(libraryId, "look")) {
     const r = onApiKey(username, "library", LOOK_LABEL) ?? aiFor(whoFor(username), "library", LOOK_LABEL);
     look = r.off ? { route: "none", missing: r.off } : r.only?.includes("mac") ? { route: "provider" } : { route: r.bill ? "budget" : "api" };
   }
@@ -120,7 +120,7 @@ export function routesOf(libraryId: string, username: string): Record<LibrarySte
     transcript = { route: "none", missing: e instanceof NeedsKey ? e.message : String(e) };
   }
   let embed: Route = { route: "off" };
-  if (librarySetting(libraryId, "embed")) {
+  if (all || librarySetting(libraryId, "embed")) {
     try {
       embed = { route: "device" in embedRoute(username) ? "device" : "openai" };
     } catch (e) {
@@ -176,6 +176,27 @@ async function perClip(db: DatabaseSync, step: LibraryStep, route: LibraryStepRo
   if (step === "look") return lookPerClip(db, route, clipSeconds);
   const pace = paceOf(db, "embed");
   return { seconds: pace ?? GUESS_S.embed!, usd: 0, measured: pace !== null, at: route === "device" ? 1 : laneSize("ai") };
+}
+
+/**
+ * What making `kind` for `n` files of `seconds` each (on average) costs `username`, the switches aside (made.ts): tokens
+ * (an AI provider or an AI key), paid (an outside service's key) or free (this server, the person's own computer).
+ */
+export async function makeCost(libraryId: string, username: string, kind: MadeKind, n: number, seconds: number): Promise<Pick<LibraryMade, "cost" | "usd" | "needs">> {
+  const db = libraryDb();
+  if (kind === "timeline") {
+    if (!canWatch(db, libraryId, username)) return { cost: "tokens", needs: "Needs a Gemini API key" };
+    const model = libraryWatchModel(db, libraryId);
+    return { cost: "tokens", usd: model === "antigravity" ? 0 : ((n * seconds) / 3600) * watchUsdPerHour(libraryLookLevel(libraryId), model) };
+  }
+  if (kind !== "describe" && kind !== "look" && kind !== "transcribe" && kind !== "embed") return { cost: "free" };
+  const step: LibraryStep = kind === "transcribe" ? "transcript" : kind;
+  const { route, missing } = routesOf(libraryId, username, true)[step];
+  const cost = route === "deepgram" || route === "openai" || (route === "none" && (kind === "transcribe" || kind === "embed")) ? "paid" : "tokens";
+  if (route === "none" || route === "off") return { cost, ...(missing ? { needs: missing } : {}) };
+  if (route === "device" || route === "computer") return { cost: "free" };
+  const each = kind === "look" ? await lookPerClip(db, route, seconds, levelShare(libraryLookLevel(libraryId))) : await perClip(db, step, route, seconds, 0);
+  return { cost, usd: n * each.usd };
 }
 
 /** About how many lines a level writes against Standard's (contracts LOOK_LEVELS: a long take is cut every `long` seconds at most). */

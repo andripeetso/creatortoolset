@@ -111,7 +111,7 @@ describe("the library settings PATCH", () => {
     expect(stored("lib_set").upload).toBe("proxies");
   });
 
-  it("turning proxies on backfills a clip that needs one or every clip under Hosted proxies, never under Originals only", async () => {
+  it("turning proxies on backfills only under Hosted proxies (every clip), never under Originals only", async () => {
     const small = clip("lib_orig", "plain", 1280, 720); // the browser plays it as it is: no proxy needed
     const big = clip("lib_orig", "uhd", 3840, 2160); // over 1080p: needs one
     await patch("lib_orig", { proxy: true });

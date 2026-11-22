@@ -11,7 +11,7 @@ import { isOnline, listDevices } from "../lib/devices";
 import { mayRunHere } from "../work/may-run";
 import { libraryWorkspace, serverKind, serverWorks } from "../work/server-work";
 import { wakeEditorPolls } from "../lib/mac-claude";
-import { blobs, libraryDb, librarySetting } from "./db";
+import { blobs, libraryDb, librarySetting, SINCE } from "./db";
 import { whoFor } from "./describe";
 import { cosineTop } from "./embed";
 import { firstClips } from "./jobs";
@@ -166,6 +166,13 @@ export async function cardPicture(db: DatabaseSync, versionId: string, key: stri
   storePictures(db, versionId, [{ seg: CARD_SEG, start: 0, vec: jpeg ? await cardVector(jpeg) : null }], false);
 }
 
+/**
+ * SQL on the library `l` and the version `v`: search by picture is made for `v`: the switch is on and `v` was added since
+ * (db.ts SINCE), or `v` was in the library when someone pressed Make for the missing (made.ts).
+ */
+export const PICTURES_WANTED = `((COALESCE(json_extract(l.settings, '$.pictures'), 1) AND v.created_at >= IFNULL(json_extract(l.settings, '$.${SINCE.pictures}'), 0))
+  OR v.created_at <= IFNULL(json_extract(l.settings, '$.picturesAsked'), -1))`;
+
 let running = false;
 let again = false;
 
@@ -192,7 +199,7 @@ export async function catchUpPictures(db = libraryDb()): Promise<number> {
           `SELECT d.version_id, d.kind, d.storage_key, a.library_id, v.created_by FROM derivatives d JOIN assets a ON a.current_version_id = d.version_id
              JOIN asset_versions v ON v.id = d.version_id JOIN libraries l ON l.id = a.library_id
            WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND a.kind IN ('video', 'image') AND d.kind IN ('thumb', 'looksheets') AND d.storage_key IS NOT NULL
-             AND COALESCE(json_extract(l.settings, '$.pictures'), 1)
+             AND ${PICTURES_WANTED}
              AND (a.library_id || '/' || IFNULL(v.created_by, '')) NOT IN (SELECT value FROM json_each(?))
              AND NOT EXISTS (SELECT 1 FROM pictures p WHERE p.version_id = d.version_id AND p.model = ? AND (p.seg = -1) = (d.kind = 'thumb'))
            ORDER BY d.version_id IN (SELECT value FROM json_each(?)) DESC, d.kind = 'thumb' DESC, d.version_id LIMIT 20`,

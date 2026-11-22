@@ -438,6 +438,42 @@ export interface LibraryEstimate {
   timelineStopped?: "free" | "credit";
 }
 
+/**
+ * What a library makes for its files (Settings → Media Library and the library's Status view, one list: api/library/made.ts).
+ * `setting`: its "Make for new files" switch; the ones without are always made for new files (they cost nothing).
+ */
+export type MadeKind = "thumb" | "sprite" | "wave" | "fingerprint" | "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline";
+export const MADE_KINDS: readonly { kind: MadeKind; label: string; setting?: "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline" }[] = [
+  { kind: "thumb", label: "Thumbnails" },
+  { kind: "sprite", label: "Frame strips" },
+  { kind: "wave", label: "Waveforms" },
+  { kind: "fingerprint", label: "Fingerprints" },
+  { kind: "proxy", label: "Proxies", setting: "proxy" },
+  { kind: "transcribe", label: "Transcripts", setting: "transcribe" },
+  { kind: "describe", label: "Descriptions and tags", setting: "describe" },
+  { kind: "embed", label: "Search by meaning", setting: "embed" },
+  { kind: "pictures", label: "Search by picture", setting: "pictures" },
+  { kind: "look", label: "Shot descriptions", setting: "look" },
+  { kind: "timeline", label: "Timelines", setting: "timeline" },
+];
+/** Tokens: an AI provider or an AI key; paid: an outside service's key (Deepgram, OpenAI); free: this server or the person's own computer. */
+export type MadeCost = "tokens" | "paid" | "free";
+export const MADE_COST_LABEL: Record<MadeCost, string> = { tokens: "Uses tokens", paid: "Paid", free: "Free" };
+
+/** GET /api/library/:id/made: one kind over the files in the library now (the trash and hidden clips left out). */
+export interface LibraryMade {
+  kind: MadeKind;
+  have: number;
+  /** files that could have it, don't, and have no job queued or running for it */
+  missing: number;
+  queued: number;
+  cost: MadeCost;
+  /** about what making the missing ones costs, in dollars (absent when free) */
+  usd?: number;
+  /** what it needs before it can be made (an AI provider, a key) */
+  needs?: string;
+}
+
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */
 export interface LibraryStage {
   /** thumb = pictures, proxy = lighter copies, fingerprint = duplicate checks, transcribe, describe, look = shot descriptions, timeline = Gemini's timelines (progress only, no job of their own), embed = search by meaning */
@@ -894,6 +930,8 @@ export const LIBRARY_WORDS = {
     amount: "a month",
   },
   analysisTitle: "Analysis",
+  madeTitle: "What's made",
+  statusTitle: "Status",
   effort: "Effort",
   effortTips: {
     off: "Imports only: file name, date, length and camera data. Nothing is analyzed until an edit needs it.",

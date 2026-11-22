@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit, TimelineEvent } from "../../contracts/library";
 import { DEVICE_EMBED_MODEL, deviceEmbedModelKept, embedOnDevice } from "../lib/device-embed";
 import { deviceTranscribes } from "../lib/device-transcribe";
-import { libraryDb, librarySetting } from "./db";
+import { libraryDb, librarySetting, sinceSql } from "./db";
 import { enqueueJob } from "./jobs";
 import { CARD, toCard, type CardRow } from "./query";
 import { keyFor } from "../my-keys";
@@ -66,7 +66,7 @@ export function embedRoute(actor: string | null): EmbedRoute {
 }
 
 /** The model `actor`'s vectors are made with now, or null when they have no route. */
-const modelFor = (actor: string | null): string | null => {
+export const modelFor = (actor: string | null): string | null => {
   try {
     return embedRoute(actor).model;
   } catch {
@@ -243,8 +243,8 @@ export function meaningGettingReady(libraryId: string, username: string): boolea
 /**
  * Queues `embed` for the current versions whose vectors are missing or of another model than their actor's route makes
  * now, and the ones parked for a key once there is a route: clips from before search by meaning ran without a key, and
- * the whole library after a key is added or removed (until each is done, a search compares only the vectors of its own
- * model). Only versions with a transcript or a description: the worker queues the others when they get one. A failed
+ * after a key is added or removed (until each is done, a search compares only the vectors of its own model). Only files
+ * added since search by meaning went on (db.ts SINCE): the older ones take Make for the missing (made.ts). Only versions with a transcript or a description: the worker queues the others when they get one. A failed
  * job waits for its Retry. Returns how many.
  * ponytail: every current version of every library is read once a minute; a changed flag on key and setting writes if that shows up
  */
@@ -255,8 +255,9 @@ export function catchUpEmbeds(db = libraryDb()): number {
          COALESCE(j.actor, (SELECT t.actor FROM jobs t WHERE t.version_id = v.id AND t.kind = 'transcribe'), a.created_by) AS actor,
          (SELECT e.model FROM embeddings e WHERE e.version_id = v.id LIMIT 1) AS model
        FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-       LEFT JOIN jobs j ON j.version_id = v.id AND j.kind = 'embed'
+       JOIN libraries l ON l.id = a.library_id LEFT JOIN jobs j ON j.version_id = v.id AND j.kind = 'embed'
        WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (j.state IS NULL OR j.state IN ('done', 'needs_key'))
+         AND (j.state = 'needs_key' OR ${sinceSql("embed")})
          AND (EXISTS (SELECT 1 FROM transcripts t WHERE t.version_id = v.id) OR EXISTS (SELECT 1 FROM descriptions d WHERE d.version_id = v.id))`,
     )
     .all() as { library_id: string; version_id: string; state: string | null; actor: string | null; model: string | null }[];

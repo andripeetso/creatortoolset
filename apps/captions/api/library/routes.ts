@@ -14,13 +14,14 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, uploadOf } from "./db";
+import { libraryMade, makeMissing, retryFailed } from "./made";
+import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
 import { playCopy, pushPlayCopy } from "../lib/play-copies";
 import { isFinal } from "./finals";
-import { BLURRED_UPLOADS, type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { BLURRED_UPLOADS, type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, MADE_KINDS, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -1139,6 +1140,35 @@ libraryApp.get("/:id/progress", async (c) => {
   return c.json(await progress(libraryId, user.username));
 });
 
+// GET /api/library/:id/made → LibraryMade[]: each kind the library makes, how many of its files have it and lack it, and its cost
+libraryApp.get("/:id/made", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json(await libraryMade(libraryId, user.username));
+});
+
+// POST /api/library/:id/made/:kind → { files }: Make for the missing, the one thing that fills the files already here
+libraryApp.post("/:id/made/:kind", (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const kind = MADE_KINDS.find((k) => k.kind === c.req.param("kind"))?.kind;
+  if (!kind) return c.json({ error: "Kind not found", code: "invalid" }, 400);
+  return c.json({ files: makeMissing(libraryId, kind, user.username) });
+});
+
+// POST /api/library/:id/retry/:kind → { files }: the step's failed jobs queued again (the Status view's Retry)
+libraryApp.post("/:id/retry/:kind", (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const kind = c.req.param("kind");
+  if (!RETRY_KINDS.has(kind)) return c.json({ error: "Kind not found", code: "invalid" }, 400);
+  return c.json({ files: retryFailed(libraryId, kind) });
+});
+const RETRY_KINDS = new Set(["thumb", "sprite", "wave", "proxy", "fingerprint", "transcribe", "describe", "look", "embed"]);
+
 // GET /api/library/:id/status → LibraryStatus: the whole library, step by step
 libraryApp.get("/:id/status", (c) => {
   const user = c.get("user");
@@ -1148,8 +1178,8 @@ libraryApp.get("/:id/status", (c) => {
 });
 
 // PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, organize?, … } } → LibrarySummary;
-// the owner only. Proxies off: the ones still queued are dropped; on: the clips that need one (or all, when proxies are
-// hosted) and have none get one. organize "ai" files what is in no folder yet (UNIFIED-PRD §4.9); it does not force describe.
+// the owner only. Proxies off: the ones still queued are dropped; under Hosted proxies every clip with none gets one.
+// A switch turned on makes for new files only (made.ts). organize "ai" files what is in no folder yet (UNIFIED-PRD §4.9); it does not force describe.
 // copyTo and places are read only by the one-time migration (§4.6), so nothing writes them.
 libraryApp.patch("/:id", async (c) => patchLibrary(c, c.req.param("id"), (await c.req.json().catch(() => null)) as { name?: unknown; settings?: Record<string, unknown> } | null));
 
@@ -1163,6 +1193,8 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const put = (key: string, value: unknown) => db().prepare(`UPDATE libraries SET settings = json_set(settings, '$.${key}', json(?)) WHERE id = ?`).run(JSON.stringify(value), libraryId);
   for (const key of ["describe", "look", "timeline", "embed", "pictures", "transcribe", "lookTalking"] as const) {
     const on = b?.settings?.[key];
+    // switched on: the catch-ups fill files added from now on, never the ones already here (db.ts SINCE)
+    if (on === true && key in SINCE && !settingOn(libraryId, key)) put(SINCE[key as keyof typeof SINCE], Date.now());
     if (typeof on === "boolean") put(key, on);
   }
   const s = b?.settings ?? {};
@@ -1199,7 +1231,8 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   if (typeof proxy === "boolean") put("proxy", proxy);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
   if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
-  if (proxy === true) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
+  // only Hosted proxies backfill (a proxy is all the server keeps then); the switch alone makes them for new files (made.ts)
+  if (hosted) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {
@@ -1217,6 +1250,12 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const updated: LibrarySummary = { id: libraryId, name: r.name, storage: r.storage_kind, settings: settingsOf(r.settings), mayKeepAsFilmed: mayKeepAsFilmed(c.get("user").username, libraryId) };
   return c.json(updated);
 }
+
+/** A switch's stored value, or its default (SETTING_DEFAULTS; lookTalking is off until set). */
+const settingOn = (libraryId: string, key: string): boolean => {
+  const v = (db().prepare(`SELECT json_extract(settings, '$.${key}') AS v FROM libraries WHERE id = ?`).get(libraryId) as { v: number | null } | undefined)?.v;
+  return v === null || v === undefined ? !!SETTING_DEFAULTS[key as keyof typeof SETTING_DEFAULTS] : !!v;
+};
 
 /** The library is set up: the setup cards of its workspace go, in the owner's chats (the ask carries on) and its members'. */
 function setUp(c: Context<{ Variables: AuthVars }>, libraryId: string): void {

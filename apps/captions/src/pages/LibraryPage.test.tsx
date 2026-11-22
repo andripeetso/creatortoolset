@@ -29,6 +29,7 @@ vi.mock("../plugins.gen", () => ({
 type Card = { id: string; title: string; kind: string; state: string; thumbUrl?: string; roll?: "a" | "b"; tags: string[]; aiTags: string[] };
 const clip = (id: string, more: Partial<Card> = {}): Card => ({ id, title: `Tiny Acrobatics ${id}`, kind: "video", state: "ready", tags: [], aiTags: [], ...more });
 const server = vi.hoisted(() => ({
+  retried: [] as string[],
   items: [] as unknown[],
   trash: [] as unknown[],
   folders: [] as unknown[],
@@ -126,6 +127,12 @@ vi.mock("@/lib/library", async (importOriginal) => ({
     return { clips: server.items.length };
   },
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
+  getStatus: async () => ({ clips: 3, unreadable: 0, stages: [{ kind: "transcribe", done: 2, failed: 1, open: 0, of: 3 }] }),
+  getMade: async () => [{ kind: "transcribe", have: 2, missing: 1, queued: 0, cost: "free" }],
+  retryFailed: async (_: string, kind: string) => {
+    server.retried.push(kind);
+    return { files: 1 };
+  },
 }));
 
 vi.mock("./library/api", () => ({
@@ -164,6 +171,7 @@ beforeEach(() => {
   server.uploading = undefined;
   server.redone = [];
   server.scans = 0;
+  server.retried = [];
   localStorage.clear();
 });
 afterEach(() => {
@@ -268,11 +276,24 @@ describe("Media Library page", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toBe("Added 2 · 1 coming in");
   });
 
+  it("Library status opens the Status view: the files, each step with Retry for what failed, and What's made", async () => {
+    const host = await mount();
+    await openMore(host);
+    await act(async () => moreItem("Library status")!.click());
+    await settle();
+    const headings = [...host.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(headings).toEqual(expect.arrayContaining(["Files", "Steps", "What's made"]));
+    expect(host.textContent).toContain("Made for 2 · 1 missing · Free");
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Retry")!.click());
+    expect(server.retried).toEqual(["transcribe"]);
+    expect(localStorage.getItem("library:view")).toBe("status");
+  });
+
   it("a library given to look at only has no Look for new files", async () => {
     server.readOnly = true;
     const host = await mount();
     await openMore(host);
-    expect(moreItem("Library status")).toBeTruthy();
+    expect(moreItem("Library status")).toBeUndefined(); // its counts are the owner's
     expect(moreItem("Look for new files")).toBeUndefined();
   });
 

@@ -193,7 +193,7 @@ describe("the plan's usage limit", () => {
   it("holds every queued description, says why, and counts them as waiting, not as work left", async () => {
     d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
     d.prepare("DELETE FROM jobs WHERE kind = 'describe'").run();
-    for (const v of ["v1", "v2", "v3"]) enqueueJob(d, "lib_e", v, "describe", "local");
+    for (const v of ["v1", "v2", "v3"]) enqueueJob(d, "lib_e", v, "describe", "local", true); // described before (the pace fixture): asked again
     enqueueJob(d, "lib_e", "v1", "describe", "someone-else"); // already queued: stays local's
     holdForLimit(d, "local", "Your Claude plan's weekly limit is reached; it resets 5pm.", Date.now() + 60_000);
     const p = await progress("lib_e", "local");
@@ -225,7 +225,7 @@ describe("parallel lanes", () => {
   it("a description waits while its clip's transcript is still to come", async () => {
     d.prepare("DELETE FROM jobs WHERE version_id = 'v3'").run();
     enqueueJob(d, "lib_e", "v3", "transcribe", "local");
-    enqueueJob(d, "lib_e", "v3", "describe", "local");
+    enqueueJob(d, "lib_e", "v3", "describe", "local", true); // described before (the pace fixture): asked again
     expect(await tick(Date.now(), ["describe"])).toBe(false);
     const j = d.prepare("SELECT state, attempts FROM jobs WHERE version_id = 'v3' AND kind = 'describe'").get() as { state: string; attempts: number };
     expect(j).toMatchObject({ state: "queued", attempts: 0 }); // never claimed, so no attempt spent

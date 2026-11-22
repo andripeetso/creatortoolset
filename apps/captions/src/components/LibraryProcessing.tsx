@@ -1,10 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStatus, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Progress } from "@/components/ui/progress";
-import { getProgress, getStatus, getWatch } from "@/lib/library";
+import { getProgress, getWatch } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { ownMacLine } from "@/lib/wording";
@@ -53,7 +52,7 @@ export function stepLine(s: LibraryStepEstimate, proxies = true): ReactNode {
 export const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 /** Each step of preparing, in the words of the person who watches it go by (api/library/estimate.ts STAGES). */
-const STAGE_NAME: Record<LibraryStage["kind"], string> = {
+export const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   thumb: "Pictures",
   proxy: "Proxies",
   fingerprint: "Duplicate checks",
@@ -65,7 +64,7 @@ const STAGE_NAME: Record<LibraryStage["kind"], string> = {
 };
 
 /** One line of the list: what, how far (a thin bar), how many; the step running now shows its clip and a soft pulse. */
-function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: string; done: number; of: number; now?: string; busy?: boolean; failed?: number }) {
+export function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: string; done: number; of: number; now?: string; busy?: boolean; failed?: number }) {
   const through = done + failed >= of;
   return (
     <li className="col-span-3 grid grid-cols-subgrid items-center text-sm">
@@ -138,7 +137,7 @@ type Waiting = LibraryProgress["waiting"][number];
 const needsYou = (w: Waiting) => (!w.limit && !w.computer && !w.away && !w.wait) || (w.wait === "needs" && !!w.mine);
 
 /**
- * `all`: also what waits for one of the person's computers (the Library status window). The library page leaves out what
+ * `all`: also what waits for one of the person's computers (the library's Status view, pages/library/Health.tsx). The library page leaves out what
  * a computer will take or what the person can't change there, and says what needs them and work no computer has taken.
  */
 export function LibraryProgressBar({ libraryId, all = false }: { libraryId: string; all?: boolean }) {
@@ -220,10 +219,6 @@ export function LibraryProgressBar({ libraryId, all = false }: { libraryId: stri
   );
 }
 
-/**
- * The whole library, step by step: how many of its clips have pictures, transcripts, descriptions and search, what
- * failed and what still waits. Opened from the page's More menu; the live run and what waits for a key on top.
- */
 /** One Library status line: clips from a folder left out that went to the trash because their computer went silent. */
 export const leftOutLine = (x: { computer: string; clips: number }) =>
   `${x.clips.toLocaleString()} ${x.clips === 1 ? "clip" : "clips"} from a folder left out on ${x.computer} went to the trash: that computer hasn't reported for 14 days. Restore brings ${x.clips === 1 ? "it" : "them"} back.`;
@@ -231,47 +226,6 @@ export const leftOutLine = (x: { computer: string; clips: number }) =>
 /** One Library status line: clips from a folder left out hidden while a folder on that computer is unread. */
 export const hiddenLine = (x: { computer: string; clips: number }) =>
   `${x.clips.toLocaleString()} ${x.clips === 1 ? "clip" : "clips"} hidden while a folder on ${x.computer} is unread`;
-
-export function LibraryStatusDialog({ libraryId, onClose }: { libraryId: string; onClose: () => void }) {
-  const [s, setS] = useState<LibraryStatus | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
-  useEffect(() => {
-    getStatus(libraryId).then(setS, (x: unknown) => setFailed(x instanceof Error ? x.message : String(x)));
-  }, [libraryId]);
-  const open = s?.stages.reduce((n, st) => n + st.open, 0) ?? 0;
-  const broken = (s?.stages.reduce((n, st) => n + st.failed, 0) ?? 0) + (s?.unreadable ?? 0);
-  const line = !s ? (failed ?? "Counting…") : !s.clips ? "No clips" : [`${s.clips.toLocaleString()} ${s.clips === 1 ? "clip" : "clips"}`, open ? `${open.toLocaleString()} ${open === 1 ? "step" : "steps"} left` : "", broken ? `${broken.toLocaleString()} failed` : ""].filter(Boolean).join(" · ");
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogTitle>Library status</DialogTitle>
-        <DialogDescription>{line}</DialogDescription>
-        <LibraryProgressBar libraryId={libraryId} all />
-        {!!s?.stages.length && (
-          <ul className="grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-1.5">
-            {s.stages.map((st) => <StageRow key={st.kind} name={STAGE_NAME[st.kind]} done={st.done} of={st.of} failed={st.failed} busy={false} />)}
-          </ul>
-        )}
-        {!!s?.unreadable && (
-          <p className="flex items-center gap-1.5 text-sm text-red-600 dark:text-red-400">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
-            {s.unreadable.toLocaleString()} {s.unreadable === 1 ? "file could not be read as video or sound" : "files could not be read as video or sound"}
-          </p>
-        )}
-        {s?.leftOut?.map((x) => (
-          <p key={x.computer} className="text-sm text-muted-foreground">
-            {leftOutLine(x)}
-          </p>
-        ))}
-        {s?.hidden?.map((x) => (
-          <p key={`h-${x.computer}`} className="text-sm text-muted-foreground">
-            {hiddenLine(x)}
-          </p>
-        ))}
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 const PICTURE_STEPS = new Set(["probe", "thumb", "wave"]);
 const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = {

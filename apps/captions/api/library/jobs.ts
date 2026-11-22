@@ -41,11 +41,28 @@ export interface JobRow {
   done_at?: number | null;
 }
 
+/** SQL (one `?`: the version): the version has what job `kind` makes. Only kinds whose output is whole once there. */
+const HAVE: Record<string, string> = {
+  ...Object.fromEntries(["thumb", "sprite", "wave", "fingerprint", "proxy"].map((k) => [k, `SELECT 1 FROM derivatives WHERE version_id = ? AND kind = '${k}'`])),
+  transcribe: "SELECT 1 FROM transcripts WHERE version_id = ?",
+  describe: "SELECT 1 FROM descriptions WHERE version_id = ?",
+};
+
 /**
  * Queues a job. A job already queued, running or done stays as it is; a failed or needs_key one is queued again from
- * zero. `again` queues a done one too: its input changed (a new transcript to embed, a describe someone asked for again).
+ * zero. A version that has what the job makes (HAVE) gets it marked done instead. `again` queues a done one too: its input changed (a new transcript to embed, a describe someone asked for again).
  */
 export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: string, kind: string, actor: string | null, again = false, table: JobTable = "jobs"): void {
+  // a file that has it already (made before, or brought in with it: an archive's transcripts and descriptions) is never
+  // made again unasked, whatever the switches say: its job reads done. `again` is an ask by name or a changed input.
+  const have = table === "jobs" && !again ? HAVE[kind] : undefined;
+  if (have && db.prepare(have).get(versionId)) {
+    db.prepare(
+      `INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES (?, ?, ?, 'done', ?, ?)
+       ON CONFLICT (version_id, kind) DO UPDATE SET state = 'done', lease_until = NULL, error = NULL WHERE jobs.state IN ('failed', 'needs_key')`,
+    ).run(libraryId, versionId, kind, actor, Date.now());
+    return;
+  }
   db.prepare(
     `INSERT INTO ${table} (library_id, version_id, kind, state, actor) VALUES (?, ?, ?, 'queued', ?)
      ON CONFLICT (version_id, kind) DO UPDATE SET state = 'queued', attempts = 0, run_after = 0,

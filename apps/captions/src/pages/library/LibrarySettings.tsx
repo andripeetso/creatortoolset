@@ -9,6 +9,7 @@ import { thisComputer, storeName } from "../LibraryStorage";
 import { LibraryCopies } from "./Copies";
 import { MemberSettings, OwnerDownloads } from "./MemberSettings";
 import { Effort } from "./settings/Effort";
+import { Made } from "./settings/Made";
 import { Models } from "./settings/Models";
 import { OwnerFolders } from "./settings/OwnerFolders";
 import { RadioList } from "./settings/RadioList";
@@ -17,7 +18,7 @@ import { HostedSwitches } from "./settings/Hosted";
 /**
  * The Media Library's settings, the owner's (UNIFIED-PRD §3.1), behind one button beside its search (the sheet) and as
  * Settings → Media Library (the same body, LibrarySettingsBody). In the order the page goes by importance: how imported
- * media behaves, Folders, Organization, Proxy workflow, Hosted media, Analysis, Models, and Copies last. A
+ * media behaves, Folders, Organization, Proxy workflow, Hosted media, Analysis, What's made, Models, and Copies last. A
  * viewer who is not the owner gets the member page (./MemberSettings.tsx). The button carries an amber dot while a
  * folder or clip is not found.
  */
@@ -82,6 +83,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
       <Section title={LIBRARY_WORDS.analysisTitle}>
         <Effort library={library} save={save} />
       </Section>
+      <Made library={library} save={save} />
       {level !== "off" && (
         <Section title={LIBRARY_WORDS.modelsTitle}>
           <Models settings={s} save={save} />
