@@ -294,7 +294,7 @@ function EditorList() {
           )}
         </AppBar>
         {tabs}
-        <main className="flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 pb-4 pt-3 sm:px-6">
+        <main className="flex w-full flex-1 flex-col gap-3 px-4 pb-4 pt-3 sm:px-6">
           {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} onChat={chat ? () => styleChat("animation") : undefined} editable={editable} />}
           {!animationList.data && animationList.error && <p className="text-sm text-red-400">{animationList.error}</p>}
         </main>
@@ -316,7 +316,7 @@ function EditorList() {
           )}
         </AppBar>
         {tabs}
-        <main className="flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 pb-4 pt-3 sm:px-6">
+        <main className="flex w-full flex-1 flex-col gap-3 px-4 pb-4 pt-3 sm:px-6">
           {styleList.data && (
             <EditingStyles
               styles={styleList.data.styles}
