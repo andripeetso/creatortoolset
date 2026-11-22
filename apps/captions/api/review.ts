@@ -2488,8 +2488,10 @@ for (const base of ["/assets/:id", "/s/:token", "/p/:token/a/:id"]) {
     if (!v.manage && !seen && (await blurFacesIn(v.meta.owner, v.meta.workspace))) return c.json({ error: "Not found" }, 404);
     const id = v.meta.id;
     const file = c.req.param("file");
-    // a thumb is made once per version and its address carries the version's createdAt (src/lib/review.ts mediaUrl)
-    if (file === "thumb") return sendFile(c, thumbPath(id, n), "image/jpeg", undefined, c.req.query("c") ? "private, max-age=31536000, immutable" : undefined);
+    // a thumb is made once per version and its address carries the version's createdAt (src/lib/review.ts mediaUrl). Kept
+    // for good only by its managers: a teammate's copy is asked for again, as Blur faces may hide it later (the Mac app's
+    // ThumbCache.keeps reads this)
+    if (file === "thumb") return sendFile(c, thumbPath(id, n), "image/jpeg", undefined, v.manage && c.req.query("c") ? "private, max-age=31536000, immutable" : undefined);
     if (version.removed) return c.json(REMOVED, 410);
     if (file === "download") {
       if (!v.download) return c.json({ error: "Downloads are off" }, 403);

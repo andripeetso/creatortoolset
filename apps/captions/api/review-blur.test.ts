@@ -232,6 +232,9 @@ it("under Blur faces a share link serves no picture of a removed version that wa
   try {
     expect((await app.request(`/s/${link.share.token}/v/2/thumb`, { headers: { "x-as": "ben" } })).status).toBe(200);
     expect((await app.request(`/s/${link.share.token}/v/1/thumb`, { headers: { "x-as": "ben" } })).status).toBe(404);
+    // a versioned thumb is kept for good by its manager only; anyone else asks again, as Blur faces may hide it later
+    expect((await app.request(`/assets/${id}/v/2/thumb?c=1`)).headers.get("cache-control")).toContain("immutable");
+    expect((await app.request(`/s/${link.share.token}/v/2/thumb?c=1`, { headers: { "x-as": "ben" } })).headers.get("cache-control")).not.toContain("immutable");
   } finally {
     blurFaces(false);
   }

@@ -130,7 +130,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         }
     }
 
-    /// The kept file when the window's account has it, else the server's answer; a 200 is kept, nothing else is. With no
+    /// The kept file when the window's account has it, else the server's answer, kept when ThumbCache.keeps says so. With no
     /// account known (signed out, or the server did not say), the server answers and nothing is kept.
     private func thumb(_ url: URL, target: String, origin: URL, cookies: @escaping @MainActor () async -> [HTTPCookie], account: String?, task: WKURLSchemeTask) {
         nonisolated(unsafe) let task = task
@@ -138,8 +138,8 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         if let file, let data = ThumbCache.read(file) { return answer(url, 200, data, task) }
         Task {
             do {
-                let (status, data) = try await ThumbCache.fetch(origin: origin, target: target, cookies: await cookies())
-                if status == 200, let file {
+                let (status, data, cacheControl) = try await ThumbCache.fetch(origin: origin, target: target, cookies: await cookies())
+                if ThumbCache.keeps(target: target, status: status, cacheControl: cacheControl), let file {
                     try? ThumbCache.write(data, to: file)
                     ThumbCache.pruneIfDue(ThumbCache.dir)
                 }

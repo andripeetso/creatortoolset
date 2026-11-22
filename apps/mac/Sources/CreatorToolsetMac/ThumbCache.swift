@@ -128,12 +128,19 @@ enum ThumbCache {
         }
     }
 
-    /// The server's answer to a target: its status and bytes, asked of `origin` with the window's cookies.
-    static func fetch(origin: URL, target: String, cookies: [HTTPCookie]) async throws -> (status: Int, data: Data) {
+    /// The server's answer to a target: its status, bytes and Cache-Control, asked of `origin` with the window's cookies.
+    static func fetch(origin: URL, target: String, cookies: [HTTPCookie]) async throws -> (status: Int, data: Data, cacheControl: String?) {
         var request = URLRequest(url: URL(string: target, relativeTo: origin) ?? origin)
         request.httpShouldHandleCookies = false
         request.allHTTPHeaderFields = HTTPCookie.requestHeaderFields(with: cookies)
         let (data, response) = try await session.data(for: request)
-        return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+        let http = response as? HTTPURLResponse
+        return (http?.statusCode ?? 0, data, http?.value(forHTTPHeaderField: "Cache-Control"))
+    }
+
+    /// Whether an answer is kept: a 200, and for a Review thumb only one the server says never changes (its managers'; a
+    /// teammate's may be hidden later by Blur faces, api/review.ts).
+    static func keeps(target: String, status: Int, cacheControl: String?) -> Bool {
+        status == 200 && (!target.hasPrefix("/api/review/") || cacheControl?.contains("immutable") == true)
     }
 }

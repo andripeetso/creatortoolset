@@ -39,6 +39,15 @@ final class ThumbCacheTests: XCTestCase {
         }
     }
 
+    func testAReviewThumbIsKeptOnlyWhenTheServerSaysItNeverChanges() {
+        let review = "/api/review/assets/a1/v/1/thumb?c=1"
+        XCTAssertTrue(ThumbCache.keeps(target: review, status: 200, cacheControl: "private, max-age=31536000, immutable"))
+        XCTAssertFalse(ThumbCache.keeps(target: review, status: 200, cacheControl: "private, max-age=3600"))
+        XCTAssertFalse(ThumbCache.keeps(target: review, status: 200, cacheControl: nil))
+        XCTAssertTrue(ThumbCache.keeps(target: thumb, status: 200, cacheControl: nil))
+        XCTAssertFalse(ThumbCache.keeps(target: thumb, status: 404, cacheControl: nil))
+    }
+
     func testTheSameServerAccountAndPathShareOneFile() throws {
         let dir = URL(fileURLWithPath: "/tmp/thumbs-test")
         let server = URL(string: "https://studio.example.com/library?x=1")!
