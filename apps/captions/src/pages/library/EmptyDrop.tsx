@@ -1,14 +1,17 @@
 import { LIBRARY_WORDS } from "@contracts/library";
 import { Button } from "@/components/ui/button";
+import { CantRead, type WaitingFolders } from "./Import";
 
 /**
  * The empty Media Library (11-19 sign-off C1): a small dashed box in the middle of the page, with a drawing of what the Library holds
  * (a photo, a video, sound) in the workspace colour, "Drop media here" and Choose files. A drop anywhere on the page adds
  * the files (the page's own drop, LibraryDrop.tsx, as New footage says: copied into Source media or used where they are);
  * Choose files opens the file window (`onChoose`, the page's picker: the Mac app's own panel in the Mac app). Someone who
- * may only look gets one line.
+ * may only look gets one line. A Media folder that waits for its Mac's OK is the page's one thing instead (CantRead): its
+ * files come in once it is allowed, so dropping more is not the next step.
  */
-export function EmptyDrop({ canAdd, onChoose }: { canAdd: boolean; onChoose: () => void }) {
+export function EmptyDrop({ canAdd, onChoose, waiting }: { canAdd: boolean; onChoose: () => void; waiting?: WaitingFolders }) {
+  if (waiting?.waiting.length) return <CantRead {...waiting} centred />;
   if (!canAdd) return <p className="py-16 text-center text-sm text-zinc-500">{LIBRARY_WORDS.noClipsYet}</p>;
   return (
     <div className="m-auto flex w-full max-w-md flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-zinc-500/30 bg-background px-6 py-7 text-center">

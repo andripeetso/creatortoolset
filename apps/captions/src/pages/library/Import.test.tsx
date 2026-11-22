@@ -4,12 +4,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import type { PlacesReport } from "@contracts/places";
-import { copyAvailable, copyInto, FoldersToAllow, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, waitingFolders } from "./Import";
+import { EmptyDrop } from "./EmptyDrop";
+import { CantRead, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
 
-const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn() }));
+const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint, importCopy: m.importCopy, pathOnMac: m.pathOnMac }));
 vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/library")>()), checkUpload: m.checkUpload, versionPlaces: m.versionPlaces, reportPlaces: m.reportPlaces }));
 vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant }));
+vi.mock("@/lib/providers", async (orig) => ({ ...(await orig<typeof import("@/lib/providers")>()), useProviders: () => ({ data: { devices: m.devices } }) }));
 vi.mock("@/lib/onMac", async (orig) => ({ ...(await orig<typeof import("@/lib/onMac")>()), indexOnMac: m.indexOnMac }));
 
 // Adding files asks nothing: the stored answer decides. Copies go under the first Source media row on this computer.
@@ -24,6 +26,7 @@ afterEach(() => {
   root = host = undefined;
   delete document.documentElement.dataset.macImport;
   delete document.documentElement.dataset.macDevice;
+  delete (window as { webkit?: unknown }).webkit;
   vi.unstubAllGlobals();
 });
 
@@ -175,28 +178,54 @@ describe("Look for new files", () => {
 });
 
 describe("Folders this Mac may not read yet", () => {
-  const folder = (id: string, host: string, folderState?: string) => ({ id, origin: { host, path: `/Volumes/Tiny/${id}` }, folderState }) as never;
+  const folder = (id: string, host: string, folderState?: string, role = "footage") => ({ id, role, origin: { host, path: `/Volumes/Tiny/${id}` }, folderState }) as never;
+  const inMacApp = () => ((window as { webkit?: unknown }).webkit = { messageHandlers: { thisMac: { postMessage: vi.fn() } } });
 
-  it("are this Mac's Settings → Folders folders waiting for its OK", () => {
-    const view = { folders: [folder("Media", "mac_1", "needs_ok"), folder("Done", "mac_1", "ok"), folder("Other", "pc_2", "needs_ok"), folder("New", "mac_1")] };
+  it("are this Mac's Media folders waiting for its OK; in a browser every computer's", () => {
+    const view = { folders: [folder("Media", "mac_1", "needs_ok"), folder("Done", "mac_1", "ok"), folder("Other", "pc_2", "needs_ok"), folder("New", "mac_1"), folder("Projects", "mac_1", "needs_ok", "projects"), { ...(folder("Gone", "mac_9", "needs_ok") as object), missing: true } as never] };
     expect(waitingFolders(view, "mac_1").map((f) => f.id)).toEqual(["Media"]);
     expect(waitingFolders(view, undefined)).toEqual([]);
+    expect(waitingFolders(view, undefined, true).map((f) => f.id)).toEqual(["Media", "Other"]);
   });
 
-  it("show one line on the Library page and are allowed only on the press", async () => {
+  /** The empty Media Library as the page draws it: the waiting folders (read from the server) and the drop box. */
+  async function emptyLibrary(state: string) {
     vi.clearAllMocks();
     document.documentElement.dataset.macDevice = "mac_1";
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ folders: [folder("Media", "mac_1", "needs_ok")] }))));
-    m.folderGrant.mockResolvedValue(true);
+    inMacApp();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ folders: [folder("Media", "mac_1", state)] }))));
+    const Page = () => <EmptyDrop canAdd onChoose={() => undefined} waiting={useWaitingFolders("lib_1")} />;
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    await act(async () => root!.render(<FoldersToAllow />));
-    expect(host.textContent).toContain("Creator Toolset can't read Media");
+    await act(async () => root!.render(<Page />));
+  }
+
+  it("fill the middle of an empty Media Library with Allow on this Mac, allowed only on the press", async () => {
+    await emptyLibrary("needs_ok");
+    m.folderGrant.mockResolvedValue(true);
+    expect(host!.textContent).toContain("Creator Toolset can't read Media yet; once allowed, its files are added to the Media Library.");
+    expect(host!.textContent).not.toContain("Drop media here");
     expect(m.folderGrant).not.toHaveBeenCalled();
     await act(async () => host!.querySelector("button")!.click());
     expect(m.folderGrant).toHaveBeenCalledWith("/Volumes/Tiny/Media", "Media");
-    expect(host.textContent).toBe("");
+    expect(host!.textContent).toContain("Drop media here"); // allowed: the notice goes, the library fills as the Mac reads it
+  });
+
+  it("leave the empty Media Library as the drop box when the folder is read", async () => {
+    await emptyLibrary("ok");
+    expect(host!.textContent).toContain("Drop media here");
+    expect(host!.textContent).not.toContain("can't read");
+  });
+
+  it("in a browser name the Mac that has to allow them, with no button", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ folders: [folder("Media", "mac_1", "needs_ok")] }))));
+    const Bar = () => <CantRead {...useWaitingFolders()} />;
+    host = document.createElement("div");
+    root = createRoot(host);
+    await act(async () => root!.render(<Bar />));
+    expect(host.textContent).toBe("Creator Toolset can't read Media yet; open the Mac app on Studio Mac and press Allow on this Mac to add its files to the Media Library.");
+    expect(host.querySelector("button")).toBeNull();
   });
 });
 

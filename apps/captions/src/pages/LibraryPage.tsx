@@ -63,7 +63,7 @@ import { thisMacDevice } from "@/lib/providers";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
 import { useLibraryDrop } from "./library/LibraryDrop";
 import { EmptyDrop } from "./library/EmptyDrop";
-import { FoldersToAllow, lookForNew, lookedLine, useImportQuestion } from "./library/Import";
+import { CantRead, lookForNew, lookedLine, useImportQuestion, useWaitingFolders } from "./library/Import";
 import { repairPictures, repairStrips } from "@/lib/onMac";
 import { SourceMediaItems } from "./library/SourceMediaItems";
 import { useOrganize } from "./library/Organize";
@@ -178,6 +178,7 @@ export default function LibraryPage() {
   // are on their way from one
   const watchLoad = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!));
   const watch = watchLoad.data;
+  const waitingFolders = useWaitingFolders(libId); // Media folders waiting for Allow on this Mac: the empty page's one thing, else a bar on top
   const adding = !!watch?.folders.some((f) => f.adding > 0);
   // the setup: the owner's only (watch is theirs alone). Until the library is set up it is the page itself, with no way
   // around it; after that ?setup=1 opens it again as a sheet
@@ -1113,7 +1114,7 @@ export default function LibraryPage() {
                   </p>
                 )}
                 {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancelImports(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} />}
-                <FoldersToAllow />
+                {!firstScreen && !settling && <CantRead {...waitingFolders} />}
                 {statusOpen && <LibraryStatusDialog libraryId={library.id} onClose={() => setStatusOpen(false)} />}
 
 
@@ -1182,7 +1183,7 @@ export default function LibraryPage() {
                   )
                 )}
 
-                {firstScreen && <EmptyDrop canAdd={mayAdd} onChoose={chooseFiles} />}
+                {firstScreen && <EmptyDrop canAdd={mayAdd} onChoose={chooseFiles} waiting={waitingFolders} />}
                 {setupOpen && library && <LibrarySetup library={library} watchAllowed={!!watch?.allowed} onDone={(l) => (saved(l), closeSetup())} onClose={closeSetup} />}
 
                 {next &&
