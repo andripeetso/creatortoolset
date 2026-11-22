@@ -325,18 +325,19 @@ collectionApp.post("/:id/collections/:cid/restore", (c) => {
   return c.json(toCollection(rowIn(libraryId, String(kept.row.id))!));
 });
 
-// GET /api/library/:id/counts → { a, b, image }: the clips sorted A-roll and B-roll and the photos, for the tabs.
+// GET /api/library/:id/counts → { a, b, image, video }: the clips sorted A-roll and B-roll, the photos and the videos, for the tabs.
 // ponytail: counted over the whole library, as /tags is, not per viewer's policies
 collectionApp.get("/:id/counts", (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(c.get("user").username, libraryId)) return notFound(c);
   const r = db()
     .prepare(
-      `SELECT SUM(a.roll = 'a') AS a, SUM(a.roll = 'b') AS b, SUM(a.kind = 'image' AND NOT ${FINISHED}) AS image
+      `SELECT SUM(a.roll = 'a') AS a, SUM(a.roll = 'b') AS b, SUM(a.kind = 'image' AND NOT ${FINISHED}) AS image,
+              SUM(a.kind = 'video' AND NOT ${FINISHED}) AS video
        FROM assets a WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
-    .get(libraryId) as { a: number | null; b: number | null; image: number | null };
-  return c.json({ a: r.a ?? 0, b: r.b ?? 0, image: r.image ?? 0 });
+    .get(libraryId) as { a: number | null; b: number | null; image: number | null; video: number | null };
+  return c.json({ a: r.a ?? 0, b: r.b ?? 0, image: r.image ?? 0, video: r.video ?? 0 });
 });
 
 // POST / DELETE /api/library/:id/collections/:cid/items { assetIds } → add or remove (manual collections; on an A-roll or

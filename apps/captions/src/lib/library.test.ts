@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
-import { addRefused, changeFolderItems, clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
+import { addRefused, changeFolderItems, clearPieceCover, getPiece, libraryNews, listAllAssets, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -255,5 +255,23 @@ describe("changeFolderItems", () => {
     const ids = Array.from({ length: 1100 }, (_, i) => `ast_${i}`);
     expect(await changeFolderItems("lib_1", "col_1", ids, true)).toEqual({ added: 1100 });
     expect(sizes).toEqual([1100]);
+  });
+});
+
+describe("listAllAssets", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads from the cursor given to the last page, in the largest pages, keeping the view's query", async () => {
+    const pages = [
+      { items: [{ id: "ast_2" }], next: "c3" },
+      { items: [{ id: "ast_3" }], next: undefined },
+    ];
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(pages.shift()), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const got = await listAllAssets("lib_1", { roll: "b", cursor: "c2" });
+    expect(got.map((a) => a.id)).toEqual(["ast_2", "ast_3"]);
+    const urls = (fetchMock.mock.calls as unknown as [string][]).map(([u]) => new URL(u, "http://x").searchParams);
+    expect(urls.map((p) => p.get("cursor"))).toEqual(["c2", "c3"]);
+    expect(urls.every((p) => p.get("limit") === "200" && p.get("roll") === "b")).toBe(true);
   });
 });

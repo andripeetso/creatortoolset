@@ -118,7 +118,7 @@ describe("folders and collections", () => {
     const a = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "A-roll", kind: "smart", query: { roll: "a" } }));
     expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${a.id}/items`, { assetIds: ["r1", "ph1"] }))).toEqual({ added: 1 });
     expect(roll()).toEqual({ roll: "a", filed_roll: "a" });
-    expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ a: 1, image: 1 });
+    expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ a: 1, image: 1, video: 4 });
     expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${a.id}/items`, { assetIds: ["ph1"] }))).toEqual({ added: 0 });
     expect(await data(call("owner-a", "DELETE", `/api/library/lib_a/collections/${a.id}/items`, { assetIds: ["r1"] }))).toEqual({ removed: 1 });
     expect(roll()).toEqual({ roll: "b", filed_roll: null });

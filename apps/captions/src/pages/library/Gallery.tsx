@@ -60,7 +60,7 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
       {...scrub}
       style={ownShape ? { aspectRatio: `${a.width || 4} / ${a.height || 3}` } : undefined}
       className={cn(
-        "group relative block w-full overflow-hidden rounded-md bg-zinc-900 text-left ring-1 ring-zinc-500/20 transition hover:ring-zinc-400/60",
+        "gallery-tile group relative block w-full overflow-hidden rounded-md bg-zinc-900 text-left ring-1 ring-zinc-500/20 transition hover:ring-zinc-400/60",
         !ownShape && (wide(a) ? "aspect-[3/2]" : "aspect-[3/4]"),
       )}
     >
@@ -82,7 +82,7 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
       )}
       {/* on the picture's own dark labels: white words in both themes */}
       {tags.length > 0 && (
-        <span className="absolute left-1.5 right-14 top-1.5 flex flex-wrap gap-1 overflow-hidden">
+        <span className="gallery-tags absolute left-1.5 right-14 top-1.5 flex flex-wrap gap-1 overflow-hidden">
           {tags.map((t) => (
             <span key={t} className="max-w-full truncate rounded bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white">
               {t}

@@ -27,6 +27,7 @@ import {
   getAsset,
   getWatch,
   isFinals,
+  listAllAssets,
   listAssets,
   listCollections,
   orderCollections,
@@ -90,8 +91,8 @@ import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./lib
  * narrow window). Above the grid: the page's own row (left: search, View with the layout and card size, More with Library
  * settings and the Trash; right: New folder and Upload), then the
  * tabs (./library/Tabs.tsx: All, A-roll, B-roll, Photos, the top-level folders), each a place to drop clips on. Three
- * views (./library/views.tsx): Folders (the folder cards, components/browse/, then the clips in none), Gallery (only the
- * clips, ./library/Gallery.tsx) and List. `?f=` opens a folder, `?trash=1` the Trash. Search looks in the whole library
+ * views (./library/views.tsx): Folders (the folder cards, components/browse/, then the clips in none), Gallery (the
+ * clips, ./library/Gallery.tsx; inside a folder, its folders above them) and List. `?f=` opens a folder, `?trash=1` the Trash. Search looks in the whole library
  * from the top, in the folder when one is open: titles and tags (FTS5, api/library/query.ts) and what is said in the
  * clips (api/library/search.ts), where a moment found (a line said, a shot, a timeline moment) opens the preview at its second. A card opens its preview; dragged
  * onto a folder or a tab it moves there, at once on screen (./library/moves.ts), with Undo. Right-click on the empty
@@ -237,6 +238,8 @@ export default function LibraryPage() {
   const reload = () => void first.refresh().catch((e) => setError(message(e)));
   const [more, setMore] = useState<{ key: string; items: AssetCard[]; next?: string } | null>(null);
   const extra = more && more.key === pageKey ? more : null;
+  // another view: a page or Select all still loading for the last one is dropped
+  useEffect(() => void ++seq.current, [pageKey]);
   const shownIds = new Set(first.data?.items.map((a) => a.id));
   // while a term is typed the grid is the search's own answer, best first: by words, by what is said, or by meaning. A
   // saved search with words runs that search, and a term typed in it narrows it
@@ -252,7 +255,8 @@ export default function LibraryPage() {
   // in the sort picked, by the server (api/library/query.ts) across every page; a search keeps its own order, best first
   const shown = items;
   const narrowed = !!term || kind !== "all" || !!roll || Object.values(facets).some((v) => v.length) || !!source || anyFilter(filters);
-  const shownFolders = trash || source || view === "gallery" ? [] : foldersAt(collections, open, term);
+  // the Gallery's tabs are the top-level folders; inside one it shows the folders in it above its clips
+  const shownFolders = trash || source || (view === "gallery" && !open) ? [] : foldersAt(collections, open, term);
 
   // an empty library says what it is for and the folder to choose in place of the grid: no clip in it (its folders,
   // the default ones say, hold none either), nothing in its trash, no footage folder, no plug-in source, no upload on
@@ -373,7 +377,7 @@ export default function LibraryPage() {
 
   // the next page as the end of the list nears (useEndOfList), one at a time
   const loadMore = () => {
-    if (!libId || !next || !pageKey || loading.current === next) return;
+    if (!libId || !next || !pageKey || pickingAll === pageKey || loading.current === next) return;
     const mine = ++seq.current;
     const cursor = next;
     loading.current = cursor;
@@ -390,6 +394,7 @@ export default function LibraryPage() {
       });
   };
   const endOfList = useEndOfList(loadMore, next);
+  const [pickingAll, setPickingAll] = useState<string | null>(null); // the view whose every clip is being read for Select all
 
 
   // the Mac app with the server elsewhere: files are indexed where they are, never uploaded, unless the library's
@@ -692,10 +697,17 @@ export default function LibraryPage() {
                 ]
               : [];
           }),
-          // a top-level folder already called Photos is the photos tab (owner, 2026-11-19: two Photos tabs, one undeletable)
-          ...((counts.data?.image ?? 0) > 0 && !collections.some((c) => c.parentId === null && holdsClips(c) && c.name.trim().toLowerCase() === "photos")
-            ? [{ id: "photos", label: "Photos", count: counts.data?.image, active: !open && kind === "image" && !roll, onOpen: () => go(null, "image") }]
-            : []),
+          // a top-level folder already called Photos or Videos is that tab (owner, 2026-11-19: two Photos tabs, one undeletable)
+          ...(
+            [
+              ["video", "Videos", counts.data?.video],
+              ["image", "Photos", counts.data?.image],
+            ] as const
+          ).flatMap(([k, label, count]): Tab[] =>
+            (count ?? 0) > 0 && !collections.some((c) => c.parentId === null && holdsClips(c) && c.name.trim().toLowerCase() === label.toLowerCase())
+              ? [{ id: k === "image" ? "photos" : "videos", label, count, active: !open && kind === k && !roll, onOpen: () => go(null, k) }]
+              : [],
+          ),
           ...collections
             .filter((c) => c.parentId === null && holdsClips(c))
             .map(
@@ -742,7 +754,26 @@ export default function LibraryPage() {
   const pickedCards = pickable.filter((a) => picks.picked.has(a.id));
   /** what a clip's menu or drag acts on: every picked clip when it is one of them */
   const carried = (a: AssetCard) => (picks.picked.has(a.id) && pickedCards.length > 1 ? pickedCards : [a]);
-  useSelectAll(() => picks.set(pickable.map((a) => a.id)));
+  useSelectAll(() => void pickAll());
+  /** every clip in this view, the pages not scrolled to yet read first (the largest pages the server gives) */
+  const pickAll = async () => {
+    if (!libId || !pageKey || !next) return picks.set(pickable.map((a) => a.id));
+    if (pickingAll === pageKey) return;
+    const mine = ++seq.current; // a page loadMore has on its way is dropped: these pages include it
+    const key = pageKey;
+    setPickingAll(key);
+    try {
+      const got = await listAllAssets(libId, { ...query, cursor: next });
+      if (mine !== seq.current) return;
+      // added to the list as it is by now, so a clip trashed or moved meanwhile stays off it
+      setMore((m) => ({ key, items: [...(m?.key === key ? m.items : []), ...got], next: undefined }));
+      picks.set([...pickable, ...got].map((a) => a.id).filter((id) => !id.startsWith("ext_")));
+    } catch (e) {
+      if (mine === seq.current) setError(message(e));
+    } finally {
+      setPickingAll((k) => (k === key ? null : k));
+    }
+  };
   // Escape: the clip's window closes itself first, then the picks go, then the search
   useEscapeSteps([() => !!pickedCards.length && (picks.clear(), true), () => !!q && (setQ(""), true)]);
   useEffect(() => {
@@ -897,11 +928,13 @@ export default function LibraryPage() {
   );
   // the trail back up, where the tabs don't already say it: the Trash, a folder inside another, a saved search
   const trail = trailOf(collections, open, trash);
-  // the tabs are the Gallery's way into folders; the folders and list views show the folders themselves
+  // the tabs are the Gallery's way into top-level folders; the folders inside one show as cards
   const tabbed = view === "gallery" && tabs.some((t) => t.active);
   // a drop's files as cards (./library/Placeholders.tsx), first in the folder they were dropped in, until each clip's own card is here
   const onPage = (id: string) => shown.some((a) => a.id === id);
   const pending = trash || narrowed ? [] : uploads.filter((u) => placeholderShown(u, onPage) && (u.folderId ?? null) === (into ?? null));
+  // the folders above the clips, where the clips are not in the same grid (the Gallery, photos)
+  const folderCards = shownFolders.length > 0 && <FolderGrid size="small" columns={columns}>{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} lines={c.sounds} />)}</FolderGrid>;
   const placeholders = pending.map((u) => <PlaceholderTile key={`up-${u.key}`} upload={u} onRetry={() => retryImport(u.key)} onCancel={() => cancelImports([u.key])} />);
   // in the Gallery each takes its clip's cell: the file's own shape once read, the library's usual one before
   const usual = commonAspect(shown);
@@ -1160,6 +1193,8 @@ export default function LibraryPage() {
                       ))}
                     </div>
                   ) : view === "gallery" ? (
+                    <div className="flex flex-col gap-3">
+                      {folderCards}
                     <GalleryGrid
                       assets={shown}
                       lead={galleryLead}
@@ -1170,10 +1205,11 @@ export default function LibraryPage() {
                         </ClipPick>
                       )}
                     />
+                    </div>
                   ) : kind === "image" ? (
                     // photos in their own proportions, folders above them
                     <div className="flex flex-col gap-3">
-                      {shownFolders.length > 0 && <FolderGrid size="small" columns={columns}>{shownFolders.map((c) => <FolderCard key={c.id} {...folderProps(c)} covers={(c.covers ?? []).map((src) => ({ src }))} lines={c.sounds} />)}</FolderGrid>}
+                      {folderCards}
                       {placeholders.length > 0 && <FolderGrid size="small" columns={columns}>{placeholders}</FolderGrid>}
                       <PhotoMasonry assets={shown} tile={tile} />
                     </div>
@@ -1226,6 +1262,7 @@ export default function LibraryPage() {
       {library && pickedCards.length > 0 && (
         <PickBar
           count={pickedCards.length}
+          all={next || pickedCards.length < pickable.length ? (pickingAll === pageKey ? "busy" : "more") : "all"}
           inTrash={trash}
           readOnly={readOnly}
           moveTo={moveOptions(collections, into)}
@@ -1239,6 +1276,7 @@ export default function LibraryPage() {
             restore: () => void trashMany(pickedCards, false),
             redo: (k) => redo(pickedCards, k),
             clear: picks.clear,
+            pickAll: () => void pickAll(),
           }}
         />
       )}

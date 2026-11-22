@@ -639,3 +639,10 @@ html:not(.dark) [data-nle] ::-webkit-scrollbar-thumb { background: #3f3f46; }
 :root[data-modal-swap] [data-slot="dialog-content"] {
   animation: none;
 }
+
+/* Media Library gallery tiles (pages/library/Gallery.tsx): below 130px across a tag reads as "a…", so tiles that
+   small show none; the length stays. */
+.gallery-tile { container: gallery-tile / inline-size; }
+@container gallery-tile (max-width: 130px) {
+  .gallery-tags { display: none; }
+}

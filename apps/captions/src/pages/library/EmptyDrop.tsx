@@ -14,7 +14,8 @@ export function EmptyDrop({ canAdd, onChoose, waiting }: { canAdd: boolean; onCh
   if (waiting?.waiting.length) return <CantRead {...waiting} centred />;
   if (!canAdd) return <p className="py-16 text-center text-sm text-zinc-500">{LIBRARY_WORDS.noClipsYet}</p>;
   return (
-    <div className="m-auto flex w-full max-w-md flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-zinc-500/30 bg-background px-6 py-7 text-center">
+    // the page centres it below the top bar; half a bar up puts it in the middle of the window
+    <div className="m-auto flex w-full max-w-md -translate-y-[calc(var(--bar-h)/2)] flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-zinc-500/30 bg-background px-6 py-7 text-center">
       <MediaDrawing />
       <span className="text-base font-medium">{LIBRARY_WORDS.dropMedia}</span>
       <Button size="sm" variant="outline" className="mt-1" onClick={onChoose}>

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { Check, Download, Folder, RefreshCw, RotateCcw, Tag, Trash2, X } from "lucide-react";
+import { Check, CheckCheck, Download, Folder, RefreshCw, RotateCcw, Tag, Trash2, X } from "lucide-react";
 import type { AssetCard, LibrarySummary } from "@contracts/library";
 import { isPickClick } from "@/components/browse/browse";
 import { Button } from "@/components/ui/button";
@@ -235,6 +235,7 @@ const barButton = "h-8 gap-1.5 px-2.5";
 /** The bar for the picked clips, at the foot of the page, apart from any one clip's buttons. */
 export function PickBar({
   count,
+  all,
   inTrash,
   readOnly,
   moveTo,
@@ -243,13 +244,15 @@ export function PickBar({
   on,
 }: {
   count: number;
+  /** whether every clip in the view is picked: "more" offers Select all, "busy" while the rest of the view loads */
+  all: "all" | "more" | "busy";
   inTrash: boolean;
   /** someone else's library to look at: Download only (a member never moves, tags or deletes the owner's footage) */
   readOnly?: boolean;
   moveTo: MoveTarget[];
   tags: string[];
   redo: { kind: string; label: string }[];
-  on: Omit<ClipMoves, "open" | "share" | "copyLink"> & { redo: (kind: string) => void; clear: () => void };
+  on: Omit<ClipMoves, "open" | "share" | "copyLink"> & { redo: (kind: string) => void; clear: () => void; pickAll: () => void };
 }) {
   return (
     // on a narrow screen it sits above the assistant's round button while that is in a bottom corner
@@ -261,6 +264,11 @@ export function PickBar({
         className="pointer-events-auto flex max-w-full items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1.5 pl-3.5 text-sm text-zinc-100 shadow-2xl"
       >
         <span className="mr-1 shrink-0 tabular-nums text-zinc-300">{count} selected</span>
+        {all !== "all" && (
+          <Button size="sm" variant="ghost" className={barButton} title="Select all (⌘A)" disabled={all === "busy"} onClick={on.pickAll}>
+            <CheckCheck /> <span className="hidden sm:inline">{all === "busy" ? "Selecting" : "Select all"}</span>
+          </Button>
+        )}
         {readOnly ? null : inTrash ? (
           <Button size="sm" className={cn(barButton, "bg-violet-600 text-white hover:bg-violet-500")} onClick={on.restore}>
             <RotateCcw /> Restore

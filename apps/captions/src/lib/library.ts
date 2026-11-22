@@ -337,15 +337,16 @@ export const listPieces = (libraryId: string, collectionId: string) =>
   send<{ pieces: Piece[] }>(`/api/library/${libraryId}/pieces?collectionId=${encodeURIComponent(collectionId)}`, "GET").then((x) => x.pieces);
 
 /**
- * Every card the viewer may see in a library, with the facet picks applied, read page by page. Finals needs whole
- * libraries here because a piece's versions can sit anywhere in it.
- * ponytail: reads the whole library on each change of a facet; a per-version lookup when libraries get big.
+ * Every card of a view (the query's, from its `cursor` on), read page by page in the largest pages the server gives.
+ * Finals needs whole libraries because a piece's versions can sit anywhere in it; the Media Library's Select all the
+ * pages not scrolled to yet.
+ * ponytail: Finals reads the whole library on each change of a facet; a per-version lookup when libraries get big.
  */
-export async function listAllAssets(libraryId: string, facets?: Record<string, string[]>): Promise<AssetCard[]> {
+export async function listAllAssets(libraryId: string, q: SearchQuery & { cursor?: string; source?: string } = {}): Promise<AssetCard[]> {
   const out: AssetCard[] = [];
-  let cursor: string | undefined;
+  let cursor = q.cursor;
   do {
-    const page = await listAssets(libraryId, { facets, limit: 200, cursor });
+    const page = await listAssets(libraryId, { ...q, limit: 200, cursor });
     out.push(...page.items);
     cursor = page.next;
   } while (cursor);

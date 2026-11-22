@@ -283,7 +283,7 @@ export default function FinalsPage() {
     async () => {
       const [pieces, cards, workshop] = await Promise.all([
         listPieces(libId!, finals!.id),
-        listAllAssets(libId!, own),
+        listAllAssets(libId!, { facets: own }),
         getWorkshopFinals().catch((): Record<string, WorkshopFinal> => ({})),
       ]);
       return { pieces, cards, workshop };

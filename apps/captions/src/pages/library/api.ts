@@ -9,7 +9,7 @@ async function json<T>(r: Response): Promise<T> {
 }
 
 /** The tabs' counts: clips sorted A-roll and B-roll, and photos. */
-export type TabCounts = { a: number; b: number; image: number };
+export type TabCounts = { a: number; b: number; image: number; video: number };
 export const tabCounts = (libraryId: string) => fetch(`/api/library/${libraryId}/counts`).then((r) => json<TabCounts>(r));
 
 /** A folder deleted moments ago, back as it was (Undo). */
