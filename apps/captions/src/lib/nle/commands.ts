@@ -1,11 +1,11 @@
 import { MARKER_COLORS, type EdjMarker, type MarkerColor, type TransType } from "@contracts/editor";
 import {
-  addMarker, blade, setMarker, clipAt, clipsFrom, closeGap, copyOf, duplicate, endOf, extract, find, isVideo, lengthOf, lengthTo, lift, markerAt, markersOf, move,
+  addMarker, blade, setMarker, clipAt, clipsFrom, closeGap, copyOf, duplicate, endOf, extract, find, handlesAt, isVideo, lengthOf, lengthTo, lift, markerAt, markersOf, move,
   freezeFrame, paste, remove, removeMarker, rippleToPlayhead, setItems, setMark, setTrack, type Gap, type Marks, type NleItem, type NleTimeline, type PlaceMode,
 } from "./model";
 import { DUCK, lowerUnderVoice, measured, normalize, normTarget, soundKeys, speechSpans } from "./loudness";
 import { INSPECTOR_COMMANDS } from "./inspector-commands";
-import { addTransition, handlesAt, removeTransition } from "./trans";
+import { addTransition, removeTransition } from "./trans";
 import { pendingText, placeText } from "./text-clip";
 import { captionsStale } from "./captions";
 

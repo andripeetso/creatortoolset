@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { EdjTrans } from "@contracts/editor";
-import { setTrack, withKeys, type NleTimeline } from "./model";
-import { addTransition, handlesAt, maxLen, normalizeTrans, removeTransition, setTransition } from "./trans";
+import { handlesAt, maxLen, setTrack, withKeys, type NleTimeline } from "./model";
+import { addTransition, normalizeTrans, removeTransition, setTransition } from "./trans";
 
 const GOLDEN = JSON.parse(readFileSync(new URL("../../../contracts/edj-golden.json", import.meta.url), "utf8")) as {
   handles: { at: EdjTrans["at"]; len: number; fps: number; earlier: { speed: number; sfps: number }; later: { speed: number; sfps: number }; tail: number; head: number }[];

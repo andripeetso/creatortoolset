@@ -5,8 +5,9 @@
 import type { EdjTrans, TransType } from "@contracts/editor";
 import { find, fixTrans, handlesAt, isVideo, maxLen, setItems, withLinked, type NleItem, type NleTimeline } from "./model";
 
-// the room at a cut and the clamp live in model.ts, which every edit runs through
-export { fixTrans, handlesAt, maxLen };
+// the room at a cut and the clamp live in model.ts: import them from there. Not passed on from here: model.ts →
+// picture.ts → trans.ts is a loop, and the Mac app's build (CT_PLUGIN_HOST=1) then read maxLen before model.ts set it
+// as the page loaded, so the window never left the CT mark (v0.18.18–v0.20.0)
 
 /** Resolve's names */
 export const TRANS_NAMES: Record<TransType, string> = { dissolve: "Cross Dissolve", dip_black: "Dip to Black", dip_white: "Dip to White", crossfade: "Cross Fade" };
