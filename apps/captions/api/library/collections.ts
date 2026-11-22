@@ -344,6 +344,9 @@ collectionApp.get("/:id/counts", (c) => {
 collectionApp.post("/:id/collections/:cid/items", (c) => changeItems(c, true));
 collectionApp.delete("/:id/collections/:cid/items", (c) => changeItems(c, false));
 
+/** The most clips one request puts in a folder or takes out. */
+export const FOLDER_ITEMS_MAX = 5000;
+
 async function changeItems(c: Ctx, add: boolean) {
   const user = c.get("user");
   const libraryId = c.req.param("id") ?? "";
@@ -353,8 +356,10 @@ async function changeItems(c: Ctx, add: boolean) {
   const roll = rollFolder(db(), libraryId, row.id);
   if (row.kind !== "manual" && !roll) return c.json({ error: "Clips cannot be moved into a saved search", code: "conflict" }, 409);
   const body = (await c.req.json().catch(() => null)) as { assetIds?: unknown } | null;
-  const asked = Array.isArray(body?.assetIds) ? body.assetIds.filter((x): x is string => typeof x === "string").slice(0, 500) : [];
+  const asked = Array.isArray(body?.assetIds) ? body.assetIds.filter((x): x is string => typeof x === "string") : [];
   if (!asked.length) return c.json({ error: "No assets given", code: "invalid" }, 400);
+  // all of them or none: a longer list is refused out loud, never cut short
+  if (asked.length > FOLDER_ITEMS_MAX) return c.json({ error: `At most ${FOLDER_ITEMS_MAX} clips at a time`, code: "invalid" }, 400);
   // only the assets the policies let this account change; the rest are skipped, as trashed or foreign ones are
   const ids = await writableAssets(user.username, libraryId, asked);
   const d = db();

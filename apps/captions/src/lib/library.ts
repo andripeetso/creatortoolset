@@ -203,20 +203,8 @@ export const listCollections = (libraryId: string) =>
 export const createCollection = (libraryId: string, input: { name: string; kind?: "manual" | "smart"; query?: SearchQuery; parentId?: string; rule?: string }) =>
   send<Collection>(`/api/library/${libraryId}/collections`, "POST", input);
 
-export const FOLDER_ITEMS_PER_REQUEST = 500;
-/** Puts clips in a folder or takes them out. The route takes 500 a request (collections.ts changeItems), so a bigger
- *  selection goes in parts of 500, one after another; the answer adds up the parts. */
-export async function changeFolderItems(libraryId: string, collectionId: string, assetIds: string[], add: boolean): Promise<{ added: number; removed: number }> {
-  const out = { added: 0, removed: 0 };
-  for (let i = 0; i === 0 || i < assetIds.length; i += FOLDER_ITEMS_PER_REQUEST) {
-    const r = await send<{ added?: number; removed?: number } | null>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", {
-      assetIds: assetIds.slice(i, i + FOLDER_ITEMS_PER_REQUEST),
-    });
-    out.added += r?.added ?? 0;
-    out.removed += r?.removed ?? 0;
-  }
-  return out;
-}
+export const changeFolderItems = (libraryId: string, collectionId: string, assetIds: string[], add: boolean) =>
+  send<{ added?: number; removed?: number }>(`/api/library/${libraryId}/collections/${collectionId}/items`, add ? "POST" : "DELETE", { assetIds });
 
 export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
   send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });

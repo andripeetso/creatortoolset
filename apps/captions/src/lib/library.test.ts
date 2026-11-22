@@ -245,7 +245,7 @@ describe("uploadFile from the Mac app on its own server", () => {
 
 describe("changeFolderItems", () => {
   afterEach(() => vi.unstubAllGlobals());
-  it("sends a selection bigger than the route's 500 in parts and adds up what each part moved", async () => {
+  it("sends a big selection whole, in one request, so it moves all of it or none", async () => {
     const sizes: number[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
       const n = (JSON.parse(String(init.body)) as { assetIds: string[] }).assetIds.length;
@@ -253,7 +253,7 @@ describe("changeFolderItems", () => {
       return new Response(JSON.stringify({ added: n }), { status: 200 });
     }));
     const ids = Array.from({ length: 1100 }, (_, i) => `ast_${i}`);
-    expect(await changeFolderItems("lib_1", "col_1", ids, true)).toEqual({ added: 1100, removed: 0 });
-    expect(sizes).toEqual([500, 500, 100]);
+    expect(await changeFolderItems("lib_1", "col_1", ids, true)).toEqual({ added: 1100 });
+    expect(sizes).toEqual([1100]);
   });
 });

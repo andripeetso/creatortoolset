@@ -87,6 +87,18 @@ describe("folders and collections", () => {
     expect(ids(await data(call("owner-a", "GET", "/api/library/lib_a/assets")))).toContain("e1");
   });
 
+  it("takes a selection past 500 whole, and refuses one past the limit out loud instead of cutting it", async () => {
+    const many = Array.from({ length: 600 }, (_, i) => `bulk${i}`);
+    for (const id of many) seed(id, `Bulk ${id}`, "owner-a");
+    const f = await data(call("owner-a", "POST", "/api/library/lib_a/collections", { name: "Bulk" }));
+    expect(await data(call("owner-a", "POST", `/api/library/lib_a/collections/${f.id}/items`, { assetIds: many }))).toEqual({ added: 600 });
+    expect(await data(call("owner-a", "DELETE", `/api/library/lib_a/collections/${f.id}/items`, { assetIds: many }))).toEqual({ removed: 600 });
+    const tooMany = Array.from({ length: 5001 }, (_, i) => `x${i}`);
+    const r = await call("owner-a", "POST", `/api/library/lib_a/collections/${f.id}/items`, { assetIds: tooMany });
+    expect(r.status).toBe(400);
+    expect((await r.json()).error).toBe("At most 5000 clips at a time");
+  });
+
   it("a clip dropped on the A-roll folder is filed A-roll; taken back out it is filed as nothing and sorted again; a photo is never filed", async () => {
     const d = libraryDb();
     seed("r1", "Roll one", "owner-a");
