@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { Hono } from "hono";
@@ -205,6 +205,32 @@ export async function addPicture(username: string, styleId: string, src: string,
   });
   if (!saved || typeof saved === "string") await rm(file, { force: true });
   for (const id of dropped) await rm(path.join(dir, `${id}.jpg`), { force: true });
+  return saved;
+}
+
+/**
+ * Pictures already made small (a style suggestion's stills, style-proposals.ts) added to a style as inspirations, as
+ * they are: copied in and recorded at once, with no computer asked. Null: no such style. A string: it holds too many.
+ */
+export async function addFitted(username: string, styleId: string, files: string[]): Promise<AnimationStyle | string | null> {
+  if (!USER.test(username) || !ID.test(styleId) || !inFile(read(username), styleId)) return null;
+  const dir = dirOf(username, styleId);
+  await mkdir(dir, { recursive: true });
+  const pics: StylePicture[] = [];
+  for (const f of files) {
+    const pic: StylePicture = { id: randomUUID(), kind: "inspiration", at: Date.now() };
+    await copyFile(f, path.join(dir, `${pic.id}.jpg`));
+    pics.push(pic);
+  }
+  const saved = change(username, (f) => {
+    const s = inFile(f, styleId);
+    if (!s) return null;
+    if (s.pictures.filter((p) => p.kind === "inspiration").length + pics.length > MAX_INSPIRATIONS) return FULL;
+    s.pictures = [...s.pictures, ...pics];
+    s.updatedAt = Date.now();
+    return s;
+  });
+  if (!saved || typeof saved === "string") for (const p of pics) await rm(path.join(dir, `${p.id}.jpg`), { force: true });
   return saved;
 }
 

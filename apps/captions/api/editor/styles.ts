@@ -89,14 +89,14 @@ export const listedIn = (ws: string | undefined) => (s: { projectId?: string }):
 
 /**
  * The styles listed in workspace `ws` (undefined: all) of `username` (the workspace's, routes.ts settingsOf), and the
- * default and proposals of `me`, the caller, who sets and keeps them in their own file (the style routes write there).
+ * default (for workspace `home`) and proposals of `me`, the caller, who sets and keeps them in their own file.
  */
-export function stylesView(username: string, ws?: string, me = username): EditingStylesView {
+export function stylesView(username: string, ws?: string, me = username, home = ws ?? ""): EditingStylesView {
   const f = read(username);
   const mine = me === username ? f : read(me);
   const styles = f.editing.filter(listedIn(ws));
   const has = (id: string | undefined) => !!id && styles.some((s) => s.id === id);
-  const def = mine.defaults?.[ws ?? ""];
+  const def = mine.defaults?.[home];
   const proposals = (mine.proposals ?? []).filter(listedIn(ws));
   return {
     styles,

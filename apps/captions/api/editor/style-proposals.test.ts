@@ -82,6 +82,11 @@ describe.skipIf(rootReplaced)("a style suggested from a reference", () => {
     expect(byKey.status).toBe(403);
     expect((await view()).styles).toHaveLength(0);
 
+    // a Keep that is refused leaves nothing behind and the suggestion where it was
+    expect((await site(`/api/editor/styles/proposals/${p.id}/keep`, "POST", { name: " ", animationBrief: "x" })).status).toBe(400);
+    expect(((await (await site("/api/editor/animation-styles")).json()) as AnimationStylesView).styles).toHaveLength(0);
+    expect((await view()).proposals?.map((x) => x.id)).toEqual([p.id]);
+
     // the person keeps it, edited first
     const kept = (await (await site(`/api/editor/styles/proposals/${p.id}/keep`, "POST", { name: "Tiny bold mine", notes: "Cut every pause.", pace: "natural", animationBrief: "White words, slow fade" })).json()) as EditingStyle;
     expect(kept).toMatchObject({ name: "Tiny bold mine", notes: "Cut every pause.", pace: "natural", punch: 1.3, versions: 2, targetS: 30 });
@@ -90,6 +95,9 @@ describe.skipIf(rootReplaced)("a style suggested from a reference", () => {
     expect(anim.pictures.map((x) => x.kind)).toEqual(["inspiration", "inspiration"]);
     expect((await view()).proposals).toBeUndefined();
     expect((await site(`/api/editor/styles/proposals/${p.id}/stills/0`)).status).toBe(404);
+    // a second Keep (a retry, another tab) makes nothing more
+    expect((await site(`/api/editor/styles/proposals/${p.id}/keep`, "POST", {})).status).toBe(404);
+    expect((await view()).styles).toHaveLength(1);
   });
 
   it("reads the person's finished edits, and a suggestion can be deleted", async () => {

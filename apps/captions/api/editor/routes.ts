@@ -265,7 +265,8 @@ editorApp.put("/defaults/:slot", async (c) => {
 });
 
 // the person's editing styles (contracts/editor-styles.ts), the workspace's in one given to them; registered before /:id, as the defaults are
-editorApp.get("/styles", async (c) => c.json(stylesView(await settingsOf(c), await currentWorkspaceId(c.get("user")), c.get("user").username)));
+// listed for the workspace a request works in (a phone or an API key with none: every style); the default is the app's current workspace's
+editorApp.get("/styles", async (c) => c.json(stylesView(await settingsOf(c), await listWorkspaceId(c.get("user")), c.get("user").username, (await currentWorkspaceId(c.get("user"))) ?? "")));
 
 const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave notes out: they write them on the style's sheet (Editor, Editing styles).";
 
@@ -319,8 +320,12 @@ editorApp.put("/styles/default", async (c) => {
  * edits), or `chat: n`, the newest n pictures sent in the assistant's chat a reply is written in (found by that reply's
  * token, never by a path). Only a proposal: nothing uses it until the person keeps it.
  */
+/** Styles of a workspace shared with the caller are its owner's: a suggestion kept there would be a style nobody lists. */
+const SHARED_STYLES = { error: "This workspace's styles are its owner's to add", code: "forbidden" } as const;
+
 editorApp.post("/styles/propose", async (c) => {
   const user = c.get("user").username;
+  if ((await settingsOf(c)) !== user) return c.json(SHARED_STYLES, 403);
   const ws = await currentWorkspaceId(c.get("user"));
   const multipart = (c.req.header("content-type") ?? "").startsWith("multipart/");
   let made: Awaited<ReturnType<typeof propose>>;
@@ -339,7 +344,7 @@ editorApp.post("/styles/propose", async (c) => {
       if ("error" in v) return c.json({ error: v.error, code: v.status === 404 ? "not_found" : v.status === 409 ? "conflict" : "invalid" }, v.status);
       made = await propose(user, { from: "video", label: v.title || "A video", stills: v.frames }, ws);
     } else if (b.finished === true) {
-      const t = finishedText(user);
+      const t = finishedText(user, ws);
       if (typeof t === "string") return c.json({ error: t, code: "conflict" }, 409);
       made = await propose(user, { from: "finished", label: `${t.count} finished ${t.count === 1 ? "edit" : "edits"}`, stills: [], text: t.text }, ws);
     } else if (b.chat !== undefined) {
@@ -365,7 +370,8 @@ editorApp.get("/styles/proposals/:id/stills/:n", async (c) => {
 /** Keep: the person's own press on the proposal's sheet, never an AI's tool, so what the AI proposed is never applied by itself. */
 editorApp.post("/styles/proposals/:id/keep", async (c) => {
   if (viaTool(c)) return c.json({ error: "Only the user keeps a proposal, on its sheet (Editor, Editing styles).", code: "forbidden" }, 403);
-  const kept = await keep(c.get("user").username, c.req.param("id"), await body(c), await currentWorkspaceId(c.get("user")));
+  if ((await settingsOf(c)) !== c.get("user").username) return c.json(SHARED_STYLES, 403);
+  const kept = await keep(c.get("user").username, c.req.param("id"), await body(c));
   if (!kept) return notFound(c);
   return typeof kept === "string" ? c.json({ error: kept, code: "invalid" }, 400) : c.json(kept);
 });

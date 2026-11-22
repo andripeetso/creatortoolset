@@ -19,11 +19,11 @@ import {
 } from "../../contracts/editor-styles";
 import { env } from "../lib/env";
 import { libraryDb } from "../library/db";
-import { addPicture, createAnimation, deleteAnimation, fitJpeg } from "./animation-styles";
+import { addFitted, createAnimation, deleteAnimation, fitJpeg } from "./animation-styles";
 import { answer } from "./cards/step";
 import { finishedOf } from "./finished";
 import { sourcesWorkspace } from "./store";
-import { change, createStyle, read } from "./styles";
+import { change, createStyle, listedIn, read } from "./styles";
 
 /**
  * Style proposals (contracts/editor-styles.ts StyleProposal): the AI reads a reference (stills of a library video,
@@ -73,9 +73,12 @@ export function parseProposal(text: string): Pick<StyleProposal, "seen" | "style
 }
 
 /** The person's finished edits as the AI reads them (finished.ts: their own brief and spoken words, numbers measured), newest first. A string: none yet. */
-export function finishedText(username: string): { text: string; count: number } | string {
+export function finishedText(username: string, ws?: string): { text: string; count: number } | string {
+  // this workspace's only: one brand's words never go into another's suggestion
   const all = read(username)
-    .editing.flatMap((s) => finishedOf(username, s.id))
+    .editing.filter(listedIn(ws))
+    .flatMap((s) => finishedOf(username, s.id))
+    .filter((f) => !ws || !f.workspaceId || f.workspaceId === ws)
     .sort((a, b) => b.at - a.at)
     .slice(0, 6);
   if (!all.length) return "No finished edits yet: an edit made in a style counts once its Review video is approved or it is sent to Finals";
@@ -143,10 +146,12 @@ export async function propose(username: string, input: { from: ProposalSource; l
       ...(projectId ? { projectId } : {}),
       at: Date.now(),
     };
+    // the oldest of this workspace's go past MAX_PROPOSALS; another workspace's are never pushed out by this one
     const gone = change(username, (f) => {
       const all = [p, ...(f.proposals ?? [])];
-      f.proposals = all.slice(0, MAX_PROPOSALS);
-      return all.slice(MAX_PROPOSALS).map((x) => x.id);
+      const out = all.filter((x) => x.projectId === projectId).slice(MAX_PROPOSALS).map((x) => x.id);
+      f.proposals = all.filter((x) => !out.includes(x.id));
+      return out;
     });
     for (const old of gone) await rm(dirOf(username, old), { recursive: true, force: true });
     return p;
@@ -180,23 +185,46 @@ export async function dismiss(username: string, id: string): Promise<boolean> {
  * and, when they send `animationBrief` as text, an animation style of that brief and the stills, named for the style
  * and set on it. Then the proposal goes. Null: no such proposal. A string: why nothing was kept.
  */
-export async function keep(username: string, id: string, body: Record<string, unknown>, projectId?: string): Promise<EditingStyle | string | null> {
-  const p = findProposal(username, id);
+export async function keep(username: string, id: string, body: Record<string, unknown>): Promise<EditingStyle | string | null> {
+  // taken out of the list first, so a second Keep (a retry, another tab) finds nothing; put back when nothing was kept
+  const p = change(username, (f) => {
+    const found = f.proposals?.find((x) => x.id === id) ?? null;
+    if (found) f.proposals = f.proposals!.filter((x) => x.id !== id);
+    return found;
+  });
   if (!p) return null;
+  const putBack = (why: string) => {
+    change(username, (f) => {
+      f.proposals = [p, ...(f.proposals ?? [])];
+    });
+    return why;
+  };
   const { animationBrief, ...fields } = body;
   let animation: string | undefined;
-  if (typeof animationBrief === "string" && p.animation) {
-    const name = typeof fields.name === "string" && fields.name.trim() ? fields.name : p.style.name;
-    const made = createAnimation(username, { name, brief: animationBrief });
-    if (typeof made === "string") return made;
-    animation = made.id;
-    for (let n = 0; n < p.animation.stills; n++) await addPicture(username, made.id, path.join(dirOf(username, id), `${n}.jpg`), "inspiration");
-  }
-  const style = createStyle(username, { ...p.style, ...fields, ...(animation ? { animation } : {}) }, undefined, false, projectId);
-  if (typeof style === "string") {
-    if (animation) await deleteAnimation(username, animation);
+  try {
+    if (typeof animationBrief === "string" && p.animation) {
+      const name = typeof fields.name === "string" && fields.name.trim() ? fields.name : p.style.name;
+      const made = createAnimation(username, { name, brief: animationBrief });
+      if (typeof made === "string") return putBack(made);
+      animation = made.id;
+      // the stills are already small JPEGs: copied in as they are, never made again on a computer that may be asleep
+      const files = Array.from({ length: p.animation.stills }, (_, n) => path.join(dirOf(username, id), `${n}.jpg`));
+      const added = await addFitted(username, made.id, files);
+      if (!added || typeof added === "string") {
+        await deleteAnimation(username, made.id);
+        return putBack(typeof added === "string" ? added : "The stills could not be kept");
+      }
+    }
+    const style = createStyle(username, { ...p.style, ...fields, ...(animation ? { animation } : {}) }, undefined, false, p.projectId);
+    if (typeof style === "string") {
+      if (animation) await deleteAnimation(username, animation);
+      return putBack(style);
+    }
+    await rm(dirOf(username, id), { recursive: true, force: true });
     return style;
+  } catch (e) {
+    if (animation) await deleteAnimation(username, animation).catch(() => false);
+    putBack("");
+    throw e;
   }
-  await dismiss(username, id);
-  return style;
 }
