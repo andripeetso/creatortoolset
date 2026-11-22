@@ -271,8 +271,9 @@ function EditorList() {
       window.removeEventListener("drop", onDrop);
     };
   }, [tab]);
+  // one row above every tab's body, so the tabs stay put when the body under them changes
   const tabs = (
-    <Tabs value={tab} onValueChange={(t) => setParams(t === "edits" ? {} : { tab: t })}>
+    <Tabs value={tab} onValueChange={(t) => setParams(t === "edits" ? {} : { tab: t })} className="px-4 pt-4 sm:px-6">
       <TabsList>
         <TabsTrigger value="edits">Edits</TabsTrigger>
         <TabsTrigger value="styles">Editing styles</TabsTrigger>
@@ -292,8 +293,8 @@ function EditorList() {
             </Button>
           )}
         </AppBar>
-        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
-          {tabs}
+        {tabs}
+        <main className="flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 pb-4 pt-3 sm:px-6">
           {animationList.data && <AnimationStyles styles={animationList.data.styles} open={openAnimation} onOpen={setOpenAnimation} onChanged={animationList.refresh} onChat={chat ? () => styleChat("animation") : undefined} editable={editable} />}
           {!animationList.data && animationList.error && <p className="text-sm text-red-400">{animationList.error}</p>}
         </main>
@@ -314,8 +315,8 @@ function EditorList() {
             </Button>
           )}
         </AppBar>
-        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 py-4 sm:px-6">
-          {tabs}
+        {tabs}
+        <main className="flex w-full max-w-5xl flex-1 flex-col gap-3 px-4 pb-4 pt-3 sm:px-6">
           {styleList.data && (
             <EditingStyles
               styles={styleList.data.styles}
@@ -344,15 +345,15 @@ function EditorList() {
         <ProjectSwitcher />
         {editable && <EditorDefaultsButton slots={["grade"]} />}
       </AppBar>
+      {tabs}
       <div className="flex w-full flex-1">
         {/* stays put while the list scrolls, with its own scroll (the Media Library's sidebar) */}
         {anything && (
-          <aside aria-label="Projects" className="sticky top-[var(--bar-h)] hidden h-[calc(100dvh-var(--bar-h))] w-60 shrink-0 overflow-y-auto border-r border-zinc-500/15 px-3 py-4 [scrollbar-gutter:stable] lg:block">
+          <aside aria-label="Projects" className="sticky top-[var(--bar-h)] hidden max-h-[calc(100dvh-var(--bar-h))] w-60 shrink-0 overflow-y-auto border-r border-zinc-500/15 px-3 py-4 [scrollbar-gutter:stable] lg:block">
             {sidebar}
           </aside>
         )}
-        <main className={cn("flex min-w-0 flex-1 flex-col gap-3 px-4 py-4 sm:px-6", over && anything && "rounded-xl bg-violet-500/10")}>
-          {tabs}
+        <main className={cn("flex min-w-0 flex-1 flex-col gap-3 px-4 pb-4 pt-3 sm:px-6", over && anything && "rounded-xl bg-violet-500/10")}>
           {edits === null && !error && <GridFrame size="small" count={4} />}
           {editable && edits?.length === 0 && !anything && (
             <div className={cn("flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center transition-colors", over ? "border-violet-500 bg-violet-500/10" : "border-zinc-500/30")}>
