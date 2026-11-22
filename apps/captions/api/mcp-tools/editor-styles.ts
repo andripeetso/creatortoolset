@@ -1,4 +1,4 @@
-import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStylesView } from "../../contracts/editor-styles";
+import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStylesView, StyleProposal } from "../../contracts/editor-styles";
 import { briefNotTyped, type StyleKind } from "../editor/animation-styles";
 import { WORDS_FROM } from "../editor/own-words";
 import { stylesView } from "../editor/styles";
@@ -138,6 +138,11 @@ export const editorStyleTools: ToolModule = {
       inputSchema: { type: "object", properties: { edit: str, style: str } },
     },
     {
+      name: "editor_style_propose",
+      description: "Read a reference and propose an editing style with the look of its cards: from_video (a Media Library video's version_id; fetch a link in first), pictures (the newest n the user sent here) or from_finished (their finished edits). Only a proposal: the user keeps or dismisses it on its sheet.",
+      inputSchema: { type: "object", properties: { from_video: str, pictures: { type: "integer" }, from_finished: { type: "boolean" } } },
+    },
+    {
       name: "animation_style_save",
       description: "Make or change an Editor animation style, the look of an edit's animated cards (id: change one). brief: only words the user typed in this chat. pictures: how many of the newest pictures they sent in this chat to add. from_video: a Media Library video's version_id whose look the style follows (a reference video): stills spread over it are added as pictures.",
       inputSchema: { type: "object", properties: { id: str, name: str, brief: str, pictures: { type: "integer" }, from_video: str } },
@@ -166,9 +171,29 @@ export const editorStyleTools: ToolModule = {
       return { ...out(now), ...(note ? { note } : {}), link: `${ctx.origin}${sheetOf("styles", now.id)}` };
     },
     animation_style_save: saveStyle("animation"),
+    // a proposal is never a style: its sheet opens and only the person's Keep there makes one (the route refuses a tool)
+    editor_style_propose: async (a, ctx) => {
+      const body = a.from_video ? { clip: String(a.from_video) } : a.pictures != null ? { chat: Number(a.pictures) } : a.from_finished === true ? { finished: true } : null;
+      if (!body) throw new ToolError("Give from_video, pictures or from_finished.");
+      const res = await ctx.api("/api/editor/styles/propose", "POST", body);
+      if (res.status === 202) return { note: `Stills of the video are still being made (${String(((await res.json()) as { waiting?: string }).waiting ?? "")}): call again with the same from_video later.` };
+      const p = (await res.json()) as StyleProposal;
+      const at = `/editor?tab=styles&proposal=${p.id}`;
+      await ctx.open?.(at);
+      return {
+        proposal: p.id,
+        from: p.fromLabel,
+        seen: p.seen,
+        would_use: { name: p.style.name, pace: p.style.pace, punch: p.style.punch, versions: p.style.versions, target_s: p.style.targetS, has_cards_look: !!p.animation?.brief },
+        note: `Only a proposal: tell the user in a line or two what you saw. They keep it, change it first, or dismiss it on its sheet${ctx.open ? ", which is open" : ""}; you cannot keep it.`,
+        link: `${ctx.origin}${at}`,
+      };
+    },
     editor_style_use: async (a, ctx) => {
-      const all = await styles(ctx);
-      if (a.edit == null && a.style == null) return { styles: all.map(out), link: sheet(ctx) };
+      const view = await ctx.json<EditingStylesView>("/api/editor/styles");
+      const all = view.styles;
+      // the workspace's default is what New edit opens on; the AI names a style only when the user asks for one
+      if (a.edit == null && a.style == null) return { styles: all.map(out), ...(view.default ? { default: view.default } : {}), link: sheet(ctx) };
       if (!a.edit) throw new ToolError("Give the edit's id: editor_list lists them.");
       if (a.style == null || !String(a.style).trim()) throw new ToolError("Give style: a style's id or name, or none to take the edit's style off.");
       const off = /^none$/i.test(String(a.style).trim());
@@ -183,5 +208,5 @@ export const editorStyleTools: ToolModule = {
       };
     },
   },
-  steps: { editor_style_save: "Saving the editing style", animation_style_save: "Saving the animation style", editor_style_use: "Setting the edit's style" },
+  steps: { editor_style_propose: "Reading the reference", editor_style_save: "Saving the editing style", animation_style_save: "Saving the animation style", editor_style_use: "Setting the edit's style" },
 };

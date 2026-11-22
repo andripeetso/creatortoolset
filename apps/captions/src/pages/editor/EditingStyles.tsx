@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 import { MAX_VERSIONS, type EditorDefaults } from "@contracts/editor";
 import type { EditStepChoice, StepRow } from "@contracts/editor-steps";
-import { cutLine, PACES, PACE_NAME, PLAYBOOK_MAX, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, WORKING_SIZES, type AnimationStyle, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace, type StyleLearned, type WorkingSize } from "@contracts/editor-styles";
+import { ANIMATION_BRIEF_MAX, cutLine, PACES, PACE_NAME, PLAYBOOK_MAX, PUNCHES, STYLE_NAME_MAX, STYLE_NOTES_MAX, WORKING_SIZES, type AnimationStyle, type EditingStyle, type EditingStyleInput, type FinishedEdit, type Pace, type StyleLearned, type StyleProposal, type WorkingSize } from "@contracts/editor-styles";
 import { placeOf } from "@contracts/skills";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +12,8 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { RowMenu } from "@/components/settings/ui";
-import { createStyle, deleteStyle, getEditorDefaults, getEditSteps, listAnimationStyles, listFinished, removeFinished, removeLearned, updateStyle } from "@/lib/editor";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { createStyle, deleteStyle, dismissProposal, getEditorDefaults, getEditSteps, keepProposal, listAnimationStyles, listFinished, proposalStillUrl, proposeStyle, removeFinished, removeLearned, setDefaultStyle, updateStyle } from "@/lib/editor";
 import { listCollections, listLibraries } from "@/lib/library";
 import { listSkills } from "@/lib/skills";
 import { AnimationSheet } from "./AnimationStyles";
@@ -55,9 +57,77 @@ export async function duplicateStyle(s: EditingStyle): Promise<EditingStyle> {
   return createStyle(body).catch((e) => (s.brollCollectionId ? createStyle({ ...body, brollCollectionId: null }) : Promise.reject(e)));
 }
 
-export function EditingStyles({ styles, open, onOpen, onChanged, onChat, editable = true }: { editable?: boolean; styles: EditingStyle[]; open: OpenStyle; onOpen: (s: OpenStyle) => void; onChanged: () => Promise<unknown>; onChat?: () => void }) {
+/**
+ * Suggest a style: the reference is read and a suggestion (StyleProposal) comes back as a card; nothing is a style until
+ * the person keeps it on its sheet. A video or a link goes through the assistant (`onVideo`), which finds or fetches it.
+ * In the tab's bar (pages/EditorPage.tsx), so an empty tab keeps its one button.
+ */
+export function SuggestButton({ onMade, onVideo }: { onMade: (p: StyleProposal) => void; onVideo?: () => void }) {
+  const pick = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const run = (from: File[] | "finished") => {
+    setBusy(true);
+    proposeStyle(from).then(onMade, (e) => toast.error(message(e))).finally(() => setBusy(false));
+  };
   return (
     <>
+      <input ref={pick} type="file" accept="image/*" multiple hidden onChange={(e) => {
+        const files = [...(e.target.files ?? [])];
+        e.target.value = "";
+        if (files.length) run(files);
+      }} />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="outline" disabled={busy}>
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            Suggest a style
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => pick.current?.click()}>From pictures</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => run("finished")}>From finished edits</DropdownMenuItem>
+          {onVideo && <DropdownMenuItem onSelect={onVideo}>From a video or link</DropdownMenuItem>}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  );
+}
+
+export function EditingStyles({ styles, open, onOpen, onChanged, onChat, editable = true, defaultId = null, proposals = [], proposal, onProposal }: {
+  editable?: boolean;
+  styles: EditingStyle[];
+  open: OpenStyle;
+  onOpen: (s: OpenStyle) => void;
+  onChanged: () => Promise<unknown>;
+  onChat?: () => void;
+  /** the style New edit opens on in this workspace */
+  defaultId?: string | null;
+  proposals?: StyleProposal[];
+  /** the suggestion in its sheet; the page owns it, so the assistant's link opens it */
+  proposal?: StyleProposal | null;
+  onProposal?: (p: StyleProposal | null) => void;
+}) {
+  return (
+    <>
+      {proposals.length > 0 && (
+        <ul aria-label="Suggested" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {proposals.map((p) => (
+            <li key={p.id} className="relative">
+              <button type="button" onClick={() => onProposal?.(p)} className="flex h-full w-full flex-col gap-1.5 rounded-xl border border-dashed border-violet-500/50 p-3.5 text-left transition-colors hover:border-violet-500">
+                <span className="flex w-full items-center gap-2 pr-8">
+                  <span className="truncate text-sm font-medium">{p.style.name}</span>
+                  <span className="shrink-0 rounded bg-violet-500/15 px-1.5 text-[11px] text-violet-500">Suggested</span>
+                </span>
+                <span className="truncate text-xs text-zinc-500">{p.fromLabel}</span>
+                <span className="line-clamp-2 text-xs text-zinc-500">{p.seen}</span>
+              </button>
+              <div className="absolute right-2 top-2.5">
+                {editable && <RowMenu label={`More for ${p.style.name}`} items={[{ label: "Delete suggestion", destructive: true, onSelect: () => dismissProposal(p.id).then(onChanged) }]} />}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       {styles.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-16">
           {editable && <Button size="sm" onClick={onChat ?? (() => onOpen("new"))}>
@@ -79,7 +149,10 @@ export function EditingStyles({ styles, open, onOpen, onChanged, onChat, editabl
                 onClick={() => onOpen(s)}
                 className="flex h-full w-full flex-col gap-1.5 rounded-xl border border-zinc-500/20 p-3.5 text-left transition-colors hover:border-violet-500/60"
               >
-                <span className="w-full truncate pr-8 text-sm font-medium">{s.name}</span>
+                <span className="flex w-full items-center gap-2 pr-8">
+                  <span className="truncate text-sm font-medium">{s.name}</span>
+                  {s.id === defaultId && <span className="shrink-0 rounded bg-zinc-500/15 px-1.5 text-[11px] text-zinc-500">Default</span>}
+                </span>
                 <span className="text-xs text-zinc-500">{styleLine(s)}</span>
                 {s.notes && <span className="line-clamp-2 whitespace-pre-line text-xs text-zinc-500">{s.notes}</span>}
               </button>
@@ -87,6 +160,9 @@ export function EditingStyles({ styles, open, onOpen, onChanged, onChat, editabl
 {editable &&                 <RowMenu
                   label={`More for ${s.name}`}
                   items={[
+                    s.id === defaultId
+                      ? { label: "Remove default", onSelect: () => setDefaultStyle(null).then(onChanged) }
+                      : { label: "Use as default", onSelect: () => setDefaultStyle(s.id).then(onChanged) },
                     { label: "Duplicate", onSelect: () => duplicateStyle(s).then(onChanged) },
                     { label: "Delete", destructive: true, confirm: { title: `Delete “${s.name}”?` }, onSelect: () => deleteStyle(s.id).then(onChanged) },
                   ]}
@@ -97,6 +173,7 @@ export function EditingStyles({ styles, open, onOpen, onChanged, onChat, editabl
         </ul>
       )}
       {open && <StyleSheet editable={editable} key={open === "new" ? "new" : `${open.id}:${open.updatedAt}`} style={open === "new" ? null : open} onClose={() => onOpen(null)} onSaved={onChanged} />}
+      {proposal && !open && <StyleSheet editable={editable} key={proposal.id} style={null} proposal={proposal} onClose={() => onProposal?.(null)} onSaved={onChanged} />}
     </>
   );
 }
@@ -118,13 +195,17 @@ export async function brollFolders(): Promise<{ id: string; name: string }[]> {
  * takes it off (both on Save). Under the finished edits, what approved edits taught it ("From finished edits"): the
  * rounds each took, its numbers and the person's own lines, each with an × that takes it off at once.
  */
-export function StyleSheet({ style, onClose, onSaved, editable = true }: { style: EditingStyle | null; onClose: () => void; onSaved: (saved: EditingStyle) => Promise<unknown>; editable?: boolean }) {
-  const [name, setName] = useState(style?.name ?? "");
-  const [notes, setNotes] = useState(style?.notes ?? "");
-  const [versions, setVersions] = useState(style?.versions ?? 1);
-  const [targetS, setTargetS] = useState(style?.targetS ? String(style.targetS) : "");
-  const [pace, setPace] = useState<Pace>(style?.pace ?? "tight");
-  const [punch, setPunch] = useState(style?.punch ?? 1.15);
+/** `proposal`: a suggestion's sheet, its fields filled from it; Keep style makes the style (and the cards' look) of what is on it. */
+export function StyleSheet({ style, proposal, onClose, onSaved, editable = true }: { style: EditingStyle | null; proposal?: StyleProposal; onClose: () => void; onSaved: (saved: EditingStyle) => Promise<unknown>; editable?: boolean }) {
+  const from = style ?? proposal?.style;
+  const [name, setName] = useState(from?.name ?? "");
+  const [notes, setNotes] = useState(from?.notes ?? "");
+  const [versions, setVersions] = useState(from?.versions ?? 1);
+  const [targetS, setTargetS] = useState(from?.targetS ? String(from.targetS) : "");
+  const [pace, setPace] = useState<Pace>(from?.pace ?? "tight");
+  const [punch, setPunch] = useState(from?.punch ?? 1.15);
+  const [cards, setCards] = useState(proposal?.animation?.brief ?? "");
+  const [keepCards, setKeepCards] = useState(!!proposal?.animation);
   const [size, setSize] = useState(style ? sizeKey(style.size) : NEW_SIZE);
   const [folder, setFolder] = useState(style?.brollCollectionId ?? "");
   const [animation, setAnimation] = useState(style?.animation ?? "");
@@ -194,7 +275,7 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
       ...(style?.playbook && playbook !== style.playbook.text ? { playbook: playbook?.trim() ? { ...style.playbook, text: playbook } : null } : {}),
     };
     try {
-      await onSaved(await (style ? updateStyle(style.id, body) : createStyle(body)));
+      await onSaved(await (style ? updateStyle(style.id, body) : proposal ? keepProposal(proposal.id, { ...body, animationBrief: keepCards ? cards : null }) : createStyle(body)));
       onClose();
     } catch (e) {
       setError(message(e));
@@ -213,7 +294,27 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
             void save();
           }}
         >
-          <SheetTitle className="text-base">{style ? "Editing style" : "New editing style"}</SheetTitle>
+          <SheetTitle className="text-base">{style ? "Editing style" : proposal ? "Suggested style" : "New editing style"}</SheetTitle>
+          {proposal && (
+            <section aria-label="Read from the reference" className="flex flex-col gap-2 rounded-xl border border-zinc-500/20 p-3 text-sm">
+              <span className="text-xs text-zinc-500">{proposal.fromLabel}</span>
+              <p>{proposal.seen}</p>
+              {proposal.animation && (
+                <>
+                  <div className="flex gap-1.5 overflow-x-auto">
+                    {Array.from({ length: proposal.animation.stills }, (_, n) => (
+                      <img key={n} src={proposalStillUrl(proposal.id, n)} alt="" className="h-20 shrink-0 rounded border border-zinc-500/20" />
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="style-cards-on">Cards look</Label>
+                    <Switch id="style-cards-on" checked={keepCards} onCheckedChange={setKeepCards} />
+                  </div>
+                  {keepCards && <Textarea aria-label="Cards look" value={cards} onChange={(e) => setCards(e.target.value)} rows={3} maxLength={ANIMATION_BRIEF_MAX} />}
+                </>
+              )}
+            </section>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="style-name">Name</Label>
             <Input id="style-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={STYLE_NAME_MAX} autoFocus={!style} />
@@ -291,7 +392,8 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
             </div>
           </div>
           <div className="flex flex-wrap gap-4">
-              <div className="flex min-w-0 flex-col gap-1.5">
+              {/* a suggestion's cards look, kept, is the animation style it gets */}
+              {!(proposal && keepCards) && <div className="flex min-w-0 flex-col gap-1.5">
                 <Label htmlFor="style-animation">Animation style</Label>
                 <select id="style-animation" value={animationShown} onChange={(e) => (e.target.value === NEW_ANIMATION ? setMakingAnimation(true) : setAnimation(e.target.value))} className={`${select} min-w-40 max-w-full`}>
                   <option value="">None</option>
@@ -302,7 +404,7 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
                   ))}
                   <option value={NEW_ANIMATION}>New animation style…</option>
                 </select>
-              </div>
+              </div>}
               {grades.length > 1 && (
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="style-grade">Grade</Label>
@@ -396,7 +498,7 @@ export function StyleSheet({ style, onClose, onSaved, editable = true }: { style
           {error && <p className="text-sm text-red-400">{error}</p>}
 {editable &&           <Button type="submit" disabled={busy || !name.trim()} className="self-start">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-            Save
+            {proposal ? "Keep style" : "Save"}
           </Button>}
           {style && finished.length > 0 && (
             <section aria-label="Finished with this style" className="flex flex-col gap-2 pt-2">

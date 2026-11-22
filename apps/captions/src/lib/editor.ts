@@ -1,6 +1,6 @@
 import type { CameraLut } from "@contracts/camera";
 import type { StepsView } from "@contracts/editor-steps";
-import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit } from "@contracts/editor-styles";
+import type { AnimationStyle, AnimationStylesView, EditingStyle, EditingStyleInput, EditingStylesView, FinishedEdit, StyleProposal } from "@contracts/editor-styles";
 import type { ItemEdit } from "@contracts/edit-timeline";
 import type { NleRun } from "./nle/commands";
 import type { NleTimeline } from "./nle/model";
@@ -77,6 +77,21 @@ export const createStyle = (body: (EditingStyleInput & { first?: true }) | { fro
 export const updateStyle = (id: string, body: EditingStyleInput) => send<EditingStyle>(`/api/editor/styles/${id}`, "PUT", body);
 export const markStylesAsked = () => send<{ ok: true }>("/api/editor/styles/asked", "POST");
 export const deleteStyle = (id: string) => send<{ ok: true }>(`/api/editor/styles/${id}`, "DELETE");
+/** The style New edit opens on in this workspace, or null for none set. */
+export const setDefaultStyle = (id: string | null) => send<{ ok: true }>("/api/editor/styles/default", "PUT", { id });
+/** The AI reads stills the person picked, or their finished edits, and proposes a style; nothing is a style until keepProposal. */
+export async function proposeStyle(from: File[] | "finished"): Promise<StyleProposal> {
+  if (from === "finished") return send<StyleProposal>("/api/editor/styles/propose", "POST", { finished: true });
+  const form = new FormData();
+  for (const f of from) form.append("file", f);
+  const r = await fetch("/api/editor/styles/propose", { method: "POST", body: form });
+  const out = (await r.json().catch(() => ({}))) as StyleProposal & { error?: string };
+  if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
+  return out;
+}
+export const proposalStillUrl = (id: string, n: number) => `/api/editor/styles/proposals/${id}/stills/${n}`;
+export const keepProposal = (id: string, body: EditingStyleInput & { animationBrief?: string | null }) => send<EditingStyle>(`/api/editor/styles/proposals/${id}/keep`, "POST", body);
+export const dismissProposal = (id: string) => send<{ ok: true }>(`/api/editor/styles/proposals/${id}`, "DELETE");
 /**
  * The person's animation styles, and their carousel styles for the Designer (contracts/editor-styles.ts): each a name,
  * a brief and pictures, kept alike at two places.

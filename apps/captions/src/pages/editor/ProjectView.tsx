@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { CircleAlert, Copy, Download, Eye, Loader2, MessageSquareText, MonitorPlay, Pencil, Play, RotateCcw, Square, ThumbsUp, Trash2, Upload } from "lucide-react";
 import { DEFAULT_EYELINE, type Draft, type Edit, type EditJob, type EditVoice, type Sentence } from "@contracts/editor";
-import { STYLE_NAME_MAX } from "@contracts/editor-styles";
+import { STYLE_NAME_MAX, type EditingStylesView } from "@contracts/editor-styles";
 import { TIMELINE_ACCEPT } from "@contracts/timeline-import";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import { canChange, useMe } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
 import {
   cardStillUrl, carryOn, createStyle, deleteEdit, duplicateVersion, exportUrl, getEdit, getSentences, goJob, likeCard, sheetUrl, makeCardsAgain, markVersion, reviseDraft, sendBack,
-  patchEdit, putLines, restoreEdit, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan,
+  listStyles, patchEdit, putLines, restoreEdit, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan,
 } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
 import { confirmHeavy } from "@/lib/setup";
@@ -658,6 +658,14 @@ function BriefTab({ e, onEdit }: { e: Edit; onEdit: (e: Edit) => void }) {
   const [script, setScript] = useState(e.script);
   const [error, setError] = useState<string | null>(null);
   const act = (p: Promise<Edit>) => p.then(onEdit, (x) => setError(message(x)));
+  // the style selector: the workspace's styles; picking one puts its choices on the edit (a cut already made stays as it is)
+  const styleList = useCachedLoad<EditingStylesView>("/api/editor/styles", listStyles, { own: true });
+  const styles = styleList.data?.styles ?? [];
+  const pickStyle = (id: string) =>
+    act(patchEdit(e.id, { style: id || null }).then((x) => {
+      if (x.drafts.length) toast("Run again to cut it in this style");
+      return x;
+    }));
   /** This edit's choices under a name, as a new editing style (its brief, script and footage stay here). */
   const saveAsStyle = async () => {
     const name = (await promptDialog({ title: "Save as style", ok: "Save", value: (e.style?.name ?? e.name).slice(0, STYLE_NAME_MAX) }))?.trim();
@@ -674,8 +682,20 @@ function BriefTab({ e, onEdit }: { e: Edit; onEdit: (e: Edit) => void }) {
     <div className="grid max-w-3xl gap-5 text-sm">
       {error && <p className="text-red-400">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-zinc-500">Editing style</span>
-        <span>{e.style?.name ?? "None"}</span>
+        <label htmlFor="edit-style" className="text-zinc-500">Editing style</label>
+        {editable && (styles.length > 0 || e.style) ? (
+          <select id="edit-style" value={e.style?.id ?? ""} onChange={(x) => void pickStyle(x.target.value)} className="h-8 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm">
+            <option value="">None</option>
+            {e.style && !styles.some((s) => s.id === e.style!.id) && <option value={e.style.id}>{e.style.name}</option>}
+            {styles.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span id="edit-style">{e.style?.name ?? "None"}</span>
+        )}
         {e.versions > 1 && <span className="text-zinc-500">· {e.versions} versions</span>}
         {e.targetS > 0 && <span className="text-zinc-500">· {e.targetS} s</span>}
         {editable && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => void saveAsStyle()}>Save as style</Button>}
