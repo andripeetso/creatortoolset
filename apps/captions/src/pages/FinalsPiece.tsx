@@ -17,6 +17,7 @@ import {
   isFinals,
   linkPieceToSession,
   cardsOfVersions,
+  listAllAssets,
   listCollections,
   listLibraries,
   listPieces,
@@ -650,8 +651,8 @@ async function loadPieceView(pieceId: string): Promise<PieceView> {
 
 /**
  * /finals/:pieceId: the piece in whichever library the account can read (the first that answers, with its Finals or not).
- * A piece's cards come from its library's list, for the thumbnails and the add-a-version picker. Reads again when the
- * library changes (a merge or a trash elsewhere, a version added from Review).
+ * A piece's cards are its own versions' (thumbnails, kind), and the library's footage for the add-a-version picker, read
+ * after the piece is on screen. Reads again when the library changes (a merge or a trash elsewhere, a version added from Review).
  */
 export default function FinalsPiecePage() {
   const { pieceId = "" } = useParams();
@@ -669,6 +670,10 @@ export default function FinalsPiecePage() {
 
   const library = found?.library ?? null;
   const piece = found?.piece;
+  // the add-a-version picker's footage: read after the piece is on screen, never in its way (the piece's own versions are
+  // finished clips, which the library's list leaves out, so the two lists don't overlap)
+  const footage = useCachedLoad<AssetCard[]>(library ? `/api/library/${library.id}/assets?for=finals-picker` : null, () => listAllAssets(library!.id));
+  const shownCards = footage.data ? [...cards, ...footage.data.filter((c) => !cards.some((p) => p.versionId === c.versionId))] : cards;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -686,7 +691,7 @@ export default function FinalsPiecePage() {
             key={piece.id}
             libraryId={library.id}
             piece={piece}
-            cards={cards}
+            cards={shownCards}
             others={others}
             readOnly={!piece.writable}
             onPiece={(next) => setFound({ library, piece: { ...next, writable: piece.writable } })}
