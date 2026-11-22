@@ -644,7 +644,8 @@ export function classifyJob(ctx: Ctx, job: JobRow, seenInPass = new Map<number, 
     (ctx.now - pickFreeAt >= STUCK_MS || ctx.tookNewerAfter(pick.id, isLook, job.id, jobSince));
 
   if (!isStuck) {
-    const out: WaitClass = { wait: "queued", actor: owner };
+    // the computer that takes it next, for the Media Library's What's made (library/made.ts)
+    const out: WaitClass = { wait: "queued", device: pick.id, actor: owner };
     seenInPass.set(job.id, out);
     return out;
   }

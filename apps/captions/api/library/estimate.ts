@@ -199,6 +199,18 @@ export async function makeCost(libraryId: string, username: string, kind: MadeKi
   return { cost, usd: n * each.usd };
 }
 
+/** About how long making `kind` for `n` files of `seconds` each takes on its route, in minutes, at this server's pace (made.ts). */
+export async function makeMinutes(libraryId: string, username: string, kind: MadeKind, n: number, seconds: number): Promise<number> {
+  if (!n) return 0;
+  const db = libraryDb();
+  if (["thumb", "sprite", "wave", "fingerprint", "proxy"].includes(kind)) return (n * (paceOf(db, kind) ?? filesGuess(kind, seconds))) / 60;
+  if (kind !== "transcribe" && kind !== "describe" && kind !== "look" && kind !== "embed") return 0;
+  const step: LibraryStep = kind === "transcribe" ? "transcript" : kind;
+  const { route } = routesOf(libraryId, username, true)[step];
+  const each = kind === "look" ? await lookPerClip(db, route, seconds, levelShare(libraryLookLevel(libraryId))) : await perClip(db, step, route, seconds, 0);
+  return (n * each.seconds) / Math.max(1, each.at) / 60;
+}
+
 /** About how many lines a level writes against Standard's (contracts LOOK_LEVELS: a long take is cut every `long` seconds at most). */
 const levelShare = (level: string) => 8 / (LOOK_LEVELS.find((l) => l.value === level)?.long ?? 8);
 

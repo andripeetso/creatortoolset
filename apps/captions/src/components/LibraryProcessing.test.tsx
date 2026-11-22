@@ -77,7 +77,7 @@ describe("the library's processing line", () => {
   const held: LibraryProgress["waiting"] = [
     { step: "files", count: 6, missing: "", away: true, wait: "stuck", reason: "Mac Studio hasn't started on these", href: "/settings/devices", mine: true, device: "mac" },
     { step: "look", count: 14, missing: "", away: true, wait: "offline", reason: "Linux box is offline", mine: true, device: "linux", devices: ["linux", "mac"] },
-    { step: "look", count: 2, missing: "", away: true, wait: "cannot", reason: "Not made on computers yet", mine: true },
+    { step: "look", count: 2, missing: "", away: true, wait: "cannot", reason: "Video work is off on this server, and no computer of yours can make these", mine: true },
     { step: "files", count: 1, missing: "", away: true, wait: "needs", reason: "Mac Studio is Off in Load balancing", href: "/settings/devices", mine: true, device: "mac" },
     { step: "files", count: 3, missing: "", away: true, wait: "needs", reason: "Your owner keeps its files on their computers", mine: false },
   ];
@@ -91,22 +91,6 @@ describe("the library's processing line", () => {
     ]);
     expect(el.querySelector("section > div")?.className).toContain("text-red-600");
     expect(el.querySelector('a[href="/settings/devices"]')?.textContent).toBe("6 files · Mac Studio hasn't started on these");
-    act(() => root!.unmount());
-    root = undefined;
-    host!.remove();
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    act(() => root!.render(<MemoryRouter><LibraryProgressBar libraryId={`lib_${Math.random()}`} all /></MemoryRouter>));
-    await flush();
-    await flush();
-    expect([...host.querySelectorAll("section > div")].map((d) => d.textContent)).toEqual([
-      "6 files · Mac Studio hasn't started on these",
-      "14 shot descriptions · Linux box is offline",
-      "2 shot descriptions · Not made on computers yet",
-      "1 file · Mac Studio is Off in Load balancing",
-      "3 files · Your owner keeps its files on their computers",
-    ]);
   });
 });
 

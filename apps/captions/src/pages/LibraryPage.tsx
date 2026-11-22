@@ -14,7 +14,7 @@ import { FolderTrail } from "@/components/browse/ToolFolders";
 import { persistSort, storedSort } from "@/components/browse/views";
 import { LibrarySetup } from "./library/Setup";
 import { LibraryProgressBar } from "@/components/LibraryProcessing";
-import { LibraryHealth } from "./library/Health";
+import { LibraryHealthButton, LibraryStatusDialog } from "./library/Health";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -136,9 +136,10 @@ export default function LibraryPage() {
     setSort(v);
     persistSort(SORT_KEY, v);
   };
-  const [pickedView, setView] = useLibraryView();
+  const [view, setView] = useLibraryView();
   const [cardSize, setCardSize] = useCardSize();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const columns = cardSize === null ? undefined : cardColumns(cardSize);
   const navigate = useNavigate();
   const [source, setSource] = useState(""); // "" = this library, else a plug-in source's id (its cards only)
@@ -159,8 +160,6 @@ export default function LibraryPage() {
    *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
   const me = useMe();
   const readOnly = !!library?.readOnly || (!!me && !canChange(me, "media"));
-  // Status is the owner's (its counts are the owner's routes): a library given to look at opens as Folders
-  const view = readOnly && pickedView === "status" ? "folders" : pickedView;
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
   const folderList = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!), { own: true });
@@ -1001,7 +1000,9 @@ export default function LibraryPage() {
                       </Button>
                     )}
                     {!firstScreen && sidebar && <SidebarSheet picked={sidebarPicked({ kind, filters, facetValue: facets, source })}>{sidebar}</SidebarSheet>}
-                    <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} status={!readOnly} />
+                    <LibraryViewMenu view={view} onChange={setView} size={cardSize} onSize={setCardSize} />
+                    {/* Status is the owner's (its counts are the owner's routes) */}
+                    {library && !readOnly && <LibraryHealthButton library={library} open={statusOpen} onOpen={() => setStatusOpen(true)} />}
                     <SortControls sort={sort} onSort={pickSort} />
                     {(watch || (changing && !firstScreen)) && (
                       <DropdownMenu modal={false}>
@@ -1025,7 +1026,7 @@ export default function LibraryPage() {
                             </DropdownMenuItem>
                           )}
                           {!readOnly && (
-                            <DropdownMenuItem onSelect={() => setView("status")}>
+                            <DropdownMenuItem onSelect={() => setStatusOpen(true)}>
                               <Activity /> Library status
                             </DropdownMenuItem>
                           )}
@@ -1117,17 +1118,30 @@ export default function LibraryPage() {
                     {lookLine}
                   </p>
                 )}
-                {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancelImports(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} all={view === "status"} />}
+                {importLine ? <ImportSummary line={importLine} onCancelAll={() => cancelImports(uploads.filter(going).map((u) => u.key))} /> : <LibraryProgressBar libraryId={library.id} />}
                 {!firstScreen && !settling && <CantRead {...waitingFolders} />}
+                {statusOpen && !readOnly && (
+                  <LibraryStatusDialog
+                    library={library}
+                    watch={watch ?? null}
+                    onClose={() => setStatusOpen(false)}
+                    onSettings={
+                      watch
+                        ? () => {
+                            setStatusOpen(false);
+                            setSettingsOpen(true);
+                          }
+                        : undefined
+                    }
+                  />
+                )}
 
 
                 {found?.meaningGettingReady && <p className="text-xs text-zinc-500">Preparing search by meaning</p>}
 
-                {view !== "status" && said.length > 0 && <FoundInClips hits={said} words={words} onOpen={(h) => openClip(h.asset, h.seconds)} />}
+                {said.length > 0 && <FoundInClips hits={said} words={words} onOpen={(h) => openClip(h.asset, h.seconds)} />}
 
-                {view === "status" ? (
-                  <LibraryHealth library={library} watch={watch ?? null} onSettings={watch ? () => setSettingsOpen(true) : undefined} />
-                ) : (searching ? !found : !first.data) || settling ? (
+                {(searching ? !found : !first.data) || settling ? (
                   view === "list" ? <RowFrame /> : <TileFrame columns={columns} />
                 ) : shown.length > 0 || shownFolders.length > 0 || placeholders.length > 0 ? (
                   view === "list" ? (

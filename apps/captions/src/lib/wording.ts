@@ -16,7 +16,7 @@ export const WORDS = {
   visitorNoProxy: "This clip isn't available to view right now.",
   lastChecked: "Last checked",
   addComputer: "Add a computer in Settings → Computers",
-  notOnComputers: "Not made on computers yet",
+  notOnComputers: "Video work is off on this server, and no computer of yours can make these",
   fileUnchecked: "Where the file is: not checked yet",
 } as const;
 

@@ -222,20 +222,21 @@ describe("Settings → Media Library, the owner's page", () => {
 
   it("What's made: a switch saves only its setting and queues nothing; Make for the missing says its cost first", async () => {
     made = [
-      { kind: "describe", have: 10, missing: 4, queued: 0, cost: "tokens", usd: 2 },
+      { kind: "describe", have: 10, missing: 4, queued: 0, cost: "tokens", usd: 2, engine: "Claude", where: "the AI provider sign-in" },
       { kind: "thumb", have: 14, missing: 0, queued: 0, cost: "free" },
     ];
     const asks: string[] = [];
     vi.stubGlobal("confirm", (m: string) => (asks.push(m), false));
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(bodyText()).toContain("Made for 10 · 4 missing · Uses tokens");
+    expect(bodyText()).toContain("Not made for 4 files · 10 of 14 · Uses tokens");
+    expect(bodyText()).toContain("Done · 14 of 14 · Free");
     const sw = host!.querySelector('[aria-label="Descriptions and tags for new files"]') as HTMLButtonElement;
     await act(async () => sw.click());
     expect(patches.at(-1)).toEqual({ settings: { describe: !library.settings.describe } });
     expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false);
     const button = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Make for 4 missing")!;
     await act(async () => button.click());
-    expect(asks[0]).toContain("Uses tokens on the AI provider, about $2.");
+    expect(asks[0]).toContain("Claude on the AI provider sign-in, about $2.00 of usage at API prices, counted toward the plan's limits. Queues 4 jobs");
     expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false); // Cancel queues nothing
     expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make for 0"))).toBe(false);
   });

@@ -283,7 +283,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     const job = enqueue("lib_tiny", v, "proxy");
 
     const snap = status("lib_tiny");
-    expect(snap.byJob.get(job.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snap.byJob.get(job.id)).toMatchObject({ wait: "queued", actor: "tiny" });
     expect(snap.queuedIds).toEqual([job.id]);
     expect(snap.waitingIds).toEqual([]);
   });
@@ -317,7 +317,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     // For POLL_FRESH_MS after BOOT -> queued, no waiting row
     resetWaitsForTest(Date.now() - 30_000);
     const snapBoot = status("lib_tiny");
-    expect(snapBoot.byJob.get(job.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snapBoot.byJob.get(job.id)).toMatchObject({ wait: "queued", actor: "tiny" });
     expect(snapBoot.waitingIds).toEqual([]);
 
     // A curl-paired Linux box before its first claim (no version, no machine id, no work) -> "Linux box is offline", never addComputer
@@ -616,7 +616,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     const vThumb = addVersion({ fromPath: "/Users/tiny/t.mov", fromDevice: mac.device.id });
     const jobThumb = enqueue("lib_tiny", vThumb, "thumb");
     if (LIBRARY_ON_COMPUTER.includes("thumb")) {
-      expect(status("lib_tiny").byJob.get(jobThumb.id)).toEqual({ wait: "queued", actor: "tiny" });
+      expect(status("lib_tiny").byJob.get(jobThumb.id)).toMatchObject({ wait: "queued", actor: "tiny" });
       // Temporarily test without thumb in LIBRARY_ON_COMPUTER
       const idx = (LIBRARY_ON_COMPUTER as string[]).indexOf("thumb");
       (LIBRARY_ON_COMPUTER as string[]).splice(idx, 1);
@@ -624,7 +624,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
         resetWaitsForTest(Date.now() - 10 * 60_000);
         expect(status("lib_tiny").byJob.get(jobThumb.id)).toEqual({
           wait: "cannot",
-          reason: "Not made on computers yet",
+          reason: "Video work is off on this server, and no computer of yours can make these",
           actor: "tiny",
         });
       } finally {
@@ -633,19 +633,19 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     } else {
       expect(status("lib_tiny").byJob.get(jobThumb.id)).toEqual({
         wait: "cannot",
-        reason: "Not made on computers yet",
+        reason: "Video work is off on this server, and no computer of yours can make these",
         actor: "tiny",
       });
     }
-    expect(notOnComputers).toBe("Not made on computers yet");
+    expect(notOnComputers).toBe("Video work is off on this server, and no computer of yours can make these");
 
-    // 2) A look of a browser upload with the Mac online -> grey "Not made on computers yet"
+    // 2) A look of a browser upload with the Mac online -> grey "Video work is off on this server, and no computer of yours can make these"
     const vBrowser = addVersion({}); // source_key not mac:, no from_device/mac_device, no place row
     const jobBrowserLook = enqueue("lib_tiny", vBrowser, "look");
     resetWaitsForTest(Date.now() - 10 * 60_000);
     expect(status("lib_tiny").byJob.get(jobBrowserLook.id)).toEqual({
       wait: "cannot",
-      reason: "Not made on computers yet",
+      reason: "Video work is off on this server, and no computer of yours can make these",
       actor: "tiny",
     });
 
@@ -716,7 +716,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     libraryDb().prepare("UPDATE jobs SET state = 'needs_key', error = ? WHERE id = ?").run(MAC_WAITS, job.id);
 
     const snapAsking = status("lib_tiny");
-    expect(snapAsking.byJob.get(job.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snapAsking.byJob.get(job.id)).toMatchObject({ wait: "queued", actor: "tiny" });
     expect(snapAsking.queuedLookIds).toEqual([job.id]);
     expect(snapAsking.queuedLookVersions).toEqual([v]);
     expect(snapAsking.waitingIds).toEqual([]);
@@ -895,7 +895,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     // 30 minutes pass with no new claim while Linux still holds the running job
     vi.advanceTimersByTime(30 * 60_000);
     const snap1 = status("lib_tiny");
-    expect(snap1.byJob.get(jQueued.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snap1.byJob.get(jQueued.id)).toMatchObject({ wait: "queued", actor: "tiny" });
     expect(snap1.queuedIds).toEqual([jQueued.id]);
     expect(snap1.waitingIds).toEqual([]);
 
@@ -923,7 +923,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     // While Linux holds the picture job, jQueued is in class 4 (busy -> queued), and freeSince(linux) is not set
     resetWaitsForTest(Date.now() - 20 * 60_000);
     const snapPic = status("lib_tiny");
-    expect(snapPic.byJob.get(jQueued.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snapPic.byJob.get(jQueued.id)).toMatchObject({ wait: "queued", actor: "tiny" });
     expect(freeSince.has(linux.device.id)).toBe(false);
 
     // Let picture hold expire; now test Mac (rank 3, free, asking) and Linux (rank 2, busy on another job)
@@ -948,7 +948,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
 
     resetWaitsForTest(Date.now() - 20 * 60_000);
     const snapBefore = status("lib_tiny");
-    expect(snapBefore.byJob.get(jWave.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snapBefore.byJob.get(jWave.id)).toMatchObject({ wait: "queued", actor: "tiny" });
 
     // Advance 10 min with Mac polling (free, asking) and never claiming -> stuck on Mac Studio
     for (let m = 1; m <= 10; m++) {
@@ -1308,7 +1308,7 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     vi.advanceTimersByTime(FRESH_MS);
     notePoll(mac.device.id, Date.now());
     const snapQueued = status("lib_tiny");
-    expect(snapQueued.byJob.get(jSend.id)).toEqual({ wait: "queued", actor: "tiny" });
+    expect(snapQueued.byJob.get(jSend.id)).toMatchObject({ wait: "queued", actor: "tiny" });
     expect(snapQueued.queuedIds).toEqual([jSend.id]);
     expect(snapQueued.waitingIds).toEqual([]);
 

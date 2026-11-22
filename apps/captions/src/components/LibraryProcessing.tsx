@@ -52,7 +52,7 @@ export function stepLine(s: LibraryStepEstimate, proxies = true): ReactNode {
 export const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 /** Each step of preparing, in the words of the person who watches it go by (api/library/estimate.ts STAGES). */
-export const STAGE_NAME: Record<LibraryStage["kind"], string> = {
+const STAGE_NAME: Record<LibraryStage["kind"], string> = {
   thumb: "Pictures",
   proxy: "Proxies",
   fingerprint: "Duplicate checks",
@@ -64,7 +64,7 @@ export const STAGE_NAME: Record<LibraryStage["kind"], string> = {
 };
 
 /** One line of the list: what, how far (a thin bar), how many; the step running now shows its clip and a soft pulse. */
-export function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: string; done: number; of: number; now?: string; busy?: boolean; failed?: number }) {
+function StageRow({ name, done, of, now, busy = !!now, failed = 0 }: { name: string; done: number; of: number; now?: string; busy?: boolean; failed?: number }) {
   const through = done + failed >= of;
   return (
     <li className="col-span-3 grid grid-cols-subgrid items-center text-sm">
@@ -137,10 +137,10 @@ type Waiting = LibraryProgress["waiting"][number];
 const needsYou = (w: Waiting) => (!w.limit && !w.computer && !w.away && !w.wait) || (w.wait === "needs" && !!w.mine);
 
 /**
- * `all`: also what waits for one of the person's computers (the library's Status view, pages/library/Health.tsx). The library page leaves out what
- * a computer will take or what the person can't change there, and says what needs them and work no computer has taken.
+ * The library page leaves out what a computer will take or what the person can't change there, and says what needs them
+ * and work no computer has taken. What waits for a computer, kind by kind, is in the Status view (pages/library/settings/Made.tsx).
  */
-export function LibraryProgressBar({ libraryId, all = false }: { libraryId: string; all?: boolean }) {
+export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   const p = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId)).data;
   // in the Mac app, this Mac's own switch: asked only while a wait names its computers as offline
   const bridge = useThisMac(hasThisMac() && !!p?.waiting.some((w) => w.wait === "offline" && w.devices?.length));
@@ -153,9 +153,9 @@ export function LibraryProgressBar({ libraryId, all = false }: { libraryId: stri
     const own = ownMacLine(w, bridge);
     return own ? { ...w, wait: "needs", mine: true, reason: own.reason, href: own.href } : w;
   });
-  // work that waits for a computer is said in the Library status window and on Settings → Computers, not over the clips;
+  // work that waits for a computer is said in the Status view and on Settings → Computers, not over the clips;
   // what needs the person, and work no computer has taken, are said here too
-  const shown = entries.filter((w) => all || needsYou(w) || w.wait === "stuck");
+  const shown = entries.filter((w) => needsYou(w) || w.wait === "stuck");
   if (!moving && !shown.length) return null;
   const toggle = () => {
     setOpen(!open);
