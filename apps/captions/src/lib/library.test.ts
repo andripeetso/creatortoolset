@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
-import { addRefused, clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
+import { addRefused, changeFolderItems, clearPieceCover, getPiece, libraryNews, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -240,5 +240,20 @@ describe("uploadFile from the Mac app on its own server", () => {
   it("keeps the server's code on a refusal, so the page shows no Retry for a file too large for this server", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "This file is 12 GB. This server takes files up to 8 GB.", code: "too_large" }), { status: 413 }));
     await expect(uploadFile("lib_1", clip(), () => {})).rejects.toMatchObject({ message: expect.stringContaining("12 GB"), code: "too_large" });
+  });
+});
+
+describe("changeFolderItems", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("sends a selection bigger than the route's 500 in parts and adds up what each part moved", async () => {
+    const sizes: number[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const n = (JSON.parse(String(init.body)) as { assetIds: string[] }).assetIds.length;
+      sizes.push(n);
+      return new Response(JSON.stringify({ added: n }), { status: 200 });
+    }));
+    const ids = Array.from({ length: 1100 }, (_, i) => `ast_${i}`);
+    expect(await changeFolderItems("lib_1", "col_1", ids, true)).toEqual({ added: 1100, removed: 0 });
+    expect(sizes).toEqual([500, 500, 100]);
   });
 });
