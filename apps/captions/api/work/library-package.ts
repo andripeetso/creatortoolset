@@ -68,8 +68,15 @@ const SENDS: Record<string, string[]> = {
 /** The file each kind must send back; a job without it fails (retried), never finishes empty. */
 // a proxy is not required: a clip whose proxy would be no smaller than it has none (media/proxy.ts makeProxy)
 const REQUIRED: Record<string, string> = { thumb: "thumb", wave: "wave", sprite: "sprite", describe: "still0" };
-/** The kinds that may download the original of a file only the server has: the proxy, and the probe and card picture it has no lighter copy for. */
-export const READS_ORIGINAL = ["proxy", "probe", "thumb"];
+/**
+ * The kinds that may download the original of a file only the server has: the proxy, and the probe, card picture,
+ * waveform, strip and fingerprint it has no lighter copy for (an upload in a library that makes no proxy).
+ */
+export const READS_ORIGINAL = ["proxy", "probe", "thumb", "wave", "sprite", "fingerprint"];
+/** Of those, the ones that wait for a proxy on its way (the lighter read) rather than download the original too. */
+const PROXY_FIRST = ["wave", "sprite", "fingerprint"];
+const proxyComing = (versionId: string): boolean =>
+  !!libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'proxy' AND state IN ('queued', 'running')").get(versionId);
 /** The most a small file (picture, waveform, strip) may weigh; a proxy is capped as a result file is. */
 const SMALL_MAX = 16 * 1024 ** 2;
 const FILE_MAX = 8 * 1024 ** 3;
@@ -181,8 +188,9 @@ export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: L
   if (job.kind === "send") return 0;
   // a probe reads the original's own header, never its proxy's
   if (job.kind !== "proxy" && job.kind !== "probe" && r.proxy) return 2;
-  // the original only for the proxy, or a probe or card picture with no proxy to read
-  return READS_ORIGINAL.includes(job.kind) && !r.source_key.startsWith("mac:") && takesOriginals(b, d) ? 1 : 0;
+  // the original only for the proxy, or a kind with no proxy to read (and none on its way)
+  if (!READS_ORIGINAL.includes(job.kind) || r.source_key.startsWith("mac:") || !takesOriginals(b, d)) return 0;
+  return PROXY_FIRST.includes(job.kind) && proxyComing(r.id) ? 0 : 1;
 }
 
 /** The computers of `owner` that may take a library job now: `me`, and the others online, free, holding none, asking for work lately and not Off. */
@@ -357,7 +365,9 @@ export function queuedFor(d: Device, now = Date.now(), balance: Balance = readBa
     ` AND NOT (j.kind = 'send' AND (${noReach}))` +
     (keyOn ? "" : ` AND NOT (j.kind = 'transcribe' AND (j.version_id IS NULL OR j.version_id NOT IN (SELECT value FROM json_each(?))))`) +
     (origOk ? ` AND NOT (j.kind = 'proxy' AND (${noReach}) AND v.source_key LIKE 'mac:%')` : ` AND NOT (j.kind = 'proxy' AND (${noReach}))`) +
-    ` AND NOT (j.kind IN ('wave', 'sprite', 'fingerprint') AND (${noReach}) AND NOT EXISTS (SELECT 1 FROM derivatives px WHERE px.version_id = v.id AND px.kind = 'proxy' AND px.storage_key IS NOT NULL))` +
+    // with no proxy to read, the original where this computer may download it and no proxy is on its way (libraryRank)
+    ` AND NOT (j.kind IN (${PROXY_FIRST.map((k) => `'${k}'`).join(", ")}) AND (${noReach}) AND NOT EXISTS (SELECT 1 FROM derivatives px WHERE px.version_id = v.id AND px.kind = 'proxy' AND px.storage_key IS NOT NULL)` +
+    (origOk ? ` AND (v.source_key LIKE 'mac:%' OR EXISTS (SELECT 1 FROM jobs pj WHERE pj.version_id = v.id AND pj.kind = 'proxy' AND pj.state IN ('queued', 'running'))))` : ")") +
     " ORDER BY j.id LIMIT 100";
   const args: (string | number)[] = [
     now,
@@ -400,7 +410,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
       const p = f.reach[d.id]?.path ?? (f.origin.host === d.id ? f.origin.path : undefined);
       return p ? [p] : [];
     }),
-    ...(READS_ORIGINAL.includes(job.kind) && !r.source_key.startsWith("mac:") && (job.kind !== "thumb" || !r.proxy) ? { original: { bytes: r.bytes } } : {}),
+    ...(READS_ORIGINAL.includes(job.kind) && !r.source_key.startsWith("mac:") && (job.kind === "proxy" || job.kind === "probe" || !r.proxy) ? { original: { bytes: r.bytes } } : {}),
     ...(r.probe && job.kind !== "send" ? { probe: JSON.parse(r.probe) as Record<string, unknown> } : {}),
     ...(job.kind === "transcribe" ? { audio: keySound(job.actor, r.id) ?? "wav" } : {}),
     ...(send
@@ -708,7 +718,7 @@ libWorkApp.get("/:id/light", async (c) => {
   return key ? serveBlob(c, key, "application/octet-stream") : c.json({ error: "Not found" }, 404);
 });
 
-/** The original of a file only the server has, only to make its proxy, probe or card picture: the computer deletes it once that is made. */
+/** The original of a file only the server has, only to make what it has no lighter copy for (READS_ORIGINAL): the computer deletes it once that is made. */
 libWorkApp.get("/:id/original", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);

@@ -7,6 +7,11 @@ import type { AuthVars } from "../auth";
 
 // What's made (made.ts): the counts per kind, Make for the missing, a kind a file has never queued again (jobs.ts HAVE),
 // and a switch turned on making for new files only (db.ts SINCE).
+vi.mock("../lib/devices", async (real) => {
+  const m = await real<typeof import("../lib/devices")>();
+  const own: Record<string, { id: string; name: string; owner: string }> = { dev_mine: { id: "dev_mine", name: "Studio Mac", owner: "local" }, dev_theirs: { id: "dev_theirs", name: "Anna's Mac", owner: "anna" } };
+  return { ...m, deviceOf: (id: string) => own[id] ?? m.deviceOf(id) };
+});
 vi.mock("../ai-complete", async (real) => {
   const m = await real<typeof import("../ai-complete")>();
   return { ...m, aiFor: vi.fn(() => ({ only: ["mac"] })) };
@@ -19,9 +24,10 @@ process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET; // the solo install: "local" is the admin
 const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
-const { libraryMade, makeMissing, retryFailed } = await import("./made");
+const { engineOf, libraryMade, makeMissing, retryFailed, stopQueued } = await import("./made");
 const { queueLook, sweepLook } = await import("./shots");
 const { libraryApp } = await import("./routes");
+const { leaveToComputers } = await import("./worker");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -127,5 +133,73 @@ describe("what's made", () => {
       `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, 'ast-mac', 1, 'mac:/Movies/a.mov', 1000, 'sha-mac', ?, 'ready', 'local', 1)`,
     ).run(v, JSON.stringify({ duration: 3, format: "mov,mp4,m4a,3gp,3g2,mj2", vcodec: "h264", width: 1280, height: 720 }));
     expect((await row("transcribe")).missing).toBe(before + 1);
+  });
+
+  it("a failed job is counted as failed (Retry), not missing, and Make for the missing leaves it", async () => {
+    const v = clip("ast-fail", { seconds: 4 });
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'sprite', 'failed', 'local')").run(v);
+    const r = await row("sprite");
+    expect(r.failed).toBe(1);
+    expect(makeMissing("lib_m", "sprite", "local")).toBe(r.missing);
+    expect(job(v, "sprite")?.state).toBe("failed");
+    expect((await row("sprite")).failed).toBe(1);
+  });
+
+  it("music or sound effect, and A-roll or B-roll: counted, sorted by themselves, with no Make", async () => {
+    clip("ast-song", { kind: "audio" });
+    d.prepare("INSERT INTO asset_tags (asset_id, tag, source) VALUES ('ast-song', 'music', 'ai')").run();
+    clip("ast-talk", { kind: "audio" }); // Gemini heard talk: both tags turned down, settled
+    d.prepare("INSERT INTO tag_rejections (asset_id, tag) VALUES ('ast-talk', 'music'), ('ast-talk', 'sound effect')").run();
+    clip("ast-hum", { kind: "audio" });
+    expect(await row("sound")).toMatchObject({ have: 2, missing: 1, cost: "free" });
+    expect(stopQueued("lib_m", "thumb", "local")).toBe(0); // a file is ready once it has one: no Cancel
+    const before = (await row("roll")).missing;
+    clip("ast-unsorted");
+    d.prepare("UPDATE assets SET roll = NULL WHERE id = 'ast-unsorted'").run();
+    expect((await row("roll")).missing).toBe(before + 1);
+    expect((await app.request("/api/library/lib_m/made/sound", { method: "POST" })).status).toBe(400);
+  });
+
+  it("says why the queued wait, or which of the person's computers makes them; another person's computer is never named", async () => {
+    const v = clip("ast-wait");
+    const id = Number(d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'fingerprint', 'queued', 'local')").run(v).lastInsertRowid);
+    const before = leaveToComputers.status;
+    const snap = (c: object) => () => ({ at: Date.now(), byJob: new Map([[id, c]]), queuedIds: [], waitingIds: [], queuedLookIds: [], queuedLookVersions: [] }) as never;
+    try {
+      leaveToComputers.status = snap({ wait: "offline", reason: "Studio Mac is offline", href: "/settings/devices", actor: "local" });
+      expect(await row("fingerprint")).toMatchObject({ queued: 1, why: "Studio Mac is offline", href: "/settings/devices" });
+      leaveToComputers.status = snap({ wait: "queued", device: "dev_mine", actor: "local" });
+      expect(await row("fingerprint")).toMatchObject({ queued: 1, by: "Studio Mac" });
+      leaveToComputers.status = snap({ wait: "queued", device: "dev_theirs", actor: "local" });
+      expect((await row("fingerprint")).by).toBeUndefined();
+      d.prepare("UPDATE jobs SET state = 'running', held_by = 'dev_mine' WHERE id = ?").run(id);
+      expect(await row("fingerprint")).toMatchObject({ queued: 1, by: "Studio Mac" });
+    } finally {
+      leaveToComputers.status = before;
+      d.prepare("UPDATE jobs SET state = 'done', held_by = NULL WHERE id = ?").run(id);
+    }
+  });
+
+  it("says what makes each kind and where, which files it skips and why, and Cancel takes the queued off", async () => {
+    expect(engineOf("lib_m", "wave", "local")).toMatchObject({ engine: "FFmpeg" });
+    expect(engineOf("lib_m", "timeline", "local").engine).toMatch(/Gemini|Antigravity/);
+    const silent = "ver-ast-silent";
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at, roll) VALUES ('ast-silent', 'lib_m', 'video', 'silent', ?, 'local', 1, 'b')").run(silent);
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES (?, 'ast-silent', 1, 'libraries/lib_m/v/s/source', 1000, 'sha-silent', ?, 'ready', 'local', 1)`,
+    ).run(silent, JSON.stringify({ duration: 9, format: "mov,mp4,m4a,3gp,3g2,mj2", vcodec: "h264", width: 1280, height: 720 }));
+    const t = await row("transcribe");
+    expect(t.skipped?.why).toBe("no sound, or music");
+    expect(t.skipped!.n).toBeGreaterThanOrEqual(1);
+    const v = clip("ast-stop");
+    enqueueJob(d, "lib_m", v, "sprite", "local");
+    expect(job(v, "sprite")?.state).toBe("queued");
+    expect(stopQueued("lib_m", "sprite", "local")).toBeGreaterThanOrEqual(1);
+    expect(job(v, "sprite")).toBeUndefined();
+    // stopping pressed timelines leaves shot descriptions queued
+    const look = clip("ast-look", { seconds: 120 });
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'queued', 'local')").run(look);
+    stopQueued("lib_m", "timeline", "local");
+    expect(job(look, "look")?.state).toBe("queued");
   });
 });

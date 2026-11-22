@@ -14,7 +14,7 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { libraryMade, makeMissing, retryFailed } from "./made";
+import { libraryMade, makeMissing, stopQueued, retryFailed } from "./made";
 import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
@@ -1153,9 +1153,20 @@ libraryApp.post("/:id/made/:kind", (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const kind = MADE_KINDS.find((k) => k.kind === c.req.param("kind"))?.kind;
+  // a kind sorted by itself has no Make
+  const kind = MADE_KINDS.find((k) => k.kind === c.req.param("kind") && !k.auto)?.kind;
   if (!kind) return c.json({ error: "Kind not found", code: "invalid" }, 400);
   return c.json({ files: makeMissing(libraryId, kind, user.username) });
+});
+
+// POST /api/library/:id/made/:kind/stop → { files }: Cancel, what is still queued for the kind taken off the queue
+libraryApp.post("/:id/made/:kind/stop", (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const kind = MADE_KINDS.find((k) => k.kind === c.req.param("kind") && !k.auto && !k.ready)?.kind;
+  if (!kind) return c.json({ error: "Kind not found", code: "invalid" }, 400);
+  return c.json({ files: stopQueued(libraryId, kind, user.username) });
 });
 
 // POST /api/library/:id/retry/:kind → { files }: the step's failed jobs queued again (the Status view's Retry)

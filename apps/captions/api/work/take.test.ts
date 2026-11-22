@@ -918,13 +918,13 @@ describe("end to end (tests 37, 38)", () => {
     expect(states().filter((j) => j.kind === "look")).toHaveLength(6);
   });
 
-  it("37. variants: browser uploads go to the Mac (rank 1), their looks read one grey 'Not made on computers yet'; files sent from the Mac (mac:) go to the Mac", async () => {
+  it("37. variants: browser uploads go to the Mac (rank 1), their looks read one grey 'Video work is off on this server, and no computer of yours can make these'; files sent from the Mac (mac:) go to the Mac", async () => {
     const { mac, linux } = await setup("37b");
     const b1 = addVersion({});
     const b2 = addVersion({});
     for (const v of [b1, b2]) for (const k of ["proxy", "look"]) enqueue("lib_tiny", v, k);
     const { seen } = await round(mac, linux, { macWorks: false });
-    expect(seen.rows.find((r) => r.detail.includes("shot description"))).toMatchObject({ detail: "2 shot descriptions", reason: "Not made on computers yet", state: "working", mark: "waits" });
+    expect(seen.rows.find((r) => r.detail.includes("shot description"))).toMatchObject({ detail: "2 shot descriptions", reason: "Video work is off on this server, and no computer of yours can make these", state: "working", mark: "waits" });
     const got = await claimWork(mac.token);
     expect(got.lib?.job.kind).toBe("proxy");
     expect(got.lib?.file?.path).toBeUndefined(); // rank 1: the original is downloaded

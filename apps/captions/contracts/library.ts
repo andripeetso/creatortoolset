@@ -441,20 +441,24 @@ export interface LibraryEstimate {
 /**
  * What a library makes for its files (Settings → Media Library and the library's Status view, one list: api/library/made.ts).
  * `setting`: its "Make for new files" switch; the ones without are always made for new files (they cost nothing).
+ * `about`: what it is, in one sentence. `auto`: sorted by itself from what the file already has, so it has no Make.
+ * `ready`: a file is ready once it has it (worker.ts markReady), so what is queued for it has no Cancel.
  */
-export type MadeKind = "thumb" | "sprite" | "wave" | "fingerprint" | "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline";
-export const MADE_KINDS: readonly { kind: MadeKind; label: string; setting?: "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline" }[] = [
-  { kind: "thumb", label: "Thumbnails" },
-  { kind: "sprite", label: "Frame strips" },
-  { kind: "wave", label: "Waveforms" },
-  { kind: "fingerprint", label: "Fingerprints" },
-  { kind: "proxy", label: "Proxies", setting: "proxy" },
-  { kind: "transcribe", label: "Transcripts", setting: "transcribe" },
-  { kind: "describe", label: "Descriptions and tags", setting: "describe" },
-  { kind: "embed", label: "Search by meaning", setting: "embed" },
-  { kind: "pictures", label: "Search by picture", setting: "pictures" },
-  { kind: "look", label: "Shot descriptions", setting: "look" },
-  { kind: "timeline", label: "Timelines", setting: "timeline" },
+export type MadeKind = "thumb" | "sprite" | "wave" | "fingerprint" | "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline" | "sound" | "roll";
+export const MADE_KINDS: readonly { kind: MadeKind; label: string; about: string; setting?: "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline"; auto?: true; ready?: true }[] = [
+  { kind: "thumb", label: "Thumbnails", about: "The picture on each clip's card.", ready: true },
+  { kind: "sprite", label: "Frame strips", about: "The frames shown while the pointer moves over a clip." },
+  { kind: "wave", label: "Waveforms", about: "The shape of a clip's sound on the timeline.", ready: true },
+  { kind: "fingerprint", label: "Duplicate check", about: "Marks the clips that hold the same footage twice." },
+  { kind: "proxy", label: "Proxies", about: "A lighter copy that plays smoothly where the original can't.", setting: "proxy" },
+  { kind: "transcribe", label: "Transcripts", about: "The words said in each clip, to search and cut by.", setting: "transcribe" },
+  { kind: "describe", label: "Descriptions and tags", about: "What each clip shows, its tags, and whether it needs turning upright.", setting: "describe" },
+  { kind: "embed", label: "Search by meaning", about: "Search by what a clip is about, beyond its exact words.", setting: "embed" },
+  { kind: "pictures", label: "Search by picture", about: "Search with a picture for the clips that look like it.", setting: "pictures" },
+  { kind: "look", label: "Shot descriptions", about: "A line for each shot of a longer clip.", setting: "look" },
+  { kind: "timeline", label: "Timelines", about: "What happens when in a clip, written by Gemini.", setting: "timeline" },
+  { kind: "sound", label: "Song or effect", about: "Each sound file filed as a song or a sound effect.", auto: true },
+  { kind: "roll", label: "A-roll or B-roll", about: "Talking takes told apart from the footage laid over them.", auto: true },
 ];
 /** Tokens: an AI provider or an AI key; paid: an outside service's key (Deepgram, OpenAI); free: this server or the person's own computer. */
 export type MadeCost = "tokens" | "paid" | "free";
@@ -472,6 +476,23 @@ export interface LibraryMade {
   usd?: number;
   /** what it needs before it can be made (an AI provider, a key) */
   needs?: string;
+  /** files whose job for it failed (Retry); not counted in `missing` */
+  failed?: number;
+  /** why the queued ones wait, when the person can change it or a computer is offline; `href`: where to change it */
+  why?: string;
+  href?: string;
+  /** the computer of the person's that is making the queued ones, or takes them next */
+  by?: string;
+  /** what makes it on the person's settings now ("Deepgram nova-3", "Claude opus on your AI provider sign-in", "ffmpeg") */
+  engine?: string;
+  /** where it runs ("Deepgram", "this server", "Studio Mac") */
+  where?: string;
+  /** about how long making the missing takes there, in minutes */
+  minutes?: number;
+  /** files of the library this kind never makes, and why ("no sound") */
+  skipped?: { n: number; why: string };
+  /** of the missing, how many are B-roll (a video nobody talks in) */
+  broll?: number;
 }
 
 /** One step of a library's preparing, as the person sees it go by: how many clips have it, of how many. */

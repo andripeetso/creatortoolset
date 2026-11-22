@@ -110,6 +110,7 @@ export const getMade = (libraryId: string) => send<LibraryMade[]>(`/api/library/
 /** Make for the missing: `kind` for every file of the library that lacks it. */
 export const makeMissing = (libraryId: string, kind: MadeKind) => send<{ files: number }>(`/api/library/${libraryId}/made/${kind}`, "POST");
 /** A step's failed jobs queued again. */
+export const stopMade = (libraryId: string, kind: MadeKind) => send<{ files: number }>(`/api/library/${libraryId}/made/${kind}/stop`, "POST");
 export const retryFailed = (libraryId: string, kind: string) => send<{ files: number }>(`/api/library/${libraryId}/retry/${kind}`, "POST");
 
 /** The owner's switches for a library: AI descriptions, shot descriptions, search by meaning. */

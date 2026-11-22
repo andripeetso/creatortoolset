@@ -230,6 +230,31 @@ describe("library work on the computer that has the file", () => {
     expect(readdirSync(path.join(dir, "library-work"))).toEqual([]);
   }, 60_000);
 
+  it("a phone upload with no proxy: its waveform, strip and fingerprint download the original rather than wait for a computer forever", async () => {
+    puts = [];
+    gets = [];
+    const file = camera("tiny-small.mp4", "640x360");
+    const size = statSync(file).size;
+    const start = (await (await post("/api/library/lib_phone/uploads", { filename: "tiny-small.mp4", size }, PHONE())).json()) as { id: string };
+    await app.request(`/api/library/uploads/${start.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(size) }, body: readFileSync(file) });
+    const { versionId } = (await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string };
+    expect(await tick(Date.now(), ["probe"])).toBe(true);
+    // a library that makes no proxy for it (its switch off, or none smaller than the file): none on its way
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'proxy'").run(versionId);
+    expect(await tick(Date.now(), ["thumb"])).toBe(true);
+    // no computer has it and there is no proxy to read: the computer downloads the original for each (once nothing could)
+    expect(await tick(Date.now(), ["sprite", "fingerprint", "wave"])).toBe(false);
+    const done: string[] = [];
+    for (let lib = (await claim()).lib; lib; lib = (await claim()).lib) {
+      expect(lib.original).toEqual({ bytes: size });
+      expect(await runLibraryJob(lib, o())).toBe("done");
+      done.push(lib.job.kind);
+    }
+    expect(done.sort()).toEqual(["fingerprint", "sprite", "wave"]);
+    expect(gets.every((g) => g === "original")).toBe(true);
+    expect(readdirSync(path.join(dir, "library-work"))).toEqual([]); // each downloaded original went with its job's folder
+  }, 60_000);
+
   it("a Linux computer that takes only library work: its machine block, the libraries it takes, originals only where allowed, Off is off", async () => {
     const linux = pairDevice("tiny", "Linux box");
     const LINUX = { os: "linux", cpus: 32, memGb: 64, freeGb: 60, load: 0, disks: [{ path: "/mnt/tiny", name: "tiny", freeGb: 900, network: true, server: "tiny-nas", fs: "smb", share: "TINY FOOTAGE" }] };

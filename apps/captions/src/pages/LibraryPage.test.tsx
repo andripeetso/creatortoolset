@@ -128,7 +128,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   getEstimate: async () => ({ clips: 1, minutes: 0, seconds: 0, steps: [{ step: "describe", route: "provider", usd: 0, seconds: 1, measured: false }] }),
   getStatus: async () => ({ clips: 3, unreadable: 0, stages: [{ kind: "transcribe", done: 2, failed: 1, open: 0, of: 3 }] }),
-  getMade: async () => [{ kind: "transcribe", have: 2, missing: 1, queued: 0, cost: "free" }],
+  getMade: async () => [{ kind: "transcribe", have: 2, missing: 1, queued: 0, failed: 1, cost: "free" }],
   retryFailed: async (_: string, kind: string) => {
     server.retried.push(kind);
     return { files: 1 };
@@ -276,17 +276,25 @@ describe("Media Library page", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toBe("Added 2 · 1 coming in");
   });
 
-  it("Library status opens the Status view: the files, each step with Retry for what failed, and What's made", async () => {
+  it("Library status opens over the library: the files, and What's made with each kind's state and Retry; Esc closes it and the library stays", async () => {
+    localStorage.setItem("library:view", "status"); // a view kept from before Status was a dialog opens as Folders
     const host = await mount();
+    // the status button's dot: a kind failed
+    expect(host.querySelector('[aria-label="Library status: Failed"]')).not.toBeNull();
     await openMore(host);
     await act(async () => moreItem("Library status")!.click());
     await settle();
-    const headings = [...host.querySelectorAll("h2")].map((h) => h.textContent);
-    expect(headings).toEqual(expect.arrayContaining(["Files", "Steps", "What's made"]));
-    expect(host.textContent).toContain("Made for 2 · 1 missing · Free");
-    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Retry")!.click());
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect([...dialog.querySelectorAll("h2")].map((h) => h.textContent)).toEqual(["Library status", "Files", "What's made"]);
+    expect(dialog.textContent).toContain("1 file failed · 2 of 4 · Free");
+    await act(async () => [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Retry")!.click());
     expect(server.retried).toEqual(["transcribe"]);
-    expect(localStorage.getItem("library:view")).toBe("status");
+    await act(async () => {
+      dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await settle();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(host.textContent).not.toContain("What's made");
   });
 
   it("a library given to look at only has no Look for new files", async () => {
