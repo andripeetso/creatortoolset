@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Edit } from "../../contracts/editor";
 import {
   ANIMATION_BRIEF_MAX,
@@ -100,6 +100,7 @@ describe.skipIf(rootReplaced)("animation styles", () => {
 
   it("keeps each brief it replaces, newest first, and puts one back on request (the one it replaces kept in turn)", async () => {
     const s = await make("maker", { name: "Kept briefs", brief: "First words." });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000); // every change in the same millisecond
     await call("maker", "PUT", `${base}/${s.id}`, { brief: "Second words." });
     const third = await json<AnimationStyle>(call("maker", "PUT", `${base}/${s.id}`, { brief: "Third words." }));
     expect(third.earlier!.map((e) => e.brief)).toEqual(["Second words.", "First words."]);
@@ -110,6 +111,7 @@ describe.skipIf(rootReplaced)("animation styles", () => {
     expect(back.earlier!.map((e) => e.brief)).toEqual(["Third words.", "Second words."]);
     expect((await call("maker", "POST", `${base}/${s.id}/restore`, { at: 1 })).status).toBe(404);
     expect((await call("other", "POST", `${base}/${s.id}/restore`, { at: back.earlier![0]!.at })).status).toBe(404);
+    clock.mockRestore();
     await call("maker", "DELETE", `${base}/${s.id}`);
   });
 

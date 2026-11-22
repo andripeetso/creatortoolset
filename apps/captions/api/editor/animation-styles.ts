@@ -112,9 +112,10 @@ export function updateAnimation(username: string, id: string, body: Record<strin
     const at = list.findIndex((s) => s.id === id);
     if (at < 0) return null;
     const was = list[at]!;
-    // a brief replaced is kept, so the person can put it back (restoreBrief)
+    // a brief replaced is kept, so the person can put it back (restoreBrief); `at` is its key, so two in one
+    // millisecond still get their own
     const earlier = given.brief !== undefined && was.brief && given.brief !== was.brief
-      ? { earlier: [{ brief: was.brief, at: Date.now() }, ...(was.earlier ?? [])].slice(0, MAX_EARLIER_BRIEFS) }
+      ? { earlier: [{ brief: was.brief, at: Math.max(Date.now(), (was.earlier?.[0]?.at ?? 0) + 1) }, ...(was.earlier ?? [])].slice(0, MAX_EARLIER_BRIEFS) }
       : {};
     return (list[at] = { ...was, ...given, ...earlier, updatedAt: Date.now() });
   });
