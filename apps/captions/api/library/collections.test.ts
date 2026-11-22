@@ -96,7 +96,15 @@ describe("folders and collections", () => {
     const tooMany = Array.from({ length: 5001 }, (_, i) => `x${i}`);
     const r = await call("owner-a", "POST", `/api/library/lib_a/collections/${f.id}/items`, { assetIds: tooMany });
     expect(r.status).toBe(400);
-    expect((await r.json()).error).toBe("At most 5000 clips at a time");
+    expect(((await r.json()) as { error: string }).error).toBe("At most 5000 clips at a time");
+    // the next tests count lib_a's clips: these leave again
+    const d = libraryDb();
+    for (const id of many) {
+      d.prepare("DELETE FROM search_assets WHERE asset_id = ?").run(id);
+      d.prepare("DELETE FROM asset_versions WHERE asset_id = ?").run(id);
+      d.prepare("DELETE FROM assets WHERE id = ?").run(id);
+    }
+    await call("owner-a", "DELETE", `/api/library/lib_a/collections/${f.id}`);
   });
 
   it("a clip dropped on the A-roll folder is filed A-roll; taken back out it is filed as nothing and sorted again; a photo is never filed", async () => {
