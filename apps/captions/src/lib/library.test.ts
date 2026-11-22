@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
-import { addRefused, changeFolderItems, clearPieceCover, getPiece, libraryNews, listAllAssets, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
+import { addRefused, cardsOfVersions, changeFolderItems, clearPieceCover, getPiece, libraryNews, listAllAssets, macIndexOnly, patchPieceItem, reorderedPositions, setPieceCover, uploadFile, uploadFinal } from "./library";
 
 describe("reorderedPositions", () => {
   const items = [
@@ -273,5 +273,21 @@ describe("listAllAssets", () => {
     const urls = (fetchMock.mock.calls as unknown as [string][]).map(([u]) => new URL(u, "http://x").searchParams);
     expect(urls.map((p) => p.get("cursor"))).toEqual(["c2", "c3"]);
     expect(urls.every((p) => p.get("limit") === "200" && p.get("roll") === "b")).toBe(true);
+  });
+});
+
+describe("cardsOfVersions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("names the versions (finished clips are only listed by id), at most 200 a request, and asks nothing for none", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [{ id: "ast" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const ids = Array.from({ length: 201 }, (_, n) => `v${n}`);
+    expect(await cardsOfVersions("lib_1", [...ids, "v0"])).toHaveLength(2);
+    const asked = (fetchMock.mock.calls as unknown as [string][]).map(([u]) => new URL(u, "http://x").searchParams.get("versions")!.split(","));
+    expect(asked.map((v) => v.length)).toEqual([200, 1]);
+    fetchMock.mockClear();
+    expect(await cardsOfVersions("lib_1", [])).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

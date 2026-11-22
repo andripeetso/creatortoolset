@@ -16,10 +16,11 @@ import {
   getWorkshopFinals,
   isFinals,
   linkPieceToSession,
-  listAllAssets,
+  cardsOfVersions,
   listCollections,
   listLibraries,
   listPieces,
+  pieceVersions,
   mergePiece,
   patchPieceItem,
   pieceZipUrl,
@@ -641,7 +642,7 @@ async function loadPieceView(pieceId: string): Promise<PieceView> {
   const found = hits.find((h): h is { library: LibrarySummary; piece: Piece } => h !== null) ?? null;
   if (!found) return { found, cards: [], others: [], workshop: await workshop };
   // the cards come with it: the versions would otherwise read "Not in the Media Library" until they arrive
-  const [cards, collections] = await Promise.all([listAllAssets(found.library.id), listCollections(found.library.id)]);
+  const [cards, collections] = await Promise.all([cardsOfVersions(found.library.id, pieceVersions([found.piece])), listCollections(found.library.id)]);
   const finals = collections.find(isFinals);
   const siblings = finals ? await listPieces(found.library.id, finals.id) : [];
   return { found, cards, others: siblings.filter((p) => p.id !== pieceId), workshop: await workshop };

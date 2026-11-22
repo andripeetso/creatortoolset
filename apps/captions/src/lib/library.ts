@@ -354,6 +354,22 @@ export async function listAllAssets(libraryId: string, q: SearchQuery & { cursor
   return out;
 }
 
+/** At most this many `versions` per asset-list request (contracts/library.ts SearchQuery). */
+const VERSIONS_MAX = 200;
+
+/**
+ * The cards of these versions (a piece's, a list of pieces'). The library's list leaves finished clips out unless they
+ * are named (api/library/query.ts), so Finals reads its versions by id, never the whole library.
+ */
+export async function cardsOfVersions(libraryId: string, versionIds: string[], q: SearchQuery = {}): Promise<AssetCard[]> {
+  const ids = [...new Set(versionIds)];
+  const chunks = Array.from({ length: Math.ceil(ids.length / VERSIONS_MAX) }, (_, n) => ids.slice(n * VERSIONS_MAX, (n + 1) * VERSIONS_MAX));
+  return (await Promise.all(chunks.map((versions) => listAllAssets(libraryId, { ...q, versions })))).flat();
+}
+
+/** Every version id the pieces hold (an item from another source has none). */
+export const pieceVersions = (pieces: Piece[]): string[] => pieces.flatMap((p) => p.items.flatMap((i) => (i.versionId ? [i.versionId] : [])));
+
 export interface UploadResult {
   assetId?: string;
   duplicateOf?: string;

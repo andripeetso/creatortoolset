@@ -5,7 +5,7 @@ import type { AssetCard, Collection, LibrarySummary, Piece } from "@contracts/li
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { getWorkshopFinals, isFinals, listAllAssets, listCollections, listLibraries, listPieces, listTrashedPieces, restorePiece, type WorkshopFinal } from "@/lib/library";
+import { cardsOfVersions, getWorkshopFinals, isFinals, listCollections, listLibraries, listPieces, listTrashedPieces, pieceVersions, restorePiece, type WorkshopFinal } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { libraryBadges, libraryFacets, pickedFor } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
@@ -281,19 +281,19 @@ export default function FinalsPage() {
   const shown = useCachedLoad<FinalsLists>(
     libId && finals && !trashView ? `/api/library/${libId}/finals/${finals.id}?facets=${encodeURIComponent(JSON.stringify(own))}` : null,
     async () => {
-      const [pieces, cards, workshop] = await Promise.all([
-        listPieces(libId!, finals!.id),
-        listAllAssets(libId!, { facets: own }),
-        getWorkshopFinals().catch((): Record<string, WorkshopFinal> => ({})),
-      ]);
-      return { pieces, cards, workshop };
+      const workshopRead = getWorkshopFinals().catch((): Record<string, WorkshopFinal> => ({}));
+      const pieces = await listPieces(libId!, finals!.id);
+      const cards = await cardsOfVersions(libId!, pieceVersions(pieces), { facets: own });
+      return { pieces, cards, workshop: await workshopRead };
     },
   );
   const trash = useCachedLoad<Piece[]>(libId && finals && trashView ? `/api/library/${libId}/finals/${finals.id}/trash` : null, () =>
     listTrashedPieces(libId!, finals!.id),
   );
   const trashed = trash.data ?? [];
-  const error = failed ?? ((libraries ? null : libs.error) || (finals === undefined && collections.error) || null);
+  const error = failed ?? ((libraries ? null : libs.error) || (finals === undefined && collections.error) || (!shown.data && shown.error) || null);
+  // the pieces not read yet: the frame, never "No pieces" and zero counts
+  const reading = !!finals && !trashView && !shown.data;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -302,8 +302,8 @@ export default function FinalsPage() {
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-red-500">{error}</p>}
         {libraries?.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">Needs a Media Library</p>}
-        {(libraries === null || (library && finals === undefined)) && !error && <FinalsFrame />}
-        {library && finals !== undefined && (
+        {(libraries === null || (library && finals === undefined) || reading) && !error && <FinalsFrame />}
+        {library && finals !== undefined && !reading && (
           <>
             <div className="flex gap-2">
               <Button size="sm" variant={trashView ? "outline" : "default"} aria-pressed={!trashView} onClick={() => setTrashView(false)}>
