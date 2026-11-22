@@ -86,6 +86,8 @@ const stylesAt = (kind: StyleKind) => (kind === "carousel" ? "/api/designs/style
 export const listAnimationStyles = (kind: StyleKind = "animation") => send<AnimationStylesView>(stylesAt(kind));
 export const createAnimationStyle = (body: { name: string; brief: string }, kind: StyleKind = "animation") => send<AnimationStyle>(stylesAt(kind), "POST", body);
 export const updateAnimationStyle = (id: string, body: { name?: string; brief?: string }, kind: StyleKind = "animation") => send<AnimationStyle>(`${stylesAt(kind)}/${id}`, "PUT", body);
+/** An earlier brief of the style (AnimationStyle.earlier, by when it was replaced) as its brief again. */
+export const restoreStyleBrief = (id: string, at: number, kind: StyleKind = "animation") => send<AnimationStyle>(`${stylesAt(kind)}/${id}/restore`, "POST", { at });
 export const deleteAnimationStyle = (id: string, kind: StyleKind = "animation") => send<{ ok: true }>(`${stylesAt(kind)}/${id}`, "DELETE");
 export const stylePictureUrl = (id: string, pictureId: string, kind: StyleKind = "animation") => `${stylesAt(kind)}/${id}/pictures/${pictureId}`;
 export const removeStylePicture = (id: string, pictureId: string, kind: StyleKind = "animation") => send<AnimationStyle>(stylePictureUrl(id, pictureId, kind), "DELETE");
@@ -125,7 +127,7 @@ export const restoreEdit = (id: string) => send<{ ok: true }>(`${base(id)}/resto
 export const cardStillUrl = (id: string, variant: string, card: string) => `${base(id)}/cards/${variant}/${card}/still`;
 export const likeCard = (id: string, variant: string, card: string) => send<Edit>(`${base(id)}/cards/${variant}/${card}/like`, "POST");
 export const makeCardsAgain = (id: string, variant: string) => send<Edit>(`${base(id)}/cards/${variant}/again`, "POST");
-export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "xml" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
+export const exportUrl = (id: string, name: string, format: "otio" | "fcpxml" | "xml" | "edl" | "zip") => `${base(id)}/drafts/${name}/export?format=${format}`;
 /** A timeline file changed in another editing app, as the draft's next version (api/editor/sent-back.ts). */
 export const sendBack = (id: string, name: string, file: string, text: string) => send<Edit>(`${base(id)}/drafts/${name}/sent-back`, "POST", { file, text });
 /** The open comments on the draft's newest Review version, each answered and the ones it changed resolved (api/editor/revise.ts). */

@@ -269,7 +269,7 @@ async function addPicture(d: Design, bytes: Buffer, ext: string, given?: unknown
 }
 
 /** A moment of a library video this account may read, as a JPEG, with the video's title. The frame is copied: a design keeps what it shows, whatever happens to the video. */
-async function videoFrame(owner: string, version: string, t: number): Promise<{ frame: Buffer; title: string }> {
+export async function videoFrame(owner: string, version: string, t: number): Promise<{ frame: Buffer; title: string }> {
   const ws = sourcesWorkspace(owner, [version]);
   if (!ws) throw new DesignError("Not found", 404);
   const row = libraryDb().prepare("SELECT v.source_key, v.mac_path, v.mac_device, a.title, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(version) as { source_key: string; mac_path: string | null; mac_device: string | null; title: string; library_id: string } | undefined;

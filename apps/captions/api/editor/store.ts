@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isLanguage } from "../../contracts/voice";
-import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, type MomentShape, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditVoice, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionMark, type VersionPlan } from "../../contracts/editor";
+import { BUILT_IN_BUNDLE, EDIT_FEEDBACK_MAX, EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, MAX_MOMENTS, MAX_VERSIONS, MOMENT_SHAPES, PIP_CORNERS, type MomentShape, type PipCorner, type EditIntro, type Edit, type EditBundle, type EditItem, type EditorDefaults, type EditSlot, type Timeline, type EditBrief, type EditVoice, type EditFeedback, type EditJob, type EditSummary, type Line, type ReviewPreview, type Sentence, type VersionMark, type VersionPlan } from "../../contracts/editor";
 import { env } from "../lib/env";
 import { listInstalled, packOn } from "../lib/packs";
 import { pluginEditFlags } from "../lib/plugin";
@@ -360,9 +360,9 @@ export async function editSources(username: string, versionIds: string[]): Promi
   return ws;
 }
 
-/** Every library clip the edit uses: its footage, its song and each draft's B-roll (a timeline's sources but the edit's own files). */
+/** Every library clip the edit uses: its footage, its song, its intro and each draft's B-roll (a timeline's sources but the edit's own files). */
 export function clipsOf(e: EditMeta): string[] {
-  const out = new Set([...e.sources, ...(e.song ? [e.song] : [])]);
+  const out = new Set([...e.sources, ...(e.song ? [e.song] : []), ...(e.intro ? [e.intro.source, ...(e.intro.reaction ? [e.intro.reaction] : [])] : [])]);
   for (const n of draftNames(e.id)) for (const [id, s] of Object.entries(readDraft(e.id, n)?.timeline.sources ?? {})) if (!s.file) out.add(id);
   return [...out];
 }
@@ -524,6 +524,21 @@ export async function cleanBrief(body: Record<string, unknown>, username: string
   // a song the person may read in this workspace; anything else is left out
   if (body.song === null) out.song = null;
   else if (typeof body.song === "string" && (await editSources(username, [body.song])) === ws) out.song = body.song;
+  // an intro whose clips the person may read in this workspace; anything else is left out
+  if (body.intro === null) out.intro = null;
+  else if (body.intro && typeof body.intro === "object" && typeof (body.intro as EditIntro).source === "string") {
+    const b = body.intro as Record<string, unknown>;
+    const ids = [b.source as string, ...(typeof b.reaction === "string" ? [b.reaction] : [])];
+    if ((await editSources(username, ids)) === ws) {
+      const seconds = num(b.seconds, 3, 300);
+      out.intro = {
+        source: ids[0]!,
+        ...(seconds !== undefined ? { seconds: Math.round(seconds) } : {}),
+        ...(ids[1] ? { reaction: ids[1] } : {}),
+        ...(typeof b.corner === "string" && (PIP_CORNERS as readonly string[]).includes(b.corner) ? { corner: b.corner as PipCorner } : {}),
+      };
+    }
+  }
   const voice = cleanVoice(body.voice);
   if (voice) out.voice = voice;
   const punch = num((body.framing as { punch?: unknown } | undefined)?.punch, 1, 2);

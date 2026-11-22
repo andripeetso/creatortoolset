@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { RowMenu } from "@/components/settings/ui";
-import { addStylePictures, createAnimationStyle, deleteAnimationStyle, listAnimationStyles, removeStylePicture, stylePictureUrl, updateAnimationStyle, type StyleKind } from "@/lib/editor";
+import { addStylePictures, createAnimationStyle, deleteAnimationStyle, listAnimationStyles, removeStylePicture, restoreStyleBrief, stylePictureUrl, updateAnimationStyle, type StyleKind } from "@/lib/editor";
 import { cn } from "@/lib/utils";
 
 /**
@@ -186,6 +186,24 @@ export function AnimationSheet({ style, onClose, onSaved, kind = "animation", ed
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="animation-brief">{words.describe}</Label>
             <Textarea id="animation-brief" disabled={!editable} value={brief} onChange={(e) => setBrief(e.target.value)} rows={5} maxLength={words.brief} />
+            {editable && saved?.earlier?.length ? (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer select-none">Earlier descriptions ({saved.earlier.length})</summary>
+                <ul className="mt-1.5 flex flex-col gap-1.5">
+                  {saved.earlier.map((e) => (
+                    <li key={e.at} className="flex items-start gap-2">
+                      <p className="min-w-0 flex-1 whitespace-pre-wrap">{e.brief}</p>
+                      <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void run(async () => {
+                        const s = await restoreStyleBrief(saved.id, e.at, kind);
+                        setSaved(s);
+                        setBrief(s.brief);
+                        await onSaved(s);
+                      })}>Use this</Button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
           {made.length > 0 && (
             <section aria-label="Made & liked" className="flex flex-col gap-2">

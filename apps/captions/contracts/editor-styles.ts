@@ -126,6 +126,9 @@ export interface EditStyleCopy {
  *   POST   /api/editor/animation-styles/:id/pictures/chat   { newest: n } → { style, added }: the assistant's own call, from a reply it is
  *                                                           writing. The newest n pictures the person sent in that chat become inspirations
  * A brief saved from a reply the assistant is writing is kept only when the person typed it in that chat (api/editor/own-words.ts).
+ *   POST   /api/editor/animation-styles/:id/pictures/video  { clip, count? } → { style, added } (202 with `waiting` while a computer makes
+ *                                                           the stills: ask again): stills spread over a library video become inspirations
+ *   POST   /api/editor/animation-styles/:id/restore         { at } → AnimationStyle: an earlier brief (AnimationStyle.earlier) is the brief again
  *   GET    /api/editor/animation-styles/:id/pictures/:pid   the picture (JPEG)
  *   DELETE /api/editor/animation-styles/:id/pictures/:pid   → AnimationStyle
  */
@@ -158,13 +161,22 @@ export interface StylePicture {
   at: number;
   /** the picture of an assistant chat it was added from: that one is never added to the style twice */
   chat?: string;
+  /** the moment of a reference video it was taken from, "<library version id>@<ms>": that one is never added twice */
+  video?: string;
 }
+
+/** Earlier briefs a style keeps, newest first: each change of the brief keeps the one before, so it can be put back. */
+export const MAX_EARLIER_BRIEFS = 10;
+/** Stills a reference video gives a style when the request names no number. */
+export const VIDEO_STILLS = 6;
 
 export interface AnimationStyle {
   id: string;
   name: string;
   /** the look, in the person's own words */
   brief: string;
+  /** its briefs before this one, newest first (MAX_EARLIER_BRIEFS), each as the person wrote it and when it was replaced */
+  earlier?: { brief: string; at: number }[];
   pictures: StylePicture[];
   /** where it was installed from; absent for a style the person made. Only a style without it makes cards. */
   from?: string;

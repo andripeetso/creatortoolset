@@ -12,7 +12,7 @@
  *   POST   /api/editor/:id/stop            stops queued and running steps → Edit
  *   PUT    /api/editor/:id/eyeline/:versionId  { y: 0..1 } (the creator) → Edit
  *   GET    /api/editor/:id/drafts/:name    → Draft
- *   GET    /api/editor/:id/drafts/:name/export?format=otio|fcpxml|zip   the draft for the user's own editor (a download)
+ *   GET    /api/editor/:id/drafts/:name/export?format=otio|fcpxml|xml|edl|zip   the draft for the user's own editor (a download; the zip with a README)
  *   POST   /api/editor/:id/drafts/:name/review   renders the draft's preview again and files it in Review (the creator) → Edit
  *   POST   /api/editor/:id/drafts/:name/cut      { asset?, n?, edits } (the creator): timeline edits cut into the draft, with no AI → Edit; rendered and filed in Review
  *   POST   /api/editor/:id/drafts/:name/revise   the open comments on its newest Review version: each answered, the cut changed only where they ask (an AI step, revise.ts) → Edit; 400 with none
@@ -108,6 +108,24 @@ export interface EditBrief {
   song?: string | null;
   /** the voice of its recordings (api/editor/voice-mix.ts); absent = as recorded */
   voice?: EditVoice;
+  /** someone else's video that opens each version, a different part of it each (api/editor/intro.ts); absent or null = none */
+  intro?: EditIntro | null;
+}
+
+export const PIP_CORNERS = ["bottom-left", "bottom-right", "top-left", "top-right"] as const;
+export type PipCorner = (typeof PIP_CORNERS)[number];
+
+/**
+ * An intro: `source` (a library version id: the video reacted to) plays first, its sound with it, then the cut. Each
+ * version gets its own stretch of it, whole sentences of about `seconds` (default 12, 32, 60, 20, 45 s by version), so
+ * no two versions open on the same words. `reaction` (a library version id) is the person's picture over the intro's
+ * last seconds, small in `corner` (default bottom-left), silent; it plays its own last seconds, ending as the intro does.
+ */
+export interface EditIntro {
+  source: string;
+  seconds?: number;
+  reaction?: string;
+  corner?: PipCorner;
 }
 
 /**
@@ -358,6 +376,8 @@ export interface Item {
   zoom?: number;
   /** timeline pixels the picture moves up (negative: down) */
   tilt?: number;
+  /** timeline pixels the picture moves right (negative: left); a B-roll clip under zoom 1 sits over the speaker there (an intro's reaction) */
+  pan?: number;
   gainDb?: number;
   /** items that share it move together (a speaker shot and its voice) */
   link?: string;
@@ -406,6 +426,8 @@ export interface TimelineSource {
   fps: number;
   /** start timecode, in the source's frames */
   tc: number;
+  /** its timecode is drop frame (29.97, 59.94): `tc` counts real frames, its label skips numbers (an EDL writes the label) */
+  drop?: boolean;
   /** length in the source's frames */
   dur: number;
   /** picture size as shown (rotation applied); 0 for sound only */

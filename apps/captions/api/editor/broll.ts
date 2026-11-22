@@ -11,6 +11,7 @@ import { Waiting } from "./analyze";
 import { gazeWanted, onScreen, readGaze, stretches, subtract } from "./lookaway";
 import { brollMinFrames } from "./qa";
 import { ownerOf, readDraft, saveDraft, seesClip, sourcesWorkspace, type EditMeta } from "./store";
+import { afterIntro, introAgain } from "./intro";
 import { noPicture, sourceOf } from "./timeline";
 import type { StepContext } from "./worker";
 
@@ -409,7 +410,9 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   const draft = readDraft(edit.id, variant);
   if (!draft) throw new Error(`No draft ${variant} to add B-roll to`);
   if (draft.timeline.plan) return; // a planned edit's picture is its plan's (plan.ts)
-  const cover = noPicture(draft.timeline);
+  // B-roll goes over the person's own cut, never over an intro (intro.ts) or the reaction on it
+  const own = afterIntro(draft.timeline);
+  const cover = noPicture(own);
   if (!edit.brollCollectionId && !cover) return;
   const lib = cover && !edit.brollCollectionId ? (libraryDb().prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(edit.sources[0] ?? "") as { library_id: string } | undefined) : undefined;
   const all = edit.brollCollectionId ? brollRows(edit.brollCollectionId) : lib ? sortedBroll(lib.library_id) : [];
@@ -424,12 +427,12 @@ export async function brollStep({ edit, job, variant, signal }: StepContext): Pr
   const pool = rows.flatMap((r) => (r.probe ? [sourceOf(r.id, r.title, JSON.parse(r.probe) as ProbeSummary)] : []));
   if (signal.aborted) return;
   // a cut with a picture of its own: its look-aways first, so its B-roll covers them (a voice cut is all cover anyway)
-  const look = cover ? { spans: [], notes: [] } : lookAways(edit, job.actor ?? "", variant, draft.timeline);
-  const spoken = () => Object.fromEntries([...new Set(draft.timeline.tracks.V1.items.map((i) => i.src))].map((id) => [id, wordsOf(libraryDb(), id) ?? []]));
-  const placed = cover ? placeCover(draft.timeline, pool, rankByWords(rows), saidUnder(draft.timeline, spoken())) : placeBroll(draft.timeline, pool, look.spans);
-  const { timeline } = placed;
+  const look = cover ? { spans: [], notes: [] } : lookAways(edit, job.actor ?? "", variant, own);
+  const spoken = () => Object.fromEntries([...new Set(own.tracks.V1.items.map((i) => i.src))].map((id) => [id, wordsOf(libraryDb(), id) ?? []]));
+  const placed = cover ? placeCover(own, pool, rankByWords(rows), saidUnder(own, spoken())) : placeBroll(own, pool, look.spans);
+  const timeline = introAgain(draft.timeline, placed.timeline);
   const notes = [...look.notes, ...placed.notes];
-  if (cover && !timeline.tracks.V2.items.length) throw new NeedsKey(NO_COVER_IN_FOLDER);
+  if (cover && !placed.timeline.tracks.V2.items.length) throw new NeedsKey(NO_COVER_IN_FOLDER);
   // a new cut the AI made: looked at again before Review (critique.ts), an earlier look's verdict gone with the old cut
   await saveDraft(edit.id, variant, { timeline, notes: [...draft.notes.filter((n) => !n.startsWith(BROLL_NOTE)), ...notes], due: 1 });
 }

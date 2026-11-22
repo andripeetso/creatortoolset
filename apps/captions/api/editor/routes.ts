@@ -6,7 +6,7 @@ import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { onUploadDone } from "../library/routes";
 import { ZipFile } from "yazl";
-import { exportGaps } from "./carry";
+import { exportGaps, handoverReadme } from "./carry";
 import { toFcp7Xml, toFcpxml } from "./fcpxml";
 import { footageTargetFor } from "./ingest";
 import { notTyped } from "./own-words";
@@ -28,6 +28,7 @@ import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
 import { applyEdits, draftView, EditRefused } from "./edits";
 import { openComments, wordsFor } from "./revise";
+import { edlTracks, toEdl } from "./edl";
 import { formatOf, fromSentBack, SentBackRefused, sentBackSummary } from "./sent-back";
 import { importTimeline, MAX_TIMELINE_BYTES, TimelineError, timelineSources } from "../../contracts/timeline-import";
 import { handCheck, refusal } from "../../src/lib/nle/check";
@@ -824,14 +825,17 @@ editorApp.get("/:id/drafts/:name", async (c) => {
   return c.json({ ...d, qa: qaOf(d.timeline, others), exportGaps: exportGaps(d.timeline, !!(await gradeOf(ownerOf(r.e), r.e.bundle))), view: draftView(d.timeline, wordsFor(d.timeline)), filed: filedAs(r.e.id, name, d.timeline), renders: rendersOf(d.timeline) });
 });
 
-/** The draft for the user's own editor: OTIO, FCPXML, FCP 7 XML (`xml`, Premiere), or all three in a zip (with download links when the footage is in a bucket). */
+/**
+ * The draft for the user's own editor: OTIO, FCPXML, FCP 7 XML (`xml`, Premiere), CMX3600 EDL (`edl`, the speaker's
+ * track), or all of them in a zip with a README of what each carries (with download links when the footage is in a bucket).
+ */
 editorApp.get("/:id/drafts/:name/export", async (c) => {
   const r = await load(c, true);
   const name = c.req.param("name");
   const d = r && readDraft(r.e.id, name);
   if (!r || !d) return notFound(c);
   const format = c.req.query("format") ?? "zip";
-  if (!["otio", "fcpxml", "xml", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml, xml or zip", code: "invalid" }, 400);
+  if (!["otio", "fcpxml", "xml", "edl", "zip"].includes(format)) return c.json({ error: "format is otio, fcpxml, xml, edl or zip", code: "invalid" }, 400);
   const tl = d.timeline;
   // read again, as the worker does: footage trashed or a library left since means no new links or download URLs
   // (a card is the edit's own file, not footage: TimelineSource.file)
@@ -849,11 +853,14 @@ editorApp.get("/:id/drafts/:name/export", async (c) => {
   if (format === "otio") return send(await otio(), `${base}.otio`, "application/json");
   if (format === "fcpxml") return send(toFcpxml(tl, m.files), `${base}.fcpxml`, "application/xml");
   if (format === "xml") return send(toFcp7Xml(tl, m.files), `${base}.xml`, "application/xml");
+  if (format === "edl") return send(toEdl(tl, m.files), `${base}.edl`, "text/plain; charset=utf-8");
   const zip = new ZipFile();
   const at = { mtime: new Date("2000-01-01T00:00:00Z") };
   zip.addBuffer(Buffer.from(await otio()), `${base}/${base}.otio`, at);
   zip.addBuffer(Buffer.from(toFcpxml(tl, m.files)), `${base}/${base}.fcpxml`, at);
   zip.addBuffer(Buffer.from(toFcp7Xml(tl, m.files)), `${base}/${base}.xml`, at);
+  for (const t of edlTracks(tl)) zip.addBuffer(Buffer.from(toEdl(tl, m.files, t)), `${base}/${base}${t === "V1" ? "" : `.${t}`}.edl`, at);
+  zip.addBuffer(Buffer.from(handoverReadme(base, tl, exportGaps(tl, !!(await gradeOf(ownerOf(r.e), r.e.bundle))))), `${base}/README.txt`, at);
   for (const o of m.own) zip.addFile(o.file, `${base}/media/${o.name}`, at);
   if (m.downloads.length) {
     const hours = LINK_TTL_S / 3600;

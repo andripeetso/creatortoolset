@@ -23,7 +23,7 @@ const { blobs, libraryDb } = await import("../library/db");
 const { enqueueJob } = await import("../library/jobs");
 const { readMeta, setApproval } = await import("../review");
 const { emptyTracks } = await import("./timeline");
-const { createEdit, readDraft, readEdit, readFiled, readStep, saveDraft, saveEdit } = await import("./store");
+const { clipsOf, createEdit, readDraft, readEdit, readFiled, readStep, saveDraft, saveEdit } = await import("./store");
 const { applyEdits } = await import("./edits");
 const { piecesOf, previewSize, previewStep, renderPreview, shotFilter } = await import("./preview");
 const { tick } = await import("./worker");
@@ -194,6 +194,34 @@ describe("AI Editor preview", () => {
     const audioS = Number(ffprobe(out, "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0"));
     expect(Math.abs(audioS - 1)).toBeLessThanOrEqual(1 / 30 + 0.025);
   }, 60_000);
+
+  it("a cutaway smaller than the frame (an intro's reaction) sits in its corner over his picture, which plays around it", async () => {
+    const t = timeline();
+    t.sources.ver_b = { versionId: "ver_b", name: "Cover", fps: 30, tc: 0, dur: 90, w: 360, h: 640 };
+    // a third of the frame, 120x213, in the bottom-left corner
+    t.tracks.V2.items = [{ src: "ver_b", in: 0, len: 10, rec: 20, zoom: 0.33, pan: -110, tilt: -200 }];
+    expect(shotFilter(t, t.tracks.V2.items[0]!, undefined, undefined, 0, true)).toMatch(/format=yuva420p,pad=360:640:11:\d+:black@0/);
+    const out = path.join(dir, "reaction.mp4");
+    await renderPreview(t, { ver_a: fixture, ver_b: blue }, out);
+    expect(Number(ffprobe(out, "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"))).toBe(30);
+    const f = frame(out, 25);
+    const at = (x: number, y: number) => f[y * 360 + x]!;
+    const blueGrey = frame(blue, 0)[0]!;
+    expect(Math.abs(at(60, 520) - blueGrey)).toBeLessThanOrEqual(3); // inside the corner: the reaction
+    // around it, his picture as it is without the reaction (never a black frame the corner sits in)
+    const plain = path.join(dir, "reaction-none.mp4");
+    await renderPreview(timeline(), { ver_a: fixture }, plain);
+    const g = frame(plain, 25);
+    for (const [x, y] of [[300, 100], [200, 300], [300, 600], [20, 300]] as const) expect(Math.abs(at(x, y) - g[y * 360 + x]!)).toBeLessThanOrEqual(12);
+  }, 60_000);
+
+  it("an edit's intro is kept only with clips the person may read, and its clips count as the edit's", async () => {
+    const e = (await createEdit("mem-a", { name: "Reaction reel", sources: ["ver_a"], intro: { source: "ver_b", reaction: "ver_a", corner: "top-right", seconds: 1, extra: 1 } }))!;
+    expect(e.intro).toEqual({ source: "ver_b", reaction: "ver_a", corner: "top-right", seconds: 3 }); // at least 3 s
+    expect(clipsOf(e)).toContain("ver_b");
+    expect((await createEdit("mem-a", { name: "Elsewhere", sources: ["ver_a"], intro: { source: "ver_nope" } }))!.intro).toBeUndefined();
+    expect((await createEdit("mem-a", { name: "Bad corner", sources: ["ver_a"], intro: { source: "ver_b", corner: "middle" } }))!.intro).toEqual({ source: "ver_b" });
+  });
 
   it("files the preview in Review, marks it made from the footage, and a re-run is the same video's next version", async () => {
     const e = (await createEdit("mem-a", { name: "Hook", sources: ["ver_a"] }))!;

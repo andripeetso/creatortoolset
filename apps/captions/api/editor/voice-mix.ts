@@ -44,7 +44,8 @@ export const stemKey = (src: string) => createHash("sha1").update(src).digest("h
 /** The recordings the cut's voice track plays (none when it is muted, or on a planned cut: its own render mixes its sound), in the order they first play. */
 export function voiceGroups(tl: Timeline): string[] {
   if (tl.tracks.A1.mute || tl.plan) return [];
-  const on = tl.tracks.A1.items.filter((i) => i.enabled !== false && !tl.sources[i.src]?.file).sort((a, b) => a.rec - b.rec);
+  // the intro's sound (intro.ts) is someone else's video, not one of the person's recordings
+  const on = tl.tracks.A1.items.filter((i) => i.enabled !== false && i.link !== "intro" && !tl.sources[i.src]?.file).sort((a, b) => a.rec - b.rec);
   return [...new Set(on.map((i) => i.src))];
 }
 
@@ -169,7 +170,7 @@ export async function stemsPlan(edit: EditMeta, variant: string, tl: Timeline, g
     const key = stemKey(src);
     const original = Object.values(made[src]!)[0]!.original;
     const pick = pickOf(edit.voice, src);
-    const items = tl.tracks.A1.items.filter((i) => on(i) && i.src === src);
+    const items = tl.tracks.A1.items.filter((i) => on(i) && i.src === src && i.link !== "intro");
     for (const f of ["original", ...fx]) {
       // the edit's slot plays what this recording itself picked; an enhancer it has none of is the recording as it is
       const which = f === voice ? pick : f;
@@ -179,7 +180,11 @@ export async function stemsPlan(edit: EditMeta, variant: string, tl: Timeline, g
     mix[`${key}.original.m4a`] = 1 - shareOf(edit.voice, src);
     if (voice !== "off") mix[`${key}.${voice}.m4a`] = shareOf(edit.voice, src);
   }
-  const rest = (["A2", "A3"] as const).filter((t) => !tl.tracks[t].mute).flatMap((t) => tl.tracks[t].items.filter(on));
+  // the rest: music, sound effects, and an intro's own sound as it is (intro.ts)
+  const rest = [
+    ...(tl.tracks.A1.mute ? [] : tl.tracks.A1.items.filter((i) => on(i) && i.link === "intro")),
+    ...(["A2", "A3"] as const).filter((t) => !tl.tracks[t].mute).flatMap((t) => tl.tracks[t].items.filter(on)),
+  ];
   const local = rest.length ? await localFiles({ ...tl, sources: Object.fromEntries(rest.map((i) => [i.src, tl.sources[i.src]!])) }, edit.id, true) : {};
   parts.push({ name: "rest.m4a", clips: rest.map((i) => clipOf(tl, i, name(local[i.src]!))) });
   mix["rest.m4a"] = 1;

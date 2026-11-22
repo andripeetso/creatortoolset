@@ -1,14 +1,15 @@
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_EYELINE, MOMENT_SHAPES, TRACKS, type Item, type Line, type Sentence, type Timeline, type TimelineSource, type TrackId, type VersionPlan } from "../../contracts/editor";
+import { DEFAULT_EYELINE, MOMENT_SHAPES, TRACKS, type EditIntro, type Item, type Line, type Sentence, type Timeline, type TimelineSource, type TrackId, type VersionPlan } from "../../contracts/editor";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import type { ProbeSummary } from "../library/media/probe";
 import { wordsOf, type TimedWord } from "../library/transcribe";
-import { energyOf } from "./analyze";
+import { energyOf, sentencesOf } from "./analyze";
 import { CUT, cutTake, type CutSettings } from "./cut";
 import { fillZoom, followPath, framingOf, reframeTimeline, speakerPath, speakerTargets, windowOf } from "./framing";
 import { measurable } from "./media";
+import { INTRO_SECONDS, introParts, secondsOf, withIntro } from "./intro";
 import { clearPasses, markPasses } from "./passes";
 import { draftPlan } from "./plan";
 import { sayFor } from "./progress";
@@ -50,7 +51,36 @@ export function sourceOf(versionId: string, name: string, p: ProbeSummary): Time
   const turned = p.rotation === 90 || p.rotation === 270;
   // a recording whose only picture is its cover art is sound only: a cover is not a picture to show
   const [w, h] = p.cover ? [0, 0] : turned ? [p.height, p.width] : [p.width, p.height];
-  return { versionId, name, fps, tc: timecodeFrames(p.timecode, fps), dur: Math.round(p.duration * fps), w, h };
+  return { versionId, name, fps, tc: timecodeFrames(p.timecode, fps), ...(p.timecode?.includes(";") ? { drop: true } : {}), dur: Math.round(p.duration * fps), w, h };
+}
+
+/**
+ * The cut with the edit's intro before it (intro.ts): this version's stretch of it, from the parts every version gets in
+ * order (the same each time, so a version cut again opens on its own words). A clip not ready, or nothing left of it
+ * for this version, leaves the cut as it is with a note.
+ */
+function introduced(tl: Timeline, intro: EditIntro, k: number, count: number, notes: string[]): Timeline {
+  const db = libraryDb();
+  const read = (id: string) => {
+    const row = db.prepare("SELECT a.title, v.probe FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as { title: string; probe: string | null } | undefined;
+    const probe = row?.probe ? (JSON.parse(row.probe) as ProbeSummary) : null;
+    return row && probe?.duration ? sourceOf(id, row.title, probe) : null;
+  };
+  const src = read(intro.source);
+  if (!src) {
+    notes.push("Intro: its video is not ready in the Media Library, so this version starts without it");
+    return tl;
+  }
+  const words = wordsOf(db, intro.source);
+  const sents = words?.length ? sentencesOf(words, intro.source, 0) : secondsOf(src.dur / src.fps);
+  const part = introParts(sents, Array.from({ length: count }, (_, i) => intro.seconds ?? INTRO_SECONDS[i % INTRO_SECONDS.length]!))[k];
+  if (!part) {
+    notes.push("Intro: the other versions use all of its video, so this version starts without it");
+    return tl;
+  }
+  const reaction = intro.reaction ? read(intro.reaction) : null;
+  if (intro.reaction && !reaction?.w) notes.push("Intro: the reaction has no picture ready, so the intro plays without it");
+  return withIntro(tl, intro, part, src, reaction ?? undefined);
 }
 
 /** A cut whose takes have no picture: nothing to cut away from, so the B-roll is the whole picture. */
@@ -258,6 +288,7 @@ export async function draftStep({ edit, job, variant, signal }: StepContext): Pr
     timeline = reframeTimeline(timeline, follow);
   }
   if (!timeline.tracks.V1.items.length) throw new Error(`No speech found in ${version.title}'s takes`);
+  if (edit.intro) timeline = introduced(timeline, edit.intro, plan.plans.indexOf(version), plan.plans.length, notes);
   // a cut the AI made: looked at and checked before Review (critique.ts)
   await saveDraft(edit.id, version.name, { timeline, notes, due: 1 });
   await clearPasses(edit.id, version.name); // cut again: its passes start over

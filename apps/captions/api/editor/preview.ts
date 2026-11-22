@@ -61,7 +61,7 @@ export function rendersOf(tl: Timeline): Renders {
     edj_version: RENDERS_EDJ,
     tracks: tl.plan
       ? { V1: ["zoom", "speed"], A1: ["gain_db"], A2: ["gain_db"], A3: SOUND }
-      : { V1: ["zoom", "tilt", "fade_in", "fade_out", "enabled", "freeze"], V2: ["zoom", "tilt", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND },
+      : { V1: ["zoom", "tilt", "pan", "fade_in", "fade_out", "enabled", "freeze"], V2: ["zoom", "tilt", "pan", "enabled", "hidden"], A1: SOUND, A2: SOUND, A3: SOUND },
   };
 }
 
@@ -106,10 +106,11 @@ export function pathExpr(keys: { t: number; x: number }[], from = 0): string {
 
 /**
  * The video filter for one speaker shot: the source fitted into the frame, scaled by its zoom, moved up by its tilt
- * (timeline px), cut to what shows and padded black to the preview's size, at the timeline's rate, then graded (if a grade is set).
- * A reframed shot's window moves along its path; `from`: seconds into the item the filter's time starts at.
+ * and right by its pan (timeline px), cut to what shows and padded black to the preview's size, at the timeline's rate,
+ * then graded (if a grade is set). A reframed shot's window moves along its path; `from`: seconds into the item the
+ * filter's time starts at. `clear`: padded with nothing (alpha) instead of black, for a picture laid over another.
  */
-export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number, from = 0): string {
+export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number, from = 0, clear = false): string {
   const src = tl.sources[item.src]!;
   const { w: PW, h: PH, k } = previewSize(tl);
   const f = fitted(src, tl.width, tl.height);
@@ -121,7 +122,7 @@ export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number,
   const wh = band ?? PH;
   const fx = item.path?.length && sw > PW ? item.path[0]!.x : item.focus && sw > PW ? item.focus.x : 0.5;
   const fy = item.focus && sh > wh ? item.focus.y : 0.5;
-  const x = Math.round(sw > PW ? -(sw - PW) * fx : (PW - sw) / 2);
+  const x = Math.round((sw > PW ? -(sw - PW) * fx : (PW - sw) / 2) + (item.pan ?? 0) * k);
   const y = Math.round((sh > wh ? (PH - wh) / 2 - (sh - wh) * fy : (PH - sh) / 2) - (item.tilt ?? 0) * k);
   const cx = Math.max(0, -x);
   const cy = Math.max(0, -y);
@@ -133,11 +134,12 @@ export function shotFilter(tl: Timeline, item: Item, grade?: Cdl, band?: number,
   return [
     `scale=${sw}:${sh}`,
     moving ? `crop=${PW}:${ch}:${sw - PW}*${pathExpr(item.path!, from)}:${cy}` : `crop=${cw}:${ch}:${cx}:${cy}`,
-    `pad=${PW}:${PH}:${Math.max(0, x)}:${Math.max(0, y)}:black`,
+    ...(clear ? ["format=yuva420p"] : []),
+    `pad=${PW}:${PH}:${Math.max(0, x)}:${Math.max(0, y)}:${clear ? "black@0" : "black"}`,
     "setsar=1",
     `fps=${den}/${num}`,
     ...(colour ? [colour] : []),
-    "format=yuv420p",
+    clear ? "format=yuva420p" : "format=yuv420p",
   ].join(",");
 }
 
@@ -214,7 +216,9 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         const voice = a
           ? ["-ss", (a.in / tl.sources[a.src]!.fps + off).toFixed(6), "-i", files[a.src]!]
           : ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"];
-        const c = p.cut;
+        // a cutaway smaller than the frame (an intro's reaction) sits over his picture; any other takes its place
+        const over = p.cut && (p.cut.zoom ?? 1) < 1 ? p.cut : undefined;
+        const c = over ? undefined : p.cut;
         // a cutaway's picture: its own clip from its in point, at its own zoom and tilt, ungraded
         const pic = c
           ? { file: files[c.src]!, at: c.in / tl.sources[c.src]!.fps + (p.at - c.rec) / tl.fps, filter: shotFilter(tl, c) }
@@ -228,17 +232,23 @@ export async function renderPreview(tl: Timeline, files: Record<string, string>,
         // a take with no picture (a voice recording) under no cutaway: black, as a gap in the picture is
         const picture = pic ? ["-ss", pic.at.toFixed(6), "-i", pic.file] : ["-f", "lavfi", "-i", `color=c=black:s=${previewSize(tl).w}x${previewSize(tl).h}:r=${den}/${num}`];
         // ponytail: a linked voice from a file with no sound stream fails the render; the editor's sources are transcribed, so they have one
+        const vf = pic ? pic.filter : "format=yuv420p";
         const args = [
           ...picture,
           ...voice,
-          "-map", "0:v:0", "-map", "1:a:0",
-          "-vf", pic ? pic.filter : "format=yuv420p",
+          ...(over
+            ? [
+              "-ss", (over.in / tl.sources[over.src]!.fps + (p.at - over.rec) / tl.fps).toFixed(6), "-i", files[over.src]!,
+              "-filter_complex", `[0:v]${vf}[b];[2:v]${shotFilter(tl, over, undefined, undefined, 0, true)}[o];[b][o]overlay=0:0,format=yuv420p[v]`,
+              "-map", "[v]", "-map", "1:a:0",
+            ]
+            : ["-map", "0:v:0", "-map", "1:a:0", "-vf", vf]),
           "-af", [...voiceAf, "aresample=48000", "aformat=channel_layouts=stereo"].join(","),
           "-frames:v", String(p.frames), "-t", secs(p.frames),
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
           "-c:a", "pcm_s16le",
         ];
-        const inputs = [pic?.file, a ? files[a.src] : undefined].filter((f): f is string => !!f);
+        const inputs = [pic?.file, a ? files[a.src] : undefined, over ? files[over.src] : undefined].filter((f): f is string => !!f);
         const seg = cache
           ? await cachedSegment(cache, args, inputs, seen, (o) => ffmpeg([...args, "-f", "mov", o]), version)
           : path.join(parts, `${String(list.length).padStart(4, "0")}.mov`);

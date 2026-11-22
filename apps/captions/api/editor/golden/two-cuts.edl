@@ -1,0 +1,10 @@
+TITLE: Tiny Acrobatics v1
+FCM: NON-DROP FRAME
+
+001  AX       AA/V  C        01:00:00;12 01:00:01;27 01:00:00:00 01:00:01:15
+* FROM CLIP NAME: Take A
+* SOURCE FILE: /Users/tiny/Footage/Take A.mov
+
+002  AX       AA/V  C        00:00:05:00 00:00:07:00 01:00:01:15 01:00:03:15
+* FROM CLIP NAME: Take B
+* SOURCE FILE: /Users/tiny/Footage/Take B.mov

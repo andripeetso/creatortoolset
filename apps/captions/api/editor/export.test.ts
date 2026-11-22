@@ -17,6 +17,8 @@ const rootReplaced = (await import("../lib/plugin")).pluginReplaces("/api/editor
 const { blobs, libraryDb } = await import("../library/db");
 const { createEdit, editDir, saveDraft } = await import("./store");
 const { frameDuration, time, toFcp7Xml, toFcpxml } = await import("./fcpxml");
+const { edlTracks, tc, toEdl } = await import("./edl");
+const { exportGaps, handoverReadme } = await import("./carry");
 const { mediaPaths, namesOf } = await import("./media");
 const { otioText, toOtio } = await import("./otio");
 const { emptyTracks, sourceOf } = await import("./timeline");
@@ -114,6 +116,48 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
 
   it("FCPXML of a two-cut timeline matches the golden file", () => {
     matchGolden("two-cuts.fcpxml", toFcpxml(twoCuts(), files));
+  });
+
+  it("EDL of a two-cut timeline matches the golden file and reads back with the cuts, files and source timecodes", () => {
+    const edl = toEdl(twoCuts(), files);
+    matchGolden("two-cuts.edl", edl);
+    const view = importTimeline("Tiny.edl", edl, 29.97);
+    expect(view.tracks.map((t) => t.id)).toEqual(["V1"]); // the voice is the shots' own (AA/V)
+    expect(view.tracks[0]!.items.map((i) => [i.rec, i.len])).toEqual([[0, 45], [45, 60]]);
+    expect(Object.values(timelineSources("Tiny.edl", edl, 29.97))).toEqual([files.ver_a, files.ver_b]);
+    // Take A starts at 01:00:00;00 drop frame: its in-point 12 is labelled 01:00:00;12, as the file says
+    expect(edl).toContain("001  AX       AA/V  C        01:00:00;12 01:00:01;27 01:00:00:00 01:00:01:15");
+    // Take B at 59.94 from 0: frame 300 is 5 s, 150 frames at 30
+    expect(edl).toContain("002  AX       AA/V  C        00:00:05:00 00:00:07:00 01:00:01:15 01:00:03:15");
+  });
+
+  it("EDL: voice apart from a shot is an audio event, B-roll its own file, switched-off clips left out", () => {
+    const tl = twoCuts();
+    tl.tracks.A1.items[1] = { ...tl.tracks.A1.items[1]!, rec: 40, len: 65 }; // a J cut: the voice starts early
+    tl.tracks.V2.items = [{ src: "ver_a", in: 100, len: 20, rec: 50 }, { src: "ver_b", in: 0, len: 10, rec: 80, enabled: false }];
+    const edl = toEdl(tl, files);
+    expect(edl.match(/^\d{3} .*$/gm)!.map((l) => l.split(/\s+/)[2])).toEqual(["AA/V", "A", "V"]);
+    expect(edlTracks(tl)).toEqual(["V1", "V2"]);
+    const b = toEdl(tl, files, "V2");
+    expect(b).toMatch(/^TITLE: Tiny Acrobatics v1 V2$/m);
+    expect(b.match(/^\d{3} /gm)).toHaveLength(1);
+    tl.tracks.V2.hidden = true;
+    expect(edlTracks(tl)).toEqual(["V1"]);
+    expect(tc(3600 * 25 + 25 * 61 + 3, 25)).toBe("01:01:01:03");
+    // drop frame: the label skips ;00 and ;01 at each minute but every tenth, and round-trips through the reader's maths
+    expect(tc(1800, 29.97, true)).toBe("00:01:00;02");
+    expect(tc(17982, 29.97, true)).toBe("00:10:00;00");
+    expect(tc(107892, 29.97, true)).toBe("01:00:00;00");
+    expect(tc(3600, 59.94, true)).toBe("00:01:00;04");
+    expect(tc(3599, 59.94, true)).toBe("00:00:59;59");
+  });
+
+  it("the hand-over README names each editor's file and what it leaves out", () => {
+    const tl = planned();
+    const text = handoverReadme("Tiny reel", tl, exportGaps(tl));
+    expect(text).toContain("Tiny reel.fcpxml: Final Cut Pro");
+    expect(text).toContain("Tiny reel.edl (and Tiny reel.V2.edl for the B-roll)");
+    expect(text).toMatch(/Premiere Pro.*\n  Not carried from the preview: .*dissolves on 1 shot/);
   });
 
   it("FCP 7 XML (Premiere) reads back with the cuts, the files, their in-points and the lines", () => {
@@ -256,10 +300,14 @@ describe.skipIf(rootReplaced)("AI Editor export", () => {
     expect(otio.headers.get("content-disposition")).toBe('attachment; filename="Bucket edit v1.otio"');
     expect(JSON.stringify(await otio.json())).toContain('"target_url":"media/Take A.mp4"');
     expect(await (await get("?format=fcpxml")).text()).toContain('src="media/Take%20A.mp4"');
-    expect((await get("?format=edl")).status).toBe(400);
+    const edl = await get("?format=edl");
+    expect(edl.headers.get("content-disposition")).toBe('attachment; filename="Bucket edit v1.edl"');
+    expect(await edl.text()).toContain("* SOURCE FILE: media/Take A.mp4");
+    expect((await get("?format=aaf")).status).toBe(400);
     const zip = Buffer.from(await (await get("")).arrayBuffer());
     const text = zip.toString("latin1");
-    for (const f of ["Bucket edit v1/Bucket edit v1.otio", "Bucket edit v1/Bucket edit v1.fcpxml", "Bucket edit v1/media/Download media.txt"]) expect(text).toContain(f);
+    for (const f of ["Bucket edit v1/Bucket edit v1.otio", "Bucket edit v1/Bucket edit v1.fcpxml", "Bucket edit v1/Bucket edit v1.edl", "Bucket edit v1/README.txt", "Bucket edit v1/media/Download media.txt"]) expect(text).toContain(f);
+    expect(text).not.toContain("v1.V2.edl"); // no B-roll, no second EDL
   });
 
   it("proxies only: the timelines name the original on the user's computer with its own size, rate and timecode, and give that path back", async () => {

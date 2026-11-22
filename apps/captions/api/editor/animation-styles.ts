@@ -8,11 +8,13 @@ import {
   CAROUSEL_BRIEF_MAX,
   MAX_ANIMATION_STYLES,
   MAX_CAROUSEL_STYLES,
+  MAX_EARLIER_BRIEFS,
   MAX_INSPIRATIONS,
   MAX_MADE,
   PICTURE_MAX_BYTES,
   PICTURE_MAX_SIDE,
   STYLE_NAME_MAX,
+  VIDEO_STILLS,
   type AnimationStyle,
   type AnimationStylesView,
   type StylePicture,
@@ -20,9 +22,11 @@ import {
 import { picturesInChat } from "../assistant";
 import { jobTurn, type AuthVars } from "../auth";
 import { env } from "../lib/env";
+import { libraryDb } from "../library/db";
 import { currentWorkspaceId, inCurrentWorkspace } from "../lib/workspace-scope";
 import { pictureMade } from "../lib/clip-frame";
 import { notTyped } from "./own-words";
+import { sourcesWorkspace } from "./store";
 import { change, read, type Saved } from "./styles";
 
 /**
@@ -107,7 +111,27 @@ export function updateAnimation(username: string, id: string, body: Record<strin
     const list = f[kind] ?? [];
     const at = list.findIndex((s) => s.id === id);
     if (at < 0) return null;
-    return (list[at] = { ...list[at]!, ...given, updatedAt: Date.now() });
+    const was = list[at]!;
+    // a brief replaced is kept, so the person can put it back (restoreBrief)
+    const earlier = given.brief !== undefined && was.brief && given.brief !== was.brief
+      ? { earlier: [{ brief: was.brief, at: Date.now() }, ...(was.earlier ?? [])].slice(0, MAX_EARLIER_BRIEFS) }
+      : {};
+    return (list[at] = { ...was, ...given, ...earlier, updatedAt: Date.now() });
+  });
+}
+
+/** An earlier brief (by when it was replaced) as the brief again; the one it replaces is kept in its place. Null: no such style or brief. */
+export function restoreBrief(username: string, id: string, at: number, kind: StyleKind = "animation"): AnimationStyle | null {
+  const old = stylesOf(username, kind).find((s) => s.id === id)?.earlier?.find((e) => e.at === at);
+  if (!old) return null;
+  const done = updateAnimation(username, id, { brief: old.brief }, kind);
+  if (!done || typeof done === "string") return null;
+  // the restored one leaves the list: it is the brief now
+  return change(username, (f) => {
+    const s = inFile(f, id);
+    if (!s) return null;
+    s.earlier = (s.earlier ?? []).filter((e) => !(e.at === at && e.brief === old.brief));
+    return s;
   });
 }
 
@@ -150,15 +174,16 @@ export const tilePictures = (actor: string, dir: string, out: string, h: number,
  * A string is why it was refused. `chat`: the assistant chat's picture it comes from; one the style already has from
  * there is not added again (the style comes back as it is).
  */
-export async function addPicture(username: string, styleId: string, src: string, kind: StylePicture["kind"], chat?: string): Promise<AnimationStyle | string | null> {
+export async function addPicture(username: string, styleId: string, src: string, kind: StylePicture["kind"], chat?: string, video?: string): Promise<AnimationStyle | string | null> {
   const full = FULL;
   if (!USER.test(username) || !ID.test(styleId)) return null;
   const now = inFile(read(username), styleId);
   if (!now) return null;
   if (chat && now.pictures.some((p) => p.chat === chat)) return now;
+  if (video && now.pictures.some((p) => p.video === video)) return now;
   if (kind === "inspiration" && now.pictures.filter((p) => p.kind === kind).length >= MAX_INSPIRATIONS) return full;
   const dir = dirOf(username, styleId);
-  const pic: StylePicture = { id: randomUUID(), kind, at: Date.now(), ...(chat ? { chat } : {}) };
+  const pic: StylePicture = { id: randomUUID(), kind, at: Date.now(), ...(chat ? { chat } : {}), ...(video ? { video } : {}) };
   const file = path.join(dir, `${pic.id}.jpg`);
   await mkdir(dir, { recursive: true });
   const made = await fitJpeg(username, src, file, PICTURE_MAX_SIDE, PICTURE_MAX_BYTES);
@@ -300,7 +325,56 @@ function stylesApp(kind: StyleKind) {
     return c.json({ style: ofKind(user, id), added, ...(sent.length ? {} : { none: true }), ...(full ? { full: true } : {}) });
   });
 
-  app.get("/:id/pictures/:pid", async (c) => {
+  /**
+   * A reference video as inspirations: `count` stills (VIDEO_STILLS when absent) spread over a library video the person
+   * may read, each taken once (a still the style has from that moment is passed over). Blur Faces is kept as the
+   * Designer keeps it (designs.ts videoFrame). Stills a computer makes are not here yet: 202 with `waiting`, and the
+   * same request later adds them.
+   */
+  app.post("/:id/pictures/video", async (c) => {
+    const user = c.get("user").username;
+    const id = c.req.param("id");
+    if (!ofKind(user, id) || !ID.test(id)) return c.json(notFound, 404);
+    const b = await json(c.req);
+    if (typeof b.clip !== "string" || !b.clip) return c.json({ error: "Give clip: the library video's version id", code: "invalid" }, 400);
+    if (!sourcesWorkspace(user, [b.clip])) return c.json(notFound, 404);
+    const row = libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?").get(b.clip) as { probe: string | null } | undefined;
+    const dur = row?.probe ? Number((JSON.parse(row.probe) as { duration?: number }).duration) || 0 : 0;
+    if (!dur) return c.json({ error: "That video is not ready yet", code: "conflict" }, 409);
+    const count = Math.max(1, Math.min(MAX_INSPIRATIONS, Math.round(Number(b.count) || VIDEO_STILLS)));
+    const { videoFrame, DesignError } = await import("../designs");
+    let added = 0;
+    for (let k = 0; k < count; k++) {
+      const ms = Math.round(((k + 0.5) / count) * dur * 1000);
+      const had = ofKind(user, id)?.pictures.length ?? 0;
+      let frame: Buffer;
+      try {
+        frame = (await videoFrame(user, b.clip, ms / 1000)).frame;
+      } catch (e) {
+        if (!(e instanceof DesignError)) throw e;
+        if (e.more?.code === "waiting") return c.json({ style: ofKind(user, id), added, waiting: e.message }, 202);
+        return c.json({ error: e.message, code: e.status === 404 ? "not_found" : "invalid" }, e.status === 404 ? 404 : e.status === 409 ? 409 : 400);
+      }
+      const dir = dirOf(user, id);
+      const tmp = path.join(dir, `${randomUUID()}.upload`);
+      await mkdir(dir, { recursive: true });
+      await writeFile(tmp, frame);
+      const now = await addPicture(user, id, tmp, "inspiration", undefined, `${b.clip}@${ms}`).finally(() => rm(tmp, { force: true }));
+      if (!now) return c.json(notFound, 404);
+      if (now === FULL) return c.json({ style: ofKind(user, id), added, full: true });
+      if (typeof now === "string") return c.json({ error: now, code: "invalid" }, 400);
+      if (now.pictures.length > had) added++;
+    }
+    return c.json({ style: ofKind(user, id), added });
+  });
+
+  app.post("/:id/restore", async (c) => {
+    const at = Number((await json(c.req)).at);
+    const s = Number.isFinite(at) ? restoreBrief(c.get("user").username, c.req.param("id"), at, kind) : null;
+    return s ? c.json(s) : c.json(notFound, 404);
+  });
+
+    app.get("/:id/pictures/:pid", async (c) => {
     const file = ofKind(c.get("user").username, c.req.param("id")) && pictureFile(c.get("user").username, c.req.param("id"), c.req.param("pid"));
     const bytes = file && (await readFile(file).catch(() => null));
     if (!bytes) return c.json(notFound, 404);
