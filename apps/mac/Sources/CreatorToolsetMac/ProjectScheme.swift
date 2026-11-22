@@ -132,20 +132,23 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
 
     /// The kept file when the window's account has it, else the server's answer, kept when ThumbCache.keeps says so. With no
     /// account known (signed out, or the server did not say), the server answers and nothing is kept.
-    private func thumb(_ url: URL, target: String, origin: URL, cookies: @escaping @MainActor () async -> [HTTPCookie], account: String?, task: WKURLSchemeTask) {
+    func thumb(_ url: URL, target: String, origin: URL, cookies: @escaping @MainActor () async -> [HTTPCookie], account: String?, task: WKURLSchemeTask) {
         nonisolated(unsafe) let task = task
         let file = account.map { ThumbCache.file(in: ThumbCache.dir, origin: origin, account: $0, target: target) }
         if let file, let data = ThumbCache.read(file) { return answer(url, 200, data, task) }
+        // this Task runs on the main actor, and deliver's main.sync from the main thread traps: answer from a queue
         Task {
             do {
                 let (status, data, cacheControl) = try await ThumbCache.fetch(origin: origin, target: target, cookies: await cookies())
-                if ThumbCache.keeps(target: target, status: status, cacheControl: cacheControl), let file {
-                    try? ThumbCache.write(data, to: file)
-                    ThumbCache.pruneIfDue(ThumbCache.dir)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    if ThumbCache.keeps(target: target, status: status, cacheControl: cacheControl), let file {
+                        try? ThumbCache.write(data, to: file)
+                        ThumbCache.pruneIfDue(ThumbCache.dir)
+                    }
+                    self.answer(url, status, data, task)
                 }
-                self.answer(url, status, data, task)
             } catch {
-                self.deliver(task, last: true) { $0.didFailWithError(error) }
+                DispatchQueue.global(qos: .userInitiated).async { self.deliver(task, last: true) { $0.didFailWithError(error) } }
             }
         }
     }

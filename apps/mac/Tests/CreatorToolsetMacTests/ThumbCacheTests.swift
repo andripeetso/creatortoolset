@@ -71,4 +71,23 @@ final class ThumbCacheTests: XCTestCase {
         next.url = URL(string: "https://studio.example.com/api/library/media/v1/thumb?v=2")!
         XCTAssertEqual(ThumbCache.followed(next, from: server).value(forHTTPHeaderField: "Cookie"), "session=secret")
     }
+
+    /// A thumb not kept is fetched and answered without a crash: the answer reaches WebKit on the main thread from a
+    /// queue, never by a main.sync made on the main thread (which traps).
+    func testAThumbNotKeptIsFetchedAndAnswered() {
+        let site = FakeSite()
+        site.answer = { _ in (200, "jpeg") }
+        let scheme = ProjectScheme(root: { FileManager.default.temporaryDirectory })
+        let task = FakeTask(ThumbCache.url(target: thumb))
+        scheme.live[ObjectIdentifier(task)] = task
+        let done = expectation(description: "answered")
+        task.ended = { done.fulfill() }
+        DispatchQueue.global().async {
+            scheme.thumb(task.request.url!, target: self.thumb, origin: site.url, cookies: { [] }, account: nil, task: task)
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(task.status, 200)
+        XCTAssertEqual(task.bytes, 4)
+        XCTAssertTrue(task.finished)
+    }
 }
