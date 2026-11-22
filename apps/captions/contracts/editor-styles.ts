@@ -18,6 +18,19 @@ import type { EditStepChoice } from "./editor-steps";
  *   POST   /api/editor/styles/asked    New edit's "How do you like to work?" was answered: it is not shown again → { ok: true }
  * POST /api/editor and PATCH /api/editor/:id take `style`: a style's id, or null for none.
  * A POST /api/editor/styles with `first: true` (that screen's button) also makes the style the one New edit opens on.
+ * A style made in a workspace is listed in that workspace only (`projectId`); one from before has none and is listed in all.
+ *   PUT    /api/editor/styles/default     { id } or { id: null } → { ok: true }: the style New edit opens on in this workspace
+ *
+ * Proposals: the AI reads a reference and proposes a style (StyleProposal). A proposal is never a style and nothing
+ * uses it until the person presses Keep on its sheet; the assistant cannot keep one.
+ *   POST   /api/editor/styles/propose     { clip } (a library video's version id; 202 with `waiting` while a computer makes
+ *                                         its stills: ask again), multipart `file` once or more (stills), { finished: true }
+ *                                         (the person's own finished edits), or { chat: n } (the newest n pictures sent in the
+ *                                         assistant's chat, its own call) → StyleProposal
+ *   GET    /api/editor/styles/proposals/:id/stills/:n   one of the stills it read (JPEG)
+ *   POST   /api/editor/styles/proposals/:id/keep        EditingStyleInput and `animationBrief` (a string makes an animation
+ *                                                       style of the stills with it; null or absent: none) → EditingStyle
+ *   DELETE /api/editor/styles/proposals/:id             → { ok: true }
  */
 
 /** How many editing styles one account keeps. */
@@ -80,6 +93,8 @@ export interface EditingStyle {
   passes?: boolean;
   /** what this kind of edit is, researched by the AI before the first edit in the style; marked as researched, the person's to edit or delete */
   playbook?: StylePlaybook | null;
+  /** the workspace it was made in: listed there only. Absent (a style from before workspaces kept styles apart): listed in every one */
+  projectId?: string;
   /** what finished edits in the style taught, newest first, at most LEARNED_MAX */
   learned?: StyleLearned[];
   /** edits whose learned entry the person removed: approving one of them again teaches the style nothing */
@@ -97,6 +112,32 @@ export interface EditingStylesView {
   last: string | null;
   /** New edit's "How do you like to work?" was answered (or put off with Not now) */
   asked?: true;
+  /** the style New edit opens on in this workspace, set by the person (else `last`) */
+  default?: string | null;
+  /** what the AI proposed and the person has neither kept nor dismissed, newest first */
+  proposals?: StyleProposal[];
+}
+
+/** Proposals one account keeps; the oldest goes when one more arrives. */
+export const MAX_PROPOSALS = 6;
+/** Stills a proposal reads of a reference video, and the most it reads of pictures sent. */
+export const PROPOSAL_STILLS = 6;
+/** What the AI read for a proposal: a reference video, stills, or the person's own finished edits. */
+export type ProposalSource = "video" | "pictures" | "finished";
+export interface StyleProposal {
+  id: string;
+  from: ProposalSource;
+  /** what was read, for the card: the video's title, "3 pictures", "5 finished edits" */
+  fromLabel: string;
+  /** what the AI saw, a few plain sentences */
+  seen: string;
+  /** the settings it would use; the notes are its words until the person keeps them */
+  style: Pick<EditingStyle, "name" | "notes" | "pace" | "punch" | "versions" | "targetS">;
+  /** the look of the cards it read in the stills: a brief, and how many stills it keeps (GET …/stills/:n). Absent: no pictures read */
+  animation?: { brief: string; stills: number };
+  /** the workspace it was made in; listed there only */
+  projectId?: string;
+  at: number;
 }
 
 /** The copy an edit keeps of the style it was made with: what later steps read (the notes: the script; the pace: the cut). */

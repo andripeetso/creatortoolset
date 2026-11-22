@@ -21,6 +21,7 @@ import {
   cutLine,
   type StyleLearned,
   type StylePlaybook,
+  type StyleProposal,
   WORKING_SIZES,
 } from "../../contracts/editor-styles";
 import { env } from "../lib/env";
@@ -53,6 +54,10 @@ export interface Saved {
   animation?: AnimationStyle[];
   /** the person's carousel styles, for the Designer: the same kind of collection (animation-styles.ts) */
   carousel?: AnimationStyle[];
+  /** the style New edit opens on, per workspace id ("" = none) */
+  defaults?: Record<string, string>;
+  /** what the AI proposed, not kept or dismissed yet, newest first (style-proposals.ts) */
+  proposals?: StyleProposal[];
   [other: string]: unknown;
 }
 
@@ -79,10 +84,37 @@ export function change<T>(username: string, fn: (f: Saved) => T): T {
   return out;
 }
 
-export function stylesView(username: string): EditingStylesView {
+/** A style or proposal made in workspace `ws` is listed there only; one with none, and every one when `ws` is undefined, everywhere. */
+export const listedIn = (ws: string | undefined) => (s: { projectId?: string }): boolean => ws === undefined || !s.projectId || s.projectId === ws;
+
+/**
+ * The styles listed in workspace `ws` (undefined: all) of `username` (the workspace's, routes.ts settingsOf), and the
+ * default and proposals of `me`, the caller, who sets and keeps them in their own file (the style routes write there).
+ */
+export function stylesView(username: string, ws?: string, me = username): EditingStylesView {
   const f = read(username);
-  return { styles: f.editing, last: f.editing.some((s) => s.id === f.last) ? f.last! : null, ...(f.asked ? { asked: true as const } : {}) };
+  const mine = me === username ? f : read(me);
+  const styles = f.editing.filter(listedIn(ws));
+  const has = (id: string | undefined) => !!id && styles.some((s) => s.id === id);
+  const def = mine.defaults?.[ws ?? ""];
+  const proposals = (mine.proposals ?? []).filter(listedIn(ws));
+  return {
+    styles,
+    last: has(f.last) ? f.last! : null,
+    ...(f.asked ? { asked: true as const } : {}),
+    ...(has(def) ? { default: def } : {}),
+    ...(proposals.length ? { proposals } : {}),
+  };
 }
+
+/** The style New edit opens on in workspace `ws` ("" = none), or none set (null). The route checks the style is listed there. */
+export const setDefault = (username: string, ws: string, id: string | null): void =>
+  change(username, (f) => {
+    const d = { ...f.defaults };
+    if (id) d[ws] = id;
+    else delete d[ws];
+    f.defaults = d;
+  });
 
 /** "How do you like to work?" is not shown again (its Not now). */
 export const markAsked = (username: string): void =>
@@ -239,7 +271,7 @@ export function cleanPlaybook(v: unknown): StylePlaybook | null | string {
  * with), never its brief, script or footage. `first`: New edit's "How do you like to work?" made it, so it is the one
  * New edit opens on and that screen is not shown again. A string is why it was refused.
  */
-export function createStyle(username: string, body: Record<string, unknown>, from?: EditMeta, first = false): EditingStyle | string {
+export function createStyle(username: string, body: Record<string, unknown>, from?: EditMeta, first = false, projectId?: string): EditingStyle | string {
   const given = clean(username, body);
   if (typeof given === "string") return given;
   if (!given.name) return "Give the style a name";
@@ -247,7 +279,7 @@ export function createStyle(username: string, body: Record<string, unknown>, fro
     ? { notes: from.style?.notes ?? "", versions: from.versions, targetS: from.targetS, pace: from.style?.pace ?? "tight", punch: punchOf(from.framing.punch), grade: from.bundle.grade, brollCollectionId: from.brollCollectionId, steps: from.steps ?? null, size: from.size ?? null, ...(from.style?.animation ? { animation: from.style.animation } : {}), ...(from.style?.skill ? { skill: from.style.skill } : {}), ...(from.style?.passes ? { passes: true } : {}) }
     : PLAIN;
   const now = Date.now();
-  const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), createdAt: now, updatedAt: now };
+  const style: EditingStyle = { ...base, ...given, name: given.name, id: randomUUID(), ...(projectId ? { projectId } : {}), createdAt: now, updatedAt: now };
   return change(username, (f) => {
     if (f.editing.length >= MAX_EDITING_STYLES) return `An account keeps at most ${MAX_EDITING_STYLES} editing styles: delete one first`;
     f.editing.push(style);
@@ -276,6 +308,7 @@ export const deleteStyle = (username: string, id: string): boolean =>
     const n = f.editing.length;
     f.editing = f.editing.filter((s) => s.id !== id);
     if (f.last === id) delete f.last;
+    if (f.defaults) f.defaults = Object.fromEntries(Object.entries(f.defaults).filter(([, v]) => v !== id));
     return f.editing.length < n;
   });
 

@@ -1,7 +1,8 @@
 import { Hono, type Context } from "hono";
 import { EDIT_FEEDBACK_TEXT_MAX, EDIT_SLOTS, EDIT_STEPS, TRACKS, type EditSlot, type EditStep, type EditSummary, type Timeline, type VersionMark, type VersionPlan } from "../../contracts/editor";
 import { deviceOf } from "../lib/devices";
-import { innerCall, type AuthVars } from "../auth";
+import { innerCall, jobTurn, type AuthVars } from "../auth";
+import { picturesInChat } from "../assistant";
 import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { onUploadDone } from "../library/routes";
@@ -23,6 +24,7 @@ import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { PROPOSAL_STILLS } from "../../contracts/editor-styles";
 import path from "node:path";
 import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
@@ -42,7 +44,8 @@ import { cardsApp } from "./cards/routes";
 import { clearCards, MAX_SHEET_NOTES, readCards, saveCards, sheetFile } from "./cards/state";
 import { heldPasses, markRead, readKeys, sheetOf, todoFor, waitsGo, workerOf } from "./todo";
 import { approvePass, markPasses, nextPass, PASS_WORD, type Pass } from "./passes";
-import { createStyle, deleteStyle, findStyle, markAsked, removeLearned, stylesView, updateStyle } from "./styles";
+import { createStyle, deleteStyle, findStyle, markAsked, removeLearned, setDefault, stylesView, updateStyle } from "./styles";
+import { dismiss, finishedText, keep, propose, stillFile, videoStills } from "./style-proposals";
 import { stopEdit } from "./worker";
 import { onEvent } from "../lib/events";
 import { readComments, readMeta } from "../review";
@@ -262,7 +265,7 @@ editorApp.put("/defaults/:slot", async (c) => {
 });
 
 // the person's editing styles (contracts/editor-styles.ts), the workspace's in one given to them; registered before /:id, as the defaults are
-editorApp.get("/styles", async (c) => c.json(stylesView(await settingsOf(c))));
+editorApp.get("/styles", async (c) => c.json(stylesView(await settingsOf(c), await currentWorkspaceId(c.get("user")), c.get("user").username)));
 
 const NOT_TYPED = "Not saved: the notes are not the user's own words in this chat. Send a whole phrase they typed themselves, or a passage of a long text they pasted with this message, word for word, or leave notes out: they write them on the style's sheet (Editor, Editing styles).";
 
@@ -291,7 +294,7 @@ editorApp.post("/styles", async (c) => {
   playbookBy(c, b, null);
   const from = b.fromEdit === undefined ? undefined : readEdit(String(b.fromEdit));
   if (b.fromEdit !== undefined && !(await editRole(user, from ?? null))) return notFound(c);
-  const made = createStyle(user, b, from ?? undefined, b.first === true);
+  const made = createStyle(user, b, from ?? undefined, b.first === true, await currentWorkspaceId(c.get("user")));
   return typeof made === "string" ? c.json({ error: made, code: "invalid" }, 400) : c.json(made);
 });
 
@@ -300,6 +303,74 @@ editorApp.post("/styles/asked", (c) => {
   markAsked(c.get("user").username);
   return c.json({ ok: true });
 });
+
+/** The style New edit opens on in this workspace (one listed here), or `id: null` for none set: the last one used then. */
+editorApp.put("/styles/default", async (c) => {
+  const b = await body(c);
+  const ws = await currentWorkspaceId(c.get("user"));
+  if (b.id !== null && !(typeof b.id === "string" && stylesView(await settingsOf(c), ws).styles.some((s) => s.id === b.id))) return notFound(c);
+  setDefault(c.get("user").username, ws ?? "", b.id);
+  return c.json({ ok: true });
+});
+
+/**
+ * The AI reads a reference and proposes a style (style-proposals.ts): `clip`, a library video's version id (its stills;
+ * 202 with `waiting` while a computer makes them), stills sent as `file`, `finished: true` (the caller's finished
+ * edits), or `chat: n`, the newest n pictures sent in the assistant's chat a reply is written in (found by that reply's
+ * token, never by a path). Only a proposal: nothing uses it until the person keeps it.
+ */
+editorApp.post("/styles/propose", async (c) => {
+  const user = c.get("user").username;
+  const ws = await currentWorkspaceId(c.get("user"));
+  const multipart = (c.req.header("content-type") ?? "").startsWith("multipart/");
+  let made: Awaited<ReturnType<typeof propose>>;
+  if (multipart) {
+    const form = await c.req.parseBody({ all: true }).catch(() => ({}) as Record<string, unknown>);
+    const files = [form.file].flat().filter((f): f is File => f instanceof File);
+    if (!files.length) return c.json({ error: "Send the pictures as file", code: "invalid" }, 400);
+    if (files.some((f) => f.size > 20 * 1024 * 1024)) return c.json({ error: "A picture is at most 20 MB", code: "invalid" }, 400);
+    const stills = await Promise.all(files.slice(0, PROPOSAL_STILLS).map(async (f) => Buffer.from(await f.arrayBuffer())));
+    made = await propose(user, { from: "pictures", label: `${stills.length} ${stills.length === 1 ? "picture" : "pictures"}`, stills }, ws);
+  } else {
+    const b = await body(c);
+    if (typeof b.clip === "string" && b.clip) {
+      const v = await videoStills(user, b.clip);
+      if ("waiting" in v) return c.json({ waiting: v.waiting }, 202);
+      if ("error" in v) return c.json({ error: v.error, code: v.status === 404 ? "not_found" : v.status === 409 ? "conflict" : "invalid" }, v.status);
+      made = await propose(user, { from: "video", label: v.title || "A video", stills: v.frames }, ws);
+    } else if (b.finished === true) {
+      const t = finishedText(user);
+      if (typeof t === "string") return c.json({ error: t, code: "conflict" }, 409);
+      made = await propose(user, { from: "finished", label: `${t.count} finished ${t.count === 1 ? "edit" : "edits"}`, stills: [], text: t.text }, ws);
+    } else if (b.chat !== undefined) {
+      const auth = c.req.header("authorization");
+      const sent = /^Bearer ctj_/.test(auth ?? "") ? picturesInChat(user, jobTurn(auth) ?? "") : null;
+      if (!sent) return c.json({ error: "Pictures come from the app's own chat. Outside it the user adds them on the Editing styles tab (Propose a style).", code: "invalid" }, 400);
+      const n = Number(b.chat);
+      if (!Number.isInteger(n) || n < 1) return c.json({ error: "Give chat: how many of the newest pictures the user sent in this chat to read", code: "invalid" }, 400);
+      const pics = (await Promise.all(sent.slice(-Math.min(n, PROPOSAL_STILLS)).map((p) => readFile(p.file).catch(() => null)))).filter((x) => x !== null);
+      if (!pics.length) return c.json({ error: "The user sent no picture in this chat that could be read", code: "invalid" }, 400);
+      made = await propose(user, { from: "pictures", label: `${pics.length} ${pics.length === 1 ? "picture" : "pictures"} from the chat`, stills: pics }, ws);
+    } else return c.json({ error: "Give clip (a library video's version id), pictures as file, finished: true, or chat: n", code: "invalid" }, 400);
+  }
+  return typeof made === "string" ? c.json({ error: made, code: "failed" }, 422) : c.json(made);
+});
+
+editorApp.get("/styles/proposals/:id/stills/:n", async (c) => {
+  const file = stillFile(c.get("user").username, c.req.param("id"), Number(c.req.param("n")));
+  const bytes = file && (await readFile(file).catch(() => null));
+  return bytes ? new Response(bytes, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=31536000, immutable" } }) : notFound(c);
+});
+
+/** Keep: the person's own press on the proposal's sheet, never an AI's tool, so what the AI proposed is never applied by itself. */
+editorApp.post("/styles/proposals/:id/keep", async (c) => {
+  if (viaTool(c)) return c.json({ error: "Only the user keeps a proposal, on its sheet (Editor, Editing styles).", code: "forbidden" }, 403);
+  const kept = await keep(c.get("user").username, c.req.param("id"), await body(c), await currentWorkspaceId(c.get("user")));
+  if (!kept) return notFound(c);
+  return typeof kept === "string" ? c.json({ error: kept, code: "invalid" }, 400) : c.json(kept);
+});
+
+editorApp.delete("/styles/proposals/:id", async (c) => ((await dismiss(c.get("user").username, c.req.param("id"))) ? c.json({ ok: true }) : notFound(c)));
 
 /** Changes the fields sent. `addNotes` adds a line under the notes the style has (one it already holds is not added twice). */
 editorApp.put("/styles/:id", async (c) => {
