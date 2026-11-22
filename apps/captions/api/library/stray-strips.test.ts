@@ -58,11 +58,11 @@ describe("old strips that aren't the clip's shape", () => {
     const wide = await index("Cartwheel wide.mov", 1920, 1080);
     expect((await list()).versions).toEqual([{ versionId: tall, path: "/Volumes/Tiny/Source media/Cartwheel tall.mov" }]);
     // until then the old strip is the one served, at its old address
-    expect(await spriteUrl(tall)).toBe(`/api/library/media/${tall}/sprite`);
+    expect(await spriteUrl(tall)).toMatch(new RegExp(`^/api/library/media/${tall}/sprite\\?v=\\d+$`));
     expect(stripOf(libraryDb(), tall)).toEqual({ w: 160, h: 90, frames: 20 });
     expect((await put(tall, jpegOf(144 * 20, 256))).status).toBe(200);
     expect(stripOf(libraryDb(), tall)).toEqual({ w: 144, h: 256, frames: 20 });
-    expect(await spriteUrl(tall)).toBe(`/api/library/media/${tall}/sprite?s=144x256`);
+    expect(await spriteUrl(tall)).toMatch(new RegExp(`^/api/library/media/${tall}/sprite\\?s=144x256&v=\\d+$`));
     expect((await list()).versions).toEqual([]);
     // the wide one was its own shape: noted as it is, never made again
     expect(stripOf(libraryDb(), wide)).toEqual({ w: 160, h: 90, frames: 20 });
