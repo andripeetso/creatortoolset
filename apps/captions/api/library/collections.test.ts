@@ -123,6 +123,9 @@ describe("folders and collections", () => {
     expect(await data(call("owner-a", "DELETE", `/api/library/lib_a/collections/${a.id}/items`, { assetIds: ["r1"] }))).toEqual({ removed: 1 });
     expect(roll()).toEqual({ roll: "b", filed_roll: null });
     expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ a: 0, b: 1 });
+    // finished work is not in the Videos tab's list, so not in its count
+    d.prepare("UPDATE assets SET filed_roll = 'none' WHERE id = 'r1'").run();
+    expect(await data(call("owner-a", "GET", "/api/library/lib_a/counts"))).toMatchObject({ video: 3 });
     expect((await call("stranger", "GET", "/api/library/lib_a/counts")).status).toBe(404);
   });
 

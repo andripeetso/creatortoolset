@@ -105,6 +105,7 @@ export async function copyIn(file: File, folder: string, signal: AbortSignal, on
   const cancel = () => void importCancel(id).catch(() => {});
   signal.addEventListener("abort", cancel, { once: true });
   try {
+    signal.throwIfAborted(); // a Cancel during the awaits above never reaches the listener
     const r = await importCopy(id, [{ from, to: `${folder}/${file.name}` }]);
     signal.throwIfAborted();
     const refused = r.failed[0]?.error;
@@ -117,6 +118,28 @@ export async function copyIn(file: File, folder: string, signal: AbortSignal, on
     clearInterval(tick);
     signal.removeEventListener("abort", cancel);
   }
+}
+
+const isVideo = (f: File) => f.type.startsWith("video/") || VIDEO.test(f.name);
+
+/**
+ * Several finals (versions A, B, C) one after another: one that fails doesn't stop the rest, a file that isn't a video
+ * is left out, and Cancel stops the ones not started. The lines for what didn't go in; null once cancelled.
+ */
+export async function sendEach(files: File[], one: (f: File, i: number, n: number) => Promise<void>, signal: AbortSignal): Promise<string[] | null> {
+  const line = (f: File, why: string) => (files.length > 1 ? `${f.name}: ${why}` : why);
+  const videos = files.filter(isVideo);
+  const failed = files.filter((f) => !isVideo(f)).map((f) => line(f, "Not a video"));
+  for (const [i, f] of videos.entries()) {
+    if (signal.aborted) return null;
+    try {
+      await one(f, i, videos.length);
+    } catch (e) {
+      if (signal.aborted) return null;
+      failed.push(line(f, e instanceof Error ? e.message : String(e)));
+    }
+  }
+  return signal.aborted ? null : failed;
 }
 
 function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
@@ -150,22 +173,13 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
     await putFinal(ask.id, id);
   };
 
-  // several finals (versions A, B, C) go one after another; one that fails doesn't stop the rest
   const send = async (files: File[]) => {
     if (!files.length || stage !== "pick") return;
     const ctl = new AbortController();
     stop.current = ctl;
     setError("");
-    const failed: string[] = [];
-    for (const [i, f] of files.entries()) {
-      setAt({ i, n: files.length });
-      try {
-        await one(f, ctl.signal);
-      } catch (e) {
-        if (ctl.signal.aborted) return;
-        failed.push(`${files.length > 1 ? `${f.name}: ` : ""}${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+    const failed = await sendEach(files, (f, i, n) => (setAt({ i, n }), one(f, ctl.signal)), ctl.signal);
+    if (!failed) return;
     setError(failed.join("\n"));
     setStage(failed.length ? "pick" : "done");
   };
@@ -212,7 +226,7 @@ function AddFinalDialog({ ask, onClose }: { ask: Ask; onClose: () => void }) {
           </button>
         ) : (
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2.5 text-sm">
-            <div className="truncate">{file?.name}</div>
+            <div className="truncate">{stage === "done" && at.n > 1 ? null : file?.name}</div>
             <div className="mt-1 text-xs text-zinc-500">
               {at.n > 1 && stage !== "done" && `${at.i + 1} of ${at.n} · `}
               {stage === "copy" ? `Copying ${pct}%` : stage === "upload" ? `Uploading ${pct}%` : stage === "finals" ? "Adding to Finals" : at.n > 1 ? `${at.n} in Finals` : "In Finals"}

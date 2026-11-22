@@ -57,6 +57,8 @@ const server = vi.hoisted(() => ({
   uploading: undefined as Promise<void> | undefined,
   /** redo asks: the kind, the clips ("all" = the library) and whether it was only a count */
   redone: [] as { kinds: string[]; ids: string[] | "all"; count: boolean }[],
+  /** clips per page of the listing (0: all on one page); the cursor is the index the next page starts at */
+  pageSize: 0,
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
@@ -87,10 +89,24 @@ vi.mock("@/lib/library", async (importOriginal) => ({
     return { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, setupAt: "2026-11-01T00:00:00.000Z", ...server.settings } };
   },
   // the stand-in narrows by roll the way the server does (api/library/query.ts): the page asks, it does not filter
-  listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b"; unfiled?: boolean }) => {
+  listAssets: async (_: string, q: { trashed?: boolean; roll?: "a" | "b"; unfiled?: boolean; cursor?: string }) => {
     server.asked.push(q);
-    const items = (q.trashed ? server.trash : server.items) as Card[];
-    return { items: items.filter((x) => (!q.roll || x.roll === q.roll) && !(q.unfiled && server.filed.has(x.id))), next: null };
+    const items = ((q.trashed ? server.trash : server.items) as Card[]).filter((x) => (!q.roll || x.roll === q.roll) && !(q.unfiled && server.filed.has(x.id)));
+    if (!server.pageSize) return { items, next: null };
+    const at = Number(q.cursor ?? 0);
+    const end = at + server.pageSize;
+    return { items: items.slice(at, end), next: end < items.length ? String(end) : undefined };
+  },
+  // Select all reads the rest of the view through the stand-in above, page by page
+  listAllAssets: async (lib: string, q: { cursor?: string }) => {
+    const { listAssets } = await import("@/lib/library");
+    const all: Card[] = [];
+    for (let cursor = q.cursor; cursor; ) {
+      const page = (await listAssets(lib, { ...q, cursor })) as { items: Card[]; next?: string };
+      all.push(...page.items);
+      cursor = page.next;
+    }
+    return all;
   },
   searchLibrary: async (_: string, q: string) => {
     server.searched.push(q);
@@ -138,7 +154,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
 vi.mock("./library/api", () => ({
   tabCounts: async () => {
     const items = server.items as Card[];
-    return { a: items.filter((x) => x.roll === "a").length, b: items.filter((x) => x.roll === "b").length, image: items.filter((x) => x.kind === "image").length };
+    return { a: items.filter((x) => x.roll === "a").length, b: items.filter((x) => x.roll === "b").length, image: items.filter((x) => x.kind === "image").length, video: items.filter((x) => x.kind === "video").length };
   },
   restoreFolder: async (_: string, id: string) => {
     server.changed.push(["restore", id]);
@@ -170,6 +186,7 @@ beforeEach(() => {
   server.gate = undefined;
   server.uploading = undefined;
   server.redone = [];
+  server.pageSize = 0;
   server.scans = 0;
   server.retried = [];
   localStorage.clear();
@@ -611,6 +628,17 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     expect(bar()?.textContent).toContain("3 selected");
   });
 
+  it("⌘A also picks the clips on pages not loaded yet, each once", async () => {
+    server.items = ["one", "two", "three", "four", "five"].map((id) => clip(id));
+    server.pageSize = 2;
+    const host = await mount();
+    expect(cards(host)).toHaveLength(2);
+    await key("a", { metaKey: true });
+    await settle();
+    expect(bar()?.textContent).toContain("5 selected");
+    expect(cards(host).map((c) => !!c.dataset.picked)).toEqual([true, true, true, true, true]);
+  });
+
   it("Escape clears the picks first, then the search", async () => {
     const host = await mount();
     const search = host.querySelector<HTMLInputElement>('[role="searchbox"]')!;
@@ -767,12 +795,14 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(host.querySelector('aside [aria-label="Kinds"]')).not.toBeNull();
   });
 
-  it("the tabs are All, A-roll, B-roll, Photos, then the top folders, with counts", async () => {
+  it("the tabs are All, A-roll, B-roll, Videos, Photos, then the top folders, with counts", async () => {
     localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.folders = folders;
     server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
     const host = await mount();
-    expect([...host.querySelectorAll('nav[aria-label="Library tabs"] button')].map((b) => b.textContent)).toEqual(["All", "A-roll1", "B-roll0", "Photos1", "Music0"]);
+    expect([...host.querySelectorAll('nav[aria-label="Library tabs"] button')].map((b) => b.textContent)).toEqual(["All", "A-roll1", "B-roll0", "Videos1", "Photos1", "Music0"]);
+    await act(async () => tab(host, "videos")!.click());
+    expect(server.asked.at(-1)).toMatchObject({ kind: ["video"] });
     await act(async () => tab(host, "photos")!.click());
     expect(server.asked.at(-1)).toMatchObject({ kind: ["image"] });
     await act(async () => tab(host, "a")!.click());

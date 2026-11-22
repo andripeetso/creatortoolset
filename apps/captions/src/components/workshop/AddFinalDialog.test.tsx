@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({ pathOnMac: vi.fn(), importCopy: vi.fn(), rows: vi.fn(async () => [] as string[]) }));
 vi.mock("@/pages/library/Import", () => ({ sourceRowsHere: m.rows }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), pathOnMac: m.pathOnMac, importCopy: m.importCopy, importProgress: vi.fn(async () => ({ bytes: 0, of: 0 })), importCancel: vi.fn(async () => ({})) }));
-const { copyIn } = await import("./AddFinalDialog");
+const { copyIn, sendEach } = await import("./AddFinalDialog");
 
 describe("a final dropped from this Mac (copyIn)", () => {
   const file = new File(["x"], "final.mp4");
@@ -34,5 +34,36 @@ describe("a final dropped from this Mac (copyIn)", () => {
     m.pathOnMac.mockResolvedValue("/Users/tiny/Downloads/final.mp4");
     m.importCopy.mockResolvedValue({ copied: [], failed: [{ from: "/Users/tiny/Downloads/final.mp4", error: "Not a folder this app copies into." }] });
     expect(await copyIn(file, "/Volumes/Tiny/Projects/Reel", new AbortController().signal, () => {})).toBeNull();
+  });
+});
+
+describe("several finals dropped at once (sendEach)", () => {
+  const video = (name: string) => new File(["x"], name, { type: "video/mp4" });
+
+  it("one that fails doesn't stop the rest; a file that isn't a video is left out", async () => {
+    const sent: string[] = [];
+    const one = vi.fn(async (f: File) => {
+      if (f.name === "B.mp4") throw new Error("Could not upload");
+      sent.push(f.name);
+    });
+    const failed = await sendEach([video("A.mp4"), video("B.mp4"), new File(["x"], "thumb.jpg", { type: "image/jpeg" }), video("C.mov")], one, new AbortController().signal);
+    expect(sent).toEqual(["A.mp4", "C.mov"]);
+    expect(failed).toEqual(["thumb.jpg: Not a video", "B.mp4: Could not upload"]);
+  });
+
+  it("Cancel while one is being added: the rest never start", async () => {
+    const ctl = new AbortController();
+    const one = vi.fn(async () => ctl.abort());
+    expect(await sendEach([video("A.mp4"), video("B.mp4")], one, ctl.signal)).toBeNull();
+    expect(one).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Cancel before the copy starts copies nothing", async () => {
+    m.pathOnMac.mockResolvedValue("/Users/tiny/Movies/final.mp4");
+    m.importCopy.mockClear();
+    const ctl = new AbortController();
+    ctl.abort();
+    await expect(copyIn(new File(["x"], "final.mp4"), "/Volumes/Tiny/Projects/Reel", ctl.signal, () => {})).rejects.toThrow();
+    expect(m.importCopy).not.toHaveBeenCalled();
   });
 });
