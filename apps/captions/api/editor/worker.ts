@@ -20,7 +20,7 @@ import type { Device } from "../../contracts/providers";
 import { passesDone } from "./passes";
 import { editLeaves, markStart } from "./preview";
 import { draining } from "../server-update";
-import { editRole, ownerOf, purgeEdits, queueVersion, readDraft, readEdit, saveStep, sourcesWorkspace, unreadNote, type EditMeta, seesEdit } from "./store";
+import { editRole, ownerOf, purgeEdits, queueVersion, readDraft, readEdit, saveStep, sourcesWorkspace, spending, unreadNote, type EditMeta, seesEdit } from "./store";
 
 export type { StepContext } from "./engine";
 
@@ -158,7 +158,7 @@ async function runStep(db: DatabaseSync, job: JobRow, now: number): Promise<bool
   try {
     // a step runs in no request: its AI calls count under the edit's workspace (Settings → Usage)
     const workspace = (await projectOf({ username: ownerOf(edit) } as SessionUser).catch(() => null))?.(edit.projectId);
-    await usageIn(workspace, () => step({ edit, job, variant, signal: ctl.signal }));
+    await usageIn(workspace, () => spending(job, () => step({ edit, job, variant, signal: ctl.signal })));
     if (ctl.signal.aborted) return true; // stopped: stopEdit already marked it
     if (job.kind === "script") await markRead(edit);
     finishJob(db, job.id, true, undefined, Date.now(), T);

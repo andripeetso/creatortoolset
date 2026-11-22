@@ -40,6 +40,10 @@ export const nlePending = (client: string) => send<{ requests: NleAsk[] }>(`/api
 export const nleReply = (r: { id: string; result?: unknown; error?: string }) => send<unknown>("/api/editor/nle/reply", "POST", r);
 export const runEdit = (id: string, from?: EditStep) => send<Edit>(`${base(id)}/run`, "POST", from ? { from } : {});
 export const retryJob = (id: string, jobId: number) => send<Edit>(`${base(id)}/jobs/${jobId}/retry`, "POST");
+/** The go on what waits for it (a held pass, a cards look sheet); `note` on a look sheet makes the cards again with it. */
+export const goJob = (id: string, jobId: number, note?: string) => send<Edit>(`${base(id)}/jobs/${jobId}/go`, "POST", note ? { note } : {});
+/** A waiting look sheet's picture: `at` (EditJob.sheet) changes with each new sheet. */
+export const sheetUrl = (id: string, jobId: number, at: number) => `${base(id)}/jobs/${jobId}/sheet.jpg?c=${at}`;
 /** Edit in passes: Carry on queues each version's next pass. */
 export const carryOn = (id: string) => send<Edit>(`${base(id)}/pass`, "POST");
 export const stopEdit = (id: string) => send<Edit>(`${base(id)}/stop`, "POST");

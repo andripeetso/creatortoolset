@@ -22,6 +22,7 @@ import { lineTakes } from "./takes";
 import type { ProbeSummary } from "../library/media/probe";
 import { homeOf } from "../library/access";
 import { statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describeEdits } from "../../contracts/edit-summary";
 import { cleanEdits } from "../../contracts/edit-timeline";
@@ -37,7 +38,9 @@ import { animationApp } from "./animation-styles";
 import { voiceApp } from "./voice";
 import { editorChatApp } from "./chat";
 import { cardsApp } from "./cards/routes";
-import { approvePass, markPasses, nextPass } from "./passes";
+import { clearCards, MAX_SHEET_NOTES, readCards, saveCards, sheetFile } from "./cards/state";
+import { heldPasses, markRead, readKeys, sheetOf, todoFor, waitsGo, workerOf } from "./todo";
+import { approvePass, markPasses, nextPass, PASS_WORD, type Pass } from "./passes";
 import { createStyle, deleteStyle, findStyle, markAsked, removeLearned, stylesView, updateStyle } from "./styles";
 import { stopEdit } from "./worker";
 import { onEvent } from "../lib/events";
@@ -157,19 +160,25 @@ editorApp.get("/", async (c) => {
 
 /** Every edit `user` sees, newest first, with the project it is in, how many versions it has and its newest one's Review still. */
 async function listFor(user: SessionUser): Promise<EditSummary[]> {
+  return (await seenBy(user)).map(({ e, projectId }) => {
+    const names = draftNames(e.id).filter((n) => !e.marks?.[n]?.trashedAt);
+    const still = newestStill(e.id, names);
+    return { ...summaryOf(e), ...(projectId ? { projectId } : {}), versionCount: names.length, ...(still ? { still } : {}), ...(waitsGo(e) ? { waits: "go" as const } : {}) };
+  }).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Every edit `user` sees, not in the trash, with the project it is in (as its workspace's owner files it). */
+async function seenBy(user: SessionUser): Promise<{ e: EditMeta; projectId?: string }[]> {
   const ofs = new Map<string, ((own?: string) => string) | null>();
-  const out: EditSummary[] = [];
+  const out: { e: EditMeta; projectId?: string }[] = [];
   // ponytail: editRole reads the given workspaces once per edit; read them once per list if a team's list gets slow
   for (const e of allEdits()) {
     if (e.trashedAt || !(await editRole(user.username, e))) continue;
     const owner = ownerOf(e);
     if (!ofs.has(owner)) ofs.set(owner, await projectOf({ username: owner } as SessionUser));
-    const projectId = ofs.get(owner)?.(e.projectId);
-    const names = draftNames(e.id).filter((n) => !e.marks?.[n]?.trashedAt);
-    const still = newestStill(e.id, names);
-    out.push({ ...summaryOf(e), ...(projectId ? { projectId } : {}), versionCount: names.length, ...(still ? { still } : {}) });
+    out.push({ e, projectId: ofs.get(owner)?.(e.projectId) });
   }
-  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out;
 }
 
 /** The Review version filed last among `names`: its asset and number (the filed cut's file time says which is newest). */
@@ -212,6 +221,26 @@ editorApp.get("/footage-target", async (c) => {
   const t = await footageTargetFor(c.get("user").username);
   return t ? c.json(t) : notFound(c);
 });
+
+// the to-do (todo.ts) and whether a computer of the person's is on; registered before /:id
+/** What waits on the person across the edits they see (?projectId= only that project's, as the list). */
+editorApp.get("/todo", async (c) => {
+  const user = c.get("user");
+  const want = await listWorkspaceId(user, c.req.query("projectId"));
+  const only = want && (await inProjectOf(user, want)) ? want : undefined;
+  const edits = (await seenBy(user)).filter((x) => !only || x.projectId === only).map((x) => x.e);
+  return c.json(await todoFor(user.username, edits, await readKeys(user.username)));
+});
+
+/** ✓ on a to-do row, or Mark all read: `keys`, the rows' own. */
+editorApp.post("/todo/read", async (c) => {
+  const keys = (await body(c)).keys;
+  if (!Array.isArray(keys)) return c.json({ error: "keys: the to-do rows' keys", code: "invalid" }, 400);
+  await markRead(c.get("user").username, keys.filter((k): k is string => typeof k === "string" && k.length < 200).slice(0, 500));
+  return c.json({ ok: true });
+});
+
+editorApp.get("/worker", (c) => c.json(workerOf(c.get("user").username)));
 
 // the defaults are registered before /:id, so "defaults" is never read as an edit id
 // the defaults of the workspace the request works in (the window's, or the one picked in Settings: X-CT-Workspace);
@@ -462,6 +491,78 @@ editorApp.post("/:id/jobs/:jobId/retry", async (c) => {
   return c.json(viewFor(r));
 });
 
+/** Steps the person starts by hand (POST /:id/jobs): the whole edit's, or one version's. The others follow the step before them (engine.ts). */
+const WHOLE_STEPS = ["analyze", "script"];
+const VERSION_STEPS = ["draft", "broll", "cards", "post", "sound", "preview"];
+
+/** One step queued ({kind, variant} or the phone's {kind, draft}): 201 with the job, 409 while any step of the edit is queued or running. */
+editorApp.post("/:id/jobs", async (c) => {
+  const r = await load(c, true);
+  if (!r) return notFound(c);
+  const b = await body(c);
+  const kind = typeof b.kind === "string" ? b.kind : "";
+  const whole = WHOLE_STEPS.includes(kind);
+  if (!whole && !VERSION_STEPS.includes(kind)) return c.json({ error: "Unknown step", code: "invalid" }, 400);
+  const variant = whole ? "" : typeof b.variant === "string" ? b.variant : typeof b.draft === "string" ? b.draft : "";
+  // a version's cut is made from its plan; every other step works on a cut it has
+  const known = kind === "draft" ? !!readStep(r.e.id, "plan")?.plans.some((p) => p.name === variant) : draftNames(r.e.id).includes(variant);
+  if (!whole && !known) return c.json({ error: "Unknown version", code: "invalid" }, 400);
+  const db = libraryDb();
+  const vid = `${r.e.id}:${variant}`;
+  // one step of an edit at a time, as Carry on and feedback wait: a preview of a cut still being drafted would be half of it
+  if (db.prepare("SELECT 1 FROM edit_jobs WHERE edit_id = ? AND state IN ('queued', 'running')").get(r.e.id)) return c.json({ error: "This edit is still being made", code: "conflict" }, 409);
+  // an edit in passes: a pass started here is recorded as the go would record it, so it is not offered again
+  if (nextPass(r.e, variant) === kind) await markPasses(r.e.id, { [variant]: kind as Pass });
+  enqueueJob(db, r.e.workspaceId, vid, kind, r.user, true, "edit_jobs");
+  return c.json(jobsOf(r.e.id).find((j) => j.kind === kind && j.variant === variant), 201);
+});
+
+/**
+ * The person's go on what waits for it (todo.ts): a look sheet's cards are laid on the cut, or with `note` made again
+ * answering it (a new sheet); a held pass of an edit in passes is queued, as Approve in Review queues it (passes.ts).
+ */
+editorApp.post("/:id/jobs/:job/go", async (c) => {
+  const r = await load(c, true);
+  if (!r) return notFound(c);
+  const db = libraryDb();
+  const row = db.prepare("SELECT id, version_id, kind, state FROM edit_jobs WHERE id = ? AND edit_id = ?").get(Number(c.req.param("job")), r.e.id) as
+    | { id: number; version_id: string; kind: string; state: string }
+    | undefined;
+  if (!row) return notFound(c);
+  const variant = row.version_id.slice(r.e.id.length + 1);
+  const b = await body(c);
+  const note = typeof b.note === "string" ? b.note.trim() : "";
+  if (note.length > EDIT_FEEDBACK_TEXT_MAX) return c.json({ error: `A note is ${EDIT_FEEDBACK_TEXT_MAX.toLocaleString("en-US")} characters at most`, code: "invalid" }, 400);
+  // running too: the step re-reads its state as it goes back to waiting (cards/step.ts lookSheetWait)
+  const st = row.kind === "cards" && (row.state === "queued" || row.state === "running") && sheetOf(r.e.id, variant) ? readCards(r.e.id, variant) : null;
+  if (st) {
+    if (note) {
+      const notes = (st.sheetNotes ?? 0) + 1;
+      if (notes > MAX_SHEET_NOTES) return c.json({ error: `That is ${MAX_SHEET_NOTES} notes on these cards: give the go, or Make cards again`, code: "conflict" }, 409);
+      // made again from nothing with the note: a new plan, script and draw, then a new sheet
+      await clearCards(r.e.id, variant);
+      await saveCards(r.e.id, variant, { style: st.style, calls: 0, draws: 0, drawn: [], liked: [], sheetNote: note, sheetNotes: notes });
+    } else await saveCards(r.e.id, variant, { ...st, go: true });
+    db.prepare("UPDATE edit_jobs SET run_after = 0 WHERE id = ? AND state = 'queued'").run(row.id);
+    return c.json(viewFor(r, readEdit(r.e.id)!));
+  }
+  if (heldPasses(r.e).some((h) => h.job === row.id)) {
+    if (note) return c.json({ error: "A note on the cut goes in Review or the chat; the go starts the next pass", code: "invalid" }, 400);
+    // as Approve in Review gives it (passes.ts), one press at a time: a second quick press finds the pass recorded
+    const p = nextPass(r.e, variant);
+    if (p && (await serial(() => approvePass(readEdit(r.e.id)!, variant, PASS_WORD[p], r.user)))) return c.json(viewFor(r, readEdit(r.e.id)!));
+  }
+  return c.json({ error: "Nothing here waits for a go", code: "conflict" }, 409);
+});
+
+/** A waiting look sheet's picture (EditJob.sheet). */
+editorApp.get("/:id/jobs/:job/sheet.jpg", async (c) => {
+  const r = await load(c, true);
+  const row = r && (libraryDb().prepare("SELECT version_id FROM edit_jobs WHERE id = ? AND edit_id = ? AND kind = 'cards'").get(Number(c.req.param("job")), r.e.id) as { version_id: string } | undefined);
+  const bytes = row && (await readFile(sheetFile(r.e.id, row.version_id.slice(r.e.id.length + 1))).catch(() => null));
+  return bytes ? new Response(bytes, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "no-store" } }) : notFound(c);
+});
+
 editorApp.post("/:id/stop", async (c) => {
   const r = await load(c);
   if (!r) return notFound(c);
@@ -693,6 +794,14 @@ editorApp.post("/sound", async (c) => {
   const ids = Array.isArray(b.sources) ? b.sources.filter((x): x is string => typeof x === "string") : [];
   if (!ids.length) return c.json({ error: "sources is a list of clip ids", code: "invalid" }, 400);
   return c.json(await (await import("./sound")).soundOf(c.get("user").username, ids));
+});
+
+/** A version's newest preview: its Review version's video (the phone plays this). A deleted version has none. */
+editorApp.get("/:id/drafts/:name/preview", async (c) => {
+  const r = await load(c, true);
+  const name = c.req.param("name");
+  const p = r && !r.e.marks?.[name]?.trashedAt && readStep(r.e.id, "review")?.[name];
+  return p ? c.redirect(`/api/review/assets/${encodeURIComponent(p.assetId)}/v/${p.n}/play`) : notFound(c);
 });
 
 /**

@@ -175,6 +175,11 @@ export interface EditJob {
   /** while it runs on one of the person's computers: that computer's name and, while it downloads, the bytes done and
    *  total and the seconds left */
   progress?: { device: string; done?: number; total?: number; leftS?: number };
+  /** what its AI calls spent, every run of it added up: calls, tokens and the API price in dollars */
+  usage?: { calls: number; tokens: number; costUsd: number };
+  /** a cards step that waits on its look sheet for the person's go or a note (POST /api/editor/:id/jobs/:job/go); the
+   *  picture is GET /api/editor/:id/jobs/:job/sheet.jpg, `at` changes with each new sheet */
+  sheet?: { at: number };
 }
 
 export interface EditSummary {
@@ -196,6 +201,10 @@ export interface EditSummary {
   /** GET /api/editor only: how many versions it has (drafts not deleted), and the newest one's Review still (/api/review/assets/<asset>/v/<n>/thumb) */
   versionCount?: number;
   still?: { asset: string; n: number };
+  /** what its steps' AI calls spent so far, in dollars at the API's price (absent: nothing yet) */
+  costUsd?: number;
+  /** GET /api/editor only: something of it waits for the person's go (a held pass, a cards look sheet: GET /api/editor/todo) */
+  waits?: "go";
 }
 
 /** One spoken sentence of the footage (analyze): numbered from 1 across every source, in recording order. */

@@ -23,7 +23,7 @@ import { sourceOf } from "../timeline";
 import { cardWindow, placeCards, type CardClip } from "./place";
 import { scriptThrew } from "./device";
 import { fixPrompt, lookPrompt, makePrompt, parseLook, parsePlan, parseScript, planPrompt, type FrameInput, type PlanLine } from "./prompts";
-import { cardFile, cardsDir, cardsFolder, clearCards, MAX_CALLS, MAX_DRAWS, readCards, saveCards, scriptFile, STILLS, type CardsState, type PlannedCard } from "./state";
+import { cardFile, cardsDir, cardsFolder, clearCards, MAX_CALLS, MAX_DRAWS, readCards, saveCards, scriptFile, sheetFile, STILLS, type CardsState, type PlannedCard } from "./state";
 
 /**
  * The AI Editor's card step, for one version of an edit whose style names an animation style (engine.ts queues it
@@ -217,13 +217,15 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
   if (!style) return end("its animation style was deleted");
   // only a style the person made reaches an AI call (contracts/editor-styles.ts `from`)
   if (style.from) return end("a style from Community makes no cards");
+  // the person's note on the last look sheet goes with the style's brief into every call of this round
+  const brief = st.sheetNote ? `${style.brief}\n\nThe person's note on the last look sheet of these cards (follow it): ${st.sheetNote}` : style.brief;
 
   try {
     if (!st.cards) {
       const lines = linesOf(edit.id, variant, tl);
       if (!lines.some((l) => l.ok)) return end("no line of this cut has room for one");
       if (!(await spend())) return end();
-      const picked = await answer(actor, planPrompt({ lines, brief: style.brief, packText: [await workspaceSetup(edit, 6000), await planPackText(actor)].filter(Boolean).join("\n\n") }), [], (t) => parsePlan(t, lines), signal);
+      const picked = await answer(actor, planPrompt({ lines, brief, packText: [await workspaceSetup(edit, 6000), await planPackText(actor)].filter(Boolean).join("\n\n") }), [], (t) => parsePlan(t, lines), signal);
       const { w, h } = previewSize(tl);
       const cards = picked.map((p, k) => {
         const l = lines[p.line - 1]!;
@@ -232,7 +234,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
       await save({ ...st, cards, width: w, height: h, fps: Math.min(tl.fps, MAX_FPS) });
       if (!cards.length) return end("the AI found no line that needs one");
     }
-    const frame: FrameInput = { brief: style.brief, width: st.width!, height: st.height!, fps: st.fps!, cards: st.cards! };
+    const frame: FrameInput = { brief, width: st.width!, height: st.height!, fps: st.fps!, cards: st.cards! };
     if (st.draws === 0) {
       if (!(await spend())) return end();
       const pictures = await stylePictures(owner, style, MAKE_PICTURES);
@@ -294,6 +296,32 @@ async function place(editId: string, variant: string, st: CardsState): Promise<v
   if (left.join("\n") !== (st.left ?? []).join("\n")) await saveCards(editId, variant, { ...st, left });
 }
 
+/** What the cards step says while its look sheet waits. The go wakes it; it also looks again this seldom, as a fallback. */
+export const SHEET_LINE = "Look sheet: waiting for your go";
+const SHEET_WAKE_S = 6 * 3600;
+
+/**
+ * The look sheet of the drawn cards, made once and kept (sheetFile), then the step waits until the person gives their go
+ * or a note. Answers the state to lay the cards from. A sheet that cannot be laid out holds nothing up: the cards are
+ * laid as they are. The state is read again before waiting: a go or a note given while this run was out counts now.
+ */
+async function lookSheetWait(editId: string, variant: string, owner: string, st: CardsState): Promise<CardsState> {
+  if (!st.sheet) {
+    const shown = (st.cards ?? []).filter((c) => st.drawn.includes(c.id)).map((c) => c.id);
+    const made = await lookSheet(owner, editId, variant, shown, st.width!, st.height!).catch((e) => {
+      if (e instanceof Waiting) throw e;
+      return null;
+    });
+    if (!made) return st;
+    await writeFile(sheetFile(editId, variant), Buffer.from(made.image.jpegBase64, "base64"));
+    await saveCards(editId, variant, { ...st, sheet: { at: clock.now() } });
+  }
+  const now = readCards(editId, variant);
+  if (now?.go) return now;
+  // no sheet now: a note made the cards start again, so the step runs again at once
+  throw now?.sheet ? new Waiting(SHEET_WAKE_S, SHEET_LINE) : new Waiting(1);
+}
+
 export async function cardsStep(ctx: StepContext): Promise<void> {
   const { edit, variant, signal } = ctx;
   const styleId = edit.style?.animation;
@@ -307,7 +335,10 @@ export async function cardsStep(ctx: StepContext): Promise<void> {
     if (st && st.style !== styleId) await clearCards(edit.id, variant);
     if (!st || st.style !== styleId) st = { style: styleId, calls: 0, draws: 0, drawn: [], liked: [] };
     if (!st.done) st = await make(ctx, draft.timeline, st);
-    if (!signal.aborted) await place(edit.id, variant, st);
+    if (signal.aborted) return;
+    // an edit in passes: the drawn cards wait on a look sheet for the person's go or note (todo.ts, POST …/jobs/:job/go)
+    if (edit.style?.passes && st.drawn.length && !st.go) st = await lookSheetWait(edit.id, variant, ownerOf(edit), st);
+    await place(edit.id, variant, st);
   } catch (e) {
     if (e instanceof Waiting || signal.aborted) throw e;
     // whatever went wrong, the version goes on to its preview: cards never hold an edit up

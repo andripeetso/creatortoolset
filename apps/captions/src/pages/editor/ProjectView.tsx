@@ -18,7 +18,7 @@ import { ENGINES, getAvailability, type EnhanceAvailability } from "@/lib/enhanc
 import { canChange, useMe } from "@/lib/auth";
 import { promptDialog } from "@/lib/dialogs";
 import {
-  cardStillUrl, carryOn, createStyle, deleteEdit, duplicateVersion, exportUrl, getEdit, getSentences, likeCard, makeCardsAgain, markVersion, reviseDraft, sendBack,
+  cardStillUrl, carryOn, createStyle, deleteEdit, duplicateVersion, exportUrl, getEdit, getSentences, goJob, likeCard, sheetUrl, makeCardsAgain, markVersion, reviseDraft, sendBack,
   patchEdit, putLines, restoreEdit, retryJob, reviewDraft, runEdit, setEyeline, stopEdit, swapTake, takeSpan,
 } from "@/lib/editor";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -204,6 +204,7 @@ function EditVersions({ id, named }: { id: string; named: boolean }) {
           {editable && <Button size="sm" onClick={() => void act(carryOn(id))}>Carry on</Button>}
         </div>
       )}
+      {e.jobs.filter((j) => j.sheet).map((j) => <LookSheet key={j.id} e={e} job={j} editable={editable} act={act} />)}
       {versions.length === 0 ? (
         !loose.length && !named && <div className="rounded-xl border border-dashed border-zinc-500/30 p-8 text-center text-sm text-zinc-500">No versions</div>
       ) : (
@@ -214,7 +215,27 @@ function EditVersions({ id, named }: { id: string; named: boolean }) {
           ))}
         </div>
       )}
+      {!!e.costUsd && <p className="text-xs text-zinc-500">AI so far: ${e.costUsd.toFixed(2)} at the API's prices</p>}
     </section>
+  );
+}
+
+/** A version's drawn cards on one sheet, waiting for the person's go, or a note that makes them again (api/editor/cards/step.ts). */
+function LookSheet({ e, job, editable, act }: { e: Edit; job: EditJob; editable: boolean; act: (p: Promise<Edit>) => Promise<void> }) {
+  const [note, setNote] = useState("");
+  const title = versionTitle(e, job.variant);
+  return (
+    <div className="grid gap-2 rounded-lg border border-zinc-500/20 px-3 py-2 text-sm">
+      <span>Look sheet · {title}</span>
+      <img src={sheetUrl(e.id, job.id, job.sheet!.at)} alt={`The cards of ${title}`} className="max-h-80 w-full rounded bg-black object-contain" />
+      {editable && (
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(x) => { x.preventDefault(); void act(goJob(e.id, job.id, note.trim() || undefined)); setNote(""); }}>
+          <input value={note} onChange={(x) => setNote(x.currentTarget.value)} aria-label="Note on the cards" placeholder="Or a note: the cards are made again"
+            className="h-8 min-w-0 flex-1 rounded-md border border-zinc-500/30 bg-transparent px-2 text-sm" />
+          <Button size="sm" type="submit">{note.trim() ? "Make again" : "Go"}</Button>
+        </form>
+      )}
+    </div>
   );
 }
 
