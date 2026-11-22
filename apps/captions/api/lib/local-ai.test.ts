@@ -13,6 +13,7 @@ const root = mkdtempSync(path.join(scratch, "local-ai-"));
 process.env.DATA_DIR = path.join(root, "data");
 process.env.APP_SECRET = "test-secret";
 process.env.CODEX_HOME = path.join(root, "codex");
+delete process.env.XDG_CONFIG_HOME; // a Linux test machine sets it: sign-ins are read from each test's own home
 
 // The Mac relay is not run here: the check's result is set per test, and it still goes through recordCheck.
 const mockCheck = vi.hoisted(() => ({ next: { ok: true, ms: 5, error: undefined as string | undefined, note: undefined as string | undefined } }));
