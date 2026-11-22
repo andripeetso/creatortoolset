@@ -754,6 +754,9 @@ export default function LibraryPage() {
   const pickedCards = pickable.filter((a) => picks.picked.has(a.id));
   /** what a clip's menu or drag acts on: every picked clip when it is one of them */
   const carried = (a: AssetCard) => (picks.picked.has(a.id) && pickedCards.length > 1 ? pickedCards : [a]);
+  // the picks as they are now, for Select all to see whether they changed while it read the pages
+  const pickedNow = useRef(picks.picked);
+  pickedNow.current = picks.picked;
   useSelectAll(() => void pickAll());
   /** every clip in this view, the pages not scrolled to yet read first (the largest pages the server gives) */
   const pickAll = async () => {
@@ -761,13 +764,15 @@ export default function LibraryPage() {
     if (pickingAll === pageKey) return;
     const mine = ++seq.current; // a page loadMore has on its way is dropped: these pages include it
     const key = pageKey;
+    const before = pickedNow.current;
     setPickingAll(key);
     try {
       const got = await listAllAssets(libId, { ...query, cursor: next });
       if (mine !== seq.current) return;
       // added to the list as it is by now, so a clip trashed or moved meanwhile stays off it
       setMore((m) => ({ key, items: [...(m?.key === key ? m.items : []), ...got], next: undefined }));
-      picks.set([...pickable, ...got].map((a) => a.id).filter((id) => !id.startsWith("ext_")));
+      // Escape, a click or a move meanwhile is the newer choice: the pages stay loaded, the picks as the person left them
+      if (pickedNow.current === before) picks.set([...pickable, ...got].map((a) => a.id).filter((id) => !id.startsWith("ext_")));
     } catch (e) {
       if (mine === seq.current) setError(message(e));
     } finally {

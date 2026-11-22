@@ -59,6 +59,8 @@ const server = vi.hoisted(() => ({
   redone: [] as { kinds: string[]; ids: string[] | "all"; count: boolean }[],
   /** clips per page of the listing (0: all on one page); the cursor is the index the next page starts at */
   pageSize: 0,
+  /** Select all's read of the remaining pages waits for this while set */
+  holdAll: undefined as Promise<void> | undefined,
 }));
 
 vi.mock("@/lib/library", async (importOriginal) => ({
@@ -99,6 +101,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   },
   // Select all reads the rest of the view through the stand-in above, page by page
   listAllAssets: async (lib: string, q: { cursor?: string }) => {
+    await server.holdAll; // a test holds Select all mid-read
     const { listAssets } = await import("@/lib/library");
     const all: Card[] = [];
     for (let cursor = q.cursor; cursor; ) {
@@ -187,6 +190,7 @@ beforeEach(() => {
   server.uploading = undefined;
   server.redone = [];
   server.pageSize = 0;
+  server.holdAll = undefined;
   server.scans = 0;
   server.retried = [];
   localStorage.clear();
@@ -637,6 +641,22 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await settle();
     expect(bar()?.textContent).toContain("5 selected");
     expect(cards(host).map((c) => !!c.dataset.picked)).toEqual([true, true, true, true, true]);
+  });
+
+  it("Escape while Select all reads the other pages: the pages load, nothing is picked", async () => {
+    server.items = ["one", "two", "three", "four", "five"].map((id) => clip(id));
+    server.pageSize = 2;
+    let answer!: () => void;
+    server.holdAll = new Promise((r) => (answer = r));
+    const host = await mount();
+    await click(cards(host)[0]!, { metaKey: true });
+    await key("a", { metaKey: true });
+    expect(bar()?.textContent).toContain("Selecting");
+    await key("Escape");
+    answer();
+    await settle();
+    expect(cards(host)).toHaveLength(5);
+    expect(bar()).toBeNull();
   });
 
   it("Escape clears the picks first, then the search", async () => {
