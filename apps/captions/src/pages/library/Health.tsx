@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Activity } from "lucide-react";
 import type { LibraryMade, LibraryStatus, LibrarySummary, WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,6 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Card, ErrorRow, LoadingRow, Row, Section, Status } from "@/components/settings/ui";
 import { hiddenLine, leftOutLine } from "@/components/LibraryProcessing";
 import { getMade, getStatus } from "@/lib/library";
-import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { healthOf, Made } from "./settings/Made";
 
@@ -18,16 +17,23 @@ const DOT = { done: "bg-emerald-500", waiting: "bg-amber-500", failed: "bg-red-5
 
 /**
  * The library page's status button: its dot is the library's health at a glance (green: everything made, amber:
- * something waits or is not made, red: something failed), from What's made. Pressed, it opens Library status; read
- * again when that closes (`open` back to false), for what was made or retried there.
+ * something waits or is not made, red: something failed), from What's made. Read when the page opens and again when
+ * Library status closes (`open` back to false), never on each library change: What's made is a heavy read.
  */
 export function LibraryHealthButton({ library, open, onOpen }: { library: LibrarySummary; open: boolean; onOpen: () => void }) {
-  const { data: made, refresh } = useCachedLoad<LibraryMade[]>(`/api/library/${library.id}/made`, () => getMade(library.id));
-  const was = useRef(open);
+  const [made, setMade] = useState<LibraryMade[] | null>(null);
   useEffect(() => {
-    if (was.current && !open) void refresh();
-    was.current = open;
-  }, [open, refresh]);
+    if (open) return;
+    let live = true;
+    // a failed read leaves the dot out: the dialog says what failed
+    getMade(library.id).then(
+      (m) => live && setMade(m),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [library.id, open]);
   const tone = made ? healthOf(made, library) : null;
   const label = tone ? `Library status: ${WORD[tone]}` : "Library status";
   return (

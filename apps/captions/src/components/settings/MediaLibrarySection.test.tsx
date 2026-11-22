@@ -236,7 +236,7 @@ describe("Settings → Media Library, the owner's page", () => {
     expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false);
     const button = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Make for 4 missing")!;
     await act(async () => button.click());
-    expect(asks[0]).toContain("Claude on the AI provider sign-in, about $2.00 of usage at API prices, counted toward the plan's limits. Queues 4 jobs");
+    expect(asks[0]).toContain("Claude on the AI provider sign-in, about $2.00 of usage at API prices, counted toward the plan's limits, queues 4 jobs");
     expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false); // Cancel queues nothing
     expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make for 0"))).toBe(false);
   });

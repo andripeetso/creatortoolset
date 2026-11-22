@@ -38,7 +38,7 @@ export function missingWhy(m: Pick<LibraryMade, "missing" | "broll" | "skipped">
 
 /** What Make for the missing does, before it is pressed. */
 export const makeWhat = (m: Pick<LibraryMade, "missing" | "where">) =>
-  `Queues ${n(m.missing)} ${m.missing === 1 ? "job" : "jobs"}${m.where ? ` that run on ${m.where}` : ""}; Stop takes back the ones still waiting`;
+  `queues ${n(m.missing)} ${m.missing === 1 ? "job" : "jobs"}${m.where ? ` that run on ${m.where}` : ""}, and Cancel takes off the ones still waiting`;
 
 type Tone = "done" | "waiting" | "failed" | "off";
 /**
@@ -46,10 +46,10 @@ type Tone = "done" | "waiting" | "failed" | "off";
  * what is missing, not made yet, done. `on`: its switch for new files; `auto`: sorted by itself, so it has no Make.
  */
 export function stateOf(m: LibraryMade, on: boolean, auto = false): { tone: Tone; text: string } {
+  if (!on) return { tone: "off", text: m.missing ? `Off for new files · ${n(m.missing)} missing` : "Off for new files" };
   if (m.failed) return { tone: "failed", text: `${files(m.failed)} failed` };
   if (m.queued) return { tone: "waiting", text: m.by ? `${files(m.queued)} queued for ${m.by}` : m.why ? `${files(m.queued)} waiting: ${m.why}` : `${files(m.queued)} queued` };
   if (m.needs && m.missing) return { tone: "waiting", text: m.needs };
-  if (!on) return { tone: "off", text: m.missing ? `Off for new files · ${n(m.missing)} missing` : "Off for new files" };
   if (m.missing) return { tone: "waiting", text: auto ? `${files(m.missing)} not sorted yet` : `Not made for ${files(m.missing)}` };
   return { tone: m.have ? "done" : "off", text: m.have ? "Done" : "No files of this kind" };
 }
@@ -57,11 +57,14 @@ export function stateOf(m: LibraryMade, on: boolean, auto = false): { tone: Tone
 /** A kind's switch for new files, on unless turned off (a kind with none is always made). */
 const onFor = (k: (typeof MADE_KINDS)[number], library: LibrarySummary) => (k.setting ? library.settings[k.setting] !== false : true);
 
-/** The library's health at a glance (the status button): red when a kind failed, amber when one waits or is not made, else green. Off kinds count for nothing. */
+/**
+ * The library's health at a glance (the status button): red when a kind failed, amber when one waits or is not made,
+ * else green. Off kinds, and the ones sorted by themselves (nothing to press), count for nothing.
+ */
 export function healthOf(made: LibraryMade[], library: LibrarySummary): "done" | "waiting" | "failed" {
   const tones = made.flatMap((m) => {
     const k = MADE_KINDS.find((x) => x.kind === m.kind);
-    return k ? [stateOf(m, onFor(k, library), k.auto).tone] : [];
+    return k && !k.auto ? [stateOf(m, onFor(k, library)).tone] : [];
   });
   return tones.includes("failed") ? "failed" : tones.includes("waiting") ? "waiting" : "done";
 }
@@ -120,7 +123,8 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
     }
   };
   const make = async (m: LibraryMade, label: string) => {
-    const body = `${[engineLine(m), costWords(m)].filter(Boolean).join(", ")}. ${makeWhat(m)}.`;
+    // one sentence: what runs it, what it costs, what pressing does
+    const body = `${[engineLine(m), costWords(m), makeWhat(m)].filter(Boolean).join(", ")}.`.replace(/^./, (c) => c.toUpperCase());
     if (!(await confirmDialog({ title: `Make ${label.toLowerCase()} for ${files(m.missing)}`, body, ok: `Make ${n(m.missing)}` }))) return;
     await run(`make-${m.kind}`, `make ${label.toLowerCase()}`, () => makeMissing(library.id, m.kind));
   };
@@ -168,13 +172,13 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
                       <Link to={m.href}>Open settings</Link>
                     </Button>
                   )}
-                  {m.queued > 0 && !k.auto && (
-                    <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(`stop-${m.kind}`, "stop", () => stopMade(library.id, m.kind))}>
-                      {busy === `stop-${m.kind}` ? "Stopping" : "Stop"}
+                  {m.queued > 0 && !k.auto && !k.ready && (
+                    <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(`cancel-${m.kind}`, "cancel", () => stopMade(library.id, m.kind))}>
+                      {busy === `cancel-${m.kind}` ? "Canceling" : "Cancel"}
                     </Button>
                   )}
                   {m.missing > 0 && !k.auto && (
-                    <Button variant="outline" size="sm" title={makeWhat(m)} disabled={busy !== null || !!m.needs} onClick={() => void make(m, k.label)}>
+                    <Button variant="outline" size="sm" title={makeWhat(m).replace(/^./, (c) => c.toUpperCase())} disabled={busy !== null || !!m.needs} onClick={() => void make(m, k.label)}>
                       {busy === `make-${m.kind}` ? "Queueing" : `Make for ${n(m.missing)} missing`}
                     </Button>
                   )}

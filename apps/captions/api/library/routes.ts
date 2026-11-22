@@ -1159,12 +1159,12 @@ libraryApp.post("/:id/made/:kind", (c) => {
   return c.json({ files: makeMissing(libraryId, kind, user.username) });
 });
 
-// POST /api/library/:id/made/:kind/stop → { files }: what is still queued for the kind taken off the queue
+// POST /api/library/:id/made/:kind/stop → { files }: Cancel, what is still queued for the kind taken off the queue
 libraryApp.post("/:id/made/:kind/stop", (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const kind = MADE_KINDS.find((k) => k.kind === c.req.param("kind") && !k.auto)?.kind;
+  const kind = MADE_KINDS.find((k) => k.kind === c.req.param("kind") && !k.auto && !k.ready)?.kind;
   if (!kind) return c.json({ error: "Kind not found", code: "invalid" }, 400);
   return c.json({ files: stopQueued(libraryId, kind, user.username) });
 });

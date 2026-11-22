@@ -152,6 +152,7 @@ describe("what's made", () => {
     d.prepare("INSERT INTO tag_rejections (asset_id, tag) VALUES ('ast-talk', 'music'), ('ast-talk', 'sound effect')").run();
     clip("ast-hum", { kind: "audio" });
     expect(await row("sound")).toMatchObject({ have: 2, missing: 1, cost: "free" });
+    expect(stopQueued("lib_m", "thumb", "local")).toBe(0); // a file is ready once it has one: no Cancel
     const before = (await row("roll")).missing;
     clip("ast-unsorted");
     d.prepare("UPDATE assets SET roll = NULL WHERE id = 'ast-unsorted'").run();
@@ -179,7 +180,7 @@ describe("what's made", () => {
     }
   });
 
-  it("says what makes each kind and where, which files it skips and why, and Stop takes the queued off", async () => {
+  it("says what makes each kind and where, which files it skips and why, and Cancel takes the queued off", async () => {
     expect(engineOf("lib_m", "wave", "local")).toMatchObject({ engine: "FFmpeg" });
     expect(engineOf("lib_m", "timeline", "local").engine).toMatch(/Gemini|Antigravity/);
     const silent = "ver-ast-silent";
@@ -191,10 +192,10 @@ describe("what's made", () => {
     expect(t.skipped?.why).toBe("no sound, or music");
     expect(t.skipped!.n).toBeGreaterThanOrEqual(1);
     const v = clip("ast-stop");
-    enqueueJob(d, "lib_m", v, "wave", "local");
-    expect(job(v, "wave")?.state).toBe("queued");
-    expect(stopQueued("lib_m", "wave", "local")).toBeGreaterThanOrEqual(1);
-    expect(job(v, "wave")).toBeUndefined();
+    enqueueJob(d, "lib_m", v, "sprite", "local");
+    expect(job(v, "sprite")?.state).toBe("queued");
+    expect(stopQueued("lib_m", "sprite", "local")).toBeGreaterThanOrEqual(1);
+    expect(job(v, "sprite")).toBeUndefined();
     // stopping pressed timelines leaves shot descriptions queued
     const look = clip("ast-look", { seconds: 120 });
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'queued', 'local')").run(look);

@@ -78,12 +78,12 @@ const SPEC: Record<MadeKind, { job?: string; of: string; have: string; can?: str
     have: has("timelines", " AND x.error IS NULL"),
     open: `(${open("look")} OR (${pressed("timeline")} AND NOT ${has("timelines", " AND x.at >= json_extract(l.settings, '$.timelineAsked')")}))`,
   },
-  // sorted by itself (sound-kind.ts): a file Gemini heard talk on has both tags turned down and is settled too
+  // sorted by itself (sound-kind.ts): a tag the person (or Gemini, hearing talk) turned down is never given again, so settled
   sound: {
     of: "a.kind = 'audio'",
-    have: `(${MUSIC} OR (SELECT COUNT(*) FROM tag_rejections r WHERE r.asset_id = a.id AND r.tag IN (${Object.values(SOUNDS)
+    have: `(${MUSIC} OR EXISTS (SELECT 1 FROM tag_rejections r WHERE r.asset_id = a.id AND r.tag IN (${Object.values(SOUNDS)
       .map((x) => `'${x.tag}'`)
-      .join(", ")})) = ${Object.keys(SOUNDS).length})`,
+      .join(", ")})))`,
   },
   // sorted by itself (roll.ts): raw videos only, finished work has none
   roll: { of: `a.kind = 'video' AND NOT ${FINISHED}`, have: "a.roll IS NOT NULL" },
@@ -171,13 +171,14 @@ function brollOf(libraryId: string, kind: MadeKind, username: string): number {
   return (libraryDb().prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${s.of} AND NOT ${s.have} AND NOT ${s.open} AND NOT ${s.failed} AND a.roll = 'b'`).get(libraryId) as { n: number }).n;
 }
 
-/** Where `username`'s video work runs now: this server, else their computers online that take library work. */
-function videoWhere(libraryId: string, username: string): string {
-  if (serverWorks(libraryWorkspace(libraryId), username)) return "this server";
-  // a computer that claimed library work here (library-package.ts takesLibrary; imported, it would load before the worker)
+/** `username`'s computers online that claimed library work here (library-package.ts takesLibrary; imported, it would load before the worker). */
+function computersWhere(username: string): string {
   const names = listDevices((x) => x.owner === username && isOnline(x.id) && !!x.work?.libraryAt).map((x) => x.name);
   return names.length ? names.join(" or ") : "one of your computers, once one is online";
 }
+
+/** Where `username`'s video work runs now: this server, else their computers. */
+const videoWhere = (libraryId: string, username: string): string => (serverWorks(libraryWorkspace(libraryId), username) ? "this server" : computersWhere(username));
 
 /** What makes `kind` on `username`'s settings now, and where: the same choices the worker makes. Empty when nothing can (makeCost says what it needs). */
 export function engineOf(libraryId: string, kind: MadeKind, username: string): Pick<LibraryMade, "engine" | "where"> {
@@ -195,7 +196,7 @@ export function engineOf(libraryId: string, kind: MadeKind, username: string): P
         if (r.provider === "deepgram") return { engine: "Deepgram nova-3", where: "Deepgram" };
         if (r.provider === "openai") return { engine: `OpenAI ${process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1"}`, where: "OpenAI" };
         if (r.provider === "device") return { engine: "the speech model on this server", where: "this server" };
-        return "model" in r ? { engine: r.model, where: videoWhere(libraryId, username) } : { engine: "the speech model on this server", where: "this server" };
+        return "model" in r ? { engine: r.model, where: computersWhere(username) } : { engine: "the speech model on this server", where: "this server" };
       }
       case "describe":
       case "look": {
@@ -229,10 +230,12 @@ export function engineOf(libraryId: string, kind: MadeKind, username: string): P
 }
 
 /**
- * Stop: `kind`'s jobs still queued in the library are taken off the queue (one running finishes); a press of Make for the
- * missing timelines or pictures is taken back. Returns how many files.
+ * Cancel: `kind`'s jobs still queued in the library are taken off the queue (one running finishes); a press of Make for
+ * the missing timelines or pictures is taken back. Never a kind a file needs to be ready (it would stay processing).
+ * Returns how many files.
  */
 export function stopQueued(libraryId: string, kind: MadeKind, username: string): number {
+  if (MADE_KINDS.find((k) => k.kind === kind)?.ready) return 0;
   const db = libraryDb();
   if (kind === "pictures" || kind === "timeline") {
     const n = (db.prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${SPEC[kind].of} AND NOT ${specOf(kind, username).have} AND ${pressed(kind)}`).get(libraryId) as { n: number }).n;

@@ -442,12 +442,13 @@ export interface LibraryEstimate {
  * What a library makes for its files (Settings → Media Library and the library's Status view, one list: api/library/made.ts).
  * `setting`: its "Make for new files" switch; the ones without are always made for new files (they cost nothing).
  * `about`: what it is, in one sentence. `auto`: sorted by itself from what the file already has, so it has no Make.
+ * `ready`: a file is ready once it has it (worker.ts markReady), so what is queued for it has no Cancel.
  */
 export type MadeKind = "thumb" | "sprite" | "wave" | "fingerprint" | "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline" | "sound" | "roll";
-export const MADE_KINDS: readonly { kind: MadeKind; label: string; about: string; setting?: "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline"; auto?: true }[] = [
-  { kind: "thumb", label: "Thumbnails", about: "The picture on each clip's card." },
+export const MADE_KINDS: readonly { kind: MadeKind; label: string; about: string; setting?: "proxy" | "transcribe" | "describe" | "embed" | "pictures" | "look" | "timeline"; auto?: true; ready?: true }[] = [
+  { kind: "thumb", label: "Thumbnails", about: "The picture on each clip's card.", ready: true },
   { kind: "sprite", label: "Frame strips", about: "The frames shown while the pointer moves over a clip." },
-  { kind: "wave", label: "Waveforms", about: "The shape of a clip's sound on the timeline." },
+  { kind: "wave", label: "Waveforms", about: "The shape of a clip's sound on the timeline.", ready: true },
   { kind: "fingerprint", label: "Duplicate check", about: "Marks the clips that hold the same footage twice." },
   { kind: "proxy", label: "Proxies", about: "A lighter copy that plays smoothly where the original can't.", setting: "proxy" },
   { kind: "transcribe", label: "Transcripts", about: "The words said in each clip, to search and cut by.", setting: "transcribe" },
@@ -456,7 +457,7 @@ export const MADE_KINDS: readonly { kind: MadeKind; label: string; about: string
   { kind: "pictures", label: "Search by picture", about: "Search with a picture for the clips that look like it.", setting: "pictures" },
   { kind: "look", label: "Shot descriptions", about: "A line for each shot of a longer clip.", setting: "look" },
   { kind: "timeline", label: "Timelines", about: "What happens when in a clip, written by Gemini.", setting: "timeline" },
-  { kind: "sound", label: "Music or sound effect", about: "Each sound file filed as a song or a sound effect.", auto: true },
+  { kind: "sound", label: "Song or effect", about: "Each sound file filed as a song or a sound effect.", auto: true },
   { kind: "roll", label: "A-roll or B-roll", about: "Talking takes told apart from the footage laid over them.", auto: true },
 ];
 /** Tokens: an AI provider or an AI key; paid: an outside service's key (Deepgram, OpenAI); free: this server or the person's own computer. */
