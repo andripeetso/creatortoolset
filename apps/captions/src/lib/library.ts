@@ -209,6 +209,9 @@ export const changeFolderItems = (libraryId: string, collectionId: string, asset
 
 export const renameCollection = (libraryId: string, collectionId: string, name: string) =>
   send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { name });
+/** Blur faces off for a folder ("no": its clips are kept as filmed), or on again (null: they follow the library) */
+export const folderBlur = (libraryId: string, collectionId: string, blur: "no" | null) =>
+  send<Collection>(`/api/library/${libraryId}/collections/${collectionId}`, "PATCH", { blur });
 
 /** The folders in this order (the tabs dragged into place); the server keeps it for everyone who opens the library */
 export const orderCollections = (libraryId: string, ids: string[]) => send<{ ok: true }>(`/api/library/${libraryId}/collections/order`, "PUT", { ids });

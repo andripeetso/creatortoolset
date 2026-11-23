@@ -395,8 +395,8 @@ export const autoJobs = {
     const now = Date.now();
     for (const j of all()) {
       if (j.owner !== device.owner || !offered(j, device.id, now)) continue;
-      // a file deleted since it came in is not covered (and needs no word)
-      if (versionGone(j.versionId)) {
+      // a file deleted since it came in, or kept as filmed since (its folder, its own answer), is not covered
+      if (versionGone(j.versionId) || fileBlur(j.versionId)?.blur !== "yes") {
         done(j);
         continue;
       }
@@ -436,7 +436,14 @@ export const autoJobs = {
       if (!j.sha256) return { error: "Send the original's sha256 with its faces first.", status: 400 };
       // linked as the blurred render only for the library's own account (its Mac, its trust); else a clip of its own
       const trusted = j.owner === libraryAccount(j.libraryId);
-      await recordCopy(j.libraryId, j.owner, device, m, trusted ? j.sha256 : undefined);
+      const r = await recordCopy(j.libraryId, j.owner, device, m, trusted ? j.sha256 : undefined);
+      // not this clip's blurred version (the copy was taken in as a clip of its own first): failed and kept, so the
+      // start-up sweep never queues the original again and piles up copies
+      if (!("versionId" in r) || (trusted && fileBlur(j.versionId)?.blurredVersionId !== r.versionId)) {
+        const why = "The blurred copy was added to the Media Library as a clip of its own.";
+        failed(j, why);
+        return { error: why, status: 409 };
+      }
       done(j);
       return { reply: { ok: true } };
     }
@@ -445,9 +452,16 @@ export const autoJobs = {
     if (typeof p === "string") return { error: p, status: 400 };
     const r = await pickFaces(j.owner, p.who, p.faces);
     if ("error" in r) {
-      // the AI provider could not answer: the file goes back with no try, and the account waits for the limit (or a while)
-      back(j);
-      paused.set(j.owner, r.limit?.until ?? Date.now() + AUTO_LIMITS.pauseMs);
+      // at its usage limit: the file goes back with no try, and the account waits for the limit (or a while)
+      if (r.limit) {
+        back(j);
+        paused.set(j.owner, r.limit.until ?? Date.now() + AUTO_LIMITS.pauseMs);
+        return { error: r.error, status: 409, back: true };
+      }
+      // any other answer it can't give (a refusal, no list): a try for this file, so one file never stops the rest
+      j.tries++;
+      if (j.tries >= AUTO_LIMITS.tries) failed(j, r.error);
+      else back(j);
       return { error: r.error, status: 409, back: true };
     }
     if (!r.blur.length) {

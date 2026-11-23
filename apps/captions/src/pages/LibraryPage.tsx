@@ -18,7 +18,7 @@ import { LibraryHealthButton, LibraryStatusDialog } from "./library/Health";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+import { ContextMenuCheckboxItem, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import {
   createCollection,
@@ -35,6 +35,7 @@ import {
   listSources,
   changeFolderItems,
   renameCollection,
+  folderBlur,
   searchLibrary,
   setTrashed,
   emptyTrash,
@@ -481,6 +482,21 @@ export default function LibraryPage() {
       setError(message(e));
     }
   };
+  // Blur faces for one folder: off keeps every clip in it as filmed (A-roll, a course), the owner's or an admin's call
+  const setFolderBlur = (c: Collection, on: boolean) => {
+    if (!libId) return;
+    folderList.set((all) => all && all.map((x) => (x.id === c.id ? (({ blur: _was, ...rest }) => (on ? rest : { ...rest, blur: "no" as const }))(x) : x)));
+    folderBlur(libId, c.id, on ? null : "no").then(reload, (e) => {
+      setError(message(e));
+      reloadFolders();
+    });
+  };
+  const blurItem = (c: Collection) =>
+    faceBlur && library?.mayKeepAsFilmed && holdsClips(c) ? (
+      <ContextMenuCheckboxItem checked={c.blur !== "no"} onCheckedChange={(on) => setFolderBlur(c, on === true)}>
+        Blur faces
+      </ContextMenuCheckboxItem>
+    ) : null;
   const renameFolder = async (c: Collection) => {
     const name = await askRename("Rename folder", c.name);
     if (name && libId) await renameCollection(libId, c.id, name).then(reloadFolders, (e) => setError(message(e)));
@@ -671,6 +687,7 @@ export default function LibraryPage() {
           {!readOnly && holdsClips(c) && <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
           {!readOnly && sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
           {thisMacDevice() && folderKeep(c)}
+          {blurItem(c)}
         </>
       ) : undefined,
   });
@@ -685,6 +702,7 @@ export default function LibraryPage() {
           <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>
           {holdsClips(c) && <ContextMenuItem onSelect={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
           {sortsItself(c) && <ContextMenuItem onSelect={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
+          {blurItem(c)}
           <ContextMenuSeparator />
           <ContextMenuItem className="text-red-400" onSelect={() => removeFolder(c)}>
             <Trash2 /> Delete folder

@@ -710,4 +710,7 @@ export const MIGRATIONS: string[] = [
   // guess before the time it was added (shoots.ts FILE_DATE). An upload carries it from its start
   `ALTER TABLE asset_versions ADD COLUMN modified_at INTEGER;
   ALTER TABLE uploads ADD COLUMN modified_at INTEGER;`,
+  // a folder kept as filmed (its menu's Blur faces off): every clip in it reads blur no (db.ts BLUR_SQL), clips filed later too
+  `ALTER TABLE collections ADD COLUMN blur TEXT;
+  CREATE INDEX IF NOT EXISTS collection_items_asset ON collection_items(asset_id);`,
 ];

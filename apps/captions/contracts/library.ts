@@ -634,6 +634,8 @@ export interface Collection {
   rule?: string;
   /** a smart folder sorting the library into itself right now */
   sorting?: true;
+  /** Blur faces off for this folder: its clips are kept as filmed (api/library/db.ts BLUR_SQL) */
+  blur?: "no";
   createdBy: string;
 }
 

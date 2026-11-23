@@ -242,7 +242,9 @@ export const SOUND_ONLY_SQL = `(a.kind = 'audio' AND NOT EXISTS (SELECT 1 FROM a
  * Asset `a`'s blur answer (assets.blur, contracts Blur): a file nobody answered for (null) reads its library's Blur faces;
  * a sound with no picture is no (a song never gets a blurred render, and never waits for one).
  */
-export const BLUR_SQL = `CASE WHEN ${SOUND_ONLY_SQL} THEN 'no' ELSE COALESCE(a.blur, CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END) END`;
+// the file's own answer, else a folder it is in kept as filmed, else its library's Blur faces
+// shortcut: only the folder a clip is directly in, not the folders above it; follow parent_id if a nested folder needs it
+export const BLUR_SQL = `CASE WHEN ${SOUND_ONLY_SQL} THEN 'no' ELSE COALESCE(a.blur, (SELECT 'no' FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id WHERE fi.asset_id = a.id AND fc.blur = 'no' LIMIT 1), CASE WHEN (SELECT json_extract(settings, '$.blurFaces') FROM libraries WHERE id = a.library_id) IS 1 THEN 'yes' ELSE 'no' END) END`;
 /** mayLeave in SQL (upload-gate.ts): version `v` of asset `a` may have pictures cut of it, kept or handed out. */
 export const LEAVES_SQL = `(v.blurred_of IS NOT NULL OR ${BLUR_SQL} = 'no')`;
 /**

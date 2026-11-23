@@ -208,6 +208,52 @@ describe("the Mac that has the file", () => {
     expect(answerOf(v)).toBe("yes");
   });
 
+  it("an answer the AI can't give for one file (no list) is a try for that file, never a pause: three, and it fails", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    ai.answer = async () => "I can't help with that.";
+    for (let t = 1; t <= AUTO_LIMITS.tries; t++) {
+      const job = autoJobs.claim(mac)!;
+      expect(job).toBeTruthy(); // not paused: the next file (here the same) is handed out at once
+      expect(await autoJobs.answer("mac-1", job.id, FACES)).toMatchObject({ status: 409 });
+    }
+    const a = await auto();
+    expect(a.pausedUntil).toBeUndefined();
+    expect(a.failed.map((f) => f.versionId)).toEqual([v]);
+    expect(autoJobs.claim(mac)).toBeNull();
+  });
+
+  it("a copy taken in as a clip of its own first is a failure, kept, so the sweep never queues its original again", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    const job = autoJobs.claim(mac)!;
+    ai.answer = async () => '{"blur": ["F1"]}';
+    await autoJobs.answer("mac-1", job.id, FACES);
+    const made = { path: "/Volumes/Tiny/Footage/Blurred/raced blurred.mp4", size: 999, quick: "raced-quick" };
+    // the Mac's folder scan indexed the copy before its record came
+    const { indexOnMac } = await import("../../api/library/on-mac");
+    await indexOnMac("lib_a", "ana", { name: "raced blurred.mp4", path: made.path, size: made.size, quick: made.quick, device: "mac-1", frames: [] });
+    expect(await autoJobs.answer("mac-1", job.id, { made })).toMatchObject({ status: 409 });
+    expect((await auto()).failed.map((f) => f.versionId)).toEqual([v]);
+    expect(await queueVersion(event(v))).toBe(false); // what the sweep asks for each waiting file
+  });
+
+  it("a file in a folder kept as filmed is not queued, and one queued before is dropped when its Mac asks", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    const d = libraryDb();
+    const asset = (d.prepare("SELECT asset_id FROM asset_versions WHERE id = ?").get(v) as { asset_id: string }).asset_id;
+    d.prepare("UPDATE assets SET blur = NULL WHERE id = ?").run(asset); // no answer of its own: the folder's counts
+    d.prepare("INSERT INTO collections (id, library_id, name, kind, created_by, created_at, blur) VALUES ('col_course', 'lib_a', 'Course', 'manual', 'ana', 0, 'no')").run();
+    d.prepare("INSERT INTO collection_items (collection_id, asset_id, position, added_by) VALUES ('col_course', ?, 1, 'ana')").run(asset);
+    expect(fileBlur(v)?.blur).toBe("no");
+    expect(autoJobs.claim(mac)).toBeNull();
+    expect(await queueVersion(event(v))).toBe(false);
+  });
+
   it("a failed file says why, until Retry", async () => {
     await settings({});
     const v = await added("mp4");

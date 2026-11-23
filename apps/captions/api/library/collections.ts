@@ -15,7 +15,7 @@ import { isFinal } from "./finals";
 import { pushFinalCopy } from "./routes";
 import { libraryRole, mayWrite } from "./access";
 import { readerOf } from "./reader";
-import { mayLeave, mayServe, type Received } from "./upload-gate";
+import { mayKeepAsFilmed, mayLeave, mayServe, type Received } from "./upload-gate";
 import { blobs, libraryDb } from "./db";
 import { frameAt, frameWaits, whenFramed, type FrameInput } from "../lib/clip-frame";
 import { externalCanSee, externalRefById } from "./refs";
@@ -49,6 +49,7 @@ interface Row {
   position?: number | null;
   rule?: string | null;
   shoot?: string | null;
+  blur?: string | null;
 }
 
 const db = () => libraryDb();
@@ -101,6 +102,7 @@ const toCollection = (r: Row, count?: number, covers?: string[], sounds?: string
   createdBy: r.created_by,
   ...(r.kind === "smart" ? { query: savedQuery(JSON.parse(r.query ?? "{}")) } : {}),
   ...(r.rule ? { rule: r.rule, ...(isSorting(r.id) ? { sorting: true } : {}) } : {}),
+  ...(r.blur === "no" ? { blur: "no" as const } : {}),
   ...(count !== undefined ? { count } : {}),
   ...(covers?.length ? { covers } : {}),
   ...(sounds?.length ? { sounds } : {}),
@@ -244,9 +246,16 @@ collectionApp.patch("/:id/collections/:cid", async (c) => {
     rule = ruleOf(body.rule);
     if (rule && !canJudge(user)) return c.json({ error: NO_JUDGE, code: "needs_key" }, 409);
   }
-  db().prepare("UPDATE collections SET name = ?, parent_id = ?, rule = ? WHERE id = ?").run(name, parent, rule, row.id);
+  // Blur faces off for the folder: its clips are kept as filmed (the owner's or an admin's call, as for one file)
+  let blur = row.blur ?? null;
+  if (body?.blur !== undefined) {
+    if (body.blur !== "no" && body.blur !== null) return c.json({ error: "blur is no or null", code: "invalid" }, 400);
+    if (!mayKeepAsFilmed(user.username, libraryId)) return notFound(c);
+    blur = body.blur;
+  }
+  db().prepare("UPDATE collections SET name = ?, parent_id = ?, rule = ?, blur = ? WHERE id = ?").run(name, parent, rule, blur, row.id);
   if (body?.rule !== undefined && rule !== (row.rule ?? null)) startSort(libraryId, row.id, user);
-  return c.json(toCollection({ ...row, name, parent_id: parent, rule }));
+  return c.json(toCollection({ ...row, name, parent_id: parent, rule, blur }));
 });
 
 // PUT /api/library/:id/collections/order { ids } → the folders in this order (the tabs dragged into place; owner only).
