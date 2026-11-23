@@ -42,9 +42,9 @@ chmodSync(SLEEP, 0o755);
 
 it("stops a version being processed: Stopped, its file kept, and the killed run writes nothing after", async () => {
   hold = true;
-  const added = await addVersion(undefined, { owner: "ana", name: "Cut.avi", mime: "video/x-msvideo", bytes: 1, workspace: WS }, async (dest) => execFileSync("cp", [clip, dest]));
+  const added = await addVersion(undefined, { owner: "ana", name: "Cut.avi", mime: "video/x-msvideo", bytes: 1, workspace: WS }, async (dest) => void execFileSync("cp", [clip, dest]));
   const id = added!.meta.id;
-  const version = async () => (await (await app.request(`/assets/${id}`)).json()).asset.versions[0];
+  const version = async () => ((await (await app.request(`/assets/${id}`)).json()) as { asset: { versions: { n: number; status: string; error?: string }[] } }).asset.versions[0];
   expect((await version()).status).toBe("processing");
   expect((await app.request(`/${id}/stop`, { method: "POST", headers: { "x-as": "bo" } })).status).toBe(404);
   expect(await (await app.request(`/${id}/stop`, { method: "POST" })).json()).toEqual({ ok: true });
@@ -57,9 +57,9 @@ it("stops a version being processed: Stopped, its file kept, and the killed run 
 
 it("Retry prepares a stopped version again, to ready", async () => {
   hold = true;
-  const added = await addVersion(undefined, { owner: "ana", name: "Again.avi", mime: "video/x-msvideo", bytes: 1, workspace: WS }, async (dest) => execFileSync("cp", [clip, dest]));
+  const added = await addVersion(undefined, { owner: "ana", name: "Again.avi", mime: "video/x-msvideo", bytes: 1, workspace: WS }, async (dest) => void execFileSync("cp", [clip, dest]));
   const id = added!.meta.id;
-  const version = async () => (await (await app.request(`/assets/${id}`)).json()).asset.versions[0];
+  const version = async () => ((await (await app.request(`/assets/${id}`)).json()) as { asset: { versions: { n: number; status: string; error?: string }[] } }).asset.versions[0];
   await app.request(`/${id}/stop`, { method: "POST" });
   await reviewJobsDone();
   hold = false;
@@ -90,5 +90,5 @@ it("a Stop while the upload is still being copied in holds: the run that follows
   land();
   await adding;
   await reviewJobsDone();
-  expect((await (await app.request(`/assets/${id}`)).json()).asset.versions[0]).toMatchObject({ status: "error", error: "Stopped" });
+  expect(((await (await app.request(`/assets/${id}`)).json()) as { asset: { versions: { n: number; status: string; error?: string }[] } }).asset.versions[0]).toMatchObject({ status: "error", error: "Stopped" });
 }, 30_000);

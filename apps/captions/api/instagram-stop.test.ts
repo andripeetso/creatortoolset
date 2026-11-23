@@ -147,7 +147,7 @@ describe("Stop in the Content Analyzer", () => {
     expect(r.status).toBe(400);
     expect(await r.json()).toEqual({ error: "Stopped" });
     // the lock went with it: a new run starts (and is stopped in turn)
-    const second = send("/ideas");
+    const second = Promise.resolve(send("/ideas"));
     await new Promise((r) => setTimeout(r, 50));
     await stop("/ideas/stop");
     expect(await (await second).json()).toEqual({ error: "Stopped" });
@@ -221,7 +221,7 @@ describe("Stop in the Content Analyzer", () => {
     const first = send("/ideas");
     await settle(50);
     await stop("/ideas/stop");
-    const second = send("/ideas");
+    const second = Promise.resolve(send("/ideas"));
     // the stopped run fails at 150 ms; a new run is still finding ideas then
     expect(await Promise.race([second.then(() => "answered"), settle(300).then(() => "running")])).toBe("running");
     await stop("/ideas/stop");
