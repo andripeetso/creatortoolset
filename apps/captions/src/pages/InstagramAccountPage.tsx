@@ -193,7 +193,9 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
   const allCatalog = sortCatalogItems(account?.catalog ?? [], sort);
   const publicCatalog = allCatalog.filter((r) => r.visibility === "public");
   const trialCatalog = allCatalog.filter((r) => r.visibility === "trial");
-  const pane = paneState ?? (account?.mine ? "public" : "library");
+  // Public and Trial need each post's mark, which only the Meta sign-in reads: an account read by Apify alone lists All posts
+  const split = !!account?.mine && allCatalog.some((r) => r.visibility);
+  const pane = paneState ?? (split ? "public" : account?.mine ? "catalog" : "library");
   const catalog =
     pane === "public" ? publicCatalog : pane === "trial" ? trialCatalog : allCatalog;
   const posts = account?.posts ?? [];
@@ -527,7 +529,7 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
 
             <div className="mt-8 flex flex-wrap gap-1 border-b border-zinc-800 pb-px">
               {(
-                account.mine
+                split
                   ? ([
                       ["public", `Public · ${publicCatalog.length}`],
                       ["trial", `Trial · ${trialCatalog.length}`],

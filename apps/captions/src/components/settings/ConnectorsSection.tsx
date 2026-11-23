@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,9 @@ export const SIGN_IN_OFF = "Sign-in not available";
 export function signInItems(logins: Record<LoginKind, boolean>, viaService: readonly LoginKind[] = []): Array<{ id: LoginKind; label: string }> {
   return LOGINS.filter((l) => logins[l.id] && !viaService.includes(l.id)).map((l) => ({ id: l.id, label: l.label }));
 }
+
+/** An account read from its public page (Apify), not signed in to: the numbers only the platform's sign-in gives are missing. */
+export const PUBLIC_ONLY = "Public posts only";
 
 /** Meta lets an app read an Instagram account only when it is a professional one (Business or Creator) linked to a Page. */
 const IG_NEEDS = "Needs a Business or Creator account linked to a Facebook Page";
@@ -266,6 +269,15 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   const ownMoves = (own: OwnInstagram): RowMenuItem[] => [
     ...w.workspaces.filter((p) => (!me || p.owner === me) && !p.accountId).map((p) => ({ label: `Move to ${p.name}`, onSelect: () => act(moveOwn(own, p.id)) })),
   ];
+  // an account not signed in to: Sign in where this server has the platform's sign-in, never "Connected"
+  const signIn = (platform: SocialPlatform) => {
+    const login = loginOf(platform);
+    return login && view.logins[login] ? (
+      <Button size="sm" variant="outline" aria-label={`Sign in to ${platform}`} disabled={asking === login} onClick={() => void choose(platform)}>
+        Sign in
+      </Button>
+    ) : null;
+  };
   // an account is the person's, not one workspace's: Disconnect takes it out of them all
   const disconnect = (handle: string, onSelect: () => unknown): RowMenuItem => ({
     label: "Disconnect",
@@ -284,10 +296,15 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
             icon={<PlatformLogo platform={r.platform} className="size-4" />}
             title={r.label}
             subtitle={r.summary}
-            status={all && <WorkspaceTag id={r.own.projectId} none="No workspace" />}
+            status={
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                {all && <WorkspaceTag id={r.own.projectId} none="No workspace" />}
+                <Status tone="attention">{PUBLIC_ONLY}</Status>
+              </span>
+            }
             actions={
               <>
-                <InUse>Connected</InUse>
+                {signIn(r.platform)}
                 {/* not the person's own account after it: the Analyzer keeps it as a followed account, no workspace links it */}
                 <RowMenu label={`${at(r.own.handle)} actions`} items={[...ownMoves(r.own), disconnect(r.own.handle, () => void act(patchInstagram(r.own!.id, { mine: false })))]} />
               </>
@@ -300,6 +317,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
             a={r.account}
             back={back}
             tag={all}
+            signIn={signIn(r.platform)}
             items={[{ label: "Read again", icon: <RefreshCw />, onSelect: () => void act(pullAccountNow(r.account!.key).then(watch)) }, ...moves(r.account), disconnect(r.account.handle, () => void act(disconnectAccount(r.account!.key)))]}
           />
         ) : (
@@ -325,7 +343,15 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   return (
     <>
       <WorkspacePick mode="list" />
-      <Section id="social-platforms" title="Social accounts">
+      <Section
+        id="social-platforms"
+        title="Social accounts"
+        action={
+          <Button asChild size="sm" variant="ghost">
+            <Link to="/?setup=social">Setup steps</Link>
+          </Button>
+        }
+      >
         {card}
       </Section>
     </>
@@ -333,10 +359,17 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
 }
 
 /** A row with an account: its numbers, its workspace (All workspaces), a sign-in that ran out, and its … menu. */
-function AccountRow({ row, a, back, tag, items }: { row: PlatformRow; a: ConnectedAccount; back: string; tag: boolean; items: RowMenuItem[] }) {
+function AccountRow({ row, a, back, tag, items, signIn }: { row: PlatformRow; a: ConnectedAccount; back: string; tag: boolean; items: RowMenuItem[]; signIn: ReactNode }) {
   const login = loginOf(a.platform);
   const needsSignIn = a.loginStatus === "needs_reconnect";
-  const status: ReactNode = needsSignIn ? <Status tone="attention">Needs sign-in</Status> : a.pullError ? <Status tone="broken">{a.pullError}</Status> : undefined;
+  const publicOnly = a.via !== "login";
+  const status: ReactNode = needsSignIn ? (
+    <Status tone="attention">Needs sign-in</Status>
+  ) : a.pullError ? (
+    <Status tone="broken">{a.pullError}</Status>
+  ) : publicOnly ? (
+    <Status tone="attention">{PUBLIC_ONLY}</Status>
+  ) : undefined;
   return (
     <ListRow
       id={`platform-${a.platform}` as SearchRowId}
@@ -354,6 +387,7 @@ function AccountRow({ row, a, back, tag, items }: { row: PlatformRow; a: Connect
       actions={
         <>
           {!status && <InUse>Connected</InUse>}
+          {publicOnly && !needsSignIn && signIn}
           {needsSignIn && login && (
             <Button asChild size="sm" variant="outline">
               <a href={loginHref(login, { back })}>Sign in again</a>

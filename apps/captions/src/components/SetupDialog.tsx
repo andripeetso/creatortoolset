@@ -34,6 +34,7 @@ import { getProviders } from "@/lib/providers";
 import { HowPicker, PictureCard } from "@/components/setup/HowPicker";
 import { LookArt } from "@/components/setup/HowArt";
 import { JobStep } from "@/components/setup/JobStep";
+import { SocialStep } from "@/components/setup/SocialStep";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { OwnAiStep } from "@/components/setup/OwnAiStep";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
@@ -82,6 +83,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
     hint: "The folders with footage, music and sound effects, read by the Editor and the Media Library.",
   },
   how: { title: "How do you work best?", hint: "" },
+  social: { title: "Connect your social accounts", hint: "A sign-in lets the app read your own numbers." },
   own: { title: "Add Creator Toolset to an AI app", hint: "Installs Creator Toolset in the AI apps on this computer." },
   // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown
   account: { title: "Account", hint: "" },
@@ -359,6 +361,8 @@ export function SetupDialog() {
           {step === "job" && (
             <JobStep mine={mine} have={view.have} job={prefs.job ?? null} onPick={pickJob} ai={<AgentsStep picked={THIS_COMPUTER} onConnectedChange={onConnected} />} />
           )}
+
+          {step === "social" && <SocialStep />}
 
           {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
 

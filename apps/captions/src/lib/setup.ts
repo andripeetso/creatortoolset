@@ -19,7 +19,7 @@ export type { SetupView };
  */
 export const SETUP_PATH = ["theme", "agents", "make", "job", "how"] as const;
 /** Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen (stepsFor). */
-export const SIDE_STEPS = ["connect", "folders", "own", "helper"] as const;
+export const SIDE_STEPS = ["connect", "folders", "own", "helper", "social"] as const;
 /** The last screen of the path when the Mac app offers a sign-in (stepsFor): the person's Creator Toolset account, skippable. */
 export const ACCOUNT_STEP = "account";
 export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS, ACCOUNT_STEP] as const;
