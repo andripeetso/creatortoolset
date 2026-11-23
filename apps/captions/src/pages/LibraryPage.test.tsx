@@ -845,6 +845,23 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(where()).toBe("?f=col_a");
   });
 
+  it("All, Videos and Photos hide from their right-click menu and come back from the tab row's", async () => {
+    localStorage.setItem("library:view", "gallery");
+    server.folders = folders;
+    server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
+    const host = await mount();
+    await act(async () => tab(host, "a")!.click()); // All is open: away from it, so it can hide
+    for (const id of ["videos", "photos", "all"]) {
+      await act(async () => void rightClick(tab(host, id)!));
+      await act(async () => menuItem("Hide tab")!.click());
+      expect(tab(host, id)).toBeNull();
+    }
+    await act(async () => void rightClick(host.querySelector('nav[aria-label="Library tabs"]')!));
+    await act(async () => menuItem("Show Photos")!.click());
+    expect(tab(host, "photos")).not.toBeNull();
+    expect(tab(host, "videos")).toBeNull();
+  });
+
   it("a kind picked on a Gallery tab goes with the tabs when the view changes", async () => {
     localStorage.setItem("library:view", "gallery");
     const host = await mount();
