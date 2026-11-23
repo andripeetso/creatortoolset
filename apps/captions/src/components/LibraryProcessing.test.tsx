@@ -45,9 +45,22 @@ async function render() {
 }
 
 describe("the library's processing line", () => {
+  it("Stop takes every kind's queued work off the queue, the ones Library status has a Cancel for", async () => {
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") posts.push(url);
+      return new Response(JSON.stringify(url.endsWith("/stop") ? { files: 1 } : url.endsWith("/watch") ? watch : progress), { status: 200 });
+    });
+    const el = await render();
+    const stop = [...el.querySelectorAll("button")].find((b) => b.textContent === "Stop")!;
+    act(() => stop.click());
+    await flush();
+    expect(posts.map((u) => u.split("/made/")[1]).sort()).toEqual(["describe/stop", "embed/stop", "fingerprint/stop", "look/stop", "pictures/stop", "proxy/stop", "sprite/stop", "timeline/stop", "transcribe/stop"]);
+  });
+
   it("is one line with a moving bar until opened; opened, it lists the steps and what waits, and stays open next time", async () => {
     const el = await render();
-    expect(el.textContent).toBe("Preparing 10 clips · about 2 min left");
+    expect(el.textContent).toBe("Preparing 10 clips · about 2 min leftStop");
     expect(el.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("20");
     // the light along the bar moves (and breathes with reduced motion), whatever the counts do
     expect(el.querySelector('[role="progressbar"] > div:last-child')?.className).toMatch(/motion-safe:animate-\[processing-progress-shimmer.*motion-reduce:animate-pulse/);

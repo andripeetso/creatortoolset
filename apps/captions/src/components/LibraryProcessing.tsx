@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { MADE_KINDS, NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { getProgress, getWatch } from "@/lib/library";
+import { getProgress, getWatch, stopMade } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { ownMacLine } from "@/lib/wording";
@@ -133,6 +134,8 @@ const remembered = () => {
  * When nothing runs, what waits for a key, an AI or the plan's limit is said by itself: it is why nothing moves.
  */
 type Waiting = LibraryProgress["waiting"][number];
+/** The kinds a Stop takes off the queue: the ones Library status has a Cancel for. */
+const STOPPABLE = MADE_KINDS.filter((k) => !k.auto && !k.ready).map((k) => k.kind);
 /** What only the person can change: a key or an AI provider, or (their own) a computer setting no computer can get past. */
 const needsYou = (w: Waiting) => (!w.limit && !w.computer && !w.away && !w.wait) || (w.wait === "needs" && !!w.mine);
 
@@ -141,7 +144,9 @@ const needsYou = (w: Waiting) => (!w.limit && !w.computer && !w.away && !w.wait)
  * and work no computer has taken. What waits for a computer, kind by kind, is in the Status view (pages/library/settings/Made.tsx).
  */
 export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
-  const p = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId)).data;
+  const progress = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId));
+  const p = progress.data;
+  const [stopping, setStopping] = useState<"busy" | "failed" | null>(null);
   // in the Mac app, this Mac's own switch: asked only while a wait names its computers as offline
   const bridge = useThisMac(hasThisMac() && !!p?.waiting.some((w) => w.wait === "offline" && w.devices?.length));
   // the same saved status as the folder card and the watch list; only the owner gets one
@@ -163,6 +168,17 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
       localStorage.setItem(OPEN_KEY, open ? "0" : "1");
     } catch {
       // a private window keeps it for this page only
+    }
+  };
+  // Stop: every kind's queued work taken off the queue, as each Cancel in Library status does (a running job finishes)
+  const stop = async () => {
+    setStopping("busy");
+    try {
+      await Promise.all(STOPPABLE.map((k) => stopMade(libraryId, k)));
+      setStopping(null);
+      await progress.refresh().catch(() => {});
+    } catch {
+      setStopping("failed");
     }
   };
   const needs = shown.some(needsYou);
@@ -193,17 +209,23 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   return (
     <section aria-label="Processing" className="flex flex-col gap-1.5 text-sm">
       {moving && (
-        <button type="button" aria-expanded={open} onClick={toggle} className="flex flex-col gap-1.5 text-left">
-          <span className="flex w-full items-center gap-2">
-            <span className="min-w-0 flex-1 truncate">
-              Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
-              <span className="text-zinc-500"> · {aboutTime(p.seconds)} left</span>
+        <div className="flex items-center gap-3">
+          <button type="button" aria-expanded={open} onClick={toggle} className="flex min-w-0 flex-1 flex-col gap-1.5 text-left">
+            <span className="flex w-full items-center gap-2">
+              <span className="min-w-0 flex-1 truncate">
+                Preparing {p.clips.toLocaleString()} {p.clips === 1 ? "clip" : "clips"}
+                <span className="text-zinc-500"> · {aboutTime(p.seconds)} left</span>
+              </span>
+              {needs && !open && <span aria-label="Needs a key or an AI provider" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />}
+              <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", open && "rotate-180")} />
             </span>
-            {needs && !open && <span aria-label="Needs a key or an AI provider" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />}
-            <ChevronDown className={cn("h-4 w-4 shrink-0 text-zinc-500 transition-transform", open && "rotate-180")} />
-          </span>
-          <MovingBar value={p.share} />
-        </button>
+            <MovingBar value={p.share} />
+          </button>
+          {stopping === "failed" && <span className="shrink-0 text-xs text-red-600 dark:text-red-400">Could not stop</span>}
+          <Button variant="outline" size="sm" className="h-7 shrink-0" disabled={stopping === "busy"} onClick={() => void stop()}>
+            {stopping === "busy" ? "Stopping" : "Stop"}
+          </Button>
+        </div>
       )}
       {moving && open && (
         // one grid for every line, so the bars start and end together
