@@ -845,21 +845,39 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(where()).toBe("?f=col_a");
   });
 
-  it("All, Videos and Photos hide from their right-click menu and come back from the tab row's", async () => {
+  it("All, Videos and Photos hide from their right-click menu and come back from any tab's menu", async () => {
     localStorage.setItem("library:view", "gallery");
     server.folders = folders;
     server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
     const host = await mount();
-    await act(async () => tab(host, "a")!.click()); // All is open: away from it, so it can hide
-    for (const id of ["videos", "photos", "all"]) {
+    // the open tab hidden: it goes, and the next tab still shown opens
+    await act(async () => void rightClick(tab(host, "all")!));
+    await act(async () => menuItem("Hide tab")!.click());
+    await settle();
+    expect(tab(host, "all")).toBeNull();
+    expect(where()).toBe("?f=col_a");
+    for (const id of ["videos", "photos"]) {
       await act(async () => void rightClick(tab(host, id)!));
       await act(async () => menuItem("Hide tab")!.click());
       expect(tab(host, id)).toBeNull();
     }
-    await act(async () => void rightClick(host.querySelector('nav[aria-label="Library tabs"]')!));
+    // a tab's own menu has the row's items too: New tab and the hidden ones
+    await act(async () => void rightClick(tab(host, "b")!));
+    expect(menuItem("New tab")).toBeDefined();
+    expect(menuItem("Show All")).toBeDefined();
     await act(async () => menuItem("Show Photos")!.click());
     expect(tab(host, "photos")).not.toBeNull();
     expect(tab(host, "videos")).toBeNull();
+  });
+
+  it("with All hidden the library opens on the first tab still shown", async () => {
+    localStorage.setItem("library:view", "gallery");
+    localStorage.setItem("ct.library.hiddenTabs.lib_tiny", JSON.stringify(["all"]));
+    server.folders = folders;
+    const host = await mount();
+    await settle();
+    expect(tab(host, "all")).toBeNull();
+    expect(where()).toBe("?f=col_a");
   });
 
   it("a kind picked on a Gallery tab goes with the tabs when the view changes", async () => {

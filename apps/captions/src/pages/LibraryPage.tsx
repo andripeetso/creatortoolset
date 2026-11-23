@@ -693,12 +693,24 @@ export default function LibraryPage() {
       )}
     </>
   );
-  const hideItem = (id: string) => <ContextMenuItem onSelect={() => hideTab(id, true)}>Hide tab</ContextMenuItem>;
+  // the open tab hidden: the next tab still shown opens, so the click shows
+  const hideItem = (id: string) => (
+    <ContextMenuItem
+      onSelect={() => {
+        hideTab(id, true);
+        if (allTabs.find((t) => t.id === id)?.active) allTabs.find((t) => t.id !== id && !hiddenTabs.includes(t.id))?.onOpen();
+      }}
+    >
+      Hide tab
+    </ContextMenuItem>
+  );
+  const landing = useRef(false); // the open-on-first-tab move replaces the history entry, so Back is not caught by it
   /** A tab's place: a folder (`id`), or the top with a kind; a tab never keeps the kind or roll picked before */
   const go = (id: string | null, k: AssetKind | "all" = "all", r: Roll | null = null) => {
     setKind(k);
     setRoll(r);
-    navigate(id ? folderTo(id) : "/library");
+    navigate(id ? folderTo(id) : "/library", { replace: landing.current });
+    landing.current = false;
   };
   const rollFolderOf = (r: Roll) => collections.find((c) => rollOfFolder(c) === r);
   const topOpen = open ? trailOf(collections, open, false)[0]?.id : undefined; // the top-level folder the open one is in
@@ -754,8 +766,39 @@ export default function LibraryPage() {
             ),
         ];
   // a hidden tab still shows while it is the open one, so the view never loses its tab
-  const tabs = allTabs.filter((t) => t.active || !hiddenTabs.includes(t.id));
-  const hiddenShown = allTabs.filter((t) => !tabs.includes(t));
+  const changing = !!library && !readOnly && !trash;
+  const shownTabs = allTabs.filter((t) => t.active || !hiddenTabs.includes(t.id));
+  const hiddenShown = allTabs.filter((t) => !shownTabs.some((x) => x.id === t.id));
+  // the tab row's own items, in every tab's menu too: a full row has no empty space to right-click
+  const rowItems = (changing || hiddenShown.length > 0) && (
+    <>
+      {changing && <ContextMenuItem onSelect={() => void newFolder(null)}>New tab</ContextMenuItem>}
+      {changing && hiddenShown.length > 0 && <ContextMenuSeparator />}
+      {hiddenShown.map((t) => (
+        <ContextMenuItem key={t.id} onSelect={() => hideTab(t.id, false)}>
+          Show {t.label}
+        </ContextMenuItem>
+      ))}
+    </>
+  );
+  const tabs = shownTabs.map((t) => ({
+    ...t,
+    menu: (
+      <>
+        {t.menu}
+        {rowItems && <ContextMenuSeparator />}
+        {rowItems}
+      </>
+    ),
+  }));
+  // All hidden: the library opens on the first tab still shown (the tabs are the Gallery's)
+  const landOn = view === "gallery" && hiddenTabs.includes("all") && allTabs.find((t) => t.id === "all")?.active ? allTabs.find((t) => !hiddenTabs.includes(t.id)) : undefined;
+  useEffect(() => {
+    if (!landOn) return;
+    landing.current = true;
+    landOn.onOpen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [landOn?.id]);
   // the folder tabs dragged into another order: at once on screen, kept by the server for everyone
   const reorderFolders = (shownIds: string[]) => {
     const movableIds = allTabs.filter((t) => t.movable).map((t) => t.id);
@@ -907,7 +950,6 @@ export default function LibraryPage() {
 
   // the Upload button's handler: the page's button, its right-click menu and the first screen's second way all call it
   const chooseFiles = () => picker.current?.click();
-  const changing = !!library && !readOnly && !trash;
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
   // the Blur faces checkbox beside Upload: only where the library blurs and this person may keep files as filmed
   const blurChoice = mayAdd && faceBlur && !!library.settings.blurFaces && library.mayKeepAsFilmed;
@@ -1194,19 +1236,7 @@ export default function LibraryPage() {
                     tabs={tabs}
                     onReorder={readOnly ? undefined : reorderFolders}
                     // the tab row is its own place: a new folder from it is a new tab, whatever is open below
-                    menu={
-                      (changing || hiddenShown.length > 0) && (
-                        <>
-                          {changing && <ContextMenuItem onSelect={() => void newFolder(null)}>New tab</ContextMenuItem>}
-                          {changing && hiddenShown.length > 0 && <ContextMenuSeparator />}
-                          {hiddenShown.map((t) => (
-                            <ContextMenuItem key={t.id} onSelect={() => hideTab(t.id, false)}>
-                              Show {t.label}
-                            </ContextMenuItem>
-                          ))}
-                        </>
-                      )
-                    }
+                    menu={rowItems}
                   />
                 )}
                 {!firstScreen && sidebar && <ActiveFilters {...narrowing} />}

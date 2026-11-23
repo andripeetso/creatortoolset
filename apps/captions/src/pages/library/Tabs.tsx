@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
@@ -28,28 +28,31 @@ export interface Tab {
 
 type Mark = { id: string; after: boolean };
 
-/** The tabs this person hid in one library: this browser's own list (a tab is a view; the folder behind it stays). */
+/** The tabs this person hid in one library: this browser's own list (a tab is a view; the folder behind it stays).
+ *  Read for the library on screen at every draw, so another library's list never shows for a frame. */
+const hiddenNow = new Map<string, string[]>(); // only when storage refuses the write: hidden for this visit
+const readHidden = (key: string): string[] => {
+  const kept = hiddenNow.get(key);
+  if (kept) return kept;
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+};
 export function useHiddenTabs(libraryId: string | null | undefined): [string[], (id: string, hide: boolean) => void] {
   const key = `ct.library.hiddenTabs.${libraryId ?? ""}`;
-  const read = () => {
-    try {
-      const v: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
-      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-    } catch {
-      return [];
-    }
-  };
-  const [hidden, setHidden] = useState<string[]>(read);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => setHidden(read()), [key]);
+  const [, redraw] = useState(0);
+  const hidden = readHidden(key);
   const set = (id: string, hide: boolean) => {
     const next = hide ? [...new Set([...hidden, id])] : hidden.filter((x) => x !== id);
-    setHidden(next);
     try {
       localStorage.setItem(key, JSON.stringify(next));
     } catch {
-      /* storage off: hidden for this visit */
+      hiddenNow.set(key, next);
     }
+    redraw((n) => n + 1);
   };
   return [hidden, set];
 }
