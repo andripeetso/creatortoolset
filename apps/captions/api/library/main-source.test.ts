@@ -27,6 +27,11 @@ vi.mock("../plugins.gen", async () => {
     ],
   };
 });
+// Face Blur's AI provider: chooses the one face it is shown
+vi.mock("../ai-vision", () => ({
+  anyVisionConfigured: () => true,
+  completeVisionWithFallback: async (_s: string, _u: string, _i: unknown[], _sig: unknown, parse: (t: string) => unknown) => ({ value: parse('{"blur": ["F1"]}'), provider: "test" }),
+}));
 vi.mock("../lib/uploads", async (real) => ({ ...(await real<typeof import("../lib/uploads")>()), freeBytes: async () => 100 * 1024 ** 3 }));
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
@@ -96,6 +101,7 @@ describe("the Media Library's main source, per workspace", () => {
       const r = await saveToLibrary("ana", file, "Tiny take.jpg", [], lib, true);
       if (!r || !("versionId" in r)) throw new Error(`not added: ${JSON.stringify(r)}`);
       d.prepare("UPDATE assets SET blur = 'yes' WHERE current_version_id = ?").run(r.versionId); // marked Blur faces: Face Blur covers it
+      d.prepare("UPDATE asset_versions SET mac_path = ?, mac_device = 'mac-1' WHERE id = ?").run(`/Volumes/Tiny/${r.versionId}.jpg`, r.versionId); // on Ana's Mac
       return r.versionId;
     };
     expect(await inWs(A, () => autoCan("ana"))).toEqual({ can: false, why: "Not available while this workspace's Media Library comes from a plug-in." });
@@ -106,9 +112,9 @@ describe("the Media Library's main source, per workspace", () => {
     const mac = { id: "mac-1", owner: "ana" };
     const job = autoJobs.claim(mac)!;
     expect(job).not.toBeNull();
-    const copy = path.join(dir, "covered.jpg");
-    writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 7, 7]));
-    expect(await autoJobs.file("mac-1", Number(job.id), copy, "covered.jpg")).toEqual({ reply: { ok: true } });
+    const faces = { faces: [{ id: "F1", picture: "/9j/AAAA", note: "middle of the frame" }], sha256: "b".repeat(64) };
+    expect(await autoJobs.answer("mac-1", Number(job.id), faces)).toMatchObject({ reply: { blur: ["F1"] } });
+    expect(await autoJobs.answer("mac-1", Number(job.id), { made: { path: "/Volumes/Tiny/Imports/Blurred/take blurred.jpg", size: 6, quick: "copy-quick" } })).toEqual({ reply: { ok: true } });
     // the covered copy is the original's blurred render: a version of its clip, so in that workspace's library
     const blurred = fileBlur(v)?.blurredVersionId;
     const made = d.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(blurred ?? "") as { library_id: string };

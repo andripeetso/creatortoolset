@@ -79,3 +79,28 @@ describe("POST /api/library/:id/on-mac", () => {
     expect((await post({ ...clip, quick: "c".repeat(64) }, "stranger")).status).toBe(404);
   });
 });
+
+describe("a file marked Blur faces, indexed on its Mac", () => {
+  it("is handed to Face Blur, and gets no plain proxy: its blurred copy is the proxy (docs/face-blur-intake-prd.md)", async () => {
+    const { indexOnMac } = await import("./on-mac");
+    const { pairDevice } = await import("../lib/devices");
+    const { onEvent } = await import("../lib/events");
+    libraryDb()
+      .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_blur', 'owner-a', 'B', 'local', ?, 0)")
+      .run(JSON.stringify({ upload: "none", blurFaces: true, proxy: true, describe: false, transcribe: false }));
+    const mac = pairDevice("owner-a", "Tiny Mac").device;
+    const heard: string[] = [];
+    onEvent("library.version.blur", (e) => heard.push(e.versionId));
+    const proxyOf = (versionId: string) => libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'proxy'").get(versionId);
+    const at = (n: number) => ({ ...clip, name: `take-${n}.mp4`, path: `/Volumes/Tiny Drive/FOOTAGE/take-${n}.mp4`, quick: String(n).repeat(64).slice(0, 64), device: mac.id, frames: [] });
+    const yes = await indexOnMac("lib_blur", "owner-a", { ...at(1), blur: "yes" });
+    if (!("versionId" in yes)) throw new Error("not indexed");
+    expect(heard).toEqual([yes.versionId]);
+    expect(proxyOf(yes.versionId)).toBeUndefined();
+    // kept as filmed: as any file, its proxy made on that Mac
+    const no = await indexOnMac("lib_blur", "owner-a", { ...at(2), blur: "no" });
+    if (!("versionId" in no)) throw new Error("not indexed");
+    expect(heard).toEqual([yes.versionId]);
+    expect(proxyOf(no.versionId)).toBeTruthy();
+  });
+});

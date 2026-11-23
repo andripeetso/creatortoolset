@@ -1,5 +1,6 @@
-// Face Blur's automatic covers: what is queued when a file comes into the Media Library, a Mac's claim, the AI's answer,
-// the covered copy added beside the original, and each way a file ends. Only the person's AI and the Macs are stood in.
+// Face Blur's automatic covers: what is queued when a file comes into the Media Library, the claim by the Mac that has it,
+// the AI's answer, the copy recorded as the clip's blurred version, and each way a file ends (docs/face-blur-intake-prd.md
+// §3a). Only the person's AI and the Macs are stood in.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -14,7 +15,7 @@ vi.mock("../../api/ai-vision", () => ({
   anyVisionConfigured: () => ai.configured,
   completeVisionWithFallback: async (_s: string, _u: string, _i: unknown[], _sig: unknown, parse: (t: string) => unknown) => ({ value: parse(await ai.answer()), provider: "test" }),
 }));
-const macs = vi.hoisted(() => ({ online: new Set<string>(["mac-1"]), kinds: ["faceblur"] as string[] }));
+const macs = vi.hoisted(() => ({ online: new Set<string>(["mac-1"]), kinds: ["faceblur-intake"] as string[] }));
 vi.mock("../../api/lib/devices", async (real) => ({
   ...(await real<typeof import("../../api/lib/devices")>()),
   isOnline: (id: string) => macs.online.has(id),
@@ -24,7 +25,7 @@ vi.mock("../../api/lib/devices", async (real) => ({
 const { Hono } = await import("hono");
 const { fileBlur, libraryDb, playOf } = await import("../../api/library/db");
 const { saveToLibrary } = await import("../../api/library/routes");
-const { default: plugin, autoJobs, queueVersion, resetAuto, AUTO_LIMITS } = await import("./plugin");
+const { default: plugin, autoJobs, queueVersion, resetAuto, sweep, AUTO_LIMITS } = await import("./plugin");
 
 const dir = process.env.DATA_DIR;
 const mac = { id: "mac-1", owner: "ana" };
@@ -37,6 +38,10 @@ app.route("/api/x/blur-faces", plugin.routes!);
 const call = (method: string, url: string, body?: unknown) =>
   app.request(`/api/x/blur-faces${url}`, { method, headers: { "Content-Type": "application/json" }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode: "all", who: "Every child's face", look: "blur", ...s });
+const SHA = "a".repeat(64);
+const FACES = { faces: [{ id: "F1", picture: "/9j/AAAA", note: "middle left of the frame; 12% of its width; seen for 4.2 s" }], sha256: SHA };
+const answerOf = (v: string) => (libraryDb().prepare("SELECT a.blur FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(v) as { blur: string | null }).blur;
+const auto = async () => (await (await call("GET", "/auto")).json()) as { can: boolean; why?: string; pausedUntil?: number; running: string[]; failed: { versionId: string; error: string }[] };
 
 let n = 0;
 /** A file added to Ana's library the way an upload adds one, with its blur answer (marked Blur faces by default); its version id. */
@@ -47,6 +52,8 @@ async function added(ext: "mp4" | "jpg" | "m4a", blur: "yes" | "no" = "yes"): Pr
   const r = await saveToLibrary("ana", file, `Tiny take ${n}.${ext}`, [], "lib_a", true);
   if (!r || !("versionId" in r)) throw new Error(`not added: ${JSON.stringify(r)}`);
   libraryDb().prepare("UPDATE assets SET blur = ? WHERE current_version_id = ?").run(blur, r.versionId);
+  // indexed where it is on Ana's Mac (on-mac.ts): its path there and that Mac
+  libraryDb().prepare("UPDATE asset_versions SET mac_path = ?, mac_device = 'mac-1' WHERE id = ?").run(`/Volumes/Tiny/Footage/take-${n}.${ext}`, r.versionId);
   return r.versionId;
 }
 const event = (versionId: string) => ({ libraryId: "lib_a", versionId, owner: "ana" });
@@ -60,24 +67,29 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   ai.configured = true;
+  ai.answer = async () => '{"blur": []}';
   macs.online = new Set(["mac-1"]);
-  macs.kinds = ["faceblur"];
+  macs.kinds = ["faceblur-intake"];
   // nothing left over from the test before
   await resetAuto();
   rmSync(path.join(dir, "plugins", "blur-faces", "auto.json"), { force: true });
 });
 
 describe("what comes into the Media Library", () => {
-  it("is queued only for a file marked Blur faces with no blurred render yet, and only photos and videos", async () => {
+  it("is queued only for a file marked Blur faces with no blurred render yet, on a Mac, and only photos and videos", async () => {
     expect(await queueVersion(event(await added("mp4", "no")))).toBe(false);
     const done = await added("mp4");
     libraryDb().prepare("UPDATE asset_versions SET blurred_of = sha256 WHERE id = ?").run(done); // a blurred render itself
     expect(await queueVersion(event(done))).toBe(false);
+    const server = await added("mp4");
+    libraryDb().prepare("UPDATE asset_versions SET mac_path = NULL, mac_device = NULL WHERE id = ?").run(server); // on no Mac
+    expect(await queueVersion(event(server))).toBe(false);
     expect(await queueVersion(event(await added("mp4")))).toBe(true);
     expect(await queueVersion(event(await added("jpg")))).toBe(true);
     expect(await queueVersion(event(await added("m4a")))).toBe(false);
-    expect(autoJobs.waits("ana")).toBe(true);
-    expect(autoJobs.waits("bo")).toBe(false);
+    expect(autoJobs.waits("ana", "mac-1")).toBe(true);
+    expect(autoJobs.waits("ana", "mac-2")).toBe(false); // not the Mac that has them
+    expect(autoJobs.waits("bo", "mac-1")).toBe(false);
   });
 
   it("is queued once, even when it is read again", async () => {
@@ -86,85 +98,114 @@ describe("what comes into the Media Library", () => {
     expect(await queueVersion(event(v))).toBe(true);
     expect(await queueVersion(event(v))).toBe(false);
   });
+
+  it("queues every file already waiting when the server starts", async () => {
+    await settings({});
+    const v = await added("mp4");
+    expect(await sweep()).toBeGreaterThanOrEqual(1);
+    expect(await queueVersion(event(v))).toBe(false); // the sweep has it
+  });
 });
 
-describe("a Mac's job", () => {
-  it("hands out the file with the settings, and a file with no face ends with no copy", async () => {
+describe("the Mac that has the file", () => {
+  it("is handed its path, the folder for the copy and the style, and only with an AI provider and Which faces", async () => {
     await settings({ look: "mosaic", strength: 0.9, size: 1.5 });
     const v = await added("mp4");
     await queueVersion(event(v));
-    const job = autoJobs.claim(mac)!;
-    // the style goes along as text, as a device job's options are
-    expect(job).toMatchObject({
-      kind: "faceblur",
-      options: { mode: "all", look: "mosaic", strength: "0.9", softness: "0.45", size: "1.5", color: "#343434", media: "video" },
-    });
+    expect(autoJobs.claim({ id: "mac-2", owner: "ana" })).toBeNull(); // another Mac of the account
+    ai.configured = false;
     expect(autoJobs.claim(mac)).toBeNull();
-    expect((await autoJobs.input("mac-1", job.id))?.type).toBe("video/mp4");
-    expect(await autoJobs.input("mac-2", job.id)).toBeNull(); // another Mac's
-    const before = assets().length;
-    expect(await autoJobs.answer("mac-1", job.id, { nothing: "No face found, nothing written" })).toEqual({ reply: { ok: true } });
-    expect(assets().length).toBe(before);
-    expect(((await (await call("GET", "/auto")).json()) as { failed: unknown[] }).failed).toEqual([]); // fine: nothing to say
-  });
-
-  it("makes the covered copy its original's blurred render, played in its place and never covered again", async () => {
-    await settings({});
-    const v = await added("jpg");
-    await queueVersion(event(v));
+    ai.configured = true;
+    await call("PUT", "/settings", { who: "  " });
+    expect(autoJobs.claim(mac)).toBeNull();
+    await call("PUT", "/settings", { who: "Every child's face" });
     const job = autoJobs.claim(mac)!;
-    const copy = path.join(dir, "covered.jpg");
-    writeFileSync(copy, Buffer.from("\0\0\0\x18ftypmp42", "latin1"));
-    expect(await autoJobs.file("mac-1", job.id, copy, "covered.jpg")).toMatchObject({ status: 400 }); // not a JPEG
-    writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 7, 7]));
-    expect(await autoJobs.file("mac-1", job.id, copy, "covered.jpg")).toEqual({ reply: { ok: true } });
-    const blurred = fileBlur(v)?.blurredVersionId;
-    expect(blurred).toBeTruthy();
-    expect(playOf(v)).toBe(blurred); // the AI Editor reads it in the original's place
-    const both = libraryDb().prepare("SELECT asset_id FROM asset_versions WHERE id IN (?, ?)").all(v, blurred!) as { asset_id: string }[];
-    expect(new Set(both.map((r) => r.asset_id)).size).toBe(1); // a version of the original's own clip, in its library
-    expect(libraryDb().prepare("SELECT 1 FROM derived_from WHERE version_id = ?").get(blurred!)).toBeUndefined();
-    expect(await queueVersion(event(blurred!))).toBe(false); // the copy comes in too: never covered again
+    expect(job).toMatchObject({
+      kind: "faceblur-intake",
+      options: { media: "video", look: "mosaic", strength: "0.9", softness: "0.45", size: "1.5", color: "#343434" },
+    });
+    expect(job.options!.path).toMatch(/^\/Volumes\/Tiny\/Footage\/take-\d+\.mp4$/);
+    expect(job.options!.out).toBe("/Volumes/Tiny/Footage/Blurred"); // no Media folder set up here: beside the original
+    expect(job.options!.mode).toBeUndefined(); // always the faces described
+    expect(await autoJobs.input()).toBeNull(); // the original is never sent
+    expect((await auto()).running).toEqual([v]);
   });
 
-  it("covers a member's clip on the library account's Mac, and links a copy only for the library's own account", async () => {
+  it("a file with no face, or none the AI chose, is kept as filmed and never queued again", async () => {
     await settings({});
-    const v = await added("jpg");
-    // a member added it: the job is the library account's (its Mac has the file, its copy is trusted)
-    expect(await queueVersion({ libraryId: "lib_a", versionId: v, owner: "bo" })).toBe(true);
-    expect(autoJobs.waits("bo")).toBe(false);
-    expect(autoJobs.waits("ana")).toBe(true);
-    const job = autoJobs.claim(mac)!;
-    // the library is no longer the job's account's by the time the copy comes: nothing is linked as its blurred render
-    libraryDb().prepare("UPDATE libraries SET workspace_id = 'nobody' WHERE id = 'lib_a'").run();
-    try {
-      const copy = path.join(dir, "covered-not-trusted.jpg");
-      writeFileSync(copy, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 9, 9]));
-      await autoJobs.file("mac-1", job.id, copy, "covered.jpg");
-      expect(fileBlur(v)?.blurredVersionId).toBeNull();
-    } finally {
-      libraryDb().prepare("UPDATE libraries SET workspace_id = 'ana' WHERE id = 'lib_a'").run();
-    }
-  });
-
-  it("in Only some faces, a failed AI writes nothing and the file says why, until Try again", async () => {
-    await settings({ mode: "some" });
     const v = await added("mp4");
     await queueVersion(event(v));
     const job = autoJobs.claim(mac)!;
-    const faces = { faces: [{ id: "F1", picture: "/9j/AAAA", note: "middle left of the frame; 12% of its width; seen for 4.2 s" }] };
-    ai.configured = false;
-    const r = await autoJobs.answer("mac-1", job.id, faces);
-    expect(r).toMatchObject({ status: 409 });
-    expect((r as { error: string }).error).toMatch(/Nothing was blurred\.$/);
-    expect(await autoJobs.file("mac-1", job.id, path.join(dir, "x"), "x")).toMatchObject({ status: 404 }); // no longer the Mac's
-    const failed = ((await (await call("GET", "/auto")).json()) as { failed: unknown }).failed as { versionId: string; error: string }[];
-    expect(failed.map((f) => f.versionId)).toEqual([v]);
-    expect((await call("POST", "/auto/retry", { versionId: v })).status).toBe(200);
-    ai.configured = true;
-    ai.answer = async () => '{"blur": ["F1"]}';
+    expect(await autoJobs.answer("mac-1", job.id, { nothing: "No face found", sha256: SHA })).toEqual({ reply: { ok: true } });
+    expect(answerOf(v)).toBe("no");
+    expect(await queueVersion(event(v))).toBe(false);
+    const w = await added("mp4");
+    await queueVersion(event(w));
     const again = autoJobs.claim(mac)!;
-    expect(await autoJobs.answer("mac-1", again.id, faces)).toEqual({ reply: { blur: ["F1"] } });
+    expect(await autoJobs.answer("mac-1", again.id, FACES)).toEqual({ reply: { blur: [] } });
+    expect(answerOf(w)).toBe("no");
+    expect((await auto()).failed).toEqual([]);
+  });
+
+  it("records the copy as its original's blurred render, played in its place and never covered again", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    const job = autoJobs.claim(mac)!;
+    ai.answer = async () => '{"blur": ["F1"]}';
+    expect(await autoJobs.answer("mac-1", job.id, { made: { path: "/x.mp4", size: 1, quick: "q" } })).toMatchObject({ status: 400 }); // sha first
+    expect(await autoJobs.answer("mac-1", job.id, FACES)).toEqual({ reply: { blur: ["F1"] } });
+    expect((libraryDb().prepare("SELECT full_sha256 FROM asset_versions WHERE id = ?").get(v) as { full_sha256: string }).full_sha256).toBe(SHA);
+    const made = { path: "/Volumes/Tiny/Footage/Blurred/take blurred.mp4", size: 4321, quick: "copy-quick", duration: 4, width: 1920, height: 1080 };
+    expect(await autoJobs.answer("mac-1", job.id, { made })).toEqual({ reply: { ok: true } });
+    const blurred = fileBlur(v)?.blurredVersionId;
+    expect(blurred).toBeTruthy();
+    expect(playOf(v)).toBe(blurred); // the AI Editor reads it in the original's place
+    const row = libraryDb().prepare("SELECT asset_id, mac_path, source_key FROM asset_versions WHERE id = ?").get(blurred!) as { asset_id: string; mac_path: string; source_key: string };
+    expect(row.mac_path).toBe(made.path); // on the Mac, nothing uploaded
+    expect(row.source_key).toMatch(/^mac:/);
+    const original = libraryDb().prepare("SELECT asset_id FROM asset_versions WHERE id = ?").get(v) as { asset_id: string };
+    expect(row.asset_id).toBe(original.asset_id); // a version of the original's own clip
+    expect(await queueVersion(event(blurred!))).toBe(false);
+    expect(await queueVersion(event(v))).toBe(false);
+    // the library uploads (all hosts proxies): its Mac makes the team's proxy from the copy and sends it
+    expect(libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'send'").get(blurred!)).toBeTruthy();
+  });
+
+  it("a disk that is not connected gives the file back, not offered to that Mac again for a while", async () => {
+    await settings({});
+    await queueVersion(event(await added("mp4")));
+    const job = autoJobs.claim(mac)!;
+    expect(await autoJobs.answer("mac-1", job.id, { back: "The disk is not connected" })).toEqual({ reply: { ok: true } });
+    expect(autoJobs.claim(mac)).toBeNull();
+    expect((await auto()).failed).toEqual([]);
+  });
+
+  it("an AI provider that cannot answer gives the file back with no try and pauses the account, never fails it", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    const job = autoJobs.claim(mac)!;
+    ai.answer = async () => {
+      throw Object.assign(new Error("429 rate_limit_error"), { limited: { until: Date.now() + 60_000 } });
+    };
+    expect(await autoJobs.answer("mac-1", job.id, FACES)).toMatchObject({ status: 409, back: true });
+    expect(autoJobs.claim(mac)).toBeNull(); // paused
+    const a = await auto();
+    expect(a.pausedUntil).toBeGreaterThan(Date.now());
+    expect(a.failed).toEqual([]);
+    expect(answerOf(v)).toBe("yes");
+  });
+
+  it("a failed file says why, until Retry", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    const job = autoJobs.claim(mac)!;
+    expect(autoJobs.fail("mac-1", job.id, "The file could not be read.")).toBe(true);
+    expect((await auto()).failed.map((f) => f.versionId)).toEqual([v]);
+    expect((await call("POST", "/auto/retry", { versionId: v })).status).toBe(200);
+    expect(autoJobs.claim(mac)).not.toBeNull();
   });
 
   it("goes back in the queue when its Mac goes quiet, and fails after three times", async () => {
@@ -174,21 +215,22 @@ describe("a Mac's job", () => {
       macs.online = new Set(["mac-1"]);
       expect(autoJobs.claim(mac)).not.toBeNull();
       macs.online = new Set();
-      autoJobs.waits("ana");
+      autoJobs.waits("ana", "mac-1");
     }
-    expect(autoJobs.waits("ana")).toBe(false);
-    const failed = ((await (await call("GET", "/auto")).json()) as { failed: unknown }).failed as { error: string }[];
-    expect(failed.at(-1)?.error).toMatch(/three times/);
+    expect(autoJobs.waits("ana", "mac-1")).toBe(false);
+    expect((await auto()).failed.at(-1)?.error).toMatch(/three times/);
   });
 });
 
-describe("the switch", () => {
-  it("shows where a Mac of this account can cover, and says why not elsewhere", async () => {
-    expect(await (await call("GET", "/auto")).json()).toMatchObject({ can: true });
-    macs.kinds = [];
-    const r = (await (await call("GET", "/auto")).json()) as { can: boolean; why: string };
-    expect(r.can).toBe(false);
-    expect(r.why).toMatch(/Mac app/);
+describe("Settings", () => {
+  it("shows what is missing", async () => {
+    await settings({});
+    expect(await auto()).toMatchObject({ can: true });
+    ai.configured = false;
+    expect(await auto()).toMatchObject({ can: false, why: "Needs an AI provider" });
+    ai.configured = true;
+    macs.kinds = ["faceblur"]; // a Mac app from before
+    expect(await auto()).toMatchObject({ can: false, why: "Needs the Mac app" });
   });
 });
 

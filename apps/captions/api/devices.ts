@@ -318,7 +318,7 @@ devicesApp.post("/relay/job/:kind/:id", async (c) => {
   const slot = slotOf(c);
   if (!slot) return c.json({ error: "Not found" }, 404);
   const r = await slot.answer(d.id, jobId(c), await c.req.json().catch(() => null));
-  return "error" in r ? c.json({ error: r.error }, r.status as 400) : c.json({ ...(r.reply as object), ...(await ended(d, true)) });
+  return "error" in r ? c.json({ error: r.error, ...(r.back ? { back: true } : {}) }, r.status as 400) : c.json({ ...(r.reply as object), ...(await ended(d, true)) });
 });
 devicesApp.post("/relay/job/:kind/:id/file", async (c) => {
   const d = deviceCaller(c);

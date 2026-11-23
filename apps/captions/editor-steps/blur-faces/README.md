@@ -46,21 +46,27 @@ and written nowhere. With "Only some faces" the person's AI picks from the faces
 ## New Media Library files
 
 Each photo and video marked Blur faces (the file's blur answer, set when it comes in: `blur` "yes", contracts `Blur`)
-that comes into one of the built-in Media Libraries of a workspace where Face Blur is on (the library's `settings.projectId`) is covered by a Mac of the account's own, with the same settings, and the covered copy is added to the same library (so the same workspace) as
-"<title> blurred", linked to the original (`derived_from`). The original is never changed, hidden or deleted.
+that a Mac indexes into a built-in Media Library of a workspace where Face Blur is on (the library's
+`settings.projectId`) is covered on that Mac, where the file is, with the faces described in Which faces. The copy
+becomes the clip's blurred version (`blurred_of`, the original's full SHA-256): the app plays, edits and exports it
+from then on, and under Upload Proxies its Mac makes the team's proxy from it (job `send`). No plain proxy is made of
+the original. The whole design: `docs/face-blur-intake-prd.md`.
 
-- **Trigger:** the core event `library.version.probed` (the library's worker, after a file is read; not for music), and
-  `library.version.blur` (a file marked Blur faces later). Queued once per version, never for a file marked no, one with
-  a blurred render already, or a file made from another (a covered copy, an export).
-- **Queue:** `<data dir>/plugins/blur-faces/auto.json`. A Mac claims a file with the device job `faceblur` (the plug-in
-  slot `deviceJobs`, PLUGINS.md); the claim carries `options: { mode, look, media }`. A Mac that goes quiet gives its file
-  back; after three times, or a Mac's own failure, the file is failed and says why.
-- **The Mac** (`FaceBlurAutoJob.swift`): `GET /api/devices/relay/job/faceblur/<id>` the original; in "some" mode `POST …/<id>`
-  `{ faces }` → `{ blur }` (the server asks the person's AI, as `/pick`; a failed AI fails the file and nothing is
-  written); no face covered → `POST …/<id>` `{ nothing: why }` and no copy; else `POST …/<id>/file` the MP4 or JPEG.
-- **Where it shows:** Settings → Face Blur → New Media Library files, only when something is wrong: why no Mac of the
-  account can cover files (none lists `faceblur`, or the Media Library is a plug-in's), and the files that could not be
-  covered, with why and Retry. Nothing is shown while all goes well. `GET /api/x/blur-faces/auto`, `POST /api/x/blur-faces/auto/retry`.
+- **Trigger:** on-Mac indexing of a yes-file (`library.version.blur` from `on-mac.ts`), a file marked Blur faces later
+  (`library.version.blur`), the worker's `library.version.probed`, and a sweep a few seconds after the server starts.
+  Queued once per version, only for a file with a path on a Mac (`mac_path`, `mac_device`), never for a file marked no,
+  one with a blurred version already, or a file made from another.
+- **Queue:** `<data dir>/plugins/blur-faces/auto.json`, a map by version id. A done file is dropped from it.
+- **Claim:** the device job `faceblur-intake`, only by the Mac that indexed the file, only while the account has an AI
+  provider and Which faces is said, and not while it is paused. Options: `media`, `path` (the original on that Mac),
+  `out` (the library's `Imports/Blurred` on that Mac, else `Blurred/` beside the original) and the style.
+- **The Mac** (`FaceBlurAutoJob.swift`): the steps are in the PRD's §3a. `{ back }` (the disk is not connected) puts
+  the file back, not offered to that Mac for 10 minutes; `{ nothing }` or an empty pick keeps the file as filmed (its
+  answer no); an AI provider that cannot answer gives `409 { error, back: true }`, puts the file back with no try and
+  pauses the account until its limit resets (15 minutes when it gives no time); `{ made }` records the copy.
+- **Where it shows:** Settings → Face Blur → New Media Library files, only when something is wrong: "Needs the Mac app",
+  "Needs an AI provider", "Needs Which faces", "Paused until 14:00", and the files that failed, with Retry.
+  `GET /api/x/blur-faces/auto` → `{ can, why?, pausedUntil?, running, failed }`, `POST /api/x/blur-faces/auto/retry`.
 
 ## Choosing faces (only "some" mode)
 

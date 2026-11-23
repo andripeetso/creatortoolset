@@ -3,7 +3,8 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, blursFaces, libraryDb, libraryUpload, librarySetting } from "./db";
+import { blobs, blursFaces, fileBlur, libraryDb, libraryUpload, librarySetting } from "./db";
+import { emitEvent } from "../lib/events";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
 import { wantsProxy } from "./media/proxy";
@@ -269,12 +270,15 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   // the Mac said nothing of when it was filmed and the file is on this very machine (the Mac app's own server): read here
   if (!x.capturedAt && x.camera === undefined && kind !== "audio") await readHere(d, versionId, x.path, kind);
   organizeOnProbe(d, versionId, sound);
+  // marked Blur faces with no blurred render yet: Face Blur covers it on this Mac (editor-steps/blur-faces queueVersion)
+  if (!pictures && !x.blurredOf && fileBlur(versionId)?.blur === "yes") emitEvent("library.version.blur", { libraryId, versionId, owner: by });
   // its transcript is made on that Mac from the file where it is (worker.ts): never uploaded for it
   // shortcut: videos only (the Mac sends no sound codec, so songs and sound effects can't be told apart); hear audio once it does
   // Analysis effort: Off makes no transcript on import (UNIFIED-PRD §4.4)
   if (kind === "video" && librarySetting(libraryId, "transcribe")) enqueueJob(d, libraryId, versionId, "transcribe", by);
-  // Upload off with Generate proxies on: the computer holding the file makes its proxy and keeps it (library-package keepProxy)
-  if (kind === "video" && mine && hostsNone(libraryUpload(libraryId)) && wantsProxy(probe as ProbeSummary, { cloud: false, on: !!librarySetting(libraryId, "proxy") }))
+  // Upload off with Generate proxies on: the computer holding the file makes its proxy and keeps it (library-package keepProxy);
+  // never of a file waiting for its blur, nor of its blurred render (that is the proxy, docs/face-blur-intake-prd.md §2)
+  if (kind === "video" && mine && pictures && !x.blurredOf && hostsNone(libraryUpload(libraryId)) && wantsProxy(probe as ProbeSummary, { cloud: false, on: !!librarySetting(libraryId, "proxy") }))
     enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     if (!pictures) {

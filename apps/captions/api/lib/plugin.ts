@@ -393,8 +393,8 @@ export interface DeviceJobSlot {
   claim: (device: { id: string; owner: string }) => DeviceJob | null;
   // the job's input file, or null when the device holds no such job
   input: (device: string, id: number) => Promise<{ file: string; type: string } | null>;
-  // a JSON answer: what to send back, or an error with its status
-  answer: (device: string, id: number, body: unknown) => Promise<{ reply: unknown } | { error: string; status: number }>;
+  // a JSON answer: what to send back, or an error with its status (`back`: the job went back in the queue, not a failure)
+  answer: (device: string, id: number, body: unknown) => Promise<{ reply: unknown } | { error: string; status: number; back?: true }>;
   // a file the device made, already on disk (`name` is the device's name for it); the slot moves or copies it
   file: (device: string, id: number, path: string, name: string) => Promise<{ reply: unknown } | { error: string; status: number }>;
   // the device could not do it; false when it holds no such job

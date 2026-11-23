@@ -565,6 +565,9 @@ describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)
     const queued: string[] = [];
     onEvent("library.version.blur", (e) => void queued.push(e.versionId));
     const f = await body(onMac("lib_kids", "Changed later.mov"));
+    // indexed on its Mac with no answer in a Blur faces library: Face Blur is asked to cover it at once
+    expect(queued).toEqual([f.versionId]);
+    queued.length = 0;
     const put = (blur: unknown, who?: string) =>
       app.request(`/api/library/lib_kids/assets/${f.assetId}/blur`, { method: "PUT", headers: { "content-type": "application/json", ...(who ? { "x-as": who } : {}) }, body: JSON.stringify({ blur }) });
     expect((await put("maybe")).status).toBe(400);

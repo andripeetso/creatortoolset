@@ -38,7 +38,7 @@ type Settings = {
   color: string;
 };
 /** plugin.ts GET /auto */
-type Auto = { can: boolean; why?: string; failed: { versionId: string; title: string; error: string }[] };
+type Auto = { can: boolean; why?: string; pausedUntil?: number; running: string[]; failed: { versionId: string; title: string; error: string }[] };
 type Style = Pick<Settings, "look" | "strength" | "softness" | "size" | "color">;
 const styleOf = ({ look, strength, softness, size, color }: Settings): Style => ({ look, strength, softness, size, color });
 
@@ -351,18 +351,20 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
 }
 
 /**
- * New Media Library files marked Blur faces are covered by themselves: nothing shows while that works. Where no computer
- * of this account can cover them, why; and the files it could not cover, each with why and Retry.
+ * New Media Library files marked Blur faces are covered on the Mac that has them: nothing shows while that works. What is
+ * missing ("Needs an AI provider"), a pause at the AI provider's usage limit, and the files that failed, each with Retry.
  */
 function AutoRows({ settings }: ReturnType<typeof useSettings>) {
   const [auto, setAuto] = useState<Auto | null>(null);
   const load = () => void call<Auto>(`${API}/auto`).then(setAuto, () => setAuto(null));
   useEffect(load, []);
-  if (!settings || !auto || (auto.can && !auto.failed.length)) return null;
+  if (!settings || !auto || (auto.can && !auto.pausedUntil && !auto.failed.length)) return null;
   const retry = (versionId: string) => call(`${API}/auto/retry`, "POST", { versionId }).then(load, (e: Error) => saveFailed(e.message));
+  const until = auto.pausedUntil && new Date(auto.pausedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
     <Card>
       {!auto.can && <Row title="New Media Library files" description={auto.why} />}
+      {auto.can && until && <Row title="New Media Library files" description={`Paused until ${until}`} />}
       {auto.failed.map((f) => (
         <Row
           key={f.versionId}
