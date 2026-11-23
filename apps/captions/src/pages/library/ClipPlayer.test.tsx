@@ -183,11 +183,21 @@ describe("with it", () => {
     await open();
     expect(video().getAttribute("src")).toBe("/api/library/media/v1/play");
     answer = original;
-    expect(button("Play original")?.title).toBe("Allow access to footage");
-    await act(async () => button("Play original")!.click());
+    expect(button("Allow folder")?.title).toBe("Allow access to footage");
+    await act(async () => button("Allow folder")!.click());
     expect(access).toHaveBeenCalledWith({ ask: "/Volumes/footage" });
     expect(video().getAttribute("src")).toMatch(/^ctlocal:\/\/media\/a/);
-    expect(button("Play original")).toBeUndefined();
+    expect(button("Allow folder")).toBeUndefined();
+  });
+
+  it("with the side panel's place for them, the buttons are drawn there and not on the player", async () => {
+    answer = { state: "here", path: "/Volumes/footage/2025/a.mov", needs: "access", folder: "/Volumes/footage", root };
+    const panel = document.createElement("div");
+    document.body.append(panel);
+    await act(async () => r.render(<ClipPlayer asset={card} detail={null} media={createRef()} startAt={0} actions={panel} />));
+    expect(panel.querySelector("button")?.textContent).toBe("Allow folder");
+    expect(host.querySelector("[data-player]")?.parentElement?.querySelector("button[title^='Allow access']")).toBeNull();
+    panel.remove();
   });
 
   it("a share that needs its login offers Connect", async () => {

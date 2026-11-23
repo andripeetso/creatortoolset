@@ -93,6 +93,8 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
     };
   }, [libraryId, asset.versionId]);
   const placeWord = where ?? a.placeWord;
+  // the player's Allow folder and Connect buttons, drawn under where the clip is
+  const [playerButtons, setPlayerButtons] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -331,6 +333,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
           The file was moved or renamed, or its drive isn't connected.
         </p>
       )}
+      <div ref={setPlayerButtons} className="empty:hidden" />
       <Locate libraryId={libraryId} versionId={a.versionId} missing={a.state === "missing"} onMac={!!a.onMac} />
     </div>
   );
@@ -500,7 +503,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
     ));
 
   const picture = playable ? (
-    <ClipPlayer asset={a} detail={detail} media={media} startAt={startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={serverPlays} />
+    <ClipPlayer asset={a} detail={detail} media={media} startAt={startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={serverPlays} actions={playerButtons} />
   ) : a.kind === "image" ? (
     <ClipImage asset={a} fill={win} />
   ) : (

@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { ChevronLeft, ChevronRight, Download, Loader2, Volume2 } from "lucide-react";
 import { hostsOriginals, hostsProxies, type AssetCard, type AssetDetail, type LibraryUpload } from "@contracts/library";
@@ -43,6 +44,7 @@ export function ClipPlayer({
   onTime,
   fill = false,
   serverPlays = true,
+  actions,
 }: {
   asset: AssetCard;
   detail: AssetDetail | null;
@@ -56,6 +58,8 @@ export function ClipPlayer({
   fill?: boolean;
   /** false when the server plays nothing of this clip (Upload none, not shared with members): a copy only this computer has plays */
   serverPlays?: boolean;
+  /** where the Allow folder and Connect buttons go (the side panel, under where the clip is); none: under the player */
+  actions?: HTMLElement | null;
 }) {
   const [muted, setMuted] = useState(false);
   // the plain address failed: once the lighter copy is made it is asked for again, at a new address (`?r=1`) so the
@@ -189,29 +193,30 @@ export function ClipPlayer({
   };
   const access = check?.state === "here" && check.needs === "access" ? check : null;
   const share = check?.state === "away" && check.needs === "connect" ? check.root : undefined;
-  // over the picture beside the badge: Proxy plays now, the button plays the original once its folder is allowed
-  const dark = "bg-black/70 text-white hover:bg-black/80";
+  // in the side panel by where the clip is, never over the picture (owner, 2026-11-23)
   const buttons = (access || share) && (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
+    <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
       {access && (
         <Button
           size="sm"
-          className={dark}
+          variant="outline"
+          className="h-7"
           disabled={busy}
           title={`Allow access to ${access.root?.name ?? access.folder.split("/").filter(Boolean).pop() ?? access.folder}`}
           onClick={press(() => askMediaFolder(access.folder).then(() => null))}
         >
-          Play original
+          Allow folder
         </Button>
       )}
       {share && (
-        <Button size="sm" className={dark} disabled={busy} onClick={press(() => placesConnect(share.key).then((r) => ("ok" in r ? null : `Could not connect ${share.name}`), () => `Could not connect ${share.name}`))}>
+        <Button size="sm" variant="outline" className="h-7" disabled={busy} onClick={press(() => placesConnect(share.key).then((r) => ("ok" in r ? null : `Could not connect ${share.name}`), () => `Could not connect ${share.name}`))}>
           Connect
         </Button>
       )}
-      {problem && <span className="rounded bg-black/70 px-1.5 py-0.5 text-white">{problem}</span>}
+      {problem && <span>{problem}</span>}
     </div>
   );
+  const placed = buttons && actions ? createPortal(buttons, actions) : null;
   const badge = places && pin && phase !== "failed" && (
     <span
       title={pin.badge === "Proxy" ? (awayLine(check) ?? undefined) : undefined}
@@ -268,7 +273,7 @@ export function ClipPlayer({
         <audio key={src} ref={bind} src={src || undefined} controls preload="auto" className="w-full" {...events} />
         {note && <Note note={note} file={original(a, detail)} />}
         {awayNote}
-        {buttons}
+        {placed ?? buttons}
       </>
     );
   }
@@ -349,7 +354,6 @@ export function ClipPlayer({
               Sound on
             </Button>
           )}
-          {buttons}
         </div>
         {onPrev && (
           <button type="button" aria-label="Previous clip" onClick={(e) => (e.stopPropagation(), onPrev())} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
@@ -362,6 +366,7 @@ export function ClipPlayer({
           </button>
         )}
       </div>
+      {placed ?? (buttons && <div className="shrink-0 px-2">{buttons}</div>)}
     </div>
   );
 }
