@@ -11,6 +11,7 @@ import { libraryBadges, libraryFacets, pickedFor } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
 import { BrowseBar } from "@/components/browse/Bar";
 import { matches, persistSort, storedSort, useBrowseView } from "@/components/browse/views";
+import { SortPick } from "./library/SortControls";
 
 /**
  * Finals (/finals): the library's Finals collection shown as pieces. A piece is one reel, carousel or other item made
@@ -39,7 +40,16 @@ export const KIND_BADGE: Record<FinalsKind, string> = {
 };
 
 // the server sends the pieces in the order they were made: Oldest is that order, as before
-const SORTS = ["oldest", "newest", "name"] as const;
+/** Newest first by default (the first); a value stored before the arrow ("oldest", "name") still loads. */
+const SORTS = ["newest", "oldest", "name", "name-za"] as const;
+type FinalsSort = (typeof SORTS)[number];
+const SORT_BY = [
+  { id: "date", label: "Date added" },
+  { id: "name", label: "Name" },
+] as const;
+type FinalsSortBy = (typeof SORT_BY)[number]["id"];
+const sortOf = (by: FinalsSortBy, first: boolean): FinalsSort => (by === "name" ? (first ? "name" : "name-za") : first ? "newest" : "oldest");
+const sortWords = (by: FinalsSortBy, first: boolean) => (by === "name" ? (first ? "A → Z" : "Z → A") : first ? "Newest first" : "Oldest first");
 const SORT_KEY = "finals:sort";
 /** A piece opened from this list: closing its window goes back here (history), not to a new /finals entry. */
 export const FROM_LIST = { fromList: true };
@@ -104,12 +114,9 @@ export function FinalsView({
   const faceted = Object.values(own).some((v) => v.length > 0);
   const all = finalsTiles(pieces, cards, faceted);
   const kept = all.filter((t) => (!kind || t.kind === kind) && matches(find, t.piece.label));
-  const shown =
-    sort === "newest"
-      ? [...kept].reverse()
-      : sort === "name"
-        ? [...kept].sort((a, b) => a.piece.label.localeCompare(b.piece.label, undefined, { numeric: true, sensitivity: "base" }))
-        : kept;
+  const byName = sort === "name" || sort === "name-za";
+  const ordered = byName ? [...kept].sort((a, b) => a.piece.label.localeCompare(b.piece.label, undefined, { numeric: true, sensitivity: "base" })) : kept;
+  const shown = sort === "newest" || sort === "name-za" ? [...ordered].reverse() : ordered;
   const kinds: (FinalsKind | null)[] = [null, "reel", "carousel", "other"];
 
   return (
@@ -145,20 +152,20 @@ export function FinalsView({
       {all.length > 0 && (
         <BrowseBar
           search={{ value: find, onChange: setFind, placeholder: "Search Finals (⌘K)" }}
-          sort={{
-            value: sort,
-            onChange: (v) => {
-              setSort(v);
-              persistSort(SORT_KEY, v);
-            },
-            label: "Sort pieces",
-            options: [
-              { id: "oldest", label: "Oldest" },
-              { id: "newest", label: "Newest" },
-              { id: "name", label: "Name" },
-            ],
-          }}
           view={{ value: view, onChange: setView }}
+          tools={
+            <SortPick
+              by={byName ? "name" : "date"}
+              first={sort === "newest" || sort === "name"}
+              options={SORT_BY}
+              words={sortWords}
+              onSort={(by, first) => {
+                const v = sortOf(by, first);
+                setSort(v);
+                persistSort(SORT_KEY, v);
+              }}
+            />
+          }
         />
       )}
 

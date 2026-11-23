@@ -95,28 +95,47 @@ export function ListHeader({ sort, onSort }: { sort: LibrarySort; onSort: (s: Li
 
 export function SortControls({ sort, onSort }: { sort: LibrarySort; onSort: (s: LibrarySort) => void }) {
   const { by, first } = splitSort(sort);
-  const now = orderWords(by, first);
+  return <SortPick by={by} first={first} options={SORT_BY} words={orderWords} onSort={(b, f) => onSort(sortOf(b, f))} />;
+}
+
+/** Sort by (a menu) and which way (the arrow beside it): the Media Library's, and any list that sorts the same way (Finals). */
+export function SortPick<B extends string>({
+  by,
+  first,
+  options,
+  words,
+  onSort,
+}: {
+  by: B;
+  /** the key's first way (↓: newest, A → Z) */
+  first: boolean;
+  options: readonly { id: B; label: string }[];
+  words: (by: B, first: boolean) => string;
+  onSort: (by: B, first: boolean) => void;
+}) {
+  const now = words(by, first);
   const Arrow = first ? ArrowDown : ArrowUp;
+  const label = options.find((o) => o.id === by)?.label ?? options[0].label;
   return (
     <>
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="h-8" aria-label={`Sort by ${SORT_BY.find((o) => o.id === by)!.label}`}>
-            {SORT_BY.find((o) => o.id === by)!.label}
+          <Button variant="outline" size="sm" className="h-8" aria-label={`Sort by ${label}`}>
+            {label}
             <ChevronDown className="h-3.5 w-3.5 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" sideOffset={4}>
-          {SORT_BY.map((o) => (
+          {options.map((o) => (
             // a new key keeps the way it was going (newest first stays the first way)
-            <DropdownMenuItem key={o.id} onSelect={() => onSort(sortOf(o.id, first))}>
+            <DropdownMenuItem key={o.id} onSelect={() => onSort(o.id, first)}>
               <Check className={o.id === by ? "h-4 w-4 text-violet-600" : "h-4 w-4 opacity-0"} />
               {o.label}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      <Button variant="outline" size="sm" className="h-8 w-8 px-0" aria-label={now} title={`${now} · click for ${orderWords(by, !first)}`} onClick={() => onSort(sortOf(by, !first))}>
+      <Button variant="outline" size="sm" className="h-8 w-8 px-0" aria-label={now} title={`${now} · click for ${words(by, !first)}`} onClick={() => onSort(by, !first)}>
         <Arrow className="h-4 w-4" />
       </Button>
     </>

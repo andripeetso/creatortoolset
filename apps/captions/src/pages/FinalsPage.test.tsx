@@ -108,6 +108,17 @@ describe("FinalsView with a plug-in facet and badge", () => {
     expect(html).toContain("Piece other");
   });
 
+  it("lists the newest piece first until another order is picked", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <FinalsView hasFinals pieces={[reel, other]} cards={cards} picked={{}} onFacets={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(html.indexOf("Piece other")).toBeLessThan(html.indexOf("Piece reel"));
+    expect(html).toContain('aria-label="Sort by Date added"');
+    expect(html).toContain('aria-label="Newest first"');
+  });
+
   it("filters the pieces by a picked facet value", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
