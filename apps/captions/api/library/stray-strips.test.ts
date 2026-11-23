@@ -34,7 +34,7 @@ let n = 0;
 /** A video indexed on this Mac with a strip; `old`: as one from before (no frame size noted). */
 const index = async (name: string, width: number, height: number, old = true) => {
   const quick = (++n).toString(16).padStart(64, "0");
-  const body = { name, path: `/Volumes/Tiny/Source media/${name}`, size: 9_000_000 + n, quick, duration: 12, width, height, frames: [], sprite: jpegOf(160 * 20, 90), device: mac };
+  const body = { name, path: `/Volumes/Tiny/Source media/${name}`, size: 9_000_000 + n, quick, duration: 12, width, height, frames: [], sprite: jpegOf(160 * 20, 90), thumb: jpegOf(320, 180), device: mac };
   const r = await Promise.resolve(app.request("/api/library/lib_s/on-mac", { method: "POST", headers: as(), body: JSON.stringify(body) }));
   expect(r.status).toBe(200);
   const { versionId } = (await r.json()) as { versionId: string };
