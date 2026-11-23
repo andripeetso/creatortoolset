@@ -127,6 +127,15 @@ final class FaceBlurAskTests: XCTestCase {
 }
 
 final class FaceBlurEngineTests: XCTestCase {
+    /// A side-on face the face detector misses: the head stands in from its upper-body box, top third, centred.
+    func testHeadFromAnUpperBodyBox() {
+        let head = FaceDetector.headOf(body: NormRect(cx: 0.5, cy: 0.5, w: 0.4, h: 0.6))
+        XCTAssertEqual(head.cx, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(head.cy, 0.4, accuracy: 1e-9) // top 0.2 + a third of 0.6
+        XCTAssertEqual(head.w, 0.2, accuracy: 1e-9)
+        XCTAssertLessThan(head.cy + head.h / 2, 0.5) // inside the upper half
+    }
+
     /// One face moving slowly across a second, plus a one-frame flicker elsewhere: one track, start to end.
     func testTracksFromDetections() {
         let frame = CGSize(width: 640, height: 480)

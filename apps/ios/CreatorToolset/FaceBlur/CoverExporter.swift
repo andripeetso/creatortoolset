@@ -10,6 +10,8 @@ enum CoverExporter {
     /// Long side of exported videos: fits every messaging app without them recompressing twice.
     static let videoLongSide: CGFloat = 1920
     static let photoLongSide: CGFloat = 4096
+    /// H.264 at a fixed bitrate: the copy is the working file for editing, and an export preset picks about half of this.
+    static let videoBitrate = 20_000_000
 
     // MARK: Video
 
@@ -65,42 +67,9 @@ enum CoverExporter {
         videoComposition.renderSize = target
         MediaColor.applySDR(to: videoComposition)
 
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-            throw MediaError.exportFailed("that video can't be made here.")
-        }
         let partial = partialURL(for: url)
         defer { try? FileManager.default.removeItem(at: partial) }
-        session.outputURL = partial
-        session.outputFileType = .mp4
-        session.videoComposition = videoComposition
-        session.shouldOptimizeForNetworkUse = true
-        session.metadata = []
-        session.metadataItemFilter = .forSharing()
-
-        let poll = Task {
-            while !Task.isCancelled {
-                progress(Double(session.progress))
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-        }
-        defer { poll.cancel() }
-
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                session.exportAsynchronously {
-                    switch session.status {
-                    case .completed:
-                        continuation.resume()
-                    case .cancelled:
-                        continuation.resume(throwing: CancellationError())
-                    default:
-                        continuation.resume(throwing: session.error ?? MediaError.exportFailed("Unknown error"))
-                    }
-                }
-            }
-        } onCancel: {
-            session.cancelExport()
-        }
+        try await write(composition, videoComposition, size: target, duration: range.duration.seconds, to: partial, progress: progress)
         progress(1)
 
         // Never give a partial or empty file the copy's name.
@@ -109,6 +78,105 @@ enum CoverExporter {
         let tracks = try await check.loadTracks(withMediaType: .video)
         guard duration > 0, !tracks.isEmpty else { throw MediaError.exportFailed("the finished file didn't check out.") }
         try place(partial, at: url)
+    }
+
+    /// Reads the composition through the cover renderer and writes H.264 at `videoBitrate` with each sound track as
+    /// stereo AAC. A writer adds no metadata of its own.
+    private static func write(
+        _ composition: AVAsset,
+        _ videoComposition: AVVideoComposition,
+        size: CGSize,
+        duration: Double,
+        to url: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        let reader = try AVAssetReader(asset: composition)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        writer.shouldOptimizeForNetworkUse = true
+        let videoOut = AVAssetReaderVideoCompositionOutput(
+            videoTracks: try await composition.loadTracks(withMediaType: .video),
+            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        )
+        videoOut.videoComposition = videoComposition
+        videoOut.alwaysCopiesSampleData = false
+        let videoIn = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(size.width),
+            AVVideoHeightKey: Int(size.height),
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: videoBitrate,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+            ],
+        ])
+        videoIn.expectsMediaDataInRealTime = false
+        guard reader.canAdd(videoOut), writer.canAdd(videoIn) else { throw MediaError.exportFailed("that video can't be made here.") }
+        reader.add(videoOut)
+        writer.add(videoIn)
+        var pairs: [(AVAssetReaderOutput, AVAssetWriterInput)] = [(videoOut, videoIn)]
+
+        var stereo = AudioChannelLayout()
+        stereo.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+        let layout = Data(bytes: &stereo, count: MemoryLayout<AudioChannelLayout>.size)
+        for track in try await composition.loadTracks(withMediaType: .audio) {
+            let out = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVChannelLayoutKey: layout,
+                AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
+            ])
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2, AVChannelLayoutKey: layout,
+                AVEncoderBitRateKey: 256_000,
+            ])
+            input.expectsMediaDataInRealTime = false
+            // a sound track that can't be read is left out, as the export session did with one it couldn't convert
+            guard reader.canAdd(out), writer.canAdd(input) else { continue }
+            reader.add(out)
+            writer.add(input)
+            pairs.append((out, input))
+        }
+
+        guard reader.startReading() else { throw reader.error ?? MediaError.exportFailed("the video couldn't be read.") }
+        guard writer.startWriting() else { throw writer.error ?? MediaError.exportFailed("the copy couldn't be started.") }
+        writer.startSession(atSourceTime: .zero)
+
+        try await withTaskCancellationHandler {
+            await withTaskGroup(of: Void.self) { group in
+                for (index, (out, input)) in pairs.enumerated() {
+                    nonisolated(unsafe) let out = out, input = input
+                    group.addTask {
+                        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                            input.requestMediaDataWhenReady(on: DispatchQueue(label: "faceblur.write.\(index)")) {
+                                while input.isReadyForMoreMediaData {
+                                    guard let sample = out.copyNextSampleBuffer() else {
+                                        input.markAsFinished()
+                                        done.resume()
+                                        return
+                                    }
+                                    if index == 0, duration > 0 { progress(min(1, CMSampleBufferGetPresentationTimeStamp(sample).seconds / duration)) }
+                                    if !input.append(sample) {
+                                        reader.cancelReading()
+                                        input.markAsFinished()
+                                        done.resume()
+                                        return
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } onCancel: {
+            reader.cancelReading()
+            writer.cancelWriting()
+        }
+        try Task.checkCancellation()
+        if reader.status == .failed { writer.cancelWriting(); throw reader.error ?? MediaError.exportFailed("the video couldn't be read.") }
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? MediaError.exportFailed("Unknown error") }
     }
 
     // MARK: Photo

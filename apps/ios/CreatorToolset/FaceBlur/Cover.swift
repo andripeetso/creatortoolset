@@ -88,8 +88,8 @@ struct Cover: Codable, Hashable, Sendable {
     /// The cover's size against the face's own cover (1 = as found; the style's Size).
     var scale: Double = 1
 
-    static let leadHold = 0.25
-    static let tailHold = 0.25
+    static let leadHold = 1.0
+    static let tailHold = 1.0
     /// Path gaps longer than this are covered by a circle spanning both ends instead of being interpolated.
     static let interpolateMax = 0.9
 

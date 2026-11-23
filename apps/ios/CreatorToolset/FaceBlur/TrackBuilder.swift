@@ -39,7 +39,7 @@ final class TrackBuilder {
     }
 
     // Tuning. Gaps are in seconds.
-    static let maxGap = 1.0
+    static let maxGap = 1.5
     static let followMax = 3.0
     static let spawnScore = 0.55
     static let keepScore = 0.75

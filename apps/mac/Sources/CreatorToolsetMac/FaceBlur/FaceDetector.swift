@@ -13,7 +13,8 @@ struct FaceDetection: Hashable, Sendable {
     var score: Double
 }
 
-/// Apple Vision face detection. Revision 3 finds faces at any roll, sideways and upside-down included.
+/// Apple Vision face detection. Revision 3 finds faces at any roll, sideways and upside-down included. Faces turned
+/// side-on it often misses entirely; an upper-body box with no face in it then stands in for the head (`headOf`).
 enum FaceDetector {
     /// Detections below this are ignored entirely.
     static let minScore = 0.45
@@ -41,8 +42,11 @@ enum FaceDetector {
             }
         }
         #endif
-        try handler.perform([request])
-        return (request.results ?? []).compactMap { face in
+        let bodies = VNDetectHumanRectanglesRequest()
+        bodies.upperBodyOnly = true
+        try handler.perform([request, bodies])
+        let found = request.results ?? []
+        let faces: [FaceDetection] = found.compactMap { face in
             let score = Double(face.confidence)
             guard score >= minScore else { return nil }
             return FaceDetection(
@@ -51,6 +55,21 @@ enum FaceDetector {
                 score: score
             )
         }
+        // a body with any face in it (even one below minScore) is that face's; only a faceless one stands in for a head
+        let heads = (bodies.results ?? []).compactMap { body -> FaceDetection? in
+            guard Double(body.confidence) >= minScore,
+                  !found.contains(where: { body.boundingBox.contains(CGPoint(x: $0.boundingBox.midX, y: $0.boundingBox.midY)) })
+            else { return nil }
+            return FaceDetection(rect: headOf(body: normRect(fromVision: body.boundingBox)), angle: 0, score: Double(body.confidence))
+        }
+        return faces + heads
+    }
+
+    /// Where the head is in an upper-body box, generously: measured on real footage the face's centre sits 18–57% down
+    /// the box and is 27–66% of its width, so this is half the box's width, a third of the way down (covers pad it more).
+    static func headOf(body: NormRect) -> NormRect {
+        let top = body.cy - body.h / 2
+        return NormRect(cx: body.cx, cy: top + body.h / 3, w: body.w / 2, h: body.h / 3.5)
     }
 
     /// Vision uses a bottom-left origin.
