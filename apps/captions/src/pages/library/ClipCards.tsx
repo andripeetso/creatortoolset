@@ -245,7 +245,7 @@ export function AssetRow({ asset: a, onOpen, drag }: { asset: AssetCard; onOpen:
           <ClipStage card={a} className="shrink-0" />
         )}
       </span>
-      {/* Date filmed is the file's own date; with none the clip sorts by when it was added, and the cell stays empty */}
+      {/* Date filmed: the filming date in the file, else its modified time; with neither the clip sorts by when it was added, and the cell stays empty */}
       <span className={cn(cell, COL.filmed)}>{day(a.capturedAt)}</span>
       <span className={cn(cell, COL.added)}>{day(a.addedAt)}</span>
       <span className="text-right font-mono text-[11px] text-zinc-500">{a.durationS !== undefined ? clock(a.durationS) : ""}</span>

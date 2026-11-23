@@ -9,6 +9,7 @@ import { BLUR_SQL, libraryProxyQuality } from "./db";
 import { placeWordOf } from "../../contracts/places";
 import { folderStatesFor } from "./places";
 import { GONE_ON_COMPUTER_SQL, ON_COMPUTER_SQL, whereIsMany } from "./whereis";
+import { FILE_DATE, FILMED as FILMED_V } from "./shoots";
 
 /**
  * Asset listing for the library (tasks/media-library-plan.md, sections 6 and 8): one SQL statement from a
@@ -23,7 +24,7 @@ export const KINDS: AssetKind[] = ["video", "image", "audio", "doc"];
 /**
  * Each order as one SQL key and its direction; the id breaks ties in the same direction, and the cursor carries the key
  * and the id of a page's last row. The same expression orders and pages, so a page never skips or repeats a clip.
- * A clip with no length (a picture, a document, one not read yet) is last both ways; Filmed falls back to when it was added.
+ * A clip with no length (a picture, a document, one not read yet) is last both ways; Filmed falls back to the file's own date, then to when it was added.
  * ponytail: Name is SQLite's NOCASE ("clip 10" before "clip 2"); a numeric-aware collation if people number their clips
  */
 const LENGTH = "json_extract(v.probe, '$.duration')";
@@ -34,8 +35,8 @@ export const SORTS: Record<LibrarySort, { key: string; desc: boolean; text?: tru
   "name-za": { key: "a.title COLLATE NOCASE", desc: true, text: true },
   longest: { key: `COALESCE(NULLIF(${LENGTH}, 0), -1)`, desc: true },
   shortest: { key: `COALESCE(NULLIF(${LENGTH}, 0), 1e15)`, desc: false },
-  filmed: { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: true },
-  "filmed-old": { key: "COALESCE(json_extract(v.probe, '$.capturedAt'), a.created_at)", desc: false },
+  filmed: { key: FILMED_V, desc: true },
+  "filmed-old": { key: FILMED_V, desc: false },
   biggest: { key: "v.bytes", desc: true },
   smallest: { key: "v.bytes", desc: false },
   kind: { key: "a.kind", desc: false, text: true },
@@ -124,7 +125,7 @@ export function parseSearch(p: Record<string, string | undefined>, username?: st
   };
 }
 
-export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at, v.bytes AS bytes,
+export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.title AS title, a.created_at AS created_at, ${FILE_DATE} AS filmed_at, v.bytes AS bytes,
   a.trashed_at AS trashed_at, v.id AS version_id, v.n AS version_n, v.state AS state, v.probe AS probe,
   ${BLUR_SQL} AS blur, (v.blurred_of IS NULL AND ${BLUR_SQL} = 'yes') AS not_blurred,
   EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') AS has_thumb,
@@ -149,6 +150,8 @@ export interface CardRow {
   kind: AssetKind;
   title: string;
   created_at: number;
+  /** the file's own date (shoots.ts FILE_DATE), null when it has none */
+  filmed_at?: number | null;
   bytes?: number | null;
   trashed_at: number | null;
   version_id: string;
@@ -176,8 +179,8 @@ export interface CardRow {
   sort_key?: string | number | null;
 }
 
-/** When a clip was filmed (its probe's capturedAt), else when it was added. Through `a` only: search by meaning has no `v`. */
-const FILMED = "COALESCE((SELECT json_extract(fv.probe, '$.capturedAt') FROM asset_versions fv WHERE fv.id = a.current_version_id), a.created_at)";
+/** When a clip was filmed (shoots.ts FILMED), through `a` only: search by meaning has no `v`. */
+const FILMED = `(SELECT ${FILMED_V} FROM asset_versions v WHERE v.id = a.current_version_id)`;
 
 /** Filmed in this country: the current version's probe (media/probe.ts countryOf). */
 const PLACE = "(SELECT json_extract(pv.probe, '$.country') FROM asset_versions pv WHERE pv.id = a.current_version_id) = ?";
@@ -327,7 +330,7 @@ export function toCard(r: CardRow): AssetCard {
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),
     state: r.state,
-    ...(p.capturedAt ? { capturedAt: p.capturedAt } : {}),
+    ...(r.filmed_at ? { capturedAt: r.filmed_at } : {}),
     ...(r.created_at ? { addedAt: r.created_at } : {}),
     ...(r.bytes ? { bytes: r.bytes } : {}),
     ...(p.country ? { place: p.country } : {}),

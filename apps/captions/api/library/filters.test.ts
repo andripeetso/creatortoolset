@@ -6,6 +6,8 @@ import { buildAssetQuery, filterClauses, indexAsset, pageOf, parseSearch, type C
 
 // The library's own filters (src/pages/library/Filters.tsx): every tag picked, when a clip was filmed.
 const DAY = 86_400_000;
+// day n of 2025: a filming date before 1990 is a camera with no clock set (shoots.ts FILMED)
+const d = (n: number) => Date.UTC(2025, 0, 1) + n * DAY;
 function seed(): DatabaseSync {
   const db = openLibraryDb(":memory:");
   db.exec("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES ('lib_a', 'ws_a', 'A', 'local', 0)");
@@ -23,9 +25,9 @@ function seed(): DatabaseSync {
     indexAsset(db, id);
   };
   // c1 filmed on day 1, added day 30; c2 has no filming time, added day 10; c3 filmed day 20, added day 40
-  asset("c1", 30 * DAY, { duration: 1, capturedAt: 1 * DAY, country: "EE" }, ["beach", "sunset"]);
-  asset("c2", 10 * DAY, { duration: 1, country: "" }, ["beach"]);
-  asset("c3", 40 * DAY, { duration: 1, capturedAt: 20 * DAY, country: "PT" }, ["sunset"]);
+  asset("c1", d(30), { duration: 1, capturedAt: d(1), country: "EE" }, ["beach", "sunset"]);
+  asset("c2", d(10), { duration: 1, country: "" }, ["beach"]);
+  asset("c3", d(40), { duration: 1, capturedAt: d(20), country: "PT" }, ["sunset"]);
   return db;
 }
 const ids = (db: DatabaseSync, p: Record<string, string>) => {
@@ -44,16 +46,16 @@ describe("library filters", () => {
 
   it("when it was filmed, else when it was added", () => {
     const db = seed();
-    expect(ids(db, { filmedFrom: String(5 * DAY) })).toEqual(["c3", "c2"]); // c1 was filmed on day 1, though added on day 30
-    expect(ids(db, { filmedTo: String(15 * DAY) })).toEqual(["c1", "c2"]);
-    expect(ids(db, { filmedFrom: String(15 * DAY), filmedTo: String(25 * DAY) })).toEqual(["c3"]);
+    expect(ids(db, { filmedFrom: String(d(5)) })).toEqual(["c3", "c2"]); // c1 was filmed on day 1, though added on day 30
+    expect(ids(db, { filmedTo: String(d(15)) })).toEqual(["c1", "c2"]);
+    expect(ids(db, { filmedFrom: String(d(15)), filmedTo: String(d(25)) })).toEqual(["c3"]);
     // from/to still mean when it was added
-    expect(ids(db, { from: String(25 * DAY) })).toEqual(["c3", "c1"]);
+    expect(ids(db, { from: String(d(25)) })).toEqual(["c3", "c1"]);
   });
 
   it("narrows a search the same way, through the asset alone", () => {
     const db = seed();
-    const where = filterClauses(parseSearch({ tag: "sunset", filmedFrom: String(10 * DAY) }));
+    const where = filterClauses(parseSearch({ tag: "sunset", filmedFrom: String(d(10)) }));
     const rows = db
       .prepare(`SELECT a.id FROM assets a WHERE ${where.map((w) => w.sql).join(" AND ")}`)
       .all(...where.flatMap((w) => w.params)) as { id: string }[];
