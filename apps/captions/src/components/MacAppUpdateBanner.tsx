@@ -1,6 +1,5 @@
-import { ArrowUpCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { restartMac, useMacUpdate } from "@/components/NewVersionPill";
+import { useMacUpdate } from "@/components/NewVersionPill";
 import { hasThisMac, tell, type ThisMacState } from "@/components/settings/ThisMacSection";
 
 /**
@@ -23,7 +22,10 @@ export function olderThan(a: string | undefined, b: string): boolean {
   return false;
 }
 
-/** Inside a Mac app older than MIN_MAC_APP: one strip saying to update it. A browser never shows it. */
+/**
+ * Inside a Mac app older than MIN_MAC_APP, with no update downloaded yet: a card in the bottom-left corner (CornerNav)
+ * saying to update it, over the page so nothing moves. A downloaded update is UpdateButton's. A browser never shows it.
+ */
 export function MacAppUpdateBanner() {
   const [old, setOld] = useState(false);
   const held = useMacUpdate();
@@ -34,29 +36,11 @@ export function MacAppUpdateBanner() {
     tell("state");
     return () => window.removeEventListener("mac-this", handle);
   }, []);
-  if (!old) return null;
+  if (!old || held) return null;
   return (
-    <div
-      role="status"
-      className="relative z-[60] flex h-11 shrink-0 items-center gap-3 overflow-hidden border-b border-amber-400/60 bg-amber-500/15 px-3 text-amber-900 dark:text-amber-100"
-    >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400">
-        <ArrowUpCircle className="h-4 w-4" />
-      </span>
-      <div className="min-w-0 leading-tight">
-        <span className="block truncate text-xs font-semibold">Update Creator Toolset to keep everything working</span>
-        {!held && <span className="hidden text-[10px] opacity-70 sm:block">Creator Toolset menu → Check for Updates…</span>}
-      </div>
-      {held && (
-        <button
-          type="button"
-          disabled={held.waiting}
-          onClick={restartMac}
-          className="ml-auto h-7 shrink-0 rounded-md bg-amber-500 px-2.5 text-xs font-medium text-amber-950 hover:bg-amber-400 disabled:opacity-60"
-        >
-          {held.waiting ? "Updates when done" : "Restart to update"}
-        </button>
-      )}
+    <div role="status" className="w-72 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-lg">
+      <p className="text-sm font-medium">Update Creator Toolset</p>
+      <p className="mt-1 text-xs text-muted-foreground">Creator Toolset menu → Check for Updates…</p>
     </div>
   );
 }
