@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { createCollection, deleteCollection } from "@/lib/library";
 import { undoable } from "@/lib/undo";
 import { confirmDialog } from "@/lib/dialogs";
-import { suggestWays } from "./api";
+import { setFolderRule, suggestWays } from "./api";
 
 /**
  * Smart folders (api/library/smart.ts): a folder told what goes in it fills itself from the library, now and as clips
