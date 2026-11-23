@@ -5,6 +5,9 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AddFolderDialog, type Computer } from "./StorageRows";
 
+const here = vi.hoisted(() => ({ device: "" }));
+vi.mock("@/lib/providers", async (orig) => ({ ...(await orig<typeof import("@/lib/providers")>()), thisMacDevice: () => here.device }));
+
 // 11-19 (CEO): adding a folder adds it at once. A big Source media folder on the server's own computer used to ask first
 // ("Add 312 files from Trips?", with time and money); now nothing asks, and the row's line says what indexing it takes.
 
@@ -20,6 +23,31 @@ afterEach(() => {
 });
 
 describe("Add folder", () => {
+  it("opens on the computer the person is at, not the first one the server lists", async () => {
+    const asked: { method: string; body?: string }[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      asked.push({ method: init?.method ?? "GET", body: typeof init?.body === "string" ? init.body : undefined });
+      return new Response(JSON.stringify({ folders: [] }), { status: 200 });
+    });
+    here.device = "mac-2";
+    const worker = { id: "mac-1", name: "Worker", owner: "tiny", online: true } as unknown as Computer;
+    const mine = { id: "mac-2", name: "Tiny Mac", owner: "tiny", online: true } as unknown as Computer;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root!.render(<MemoryRouter><AddFolderDialog open onOpenChange={() => {}} role="footage" devices={[worker, mine]} onChanged={() => {}} /></MemoryRouter>));
+    await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Folder path"]')!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "/Volumes/Tiny/Trips");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => void input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
+    expect(asked.find((a) => a.method === "POST")?.body).toContain('"host":"mac-2"');
+    here.device = "";
+  });
+
   it("a big Source media folder on this server's computer is added at once: no dialog, its size never asked", async () => {
     const asked: { url: string; method: string; body?: string }[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {

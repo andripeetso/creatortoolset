@@ -491,7 +491,8 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
   }, [open]);
   const unpaired = !!mac?.pairs && !mac.paired;
   const hosts = [...(unpaired ? [{ id: NEW_MAC, name: mac.computer ?? "This Mac" }] : []), ...devices];
-  const host = hosts.some((d) => d.id === pickHost) ? pickHost : hosts[0]?.id ?? "";
+  // the computer the person is at first, not whichever the server lists first (a helper or another Mac)
+  const host = hosts.some((d) => d.id === pickHost) ? pickHost : (hosts.find((d) => d.id === thisMacDevice())?.id ?? hosts[0]?.id ?? "");
   const known = (id?: string | null) => (id && w?.workspaces.some((p) => p.id === id) ? id : null);
   const workspace = forWorkspace ?? known(pickWorkspace) ?? known(w?.id) ?? known(windowIn) ?? w?.workspaces[0]?.id ?? null;
 
