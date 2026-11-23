@@ -25,7 +25,7 @@ vi.mock("../../api/lib/devices", async (real) => ({
 const { Hono } = await import("hono");
 const { fileBlur, libraryDb, playOf } = await import("../../api/library/db");
 const { saveToLibrary } = await import("../../api/library/routes");
-const { default: plugin, autoJobs, queueVersion, resetAuto, sweep, AUTO_LIMITS } = await import("./plugin");
+const { default: plugin, autoJobs, outOf, queueVersion, resetAuto, sweep, AUTO_LIMITS } = await import("./plugin");
 
 const dir = process.env.DATA_DIR;
 const mac = { id: "mac-1", owner: "ana" };
@@ -37,7 +37,7 @@ app.use(async (c, next) => {
 app.route("/api/x/blur-faces", plugin.routes!);
 const call = (method: string, url: string, body?: unknown) =>
   app.request(`/api/x/blur-faces${url}`, { method, headers: { "Content-Type": "application/json" }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode: "all", who: "Every child's face", look: "blur", ...s });
+const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode: "all", who: "Every child's face", look: "blur", resolution: "1080", bitrate: 20, location: "folder", ...s });
 const SHA = "a".repeat(64);
 const FACES = { faces: [{ id: "F1", picture: "/9j/AAAA", note: "middle left of the frame; 12% of its width; seen for 4.2 s" }], sha256: SHA };
 const answerOf = (v: string) => (libraryDb().prepare("SELECT a.blur FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(v) as { blur: string | null }).blur;
@@ -108,6 +108,17 @@ describe("what comes into the Media Library", () => {
 });
 
 describe("the Mac that has the file", () => {
+  it("writes the copy at the resolution and bitrate set, into the folder the location says", async () => {
+    await settings({ resolution: "original", bitrate: 80, location: "beside" });
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    const job = autoJobs.claim(mac)!;
+    expect(job.options).toMatchObject({ longSide: "0", bitrate: "80000000", out: "/Volumes/Tiny/Footage" });
+    expect(outOf({ location: "custom", folder: "/Volumes/Tiny/Copies" }, "/q", "/Volumes/Tiny/Footage/a.mp4")).toBe("/Volumes/Tiny/Copies");
+    expect(outOf({ location: "custom", folder: "" }, "/q", "/Volumes/Tiny/Footage/a.mp4")).toBe("/q"); // no folder chosen yet: the Blurred folder
+    expect(outOf({ location: "folder", folder: "/x" }, "/q", "/Volumes/Tiny/Footage/a.mp4")).toBe("/q");
+  });
+
   it("is handed its path, the folder for the copy and the style, and only with an AI provider and Which faces", async () => {
     await settings({ look: "mosaic", strength: 0.9, size: 1.5 });
     const v = await added("mp4");
@@ -122,7 +133,7 @@ describe("the Mac that has the file", () => {
     const job = autoJobs.claim(mac)!;
     expect(job).toMatchObject({
       kind: "faceblur-intake",
-      options: { media: "video", look: "mosaic", strength: "0.9", softness: "0.45", size: "1.5", color: "#343434" },
+      options: { media: "video", look: "mosaic", strength: "0.9", softness: "0.45", size: "1.5", color: "#343434", longSide: "1920", bitrate: "20000000" },
     });
     expect(job.options!.path).toMatch(/^\/Volumes\/Tiny\/Footage\/take-\d+\.mp4$/);
     expect(job.options!.out).toBe("/Volumes/Tiny/Footage/Blurred"); // no Media folder set up here: beside the original

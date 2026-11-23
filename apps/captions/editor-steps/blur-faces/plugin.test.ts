@@ -40,13 +40,17 @@ describe("Face Blur's settings", () => {
   const start = { ...DEFAULTS, softness: 0.45 };
   it("start from the defaults, keep each account's own, and refuse what isn't one", async () => {
     expect(await (await call("GET", "/settings")).json()).toEqual(start);
-    const mine = { mode: "some", who: "Everyone but me", look: "mosaic", strength: 0.8, softness: 0.2, size: 1.4, color: "#112233" };
+    const mine = {
+      ...start, mode: "some", who: "Everyone but me", look: "mosaic", strength: 0.8, softness: 0.2, size: 1.4, color: "#112233",
+      resolution: "2160", bitrate: 40, location: "custom", folder: "/Volumes/Tiny Footage/Blurred copies",
+    };
     expect((await call("PUT", "/settings", mine)).status).toBe(200);
     expect(await (await call("GET", "/settings")).json()).toEqual(mine);
     expect(await (await as("ada")("GET", "/settings")).json()).toEqual(start);
     const bad = [
       { mode: "most" }, { look: "emoji" }, { who: "x".repeat(LIMITS.who + 1) }, { who: 3 }, { strength: 1.5 },
       { softness: -0.1 }, { size: 0.7 }, { size: 2.5 }, { size: "1" }, { color: "red" }, { color: "#12345" }, null, [],
+      { resolution: "720" }, { bitrate: 25 }, { bitrate: "20" }, { location: "desktop" }, { folder: "Blurred" }, { folder: "/" + "x".repeat(LIMITS.folder) },
     ];
     for (const b of bad) expect((await call("PUT", "/settings", b)).status).toBe(400);
     expect(await (await call("GET", "/settings")).json()).toEqual(mine);

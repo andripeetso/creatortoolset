@@ -47,11 +47,25 @@ export type Look = "blur" | "mosaic" | "solid";
  * The style is the engine's (FaceBlur/Cover.swift LookPreset): strength 0…1 (the blur, or the mosaic's squares), softness
  * 0…1 (how far the edge fades out), size 0.8…2 (the cover against the face), color (Solid's).
  */
-export type Settings = { mode: "all" | "some"; who: string; look: Look; strength: number; softness: number; size: number; color: string };
-export const DEFAULTS: Omit<Settings, "softness"> = { mode: "all", who: "Every child's face", look: "blur", strength: 0.5, size: 1, color: "#343434" };
+export type Settings = {
+  mode: "all" | "some"; who: string; look: Look; strength: number; softness: number; size: number; color: string;
+  /** the automatic blurred copies: long side ("original" keeps the file's), Mbps, and where on the Mac they are written */
+  resolution: Resolution; bitrate: number; location: Location; folder: string;
+};
+export type Resolution = "1080" | "2160" | "original";
+export type Location = "folder" | "beside" | "custom";
+export const DEFAULTS: Omit<Settings, "softness"> = {
+  mode: "all", who: "Every child's face", look: "blur", strength: 0.5, size: 1, color: "#343434",
+  resolution: "1080", bitrate: 20, location: "folder", folder: "",
+};
 /** the edge a look has when the person never set one: Solid's is hard, as before there was a choice */
 export const softnessOf = (look: Look) => (look === "solid" ? 0 : 0.45);
-export const LIMITS = { who: 500, faces: 40, picture: 200_000, note: 300, size: [0.8, 2] as const };
+export const LIMITS = { who: 500, faces: 40, picture: 200_000, note: 300, size: [0.8, 2] as const, folder: 1000 };
+export const RESOLUTIONS: readonly Resolution[] = ["1080", "2160", "original"];
+export const BITRATES: readonly number[] = [10, 20, 40, 80];
+export const LOCATIONS: readonly Location[] = ["folder", "beside", "custom"];
+/** the long side the Mac writes for each resolution (0: the original's size) */
+const LONG_SIDE: Record<Resolution, string> = { "1080": "1920", "2160": "3840", original: "0" };
 const MODES: unknown[] = ["all", "some"];
 const LOOKS: unknown[] = ["blur", "mosaic", "solid"];
 const PER_CALL = 10; // faces (one picture each) per question to the AI
@@ -100,10 +114,16 @@ export function checkSettings(b: unknown, current: Settings = { ...DEFAULTS, sof
   if (s.softness !== undefined && !within(s.softness, 0, 1)) return "softness is between 0 and 1.";
   if (s.size !== undefined && !within(s.size, ...LIMITS.size)) return `size is between ${LIMITS.size[0]} and ${LIMITS.size[1]}.`;
   if (s.color !== undefined && (typeof s.color !== "string" || !/^#[0-9a-f]{6}$/i.test(s.color))) return "color is #rrggbb.";
+  if (s.resolution !== undefined && !RESOLUTIONS.includes(s.resolution)) return "resolution is 1080, 2160 or original.";
+  if (s.bitrate !== undefined && !BITRATES.includes(s.bitrate)) return "bitrate is 10, 20, 40 or 80.";
+  if (s.location !== undefined && !LOCATIONS.includes(s.location)) return "location is folder, beside or custom.";
+  if (s.folder !== undefined && (typeof s.folder !== "string" || s.folder.length > LIMITS.folder || (s.folder !== "" && !s.folder.startsWith("/"))))
+    return `folder is a full path starting with /, at most ${LIMITS.folder} characters.`;
   const pick = <K extends keyof Settings>(k: K): Settings[K] => (s[k] ?? current[k]) as Settings[K];
   return {
     mode: pick("mode"), who: pick("who"), look: pick("look"), strength: pick("strength"), softness: pick("softness"),
     size: pick("size"), color: pick("color").toLowerCase(),
+    resolution: pick("resolution"), bitrate: pick("bitrate"), location: pick("location"), folder: pick("folder"),
   };
 }
 
@@ -296,6 +316,13 @@ export async function queueVersion(ev: { libraryId: string; versionId: string; o
   return true;
 }
 
+/** Where the Mac writes a copy: the library's Blurred folder chosen when it was queued, the original's own folder, or the person's. */
+export function outOf(s: Pick<Settings, "location" | "folder">, queued: string, macPath: string): string {
+  if (s.location === "beside") return path.dirname(macPath);
+  if (s.location === "custom" && s.folder) return s.folder;
+  return queued;
+}
+
 /** A file whose Mac went quiet, or held it too long, goes back in the queue; after AUTO_LIMITS.tries it fails. */
 function releaseStale(now = Date.now()): void {
   let changed = false;
@@ -381,7 +408,8 @@ export const autoJobs = {
       delete j.awayUntil;
       saveJobs();
       const style = { look: s.look, strength: String(s.strength), softness: String(s.softness), size: String(s.size), color: s.color };
-      return { id: j.n, kind: AUTO_KIND, editId: "", variant: "", options: { media: j.kind === "video" ? "video" : "photo", path: v.mac_path, out: j.out, ...style } };
+      const output = { longSide: LONG_SIDE[s.resolution], bitrate: String(s.bitrate * 1_000_000) };
+      return { id: j.n, kind: AUTO_KIND, editId: "", variant: "", options: { media: j.kind === "video" ? "video" : "photo", path: v.mac_path, out: outOf(s, j.out, v.mac_path), ...style, ...output } };
     }
     return null;
   },

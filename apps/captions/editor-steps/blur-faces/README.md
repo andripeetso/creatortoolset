@@ -29,9 +29,12 @@ account's settings from before they were per workspace, which each workspace sta
   strength: number;  // 0…1: the blur, or the mosaic's squares
   softness: number;  // 0…1: how far the edge fades out (Solid's starts at 0, the others at 0.45)
   size: number;      // 0.8…2: the cover against the face it covers (smaller would leave the face showing)
-  color: string }    // "#rrggbb", Solid's
+  color: string;     // "#rrggbb", Solid's
+  // the automatic blurred copies of Media Library files (Settings → Face Blur → Blurred copies)
+  resolution: "1080" | "2160" | "original"; bitrate: 10 | 20 | 40 | 80;   // Mbps
+  location: "folder" | "beside" | "custom"; folder: string }             // folder: a full path, for "custom"
 // default { mode: "all", who: "Every child's face", look: "blur", strength: 0.5, softness: 0.45, size: 1,
-//           color: "#343434" }
+//           color: "#343434", resolution: "1080", bitrate: 20, location: "folder", folder: "" }
 ```
 
 The style is the engine's (`FaceBlur/Cover.swift` `LookPreset`): the Mac app's jobs and test runs, the automatic covers

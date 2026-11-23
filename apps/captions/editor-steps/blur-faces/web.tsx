@@ -19,6 +19,7 @@ import {
   faceBlurState,
   faceBlurTry,
   faceBlurVersion,
+  chooseFolderOnMac,
   pathOnMac,
   type FaceBlurFace,
   type FaceBlurItem,
@@ -36,6 +37,10 @@ type Settings = {
   softness: number;
   size: number;
   color: string;
+  resolution: "1080" | "2160" | "original";
+  bitrate: number;
+  location: "folder" | "beside" | "custom";
+  folder: string;
 };
 /** plugin.ts GET /auto */
 type Auto = { can: boolean; why?: string; pausedUntil?: number; running: string[]; failed: { versionId: string; title: string; error: string }[] };
@@ -381,6 +386,73 @@ function AutoRows({ settings }: ReturnType<typeof useSettings>) {
   );
 }
 
+/** How the automatic blurred copies of Media Library files are written, and where on the Mac (plugin.ts outOf). */
+function CopiesCard({ settings, save }: ReturnType<typeof useSettings>) {
+  if (!settings) return null;
+  const choose = async () => {
+    const folder = await chooseFolderOnMac();
+    if (folder) await save({ ...settings, folder });
+  };
+  return (
+    <Card>
+      <Row
+        title="Resolution"
+        control={
+          <SettingsSelect
+            label="Resolution"
+            value={settings.resolution}
+            onValueChange={(v) => void save({ ...settings, resolution: v as Settings["resolution"] })}
+            options={[
+              { value: "1080", label: "1080p" },
+              { value: "2160", label: "4K" },
+              { value: "original", label: "Original" },
+            ]}
+          />
+        }
+      />
+      <Row
+        title="Bitrate"
+        control={
+          <SettingsSelect
+            label="Bitrate"
+            value={String(settings.bitrate)}
+            onValueChange={(v) => void save({ ...settings, bitrate: Number(v) })}
+            options={[10, 20, 40, 80].map((n) => ({ value: String(n), label: `${n} Mbps` }))}
+          />
+        }
+      />
+      <Row
+        title="Location"
+        control={
+          <SettingsSelect
+            label="Location"
+            value={settings.location}
+            onValueChange={(v) => void save({ ...settings, location: v as Settings["location"] })}
+            options={[
+              { value: "folder", label: "Blurred folder" },
+              { value: "beside", label: "Beside the original" },
+              { value: "custom", label: "Custom folder" },
+            ]}
+          />
+        }
+      />
+      {settings.location === "custom" && (
+        <Row
+          title="Folder"
+          control={
+            <div className="flex items-center gap-2">
+              <TextField label="Folder" value={settings.folder} maxLength={1000} onCommit={(folder) => save({ ...settings, folder: folder.trim() })} />
+              <Button size="sm" variant="outline" onClick={() => void choose()}>
+                Choose folder
+              </Button>
+            </div>
+          }
+        />
+      )}
+    </Card>
+  );
+}
+
 function FaceBlurSettings() {
   const s = useSettings();
   return (
@@ -388,6 +460,9 @@ function FaceBlurSettings() {
       <SettingsRows {...s} />
       <Section title="Style">
         <StyleCard {...s} />
+      </Section>
+      <Section title="Blurred copies">
+        <CopiesCard {...s} />
       </Section>
       <AutoRows {...s} />
     </div>
