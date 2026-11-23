@@ -20,6 +20,7 @@ import { isThisMachine, listDevices } from "../lib/devices";
 import { parseStorageFile, storageFilePath } from "../lib/storage";
 import { changeStorage, leaveRows, placedIn, placesOf } from "../devices-storage";
 import { projectOf } from "../lib/project-of";
+import { quickPrint } from "../work/files";
 import { editorDirsOf, folderIn, leftOutBy, LIBRARY_NAME, LIBRARY_SUBFOLDERS, notFootage, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../../contracts/storage";
 
 // a watched folder is a Source media row read where it is (UNIFIED-PRD §4.3); copying is for drops, and the migration
@@ -678,12 +679,15 @@ async function ingest(libraryId: string, f: WatchFolder & { blur?: Blur | null }
     } else {
       sha256 = await sha256File(file);
     }
+    // a clip a Mac indexed has no whole-file hash ("mac:<quick>"): the same file is also matched by size and quick fingerprint
+    const quick = (await quickPrint(f.mode === "copy" ? staged : file)) ?? "";
     const dup = db()
       .prepare(
         `SELECT v.id, v.asset_id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-         WHERE a.library_id = ? AND v.sha256 = ? ORDER BY a.trashed_at IS NOT NULL, v.state = 'missing' DESC, v.created_at LIMIT 1`,
+         WHERE a.library_id = ? AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?))
+         ORDER BY a.trashed_at IS NOT NULL, v.state = 'missing' DESC, v.created_at LIMIT 1`,
       )
-      .get(libraryId, sha256) as { id: string; asset_id: string; state: string; source_key: string; source_path: string | null } | undefined;
+      .get(libraryId, sha256, quick, size) as { id: string; asset_id: string; state: string; source_key: string; source_path: string | null } | undefined;
     // the same file read where it is (outside a left-out folder: filesIn and in-place keep those out): one hidden while it
     // waited is here after all
     if (dup) showHidden(dup.asset_id);

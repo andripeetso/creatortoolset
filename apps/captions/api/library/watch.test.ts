@@ -359,6 +359,23 @@ describe("a folder brought in for the AI (POST /api/library/import-folder)", () 
     expect(libraryDb().prepare("SELECT COUNT(*) AS n FROM watch_seen WHERE library_id = ? AND path = ?").get("lib_w", take)).toEqual({ n: 1 });
   });
 
+  it("the same bytes a Mac indexed (no whole-file hash, only its quick fingerprint) are that clip, never a second one", async () => {
+    const v = versions().find((x) => x.source_path === take)!;
+    const { quickPrint } = await import("../work/files"); // after DATA_DIR is set, like the test's other imports
+    const quick = await quickPrint(take);
+    libraryDb().prepare("UPDATE asset_versions SET sha256 = ?, quick = ? WHERE id = ?").run(`mac:${quick}`, quick, v.id);
+    const again = path.join(importDir, "Handstand again.mp4");
+    writeFileSync(again, "frame data take");
+    try {
+      const assetsBefore = assets();
+      const body = await read(await importFolder("owner-w", { path: importDir, since, libraryId: "lib_w" }));
+      expect(body.imported.find((x) => x.file === again)?.versionId).toBe(v.id);
+      expect(assets()).toBe(assetsBefore);
+    } finally {
+      rmSync(again);
+    }
+  });
+
   it("refuses on a server that may not read folders, a relative path, and someone else's library", async () => {
     process.env.LIBRARY_WATCH_FOLDERS = "0";
     try {
