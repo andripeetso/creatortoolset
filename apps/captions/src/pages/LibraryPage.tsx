@@ -54,6 +54,7 @@ import { useWorkspace } from "@/lib/workspace";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
+import { warmThumbs } from "@/lib/warm-thumbs";
 import { ClipPanel } from "./library/ClipPanel";
 import { AssetRow, AssetTile, LIST_CONTAINER, PhotoMasonry, RowFrame, TileFrame } from "./library/ClipCards";
 import { ImportSummary, PlaceholderTile, commonAspect, going, placeholderShown, placeholderWide, summaryLine } from "./library/Placeholders";
@@ -168,6 +169,12 @@ export default function LibraryPage() {
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
+  // every clip's thumbnail kept on this Mac ahead of time (the Mac app only), after the first screen has its own
+  useEffect(() => {
+    if (!libId) return;
+    const t = setTimeout(() => void warmThumbs(libId), 5000);
+    return () => clearTimeout(t);
+  }, [libId]);
   const [hiddenTabs, hideTab] = useHiddenTabs(libId);
   // this library's files on their way in (the queue is the whole app's)
   const uploads = queue.items.filter((u) => u.libraryId === libId);
