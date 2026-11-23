@@ -1319,6 +1319,11 @@ export const saveAccountTags = (id: string, tags: Tag[]) =>
 export const deleteAccount = (id: string) =>
   fetch(`/api/instagram/accounts/${id}`, { method: "DELETE" }).then(() => undefined);
 
+/** Stop: a post's analysis, an account's pull, or every idea board being found; each ends as "Stopped". */
+export const stopPost = (id: string) => fetch(`/api/instagram/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: true }>(r));
+export const stopAccount = (id: string) => fetch(`/api/instagram/accounts/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: true }>(r));
+export const stopIdeaBoard = () => fetch("/api/instagram/ideas/stop", { method: "POST" }).then((r) => json<{ ok: true }>(r));
+
 export const deletePost = (id: string) =>
   fetch(`/api/instagram/${id}`, { method: "DELETE" }).then(() => undefined);
 

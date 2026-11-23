@@ -4759,6 +4759,14 @@ instagramApp.post("/:id/stop", async (c) => {
   const meta = await ownedMeta(c.req.param("id"), user);
   if (!meta) return c.json({ error: "Not found" }, 404);
   cancel(meta.id);
+  // a post waiting for a computer runs in no process here (cancel had no live run to end): its record ends the same way
+  if (meta.status === "processing") {
+    meta.status = move(POST_STATUS_MOVES, meta.status, "error", "post");
+    meta.step = undefined;
+    meta.error = "Stopped";
+    meta.jobs = (meta.jobs ?? []).map((j) => (j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: "Stopped" } : j));
+    await persist(meta);
+  }
   announceSoon(user.username, "instagram");
   return c.json({ ok: true });
 });

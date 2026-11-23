@@ -62,6 +62,8 @@ import {
   postToMarkdown,
   refreshCounts,
   retryPost,
+  stopIdeaBoard,
+  stopPost,
   runPostJobs,
   groupStatus,
   savePostTags,
@@ -109,6 +111,7 @@ import { confirmDialog } from "@/lib/dialogs";
 import { cardRatio, PostCard, workshopUsesByPost } from "@/components/instagram/PostCard";
 import { QueueMenu } from "@/components/instagram/QueueMenu";
 import { JobsDock } from "@/components/instagram/JobsDock";
+import { StopButton } from "@/components/instagram/StopButton";
 import { SlidePanel } from "@/components/instagram/SlidePanel";
 import { SlideViewer, type SeekRequest } from "@/components/instagram/SlideViewer";
 import { CommentsList } from "@/components/instagram/CommentsList";
@@ -478,7 +481,7 @@ function PostView({
         <ArrowLeft className="h-3.5 w-3.5" /> All posts
       </button>
 
-      <JobsDock post={post} />
+      <JobsDock post={post} onStop={owns ? async () => onChange(await stopPost(post.id).then(() => getPost(post.id))) : undefined} />
 
       {post.status === "error" && (
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
@@ -1191,7 +1194,8 @@ export default function InstagramPage() {
     try {
       setIdeaBoard(await generateIdeaBoard());
     } catch (e) {
-      setBoardError(e instanceof Error ? e.message : "Could not find ideas");
+      // a run stopped (its Stop here or on Home) keeps the board it had and says nothing
+      if (!(e instanceof Error && e.message === "Stopped")) setBoardError(e instanceof Error ? e.message : "Could not find ideas");
     } finally {
       setBoardBusy(false);
     }
@@ -1734,7 +1738,9 @@ export default function InstagramPage() {
                       {boardBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                       {ideaBoard?.ideas.length ? "Update ideas" : "Find ideas"}
                     </button>
-                  ) : (
+                  ) : null}
+                  {ideasView && boardBusy && <StopButton onStop={stopIdeaBoard} />}
+                  {ideasView ? null : (
                     <PickMenu
                       label="Sort"
                       value={sort}

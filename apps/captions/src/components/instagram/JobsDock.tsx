@@ -5,13 +5,14 @@ import {
   groupStatus,
   type InstagramPost,
 } from "@/lib/instagram";
+import { StopButton } from "./StopButton";
 
 /**
  * Progress for a post whose jobs are running, floating at the bottom of
  * the viewport so the page never reflows while it works. Jobs keep
  * running on the server whether or not this is on screen.
  */
-export function JobsDock({ post }: { post: InstagramPost }) {
+export function JobsDock({ post, onStop }: { post: InstagramPost; onStop?: () => Promise<unknown> }) {
   if (post.status !== "processing") return null;
   const pct = Math.round(Math.max(0, Math.min(1, post.progress)) * 100);
   const rows = JOB_GROUPS.map((g) => ({
@@ -34,6 +35,7 @@ export function JobsDock({ post }: { post: InstagramPost }) {
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-400" />
           <span className="min-w-0 flex-1 truncate text-zinc-100">{detail}</span>
           <span className="tabular-nums text-zinc-500">{pct}%</span>
+          {onStop && <StopButton onStop={onStop} />}
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
           <div

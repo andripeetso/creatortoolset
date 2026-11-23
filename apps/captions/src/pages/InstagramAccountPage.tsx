@@ -40,6 +40,7 @@ import {
   saveAccountTags,
   accountCatalogReady,
   sortCatalogItems,
+  stopAccount,
   thumbUrl,
   virality,
   type AccountJobType,
@@ -73,6 +74,7 @@ import { IdeaStatusSelect, RankStars, SavedForToggle } from "@/components/instag
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MEDIA_PILL, mediaMark } from "@/components/instagram/PostCard";
 import { QueueMenu } from "@/components/instagram/QueueMenu";
+import { StopButton } from "@/components/instagram/StopButton";
 import { confirmHeavy } from "@/lib/setup";
 
 const COUNT_PRESETS = [12, 25, 50];
@@ -474,12 +476,21 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
               <p className="mt-4 flex items-center gap-2 text-sm text-zinc-400">
                 <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
                 {(account.step && ACCOUNT_STEP_LABELS[account.step]) || "Working"} · {Math.round((account.progress || 0) * 100)}%
+                {owns && (
+                  <StopButton
+                    onStop={async () => {
+                      await stopAccount(account.id);
+                      const next = await getAccountStatus(account.id);
+                      setAccount((cur) => (cur ? { ...cur, status: next.status, step: next.step, progress: next.progress, error: next.error, jobs: next.jobs } : cur));
+                    }}
+                  />
+                )}
               </p>
             )}
             {account.status === "error" && !processing && (
               <p className="mt-4 flex items-center gap-2 text-xs text-zinc-400" title={account.error}>
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
-                Could not update the account
+                {account.error === "Stopped" ? "Stopped" : "Could not update the account"}
                 {owns ? (
                   <button
                     type="button"
