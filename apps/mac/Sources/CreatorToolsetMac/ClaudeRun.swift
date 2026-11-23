@@ -199,8 +199,9 @@ func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
     let resume = req.session.isEmpty ? "" : opts.resume
     let args = claudeArguments(model: opts.model, effort: opts.effort, systemFile: systemFile.path,
                                tools: tools, session: !req.session.isEmpty, resume: resume, mcpConfigFile: mcpFile, asks: req.asks)
+    let home = claudeConfigDir(home: opts.home)
     // asks: the chat's text streams as it comes (only a Workshop folder waits for its JSON answer)
-    let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: claudeEnv(base: ProcessInfo.processInfo.environment, home: opts.home, baseUrl: opts.baseUrl, extra: opts.env),
+    let outcome = try runStream(cli: cli, args: args, cwd: cwd, env: claudeEnv(base: ProcessInfo.processInfo.environment, home: home, baseUrl: opts.baseUrl, extra: opts.env),
                                 prompt: requestText(req.user, folder: folder), folder: folder && !req.asks, send: send, step: step, tmp: tmp,
                                 stream: ClaudeStream(cwd: cwd.path), ask: req.asks ? (ask ?? { _ in "denied" }) : nil)
     let stream = outcome.stream
@@ -219,7 +220,12 @@ func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
         throw ClaudeFailure(message: "Claude gave no result: \(String(outcome.err.suffix(500)))")
     }
     if result["is_error"] as? Bool == true {
-        throw ClaudeFailure(message: "Claude: \(resultText(result))", usage: failedRow(result, model: opts.model))
+        let said = resultText(result)
+        // signed in in Terminal, not for this folder: the folder's login is a keychain item of its own
+        let message = !home.isEmpty && said.range(of: "not logged in", options: .caseInsensitive) != nil
+            ? "Claude is not signed in for the settings folder \(home): run CLAUDE_CONFIG_DIR=\(home) claude and sign in, or clear the folder in Settings → Providers"
+            : "Claude: \(said)"
+        throw ClaudeFailure(message: message, usage: failedRow(result, model: opts.model))
     }
     do {
         let usage = try usageRow(result, model: opts.model)

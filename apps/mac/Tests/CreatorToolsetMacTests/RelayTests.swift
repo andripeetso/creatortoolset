@@ -165,6 +165,14 @@ final class RelayTests: XCTestCase {
         XCTAssertEqual(env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"], "1")
     }
 
+    func testDefaultClaudeFolderRunsWithoutTheVariableUnlessItsOwnLoginExists() {
+        let def = "/Users/x/.claude"
+        XCTAssertEqual(claudeConfigDir(home: def, defaultHome: def, hasLogin: { _ in false }), "")
+        XCTAssertEqual(claudeConfigDir(home: def, defaultHome: def, hasLogin: { $0 == claudeKeychainService(home: def) }), def)
+        XCTAssertEqual(claudeConfigDir(home: "/Users/x/work-claude", defaultHome: def, hasLogin: { _ in false }), "/Users/x/work-claude")
+        XCTAssertEqual(claudeConfigDir(home: "", defaultHome: def, hasLogin: { _ in false }), "")
+    }
+
     func testPlugInEndpointReachesTheClaudeEnvAndWinsOverTheHome() throws {
         let r = request(#"{"id":"j4","system":"","user":"","baseUrl":"https://proxy.example.test/v1"}"#)
         XCTAssertEqual(try requestOptions(r).baseUrl, "https://proxy.example.test/v1")

@@ -121,6 +121,14 @@ func claudeKeychainService(home: String) -> String {
     return "Claude Code-credentials-" + String(hex.prefix(8))
 }
 
+/// The folder a run names in CLAUDE_CONFIG_DIR. Claude Code names its keychain login after that variable whenever it is
+/// set, even to ~/.claude, so the default folder runs without it (and finds the login `claude` made in Terminal) unless
+/// a login was made for it with the variable. "" = no variable.
+func claudeConfigDir(home: String, defaultHome: String = realPath(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude").path),
+                     hasLogin: (String) -> Bool = { keychainJSON(service: $0)?["claudeAiOauth"] != nil }) -> String {
+    home == defaultHome && !hasLogin(claudeKeychainService(home: home)) ? "" : home
+}
+
 /// A generic password's JSON value from the login keychain, read through `security ... -w` into memory only. nil on any failure.
 private func keychainJSON(service: String) -> [String: Any]? {
     let process = Process()
