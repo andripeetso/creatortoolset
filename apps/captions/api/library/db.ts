@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "../lib/env";
+import { timeQueries } from "../lib/stalls";
 import { MIGRATIONS } from "./schema";
 import { bunnyBlobs, type BunnyPlace } from "./storage/bunny";
 import { localBlobs } from "./storage/local";
@@ -41,7 +42,7 @@ export function openLibraryDb(file: string): DatabaseSync {
 let shared: DatabaseSync | null = null;
 
 /** The server's library database, $DATA_DIR/library/library.db, opened on first use. */
-export const libraryDb = (): DatabaseSync => (shared ??= openLibraryDb(path.join(env.dataDir, "library", "library.db")));
+export const libraryDb = (): DatabaseSync => (shared ??= timeQueries(openLibraryDb(path.join(env.dataDir, "library", "library.db"))));
 
 const local = localBlobs(path.join(env.dataDir, "library", "blobs"));
 const remotes = new Map<string, BlobStore>();

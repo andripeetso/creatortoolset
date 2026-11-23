@@ -99,6 +99,7 @@ import { activityApp } from "./activity";
 import { VISITOR, mayChange, mayUse, touchActive, type Tool } from "./users";
 import { env, hasTeam, isCloud, serverKind } from "./lib/env";
 import { disableRequestTimeouts } from "./lib/incoming";
+import { startStallWatch } from "./lib/stalls";
 import { randomUUID } from "node:crypto";
 import { TOOL_NAMES } from "../contracts/tools";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -572,6 +573,7 @@ app.route("/api/edit-steps", editStepsApp);
 const workerFor = process.env.CT_WORKER;
 // the library's worker: probes, thumbs and proxies queued uploads; and the trash purge (not under tests, which call them)
 if (process.env.NODE_ENV !== "test" && !workerFor) {
+  startStallWatch(); // a blocked process in the log (lib/stalls.ts)
   settleServerWork(); // before the loops: a new server starts with its video work off (work/server-work.ts)
   migrateOwnerChoices(); // after it: settle writes the file the migration keeps
   try {
