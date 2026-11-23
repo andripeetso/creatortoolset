@@ -269,7 +269,7 @@ export async function rereadUploadedDates(d = libraryDb()): Promise<number> {
        FROM asset_versions v JOIN assets a ON a.current_version_id = v.id JOIN libraries l ON l.id = a.library_id
        WHERE a.kind = 'video' AND l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%' AND v.probe IS NOT NULL AND json_type(v.probe, '$.camera') IS NULL`,
     )
-    .all() as (Asset & { version: string; source_key: string; at: number | null })[];
+    .all() as unknown as (Asset & { version: string; source_key: string; at: number | null })[];
   const at = d.prepare("SELECT json_extract(probe, '$.capturedAt') AS at FROM asset_versions WHERE id = ?");
   let changed = 0;
   for (const r of rows) {

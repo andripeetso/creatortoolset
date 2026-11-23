@@ -1774,7 +1774,10 @@ async function withApifyReels(
 ): Promise<CatalogPage> {
   const apify = await readApify(user);
   if (!apify || apify.valid === false) return { items, more: false };
-  const reels = await fetchCatalogViaApify(url, { username: user, cap, signal, tabs: ["reels"] }).catch(() => null);
+  const reels = await fetchCatalogViaApify(url, { username: user, cap, signal, tabs: ["reels"] }).catch((e) => {
+    console.warn(`[instagram] reels tab not read: ${errorMessage(e)}`);
+    return null;
+  });
   if (!reels) return { items, more: false };
   const seen = new Set(items.map((i) => i.shortcode));
   const merged = [...items, ...reels.items.filter((i) => !seen.has(i.shortcode))];
@@ -2092,6 +2095,8 @@ async function workshopSourcePostIds(user: SessionUser): Promise<Set<string>> {
 }
 
 const boardLocks = new Map<string, Promise<IdeaBoard>>();
+/** Each running idea board's Stop (POST /ideas/stop), by its boardLocks key. */
+const boardStops = new Map<string, AbortController>();
 
 async function generateIdeaBoard(
   user: SessionUser,
@@ -2101,8 +2106,19 @@ async function generateIdeaBoard(
   const key = `${user.username}:${projectId ?? ""}`;
   const pending = boardLocks.get(key);
   if (pending) return pending;
-  const run = generateIdeaBoardNow(user, signal, projectId).finally(() => (boardLocks.delete(key), announceSoon(user.username, "instagram")));
+  const stop = new AbortController();
+  const run: Promise<IdeaBoard> = generateIdeaBoardNow(user, signal ? AbortSignal.any([signal, stop.signal]) : stop.signal, projectId)
+    .catch((e: unknown) => {
+      throw stop.signal.aborted ? new Error("Stopped") : e;
+    })
+    .finally(() => {
+      // a run started after this one was stopped keeps its own lock
+      if (boardLocks.get(key) === run) boardLocks.delete(key);
+      if (boardStops.get(key) === stop) boardStops.delete(key);
+      announceSoon(user.username, "instagram");
+    });
   boardLocks.set(key, run);
+  boardStops.set(key, stop);
   announceSoon(user.username, "instagram"); // Home's chip (api/activity.ts analyzerWork)
   return run;
 }
@@ -2686,6 +2702,28 @@ function pump(): void {
       pump();
     });
   }
+}
+
+/** Stop: an account's pull taken off the queue or ended, as "Stopped"; what it pulled before stays. */
+function stopAccount(id: string): void {
+  const at = queue.findIndex((q) => q.kind === "account" && q.id === id);
+  if (at >= 0) queue.splice(at, 1);
+  const live = accountActive.get(id);
+  if (live) {
+    live.status = move(POST_STATUS_MOVES, live.status, "error", "account");
+    live.step = undefined;
+    live.error = "Stopped";
+    live.jobs = (live.jobs ?? []).map((j) => (j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: "Stopped" } : j));
+    void persistAccount(live).catch(() => {});
+  }
+  accountActive.delete(id);
+  aborts.get(`a:${id}`)?.abort();
+  aborts.delete(`a:${id}`);
+  jobUsers.delete(`a:${id}`);
+  accountJobKinds.delete(id);
+  accountJobOpts.delete(id);
+  accountFollowUps.delete(id);
+  settleIdle(id);
 }
 
 function cancel(id: string): void {
@@ -3756,6 +3794,14 @@ instagramApp.post("/ideas", async (c) => {
   }
 });
 
+// POST /api/instagram/ideas/stop → { ok }: every idea board this account is finding now ends, as "Stopped"
+instagramApp.post("/ideas/stop", (c) => {
+  const user = c.get("user");
+  for (const [key, stop] of boardStops) if (key.startsWith(`${user.username}:`)) stop.abort();
+  announceSoon(user.username, "instagram");
+  return c.json({ ok: true });
+});
+
 instagramApp.get("/analysis", async (c) => {
   const user = c.get("user");
   const projectId = queryProjectId(c);
@@ -4440,6 +4486,16 @@ instagramApp.patch("/accounts/:id/catalog", async (c) => {
   return c.json(row);
 });
 
+// POST /api/instagram/accounts/:id/stop → { ok }: the account's pull ends, as "Stopped"; nothing it pulled is removed
+instagramApp.post("/accounts/:id/stop", async (c) => {
+  const user = c.get("user");
+  const meta = await ownedAccount(c.req.param("id"), user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  stopAccount(meta.id);
+  announceSoon(user.username, "instagram");
+  return c.json({ ok: true });
+});
+
 instagramApp.delete("/accounts/:id", async (c) => {
   const meta = await ownedAccount(c.req.param("id"), c.get("user"));
   if (!meta) return c.json({ error: "Not found" }, 404);
@@ -4695,6 +4751,16 @@ instagramApp.patch("/:id/research", async (c) => {
   }
   await persist(meta);
   return c.json(publicMeta(meta));
+});
+
+// POST /api/instagram/:id/stop → { ok }: the post's analysis ends, as "Stopped" (Retry runs it again); its files stay
+instagramApp.post("/:id/stop", async (c) => {
+  const user = c.get("user");
+  const meta = await ownedMeta(c.req.param("id"), user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  cancel(meta.id);
+  announceSoon(user.username, "instagram");
+  return c.json({ ok: true });
 });
 
 instagramApp.delete("/:id", async (c) => {
