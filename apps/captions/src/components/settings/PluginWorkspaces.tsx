@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Switch } from "@/components/ui/switch";
+import { markSave } from "@/components/settings/page-action";
 import { Card, EmptyRow, ErrorRow, LoadingRow, Notice, Row, saveFailed, Section, useSettingsWorkspace, WorkspacePick } from "@/components/settings/ui";
 import { pluginOffHere, useMe } from "@/lib/auth";
 import { getEditSteps } from "@/lib/editor";
@@ -35,7 +36,7 @@ export function PluginWorkspaces({ id, onView }: { id: string; onView?: (v: Plug
   const load = useCallback(() => send(id).then(show, () => setFailed(true)), [id, show]);
   useEffect(() => void load(), [load]);
   const save = (body: { all: true } | { only: string[] }) =>
-    send(id, body).then(
+    markSave(send(id, body)).then(
       (v) => {
         show(v);
         // the switcher's copy says what is off where: the page hides it there at once

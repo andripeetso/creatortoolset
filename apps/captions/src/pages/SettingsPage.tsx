@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PAGE_BODIES } from "@/components/settings/pages";
 import { AccountAvatar } from "@/components/settings/AccountSection";
 import { navBlocks, navListFor, resolveSection, sectionsFor, withToolPages, type NavContext, type SettingsPageId } from "@/components/settings/nav";
-import { PageActionContext, PageTitleContext } from "@/components/settings/page-action";
+import { PageActionContext, PageTitleContext, SaveMark } from "@/components/settings/page-action";
 import { resetWorkspacePick } from "@/components/settings/workspace-pick";
 import { pluginOfSection, WithPluginWorkspaces } from "@/components/settings/PluginWorkspaces";
 import { webPlugins } from "@/plugins.gen";
@@ -19,6 +19,7 @@ import { TOOL_ICONS } from "@/components/setup/ToolNeeds";
 import { HOME_TILE_NAMES, isHomeTile } from "@contracts/tools";
 import { logout, hasTeam, useAuth, useMe } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { lockPageScroll } from "@/lib/page-scroll-lock";
 
 const inDock = (t: EventTarget | null) => t instanceof Element && !!t.closest("[data-assistant-dock]");
 /** Another layer on top of Settings (a toast, a confirm, another dialog): a click there does not close Settings. */
@@ -64,6 +65,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
 
   // the workspace selector's choice lasts while Settings is open: the next opening starts from the window's workspace
   useEffect(() => resetWorkspacePick, []);
+  useEffect(lockPageScroll, []);
 
   // "/" and Ctrl/⌘F focus the search, unless a field already has the keyboard
   useEffect(() => {
@@ -345,6 +347,7 @@ export default function SettingsPage({ onClose }: { onClose: () => void }) {
                 <span className="font-medium text-foreground">{title}</span>
               </DialogTitle>
               <div ref={setActionEl} className="flex shrink-0 items-center gap-2 empty:hidden" />
+              <SaveMark page={pathname} />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DialogClose asChild>

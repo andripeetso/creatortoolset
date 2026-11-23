@@ -4,7 +4,7 @@ import { Gauge, ScanFace } from "lucide-react";
 import { AppBar, ToolIntro } from "@/components/AppBar";
 import { upcoming } from "@/components/assistant/LimitBanner";
 import { dropZoneClass } from "@/components/DropZone";
-import { Card, Row, Section, SettingsSelect, Status, TextField, saveFailed } from "@/components/settings/ui";
+import { Card, Row, Section, SettingsSelect, Status, TextField, markSave, saveFailed } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -79,7 +79,7 @@ function useSettings() {
     const prev = settings;
     setSettings(next);
     try {
-      setSettings(await call<Settings>(`${API}/settings`, "PUT", next));
+      setSettings(await markSave(call<Settings>(`${API}/settings`, "PUT", next)));
     } catch (e) {
       setSettings(prev);
       saveFailed((e as Error).message);

@@ -318,7 +318,8 @@ and answers:
     - A page, card or dialog either saves each change at once, or is a form with one Save. Never both in one card,
       never a Save per section. Save is never hidden or greyed out while its form is on screen: pressed with
       something missing, it says what is missing, at the field (`required`). A submit that is busy may show it.
-    - A save is confirmed only when the change cannot be seen on screen. A save that fails keeps what the person
+    - A page that saves each change at once wraps the save in `markSave` (`page-action.tsx`): the header says "Saving",
+      then "Saved". Beyond that, a save is confirmed only when the change cannot be seen on screen. A save that fails keeps what the person
       typed.
     - A main switch at the top of a section turns off everything under it, and the rows under it show only while it
       is on.

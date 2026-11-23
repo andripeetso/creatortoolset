@@ -29,6 +29,6 @@ export * from "./kit-rows";
 export * from "./kit-controls";
 export * from "./kit-dialog";
 export * from "./legacy";
-export { PageAction } from "./page-action";
+export { PageAction, markSave } from "./page-action";
 export { CopyBox } from "./copy-box";
 export { ALL_WORKSPACES, WorkspacePick, WorkspaceTag, WorkspacesDialog, inWorkspace, moveItems, useSettingsWorkspace, type SettingsWorkspace } from "./workspace-pick";
