@@ -16,15 +16,14 @@ import { pluginOnIn } from "../../api/lib/plugin-workspaces";
 import { projectOf } from "../../api/lib/project-of";
 import { currentWorkspaceId } from "../../api/lib/workspace-scope";
 import type { SessionUser } from "../../api/users";
-import { BLUR_SQL, fileBlur, libraryDb, libraryUploadStored } from "../../api/library/db";
-import { enqueueJob } from "../../api/library/jobs";
-import { indexOnMac } from "../../api/library/on-mac";
-import { hostsProxies } from "../../contracts/library";
+import { BLUR_SQL, fileBlur, libraryDb } from "../../api/library/db";
 import { importTarget } from "../../contracts/storage";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { libraryAccount } from "../../api/library/routes";
 import { mainSourceFor } from "../../api/library/access";
 import { EXAMPLE_JPEG } from "./example";
+import { checkMade, HEX64, recordCopy } from "./copy";
+import { reconnectRoutes } from "./reconnect";
 
 /**
  * Face Blur: every face, or the ones the person names, covered in photos and videos on their own Mac or iPhone (the apps'
@@ -338,7 +337,6 @@ function keepAsFilmed(versionId: string): void {
   libraryDb().prepare("UPDATE assets SET blur = 'no' WHERE id = (SELECT asset_id FROM asset_versions WHERE id = ?)").run(versionId);
   emitEvent("library.changed", {});
 }
-const HEX64 = /^[0-9a-f]{64}$/;
 /** The original's full SHA-256 its Mac read: kept on the job, and on the version when it has none (the copy links on it). */
 function noteSha(j: AutoJob, sha: unknown): boolean {
   if (typeof sha !== "string" || !HEX64.test(sha)) return false;
@@ -354,20 +352,6 @@ export async function autoCan(owner: string, workspace?: string): Promise<{ can:
   if (!anyVisionConfigured(owner)) return { can: false, why: "Needs an AI provider" };
   if (!settingsOf(owner, workspace).who.trim()) return { can: false, why: "Needs Which faces" };
   return { can: true };
-}
-
-type Made = { path: string; size: number; quick: string; sha256?: string; duration?: number; width?: number; height?: number; thumb?: string };
-const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
-/** The copy's record a Mac sends (§3a step 6), or what is wrong with it. */
-export function checkMade(b: unknown): Made | string {
-  const m = b as Partial<Made> | null;
-  if (!m || typeof m !== "object") return "Send the copy's record.";
-  if (typeof m.path !== "string" || !m.path.startsWith("/") || m.path.length > 4096) return "Send the copy's path on this Mac.";
-  if (num(m.size) === undefined || !m.size) return "Send the copy's size.";
-  if (typeof m.quick !== "string" || !m.quick || m.quick.length > 200) return "Send the copy's quick fingerprint.";
-  if (m.sha256 !== undefined && (typeof m.sha256 !== "string" || !HEX64.test(m.sha256))) return "sha256 is 64 hex characters.";
-  if (m.thumb !== undefined && (typeof m.thumb !== "string" || !BASE64.test(m.thumb) || m.thumb.length > 2_000_000)) return "thumb is a JPEG as base64.";
-  return { path: m.path, size: m.size, quick: m.quick, ...(m.sha256 ? { sha256: m.sha256 } : {}), duration: num(m.duration), width: num(m.width), height: num(m.height), ...(m.thumb ? { thumb: m.thumb } : {}) };
 }
 
 export const autoJobs = {
@@ -424,18 +408,7 @@ export const autoJobs = {
       if (!j.sha256) return { error: "Send the original's sha256 with its faces first.", status: 400 };
       // linked as the blurred render only for the library's own account (its Mac, its trust); else a clip of its own
       const trusted = j.owner === libraryAccount(j.libraryId);
-      const r = await indexOnMac(j.libraryId, j.owner, {
-        name: path.basename(m.path), path: m.path, size: m.size, quick: m.quick, device, frames: [],
-        ...(m.sha256 ? { sha256: m.sha256 } : {}), ...(m.duration !== undefined ? { duration: m.duration } : {}),
-        ...(m.width !== undefined ? { width: m.width } : {}), ...(m.height !== undefined ? { height: m.height } : {}),
-        ...(m.thumb ? { thumb: m.thumb } : {}), ...(trusted ? { blurredOf: j.sha256 } : {}),
-      });
-      // Upload Proxies: its Mac makes the team's proxy from the copy where it is and sends it (job "send", derived.ts sendLater)
-      if ("versionId" in r && hostsProxies(libraryUploadStored(j.libraryId))) {
-        const db = libraryDb();
-        db.prepare("UPDATE asset_versions SET from_path = ?, from_device = ? WHERE id = ?").run(m.path, device, r.versionId);
-        enqueueJob(db, j.libraryId, r.versionId, "send", j.owner);
-      }
+      await recordCopy(j.libraryId, j.owner, device, m, trusted ? j.sha256 : undefined);
       done(j);
       return { reply: { ok: true } };
     }
@@ -499,6 +472,9 @@ routes.post("/auto/retry", async (c) => {
   void wakeEditorPolls();
   return c.json({ ok: true });
 });
+
+// blurred copies made before this, added as their clips' blurred versions (reconnect.ts)
+routes.route("/reconnect", reconnectRoutes);
 
 // `kind` is read as text by Community's list of the team's plug-ins: a tool of its own, not a Home tool's, so it is listed under Other
 const faceBlur = definePlugin({

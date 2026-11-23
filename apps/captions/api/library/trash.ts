@@ -96,6 +96,38 @@ export async function purgeTrashedPieces(now = Date.now()): Promise<number> {
   return pieces.length;
 }
 
+/** The tables that hold a version's own rows, by version_id. */
+const VERSION_TABLES = ["derivatives", "descriptions", "transcripts", "embeddings", "pictures", "search_segments", "stretches", "search_stretches", "stretch_notes", "timelines", "search_timeline", "jobs", "version_places", "copy_sends"];
+
+/**
+ * Deletes versions for good, their clips kept: each version's rows and what the server keeps of it. A file on a Mac stays
+ * where it is ("mac:<id>" names no blob here). The caller points its clip's current version elsewhere first.
+ */
+export async function deleteVersions(versions: string[]): Promise<void> {
+  if (!versions.length) return;
+  const d = libraryDb();
+  const V = inList(versions.length);
+  const keys = [
+    ...(d.prepare(`SELECT source_key AS k FROM asset_versions WHERE id IN (${V})`).all(...versions) as { k: string }[]),
+    ...(d.prepare(`SELECT storage_key AS k FROM derivatives WHERE storage_key IS NOT NULL AND version_id IN (${V})`).all(...versions) as { k: string }[]),
+    ...(d.prepare(`SELECT storage_key AS k FROM copy_sends WHERE storage_key IS NOT NULL AND version_id IN (${V})`).all(...versions) as { k: string }[]),
+  ].map((r) => r.k);
+  d.exec("BEGIN");
+  try {
+    for (const t of VERSION_TABLES) d.prepare(`DELETE FROM ${t} WHERE version_id IN (${V})`).run(...versions);
+    d.prepare(`DELETE FROM derived_from WHERE version_id IN (${V}) OR source_version_id IN (${V})`).run(...versions, ...versions);
+    d.prepare(`DELETE FROM shares WHERE target_kind = 'version' AND target_id IN (${V})`).run(...versions);
+    d.prepare(`DELETE FROM asset_versions WHERE id IN (${V})`).run(...versions);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+  for (const k of keys) if (!k.startsWith("mac:")) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
+  for (const k of keys) if (k.startsWith("mac:")) await dropMacFrames(k.slice(4));
+  await sweepPlayCopies(versions.map((v) => `library/${v}/`)).catch((e) => console.error("[library] playback copies:", e));
+}
+
 /** Deletes assets for good: every version, derivative, share and file. Review uses it when one of its videos is gone. */
 export async function deleteAssets(assets: string[]): Promise<void> {
   if (!assets.length) return;
@@ -114,7 +146,7 @@ export async function deleteAssets(assets: string[]): Promise<void> {
   d.exec("BEGIN");
   try {
     if (versions.length) {
-      for (const t of ["derivatives", "descriptions", "transcripts", "embeddings", "pictures", "search_segments", "stretches", "search_stretches", "stretch_notes", "timelines", "search_timeline", "jobs", "version_places", "copy_sends"]) {
+      for (const t of VERSION_TABLES) {
         d.prepare(`DELETE FROM ${t} WHERE version_id IN (${V})`).run(...versions);
       }
       d.prepare(`DELETE FROM derived_from WHERE version_id IN (${V}) OR source_version_id IN (${V})`).run(...versions, ...versions);

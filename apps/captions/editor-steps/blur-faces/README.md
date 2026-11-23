@@ -68,6 +68,28 @@ the original. The whole design: `docs/face-blur-intake-prd.md`.
   "Needs an AI provider", "Needs Which faces", "Paused until 14:00", and the files that failed, with Retry.
   `GET /api/x/blur-faces/auto` → `{ can, why?, pausedUntil?, running, failed }`, `POST /api/x/blur-faces/auto/retry`.
 
+## Blurred copies made before
+
+Copies blurred before Face Blur (by hand or another tool) are added to the clips they belong to, so nothing is blurred
+again (`reconnect.ts`). One time, by the library's owner or an admin, with an access key from Headless access. Keep Blur
+faces off in that library until it is done: switched on first, every file without a blurred version is queued.
+
+`POST /api/x/blur-faces/reconnect` `{ libraryId, dry?: true, rows }`, at most 500 rows a call → `{ rows: [{ i,
+versionId, result, copyVersionId?, error? }] }`. Each row finds its clip by `versionId` or by `path` (the original's
+path on its Mac) and has an `action`:
+
+- `link` `{ originalSha256, copy: { path, size, quick, sha256, duration?, width?, height? } }`: the copy (a file on the
+  same Mac; `quick` as the Mac app's `Imports.quickPrint`) becomes the clip's current, blurred version, as Face Blur's own
+  copy does, and the clip is marked Blur faces. A copy already in the library as a clip of its own is `merge-needed`
+  and left alone.
+- `self` `{ originalSha256 }`: the file is already blurred; it is its own blurred version.
+- `filmed`: kept as filmed.
+
+Results: `linked`, `blurred`, `filmed`, `done before`, `merge-needed`, `error` (a size or SHA-256 that differs, a file not
+in the library, no computer with it). `dry` changes nothing. Nothing is queued for Face Blur, and no file is moved or
+deleted. Every applied row is logged (`<data dir>/plugins/blur-faces/reconnect-log.jsonl`);
+`DELETE /api/x/blur-faces/reconnect?libraryId=` puts the library's clips back, newest first.
+
 ## Choosing faces (only "some" mode)
 
 `POST /api/x/blur-faces/pick` with `{ who: string; faces: Array<{ id: string; picture: string; note: string }> }`
