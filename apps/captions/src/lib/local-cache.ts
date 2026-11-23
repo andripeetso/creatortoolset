@@ -28,6 +28,15 @@ type Meta = { seq: number; boot: string };
 const mem = new Map<string, unknown>();
 const meta = new Map<string, Meta>();
 const versions = new Map<string, number>();
+/** when each list was last saved: a list not saved for KEEP_MS (so not shown, since a shown list refetches) is dropped at start */
+const written = new Map<string, number>();
+const KEEP_MS = 30 * 24 * 3600_000;
+
+/** What start-up does with a saved record: keep it, drop it (not saved for 30 days), or keep it and save its time (older records have none). */
+export function ageOf(t: number | undefined, now: number): "keep" | "drop" | "stamp" {
+  if (t === undefined) return "stamp";
+  return now - t > KEEP_MS ? "drop" : "keep";
+}
 let epoch = 0;
 
 const baseOf = (user: string, url: string) => `${PREFIX}${encodeURIComponent(user)}|${url}`;
@@ -78,7 +87,7 @@ async function flush() {
     const tx = d.transaction(STORE, "readwrite");
     const st = tx.objectStore(STORE);
     for (const k of keys) {
-      if (mem.has(k) && mem.get(k) !== null) st.put({ v: mem.get(k), m: meta.get(k) ?? null }, k);
+      if (mem.has(k) && mem.get(k) !== null) st.put({ v: mem.get(k), m: meta.get(k) ?? null, t: written.get(k) ?? Date.now() }, k);
       else st.delete(k);
     }
   } catch {
@@ -94,15 +103,20 @@ export async function hydrateLocalCache(): Promise<void> {
   if (d) {
     await new Promise<void>((resolve) => {
       try {
-        const req = d.transaction(STORE, "readonly").objectStore(STORE).openCursor();
+        const now = Date.now();
+        const req = d.transaction(STORE, "readwrite").objectStore(STORE).openCursor();
         req.onsuccess = () => {
           const cur = req.result;
           if (!cur) return resolve();
-          const rec = cur.value as { v: unknown; m: Meta | null };
+          const rec = cur.value as { v: unknown; m: Meta | null; t?: number };
           const k = String(cur.key);
-          if (!mem.has(k)) {
+          const age = ageOf(rec.t, now);
+          if (age === "drop") cur.delete();
+          else if (!mem.has(k)) {
             mem.set(k, rec.v);
             if (rec.m) meta.set(k, rec.m);
+            written.set(k, rec.t ?? now);
+            if (age === "stamp") persist(k);
           }
           cur.continue();
         };
@@ -148,6 +162,7 @@ function read<T>(k: string): T | null {
 function write(k: string, v: unknown, at?: Meta) {
   mem.set(k, v);
   if (at) meta.set(k, at);
+  written.set(k, Date.now());
   touch(k);
   persist(k);
   for (const l of watchers.get(k) ?? []) l();
@@ -156,6 +171,7 @@ function write(k: string, v: unknown, at?: Meta) {
 function drop(k: string) {
   mem.delete(k);
   meta.delete(k);
+  written.delete(k);
   touch(k);
   persist(k);
   for (const l of watchers.get(k) ?? []) l();

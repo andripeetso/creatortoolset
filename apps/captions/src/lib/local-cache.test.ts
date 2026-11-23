@@ -105,3 +105,13 @@ describe("local-cache", () => {
     expect(readCached("tinyacrobatics", "/api/clips")).toEqual(["kept"]);
   });
 });
+
+describe("ageOf", () => {
+  const day = 24 * 3600_000;
+  it("drops a list not saved for 30 days, keeps a newer one, and stamps one saved before lists carried a time", async () => {
+    const { ageOf } = await import("./local-cache");
+    expect(ageOf(0, 31 * day)).toBe("drop");
+    expect(ageOf(2 * day, 31 * day)).toBe("keep");
+    expect(ageOf(undefined, 31 * day)).toBe("stamp");
+  });
+});
