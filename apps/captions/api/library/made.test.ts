@@ -52,7 +52,7 @@ function clip(id: string, o: { at?: number; seconds?: number; kind?: string } = 
   ).run(v, id, `libraries/lib_m/v/${v}/source`, `sha-${id}`, JSON.stringify({ duration: o.seconds ?? 30, format: "mov,mp4,m4a,3gp,3g2,mj2", vcodec: "hevc", acodec: "aac", width: 3840, height: 2160 }), o.at ?? 1);
   return v;
 }
-const job = (v: string, kind: string) => d.prepare("SELECT state FROM jobs WHERE version_id = ? AND kind = ?").get(v, kind) as { state: string } | undefined;
+const job = (v: string, kind: string) => d.prepare("SELECT state, error FROM jobs WHERE version_id = ? AND kind = ?").get(v, kind) as { state: string; error: string | null } | undefined;
 const row = async (kind: string) => (await libraryMade("lib_m", "local")).find((m) => m.kind === kind)!;
 
 // an archive's clip, brought in with its transcript, description and thumbnail; and a clip with none
@@ -204,7 +204,10 @@ describe("what's made", () => {
     enqueueJob(d, "lib_m", v, "sprite", "local");
     expect(job(v, "sprite")?.state).toBe("queued");
     expect(stopQueued("lib_m", "sprite", "local")).toBeGreaterThanOrEqual(1);
-    expect(job(v, "sprite")).toBeUndefined();
+    // ended, not deleted: a sweep queues a file with no job row again
+    expect(job(v, "sprite")).toMatchObject({ state: "failed", error: "Stopped" });
+    expect(retryFailed("lib_m", "sprite")).toBeGreaterThanOrEqual(1);
+    expect(job(v, "sprite")?.state).toBe("queued");
     // stopping pressed timelines leaves shot descriptions queued
     const look = clip("ast-look", { seconds: 120 });
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'queued', 'local')").run(look);

@@ -230,7 +230,7 @@ export function engineOf(libraryId: string, kind: MadeKind, username: string): P
 }
 
 /**
- * Cancel: `kind`'s jobs still queued in the library are taken off the queue (one running finishes); a press of Make for
+ * Cancel: `kind`'s jobs still queued in the library end as failed "Stopped" (one running finishes; Retry queues them); a press of Make for
  * the missing timelines or pictures is taken back. Never a kind a file needs to be ready (it would stay processing).
  * Returns how many files.
  */
@@ -245,7 +245,8 @@ export function stopQueued(libraryId: string, kind: MadeKind, username: string):
   }
   const job = SPEC[kind].job;
   if (!job) return 0;
-  return Number(db.prepare(`DELETE FROM jobs WHERE library_id = ? AND kind = ? AND state = 'queued'`).run(libraryId, job).changes);
+  // failed, not deleted: a file with no job row is new to the sweeps (shots.ts sweepLook) and queued again; Retry starts it
+  return Number(db.prepare(`UPDATE jobs SET state = 'failed', error = 'Stopped' WHERE library_id = ? AND kind = ? AND state = 'queued'`).run(libraryId, job).changes);
 }
 
 /**
