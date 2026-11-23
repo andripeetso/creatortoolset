@@ -252,6 +252,13 @@ final class SpeechModelsTests: XCTestCase {
         XCTAssertEqual(TranscriptionFailed(underlying: CocoaError(.fileNoSuchFile), saved: nil).userMessage, "Transcription failed")
     }
 
+    func testOnlyAModelCoreMLCannotReadIsDownloadedAgain() {
+        // what a broken copy threw on a person's Mac: "Error in reading the MIL network."
+        XCTAssertTrue(WhisperKitTranscriber.isUnreadable(NSError(domain: "com.apple.CoreML", code: 3)))
+        XCTAssertFalse(WhisperKitTranscriber.isUnreadable(NSError(domain: "com.apple.CoreML", code: 0)))
+        XCTAssertFalse(WhisperKitTranscriber.isUnreadable(URLError(.timedOut)))
+    }
+
     func testTheEngineIsKeptOnThisMac() {
         let d = UserDefaults(suiteName: "speech-models-test")!
         defer { d.removePersistentDomain(forName: "speech-models-test") }

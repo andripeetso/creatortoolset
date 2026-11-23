@@ -34,6 +34,14 @@ actor WhisperKitTranscriber: Transcriber {
     }
 
     private var loading: Task<Void, Error>?
+    /// Set once a copy on disk was unreadable and fetched again, so a second failure is reported, not looped on.
+    private var redownloaded = false
+
+    /// Core ML's "Error in reading the MIL network": the model's files on disk are broken, not the audio.
+    static func isUnreadable(_ error: Error) -> Bool {
+        let e = error as NSError
+        return e.domain == MLModelErrorDomain && e.code == MLModelError.io.rawValue
+    }
 
     private func load(progress: (@Sendable (Double) -> Void)?) async throws {
         guard let whisperKitID = model.whisperKitID else {
@@ -70,7 +78,16 @@ actor WhisperKitTranscriber: Transcriber {
             load: true,
             download: false
         )
-        let loaded = try await WhisperKit(config)
+        let loaded: WhisperKit
+        do {
+            loaded = try await WhisperKit(config)
+        } catch where Self.isUnreadable(error) && !redownloaded {
+            // a copy Core ML can't read (a download cut short) failed every dictation forever: drop it and fetch it once more
+            redownloaded = true
+            DictationLog.warning("\(model.id) on disk can't be read (\(error.localizedDescription)); downloading it again")
+            if base == DictationPaths.base { ModelFiles.remove(whisperKitID) } else { SpeechModels.setAside(whisperKitID) }
+            return try await load(progress: progress)
+        }
         // Replaced while loading (a model change), with no transcription waiting for it: drop it.
         if retired && users == 0 {
             await loaded.unloadModels()
