@@ -9,6 +9,7 @@ import {
   EFFORTS,
   JOBS,
   isAcpDriver,
+  isDefaultHome,
   driverFields,
   ENV_NAME_RE,
   runsOn,
@@ -75,13 +76,16 @@ function savedFor(scope: Scope): ProviderSettings | null {
   return s && withPresetEndpoints(s);
 }
 
-/** Each instance added from a plug-in preset gets that preset's endpoint now (a preset's endpoint is never saved). */
-function withPresetEndpoints(s: ProviderSettings): ProviderSettings {
+/**
+ * Each instance added from a plug-in preset gets that preset's endpoint now (a preset's endpoint is never saved), and
+ * one saved before 2026-11-23 with the tool's default folder as its account folder runs with none (isDefaultHome).
+ */
+export function withPresetEndpoints(s: ProviderSettings): ProviderSettings {
   return {
     ...s,
-    instances: s.instances.map((i) => {
+    instances: s.instances.map(({ home, ...i }) => {
       const endpoint = i.preset ? providerPresets().find((p) => p.id === i.preset)?.baseUrl : undefined;
-      return endpoint ? { ...i, baseUrl: endpoint } : i;
+      return { ...i, ...(home && !isDefaultHome(i.driver, home) ? { home } : {}), ...(endpoint ? { baseUrl: endpoint } : {}) };
     }),
   };
 }
@@ -277,7 +281,8 @@ export function parseSettings(raw: unknown, scope: Scope = "workspace", opts: { 
     const device = picked && deviceExists(picked) ? picked : "";
     if (device && !belongsTo(scope, device)) throw new Error(scope === "workspace" ? `${name} runs on a computer that is not an admin's` : `${name} runs on a computer that is not yours`);
     // a folder only for a driver that reads one (driverFields): the others keep their own, and the Mac refuses one
-    const home = typeof i.home === "string" && driverFields(i.driver as Driver).home ? i.home.trim() : "";
+    const given = typeof i.home === "string" && driverFields(i.driver as Driver).home ? i.home.trim() : "";
+    const home = isDefaultHome(i.driver as Driver, given) ? "" : given;
     // a folder the server found on its own Mac (setup's Connect) is trusted; one from the page must sit in the user's home
     if (home && !opts.trustedFolder && !HOME_RE.test(home)) throw new Error("The account folder must be a full path inside the Mac user's folder, like /Users/you/.claude-work");
     const model = typeof i.model === "string" && (i.model === "" || MODEL_RE.test(i.model)) ? i.model : undefined;

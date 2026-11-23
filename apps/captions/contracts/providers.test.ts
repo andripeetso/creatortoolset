@@ -60,5 +60,6 @@ describe("isDefaultHome", () => {
     expect(isDefaultHome("claude", "/Users/tiny/.claude-work")).toBe(false);
     expect(isDefaultHome("codex", "/Users/tiny/.codex")).toBe(true);
     expect(isDefaultHome("codex", "/Users/tiny/.claude")).toBe(false);
+    expect(isDefaultHome("claude", "/Users/tiny/accounts/work/.claude")).toBe(false); // a second account kept in a folder of that name
   });
 });

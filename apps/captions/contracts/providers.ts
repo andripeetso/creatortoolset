@@ -489,4 +489,4 @@ export interface DriverCatalog {
  * sign-in that worked). Such a folder is saved as none.
  */
 export const isDefaultHome = (driver: Driver, home: string): boolean =>
-  (driver === "claude" && /\/\.claude\/?$/.test(home)) || (driver === "codex" && /\/\.codex\/?$/.test(home));
+  (driver === "claude" || driver === "codex") && new RegExp(`^/(?:Users|home)/[^/]+/\\.${driver}/?$`).test(home);

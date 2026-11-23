@@ -150,3 +150,16 @@ describe("Muse Code on a Mac", () => {
     await expect(answer).rejects.toMatchObject({ kind: "limit", message: "Your Muse Code plan's limit is reached; it resets Nov 11, 2026 at 5:00 AM." });
   });
 });
+
+describe("Claude with the default folder as its account folder", () => {
+  it("runs with no folder, so it sees the sign-in made with no folder; another account folder stays", async () => {
+    // saved before 2026-11-23 by Add provider: CLAUDE_CONFIG_DIR=~/.claude keeps the sign-in under another Keychain name
+    const old = (home: string): ProviderSettings => ({ instances: [{ id: "claude", driver: "claude", name: "Claude", enabled: true, device: jordan.device.id, home }], default: { instance: "claude", model: "", effort: "low" }, jobs: {} }) as unknown as ProviderSettings;
+    await saveSettings(old("/Users/tiny/.claude"), "jordan");
+    expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").mac?.provider?.home).toBeUndefined();
+    await saveSettings(old("/Users/tiny/accounts/work/.claude"), "jordan");
+    expect(aiFor({ username: "jordan", role: "team" }, "captions", "Caption Studio").mac?.provider).toMatchObject({ home: "/Users/tiny/accounts/work/.claude" });
+    const { parseSettings } = await import("./lib/providers");
+    expect(parseSettings(old("/Users/tiny/.claude/"), "jordan").instances[0]).not.toHaveProperty("home");
+  });
+});
