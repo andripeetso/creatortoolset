@@ -21,6 +21,7 @@ import {
   patchProject,
   patchSource,
   readSourceAgain,
+  stopSourceRead,
   type KnowledgeSource,
 } from "@/lib/workshop";
 
@@ -158,6 +159,7 @@ export function KnowledgePanel({ projectId, readOnly }: { projectId?: string; re
     <RowMenu
       label="Context file actions"
       items={[
+        ...(s.status === "reading" || s.status === "queued" ? [{ label: "Stop", onSelect: () => stopSourceRead(s.id).then(() => put({ ...s, status: "new", waitUntil: undefined })) }] : []),
         ...(s.status === "reading" ? [] : [{ label: s.status === "new" ? "Read" : "Read again", onSelect: () => readSourceAgain(s.id).then(put) }]),
         ...(shared(s) ? [{ label: isOff(s) ? "Turn on in this workspace" : "Turn off in this workspace", onSelect: () => toggleProject(s.id) }] : []),
         ...(projectId ? [] : moveItems(projects, s.projectId, (to) => patchSource(s.id, { projectId: to }).then(moved))),

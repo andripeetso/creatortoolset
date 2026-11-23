@@ -42,6 +42,8 @@ const RESULT_MAX = 2000;
 export const MISSED_MS = 10 * 60_000;
 /** Which tasks are running now (this process): one run at a time per task. */
 const running = new Set<string>();
+/** Each running task's Stop (POST /:id/stop, and Delete): aborting it ends its chat turn. */
+const stops = new Map<string, AbortController>();
 // "Run it now"'s card runs while the task does (assistant.ts sweepWork): its answer is in the task's own chat
 void import("./assistant").then(({ checkWork }) => checkWork("automation", (id) => (running.has(id.slice("automation:".length)) ? null : { status: "done", detail: "Ran: the answer is in its chat" })));
 
@@ -180,9 +182,16 @@ export async function runAutomation(username: string, a: Automation, ready: { ro
       fresh: a.destination !== "continue",
       route: ready.route,
       url: ready.url,
+      cancel: stops.get(a.id)?.signal,
     });
     await finish(username, a.id, { status: "done", text, chat });
   } catch (e) {
+    // stopped by the person: the row says so, and the inbox is not told what they did themselves
+    if (stops.get(a.id)?.signal.aborted) {
+      update(username, a.id, (x) => (x.lastResult = { status: "skipped", text: "Stopped", at: Date.now() }));
+      announceSoon(username, "automations");
+      return;
+    }
     await finish(username, a.id, { status: "error", text: e instanceof Error ? e.message : String(e) });
   }
 }
@@ -247,10 +256,12 @@ const releaseRunLock = (id: string): void => rmSync(lockOf(id), { force: true })
  */
 function start(username: string, a: Automation, at: number, go: () => Promise<void>): Promise<void> {
   running.add(a.id);
+  stops.set(a.id, new AbortController());
   try {
     update(username, a.id, (x) => (x.lastRun = at));
   } catch (e) {
     running.delete(a.id);
+    stops.delete(a.id);
     releaseRunLock(a.id);
     console.error("[automations]", e);
     return Promise.resolve();
@@ -260,6 +271,7 @@ function start(username: string, a: Automation, at: number, go: () => Promise<vo
     .catch((e) => console.error("[automations]", e))
     .finally(() => {
       running.delete(a.id);
+      stops.delete(a.id);
       releaseRunLock(a.id);
       announceSoon(username, "automations"); // told once the flag is down, so the row leaves Running now
     });
@@ -467,6 +479,16 @@ automationsApp.delete("/:id", (c) => {
   const left = list.filter((x) => x.id !== c.req.param("id"));
   if (left.length === list.length) return c.json({ error: "Not found" }, 404);
   writeAll(username, left);
+  stops.get(c.req.param("id"))?.abort(); // "It stops at once"
+  return c.json({ ok: true });
+});
+
+/** Stop: the run going now ends (its chat says Stopped); the task stays on for its next time. Nothing running: nothing changes. */
+automationsApp.post("/:id/stop", (c) => {
+  const username = c.get("user").username;
+  const a = readAll(username).find((x) => x.id === c.req.param("id"));
+  if (!a) return c.json({ error: "Not found" }, 404);
+  stops.get(a.id)?.abort();
   return c.json({ ok: true });
 });
 

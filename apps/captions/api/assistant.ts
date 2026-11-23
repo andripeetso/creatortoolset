@@ -1935,7 +1935,7 @@ export function chatBusy(username: string, chat: string | undefined): boolean {
  */
 export async function runInChat(
   username: string,
-  o: { chat?: string; task: { id: string; name: string }; prompt: string; preface: string; fresh: boolean; route: Route; url: string; workspace?: string },
+  o: { chat?: string; task: { id: string; name: string }; prompt: string; preface: string; fresh: boolean; route: Route; url: string; workspace?: string; cancel?: AbortSignal },
 ): Promise<{ chat: string; text: string }> {
   const conv = load(username);
   let chat = chatOf(conv, o.chat);
@@ -1953,6 +1953,9 @@ export async function runInChat(
   tell(username, reply.id);
   const prompt = `${o.preface}\n\n${promptFor(username, o.fresh ? [asked] : chat.messages)}`;
   const stop = new AbortController();
+  // the task's own Stop (automations.ts) stops it as the dock's Stop does
+  if (o.cancel?.aborted) stop.abort();
+  else o.cancel?.addEventListener("abort", () => stop.abort(), { once: true });
   const chatId = chat.id; // `chat` may be the open one, whose id changes with a New chat
   runsOf(username).set(reply.id, stop);
   try {

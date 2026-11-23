@@ -868,12 +868,7 @@ export function Player() {
             className="flex max-w-full items-center gap-3 rounded-xl border border-zinc-700/80 bg-zinc-900/95 px-4 py-3 shadow-xl"
           >
             {/* the server is making them (a video sent from the assistant's chat): they come in by themselves */}
-            {words.length === 0 && status.phase === "idle" && serverCaptioning && (
-              <span className="flex items-center gap-2 text-sm text-zinc-200">
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-400" />
-                Making the captions
-              </span>
-            )}
+            {words.length === 0 && status.phase === "idle" && serverCaptioning && <ServerCaptioning />}
             {words.length === 0 && status.phase === "idle" && !serverCaptioning && (
               <>
                 {/* the picker gives way to the button when the player is narrow (beside the chats in chat mode) */}
@@ -1314,6 +1309,34 @@ function EstimatedProcessingStatus({
         )}
       </span>
       )}
+    </span>
+  );
+}
+
+/** The server is making the captions (a video sent from the chat): they come in by themselves, or Stop ends that job. */
+function ServerCaptioning() {
+  const projectId = useStudio((s) => s.projectId);
+  const [stopping, setStopping] = useState<"busy" | "failed" | null>(null);
+  const stop = async () => {
+    setStopping("busy");
+    const r = await fetch(`/api/projects/${projectId}/captioning/stop`, { method: "POST" }).catch(() => null);
+    // the project is read again on the server's notice; Transcribe shows once it says the job ended
+    if (r?.ok) useStudio.setState({ serverCaptioning: false });
+    setStopping(r?.ok ? null : "failed");
+  };
+  return (
+    <span className="flex items-center gap-2 text-sm text-zinc-200">
+      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-400" />
+      Making the captions
+      {stopping === "failed" && <span className="text-xs text-red-400">Could not stop</span>}
+      <button
+        type="button"
+        disabled={stopping === "busy" || !projectId}
+        onClick={() => void stop()}
+        className="flex items-center gap-1 rounded-md border border-zinc-600 px-2 py-1 text-xs font-medium text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-50"
+      >
+        <Square className="h-2.5 w-2.5" fill="currentColor" /> {stopping === "busy" ? "Stopping" : "Stop"}
+      </button>
     </span>
   );
 }

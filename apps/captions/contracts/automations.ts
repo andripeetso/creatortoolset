@@ -24,7 +24,7 @@ export const DESTINATIONS: readonly Destination[] = ["new_chat", "continue", "fr
 
 export interface AutomationResult {
   at: number;
-  /** done = the answer; error = the run failed; skipped = nothing ran (no AI, Mac offline, …) */
+  /** done = the answer; error = the run failed; skipped = nothing ran (no AI, Mac offline, …), or text "Stopped": its Stop ended it */
   status: "done" | "error" | "skipped";
   text: string;
   /** The chat the run posted in. */

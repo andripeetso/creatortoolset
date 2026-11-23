@@ -45,6 +45,7 @@ export function statusOf(a: AutomationView, now: number, limitReset: string | nu
   const r = a.lastResult;
   if (!r || r.status === "done") return { line };
   const ago = fmtAgo(r.at, now);
+  if (r.status === "skipped" && r.text === "Stopped") return { line, problem: { tone: "attention", text: `Stopped ${ago}` } };
   const reset = r.status === "error" && /usage limit/i.test(r.text) && limitReset ? ` · ${limitReset}` : "";
   return { line, problem: { tone: r.status === "error" ? "broken" : "attention", text: `${r.status === "error" ? "Failed" : "Skipped"} ${ago}: ${r.text.split("\n")[0]}${reset}` } };
 }
@@ -70,6 +71,7 @@ export const createAutomation = (body: AutomationBody) => call<AutomationView>("
 export const updateAutomation = (id: string, patch: Partial<AutomationBody>) => call<AutomationView>(`/${id}`, "PATCH", patch);
 export const deleteAutomation = (id: string) => call<{ ok: true }>(`/${id}`, "DELETE");
 export const runAutomationNow = (id: string) => call<AutomationView>(`/${id}/run`, "POST");
+export const stopAutomation = (id: string) => call<{ ok: true }>(`/${id}/stop`, "POST");
 
 export type ScheduleMode = Schedule["kind"];
 

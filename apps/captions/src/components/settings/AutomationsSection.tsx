@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { MessageSquare, Pencil, Play, Plus } from "lucide-react";
+import { MessageSquare, Pencil, Play, Plus, Square } from "lucide-react";
 import { AUTOMATION_NAME_MAX, AUTOMATION_PROMPT_MAX, type Destination, type Weekday } from "@contracts/automations";
 import { EFFORTS, type Effort, type LimitsIdentity, type ProviderInstance, type ProvidersView, type Selection } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
   draftOf,
   listAutomations,
   runAutomationNow,
+  stopAutomation,
   statusOf,
   updateAutomation,
   type AutomationDraft,
@@ -191,7 +192,7 @@ function TaskRow({ a, tagged, workspaces, limits, now, onEdit, onChanged }: { a:
             label={`Actions for ${a.name}`}
             items={[
               { label: "Edit", icon: <Pencil />, onSelect: onEdit },
-              ...(a.running ? [] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
+              ...(a.running ? [{ label: "Stop", icon: <Square />, onSelect: () => stopAutomation(a.id).then(onChanged) }] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
               ...(chat ? [{ label: a.destination === "new_chat" ? "Open last run's chat" : "Open chat", icon: <MessageSquare />, onSelect: () => navigate(`/?chat=${encodeURIComponent(chat)}`) }] : []),
               ...moveItems(workspaces, a.project, (to) => updateAutomation(a.id, { project: to }).then(onChanged)),
               {

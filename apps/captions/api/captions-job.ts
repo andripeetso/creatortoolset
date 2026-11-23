@@ -10,7 +10,7 @@ import { deviceTranscribes, transcribeOnDevice } from "./lib/device-transcribe";
 import { captioning, clipReadyToEdit, clipSourceFile, projectsApp } from "./projects";
 import { captionsComputer, cloudTranscribeBlock, transcribeApp, userMayCloudTranscribe } from "./transcribe";
 import { LOCAL_USER, findUser, type SessionUser } from "./users";
-import { startTask, taskFor } from "./work/tasks";
+import { dropTask, startTask, taskFor } from "./work/tasks";
 import type { Sound, SoundInput } from "./work/tasks/caption-studio";
 import { storedStyle } from "../src/lib/export-request";
 import { inRanges } from "../src/lib/nle/captions";
@@ -90,6 +90,7 @@ async function caption(user: SessionUser, projectId: string, clipId: string, eng
   if (!(await clipReadyToEdit(projectId, clipId, user).catch(quiet))) throw new Error("This file could not be read as a video");
   // the stored source back on the server's disk when it was kept elsewhere (serving, not processing)
   if (!(await clipSourceFile(projectId, clipId))) throw new Error("Source video is not on the server");
+  if (stopped.has(projectId)) return; // stopped while its editing copy was made: its sound is not cut
   const r = await routesAs(user)<Project>(`/api/projects/${projectId}`);
   const seconds = r.body.clips?.find((c) => c.id === clipId)?.duration ?? 0;
   await startTask<SoundInput, Sound>("caption-sound", projectId, user.username, workspace ?? null, { project: projectId, clip: clipId, cloud: engine === "cloud", seconds, name: r.body.name ?? "" });
@@ -155,6 +156,7 @@ async function hear(user: SessionUser, input: SoundInput, sound: Sound, files: R
     const cues = fill ? byStart(clip.cues ?? [], laid.cues).map((c, i) => ({ ...c, id: i + 1 })) : laid.cues;
     const seconds = clip.duration || sound.seconds;
     // the snapshot the page sends after a transcript lands (src/lib/persist.ts saveClip)
+    if (stopped.has(projectId)) throw STOPPED; // stopped while it was heard: nothing is saved
     const saved = await call(`/api/projects/${projectId}/sync`, "PUT", {
       baseRevision: p.revision,
       mutationId: randomUUID(),
@@ -194,6 +196,22 @@ export const captionsFailed = (actor: string, input: SoundInput, error: string):
 
 /** Who each running job is for and its project's name, for Home (api/activity.ts). */
 const started = new Map<string, { owner: string; name: string; workspace?: string }>();
+/** Projects whose captioning was stopped: a late end of that job (its sound, a failure) is not said. Cleared by a new start. */
+const stopped = new Set<string>();
+const STOPPED = new Error("Stopped");
+
+/**
+ * Stop (POST /api/projects/:id/captioning/stop): the job ends as stopped and its sound task is dropped (a computer that
+ * holds it loses it at its next beat). The project and its clip stay; Transcribe on its page starts it again. Nothing
+ * running: nothing changes.
+ */
+export function stopCaptioning(username: string, projectId: string, name: string): void {
+  const t = taskFor("caption-sound", projectId);
+  if (!started.has(projectId) && !captioning.has(projectId) && t?.state !== "queued" && t?.state !== "running") return;
+  dropTask("caption-sound", projectId);
+  end(projectId, STOPPED, name, username);
+  stopped.add(projectId);
+}
 // a transcription's card runs while it is captioned here (assistant.ts sweepWork), or while its sound task waits for a
 // computer or runs on one (a restart keeps that)
 void import("./assistant").then(({ checkWork }) => checkWork("captions", (id) => {
@@ -211,6 +229,7 @@ export async function captioningWork(user: SessionUser) {
 
 /** Starts the captions for a project just made from a file; the chat hears how it ended. `name` and `workspace` are the project's. */
 export function captionInBackground(user: SessionUser, projectId: string, clipId: string, name: string, engine: Engine, workspace?: string): void {
+  stopped.delete(projectId);
   captioning.set(projectId, "preparing");
   started.set(projectId, { owner: user.username, name, workspace });
   announceSoon(user.username, "projects"); // Home's chip (api/activity.ts captioningWork)
@@ -222,13 +241,16 @@ export function captionInBackground(user: SessionUser, projectId: string, clipId
  * the chat told. Said once: a second end finds no running card (workEnded).
  */
 function end(projectId: string, outcome: { lines: number; note?: string } | unknown, title?: string, actor?: string): void {
+  if (stopped.has(projectId)) return; // its Stop said the end already
   const name = started.get(projectId)?.name ?? title ?? "";
   const owner = started.get(projectId)?.owner ?? actor;
   const done = typeof outcome === "object" && outcome !== null && "lines" in outcome ? (outcome as { lines: number; note?: string }) : undefined;
   // one plain sentence for the card and the chat
   const why = done ? "" : (outcome instanceof Error ? outcome.message : String(outcome)).split("\n")[0]!.slice(0, 200).replace(/\.$/, "");
-  if (!done) console.warn(`[captions] ${projectId} was not captioned: ${why}`);
-  const ended = done
+  if (!done && outcome !== STOPPED) console.warn(`[captions] ${projectId} was not captioned: ${why}`);
+  const ended = outcome === STOPPED
+    ? { status: "stopped" as const, detail: "Stopped", say: `The captions for “${name}” were stopped.` }
+    : done
     ? done.lines
       ? { status: "done" as const, detail: done.note ?? "Captions are ready", say: `The captions for “${name}” are ready.`, choices: ["What do they say?"] }
       : { status: "done" as const, detail: "No words were heard", say: `No words were heard in “${name}”, so it has no captions.` }

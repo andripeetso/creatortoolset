@@ -308,6 +308,8 @@ function patchSource(id: string, change: (s: KnowledgeSource) => KnowledgeSource
 }
 /** Sources being read in this process: a second read of one waits for the first. */
 const inRead = new Set<string>();
+/** Each read's Stop (POST /sources/:id/stop): aborting it ends the AI call, and the read writes nothing after it. */
+const readStops = new Map<string, AbortController>();
 /** This account's sources its AI is reading, for Home (api/activity.ts); inJob tells "workshop" as they start and end. */
 export const knowledgeWork = async (username: string) =>
   (await Promise.all([...inRead].map((id) => readJson<KnowledgeSource>(sourcePath(id))))).flatMap((s) => (s?.owner === username && s.status === "reading" ? [{ id: s.id, name: s.title || s.name, ...(s.projectId ? { projectId: s.projectId } : {}) }] : []));
@@ -398,20 +400,26 @@ async function projectForAi(id: string | undefined, user: SessionUser): Promise<
 async function fileSource(user: SessionUser, id: string): Promise<ReadOutcome> {
   if (inRead.has(id)) return undefined;
   inRead.add(id);
+  const stop = new AbortController();
+  readStops.set(id, stop);
   try {
-    return await fileSourceOnce(user, id);
+    return await fileSourceOnce(user, id, stop.signal);
   } finally {
     inRead.delete(id);
+    readStops.delete(id);
   }
 }
 
 type ReadOutcome = { ok: boolean; projectId?: string } | undefined;
 
-async function fileSourceOnce(user: SessionUser, id: string): Promise<ReadOutcome> {
+async function fileSourceOnce(user: SessionUser, id: string, signal: AbortSignal): Promise<ReadOutcome> {
   const s = await readSource(id, user);
-  if (!s) return undefined;
+  // stopped while it waited its turn: it is not read
+  if (!s || s.status !== "queued") return undefined;
   let text = await readSourceText(id);
   await patchSource(id, (cur) => ({ ...cur, status: "reading", startedAt: Date.now(), error: undefined, waitUntil: undefined }));
+  // a stopped read's late answer writes nothing: the stop set the source back to Not read
+  const unlessStopped = (change: (cur: KnowledgeSource) => KnowledgeSource) => (cur: KnowledgeSource) => (signal.aborted ? cur : change(cur));
   let usage: MacUsage | undefined;
   try {
     const ai = route(user, "workshop", "Knowledge");
@@ -421,29 +429,30 @@ async function fileSourceOnce(user: SessionUser, id: string): Promise<ReadOutcom
       const batch = pages.slice(i, i + OCR_BATCH);
       const files: Record<string, string> = {};
       for (const n of batch) files[`pages/${n}`] = `base64:${(await readFile(path.join(sourcePagesDir(id), n))).toString("base64")}`;
-      const got = await completeWithFallback(OCR_SYSTEM, ocrPrompt(batch, i), undefined, (t) => t.trim(), {
+      const got = await completeWithFallback(OCR_SYSTEM, ocrPrompt(batch, i), signal, (t) => t.trim(), {
         ...ai,
         mac: { ...ai.mac, label: "Knowledge", background: true, files },
         onUsage: (u) => (usage = sumUsage(usage, u)),
       });
       text += `${text ? "\n\n" : ""}${got}`;
       // progress only: a rename made meanwhile is kept, and a deleted source is not written back
-      if (!(await patchSource(id, (cur) => ({ ...cur, chars: text.length, readCost: usage?.costUsd, startedAt: Date.now() }), text))) return undefined;
+      if (signal.aborted || !(await patchSource(id, (cur) => ({ ...cur, chars: text.length, readCost: usage?.costUsd, startedAt: Date.now() }), text))) return undefined;
       for (const n of batch) await rm(path.join(sourcePagesDir(id), n), { force: true });
     }
     if (pages.length) await rm(sourcePagesDir(id), { recursive: true, force: true });
     if (!text.trim()) throw new Error("No text came out of it");
     const lines = lineCount(text);
     // ponytail: the whole text goes to the Mac on each read; fine for one file at a time
-    const filing = await completeWithFallback(READ_SYSTEM, readPrompt(s.name, lines), undefined, (t) => parseReading(t, lines), {
+    const filing = await completeWithFallback(READ_SYSTEM, readPrompt(s.name, lines), signal, (t) => parseReading(t, lines), {
       ...ai,
       mac: { ...ai.mac, label: "Knowledge", background: true, files: { "source.txt": text } },
       onUsage: (u) => (usage = sumUsage(usage, u)),
     });
     // deleted while it was read: patchSource finds nothing and writes nothing
-    await patchSource(id, (cur) => ({ ...cur, ...filing, status: "read", error: undefined, readAt: Date.now(), readCost: usage?.costUsd, updatedAt: Date.now() }));
-    return { ok: true, projectId: s.projectId };
+    await patchSource(id, unlessStopped((cur) => ({ ...cur, ...filing, status: "read", error: undefined, readAt: Date.now(), readCost: usage?.costUsd, updatedAt: Date.now() })));
+    return signal.aborted ? undefined : { ok: true, projectId: s.projectId };
   } catch (e) {
+    if (signal.aborted) return undefined;
     const limited = limitedOf(e);
     if (limited !== undefined) {
       // a usage limit is a wait, not a failure: it stays queued and the reads go on by themselves at the reset
@@ -2450,6 +2459,17 @@ workshopApp.post("/sources/:id/read", async (c) => {
   queueRead(user, s.id);
   void queueWaiting(user); // the ones the limit held go on behind it (the list that follows a press started them before)
   return c.json(queued ?? s);
+});
+
+/** Stop: a source being read, or waiting its turn, goes back to Not read (Read starts it again); the source stays. */
+workshopApp.post("/sources/:id/stop", async (c) => {
+  const user = c.get("user");
+  const s = await readSource(c.req.param("id"), user);
+  if (!s) return c.json({ error: "Not found" }, 404);
+  readStops.get(s.id)?.abort(); // first, so no write of the read's lands after the one below
+  await patchSource(s.id, (cur) => (cur.status === "reading" || cur.status === "queued" ? { ...cur, status: "new", error: undefined, waitUntil: undefined } : cur));
+  announce(user.username, "workshop");
+  return c.json({ ok: true });
 });
 
 workshopApp.patch("/sources/:id", async (c) => {

@@ -424,6 +424,8 @@ export const addSourceLink = (url: string, projectId?: string) =>
 export const patchSource = (id: string, fields: Partial<Omit<KnowledgeSource, "projectId">> & { projectId?: string | null }) =>
   fetch(`/api/workshop/sources/${id}`, jsonInit(fields, "PATCH")).then((r) => json<KnowledgeSource>(r));
 export const readSourceAgain = (id: string) => fetch(`/api/workshop/sources/${id}/read`, jsonInit({})).then((r) => json<KnowledgeSource>(r));
+/** Stop a source's read (or its turn in the queue): it is Not read again. */
+export const stopSourceRead = (id: string) => fetch(`/api/workshop/sources/${id}/stop`, jsonInit({})).then((r) => json<{ ok: true }>(r));
 export const deleteSource = (id: string) => fetch(`/api/workshop/sources/${id}`, { method: "DELETE" }).then((r) => json<{ ok: true }>(r));
 export const sourceTextUrl = (id: string) => `/api/workshop/sources/${id}/text`;
 

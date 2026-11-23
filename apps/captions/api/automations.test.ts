@@ -225,6 +225,24 @@ describe("the scheduler", () => {
     void run;
   });
 
+  it("Stop ends a run going now: its turn is aborted, the row says Stopped, and the task stays on", async () => {
+    const a = await make("alice", { name: "Stoppable", schedule: everyHour, prompt: "p" });
+    let asked: AbortSignal | undefined;
+    const { streamMacClaude } = await import("./lib/mac-claude");
+    vi.mocked(streamMacClaude).mockImplementationOnce((_s, _p, cancel) => {
+      asked = cancel;
+      return new Promise((_, reject) => cancel?.addEventListener("abort", () => reject(new Error("aborted"))));
+    });
+    void tick(Date.now() + 5 * 3_600_000, (u, x, r) => (x.id === a.id ? runAutomation(u, x, r) : hold), always);
+    await vi.waitFor(() => expect(asked).toBeDefined());
+    expect((await req("alice", "POST", `/automations/${a.id}/stop`)).status).toBe(200);
+    expect(asked!.aborted).toBe(true);
+    await vi.waitFor(async () => expect((await find("alice", a.id))?.running).toBe(false));
+    const after = await find("alice", a.id);
+    expect(after).toMatchObject({ enabled: true, lastResult: { status: "skipped", text: "Stopped" } });
+    expect((await req("bob", "POST", `/automations/${a.id}/stop`)).status).toBe(404);
+  });
+
   it("an interval task keeps its grid: a tick a little late does not move the time it is recorded at", async () => {
     const a = await make("alice", { name: "Grid", schedule: { kind: "interval", everyMinutes: 5 }, prompt: "p" });
     const anchor = a.createdAt as number;

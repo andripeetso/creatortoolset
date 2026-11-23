@@ -1182,6 +1182,16 @@ projectsApp.post("/:id/copy", async (c) => {
 });
 
 /* load a session: project settings + every clip with its editor state */
+// Stop: the captions the server makes by itself for this project (a video sent from the chat) end; the project stays
+projectsApp.post("/:id/captioning/stop", async (c) => {
+  const user = c.get("user");
+  const meta = await ownedMeta(c.req.param("id"), user);
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  // loaded here: captions-job.ts loads this file
+  (await import("./captions-job")).stopCaptioning(user.username, meta.id, meta.name);
+  return c.json({ ok: true });
+});
+
 projectsApp.get("/:id", async (c) => {
   const id = c.req.param("id");
   const meta = await ownedMeta(id, c.get("user"));
