@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reordered } from "./Tabs";
+import { reordered, withHidden } from "./Tabs";
 
 describe("reordered", () => {
   const ids = ["music", "desktop", "mobile"];
@@ -12,5 +12,11 @@ describe("reordered", () => {
     expect(reordered(ids, "music", "music", true)).toBeNull();
     expect(reordered(ids, "music", "desktop", false)).toBeNull();
     expect(reordered(ids, "all", "music", false)).toBeNull();
+  });
+});
+
+describe("withHidden", () => {
+  it("puts the dragged order back around the hidden tabs", () => {
+    expect(withHidden(["a", "h", "b", "c"], ["a", "b", "c"], ["c", "a", "b"])).toEqual(["c", "h", "a", "b"]);
   });
 });

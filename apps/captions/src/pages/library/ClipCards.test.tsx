@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SPRITE_FRAMES, type AssetCard } from "@contracts/library";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AssetRow, AssetTile, fileLine, frameAt, frameStyle, intoColumns } from "./ClipCards";
+import { AssetRow, AssetTile, fileLine, frameAt, frameStyle, intoColumns, masonryColumns } from "./ClipCards";
 import { GalleryTile } from "./Gallery";
 
 // A mouse across a video card's picture shows the clip there from its strip of frames; leaving shows the picture again.
@@ -153,5 +153,13 @@ describe("a photo with no picture", () => {
     expect(host.textContent).not.toContain("No picture yet");
     show({ ...card, thumbUrl: undefined });
     expect(host.textContent).not.toContain("No picture yet");
+  });
+});
+
+describe("masonryColumns", () => {
+  it("fits columns of the slider's size, never fewer than two", () => {
+    expect(masonryColumns(1200, 100)).toBe(10);
+    expect(masonryColumns(1200, 400)).toBe(2);
+    expect(masonryColumns(300, 400)).toBe(2);
   });
 });

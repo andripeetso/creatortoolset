@@ -280,14 +280,29 @@ export function intoColumns<T>(items: readonly T[], cols: number, tall: (t: T) =
   return out;
 }
 
-/** Photos in their own proportions, in columns: the cards view when only images are shown (LibraryPage.tsx). */
-export function PhotoMasonry({ assets, tile }: { assets: readonly AssetCard[]; tile: (a: AssetCard) => ReactNode }) {
-  const cols = useSyncExternalStore(onColumns, columnCount, () => 2);
+/** Columns of at least `size` px across `width` (gap 12), never fewer than two: as `cardColumns` lays out the grid. */
+export const masonryColumns = (width: number, size: number) => Math.max(2, Math.floor((width + 12) / (size + 12)));
+
+/** Photos in their own proportions, in columns: the cards view when only images are shown (LibraryPage.tsx).
+ *  `size`: the card size slider's column width (views.tsx); none, the screen width's own count. */
+export function PhotoMasonry({ assets, tile, size }: { assets: readonly AssetCard[]; tile: (a: AssetCard) => ReactNode; size?: number | null }) {
+  const byScreen = useSyncExternalStore(onColumns, columnCount, () => 2);
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = box.current;
+    if (!el || !size || typeof ResizeObserver === "undefined") return;
+    setWidth(el.clientWidth);
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [size]);
+  const cols = size && width ? masonryColumns(width, size) : byScreen;
   // the name under each picture counts as a fifth of a width
   const tall = (a: AssetCard) => (a.width && a.height ? a.height / a.width : 0.75) + 0.2;
   const columns = intoColumns(assets, cols, tall);
   return (
-    <div className="flex items-start gap-3">
+    <div ref={box} className="flex items-start gap-3">
       {columns.map((c, i) => (
         <div key={i} className="flex min-w-0 flex-1 flex-col gap-3">
           {c.map((a) => (

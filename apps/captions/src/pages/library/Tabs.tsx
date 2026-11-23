@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,38 @@ export interface Tab {
 }
 
 type Mark = { id: string; after: boolean };
+
+/** The tabs this person hid in one library: this browser's own list (a tab is a view; the folder behind it stays). */
+export function useHiddenTabs(libraryId: string | null | undefined): [string[], (id: string, hide: boolean) => void] {
+  const key = `ct.library.hiddenTabs.${libraryId ?? ""}`;
+  const read = () => {
+    try {
+      const v: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  const [hidden, setHidden] = useState<string[]>(read);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setHidden(read()), [key]);
+  const set = (id: string, hide: boolean) => {
+    const next = hide ? [...new Set([...hidden, id])] : hidden.filter((x) => x !== id);
+    setHidden(next);
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      /* storage off: hidden for this visit */
+    }
+  };
+  return [hidden, set];
+}
+
+/** `all` in order with the slots of `shown` refilled from `order` (the shown ones dragged): the hidden ones keep their place */
+export function withHidden(all: string[], shown: string[], order: string[]): string[] {
+  let i = 0;
+  return all.map((id) => (shown.includes(id) ? order[i++]! : id));
+}
 
 /** Where `from` goes when dropped before or after `target`, among the movable ids; null: nothing changes */
 export function reordered(ids: string[], from: string, target: string, after: boolean): string[] | null {

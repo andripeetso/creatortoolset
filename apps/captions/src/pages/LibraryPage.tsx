@@ -82,7 +82,7 @@ import { CLIP_CARDS, type DraggedClip } from "@/lib/chat-clips";
 import { ActiveFilters, LibrarySidebar, SidebarSheet, sidebarPicked } from "./library/Sidebar";
 import { ListHeader, SORT_IDS, SortControls } from "./library/SortControls";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
-import { LibraryTabs, type Tab } from "./library/Tabs";
+import { LibraryTabs, useHiddenTabs, withHidden, type Tab } from "./library/Tabs";
 import { automaticAbout, NewFolderDialog, ReorganizeDialog, SmartFolderDialog } from "./library/SmartFolders";
 import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./library/views";
 
@@ -164,6 +164,7 @@ export default function LibraryPage() {
 
   const library = libraries?.find((l) => l.id === libraryId) ?? libraries?.[0] ?? null;
   const libId = library?.id;
+  const [hiddenTabs, hideTab] = useHiddenTabs(libId);
   // this library's files on their way in (the queue is the whole app's)
   const uploads = queue.items.filter((u) => u.libraryId === libId);
   /** a workspace given to this person by its owner, or the Media Library on Read for them: to look at and download from,
@@ -674,9 +675,10 @@ export default function LibraryPage() {
       ) : undefined,
   });
   /** a tab's right-click menu: the folder's own (Open, Rename…, New folder inside, Delete folder) */
-  const folderMenu = (c: Collection) => (
+  const folderMenu = (c: Collection, tabId = c.id) => (
     <>
       <ContextMenuItem onSelect={() => go(c.id)}>Open</ContextMenuItem>
+      {hideItem(tabId)}
       {thisMacDevice() && folderKeep(c)}
       {!readOnly && (
         <>
@@ -691,6 +693,7 @@ export default function LibraryPage() {
       )}
     </>
   );
+  const hideItem = (id: string) => <ContextMenuItem onSelect={() => hideTab(id, true)}>Hide tab</ContextMenuItem>;
   /** A tab's place: a folder (`id`), or the top with a kind; a tab never keeps the kind or roll picked before */
   const go = (id: string | null, k: AssetKind | "all" = "all", r: Roll | null = null) => {
     setKind(k);
@@ -699,11 +702,11 @@ export default function LibraryPage() {
   };
   const rollFolderOf = (r: Roll) => collections.find((c) => rollOfFolder(c) === r);
   const topOpen = open ? trailOf(collections, open, false)[0]?.id : undefined; // the top-level folder the open one is in
-  const tabs: Tab[] =
+  const allTabs: Tab[] =
     !library || trash || source
       ? []
       : [
-          { id: "all", label: "All", active: !open && kind === "all" && !roll, onOpen: () => go(null), onItems: into && !readOnly ? (ids) => void move(ids, null) : undefined },
+          { id: "all", label: "All", active: !open && kind === "all" && !roll, onOpen: () => go(null), onItems: into && !readOnly ? (ids) => void move(ids, null) : undefined, menu: hideItem("all") },
           // the A-roll and B-roll folders, under the names they were given; a deleted one has no tab
           ...(["a", "b"] as const).flatMap((r): Tab[] => {
             const f = rollFolderOf(r);
@@ -716,7 +719,7 @@ export default function LibraryPage() {
                     active: viewRoll === r && (!open || !!smart),
                     onOpen: () => go(f.id),
                     onItems: readOnly ? undefined : (ids) => void fileAs(ids, r),
-                    menu: folderMenu(f),
+                    menu: folderMenu(f, r),
                     icon: FolderCog,
                   },
                 ]
@@ -730,7 +733,7 @@ export default function LibraryPage() {
             ] as const
           ).flatMap(([k, label, count]): Tab[] =>
             (count ?? 0) > 0 && !collections.some((c) => c.parentId === null && holdsClips(c) && c.name.trim().toLowerCase() === label.toLowerCase())
-              ? [{ id: k === "image" ? "photos" : "videos", label, count, active: !open && kind === k && !roll, onOpen: () => go(null, k) }]
+              ? [{ id: k === "image" ? "photos" : "videos", label, count, active: !open && kind === k && !roll, onOpen: () => go(null, k), menu: hideItem(k === "image" ? "photos" : "videos") }]
               : [],
           ),
           // the top-level folders, automatic ones too (the A-roll and B-roll folders have theirs above)
@@ -750,8 +753,13 @@ export default function LibraryPage() {
               }),
             ),
         ];
+  // a hidden tab still shows while it is the open one, so the view never loses its tab
+  const tabs = allTabs.filter((t) => t.active || !hiddenTabs.includes(t.id));
+  const hiddenShown = allTabs.filter((t) => !tabs.includes(t));
   // the folder tabs dragged into another order: at once on screen, kept by the server for everyone
-  const reorderFolders = (ids: string[]) => {
+  const reorderFolders = (shownIds: string[]) => {
+    const movableIds = allTabs.filter((t) => t.movable).map((t) => t.id);
+    const ids = withHidden(movableIds, movableIds.filter((id) => tabs.some((t) => t.id === id)), shownIds);
     const before = folderList.data;
     const at = (id: string) => (ids.includes(id) ? ids.indexOf(id) : ids.length);
     folderList.set((all) => all && [...all].sort((a, b) => at(a.id) - at(b.id)));
@@ -1186,7 +1194,19 @@ export default function LibraryPage() {
                     tabs={tabs}
                     onReorder={readOnly ? undefined : reorderFolders}
                     // the tab row is its own place: a new folder from it is a new tab, whatever is open below
-                    menu={changing && <ContextMenuItem onSelect={() => void newFolder(null)}>New tab</ContextMenuItem>}
+                    menu={
+                      (changing || hiddenShown.length > 0) && (
+                        <>
+                          {changing && <ContextMenuItem onSelect={() => void newFolder(null)}>New tab</ContextMenuItem>}
+                          {changing && hiddenShown.length > 0 && <ContextMenuSeparator />}
+                          {hiddenShown.map((t) => (
+                            <ContextMenuItem key={t.id} onSelect={() => hideTab(t.id, false)}>
+                              Show {t.label}
+                            </ContextMenuItem>
+                          ))}
+                        </>
+                      )
+                    }
                   />
                 )}
                 {!firstScreen && sidebar && <ActiveFilters {...narrowing} />}
@@ -1261,7 +1281,7 @@ export default function LibraryPage() {
                     <div className="flex flex-col gap-3">
                       {folderCards}
                       {placeholders.length > 0 && <FolderGrid size="small" columns={columns}>{placeholders}</FolderGrid>}
-                      <PhotoMasonry assets={shown} tile={tile} />
+                      <PhotoMasonry assets={shown} size={cardSize} tile={tile} />
                     </div>
                   ) : (
                     <FolderGrid size="small" columns={columns}>

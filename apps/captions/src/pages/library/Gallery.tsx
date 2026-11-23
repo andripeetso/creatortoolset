@@ -18,7 +18,7 @@ const wide = (a: AssetCard) => !!a.width && !!a.height && wideShape(a.width / a.
 /** `size`: the folders view's card size (views.tsx); a tall clip here is about half a card. */
 /** `lead`: cards before the clips (a drop's files going in, ./Placeholders.tsx), one cell, two when `wide` like a clip's. */
 export function GalleryGrid({ assets, size, tile, lead = [] }: { assets: readonly AssetCard[]; size?: number | null; tile: (a: AssetCard, ownShape: boolean) => ReactNode; lead?: readonly { key: string; wide: boolean; node: ReactNode }[] }) {
-  if (!lead.length && assets.length && assets.every((a) => a.kind === "image")) return <PhotoMasonry assets={assets} tile={(a) => tile(a, true)} />;
+  if (!lead.length && assets.length && assets.every((a) => a.kind === "image")) return <PhotoMasonry assets={assets} size={size ? Math.round(size * 0.45) : null} tile={(a) => tile(a, true)} />;
   return (
     <div
       className={cn("grid grid-flow-row-dense gap-2", size ? "" : "grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]")}
