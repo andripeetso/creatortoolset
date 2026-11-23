@@ -11,11 +11,12 @@ export async function makeThumb(src: string, out: string, duration: number, cove
   const vf = turned(turn, "scale=480:-2");
   // a picture is what the person waits for: it goes before the queued long runs (run.ts ffmpegSlot)
   if (cover) return ffmpegTo(out, ["-i", src, "-map", "0:v:0", "-frames:v", "1", "-vf", vf, "-q:v", "4"], true);
-  const seeks = [duration * 0.1, 1, 0];
+  // the last try reads the first frame with no -ss: on a photo (a one-frame mjpeg) any -ss, even 0, writes nothing
+  const seeks = duration > 0.5 ? [duration * 0.1, 1, 0] : [0];
   let lastErr: unknown;
   for (const t of [...new Set(seeks)]) {
     try {
-      await ffmpegTo(out, ["-ss", String(Math.max(0, t)), "-i", src, "-frames:v", "1", "-vf", vf, "-q:v", "4"], true);
+      await ffmpegTo(out, [...(t > 0 ? ["-ss", String(t)] : []), "-i", src, "-frames:v", "1", "-vf", vf, "-q:v", "4"], true);
       return;
     } catch (e) {
       lastErr = e;

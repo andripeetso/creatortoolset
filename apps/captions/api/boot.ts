@@ -39,6 +39,7 @@ import { serverUpdateApp } from "./server-update";
 import { migrateOwnerChoices, settleServerWork } from "./work/server-work";
 import { migrateLibraries, migrateOnce } from "./library/migrate";
 import { fixPlaceRows } from "./library/place-rows";
+import { retryEmptyPictures } from "./library/made";
 import { foldersOf } from "./editor/reach";
 import { checkWaits } from "./work/waits";
 import { startTaskTick, sweepTasks } from "./work/tasks";
@@ -580,6 +581,8 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
     // one place row per file on a computer, under a folder that exists (library/place-rows.ts); nothing to do the second time
     const fixed = fixPlaceRows(foldersOf);
     console.log(`[library] place rows: ${fixed.merged} merged, ${fixed.repointed} moved to their folder`);
+    const again = retryEmptyPictures(); // photos failed by an empty card picture (media/thumb.ts), sent again
+    if (again) console.log(`[library] ${again} jobs with an empty card picture queued again`);
   } catch (e) {
     console.warn("[library] the place rows fix-up failed:", e instanceof Error ? e.message : e);
   }

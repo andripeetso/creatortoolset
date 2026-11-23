@@ -164,6 +164,14 @@ describe("thumb", () => {
     expect((await probe(out)).width).toBe(480);
     expect(existsSync(`${out}.part.jpg`)).toBe(false);
   });
+
+  it("reads a photo (one frame: any -ss writes nothing)", async () => {
+    const photo = path.join(dir, "photo.jpg");
+    const out = path.join(dir, "photo-thumb.jpg");
+    ff(["-f", "lavfi", "-i", "testsrc=size=1600x1200", "-frames:v", "1", photo]);
+    await makeThumb(photo, out, (await probe(photo)).duration);
+    expect((await probe(out)).width).toBe(480);
+  });
 });
 
 describe("proxy", () => {

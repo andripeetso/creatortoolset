@@ -24,7 +24,7 @@ process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET; // the solo install: "local" is the admin
 const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
-const { engineOf, libraryMade, makeMissing, retryFailed, stopQueued } = await import("./made");
+const { engineOf, libraryMade, makeMissing, retryEmptyPictures, retryFailed, stopQueued } = await import("./made");
 const { queueLook, sweepLook } = await import("./shots");
 const { libraryApp } = await import("./routes");
 const { leaveToComputers } = await import("./worker");
@@ -89,6 +89,15 @@ describe("what's made", () => {
     // asked for by name, it is made again
     enqueueJob(d, "lib_m", archived, "transcribe", "local", true);
     expect(job(archived, "transcribe")?.state).toBe("queued");
+  });
+
+  it("at start, a photo whose card picture came out empty is sent again; other failures stay", () => {
+    const empty = "ENOENT: no such file or directory, rename '/x/thumb.jpg.part.jpg' -> '/x/thumb.jpg'";
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error) VALUES ('lib_m', ?, 'send', 'failed', 'local', ?)").run(bare, empty);
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error) VALUES ('lib_m', ?, 'send', 'failed', 'local', 'Moov atom not found')").run(archived);
+    expect(retryEmptyPictures()).toBe(1);
+    expect(job(bare, "send")?.state).toBe("queued");
+    expect(job(archived, "send")?.state).toBe("failed");
   });
 
   it("turning a switch on makes for new files only, never the ones already here", async () => {

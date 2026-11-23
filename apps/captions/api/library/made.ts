@@ -316,3 +316,16 @@ export function retryFailed(libraryId: string, kind: string): number {
   for (const r of rows) enqueueJob(db, libraryId, r.version_id, kind, r.actor);
   return rows.length;
 }
+
+/**
+ * At start: the jobs that failed only because a photo's card picture came out empty (media/thumb.ts seeked into a
+ * one-frame file, so ffmpeg wrote nothing and the rename failed) are queued again; once they land the clip is ready.
+ */
+export function retryEmptyPictures(): number {
+  const db = libraryDb();
+  const rows = db
+    .prepare("SELECT library_id, version_id, kind, actor FROM jobs WHERE state = 'failed' AND error LIKE '%ENOENT%.jpg.part.jpg%'")
+    .all() as { library_id: string; version_id: string; kind: string; actor: string | null }[];
+  for (const r of rows) enqueueJob(db, r.library_id, r.version_id, r.kind, r.actor);
+  return rows.length;
+}
