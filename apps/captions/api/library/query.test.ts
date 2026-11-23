@@ -129,10 +129,12 @@ describe("library asset query, sorted by the server", () => {
     add("c1", "video", "beach: morning", 1000, { duration: 30, capturedAt: 700_000_000_000 }, 300);
     add("c2", "video", "Apple orchard", 2000, { duration: 10 }, 100);
     add("c3", "video", "cliff walk", 2000, { duration: 30, capturedAt: 1_700_000_000_000 }, 300);
-    add("c4", "image", "Dune", 3000, { duration: 0 }, 50);
+    add("c4", "image", "Dune", 3000, { duration: 0, capturedAt: 500 }, 50);
     add("c5", "video", "attic", 4000, null, 200);
     // c2 has no filming date in the file: Date filmed takes its modified time on a computer, not when it was added
     db.prepare("INSERT INTO version_places (version_id, device, path, mtime) VALUES ('v_c2', 'mac1', '/c2.mov', 1600000000000)").run();
+    // c4's camera had no clock set (1970): no date; the modified time it was uploaded with is
+    db.prepare("UPDATE asset_versions SET modified_at = 1650000000000 WHERE id = 'v_c4'").run();
     return db;
   }
   /** every page at one clip a page, walked by cursor */
@@ -154,7 +156,7 @@ describe("library asset query, sorted by the server", () => {
     ["name", ["c2", "c5", "c1", "c3", "c4"]],
     ["longest", ["c3", "c1", "c2", "c5", "c4"]],
     ["shortest", ["c2", "c1", "c3", "c4", "c5"]],
-    ["filmed", ["c3", "c2", "c1", "c5", "c4"]],
+    ["filmed", ["c3", "c4", "c2", "c1", "c5"]],
     // the list's Size and Kind columns (11-19)
     ["biggest", ["c3", "c1", "c5", "c2", "c4"]],
     ["smallest", ["c4", "c2", "c5", "c1", "c3"]],

@@ -172,7 +172,7 @@ describe("uploadFile from the Mac app on its own server", () => {
     });
     expect(await uploadFile("lib_1", clip(), () => {})).toEqual({ assetId: "a3" });
     // and that this Mac may send it itself: its quick fingerprint, so a server that lets it sends no bytes from here
-    expect(starts).toEqual([{ filename: "C0001.MP4", size: 5000, fromPath: "/Volumes/Card/C0001.MP4", fromDevice: "dev_1", quick: expect.stringMatching(/^[0-9a-f]{64}$/), send: true }]);
+    expect(starts).toEqual([{ filename: "C0001.MP4", size: 5000, fromPath: "/Volumes/Card/C0001.MP4", fromDevice: "dev_1", modified: 1_700_000_000_000, quick: expect.stringMatching(/^[0-9a-f]{64}$/), send: true }]);
   });
 
   it("sends no bytes when the server lets this Mac send the file itself (its proxy, not the original)", async () => {

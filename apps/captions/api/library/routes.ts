@@ -182,6 +182,8 @@ export function recordVersion(
     origin?: string | null;
     /** a blurred render: its original's full SHA-256. It becomes a version of that original's clip, and its current one */
     blurredOf?: string | null;
+    /** the file's modified time where it came from (File.lastModified, ms): Date filmed's fallback (shoots.ts FILE_DATE) */
+    modifiedAt?: number | null;
     /** a new clip's blur answer when someone chose one (upload-gate.ts blurAtIntake); none: null, read as its library's Blur faces. A new version keeps its clip's */
     blur?: Blur | null;
   },
@@ -202,9 +204,9 @@ export function recordVersion(
   }
   const { n } = d.prepare("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?").get(assetId) as { n: number };
   d.prepare(
-    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device, origin)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?)`,
-  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null, o.origin ?? null);
+    `INSERT INTO asset_versions (id, asset_id, n, source_key, source_path, bytes, sha256, mime, state, created_by, created_at, from_path, from_device, origin, modified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?, ?)`,
+  ).run(o.versionId, assetId, n, o.sourceKey, o.sourcePath ?? null, o.size, o.sha256, mimeOf(o.filename), o.by, now, o.fromPath ?? null, o.fromDevice ?? null, o.origin ?? null, o.modifiedAt ?? null);
   if (o.blurredOf) d.prepare("UPDATE asset_versions SET blurred_of = ? WHERE id = ?").run(o.blurredOf, o.versionId);
   d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(o.versionId, assetId);
   if (o.collectionId && d.prepare("SELECT 1 FROM collections WHERE id = ? AND library_id = ? AND kind = 'manual'").get(o.collectionId, o.libraryId)) {
@@ -439,6 +441,7 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
 
 interface UploadRow {
   id: string;
+  modified_at: number | null;
   library_id: string;
   created_by: string;
   filename: string;
@@ -635,6 +638,7 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
       origin: row.origin,
       blurredOf: row.blurred_of,
       blur: row.blur,
+      modifiedAt: row.modified_at,
     });
     if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(row.id); // fileMade queues what it needs
     d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
@@ -688,6 +692,9 @@ libraryApp.post("/here/uploads", async (c) => {
 // uploaded by the page: 200 { assetId, versionId, sent: true } | { duplicateOf }, and that computer makes the proxy and
 // the small files and sends them, the original too only to a library that keeps originals (derived.ts sendLater)
 libraryApp.post("/:id/uploads", (c) => startUpload(c, c.req.param("id")));
+
+/** A file's modified time as a browser sends it (File.lastModified, ms), or null: a clock before 1990 or past 2100 is no date. */
+export const modifiedOf = (v: unknown): number | null => (typeof v === "number" && v > 631152000000 && v < 4102444800000 ? Math.round(v) : null);
 
 async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: string): Promise<Response> {
   const user = c.get("user");
@@ -773,8 +780,8 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   }
   db()
     .prepare(
-      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin, blurred_of, blur)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO uploads (id, library_id, created_by, filename, size, received, staging_path, replaces_asset_id, collection_id, expires_at, state, direct_upload_id, from_path, from_device, made, origin, blurred_of, blur, modified_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -793,6 +800,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
       phone ? "phone" : null,
       blurredOf,
       blur,
+      modifiedOf(body?.modified),
     );
   if (started) return c.json({ id, offset: 0, chunkSize: started.partSize, direct: { partSize: started.partSize, urls: started.urls } }, 201);
   return c.json({ id, offset: 0, chunkSize: CHUNK_BYTES }, 201);
@@ -1044,6 +1052,7 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         origin: row.origin,
         blurredOf: row.blurred_of,
         blur: row.blur,
+        modifiedAt: row.modified_at,
       });
       if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);

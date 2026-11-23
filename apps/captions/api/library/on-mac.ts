@@ -13,7 +13,7 @@ import { readHere } from "./shoots";
 import { organizeOnProbe } from "./organize";
 import { tagSoundType } from "./sfx-type";
 import { settleSoundKind } from "./sound-kind";
-import { kindOf, mimeOf, recordVersion } from "./routes";
+import { kindOf, mimeOf, modifiedOf, recordVersion } from "./routes";
 import { deviceOf } from "../lib/devices";
 import { rootAt } from "../lib/storage";
 import { confirmPlaces, OWN } from "./places";
@@ -58,6 +58,8 @@ export interface OnMacIndex {
   /** when it was filmed (ms), and the minutes east of UTC it was filmed in, when the file says (Mac app 11-19 on) */
   capturedAt?: number;
   tz?: number;
+  /** the file's modified time (File.lastModified) the drop came with: Date filmed's fallback (shoots.ts FILE_DATE) */
+  modified?: number;
   /** where it was filmed, as the file has it (ISO 6709): only its country is kept */
   location?: string;
   /** a picture: whether its EXIF names a camera, and whether it has an alpha channel (shoots.ts isGraphic) */
@@ -86,8 +88,10 @@ export function parseOnMac(body: unknown): OnMacIndex | string {
   for (const [k, max] of [["thumb", MB], ["sprite", 2 * MB]] as const) if (b[k] !== undefined && !jpeg(b[k], max)) return `The ${k} is not a JPEG under ${max / MB} MB`;
   const frames = Array.isArray(b.frames) ? b.frames.slice(0, FRAMES) : [];
   if (frames.some((f) => !jpeg(f, MB))) return "A still is not a JPEG under 1 MB";
+  const modified = modifiedOf(b.modified);
   return {
     ...parseFilmed(b),
+    ...(modified ? { modified } : {}),
     name,
     path: at,
     size,
@@ -231,7 +235,7 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
     : undefined;
   d.exec("BEGIN IMMEDIATE");
   try {
-    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId, blur: x.blur ?? null, blurredOf: x.blurredOf ?? null, ...(blurred ? { assetId: blurred.asset_id } : {}) });
+    assetId = recordVersion(d, { libraryId, versionId, sourceKey: `mac:${versionId}`, filename: x.name, size: x.size, sha256: `mac:${x.quick}`, by, collectionId: x.collectionId, blur: x.blur ?? null, blurredOf: x.blurredOf ?? null, modifiedAt: x.modified ?? null, ...(blurred ? { assetId: blurred.asset_id } : {}) });
     if (blurred) d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ?").run(blurred.id, assetId);
     if (x.sha256) d.prepare("UPDATE asset_versions SET full_sha256 = ? WHERE id = ?").run(x.sha256, versionId);
     // the Mac probed it: no probe here (it would read a file this server does not have)

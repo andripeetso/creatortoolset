@@ -228,6 +228,18 @@ describe("library: uploading into a folder", () => {
     expect((await create("owner-a", 800, { collectionId: "col_smart" })).status).toBe(409);
   });
 
+  it("keeps the file's modified time it was uploaded with (Date filmed's fallback), never a clock before 1990", async () => {
+    const add = async (modified: unknown, salt: number) => {
+      const data = clip(800, salt);
+      const init = await read(create("owner-a", data.length, { modified }));
+      await patch("owner-a", init.id, 0, data, data.length);
+      const { assetId } = await read(finish("owner-a", init.id));
+      return (libraryDb().prepare("SELECT v.modified_at FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?").get(assetId) as { modified_at: number | null }).modified_at;
+    };
+    expect(await add(1_600_000_000_000, 14)).toBe(1_600_000_000_000);
+    expect(await add(500, 15)).toBeNull();
+  });
+
   it("takes an upload into the A-roll folder (the AI Editor's footage) and files it as A-roll", async () => {
     libraryDb().prepare(`INSERT INTO collections (id, library_id, name, kind, query, created_at, created_by) VALUES ('col_aroll', 'lib_a', 'A-roll', 'smart', '{"roll":"a"}', 0, 'owner-a')`).run();
     const { assetId } = await upload("col_aroll", 13);

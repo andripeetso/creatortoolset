@@ -227,7 +227,7 @@ export async function indexOnMac(libraryId: string, file: File | MacFile, path: 
   const r = await fetch(`/api/library/${libraryId}/on-mac`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index, ...(sha256 ? { sha256 } : {}), ...(asFilmed ? { blur: false } : {}) }),
+    body: JSON.stringify({ name: file.name, path, size: file.size, quick, device, collectionId, ...index, ...(file instanceof File ? { modified: file.lastModified } : {}), ...(sha256 ? { sha256 } : {}), ...(asFilmed ? { blur: false } : {}) }),
     signal,
   });
   const body = (await r.json().catch(() => ({}))) as { assetId?: string; duplicateOf?: string; duplicate?: true; error?: string };

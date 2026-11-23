@@ -460,6 +460,7 @@ export async function uploadFile(
       filename: file.name,
       size: file.size,
       collectionId,
+      modified: file.lastModified, // Date filmed's fallback when the file says nothing of when it was filmed
       ...(where ? { fromPath: where } : {}),
       ...(fromDevice ? { fromDevice } : {}),
       ...(quick ? { quick, send: true } : {}),

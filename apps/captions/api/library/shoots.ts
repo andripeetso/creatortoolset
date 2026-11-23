@@ -33,9 +33,10 @@ interface Shoot {
 
 /**
  * When a version was filmed: its file's capture time, else the earliest modified time a computer reported for it, else
+ * the modified time it was uploaded or dropped with, else
  * when it was added (FILE_DATE is the same without that last step). A time before 1990 is a camera's unset clock (1904, 1970), never a date.
  */
-export const FILE_DATE = `COALESCE((SELECT t FROM (SELECT json_extract(v.probe, '$.capturedAt') AS t) WHERE t > 631152000000), (SELECT MIN(p.mtime) FROM version_places p WHERE p.version_id = v.id AND p.mtime > 631152000000))`;
+export const FILE_DATE = `COALESCE((SELECT t FROM (SELECT json_extract(v.probe, '$.capturedAt') AS t) WHERE t > 631152000000), (SELECT MIN(p.mtime) FROM version_places p WHERE p.version_id = v.id AND p.mtime > 631152000000), CASE WHEN v.modified_at > 631152000000 THEN v.modified_at END)`;
 export const FILMED = `COALESCE(${FILE_DATE}, a.created_at)`;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

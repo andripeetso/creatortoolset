@@ -706,4 +706,8 @@ export const MIGRATIONS: string[] = [
   // files already in a library get these only from "Make for the missing". Libraries from before start from now
   `UPDATE libraries SET settings = json_set(settings, '$.lookSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000, '$.timelineSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000,
     '$.embedSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000, '$.picturesSince', CAST(strftime('%s', 'now') AS INTEGER) * 1000);`,
+  // the file's modified time on the computer it was uploaded or dropped from (File.lastModified): Date filmed's last
+  // guess before the time it was added (shoots.ts FILE_DATE). An upload carries it from its start
+  `ALTER TABLE asset_versions ADD COLUMN modified_at INTEGER;
+  ALTER TABLE uploads ADD COLUMN modified_at INTEGER;`,
 ];
