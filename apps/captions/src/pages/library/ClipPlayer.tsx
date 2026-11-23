@@ -189,19 +189,27 @@ export function ClipPlayer({
   };
   const access = check?.state === "here" && check.needs === "access" ? check : null;
   const share = check?.state === "away" && check.needs === "connect" ? check.root : undefined;
+  // over the picture beside the badge: Proxy plays now, the button plays the original once its folder is allowed
+  const dark = "bg-black/70 text-white hover:bg-black/80";
   const buttons = (access || share) && (
-    <div className="flex flex-wrap items-center gap-2 py-1.5 text-xs text-zinc-400">
+    <div className="flex flex-wrap items-center gap-2 text-xs">
       {access && (
-        <Button size="sm" variant="secondary" disabled={busy} onClick={press(() => askMediaFolder(access.folder).then(() => null))}>
-          Allow access to {access.root?.name ?? access.folder.split("/").filter(Boolean).pop() ?? access.folder}
+        <Button
+          size="sm"
+          className={dark}
+          disabled={busy}
+          title={`Allow access to ${access.root?.name ?? access.folder.split("/").filter(Boolean).pop() ?? access.folder}`}
+          onClick={press(() => askMediaFolder(access.folder).then(() => null))}
+        >
+          Play original
         </Button>
       )}
       {share && (
-        <Button size="sm" variant="secondary" disabled={busy} onClick={press(() => placesConnect(share.key).then((r) => ("ok" in r ? null : `Could not connect ${share.name}`), () => `Could not connect ${share.name}`))}>
+        <Button size="sm" className={dark} disabled={busy} onClick={press(() => placesConnect(share.key).then((r) => ("ok" in r ? null : `Could not connect ${share.name}`), () => `Could not connect ${share.name}`))}>
           Connect
         </Button>
       )}
-      {problem && <span>{problem}</span>}
+      {problem && <span className="rounded bg-black/70 px-1.5 py-0.5 text-white">{problem}</span>}
     </div>
   );
   const badge = places && pin && phase !== "failed" && (
@@ -341,6 +349,7 @@ export function ClipPlayer({
               Sound on
             </Button>
           )}
+          {buttons}
         </div>
         {onPrev && (
           <button type="button" aria-label="Previous clip" onClick={(e) => (e.stopPropagation(), onPrev())} className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70">
@@ -353,7 +362,6 @@ export function ClipPlayer({
           </button>
         )}
       </div>
-      {buttons && <div className="shrink-0 px-2">{buttons}</div>}
     </div>
   );
 }

@@ -183,10 +183,11 @@ describe("with it", () => {
     await open();
     expect(video().getAttribute("src")).toBe("/api/library/media/v1/play");
     answer = original;
-    await act(async () => button("Allow access to footage")!.click());
+    expect(button("Play original")?.title).toBe("Allow access to footage");
+    await act(async () => button("Play original")!.click());
     expect(access).toHaveBeenCalledWith({ ask: "/Volumes/footage" });
     expect(video().getAttribute("src")).toMatch(/^ctlocal:\/\/media\/a/);
-    expect(button("Allow access to footage")).toBeUndefined();
+    expect(button("Play original")).toBeUndefined();
   });
 
   it("a share that needs its login offers Connect", async () => {
