@@ -11,6 +11,7 @@ import { sessionSources } from "./lib/connectors/provider";
 import { printPosts } from "./lib/connectors/prints";
 import { findAccount, newState, patchAccount, publicAccount, readConnectors, removeAccount, saveAccounts, type StoredAccount } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
+import { mineUsesGraph } from "./lib/instagram/graph";
 import { addLoginAccount, allAccounts } from "./instagram";
 import { accountProjects, getWorkspace } from "./lib/workshop/workspace";
 import { announce } from "./lib/sync";
@@ -58,7 +59,7 @@ async function ownInstagram(username: string): Promise<OwnInstagram[]> {
   const links = await accountProjects(username);
   return (await allAccounts())
     .filter((a) => a.owner === username && (a.mine || links.has(a.id)))
-    .map((a) => ({ id: a.id, handle: a.username, followers: a.counts.followers, mine: !!a.mine, projectId: links.get(a.id) }));
+    .map((a) => ({ id: a.id, handle: a.username, followers: a.counts.followers, mine: !!a.mine, signedIn: mineUsesGraph(a), projectId: links.get(a.id) }));
 }
 
 connectorsApp.get("/", async (c) => c.json(await view(c)));

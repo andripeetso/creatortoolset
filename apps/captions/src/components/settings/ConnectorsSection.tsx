@@ -4,13 +4,14 @@ import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useMe } from "@/lib/auth";
-import { patchAccount as patchInstagram } from "@/lib/instagram";
+import { addAccount as addInstagram, patchAccount as patchInstagram } from "@/lib/instagram";
 import { useCachedLoad } from "@/lib/local-cache";
 import { patchProject } from "@/lib/workshop";
 import { useWorkspace } from "@/lib/workspace";
 import {
   LOGINS,
   PLATFORMS,
+  addHandle,
   disconnectAccount,
   getConnectors,
   linkAccount,
@@ -23,10 +24,11 @@ import {
   type OwnInstagram,
   type SocialPlatform,
 } from "@/lib/connectors";
-import { Card, ErrorRow, ListRow, LoadingRow, RowMenu, Section, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, InUse, type RowMenuItem } from "./ui";
+import { Card, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, InUse, type RowMenuItem } from "./ui";
 import { ApifyKeyRow } from "./ApiKeysSection";
 import { PlatformLogo } from "./PlatformLogos";
-import { msg } from "./helpers";
+import { inputCls, msg } from "./helpers";
+import { cn } from "@/lib/utils";
 import type { SearchRowId } from "./search";
 
 const n = (v?: number) => (v === undefined ? "" : v >= 10_000 ? `${Math.round(v / 1000).toLocaleString("en-US")}k` : v.toLocaleString("en-US"));
@@ -40,8 +42,6 @@ export const newestSignIn = (accounts: readonly ConnectedAccount[]) => Math.max(
 /** The accounts a platform sign-in connected after `since` (a time from newestSignIn, so one clock is compared with itself). */
 export const signedInSince = (accounts: readonly ConnectedAccount[], since: number) => accounts.filter((a) => a.via === "login" && a.connectedAt > since);
 
-/** What a row says when the sign-in service was asked for its platform and does not offer it (or could not be reached). */
-export const SIGN_IN_OFF = "Sign-in not available";
 
 /**
  * The sign-ins this server has its own app for, by the platforms each covers (the login is the platform's own: Meta
@@ -53,7 +53,18 @@ export function signInItems(logins: Record<LoginKind, boolean>, viaService: read
 }
 
 /** An account read from its public page (Apify), not signed in to: the numbers only the platform's sign-in gives are missing. */
-export const PUBLIC_ONLY = "Public posts only";
+export const NOT_SIGNED_IN = "Not signed in";
+/** The tooltip on a "Not signed in" account: what the platform's sign-in would add. */
+export function missingWithoutSignIn(p: SocialPlatform): string {
+  const gives = LOGINS.find((l) => l.id === loginOf(p))?.gives;
+  return gives ? `Public posts only. Signing in adds ${gives.charAt(0).toLowerCase()}${gives.slice(1)}` : "Public posts only";
+}
+/** "Not signed in", with what is missing on hover. */
+const notSignedIn = (p: SocialPlatform) => (
+  <span title={missingWithoutSignIn(p)}>
+    <Status tone="attention">{NOT_SIGNED_IN}</Status>
+  </span>
+);
 
 /** Meta lets an app read an Instagram account only when it is a professional one (Business or Creator) linked to a Page. */
 const IG_NEEDS = "Needs a Business or Creator account linked to a Facebook Page";
@@ -64,7 +75,7 @@ export interface PlatformRow {
   label: string;
   /** The account's @handle and numbers, or what adding one needs on this platform ("" = nothing to say). */
   summary: string;
-  /** "Add" starts the platform's sign-in; none = an account is there (or the sign-in is not available). */
+  /** "Add" opens the platform's Add dialog (its sign-in, or a handle read from the public page); none = an account is there. */
   button?: "Add";
   /** An account the person connected (its workspace is its `projectId`; none = no workspace: listed in each, its numbers used by none). */
   account?: ConnectedAccount;
@@ -81,11 +92,7 @@ const ownRow = (p: Platform, own: OwnInstagram): PlatformRow => ({ platform: p.i
  * public account is followed where it is read, not here); one the sign-in service turned down (`off`: asked when Add was
  * pressed) says so, with nothing to press.
  */
-function addRow(p: Platform, logins: ConnectorsView["logins"], off: readonly LoginKind[]): PlatformRow[] {
-  if (p.login && off.includes(p.login)) return [{ platform: p.id, label: p.label, summary: SIGN_IN_OFF }];
-  if (!p.login || !logins[p.login]) return [];
-  return [{ platform: p.id, label: p.label, summary: p.id === "instagram" ? IG_NEEDS : "", button: "Add" }];
-}
+const addRow = (p: Platform): PlatformRow[] => [{ platform: p.id, label: p.label, summary: "", button: "Add" }];
 
 type RowsView = Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagram">;
 
@@ -95,7 +102,7 @@ type RowsView = Pick<ConnectorsView, "logins" | "apify" | "accounts" | "instagra
  * the person's own account: its sign-in, else the Analyzer account the workspace links (or the one marked Mine that no
  * workspace links).
  */
-export function platformRows(view: RowsView, projectId?: string, off: LoginKind[] = []): PlatformRow[] {
+export function platformRows(view: RowsView, projectId?: string): PlatformRow[] {
   return PLATFORMS.flatMap((p): PlatformRow[] => {
     const on = view.accounts.filter((a) => a.platform === p.id);
     // ponytail: a Meta sign-in can bring several Pages into one workspace; the row shows the first (All workspaces lists each)
@@ -105,7 +112,7 @@ export function platformRows(view: RowsView, projectId?: string, off: LoginKind[
       const own = view.instagram.find((x) => !!projectId && x.projectId === projectId) ?? view.instagram.find((x) => x.mine && !x.projectId);
       if (own) return [ownRow(p, own)];
     }
-    return addRow(p, view.logins, off);
+    return addRow(p);
   });
 }
 
@@ -113,13 +120,13 @@ export function platformRows(view: RowsView, projectId?: string, off: LoginKind[
  * Social accounts for all workspaces: every account the person has, in the order of PLATFORMS, and the Add button of a
  * platform with none. An Instagram account in the Analyzer that a sign-in account fills is that account's one row.
  */
-export function everyRow(view: RowsView, off: LoginKind[] = []): PlatformRow[] {
+export function everyRow(view: RowsView): PlatformRow[] {
   return PLATFORMS.flatMap((p): PlatformRow[] => {
     const accounts = view.accounts.filter((a) => a.platform === p.id);
     const filled = new Set(accounts.map((a) => a.analyzerId));
     const own = p.id === "instagram" ? view.instagram.filter((x) => !filled.has(x.id)) : [];
     const rows = [...accounts.map((a) => accountRow(p, a)), ...own.map((x) => ownRow(p, x))];
-    return rows.length ? rows : addRow(p, view.logins, off);
+    return rows.length ? rows : addRow(p);
   });
 }
 
@@ -151,6 +158,8 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   // then said it does not offer, said on their rows until the page is left; `asking`: the one being asked for now.
   const [off, setOff] = useState<LoginKind[]>([]);
   const [asking, setAsking] = useState<LoginKind | null>(null);
+  // the platform whose Add dialog is open
+  const [adding, setAdding] = useState<SocialPlatform | null>(null);
   const offered = async (kind: LoginKind, view: ConnectorsView): Promise<boolean> => {
     if (!view.logins[kind]) return false;
     // this server's own app: nothing to ask
@@ -185,7 +194,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   const act = (p: Promise<unknown>) => p.then(reload).catch((e) => saveFailed(msg(e)));
   // the workspace a new account goes to: the pinned or picked one; from All workspaces, the window's
   const projectId = () => current ?? useWorkspace.getState().currentProjectId ?? undefined;
-  const rowsOf = (view: ConnectorsView) => (all ? everyRow(view, off) : platformRows(view, current ?? undefined, off));
+  const rowsOf = (view: ConnectorsView) => (all ? everyRow(view) : platformRows(view, current ?? undefined));
 
   // the sign-in comes back here with the result: say it once, then drop it from the address
   useEffect(() => {
@@ -246,12 +255,24 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
 
   const rows = rowsOf(view);
   if (pinned && !rows.length) return null;
-  // Add is the platform's sign-in itself (the Mac app finishes it in the computer's browser)
+  // the platform's sign-in (the Mac app finishes it in the computer's browser)
   const choose = async (platform: SocialPlatform) => {
     const login = loginOf(platform);
     if (!login || !(await offered(login, view))) return;
     waiting.current = newestSignIn(view.accounts);
     window.location.assign(loginHref(login, { back, projectId: projectId() }));
+  };
+
+  // An account by its handle, read from its public page on the person's Apify key. Instagram's is the Analyzer's account
+  // marked Mine, linked to the workspace when that workspace has no Instagram yet.
+  const addByHandle = async (platform: SocialPlatform, handle: string) => {
+    const pid = projectId();
+    if (platform === "instagram") {
+      const acc = await addInstagram(handle, { mine: true, run: "now" });
+      if (pid && !view.instagram.some((x) => x.projectId === pid)) await patchProject(pid, { accountId: acc.id });
+    } else await addHandle(platform, handle, pid);
+    await reload();
+    watch();
   };
 
   // A row menu's moves. With one workspace an account in none can still be put in it (the Workshop gets a linked account's numbers).
@@ -299,12 +320,12 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
             status={
               <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
                 {all && <WorkspaceTag id={r.own.projectId} none="No workspace" />}
-                <Status tone="attention">{PUBLIC_ONLY}</Status>
+                {!r.own.signedIn && notSignedIn(r.platform)}
               </span>
             }
             actions={
               <>
-                {signIn(r.platform)}
+                {r.own.signedIn ? <InUse>Signed in</InUse> : signIn(r.platform)}
                 {/* not the person's own account after it: the Analyzer keeps it as a followed account, no workspace links it */}
                 <RowMenu label={`${at(r.own.handle)} actions`} items={[...ownMoves(r.own), disconnect(r.own.handle, () => void act(patchInstagram(r.own!.id, { mine: false })))]} />
               </>
@@ -329,7 +350,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
             subtitle={r.summary}
             actions={
               r.button && (
-                <Button size="sm" variant="outline" aria-label={`${r.button} ${r.label}`} disabled={!!asking && asking === loginOf(r.platform)} onClick={() => void choose(r.platform)}>
+                <Button size="sm" variant="outline" aria-label={`${r.button} ${r.label}`} onClick={() => setAdding(r.platform)}>
                   {r.button}
                 </Button>
               )
@@ -337,6 +358,16 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
           />
         ),
       )}
+      <AddAccountDialog
+        platform={adding}
+        signIn={!!adding && !!loginOf(adding) && !!view.logins[loginOf(adding)!] && !off.includes(loginOf(adding)!)}
+        apify={view.apify.configured && view.apify.valid !== false}
+        busy={!!asking}
+        onClose={() => setAdding(null)}
+        onSignIn={(p) => void choose(p)}
+        onAdd={addByHandle}
+        onKeyChanged={() => void reload()}
+      />
     </Card>
   );
   if (pinned) return title ? <Section title={title}>{card}</Section> : card;
@@ -368,7 +399,7 @@ function AccountRow({ row, a, back, tag, items, signIn }: { row: PlatformRow; a:
   ) : a.pullError ? (
     <Status tone="broken">{a.pullError}</Status>
   ) : publicOnly ? (
-    <Status tone="attention">{PUBLIC_ONLY}</Status>
+    notSignedIn(a.platform)
   ) : undefined;
   return (
     <ListRow
@@ -386,7 +417,7 @@ function AccountRow({ row, a, back, tag, items, signIn }: { row: PlatformRow; a:
       }
       actions={
         <>
-          {!status && <InUse>Connected</InUse>}
+          {!status && <InUse>Signed in</InUse>}
           {publicOnly && !needsSignIn && signIn}
           {needsSignIn && login && (
             <Button asChild size="sm" variant="outline">
@@ -397,5 +428,78 @@ function AccountRow({ row, a, back, tag, items, signIn }: { row: PlatformRow; a:
         </>
       }
     />
+  );
+}
+
+/**
+ * Add one platform's account: its sign-in where this server has one (recommended: the account's own numbers), or its
+ * handle, read from the public page on the person's Apify key (public posts only, the row then says Not signed in).
+ */
+function AddAccountDialog({ platform, signIn, apify, busy, onClose, onSignIn, onAdd, onKeyChanged }: {
+  platform: SocialPlatform | null;
+  signIn: boolean;
+  apify: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onSignIn: (p: SocialPlatform) => void;
+  onAdd: (p: SocialPlatform, handle: string) => Promise<void>;
+  onKeyChanged: () => void;
+}) {
+  const [handle, setHandle] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setHandle("");
+    setError(null);
+  }, [platform]);
+  const label = PLATFORMS.find((p) => p.id === platform)?.label ?? "";
+  const gives = platform ? LOGINS.find((l) => l.id === loginOf(platform))?.gives : undefined;
+  const add = async () => {
+    if (!platform) return;
+    if (!apify) return setError("Needs an Apify key");
+    setSaving(true);
+    setError(null);
+    try {
+      await onAdd(platform, handle.trim());
+      onClose();
+    } catch (e) {
+      setError(msg(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <FormDialog
+      open={!!platform}
+      onOpenChange={(o) => !o && onClose()}
+      title={`Add ${label}`}
+      description={signIn ? "Sign-in is recommended: an account added by handle shows its public posts only." : "An account added by handle shows its public posts only."}
+      submitLabel="Add"
+      busy={saving}
+      error={error}
+      onSubmit={add}
+    >
+      {signIn && platform && (
+        <div className="space-y-1 rounded-lg border border-border/60 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">Sign-in</span>
+            <Button type="button" size="sm" disabled={busy} onClick={() => onSignIn(platform)}>
+              Sign in
+            </Button>
+          </div>
+          {gives && <p className="text-xs text-muted-foreground">{gives}.</p>}
+          {platform === "instagram" && <p className="text-xs text-muted-foreground">{IG_NEEDS}.</p>}
+        </div>
+      )}
+      {!apify && (
+        <Card>
+          <ApifyKeyRow onChanged={onKeyChanged} />
+        </Card>
+      )}
+      <label className="block space-y-1.5">
+        <span className="block text-xs font-medium">Handle</span>
+        <input className={cn(inputCls, "w-full text-sm")} value={handle} onChange={(e) => setHandle(e.target.value)} required disabled={saving} />
+      </label>
+    </FormDialog>
   );
 }

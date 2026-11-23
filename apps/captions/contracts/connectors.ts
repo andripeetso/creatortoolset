@@ -107,6 +107,8 @@ export interface OwnInstagram {
   followers?: number;
   /** The Analyzer's "my account" flag (read through the server's own Instagram token where it has one). */
   mine: boolean;
+  /** Read through a Meta sign-in (insights, reach, saves), not only its public page. */
+  signedIn: boolean;
   /** The project that links it as its Instagram. */
   projectId?: string;
 }

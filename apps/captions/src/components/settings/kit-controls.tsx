@@ -133,7 +133,7 @@ export function Status({ tone, children }: { tone?: "attention" | "broken" | "ok
 
 /**
  * The one in use, or connected and working: a green dot and the word in green, as large as a row's title ("Active" on
- * Servers, "Connected" on Social accounts, "Installed" on Headless access). It sits where the row's button would be, with
+ * Servers, "Signed in" on Social accounts, "Installed" on Headless access). It sits where the row's button would be, with
  * the `…` menu after it. One word; a quiet fact (a version, a plan) is a Status, not this.
  */
 export function InUse({ children }: { children: ReactNode }) {

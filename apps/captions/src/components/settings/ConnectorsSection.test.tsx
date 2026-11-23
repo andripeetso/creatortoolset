@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAuth } from "@/lib/auth";
 import { clearLocalCache, putCached } from "@/lib/local-cache";
 import { useWorkspace } from "@/lib/workspace";
-import { ConnectorsSection, everyRow, newestSignIn, platformRows, signedInSince, signInItems } from "./ConnectorsSection";
+import { ConnectorsSection, everyRow, missingWithoutSignIn, newestSignIn, platformRows, signedInSince, signInItems } from "./ConnectorsSection";
 import type { ConnectedAccount, ConnectorsView } from "@contracts/connectors";
 
 it("offers only the sign-ins this server has an app for", () => {
@@ -26,28 +26,25 @@ it("a tool's setup form offers a sign-in only where this server has its own app:
   expect(signInItems(all, ["meta", "google", "tiktok"])).toEqual([]);
 });
 
-it("the platform list: only accounts the person signs in to, in order, each with its account or Add", () => {
-  // no sign-in on this server: only an account already there has a row (his own Instagram in the Analyzer)
-  const rows = platformRows(view({ instagram: [{ id: "a1", handle: "tinyacrobatics", followers: 4120, mine: true }] }));
-  expect(rows.map((r) => r.platform)).toEqual(["instagram"]);
+it("the platform list: every platform, each with its account or Add (sign-in or a handle, chosen in the dialog)", () => {
+  const rows = platformRows(view({ instagram: [{ id: "a1", handle: "tinyacrobatics", followers: 4120, mine: true, signedIn: false }] }));
   expect(row(rows, "instagram")).toMatchObject({ summary: "@tinyacrobatics · 4,120 followers", own: { id: "a1" } });
   expect(row(rows, "instagram")?.button).toBeUndefined();
-  expect(platformRows(view({}))).toEqual([]);
-  // every sign-in on: one Add each; X has no sign-in, so no row
-  const all = platformRows(view({ logins: { meta: true, google: true, tiktok: true } }));
-  expect(all.map((r) => [r.platform, r.button, r.summary])).toEqual([
-    ["instagram", "Add", "Needs a Business or Creator account linked to a Facebook Page"],
-    ["facebook", "Add", ""],
-    ["youtube", "Add", ""],
-    ["tiktok", "Add", ""],
-  ]);
-  for (const r of all) expect(JSON.stringify(r)).not.toMatch(/apify|key|handle/i);
+  // with or without this server's sign-ins, each platform with no account has Add
+  for (const logins of [none, { meta: true, google: true, tiktok: true }]) {
+    expect(platformRows(view({ logins })).map((r) => [r.platform, r.button])).toEqual([
+      ["instagram", "Add"],
+      ["facebook", "Add"],
+      ["youtube", "Add"],
+      ["tiktok", "Add"],
+      ["x", "Add"],
+    ]);
+  }
 });
 
-it("a platform whose sign-in the service does not offer says so on its row, with nothing to press", () => {
-  const rows = platformRows(view({ logins: { meta: true, google: true, tiktok: true } }), undefined, ["tiktok"]);
-  expect(row(rows, "tiktok")).toEqual({ platform: "tiktok", label: "TikTok", summary: "Sign-in not available" });
-  expect(row(rows, "youtube")).toMatchObject({ button: "Add", summary: "" });
+it("an account not signed in to says what the platform's sign-in adds", () => {
+  expect(missingWithoutSignIn("instagram")).toMatch(/^Public posts only\. Signing in adds insights, reach, saves/);
+  expect(missingWithoutSignIn("x")).toBe("Public posts only");
 });
 
 it("each project shows its own account per platform; an account in no project shows until one is linked", () => {
@@ -59,11 +56,11 @@ it("each project shows its own account per platform; an account in no project sh
   expect(row(p1, "youtube")?.account?.handle).toBe("old");
   // an account already there keeps its row, sign-in or not
   expect(row(platformRows(view({ accounts }), "p2"), "x")?.account?.handle).toBe("tinyx");
-  expect(row(p1, "x")).toBeUndefined();
+  expect(row(p1, "x")).toMatchObject({ button: "Add" });
 });
 
 it("Instagram follows the project: the account a project links, else the one marked Mine that no project links", () => {
-  const instagram = [{ id: "a", handle: "brand-a", mine: true, projectId: "p1" }, { id: "b", handle: "brand-b", mine: false, projectId: "p2" }];
+  const instagram = [{ id: "a", handle: "brand-a", mine: true, signedIn: false, projectId: "p1" }, { id: "b", handle: "brand-b", mine: false, signedIn: false, projectId: "p2" }];
   expect(row(platformRows(view({ instagram }), "p1"), "instagram")?.own?.id).toBe("a");
   expect(row(platformRows(view({ instagram }), "p2"), "instagram")?.own?.id).toBe("b");
   expect(row(platformRows(view({ instagram, logins: { ...none, meta: true } }), "p3"), "instagram")).toMatchObject({ button: "Add" });
@@ -86,7 +83,7 @@ it("knows a sign-in finished elsewhere: an account connected by sign-in after th
 it("All workspaces lists every account the person has, and Add only for a platform with none", () => {
   const accounts = [acct("tiktok", "brand-a", "p1"), acct("tiktok", "brand-b", "p2"), acct("youtube", "old"), { ...acct("instagram", "tinyacrobatics", "p1"), analyzerId: "a1" }];
   // the Analyzer account a sign-in account fills is that account's row, not a second one
-  const instagram = [{ id: "a1", handle: "tinyacrobatics", mine: true, projectId: "p1" }, { id: "a2", handle: "tinyshop", mine: false, projectId: "p2" }];
+  const instagram = [{ id: "a1", handle: "tinyacrobatics", mine: true, signedIn: false, projectId: "p1" }, { id: "a2", handle: "tinyshop", mine: false, signedIn: false, projectId: "p2" }];
   const rows = everyRow(view({ accounts, instagram, logins: { meta: true, google: true, tiktok: true } }));
   expect(rows.map((r) => [r.platform, r.account?.handle ?? r.own?.handle ?? r.button])).toEqual([
     ["instagram", "tinyacrobatics"],
@@ -95,6 +92,7 @@ it("All workspaces lists every account the person has, and Add only for a platfo
     ["youtube", "old"],
     ["tiktok", "brand-a"],
     ["tiktok", "brand-b"],
+    ["x", "Add"],
   ]);
 });
 
@@ -223,6 +221,21 @@ describe("an account's workspace", () => {
     expect(useWorkspace.getState().currentProjectId).toBe("p1");
   });
 
+  it("Add without a sign-in takes the handle and reads the public page; with no sign-in here the dialog offers none", async () => {
+    await open({});
+    await press(document.body.querySelector('button[aria-label="Add X"]') as HTMLElement);
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("Add X");
+    expect(dialog.textContent).not.toContain("Sign in");
+    const input = dialog.querySelector("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "@tinyx");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await press(dialog.querySelector('button[type="submit"]') as HTMLElement);
+    expect(sent).toEqual([["POST /api/connectors/handles", { platform: "x", handle: "@tinyx", projectId: "p1" }]]);
+  });
+
   it("the row menu moves an account to another workspace: an account is one workspace's or none's", async () => {
     await open({ accounts: [acct("tiktok", "brand-a", "p1")] });
     const items = menu("brand-a");
@@ -243,7 +256,7 @@ describe("an account's workspace", () => {
   });
 
   it("Instagram's own account moves to a workspace of the person's own that links none; with no workspace only the one marked Mine stays listed", async () => {
-    await open({ instagram: [{ id: "a1", handle: "tinyacrobatics", mine: true, projectId: "p1" }] });
+    await open({ instagram: [{ id: "a1", handle: "tinyacrobatics", mine: true, signedIn: false, projectId: "p1" }] });
     const items = menu("tinyacrobatics");
     expect(items.map((i) => i.textContent)).toEqual(["Move to Tiny Acrobatics shop", "Disconnect"]);
     await press(items[0]!);
