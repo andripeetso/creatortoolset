@@ -2830,8 +2830,10 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
         } else {
           const pageSize =
             meta.mine || mode === "graph" ? MINE_CATALOG_CAP : parseCatalogCount(opts.count);
+          // Apify reads at most the newest 500 and says "more" whenever it filled them, so waiting for "no more" made
+          // every Update of an own account read those 500 again (two runs, paid) and add nothing: it reads the newest 100
           const watermark =
-            meta.catalogHasMore === false
+            meta.catalogHasMore === false || mode === "apify"
               ? (meta.catalogNewestAt ?? catalogNewestAt(existing))
               : undefined;
           const incremental = Boolean(meta.mine && !opts.more && existing.length && watermark);
