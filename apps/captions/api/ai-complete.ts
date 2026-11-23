@@ -6,6 +6,7 @@ import {
 } from "./credits";
 import { DRIVERS, type JobId, type Selection } from "../contracts/providers";
 import { MAC_MISS, MacClaudeError, recordUsage, streamMacClaude, type MacErrorKind, type MacOpts, type MacUsage } from "./lib/mac-claude";
+import { recordService } from "./lib/service-usage";
 import { instanceIn, limitFallbacks, ownSettings, routeFor, runFields } from "./lib/providers";
 import { completeLocal } from "./lib/local-claude";
 import { hasTeam } from "./lib/env";
@@ -213,8 +214,10 @@ export function apiUsage(u: AnthropicUsage, model: string): MacUsage {
 }
 
 /** An API answer's usage: the same hourly tally as the Mac's, under "<label> (API)" so the two stay apart. */
-function reportApi(label: string | undefined, usage: MacUsage, onUsage?: (u: MacUsage) => void, bill?: string) {
+function reportApi(label: string | undefined, usage: MacUsage, onUsage?: (u: MacUsage) => void, bill?: string, apiKey?: string) {
   void recordUsage(`${label ?? "other"} (API)`, usage);
+  // and on the key's own usage (Settings → API keys): a team budget's call is the team's
+  if (apiKey) void recordService({ service: "ANTHROPIC_API_KEY", key: apiKey, actor: bill, label: label ?? "other", units: usage.tokens, unit: "tokens", costUsd: usage.costUsd, ...(bill ? { whose: "team" as const } : {}) });
   if (bill) addSpend(bill, usage.costUsd);
   onUsage?.(usage);
 }
@@ -368,7 +371,7 @@ async function completeAnthropic(
   const body = await readBody(resp);
   if (!resp.ok) throw classifyHttpError(resp.status, body, "Anthropic", opts.apiKey);
   creditBack("ANTHROPIC_API_KEY", opts.apiKey ?? "");
-  return contentFromAnthropic(body, (u) => reportApi(opts.mac?.label, apiUsage(u, params.model), opts.onUsage, opts.bill));
+  return contentFromAnthropic(body, (u) => reportApi(opts.mac?.label, apiUsage(u, params.model), opts.onUsage, opts.bill, opts.apiKey));
 }
 
 export function contentFromAnthropic(body: string, onUsage?: (u: AnthropicUsage) => void): string {
@@ -710,7 +713,7 @@ async function streamAnthropic(system: string, user: string, cancelSignal: Abort
   } catch (e: unknown) {
     wrapFetchError(e, cancelSignal);
   } finally {
-    if (Object.keys(usage).length) reportApi(opts.mac?.label, apiUsage(usage, params.model), onUsage, opts.bill);
+    if (Object.keys(usage).length) reportApi(opts.mac?.label, apiUsage(usage, params.model), onUsage, opts.bill, opts.apiKey);
   }
   if (!text.trim()) throw new AiProviderError("The model returned an empty answer", "FAILED", true);
   return text;

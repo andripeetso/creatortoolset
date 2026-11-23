@@ -31,6 +31,7 @@ export interface ServiceLimit {
   /** "Monthly usage", "Credit balance", "Characters this month" */
   label: string;
   used?: number;
+  /** with no `used`, a balance: what is left (Deepgram's credit) */
   limit?: number;
   unit: string;
   /** ms */

@@ -84,6 +84,7 @@ import { startConnector } from "./connect/connector";
 import { deviceForToken } from "./lib/devices";
 import { serviceKeysApp } from "./service-keys";
 import { myKeysApp } from "./my-keys";
+import { serviceUsageApp } from "./lib/service-usage";
 import { setupApp } from "./setup";
 import { workPrefsApp } from "./work-prefs";
 import { voicePrefsApp } from "./voice-prefs";
@@ -474,6 +475,8 @@ app.route("/api/server", endpointsApp);
 app.route("/api/service-keys", serviceKeysApp);
 // Settings → API keys: each account's own keys for the paid services (never through an AI key)
 app.route("/api/my-keys", myKeysApp);
+// what each paid service call used, per key (lib/service-usage.ts): Settings → API keys and the Usage page
+app.route("/api/usage", serviceUsageApp);
 // first-run setup and Settings → Setup: my tools, my plan, what is set up (setup.ts)
 app.route("/api/setup", setupApp);
 // how a person wants to work: in the app, in their own AI, or both (contracts/work-prefs.ts)

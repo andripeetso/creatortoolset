@@ -1,0 +1,181 @@
+import { readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { Hono } from "hono";
+import type { MyKeyEnv } from "../../contracts/service-keys";
+import type { ServiceLimit, ServiceUsageLine, ServiceUsageView } from "../../contracts/service-usage";
+import type { AuthVars } from "../auth";
+import { isAdminActor, myKeys } from "../my-keys";
+import { listUsers, LOCAL_USER } from "../users";
+import { env } from "./env";
+import { readApify } from "./instagram/apify";
+import { usageWorkspace } from "./mac-claude";
+
+/**
+ * What each paid service call used (Settings → API keys, the Usage page): an hourly tally by service, label (the tool
+ * or process, in Home names), whose key paid, the account that asked and the workspace, kept 90 days. The AI tally
+ * (mac-claude.ts recordUsage) is the same idea for AI providers; this one is for keys.
+ */
+
+export type ServiceId = MyKeyEnv | "APIFY_TOKEN";
+type Whose = ServiceUsageLine["whose"];
+type Cell = { calls: number; units: number; unit: string; costUsd: number };
+/** hour → JSON [service, label, whose, user, workspace] → totals */
+type Tally = Record<string, Record<string, Cell>>;
+
+const FILE = () => path.join(env.dataDir, "service-usage.json");
+let tally: Promise<Tally> | null = null;
+let saving: Promise<void> = Promise.resolve();
+const load = () => (tally ??= readFile(FILE(), "utf-8").then((t) => JSON.parse(t) as Tally).catch((): Tally => ({})));
+
+/**
+ * USD per unit, for a service whose answer does not say what it cost.
+ * shortcut: list prices of 2026-11 (pay-as-you-go, the cheapest model each call uses); they drift and plans differ, so
+ * update them when a provider changes its prices, or read the cost from the answer once the service gives it.
+ */
+export const PRICE: Partial<Record<`${ServiceId}:${string}`, number>> = {
+  "DEEPGRAM_API_KEY:audio minutes": 0.0043, // nova-3, prerecorded
+  "OPENAI_API_KEY:audio minutes": 0.006, // whisper-1
+  "OPENAI_API_KEY:tokens": 0.02 / 1e6, // text-embedding-3-small
+  "ELEVENLABS_API_KEY:characters": 0.3 / 1000, // over a plan's own characters
+  "PERPLEXITY_API_KEY:tokens": 1 / 1e6, // sonar
+  "APIFY_TOKEN:results": 2.3 / 1000, // the post and profile readers, per result
+};
+
+/** What `units` of `unit` cost on `service`: the service's own figure when it gave one, else the price list, else 0. */
+export const costOf = (service: ServiceId, units: number, unit: string, given?: number): number =>
+  given ?? units * (PRICE[`${service}:${unit}`] ?? 0);
+
+const accounts = () => [...listUsers().map((u) => u.username), ...(env.appSecret ? [] : [LOCAL_USER.username])];
+
+export interface ServiceCall {
+  service: ServiceId;
+  /** the key the call ran on: tells whose it was when `whose` is not given */
+  key: string;
+  /** the tool or process, in Home names ("Caption Studio: captions") */
+  label: string;
+  units: number;
+  unit: string;
+  /** what the service said it cost; else the price list (costOf) */
+  costUsd?: number;
+  /** the account that asked; else the account whose own key `key` is */
+  actor?: string | null;
+  /** given where the key's store is not Settings → API keys (Apify), or a team budget's call */
+  whose?: Whose;
+  /** null: in no workspace; undefined: the one the work runs in */
+  workspace?: string | null;
+}
+
+/** One paid call (or a batch of `calls`), tallied by hour. Never throws: a tally is never worth a failed call. */
+export async function recordService(c: ServiceCall, calls = 1): Promise<void> {
+  if (!c.key && !c.whose) return;
+  const name = c.service as MyKeyEnv;
+  const user = c.actor || (c.whose ? undefined : accounts().find((u) => myKeys(u)[name] === c.key));
+  const whose: Whose = c.whose ?? (user && myKeys(user)[name] === c.key ? "own" : "server");
+  const workspace = c.workspace === undefined ? usageWorkspace() : c.workspace;
+  const all = await load();
+  const hour = new Date().toISOString().slice(0, 13);
+  const id = JSON.stringify([c.service, c.label, whose, user ?? "", workspace ?? ""]);
+  const cell = ((all[hour] ??= {})[id] ??= { calls: 0, units: 0, unit: c.unit, costUsd: 0 });
+  cell.calls += calls;
+  cell.units += c.units;
+  cell.costUsd += costOf(c.service, c.units, c.unit, c.costUsd);
+  for (const h of Object.keys(all).sort().slice(0, -24 * 90)) delete all[h]; // 90 days
+  const json = JSON.stringify(all);
+  saving = saving
+    .then(async () => {
+      const tmp = `${FILE()}.tmp-${process.pid}`;
+      await writeFile(tmp, json);
+      await rename(tmp, FILE());
+    })
+    .catch((e: unknown) => console.warn(`[service-usage] not saved: ${e instanceof Error ? e.message : e}`));
+}
+
+/** The lines since `since` (ms) that `username` may see: their own calls, and for an admin every call on the server's keys. */
+export async function serviceLines(since: number, username: string, admin: boolean): Promise<ServiceUsageLine[]> {
+  const from = new Date(since).toISOString().slice(0, 13);
+  const out: ServiceUsageLine[] = [];
+  for (const [hour, cells] of Object.entries(await load())) {
+    if (hour < from) continue;
+    for (const [id, x] of Object.entries(cells)) {
+      const [service, label, whose, user, workspace] = JSON.parse(id) as [string, string, Whose, string, string];
+      if (user !== username && !(admin && whose !== "own")) continue;
+      out.push({ hour, service, label, whose, calls: x.calls, units: x.units, unit: x.unit, costUsd: x.costUsd, ...(workspace ? { workspace } : {}) });
+    }
+  }
+  return out;
+}
+
+/* ---- each service's own limits or balance, where its API offers one ---- */
+
+const LIMIT_TTL = 10 * 60_000;
+const limitCache = new Map<string, { at: number; value: Promise<Omit<ServiceLimit, "whose">[]> }>();
+const getJson = async (url: string, headers: Record<string, string>): Promise<Record<string, any>> => {
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return (await r.json()) as Record<string, any>;
+};
+
+const READERS: Partial<Record<ServiceId, (key: string, at: number) => Promise<Omit<ServiceLimit, "whose">[]>>> = {
+  APIFY_TOKEN: async (key, at) => {
+    const d = (await getJson("https://api.apify.com/v2/users/me/limits", { Authorization: `Bearer ${key}` })).data ?? {};
+    const end = Date.parse(d.monthlyUsageCycle?.endAt ?? "");
+    return [{ service: "APIFY_TOKEN", label: "Monthly usage", used: d.current?.monthlyUsageUsd, limit: d.limits?.maxMonthlyUsageUsd, unit: "USD", ...(end ? { resetsAt: end } : {}), at }];
+  },
+  ELEVENLABS_API_KEY: async (key, at) => {
+    const d = await getJson("https://api.elevenlabs.io/v1/user/subscription", { "xi-api-key": key });
+    const reset = Number(d.next_character_count_reset_unix) * 1000;
+    return [{ service: "ELEVENLABS_API_KEY", label: "Characters this month", used: d.character_count, limit: d.character_limit, unit: "characters", ...(reset ? { resetsAt: reset } : {}), at }];
+  },
+  DEEPGRAM_API_KEY: async (key, at) => {
+    const h = { Authorization: `Token ${key}` };
+    const project = (await getJson("https://api.deepgram.com/v1/projects", h)).projects?.[0]?.project_id;
+    if (!project) return [];
+    const b = (await getJson(`https://api.deepgram.com/v1/projects/${encodeURIComponent(project)}/balances`, h)).balances?.[0];
+    return b ? [{ service: "DEEPGRAM_API_KEY", label: "Credit balance", limit: b.amount, unit: String(b.units ?? "usd").toUpperCase(), at }] : [];
+  },
+};
+
+/** One key's limits, read at most every 10 minutes; a service that fails gives none. */
+function limitsOf(service: ServiceId, key: string, now: number): Promise<Omit<ServiceLimit, "whose">[]> {
+  const read = READERS[service];
+  if (!read || !key) return Promise.resolve([]);
+  const id = `${service}:${key}`;
+  const hit = limitCache.get(id);
+  if (hit && now - hit.at < LIMIT_TTL) return hit.value;
+  const value = read(key, now).catch(() => []);
+  limitCache.set(id, { at: now, value });
+  return value;
+}
+
+/** The limits of the keys `username` has: their own, and for an admin the server's. */
+async function serviceLimits(username: string, admin: boolean, now = Date.now()): Promise<ServiceLimit[]> {
+  const mine = myKeys(username);
+  const apify = await readApify(username).catch(() => null);
+  const asks: Array<[ServiceId, string, ServiceLimit["whose"]]> = [];
+  for (const s of Object.keys(READERS) as ServiceId[]) {
+    if (s === "APIFY_TOKEN") {
+      if (apify?.token && (apify.source !== "env" || admin)) asks.push([s, apify.token, apify.source === "env" ? "server" : "own"]);
+      continue;
+    }
+    const own = mine[s as MyKeyEnv];
+    if (own) asks.push([s, own, "own"]);
+    const server = process.env[s];
+    if (admin && server && server !== own) asks.push([s, server, "server"]);
+  }
+  const read = await Promise.all(asks.map(([s, key, whose]) => limitsOf(s, key, now).then((ls) => ls.map((l) => ({ ...l, whose })))));
+  return read.flat();
+}
+
+/** GET /api/usage/services?since=<ms> → ServiceUsageView (contracts/service-usage.ts). Accounts only. */
+export const serviceUsageApp = new Hono<{ Variables: AuthVars }>();
+
+serviceUsageApp.get("/services", async (c) => {
+  const u = c.get("user");
+  if (u.role === "visitor") return c.json({ error: "Sign in with an account to see usage" }, 403);
+  const now = Date.now();
+  const asked = Number(c.req.query("since"));
+  const since = Math.max(now - 90 * 864e5, Number.isFinite(asked) && asked > 0 ? asked : now - 30 * 864e5);
+  const admin = u.role === "admin" || isAdminActor(u.username);
+  const [lines, limits] = await Promise.all([serviceLines(since, u.username, admin), serviceLimits(u.username, admin, now).catch(() => [])]);
+  return c.json({ lines, limits } satisfies ServiceUsageView);
+});

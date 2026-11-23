@@ -34,7 +34,7 @@ export async function relevance(
       `Post ${i + 1}:\n"""${item.text.slice(0, 1200)}"""\nIs this post about what the search is looking for? The topic of the search is the requirement; exact wording is not.`,
     );
   });
-  const answers = await ask(key, { search: query }, questions, signal);
+  const answers = await ask(key, { search: query }, questions, signal, "Content Analyzer: search");
   return new Map(items.map((item, i) => [item.id, yes(answers[`p${i}`])]));
 }
 

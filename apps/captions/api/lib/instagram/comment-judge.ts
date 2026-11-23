@@ -85,6 +85,7 @@ export async function judgeComments(
       { creator: creatorLine(post.handle), post: (post.caption ?? "").slice(0, 800) },
       questions,
       signal,
+      "Content Analyzer: comments",
     );
     const keywords = captionKeywords(post.caption);
     batch.forEach((c, k) => {

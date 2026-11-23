@@ -111,6 +111,7 @@ export async function existingFolderFor(
       ),
     },
     signal,
+    "Content Analyzer: ideas",
   );
   const picked = answers.folder;
   if (!picked?.choice || picked.choice === NEW_TOPIC) return null;

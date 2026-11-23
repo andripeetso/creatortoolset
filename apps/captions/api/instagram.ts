@@ -1486,7 +1486,7 @@ async function transcribeSlide(
     // cut by the post-media task (postMedia), on a computer or here
     if (!existsSync(wav)) throw new Error("The sound could not be read");
     const audio = await readFile(wav);
-    const result = await transcribeWav(audio, user, { languages: askIn.get(id) });
+    const result = await transcribeWav(audio, user, { languages: askIn.get(id), label: "Content Analyzer: post transcripts" });
     if ("error" in result) throw new Error(result.error);
     const words: TranscriptWord[] = result.words.map((w) => ({
       text: w.text,

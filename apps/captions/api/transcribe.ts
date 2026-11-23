@@ -6,6 +6,7 @@ import type { AuthVars } from "./auth";
 import type { SessionUser } from "./users";
 import { bumpUsage } from "./users";
 import { creditBack, creditOut, isOutOfCredits, outOfCreditsMessage } from "./credits";
+import { recordService } from "./lib/service-usage";
 import { keyFor } from "./my-keys";
 import { env } from "./lib/env";
 import { availableEngines, readVoicePrefs, speechFor } from "./lib/speech";
@@ -342,11 +343,11 @@ export function mergeOverlappingWindows(
   return out.sort((a, b) => a.start - b.start);
 }
 
-/** `fillers`: keep filler words (the Media Library, for the AI Editor's cuts); Caption Studio leaves them out. `languages`: the workspace's or the edit's; none: the person's own list. */
+/** `fillers`: keep filler words (the Media Library, for the AI Editor's cuts); Caption Studio leaves them out. `languages`: the workspace's or the edit's; none: the person's own list. `label`: what it is for, in the key's usage. */
 export async function transcribeWav(
   audio: Uint8Array | ArrayBuffer,
   user: SessionUser,
-  { fillers = false, languages }: { fillers?: boolean; languages?: string[] } = {},
+  { fillers = false, languages, label = "Caption Studio: captions" }: { fillers?: boolean; languages?: string[]; label?: string } = {},
 ): Promise<TranscriptionResult> {
   const langs = languages?.length ? languages : readVoicePrefs(user.username).languages;
   const route = keyFor(user, "DEEPGRAM_API_KEY");
@@ -397,6 +398,7 @@ export async function transcribeWav(
       : Math.max(0, audio.byteLength - 44) / 32000,
   );
   bumpUsage(user.username, { cloudRuns: 1, cloudSeconds: seconds });
+  void recordService({ service: "DEEPGRAM_API_KEY", key: route.key, actor: user.username, label, units: (durationS || seconds) / 60, unit: "audio minutes" });
   return { words, language };
 }
 

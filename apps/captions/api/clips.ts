@@ -754,7 +754,7 @@ async function noteText(meta: Meta, user: SessionUser, heard: boolean): Promise<
       stopCrawl = crawlProgress(meta, 0.72);
       const result = onDevice
         ? await transcribeOnDevice(wavPath(id), id)
-        : await transcribeWav(await readFile(wavPath(id)), user, { languages: await videoLanguages(user.username, meta.projectId) });
+        : await transcribeWav(await readFile(wavPath(id)), user, { languages: await videoLanguages(user.username, meta.projectId), label: "Video Notes: transcripts" });
       stopCrawl();
       await rm(wavPath(id), { force: true }).catch(() => {});
       if ("error" in result) throw new Error(result.error);

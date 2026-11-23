@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { FormDialog, InUse, ListRow, RowMenu, SecretField, Status } from "./ui";
 import type { SearchRowId } from "./search";
 import { msg } from "./helpers";
+import { KeyUsageDialog, usageLine, useServiceUsage } from "./KeyUsage";
 
 export interface KeyRowProps {
   id: SearchRowId;
@@ -26,6 +27,8 @@ export interface KeyRowProps {
   broken?: string;
   /** The Remove confirm's sentence. */
   removeBody?: string;
+  /** The key's env name ("APIFY_TOKEN" for Apify): its usage line and Usage dialog (KeyUsage.tsx). */
+  service?: string;
   /** Saves a key, or removes it (null). A throw shows in the dialog's field. */
   save: (value: string | null) => Promise<unknown>;
 }
@@ -45,8 +48,12 @@ const inUse = (last4: string | undefined, broken?: string) => (
  * the same height when the person saves their own (the status line stays: "Your key"). Saving opens a small dialog
  * with one field, a "Get a key" link and [Save].
  */
-export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOnlyText = "Set in the server's settings file (.env)", served, broken, removeBody, save }: KeyRowProps) {
+export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOnlyText = "Set in the server's settings file (.env)", served, broken, removeBody, service, save }: KeyRowProps) {
   const [open, setOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const view = useServiceUsage();
+  const used = service ? usageLine(view, service) : null;
+  const usageItem = service ? [{ label: "Usage", onSelect: () => setUsageOpen(true) }] : [];
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -58,6 +65,12 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
   ) : served ? (
     <Status>{set ? "Your key" : "Server key"}</Status>
   ) : undefined;
+  // the last 30 days and the service's own limit, under the status; it opens the key's usage by tool
+  const usage = used && (
+    <button type="button" className="block max-w-full truncate text-left text-xs text-muted-foreground hover:text-foreground hover:underline" onClick={() => setUsageOpen(true)}>
+      {used}
+    </button>
+  );
 
   const actions: ReactNode = readOnly ? (
     last4 ? inUse(last4, broken) : undefined
@@ -67,6 +80,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
       <RowMenu
         label={`${name} actions`}
         items={[
+          ...usageItem,
           { label: "Change key", onSelect: () => setOpen(true) },
           {
             label: "Remove key",
@@ -86,7 +100,7 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
   ) : served ? (
     <>
       {inUse(served.last4, broken)}
-      <RowMenu label={`${name} actions`} items={[{ label: "Add key", onSelect: () => setOpen(true) }]} />
+      <RowMenu label={`${name} actions`} items={[...usageItem, { label: "Add key", onSelect: () => setOpen(true) }]} />
     </>
   ) : (
     <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -112,7 +126,8 @@ export function KeyRow({ id, name, subtitle, where, set, last4, readOnly, readOn
 
   return (
     <>
-      <ListRow id={id} title={name} subtitle={subtitle} status={status} actions={actions} />
+      <ListRow id={id} title={name} subtitle={subtitle} status={status || usage ? <>{status}{usage}</> : undefined} actions={actions} />
+      {service && <KeyUsageDialog service={service} name={name} open={usageOpen} onOpenChange={setUsageOpen} />}
       <FormDialog
         open={open}
         onOpenChange={(o) => {

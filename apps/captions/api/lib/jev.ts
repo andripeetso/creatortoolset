@@ -1,4 +1,5 @@
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
+import { recordService } from "./service-usage";
 
 /**
  * TypeSafe Jev: a fast judge for closed questions over text — pick one of
@@ -36,12 +37,15 @@ export async function ask(
   state: Record<string, unknown> | string,
   questions: Record<string, Question>,
   signal?: AbortSignal,
+  /** what it is for, in the key's usage (Settings → API keys) */
+  label = "Content Analyzer",
 ): Promise<Record<string, Answer>> {
   if (!key) throw new Error("No TypeSafe Jev key");
   const result = await jev(key).systemOne(
     { state: state as never, questions },
     { signal, timeout: 30_000 },
   );
+  void recordService({ service: "TYPESAFE_API_KEY", key, label, units: 1, unit: "requests" });
   return result.answers as unknown as Record<string, Answer>;
 }
 

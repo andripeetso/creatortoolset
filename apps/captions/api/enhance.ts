@@ -11,7 +11,8 @@ import { creditBack, creditOut, isOutOfCredits, outOfCreditsMessage } from "./cr
 import type { EnhanceStatus } from "../contracts/enhance";
 import { env } from "./lib/env";
 import { keyFor, type Actor } from "./my-keys";
-import { enhancePiece, NvidiaRefused, SR as NV_SR } from "./lib/nvidia-voice";
+import { enhancePiece, NvidiaRefused, readWav, SR as NV_SR } from "./lib/nvidia-voice";
+import { recordService } from "./lib/service-usage";
 import { type SessionUser, bumpUsage, canSee } from "./users";
 import { type Moves, move } from "./lib/transition";
 import { announceSoon } from "./lib/announce-soon";
@@ -361,7 +362,10 @@ export async function voicePiece(id: string, owner: string | undefined, wav: Buf
   const controller = new AbortController();
   apiCalls.set(id, controller);
   try {
-    return await enhancePiece(engineKey("nvidia", owner), wav, controller.signal);
+    const key = engineKey("nvidia", owner);
+    const out = await enhancePiece(key, wav, controller.signal);
+    void recordService({ service: "NVIDIA_API_KEY", key, actor: owner, label: "Audio Enhancer: Studio Voice", units: 1, unit: "requests" });
+    return out;
   } catch (e) {
     if (controller.signal.aborted) throw new Error("Cancelled");
     if (e instanceof NvidiaRefused) console.warn(`[nvidia] ${e.message}`);
@@ -427,6 +431,9 @@ export async function isolate(id: string, owner: string | undefined, audio: Buff
     throw new Error(`ElevenLabs error ${res.status}: ${detail || "no details"}`);
   }
   creditBack("ELEVENLABS_API_KEY", key);
+  // the Voice Isolator bills 1,000 characters a minute of audio
+  const { sr, x } = readWav(audio);
+  void recordService({ service: "ELEVENLABS_API_KEY", key, actor: owner, label: "Audio Enhancer: voice isolation", units: Math.round((x.length / sr / 60) * 1000), unit: "characters" });
   return { ext: EL_EXT[(res.headers.get("content-type") || "").split(";")[0].trim()] || "mp3", audio: Buffer.from(await res.arrayBuffer()) };
 }
 

@@ -16,6 +16,7 @@ import {
   wrapFetchError,
 } from "./ai-complete";
 import type { JobId } from "../contracts/providers";
+import { recordService } from "./lib/service-usage";
 import { recordUsage } from "./lib/mac-claude";
 import { addSpend } from "./lib/workspaces";
 import { onComputer } from "./work/on-computer";
@@ -124,6 +125,7 @@ async function completeAnthropic(
   return contentFromAnthropic(body, (u) => {
     const usage = apiUsage(u, params.model);
     void recordUsage(`${label} (API)`, usage);
+    void recordService({ service: "ANTHROPIC_API_KEY", key: apiKey, actor: bill, label, units: usage.tokens, unit: "tokens", costUsd: usage.costUsd, ...(bill ? { whose: "team" as const } : {}) });
     if (bill) addSpend(bill, usage.costUsd);
   });
 }

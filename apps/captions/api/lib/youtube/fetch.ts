@@ -56,7 +56,7 @@ export async function fetchYoutubeViaApify(
   ref: YoutubeRef,
   opts: ApifyFetchOptions,
 ): Promise<{ raw: Rec; info: PostInfo }> {
-  const items = (await apifyRun(YOUTUBE_ACTOR, youtubeActorInput(ref.canonical), opts)).filter(
+  const items = (await apifyRun(YOUTUBE_ACTOR, youtubeActorInput(ref.canonical), opts, "Content Analyzer: YouTube videos")).filter(
     (i): i is Rec => !!i && typeof i === "object",
   );
   const good = items.filter((i) => !i.error);

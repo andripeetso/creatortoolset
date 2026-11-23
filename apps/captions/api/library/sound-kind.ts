@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { SOUNDS, type GeminiModel, type Sound } from "../../contracts/library";
 import { env } from "../lib/env";
 import { recordUsage } from "../lib/mac-claude";
+import { recordService } from "../lib/service-usage";
 import { librarySetting, libraryDb } from "./db";
 import { workspaceIdOf } from "./describe";
 import { firstClips } from "./jobs";
@@ -160,6 +161,7 @@ export async function listen(d: DatabaseSync, versionId: string, libraryId: stri
     const out = (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0);
     const price = GEMINI_PRICE[LISTEN_MODEL];
     void recordUsage(LISTEN_LABEL, { tokens: (u.promptTokenCount ?? 0) + out, costUsd: ((u.promptTokenCount ?? 0) * price.in + out * price.out) / 1e6 }, undefined, "workspace", (await workspaceIdOf(d, versionId)) ?? null);
+    void recordService({ service: "GEMINI_API_KEY", key, actor, label: "Media Library: sound kinds", units: (u.promptTokenCount ?? 0) + out, unit: "tokens", costUsd: ((u.promptTokenCount ?? 0) * price.in + out * price.out) / 1e6 });
     const text = (body.candidates?.[0]?.content?.parts ?? []).filter((p) => !p.thought && p.text).map((p) => p.text).join("");
     const kind = (JSON.parse(text || "{}") as { kind?: string }).kind;
     return kind === "music" || kind === "effect" || kind === "speech" ? kind : null;

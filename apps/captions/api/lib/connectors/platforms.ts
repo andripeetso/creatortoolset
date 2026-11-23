@@ -1,3 +1,4 @@
+import { recordService } from "../service-usage";
 import { createHash, randomBytes } from "node:crypto";
 import type { LoginKind, SocialPlatform, SocialPost, SocialStats, SocialVideo } from "../../../contracts/connectors";
 import { apifyRun } from "../instagram/apify";
@@ -346,7 +347,11 @@ async function ytAllRows(r: YtReport, start: string, end: string, h: RequestInit
 type YtAuth = { token: string } | { key: string };
 const yt = (path: string, auth: YtAuth) =>
   "key" in auth
-    ? getJson(`https://www.googleapis.com/youtube/v3/${path}&key=${encodeURIComponent(auth.key)}`)
+    ? getJson(`https://www.googleapis.com/youtube/v3/${path}&key=${encodeURIComponent(auth.key)}`).then((j) => {
+        // a list call is 1 unit of the key's daily quota
+        void recordService({ service: "YOUTUBE_API_KEY", key: auth.key, label: "Social accounts: public channels", units: 1, unit: "quota units" });
+        return j;
+      })
     : getJson(`https://www.googleapis.com/youtube/v3/${path}`, { headers: { Authorization: `Bearer ${auth.token}` } });
 
 /** A channel (picked by `select`, e.g. id=… or forHandle=@…) and its 50 newest uploads with their numbers. */
@@ -489,7 +494,7 @@ async function pullYoutubePublic(a: StoredAccount, username: string): Promise<Pu
 
 async function pullApify(a: StoredAccount, username: string): Promise<Pulled> {
   const platform = a.platform as Exclude<SocialPlatform, "instagram">;
-  const items = (await apifyRun(APIFY_ACTORS[platform], apifyInput(platform, a.handle), { username })).filter(isRec).filter((i) => !i.error);
+  const items = (await apifyRun(APIFY_ACTORS[platform], apifyInput(platform, a.handle), { username }, "Social accounts: public accounts")).filter(isRec).filter((i) => !i.error);
   if (!items.length) throw new Error(`Nothing found for @${a.handle} on ${platform}`);
   return { ...apifyStats(platform, items), posts: items.map((i) => apifyPost(platform, i)).filter((p): p is SocialPost => !!p && !!p.id) };
 }

@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { recordService } from "../service-usage";
 import path from "node:path";
 import { env } from "../env";
 import { canonicalPostUrl, shortcodeToMediaId } from "./url";
@@ -335,6 +336,8 @@ export async function apifyRun(
   actor: string,
   input: unknown,
   opts: ApifyFetchOptions,
+  /** what it is for, in the key's usage (Settings → API keys) */
+  label = "Content Analyzer: posts",
 ): Promise<unknown[]> {
   const stored = await requireApify(opts.username);
   const limit = stored.slow ? 1 : MAX_RUNS;
@@ -343,7 +346,9 @@ export async function apifyRun(
   try {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await apifyRunOnce(actor, input, opts, stored.token);
+        const items = await apifyRunOnce(actor, input, opts, stored.token);
+        void recordService({ service: "APIFY_TOKEN", key: stored.token, actor: opts.username, whose: stored.source === "env" ? "server" : "own", label, units: items.length, unit: "results" });
+        return items;
       } catch (e) {
         const retryable = e instanceof InstagramError && e.retryable && e.code !== "CANCELLED";
         if (!retryable || attempt >= RETRY_DELAYS_MS.length || opts.signal?.aborted) throw e;
@@ -737,10 +742,10 @@ export async function fetchCommentsViaApify(
   const base = { directUrls: [url], resultsLimit: opts.cap };
   let items: unknown[];
   try {
-    items = await apifyRun(COMMENT_ACTOR, { ...base, includeNestedComments: true }, opts);
+    items = await apifyRun(COMMENT_ACTOR, { ...base, includeNestedComments: true }, opts, "Content Analyzer: comments");
   } catch (e) {
     if (e instanceof InstagramError && e.code === "FAILED") {
-      items = await apifyRun(COMMENT_ACTOR, base, opts);
+      items = await apifyRun(COMMENT_ACTOR, base, opts, "Content Analyzer: comments");
     } else {
       throw e;
     }
@@ -812,6 +817,7 @@ export async function fetchProfileViaApify(
     POST_ACTOR,
     { directUrls: [url], resultsType: "details", resultsLimit: 1 },
     opts,
+    "Content Analyzer: profiles",
   );
   for (const item of items) {
     if (!isRec(item)) continue;
@@ -828,7 +834,7 @@ export async function fetchCatalogViaApify(
   const cap = Math.max(1, Math.min(500, opts.cap));
   const tabs = opts.tabs ?? ["posts", "reels"];
   const run = (resultsType: "posts" | "reels") =>
-    apifyRun(POST_ACTOR, { directUrls: [url], resultsType, resultsLimit: cap }, opts);
+    apifyRun(POST_ACTOR, { directUrls: [url], resultsType, resultsLimit: cap }, opts, "Content Analyzer: account posts");
   let lists: unknown[][];
   try {
     lists = await Promise.all(tabs.map(run));

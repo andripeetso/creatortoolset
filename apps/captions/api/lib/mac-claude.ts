@@ -138,7 +138,7 @@ const jobTally = new AsyncLocalStorage<Tally>();
 /** One queue step's AI calls also add up in `sink` (editor/worker.ts: what an AI Editor step spent, shown on its edit). */
 export const tallyInto = <T>(sink: Tally, fn: () => T): T => jobTally.run(sink, fn);
 /** The workspace an AI call made now counts under: the one named for the work (usageIn), else the request's own. */
-function usageWorkspace(): string | undefined {
+export function usageWorkspace(): string | undefined {
   const id = usageScope.getStore() ?? workspaceScope.getStore()?.id;
   return okId(id) ? id : undefined;
 }

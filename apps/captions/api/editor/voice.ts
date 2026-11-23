@@ -10,6 +10,7 @@ import { libraryDb } from "../library/db";
 import { enqueueJob } from "../library/jobs";
 import { resolveProjectId } from "../lib/workshop/workspace";
 import { saveToLibrary } from "../library/routes";
+import { recordService } from "../lib/service-usage";
 import { keyFor } from "../my-keys";
 import { change, read } from "./styles";
 
@@ -121,6 +122,8 @@ export async function makeVoice(
   const voice = pickVoice(await voicesOf(key), input.voice ?? "", lastVoice(user.username));
   // the model is ElevenLabs' own default, and so is the format: an MP3 every plan may ask for
   const res = await call(key, `/v1/text-to-speech/${encodeURIComponent(voice.id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  // ElevenLabs says what the voice cost in its character-cost header
+  void recordService({ service: "ELEVENLABS_API_KEY", key, actor: user.username, label: "Editor: voice from a script", units: Number(res.headers.get("character-cost")) || text.length, unit: "characters" });
   const dir = await mkdtemp(path.join(tmpdir(), "ct-voice-"));
   try {
     const title = (input.name?.trim() || `Voice: ${text.replace(/\s+/g, " ").split(" ").slice(0, 7).join(" ")}`).replace(/[/\\]/g, " ").slice(0, 100);

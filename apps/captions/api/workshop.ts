@@ -188,7 +188,7 @@ async function webResearch(
   }
   const key = perplexityFor(user);
   if (!key) throw new Error(RESEARCH_OFF);
-  return perplexityComplete(system, prompt, { key, depth: opts.depth, jsonSchema: opts.jsonSchema, signal: opts.signal });
+  return perplexityComplete(system, prompt, { key, depth: opts.depth, jsonSchema: opts.jsonSchema, signal: opts.signal, label: opts.jsonSchema ? "Content Workshop: accuracy check" : "Content Workshop: research", actor: user.username });
 }
 
 /**

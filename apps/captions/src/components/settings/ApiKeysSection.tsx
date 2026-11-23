@@ -41,6 +41,7 @@ export function ApifyKeyRow({ onChanged }: { onChanged?: () => void }) {
       last4={status.last4}
       readOnly={status.source === "env"}
       readOnlyText="Server key"
+      service="APIFY_TOKEN"
       broken={status.configured && status.valid === false ? "Key not accepted" : undefined}
       removeBody="Social accounts and Content Analyzer stop reading public posts."
       save={async (value) => {
@@ -92,6 +93,7 @@ export function ApiKeysSection() {
           set={!!mine?.set}
           last4={mine?.last4}
           served={mine?.server}
+          service={k.env}
           save={(v) => saveMyKey(k.env as MyKeyEnv, v).then(reload)}
         />
       );

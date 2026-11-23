@@ -203,7 +203,7 @@ export async function judge(
   if (key) {
     const questions = Object.fromEntries(rules.map((r, i) => [`f${i}`, noul(question(r, examples[r.id]))]));
     await pool(clips, JEV_AT_ONCE, async (c) => {
-      const a = await ask(key, { ...(ws ? { workspace: ws } : {}), clip: clipText(c) }, questions).catch(() => null);
+      const a = await ask(key, { ...(ws ? { workspace: ws } : {}), clip: clipText(c) }, questions, undefined, "Media Library: smart folders").catch(() => null);
       if (!a) return;
       const p = (i: number) => yes(a[`f${i}`]);
       out.set(c.id, { in: rules.filter((_, i) => p(i) >= YES).map((r) => r.id), unsure: rules.filter((_, i) => p(i) >= UNSURE && p(i) < YES).map((r) => r.id) });

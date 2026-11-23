@@ -1,3 +1,4 @@
+import { recordService } from "../lib/service-usage";
 import { creditBack, creditOut, isOutOfCredits } from "../credits";
 import type { DatabaseSync } from "node:sqlite";
 import type { SearchHit, TimelineEvent } from "../../contracts/library";
@@ -91,7 +92,8 @@ export async function embedTexts(texts: string[], route: EmbedRoute, job?: { key
     throw new Error(`Embeddings ${r.status}: ${said}`);
   }
   creditBack("OPENAI_API_KEY", route.key);
-  const data = (await r.json()) as { data?: { index: number; embedding: number[] }[] };
+  const data = (await r.json()) as { data?: { index: number; embedding: number[] }[]; usage?: { total_tokens?: number } };
+  void recordService({ service: "OPENAI_API_KEY", key: route.key, label: job ? "Media Library: search index" : "Media Library: searches", units: data.usage?.total_tokens ?? 0, unit: "tokens" });
   const rows = (data.data ?? []).sort((a, b) => a.index - b.index);
   if (rows.length !== texts.length) throw new Error("Embeddings: the answer has the wrong number of vectors");
   return rows.map((x) => Float32Array.from(x.embedding));

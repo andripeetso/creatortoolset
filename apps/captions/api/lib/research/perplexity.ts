@@ -4,6 +4,7 @@
  * model, deep research on the slow one that reads dozens of sources. The caller passes the key that serves the asker
  * (my-keys.ts keyFor).
  */
+import { recordService } from "../service-usage";
 import { creditBack, creditOut, isOutOfCredits } from "../../credits";
 
 const API_URL = process.env.PERPLEXITY_BASE_URL || "https://api.perplexity.ai/chat/completions";
@@ -40,7 +41,7 @@ export interface ResearchAnswer {
 export async function perplexityComplete(
   system: string,
   user: string,
-  opts: { key: string; depth?: ResearchDepth; model?: string; signal?: AbortSignal; jsonSchema?: Record<string, unknown> },
+  opts: { key: string; depth?: ResearchDepth; model?: string; signal?: AbortSignal; jsonSchema?: Record<string, unknown>; label?: string; actor?: string },
 ): Promise<ResearchAnswer> {
   const key = opts.key;
   const depth = opts.depth ?? "quick";
@@ -75,6 +76,8 @@ export async function perplexityComplete(
   const searchResults = Array.isArray(raw?.search_results)
     ? (raw!.search_results as Array<Record<string, unknown>>).flatMap((r) => (typeof r.url === "string" ? [{ url: r.url, title: typeof r.title === "string" ? r.title : undefined, date: typeof r.date === "string" ? r.date : undefined }] : []))
     : [];
-  const usage = raw?.usage as { total_tokens?: number } | undefined;
+  // Perplexity's answer says what it cost (usage.cost.total_cost); an older answer without it goes by the price list
+  const usage = raw?.usage as { total_tokens?: number; cost?: { total_cost?: number } } | undefined;
+  void recordService({ service: "PERPLEXITY_API_KEY", key, actor: opts.actor, label: opts.label ?? "Content Workshop: research", units: usage?.total_tokens ?? 0, unit: "tokens", costUsd: usage?.cost?.total_cost });
   return { content, citations, searchResults, model, tokens: usage?.total_tokens ?? 0 };
 }

@@ -55,7 +55,7 @@ export async function checkDraft(
     );
   }
   if (!Object.keys(questions).length) return [];
-  const answers = await ask(key, { draft: draftText(doc) }, questions, signal);
+  const answers = await ask(key, { draft: draftText(doc) }, questions, signal, "Content Workshop: rules");
   const flags: RuleFlag[] = [];
   active.forEach((r, i) => {
     const p = yes(answers[`rule${i}`]);

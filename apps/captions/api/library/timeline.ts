@@ -9,6 +9,7 @@ import { completeWithFallback, type ProviderOpts } from "../ai-complete";
 import { creditBack, creditChoice, creditOut, type CreditChoice } from "../credits";
 import { keyFor } from "../my-keys";
 import { MacClaudeError, recordUsage, usageIn } from "../lib/mac-claude";
+import { recordService } from "../lib/service-usage";
 import { ownSettings, providerSettings, routeForInstance, runFields } from "../lib/providers";
 import { findUser } from "../users";
 import { workspaceContext } from "../lib/workshop/context";
@@ -654,6 +655,7 @@ export async function watchVersion(
     inTokens += r.inTokens;
     outTokens += r.outTokens;
     void recordUsage(WATCH_LABEL, r.usage, undefined, "workspace", wsId ?? null);
+    void recordService({ service: "GEMINI_API_KEY", key, actor, label: "Media Library: timelines", units: r.usage.tokens, unit: "tokens", costUsd: r.usage.costUsd, workspace: wsId ?? null });
     return r.events;
   };
   // Antigravity runs one part at a time: each run starts its program afresh on the person's Mac

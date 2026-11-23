@@ -3,6 +3,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { recordService } from "../lib/service-usage";
 import { transcribeWav } from "../transcribe";
 import { DEVICE_AUDIO, transcribeOnDevice } from "../lib/device-transcribe";
 import { MIC_LIMITS, needComputerOn, transcribeOnComputer, type OwnSound } from "../lib/computer-transcribe";
@@ -120,14 +121,14 @@ export type Transcribed = { segments: Segment[]; words: TimedWord[]; language: s
 
 async function deepgram(file: string, actor: string, fillers: boolean, languages?: string[]): Promise<Transcribed> {
   const role = isAdminActor(actor) ? "admin" : (findUser(actor)?.role ?? "user");
-  const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers, languages });
+  const r = await transcribeWav(await readFile(file), { username: actor, role, cloud: true, off: [] }, { fillers, languages, label: "Media Library: transcripts" });
   if ("error" in r) throw new Error(r.error);
   const words = r.words.map((w) => ({ w: w.text, s: w.start, e: w.end, ...(w.confidence !== undefined ? { c: w.confidence } : {}) }));
   return { segments: wordsToSegments(r.words), words, language: r.language };
 }
 
 // ponytail: OpenAI's endpoint takes 25 MB, about 100 minutes of the 32 kbps audio sent here; longer files need chunks
-async function openai(file: string, key: string, languages?: string[]): Promise<Transcribed> {
+async function openai(file: string, key: string, languages?: string[], actor?: string | null): Promise<Transcribed> {
   const form = new FormData();
   form.set("file", new Blob([await readFile(file)], { type: "audio/mp4" }), "audio.m4a");
   form.set("model", process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1");
@@ -149,10 +150,12 @@ async function openai(file: string, key: string, languages?: string[]): Promise<
   }
   creditBack("OPENAI_API_KEY", key);
   const data = (await r.json()) as {
+    duration?: number;
     language?: string;
     segments?: { start: number; end: number; text: string }[];
     words?: { word: string; start: number; end: number }[];
   };
+  void recordService({ service: "OPENAI_API_KEY", key, actor, label: "Media Library: transcripts", units: (data.duration ?? 0) / 60, unit: "audio minutes" });
   const segments = (data.segments ?? []).map((s) => ({ start: s.start, end: s.end, text: s.text.trim() })).filter((s) => s.text);
   const words = (data.words ?? []).map((w) => ({ w: w.word.trim(), s: w.start, e: w.end })).filter((w) => w.w);
   return { segments, words, language: data.language ?? null };
@@ -214,7 +217,7 @@ export async function transcribeFile(
       route.provider === "device" ? await device(out, status)
       : route.provider === "computer" ? await computer(own ? { ...own, cut: cutHere } : out, actor ?? "", route.model, languages?.length ? languages : route.languages, soon, use === "editor")
       : route.provider === "deepgram" ? await deepgram(out, actor ?? "", fillers, languages)
-      : await openai(out, route.key, languages);
+      : await openai(out, route.key, languages, actor);
     return { ...t, provider: route.provider, ...(route.provider === "computer" ? { model: route.model } : {}) };
   } finally {
     await cutting?.catch(() => {}); // a cut a computer asked for that is still running writes nothing after this
@@ -362,7 +365,7 @@ export async function hearSound(versionId: string, actor: string | null, file: s
   const route = versionRoute(actor, versionId);
   const languages = askVersionIn.get(versionId)?.languages;
   if (route.provider === "deepgram") return { ...(await deepgram(file, actor ?? "", true, languages)), provider: "deepgram" };
-  if (route.provider === "openai") return { ...(await openai(file, route.key, languages)), provider: "openai" };
+  if (route.provider === "openai") return { ...(await openai(file, route.key, languages, actor)), provider: "openai" };
   throw new Error("This transcript is not made on a key");
 }
 
