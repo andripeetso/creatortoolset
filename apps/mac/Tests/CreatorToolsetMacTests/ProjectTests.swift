@@ -109,6 +109,20 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(ProjectStore.list(root: root).map(\.id), [newer.id, older.id])
     }
 
+    /// The crash of 0.21.0: an answer made on the main thread (a Task in the scheme runs there) did a main.sync from the
+    /// main thread, which traps. It is made at once now, and still only while the task is live.
+    @MainActor
+    func testAnAnswerMadeOnTheMainThreadIsMadeAtOnce() {
+        let scheme = ProjectScheme(root: { self.root })
+        let task = WrittenTask(ProjectScheme.url(projectID: "p1", file: "screen.mp4"), expectation(description: "answered"))
+        scheme.live[ObjectIdentifier(task)] = task
+        scheme.serve(task.request.url!, method: "POST", range: nil, root: root, granted: [], cache: nil, task: task)
+        wait(for: [task.done], timeout: 1)
+        XCTAssertEqual(task.status, 405)
+        XCTAssertEqual(task.calls, ["response", "finish"])
+        XCTAssertNil(scheme.live[ObjectIdentifier(task)])
+    }
+
     /// The freeze of 0.13.1 and before: answers were made from the reading thread under a lock that start and stop
     /// took too, and WebKit makes an answer from another thread wait for the main thread. Two requests at once (the
     /// editor plays the video and reads the pointer log) left each waiting for the other. Every answer is made on the

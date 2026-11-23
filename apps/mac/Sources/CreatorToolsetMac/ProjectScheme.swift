@@ -136,7 +136,7 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
         nonisolated(unsafe) let task = task
         let file = account.map { ThumbCache.file(in: ThumbCache.dir, origin: origin, account: $0, target: target) }
         if let file, let data = ThumbCache.read(file) { return answer(url, 200, data, task) }
-        // this Task runs on the main actor, and deliver's main.sync from the main thread traps: answer from a queue
+        // this Task runs on the main actor: the file is written and the answer made from a queue
         Task {
             do {
                 let (status, data, cacheControl) = try await ThumbCache.fetch(origin: origin, target: target, cookies: await cookies())
@@ -243,16 +243,18 @@ final class ProjectScheme: NSObject, WKURLSchemeHandler {
 
     /// Runs `body` on the main thread, and only while the task is still live there, so WebKit never gets a call after
     /// it stopped the task. The reading thread waits for it holding nothing, so the main thread is never kept from
-    /// starting or stopping another task. `last` ends the task. Returns false when the task was stopped.
+    /// starting or stopping another task. `last` ends the task. Returns false when the task was stopped. Called on the
+    /// main thread (a Task in this class runs there) it runs `body` at once: main.sync from the main thread traps.
     @discardableResult
     private func deliver(_ task: WKURLSchemeTask, last: Bool = false, _ body: (WKURLSchemeTask) -> Void) -> Bool {
-        DispatchQueue.main.sync {
+        func run() -> Bool {
             let key = ObjectIdentifier(task)
-            guard live[key] != nil else { return false }
+            guard self.live[key] != nil else { return false }
             body(task)
-            if last { live[key] = nil }
+            if last { self.live[key] = nil }
             return true
         }
+        return Thread.isMainThread ? run() : DispatchQueue.main.sync(execute: run)
     }
 
     private static func response(_ url: URL, _ status: Int, _ headers: [String: String]) -> HTTPURLResponse {
