@@ -253,3 +253,33 @@ export async function refileAllShoots(d = libraryDb()): Promise<void> {
     }
   }
 }
+
+/**
+ * At the worker's start: each video uploaded to this server's own disk whose header was never read for its date is read
+ * once (a server probe kept an edited or sent file's write time before 11-23, media/probe.ts), where the server's video
+ * work is on. One whose date changed leaves the shoot the app filed it in for its own (reshoot). Returns how many changed.
+ */
+export async function rereadUploadedDates(d = libraryDb()): Promise<number> {
+  const { libraryWorkspace, serverWorks } = await import("../work/server-work");
+  const { reshoot } = await import("./shoots");
+  const { libraryChanged } = await import("./access"); // the open pages sort again
+  const rows = d
+    .prepare(
+      `SELECT v.id AS version, v.source_key, json_extract(v.probe, '$.capturedAt') AS at, a.id, a.library_id, a.kind, a.created_by
+       FROM asset_versions v JOIN assets a ON a.current_version_id = v.id JOIN libraries l ON l.id = a.library_id
+       WHERE a.kind = 'video' AND l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%' AND v.probe IS NOT NULL AND json_type(v.probe, '$.camera') IS NULL`,
+    )
+    .all() as (Asset & { version: string; source_key: string; at: number | null })[];
+  const at = d.prepare("SELECT json_extract(probe, '$.capturedAt') AS at FROM asset_versions WHERE id = ?");
+  let changed = 0;
+  for (const r of rows) {
+    if (!serverWorks(libraryWorkspace(r.library_id), r.created_by)) continue;
+    const file = await blobs.localCopy(r.source_key).catch(() => null);
+    if (!file || !(await readHere(d, r.version, file, r.kind))) continue;
+    if ((at.get(r.version) as { at: number | null }).at === r.at) continue;
+    changed++;
+    if (organizeOf(r.library_id, d) === "ai") reshoot(d, r);
+    libraryChanged(r.library_id);
+  }
+  return changed;
+}

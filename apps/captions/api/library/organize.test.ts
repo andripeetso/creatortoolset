@@ -27,7 +27,7 @@ delete process.env.ANTHROPIC_API_KEY;
 const { blobs, libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { enqueueJob } = await import("./jobs");
-const { fileInto, organizeOnProbe } = await import("./organize");
+const { fileInto, organizeOnProbe, rereadUploadedDates } = await import("./organize");
 const { tick } = await import("./worker");
 const { aiFor } = await import("../ai-complete");
 const { completeVisionWithFallback } = await import("../ai-vision");
@@ -182,5 +182,17 @@ describe("organize: kind folders", () => {
     expect(folders("lib_aim")).toEqual([{ name: "Graphics", kind: "manual", query: null }]);
     expect(d.prepare("SELECT rule FROM collections WHERE library_id = 'lib_aim'").get()).toEqual({ rule: null }); // never a self-filling folder
     expect(fileInto(d, a, "Finals")).toBe(false);
+  });
+
+  it("an uploaded video's date is read again once from its filming tag, not the time the file was written", async () => {
+    const sent = media("sent.mov");
+    execFileSync(ffmpegCommand(), ["-hide_banner", "-loglevel", "error", "-y", "-i", media("clip.mp4"), "-c", "copy", "-movflags", "use_metadata_tags",
+      "-metadata", "creation_time=2026-10-31T21:56:21Z", "-metadata", "com.apple.quicktime.creationdate=2026-10-30T13:07:57-0600", sent]);
+    const wrong = Date.parse("2026-10-31T21:56:21Z");
+    const v = await seed("lib_def", "vid-sent", "video", sent, JSON.stringify({ duration: 2, vcodec: "h264", capturedAt: wrong }));
+    const probeOf = () => JSON.parse((libraryDb().prepare("SELECT probe FROM asset_versions WHERE id = ?").get(v) as { probe: string }).probe);
+    expect(await rereadUploadedDates()).toBe(1);
+    expect(probeOf()).toMatchObject({ capturedAt: Date.parse("2026-10-30T19:07:57Z"), tz: -360, camera: false });
+    expect(await rereadUploadedDates()).toBe(0); // read once
   });
 });
