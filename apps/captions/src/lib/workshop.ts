@@ -42,13 +42,21 @@ export interface WorkshopProject {
   handles?: Partial<Record<SocialPlatform, string>>;
   /** The languages spoken in its videos; missing = the person's Voice languages. */
   languages?: string[];
+  /** Who reads a piece for "Read as a follower"; missing = none yet, the button opens the persona builder. */
+  personas?: Persona[];
   createdAt: number;
   updatedAt: number;
 }
 
+/** One kind of viewer of a workspace: a short label and a paragraph in the second person. */
+export interface Persona {
+  name: string;
+  about: string;
+}
+
 export type ProjectFields = Pick<
   WorkshopProject,
-  "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles" | "languages"
+  "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles" | "languages" | "personas"
 > & {
   accountId?: string | null;
 };
@@ -328,6 +336,9 @@ export const patchProject = async (id: string, fields: Partial<ProjectFields>) =
   await useWorkspace.getState().load();
   return p;
 };
+/** The persona builder's draft from the workspace's instructions, its account and what the person typed; saved with patchProject. */
+export const draftPersonas = (id: string, said: string) =>
+  fetch(`/api/workshop/projects/${id}/personas/draft`, jsonInit({ said })).then((r) => json<{ personas: Persona[] }>(r));
 /** What deleting a workspace deletes with it (the confirm's counts). */
 export const workspaceContents = (id: string) => fetch(`/api/workshop/projects/${id}/contents`).then((r) => json<WorkspaceContents>(r));
 export const deleteProject = async (id: string) => {

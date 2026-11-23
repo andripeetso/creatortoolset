@@ -1,4 +1,4 @@
-import type { Document } from "./types";
+import type { Document, Persona } from "./types";
 
 /**
  * "Read as a follower": a button, not a pass. A second
@@ -6,7 +6,8 @@ import type { Document } from "./types";
  * followers would, with little context on purpose: the piece as posted, who
  * the followers are, and the account's posts people saved and sent most. Not
  * the session, the sources, the angle talk or any rules, so nothing anchors
- * it. Its read lands in the chat, where the writer sees it next turn.
+ * it. Each of the workspace's personas reads it on its own; the reads land in
+ * the chat as one message, where the writer sees them next turn.
  */
 
 export const REVIEW_MODEL = "claude-fable-5-1";
@@ -30,17 +31,45 @@ export function pieceAsPosted(doc: Document): string {
   return doc.blocks.map((b) => b.text.trim()).join("\n\n");
 }
 
-/** Who the followers are: the project's audience field, else the "Audience:" paragraph of its instructions. */
-export function audienceOf(p: { audience?: string; notes?: string } | null | undefined): string {
-  if (p?.audience?.trim()) return p.audience.trim();
-  const line = /^Audience:\s*(.+)$/im.exec(p?.notes ?? "");
-  return line?.[1]?.trim() ?? "";
+export const MAX_PERSONAS = 4;
+const PERSONA_NAME = 60;
+const PERSONA_ABOUT = 800;
+
+/** The personas as saved or drafted: a name and a paragraph each, empty ones dropped, at most MAX_PERSONAS. */
+export function parsePersonas(raw: unknown): Persona[] {
+  const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+  return (Array.isArray(raw) ? raw : [])
+    .map((p: { name?: unknown; about?: unknown } | null) => ({ name: str(p?.name, PERSONA_NAME), about: str(p?.about, PERSONA_ABOUT) }))
+    .filter((p) => p.name && p.about)
+    .slice(0, MAX_PERSONAS);
 }
 
-export function buildReviewPrompt(input: { doc: Document; handle?: string; audience: string; best: ReviewPost[]; packText?: string }): { system: string; user: string } {
+export const PERSONAS_SYSTEM = `A creator wants their drafts read by the people they make them for, before posting. From what you're given about the workspace (its instructions, the account, its posts), write ${MAX_PERSONAS - 1} to ${MAX_PERSONAS} personas of the people who actually watch it.
+
+- Each is one real kind of viewer, different from the others in what they want and how much they already know or trust the account. One is someone who doesn't follow the account yet and sees it come up among strangers' posts.
+- "name": a short label a person would say, like "New parent, follows for tips" (no first names).
+- "about": one paragraph in the second person ("You…"): who you are, your situation, what you scroll for, what makes you stop, save or send, what makes you swipe away, and whether you follow the account.
+- Only what the material supports; where it says little, keep the persona plain rather than invent detail.
+
+Answer with JSON only: {"personas":[{"name":"…","about":"…"}]}`;
+
+/** The AI's answer: the JSON object (or a bare array) anywhere in the text. */
+export function parsePersonaDraft(text: string): Persona[] {
+  const at = text.search(/[[{]/);
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(text.slice(at, Math.max(text.lastIndexOf("}"), text.lastIndexOf("]")) + 1));
+  } catch {
+    throw new Error("Could not read the drafted personas");
+  }
+  const list = parsePersonas(Array.isArray(raw) ? raw : (raw as { personas?: unknown } | null)?.personas);
+  if (!list.length) throw new Error("Could not read the drafted personas");
+  return list;
+}
+
+export function buildReviewPrompt(input: { doc: Document; handle?: string; persona: Persona; best: ReviewPost[]; packText?: string }): { system: string; user: string } {
   const kind = KIND_WORD[input.doc.kind] ?? "post";
-  const who = input.audience ? `You're one of the people this account posts for: ${input.audience}` : "You're one of the people this account posts for.";
-  const base = `${who} You follow ${input.handle ? `@${input.handle}` : "this account"}. A new ${kind} from them just came up in your feed. Read it the way you would on your phone${kind === "carousel" ? ", one slide at a time" : ""}, and be honest about how it lands.
+  const base = `You're one of the people ${input.handle ? `@${input.handle}` : "this account"} posts for: ${input.persona.name}. ${input.persona.about} A new ${kind} from them just came up in your feed. Read it the way you would on your phone${kind === "carousel" ? ", one slide at a time" : ""}, and be honest about how it lands.
 
 Then tell the author, briefly and plainly:
 - Where you'd stop ${kind === "reel" ? "watching" : "swiping"}, and the line that lost you. If you'd get to the end, say so and why.${kind === "carousel" ? "\n- Instagram shows a carousel a second time opening on slide 2. Would slide 1 stop your thumb? Would slide 2, seen first?" : ""}

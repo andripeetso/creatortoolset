@@ -29,8 +29,8 @@ const EMPTY: ProjectFields = { name: "", audience: "", voice: "", cta: "", notes
 
 /**
  * The form's starting values. The old audience, voice and CTA fields are moved into the instructions, where they can be
- * read and changed. The prompts still read those fields (api/lib/workshop/prompt.ts renderInstructions, review.ts
- * audienceOf), so they are emptied only when their text is in the instructions whole: one the 20,000 limit would cut
+ * read and changed. The prompts still read those fields (api/lib/workshop/prompt.ts renderInstructions),
+ * so they are emptied only when their text is in the instructions whole: one the 20,000 limit would cut
  * stays in its field, as it was.
  */
 function fieldsFrom(initial?: WorkshopProject): ProjectFields {

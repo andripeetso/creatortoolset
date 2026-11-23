@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { SESSION_STATUSES, type ContextField, type ContextSnippet, type DocKind, type DraftKind, type FileRef, type Framework, type FrameworkRole, type GenerateInput, type ImageRef, type KnowledgeFile, type LibraryPick, type LoadedSource, type PieceQuote, type Project, type ProviderChoice, type Rule, type SessionSource, type SessionStatus, type TurnInput } from "./types";
 import { isCarouselTypeId } from "../../../src/lib/carousel-visualize";
 import { postedFromUrl } from "./posted";
+import { parsePersonas } from "./review";
 import { isLanguage } from "../../../contracts/voice";
 import { EFFORTS, type Effort, type Selection } from "../../../contracts/providers";
 import { PLATFORMS, type SocialPlatform } from "../../../contracts/connectors";
@@ -92,7 +93,7 @@ function field(body: Record<string, unknown>, key: string, base: string, max: nu
   return key in body ? str(body[key], max) : base;
 }
 
-type ProjectFields = Pick<Project, "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles" | "languages"> & {
+type ProjectFields = Pick<Project, "name" | "audience" | "voice" | "cta" | "notes" | "knowledge" | "color" | "off" | "handles" | "languages" | "personas"> & {
   accountId?: string | null;
 };
 
@@ -173,6 +174,9 @@ export function parseProjectInput(raw: unknown, base?: ProjectFields): ProjectFi
   const languages = "languages" in body ? (Array.isArray(body.languages) ? [...new Set(body.languages.filter(isLanguage))].slice(0, 5) : []) : b.languages;
   if (languages?.length) out.languages = languages;
   else delete out.languages;
+  const personas = "personas" in body ? parsePersonas(body.personas) : b.personas;
+  if (personas?.length) out.personas = personas;
+  else delete out.personas;
   if (!out.name) throw new Error("Give the workspace a name");
   return out;
 }

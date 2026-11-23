@@ -20,6 +20,12 @@ export interface KnowledgeFile {
 export type { KnowledgeSource, SourceKind, SourceSection } from "../../../contracts/knowledge";
 import type { SourceKind, SourceSection } from "../../../contracts/knowledge";
 
+/** One kind of viewer of a workspace: a short label and a paragraph in the second person. */
+export interface Persona {
+  name: string;
+  about: string;
+}
+
 export interface Project {
   id: string;
   owner: string;
@@ -41,6 +47,8 @@ export interface Project {
   /** The languages spoken in its videos (two-letter codes): they win over the person's Settings → AI → Voice languages
    *  for the transcripts this project asks for. Missing = the person's. */
   languages?: string[];
+  /** Who reads a piece for "Read as a follower" (review.ts), made in its persona builder. Missing = none yet: the button opens the builder. */
+  personas?: Persona[];
   /** false: its video work runs on its owner's and members' computers only, never on this server (api/work/server-work.ts). Missing = also this server, where the server allows it. */
   serverWork?: boolean;
   createdAt: number;

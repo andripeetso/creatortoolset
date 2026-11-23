@@ -94,7 +94,7 @@ import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFet
 import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, renderDocument, unansweredBefore, wantsComments } from "./lib/workshop/chat-prompt";
-import { REVIEW_MODEL, audienceOf, buildReviewPrompt, type ReviewPost } from "./lib/workshop/review";
+import { PERSONAS_SYSTEM, REVIEW_MODEL, buildReviewPrompt, parsePersonaDraft, type ReviewPost } from "./lib/workshop/review";
 import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
@@ -1917,20 +1917,37 @@ function fableProvider(user: SessionUser): MacOpts["provider"] {
 const readerName = (reader: MacOpts["provider"]): string =>
   reader && reader.driver !== "claude" ? `${DRIVERS.find((d) => d.id === reader.driver)?.label ?? reader.driver} (Mac)` : "Claude Fable (Mac)";
 
-/** "Read as a follower": Fable on the Mac reads the piece with only the piece, the audience and the author's best posts (review.ts). */
+/** "Read as a follower": Fable on the Mac reads the piece once per persona, each with only the piece, that persona and the author's best posts (review.ts). */
 async function runReview(session: SessionMeta, user: SessionUser, messageId: string, docId: string): Promise<void> {
   const signal = stopSignal(messageId);
   try {
     const doc = await readDoc(session.id, docId);
     if (!doc?.blocks.length) throw new Error("The piece is empty");
     const project = await projectForAi(session.projectId, user);
+    const personas = project?.personas ?? [];
+    if (!personas.length) throw new Error("Needs personas");
     const { handle, best } = await bestPosts(user, project, 8);
     const reader = fableProvider(user);
     const packText = await packInstructions(user.username, "workshop.review", project?.id ?? null, { ai: { only: ["mac"], mac: { label: "Workshop follower's read", provider: reader } } });
-    const { system, user: prompt } = buildReviewPrompt({ doc, handle, audience: audienceOf(project), best, packText });
-    let usage: MacUsage | undefined;
     const write = progressWriter(session.id, messageId);
-    const text = await streamMacClaude(system, prompt, signal, (t) => write({ text: t, stage: "writing" }), (u) => (usage = u), { label: "Workshop follower's read", provider: reader, model: REVIEW_MODEL });
+    // each persona reads on its own, so one read never colours another; the message shows them in order as they stream
+    const reads = personas.map(() => "");
+    const joined = () => personas.map((p, i) => `${p.name}\n${reads[i]!.trim() || "…"}`).join("\n\n———\n\n");
+    const usages: MacUsage[] = [];
+    const settled = await Promise.allSettled(
+      personas.map((persona, i) => {
+        const { system, user: prompt } = buildReviewPrompt({ doc, handle, persona, best, packText });
+        return streamMacClaude(system, prompt, signal, (t) => ((reads[i] = t), write({ text: joined(), stage: "writing" })), (u) => usages.push(u), { label: "Workshop follower's read", provider: reader, model: REVIEW_MODEL }).then((t) => {
+          reads[i] = t;
+        });
+      }),
+    );
+    // one persona that fails says so in its place; only when every one fails is the read an error
+    const failed = settled.map((r) => (r.status === "rejected" ? r.reason : null));
+    if (failed.every(Boolean)) throw failed[0];
+    failed.forEach((e, i) => e && (reads[i] = `Could not read: ${errorMessage(e).slice(0, 200)}`));
+    const text = joined();
+    const usage: MacUsage | undefined = usages.length ? { tokens: usages.reduce((n, u) => n + u.tokens, 0), costUsd: usages.reduce((n, u) => n + u.costUsd, 0) } : undefined;
     await write({}, true);
     // a non-Claude reader (a member whose only AI is Codex) keeps its own model: name the CLI that actually read it
     await patchMessage(session.id, messageId, { status: "done", stage: undefined, text: text.trim(), provider: readerName(reader), usage });
@@ -2177,6 +2194,41 @@ const givenFiles = (raw: unknown, max: number): GivenFile[] =>
     .slice(0, max);
 const fileWords = async (f: GivenFile) => (typeof f.text === "string" ? f.text : documentText(f.name, Buffer.from(f.data ?? "", "base64")));
 
+/** A social account for the AI: its bio and stats, then its 40 most-viewed posts (what was said or on the slides). "" when it can't be read. */
+async function accountMaterial(user: SessionUser, id: string): Promise<string> {
+  const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
+  const [account, own] = await Promise.all([ownAccountContextFor(user, id), ownPostsForWorkshop(user, id)]);
+  if (!account) return "";
+  const posts = [...(own?.posts ?? [])]
+    .sort((a, b) => views(b) - views(a))
+    .slice(0, 40)
+    .map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
+  return `${renderAccountContext(account)}${posts.length ? `\n\nIts most-viewed posts (what was said or on the slides):\n${posts.join("\n")}` : ""}`;
+}
+
+/** The persona builder: drafts the workspace's personas from its instructions, its account and what the person typed. Saved by PATCH /projects/:id. */
+workshopApp.post("/projects/:id/personas/draft", async (c) => {
+  const user = c.get("user");
+  const project = await readProject(c.req.param("id"), user);
+  if (!project) return c.json({ error: "Not found" }, 404);
+  const body = (await c.req.json().catch(() => null)) as { said?: unknown } | null;
+  const said = typeof body?.said === "string" ? body.said.slice(0, DRAFT_TEXT).trim() : "";
+  const account = projectAccount(project);
+  const material = account ? await accountMaterial(user, account) : "";
+  if (!said && !project.notes.trim() && !material) return c.json({ error: "Needs a few words about who watches" }, 400);
+  const prompt = [
+    `Workspace: ${project.name}`,
+    said ? `What they said about who watches:\n${said}` : "",
+    project.notes.trim() ? `The workspace's instructions:\n${project.notes.trim()}` : "",
+    material,
+  ].filter(Boolean).join("\n\n");
+  try {
+    return c.json({ personas: await completeWithFallback(PERSONAS_SYSTEM, prompt, undefined, parsePersonaDraft, route(user, "workshop", "Personas")) });
+  } catch (e) {
+    return c.json({ error: errorMessage(e) }, 502);
+  }
+});
+
 workshopApp.post("/projects/draft-notes", async (c) => {
   const user = c.get("user");
   const body = (await c.req.json().catch(() => null)) as { accountId?: unknown; accountIds?: unknown; name?: unknown; text?: unknown; said?: unknown; files?: unknown; projectId?: unknown } | null;
@@ -2188,19 +2240,10 @@ workshopApp.post("/projects/draft-notes", async (c) => {
   const ids = [...new Set([body?.accountId, ...(Array.isArray(body?.accountIds) ? body.accountIds : [])].filter(okId))].slice(0, 3);
   const given = givenFiles(body?.files, DRAFT_FILES);
   const links = [...new Set(`${text}\n${said}`.match(/https?:\/\/[^\s<>"')]+/g) ?? [])].slice(0, DRAFT_LINKS);
-  const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
   // each part on its own: one that can't be read is said, the rest still drafts
   const [parts, files] = await Promise.all([
     Promise.all([
-      ...ids.map(async (id) => {
-        const [account, own] = await Promise.all([ownAccountContextFor(user, id), ownPostsForWorkshop(user, id)]);
-        if (!account) return "";
-        const posts = [...(own?.posts ?? [])]
-          .sort((a, b) => views(b) - views(a))
-          .slice(0, 40)
-          .map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
-        return `${renderAccountContext(account)}${posts.length ? `\n\nIts most-viewed posts (what was said or on the slides):\n${posts.join("\n")}` : ""}`;
-      }),
+      ...ids.map((id) => accountMaterial(user, id)),
       ...links.map((url) =>
         webPageText(url).then(
           (p) => `The page ${url} (${p.title}):\n${p.text.slice(0, 12_000)}`,
@@ -2273,6 +2316,7 @@ workshopApp.patch("/projects/:id", async (c) => {
     const next: Project = { ...project, ...fields, updatedAt: Date.now() };
     if (!fields.off) delete next.off;
     if (!fields.languages) delete next.languages;
+    if (!fields.personas) delete next.personas;
     if (accountId === null) delete next.accountId;
     else if (accountId) next.accountId = accountId;
     await writeJsonAtomic(projectPath(next.id), next);
@@ -4028,6 +4072,8 @@ workshopApp.post("/sessions/:id/reviews", async (c) => {
   const doc = typeof body?.docId === "string" ? await readDoc(meta.id, body.docId) : null;
   if (!doc || doc.kind === "notes" || !doc.blocks.length) return c.json({ error: "Open a piece with some text first" }, 400);
   if (!onMac(user)) return c.json({ error: "Read as a follower needs an AI provider on a computer" }, 503);
+  // the persona builder comes first (the page opens it); a read with no one to read it is refused
+  if (!(meta.projectId && (await readProject(meta.projectId, user))?.personas?.length)) return c.json({ error: "Needs personas" }, 409);
   await readChat(meta.id);
   const now = Date.now();
   const ask: ChatMessage = { id: randomUUID(), role: "user", text: "Read it as a follower would.", at: now, docId: doc.id, status: "done" };

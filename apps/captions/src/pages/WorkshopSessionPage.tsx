@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { createDesign, listDesigns } from "@/lib/designs";
-import { Eye, Loader2, X } from "lucide-react";
+import { Eye, Loader2, Users, X } from "lucide-react";
 import { AppBar } from "@/components/AppBar";
 import { WorkshopShareView } from "@/pages/WorkshopSharePage";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import { AuditButton } from "@/components/workshop/AuditButton";
 import { AuditModal } from "@/components/workshop/AuditModal";
 import { ChatPane } from "@/components/workshop/ChatPane";
+import { PersonaBuilder } from "@/components/workshop/PersonaBuilder";
 import { DocShapeRules, DocView, type DocSettingsPatch } from "@/components/workshop/ComposerBar";
 import { DocumentEditor } from "@/components/workshop/DocumentEditor";
 import { DocumentTabs } from "@/components/workshop/DocumentTabs";
@@ -69,6 +70,7 @@ import {
   type ChatMessage,
   type TurnInput,
   type AuditDepth,
+  type Persona,
   type ContextSnippet,
   type PieceQuote,
   usageTally,
@@ -314,6 +316,9 @@ export default function WorkshopSessionPage() {
   const chatMode = useChatShown();
   const desk = chatMode ? enterFocus(savedDesk, "writing") : savedDesk;
   const [auditMessageId, setAuditMessageId] = useState<string | null>(null);
+  const [personasOpen, setPersonasOpen] = useState(false);
+  // the session's workspace holds the personas "Read as a follower" reads with
+  const personas = useWorkspace((s) => s.projects.find((p) => p.id === session?.projectId)?.personas);
   const auditThinking = useRef(new Set<string>());
 
   const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
@@ -854,8 +859,11 @@ export default function WorkshopSessionPage() {
   };
 
   // ---- a follower's read: Claude Fable reads the open piece with only the piece in front of it
-  const review = async () => {
+  const review = async (saved?: Persona[]) => {
     if (!session || !activeDoc) return;
+    if (!session.projectId) return setError("Needs a workspace");
+    // the first read in a workspace builds its personas first; Save comes back here
+    if (!(saved ?? personas)?.length) return setPersonasOpen(true);
     setError(null);
     await flushBlocks();
     try {
@@ -1389,11 +1397,22 @@ export default function WorkshopSessionPage() {
                             type="button"
                             onClick={() => void review()}
                             disabled={thinking}
-                            title="A read of the piece alone, as a follower: where they would stop, what they would take away, whether they would save or send it."
+                            title="A read of the piece alone, by each persona: where they would stop, what they would take away, whether they would save or send it."
                             className="flex items-center gap-1 rounded-md border border-border bg-background/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                           >
                             <Eye className="h-3.5 w-3.5" /> Read as a follower
                           </button>
+                          {personas?.length ? (
+                            <button
+                              type="button"
+                              onClick={() => setPersonasOpen(true)}
+                              aria-label="Edit personas"
+                              title={`Personas: ${personas.map((p) => p.name).join(", ")}`}
+                              className="flex items-center rounded-md border border-border bg-background/80 px-1.5 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            >
+                              <Users className="h-3.5 w-3.5" />
+                            </button>
+                          ) : null}
                         </>
                       ) : null
                     }
@@ -1511,6 +1530,18 @@ export default function WorkshopSessionPage() {
             <InstagramAccountPage accountId={creatorId} onOpenPost={openCreatorPost} onClose={() => setCreatorId(null)} />
           </DialogContent>
         </Dialog>
+      ) : null}
+      {personasOpen && session?.projectId ? (
+        <PersonaBuilder
+          projectId={session.projectId}
+          initial={personas ?? []}
+          onClose={() => setPersonasOpen(false)}
+          onSaved={(saved) => {
+            setPersonasOpen(false);
+            // first time: the read the person asked for; an edit only saves
+            if (!personas?.length) void review(saved);
+          }}
+        />
       ) : null}
       {auditOpen?.audit?.result ? (
         <AuditModal

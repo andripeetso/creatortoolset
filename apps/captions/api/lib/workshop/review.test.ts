@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { audienceOf, buildReviewPrompt, pieceAsPosted } from "./review";
+import { buildReviewPrompt, parsePersonaDraft, parsePersonas, pieceAsPosted } from "./review";
 import { newDocument } from "./doc";
 import { buildTurnPrompt } from "./chat-prompt";
 
@@ -10,15 +10,14 @@ const carousel = () => {
 };
 
 describe("a follower's read", () => {
-  it("sees the piece as posted, who the followers are and the best posts, nothing else", () => {
+  it("sees the piece as posted, the persona and the best posts, nothing else", () => {
     const { system, user } = buildReviewPrompt({
       doc: carousel(),
       handle: "tinyacrobatics",
-      audience: audienceOf({ notes: "You write as Alex.\n\nAudience: parents 25–40, puppies 0–24 months.\n\nHard rules: …" }),
+      persona: { name: "New parent", about: "You have a puppy of 0–24 months." },
       best: [{ date: "2025-12-08", views: 1_234_567, keptPer1k: 92, text: "Sample review of the app. Very happy, 10/10." }],
     });
-    expect(system).toContain("You're one of the people this account posts for: parents 25–40, puppies 0–24 months.");
-    expect(system).toContain("@tinyacrobatics");
+    expect(system).toContain("You're one of the people @tinyacrobatics posts for: New parent. You have a puppy of 0–24 months.");
     expect(system).toContain("one slide at a time");
     expect(system).toContain("opening on slide 2");
     expect(system).toContain("don't rewrite the piece");
@@ -31,7 +30,7 @@ describe("a follower's read", () => {
     const d = newDocument("r1", "s1", "reel", "Reel", { text: "So our sample has its own plan.", now: 1 });
     d.hooks = [{ id: "h1", text: "Your sample needs a plan", author: "user" } as never];
     expect(pieceAsPosted(d)).toBe("Opening 1: Your sample needs a plan\n\nSo our sample has its own plan.");
-    expect(buildReviewPrompt({ doc: d, audience: "", best: [] }).system).toContain("stop watching");
+    expect(buildReviewPrompt({ doc: d, persona: { name: "Stranger", about: "You don't follow." }, best: [] }).system).toContain("stop watching");
   });
 
   it("is labelled for the writer as another model's read, not its own words", () => {
@@ -53,12 +52,30 @@ describe("a follower's read", () => {
 
 describe("pack instructions in the follower's read", () => {
   it("are added to the system prompt after the app's own, and an empty text changes nothing", () => {
-    const input = { doc: carousel(), handle: "tinyacrobatics", audience: "parents", best: [] };
+    const input = { doc: carousel(), handle: "tinyacrobatics", persona: { name: "Parent", about: "You have a puppy." }, best: [] };
     const plain = buildReviewPrompt(input);
     expect(buildReviewPrompt({ ...input, packText: "" })).toEqual(plain);
     const packed = buildReviewPrompt({ ...input, packText: "PACK-REVIEW-ZQ" });
     expect(packed.system.startsWith(plain.system)).toBe(true);
     expect(packed.system).toContain("PACK-REVIEW-ZQ");
     expect(packed.user).toBe(plain.user);
+  });
+});
+
+describe("personas", () => {
+  it("keep a name and a paragraph each, drop empty ones and stop at four", () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({ name: ` P${i} `, about: "You watch." }));
+    expect(parsePersonas([{ name: "", about: "x" }, { name: "Stranger", about: " " }, ...six, "junk", null])).toEqual(
+      ["P0", "P1", "P2", "P3"].map((name) => ({ name, about: "You watch." })),
+    );
+    expect(parsePersonas("not a list")).toEqual([]);
+  });
+
+  it("are read from the drafted answer, with or without text around the JSON", () => {
+    const one = [{ name: "Stranger", about: "You don't follow yet." }];
+    expect(parsePersonaDraft(`Here:\n{"personas":${JSON.stringify(one)}}\nDone`)).toEqual(one);
+    expect(parsePersonaDraft(JSON.stringify(one))).toEqual(one);
+    expect(() => parsePersonaDraft("no json")).toThrow("Could not read");
+    expect(() => parsePersonaDraft('{"personas":[]}')).toThrow("Could not read");
   });
 });
