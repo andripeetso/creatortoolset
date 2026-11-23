@@ -78,7 +78,7 @@ describe("estimate", () => {
   it("a clip in the trash is never work left, even one trashed partway through a run: its jobs wait for it to come back", async () => {
     const checks = async () => {
       const p = await progress("lib_e", "local");
-      return { left: p.left, share: p.share, line: p.stages.find((s) => s.kind === "fingerprint") };
+      return { left: p.left, share: p.share, line: p.stages?.find((s) => s.kind === "fingerprint") };
     };
     enqueueJob(d, "lib_e", "v1", "fingerprint", "local");
     enqueueJob(d, "lib_e", "v2", "fingerprint", "local");
