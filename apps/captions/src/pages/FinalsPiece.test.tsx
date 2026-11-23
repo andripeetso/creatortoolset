@@ -74,8 +74,8 @@ describe("FinalsPiece editor", () => {
     const picked = { ...piece, coverUrl: "/api/library/lib_tiny/pieces/pce_tiny/cover?v=5" };
     const html = render(picked);
     expect(html).toContain('src="/api/library/lib_tiny/pieces/pce_tiny/cover?v=5"');
-    expect(html).toContain("Use the automatic cover");
-    expect(html).toContain("Use this frame as cover");
+    expect(html).toContain("Reset cover");
+    expect(html).toContain("Use frame as cover");
   });
 
   it("is read only when some item is not visible to the account: no controls, one line", () => {
@@ -83,8 +83,9 @@ describe("FinalsPiece editor", () => {
       <PieceEditor libraryId="lib_tiny" piece={piece} cards={cards} readOnly onPiece={() => {}} onGone={() => {}} />,
     );
     expect(html).toContain("Read only");
-    expect(html).not.toContain("Use this frame as cover");
-    expect(html).not.toMatch(/<(button|select|input|textarea)(?![^>]*disabled)/); // every control is rendered disabled
+    expect(html).not.toContain("Use frame as cover");
+    // every control is rendered disabled; picking which version to look at (data-pick) changes nothing
+    expect(html).not.toMatch(/<(button|select|input|textarea)(?![^>]*(disabled|data-pick))/);
   });
 
   it("saves the piece as one ZIP link, also when it is read only, and not for an empty piece", () => {
@@ -92,8 +93,15 @@ describe("FinalsPiece editor", () => {
     const readOnly = renderToStaticMarkup(
       <PieceEditor libraryId="lib_tiny" piece={piece} cards={cards} readOnly onPiece={() => {}} onGone={() => {}} />,
     );
-    expect(readOnly).toContain("Download all as ZIP");
-    expect(render({ ...piece, items: [] })).not.toContain("Download all as ZIP");
+    expect(readOnly).toContain(" Download</a>");
+    expect(render({ ...piece, items: [] })).not.toContain(" Download</a>");
+  });
+
+  it("shows one version without a list, winner or reorder: just its player, cover and post", () => {
+    const html = render({ ...piece, items: [piece.items[1]] });
+    expect(html).not.toContain('aria-label="Versions"');
+    expect(html).not.toContain("aria-pressed");
+    expect(html).toContain("Tiny post text");
   });
 
   it("offers no raw footage to add: a piece's versions come from Review, exports and the Content Workshop", () => {

@@ -29,10 +29,10 @@ export interface FinalsTile {
   posted: boolean;
 }
 
-const KIND_LABEL: Record<FinalsKind, string> = { reel: "Reel", carousel: "Carousel", other: "Other" };
+export const KIND_LABEL: Record<FinalsKind, string> = { reel: "Reel", carousel: "Carousel", other: "Other" };
 const KIND_ICON = { reel: Clapperboard, carousel: GalleryHorizontalEnd, other: Layers } as const;
 /** One color per kind, the same as the Media Library's Finals list. */
-const KIND_BADGE: Record<FinalsKind, string> = {
+export const KIND_BADGE: Record<FinalsKind, string> = {
   reel: "bg-red-600/90 text-white",
   carousel: "bg-sky-600/90 text-white",
   other: "bg-zinc-600/90 text-white",
@@ -41,6 +41,8 @@ const KIND_BADGE: Record<FinalsKind, string> = {
 // the server sends the pieces in the order they were made: Oldest is that order, as before
 const SORTS = ["oldest", "newest", "name"] as const;
 const SORT_KEY = "finals:sort";
+/** A piece opened from this list: closing its window goes back here (history), not to a new /finals entry. */
+export const FROM_LIST = { fromList: true };
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -185,7 +187,7 @@ function PieceRow({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
   const versions = piece.items.length;
   const noun = kind === "carousel" ? "slide" : "version";
   return (
-    <Link to={`/finals/${piece.id}`} className="flex items-center gap-3 rounded-lg border border-zinc-500/25 bg-zinc-500/5 px-2 py-1.5 transition-colors hover:border-zinc-400/60">
+    <Link to={`/finals/${piece.id}`} state={FROM_LIST} className="flex items-center gap-3 rounded-lg border border-zinc-500/25 bg-zinc-500/5 px-2 py-1.5 transition-colors hover:border-zinc-400/60">
       <span className="relative block h-12 w-10 shrink-0 overflow-hidden rounded bg-black">
         <ImageOff className="absolute inset-0 m-auto h-4 w-4 text-zinc-800" />
         {cover && (
@@ -221,7 +223,7 @@ function PieceCard({ tile, work }: { tile: FinalsTile; work?: WorkshopFinal }) {
   const winner = piece.items.find((i) => i.winner) ?? piece.items[0];
   const description = (winner && work?.versions[winner.id]?.text) || work?.description || "";
   return (
-    <Link to={`/finals/${piece.id}`} className="block overflow-hidden rounded-xl border border-zinc-500/25 bg-zinc-500/5 transition-colors hover:border-zinc-400/60">
+    <Link to={`/finals/${piece.id}`} state={FROM_LIST} className="block overflow-hidden rounded-xl border border-zinc-500/25 bg-zinc-500/5 transition-colors hover:border-zinc-400/60">
       <div className="relative aspect-[4/5] overflow-hidden bg-black">
         <ImageOff className="absolute inset-0 m-auto h-8 w-8 text-zinc-800" />
         {cover && (
@@ -360,7 +362,7 @@ function TrashList({ pieces, onRestore }: { pieces: Piece[]; onRestore: (piece: 
     <ul aria-label="Finals trash" className="flex flex-col divide-y divide-zinc-500/25 rounded-xl border border-zinc-500/25">
       {pieces.map((p) => (
         <li key={p.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-          <Link to={`/finals/${p.id}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:underline">
+          <Link to={`/finals/${p.id}`} state={FROM_LIST} className="min-w-0 flex-1 truncate text-sm font-medium hover:underline">
             {p.label}
           </Link>
           <span className="text-xs text-zinc-500">

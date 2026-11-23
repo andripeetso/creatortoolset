@@ -403,8 +403,8 @@ export default function App() {
           <Route path="/ws/:token" element={<WorkshopSharePage />} />
           <Route path="/library/s/:token" element={<LibrarySharePage />} />
           <Route path="/library" element={<AppRoute tool="media"><LibraryScreen /></AppRoute>} />
-          <Route path="/finals" element={<AppRoute tool="media"><FinalsScreen /></AppRoute>} />
-          <Route path="/finals/:pieceId" element={<AppRoute tool="media"><FinalsPiecePage /></AppRoute>} />
+          {/* one route for the list and an open piece: the piece is a window over the list, which stays mounted */}
+          <Route path="/finals/:pieceId?" element={<AppRoute tool="media"><FinalsScreen /><FinalsPiecePage /></AppRoute>} />
           <Route path="/stories" element={<AppRoute tool="stories"><StorySplitterPage /></AppRoute>} />
           {/* a design belongs to the piece or the video it was made from: opened from there, with no tile of its own */}
           <Route path="/design" element={<AppRoute tool="design"><DesignsPage /></AppRoute>} />
