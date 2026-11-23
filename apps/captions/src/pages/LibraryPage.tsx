@@ -707,7 +707,11 @@ export default function LibraryPage() {
   // Available offline for a clip or a folder, on this computer's list (M14); the server's answer replaces the list
   const keepOffline = (target: { version: string } | { collection: string }, on: boolean) => setOffline(target, on).catch((e: unknown) => setError(message(e)));
   // Folder settings: whoever may change the folder, or keep it offline on This Mac
-  const settingsItem = (c: Collection) => (!readOnly || thisMacDevice() ? <ContextMenuItem onSelect={() => setSetting(c)}>Folder settings</ContextMenuItem> : null);
+  // Blur faces is a folder's to set where the library blurs and this person may keep files as filmed
+  const blurShown = (c: Collection) => !!(faceBlur && library?.mayKeepAsFilmed && holdsClips(c));
+  // only where it holds more than the name (Rename is beside it): a rule, Blur faces, or Available offline on This Mac
+  const settingsItem = (c: Collection) =>
+    thisMacDevice() || (!readOnly && (sortsItself(c) || blurShown(c))) ? <ContextMenuItem onSelect={() => setSetting(c)}>Folder settings</ContextMenuItem> : null;
   const folderProps = (c: Collection): FolderProps => ({
     name: c.name,
     to: folderTo(c.id),
@@ -1438,7 +1442,7 @@ export default function LibraryPage() {
         folder={setting}
         name={!readOnly}
         rule={!readOnly && !!setting && sortsItself(setting)}
-        blur={setting && faceBlur && library?.mayKeepAsFilmed && holdsClips(setting) ? setting.blur !== "no" : undefined}
+        blur={setting && blurShown(setting) ? setting.blur !== "no" : undefined}
         offline={setting && thisMacDevice() ? offline.collections.includes(setting.id) : undefined}
         onClose={() => setSetting(null)}
         onSave={saveFolder}

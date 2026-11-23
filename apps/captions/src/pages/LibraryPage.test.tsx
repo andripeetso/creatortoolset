@@ -52,6 +52,7 @@ const server = vi.hoisted(() => ({
   uploaded: [] as string[],
   /** the library is someone else's, given to look at */
   readOnly: false,
+  faceBlur: false, // the Face Blur plug-in on, and this person may keep files as filmed
   gate: undefined as Promise<void> | undefined,
   /** a test holds every upload until it lets go */
   uploading: undefined as Promise<void> | undefined,
@@ -66,7 +67,7 @@ const server = vi.hoisted(() => ({
 vi.mock("@/lib/library", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/library")>()),
   listLibraries: async () => [
-    { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, setupAt: "2026-11-01T00:00:00.000Z", ...server.settings }, ...(server.readOnly ? { readOnly: true } : {}) },
+    { id: "lib_tiny", name: "Tiny", storage: "local", settings: { describe: true, embed: false, setupAt: "2026-11-01T00:00:00.000Z", ...server.settings }, ...(server.readOnly ? { readOnly: true } : {}), ...(server.faceBlur ? { mayKeepAsFilmed: true } : {}) },
   ],
   // Default folders makes the six folders (api/library/organize.ts)
   uploadFile: async (_: string, f: File) => {
@@ -132,6 +133,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   listTags: async () => [{ tag: "beach", count: 2 }],
   listPlaces: async () => [],
   renameCollection: async (_: string, id: string, name: string) => void server.changed.push(["rename", id, name]),
+  folderBlur: async (_: string, id: string, blur: string | null) => void server.changed.push(["blur", id, blur]),
   deleteCollection: async (_: string, id: string) => {
     server.changed.push(["delete", id]);
     return { ok: true };
@@ -153,6 +155,11 @@ vi.mock("@/lib/library", async (importOriginal) => ({
     server.retried.push(kind);
     return { files: 1 };
   },
+}));
+
+vi.mock("./library/face-blur", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./library/face-blur")>()),
+  faceBlurOn: () => server.faceBlur,
 }));
 
 vi.mock("./library/api", () => ({
@@ -188,6 +195,7 @@ beforeEach(() => {
   server.trashed = [];
   server.uploaded = [];
   server.readOnly = false;
+  server.faceBlur = false;
   server.gate = undefined;
   server.uploading = undefined;
   server.redone = [];
@@ -965,6 +973,29 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     await settle();
     expect(server.changed).toContainEqual(["rename", "col_m", "Songs"]);
     expect(server.changed.some((c) => (c as unknown[])[0] === "rule")).toBe(false);
+  });
+
+  it("Folder settings turns Blur faces off for a folder only once the person agrees", async () => {
+    localStorage.setItem("library:view", "gallery");
+    server.folders = folders;
+    server.faceBlur = true;
+    let answer = false;
+    window.confirm = () => answer;
+    const host = await mount();
+    const save = async () => {
+      await act(async () => void rightClick(tab(host, "col_m")!));
+      await act(async () => menuItem("Folder settings")!.click());
+      await act(async () => document.querySelector<HTMLElement>('[role="dialog"] [role="checkbox"]')!.click());
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === "Save")!.click());
+      await settle();
+    };
+    await save(); // asked, and said no: nothing sent, the window stays
+    expect(server.changed.some((c) => (c as unknown[])[0] === "blur")).toBe(false);
+    answer = true;
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === "Save")!.click());
+    await settle();
+    expect(server.changed).toContainEqual(["blur", "col_m", "no"]);
+    (window as { confirm?: unknown }).confirm = undefined;
   });
 
   it("a folder's tab menu deletes it at once and Undo brings it back", async () => {
