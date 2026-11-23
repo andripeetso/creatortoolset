@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { canUse, useMe } from "@/lib/auth";
-import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Merge, MoreHorizontal, Palette, Plus, Scissors, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, GripVertical, ImageOff, ImagePlus, Link2, Merge, MoreHorizontal, NotebookPen, Palette, Plus, Scissors, Send, Share2, Star, Trash2, Upload, X, type LucideIcon } from "lucide-react";
+import { ClipShare } from "./library/ClipShare";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -20,7 +21,10 @@ import type { AssetCard, LibrarySummary, Piece, PieceItem } from "@contracts/lib
 import { PLATFORMS } from "@contracts/connectors";
 import { Button } from "@/components/ui/button";
 import {
+  addPieceItem,
   addPosting,
+  getAsset,
+  uploadFile,
   clearPieceCover,
   getPiece,
   getWorkshopFinals,
@@ -96,30 +100,68 @@ function SavedText({
   return multiline ? <textarea rows={5} {...common} className={cn(className, "resize-y")} /> : <input {...common} />;
 }
 
-function PostingForm({ disabled, onAdd }: { disabled: boolean; onAdd: (input: { platform: string; url?: string }) => void }) {
+/** The platform a post link is on, by its address; undefined for any other site. */
+export function platformOfLink(url: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(url.trim()).hostname.replace(/^(www|m)\./, "");
+  } catch {
+    return undefined;
+  }
+  const on = (d: string) => host === d || host.endsWith(`.${d}`);
+  if (on("instagram.com")) return "instagram";
+  if (on("facebook.com") || on("fb.watch")) return "facebook";
+  if (on("youtube.com") || on("youtu.be")) return "youtube";
+  if (on("tiktok.com")) return "tiktok";
+  if (on("x.com") || on("twitter.com")) return "x";
+  return undefined;
+}
+
+/** One row of the post panel: icon, title, its state, its actions; what it opens goes under it. Posts and the
+ *  Content Workshop share it, so the two read alike. */
+function Card({ icon: Icon, title, status, actions, children }: { icon: LucideIcon; title: string; status: string; actions?: ReactNode; children?: ReactNode }) {
+  return (
+    <section aria-label={title} className="rounded-lg border border-zinc-500/25">
+      <div className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+        <Icon className="h-4 w-4 shrink-0 text-zinc-500" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm">{title}</span>
+          <span className="block truncate text-xs text-zinc-500">{status}</span>
+        </span>
+        {actions}
+      </div>
+      {children && <div className="flex flex-col gap-2 border-t border-zinc-500/15 px-3 py-2.5">{children}</div>}
+    </section>
+  );
+}
+
+/** A post link: pasted, its platform picked from the address (changeable for a short link). */
+function PostingForm({ onAdd, onCancel }: { onAdd: (input: { platform: string; url?: string }) => void; onCancel: () => void }) {
   const [platform, setPlatform] = useState<string>(PLATFORMS[0].id);
   const [url, setUrl] = useState("");
-  const [open, setOpen] = useState(false);
-  if (!open)
-    return (
-      <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setOpen(true)}>
-        <Plus className="h-4 w-4" /> Add posting
-      </Button>
-    );
   return (
     <form
-      className="flex w-full flex-wrap gap-2"
+      className="flex flex-wrap gap-2"
       onSubmit={(e) => {
         e.preventDefault();
         onAdd({ platform, url: url.trim() || undefined });
-        setUrl("");
-        setOpen(false);
       }}
     >
+      <input
+        aria-label="Post link"
+        autoFocus
+        type="url"
+        value={url}
+        onChange={(e) => {
+          setUrl(e.target.value);
+          const found = platformOfLink(e.target.value);
+          if (found) setPlatform(found);
+        }}
+        className="min-w-0 flex-1 basis-48 rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm outline-none focus:border-violet-500"
+      />
       <select
         aria-label="Platform"
         value={platform}
-        disabled={disabled}
         onChange={(e) => setPlatform(e.target.value)}
         className="rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
       >
@@ -129,18 +171,10 @@ function PostingForm({ disabled, onAdd }: { disabled: boolean; onAdd: (input: { 
           </option>
         ))}
       </select>
-      <input
-        aria-label="Post link"
-        placeholder="Link (optional)"
-        value={url}
-        disabled={disabled}
-        onChange={(e) => setUrl(e.target.value)}
-        className="min-w-0 flex-1 rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
-      />
-      <Button type="submit" size="sm" variant="outline" disabled={disabled}>
-        Add posting
+      <Button type="submit" size="sm" variant="outline">
+        Add
       </Button>
-      <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+      <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
         Cancel
       </Button>
     </form>
@@ -189,6 +223,10 @@ export function PieceEditor({
   const [error, setError] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [pickId, setPickId] = useState<string | null>(null);
+  const [posting, setPosting] = useState(false); // the post link form is open
+  const [upload, setUpload] = useState<{ name: string; pct: number } | null>(null);
+  const [sharing, setSharing] = useState<{ kind: "piece" | "version"; id: string; title: string } | null>(null);
+  const files = useRef<HTMLInputElement>(null);
   const player = useRef<HTMLVideoElement>(null);
   const locked = busy || readOnly;
   const byVersion = new Map(cards.filter((c) => c.versionId).map((c) => [c.versionId, c]));
@@ -285,13 +323,48 @@ export function PieceEditor({
     }
   };
 
+  // New versions from files: each into the library (the piece's collection, Finals), then into the piece, last; the
+  // last one added is shown
+  const addFiles = async (picked: File[]) => {
+    if (locked || !picked.length) return;
+    setBusy(true);
+    setError(null);
+    try {
+      let next: Piece | undefined;
+      for (const f of picked) {
+        setUpload({ name: f.name, pct: 0 });
+        const up = await uploadFile(libraryId, f, (sent) => setUpload({ name: f.name, pct: f.size ? Math.min(100, Math.round((sent / f.size) * 100)) : 0 }), piece.collectionId ?? undefined);
+        const assetId = up.assetId ?? up.duplicateOf;
+        if (!assetId) throw new Error(`Could not upload ${f.name}`);
+        next = await addPieceItem(libraryId, piece.id, (await getAsset(libraryId, assetId)).versionId);
+      }
+      if (next) {
+        onPiece(next);
+        setPickId(next.items[next.items.length - 1]?.id ?? null);
+      }
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setUpload(null);
+      setBusy(false);
+    }
+  };
+
   const versionName = (item: PieceItem, n: number) => item.label ?? (item.versionId && byVersion.get(item.versionId)?.title) ?? `Version ${n + 1}`;
   const posted = piece.items.some((i) => i.postings.length > 0);
   const many = piece.items.length > 1;
   const selIndex = pick ? piece.items.indexOf(pick) : -1;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onDragOver={(e) => e.dataTransfer.types.includes("Files") && e.preventDefault()}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        void addFiles([...e.dataTransfer.files]);
+      }}
+    >
       <header className="flex items-start gap-2 border-b border-zinc-500/25 py-3 pl-4 pr-12 sm:pl-5">
         <div className="min-w-0 flex-1">
           <SavedText
@@ -313,6 +386,9 @@ export function PieceEditor({
             </a>
           </Button>
         )}
+        <Button variant="outline" size="sm" disabled={readOnly} onClick={() => setSharing({ kind: "piece", id: piece.id, title: piece.label })}>
+          <Share2 className="h-4 w-4" /> Share
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" aria-label="Piece menu" disabled={locked}>
@@ -413,7 +489,26 @@ export function PieceEditor({
           {error && <p className="text-sm text-red-500">{error}</p>}
           {readOnly && <p className="text-sm text-zinc-500">Read only: some versions in this piece are not visible to this account.</p>}
 
-          {piece.items.length === 0 && <p className="text-sm text-zinc-500">No versions</p>}
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">
+              {upload ? `Uploading ${upload.name} · ${upload.pct}%` : piece.items.length === 0 ? "No versions" : many ? "Versions" : ""}
+            </span>
+            <input
+              ref={files}
+              type="file"
+              multiple
+              accept="video/*,image/*"
+              hidden
+              disabled={locked}
+              onChange={(e) => {
+                void addFiles([...(e.target.files ?? [])]);
+                e.target.value = "";
+              }}
+            />
+            <Button size="sm" variant="ghost" disabled={locked} onClick={() => files.current?.click()}>
+              <Upload className="h-4 w-4" /> Add version
+            </Button>
+          </div>
           {many && (
             <ol aria-label="Versions" className="flex flex-col gap-1">
               {piece.items.map((item, i) => {
@@ -494,6 +589,11 @@ export function PieceEditor({
                         <DropdownMenuItem disabled={i === piece.items.length - 1} onSelect={() => moveTo(i, i + 1)}>
                           <ArrowDown className="h-4 w-4" /> Move down
                         </DropdownMenuItem>
+                        {item.versionId && (
+                          <DropdownMenuItem onSelect={() => setSharing({ kind: "version", id: item.versionId!, title: name })}>
+                            <Share2 className="h-4 w-4" /> Share version
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem onSelect={() => void split(item)}>
                           <Scissors className="h-4 w-4" /> Make its own piece
                         </DropdownMenuItem>
@@ -533,39 +633,72 @@ export function PieceEditor({
                   onSave={(text) => void run([itemCall(pick, { postDescription: text.trim() })])}
                 />
               </label>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs text-zinc-500">Posted</span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {pick.postings.map((p) => (
-                    <span key={p.id} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-zinc-500/30 py-0.5 pl-2.5 pr-1 text-xs">
-                      {p.url ? (
-                        <a href={p.url} target="_blank" rel="noreferrer" className="truncate hover:underline">
-                          {platformLabel(p.platform)}
-                        </a>
-                      ) : (
-                        <span>{platformLabel(p.platform)}</span>
-                      )}
-                      <span className="text-zinc-500">{new Date(p.postedAt).toLocaleDateString()}</span>
-                      <button
-                        type="button"
-                        aria-label={`Remove posting on ${platformLabel(p.platform)}`}
-                        disabled={locked}
-                        onClick={() => void run([() => removePosting(libraryId, piece.id, pick.id, p.id)])}
-                        className="rounded-full p-0.5 text-zinc-500 hover:text-zinc-200"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <PostingForm disabled={locked} onAdd={(input) => void run([() => addPosting(libraryId, piece.id, pick.id, input)])} />
-                </div>
-              </div>
+              <Card
+                icon={Send}
+                title="Posts"
+                status={pick.postings.length ? `Posted on ${[...new Set(pick.postings.map((p) => platformLabel(p.platform)))].join(", ")}` : "Not posted"}
+                actions={
+                  !posting && (
+                    <Button size="sm" variant="outline" disabled={locked} onClick={() => setPosting(true)}>
+                      <Link2 className="h-4 w-4" /> Add link
+                    </Button>
+                  )
+                }
+              >
+                {(pick.postings.length > 0 || posting) && (
+                  <>
+                    {pick.postings.map((p) => (
+                      <div key={p.id} className="flex items-center gap-2 text-sm">
+                        <span className="shrink-0">{platformLabel(p.platform)}</span>
+                        {p.url ? (
+                          <a href={p.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-zinc-400 hover:text-zinc-200 hover:underline">
+                            {p.url.replace(/^https?:\/\/(www\.)?/, "")}
+                          </a>
+                        ) : (
+                          <span className="flex-1" />
+                        )}
+                        <span className="shrink-0 text-xs text-zinc-500">{new Date(p.postedAt).toLocaleDateString()}</span>
+                        <button
+                          type="button"
+                          aria-label={`Remove posting on ${platformLabel(p.platform)}`}
+                          disabled={locked}
+                          onClick={() => void run([() => removePosting(libraryId, piece.id, pick.id, p.id)])}
+                          className="shrink-0 rounded p-1 text-zinc-500 hover:text-zinc-200"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    {posting && (
+                      <PostingForm
+                        onCancel={() => setPosting(false)}
+                        onAdd={(input) => {
+                          setPosting(false);
+                          void run([() => addPosting(libraryId, piece.id, pick.id, input)]);
+                        }}
+                      />
+                    )}
+                  </>
+                )}
+              </Card>
             </section>
           )}
 
           <WorkshopLink piece={piece} disabled={locked} onOpenSession={onOpenSession} linked={linked} />
         </div>
       </div>
+      {sharing && (
+        <ClipShare
+          libraryId={libraryId}
+          assetId=""
+          versionId=""
+          target={{ kind: sharing.kind, id: sharing.id }}
+          href={`/finals/${piece.id}`}
+          title={sharing.title}
+          open
+          onOpenChange={(o) => !o && setSharing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -620,42 +753,69 @@ function WorkshopLink({
     }
   };
 
+  const [choosing, setChoosing] = useState(false);
   return (
-    <section aria-label="Content Workshop project" className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-500/25 px-3 py-2.5">
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm">Content Workshop</span>
-        <span className="block text-xs text-zinc-500">{linked ? (linked.status === "toPost" ? "Ready to post" : "Linked") : (note ?? "Not linked")}</span>
-      </span>
-      {linked ? (
-        <Button asChild size="sm" variant="outline">
-          <Link to={sessionPath(linked.sessionId)}>Open project</Link>
-        </Button>
-      ) : (
+    <Card
+      icon={NotebookPen}
+      title="Content Workshop"
+      status={linked ? (linked.status === "toPost" ? "Ready to post" : "Linked") : (note ?? "Not linked")}
+      actions={
+        linked ? (
+          <Button asChild size="sm" variant="outline">
+            <Link to={sessionPath(linked.sessionId)}>Open project</Link>
+          </Button>
+        ) : (
+          !choosing && (
+            <>
+              <Button size="sm" variant="outline" disabled={disabled} onClick={() => setChoosing(true)}>
+                <Link2 className="h-4 w-4" /> Link project
+              </Button>
+              <Button size="sm" variant="ghost" disabled={disabled} onClick={() => void startNew()}>
+                <Plus className="h-4 w-4" /> New project
+              </Button>
+            </>
+          )
+        )
+      }
+    >
+      {(choosing && !linked) || error ? (
         <>
-          <select
-            aria-label="Project to link"
-            value={pick}
-            disabled={disabled || !sessions?.length}
-            onChange={(e) => setPick(e.target.value)}
-            className="min-w-0 max-w-full rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm sm:max-w-56"
-          >
-            <option value="">{sessions ? (sessions.length ? "Choose a project" : "No projects") : "Loading projects"}</option>
-            {(sessions ?? []).map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title}
-              </option>
-            ))}
-          </select>
-          <Button size="sm" variant="outline" disabled={disabled || !pick} onClick={() => void link(pick)}>
-            Link project
-          </Button>
-          <Button size="sm" variant="ghost" disabled={disabled} onClick={() => void startNew()}>
-            New project
-          </Button>
+          {choosing && !linked && (
+            <form
+              className="flex flex-wrap gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (pick) void link(pick).then(() => setChoosing(false));
+              }}
+            >
+              <select
+                aria-label="Project to link"
+                autoFocus
+                required
+                value={pick}
+                disabled={disabled || !sessions?.length}
+                onChange={(e) => setPick(e.target.value)}
+                className="min-w-0 flex-1 basis-48 rounded-md border border-zinc-500/30 bg-transparent px-2 py-1 text-sm"
+              >
+                <option value="">{sessions ? (sessions.length ? "Choose a project" : "No projects") : "Loading projects"}</option>
+                {(sessions ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title}
+                  </option>
+                ))}
+              </select>
+              <Button type="submit" size="sm" variant="outline" disabled={disabled}>
+                Link
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setChoosing(false)}>
+                Cancel
+              </Button>
+            </form>
+          )}
+          {error && <p className="text-sm text-red-500">{error}</p>}
         </>
-      )}
-      {error && <p className="w-full text-sm text-red-500">{error}</p>}
-    </section>
+      ) : null}
+    </Card>
   );
 }
 

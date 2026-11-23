@@ -572,6 +572,9 @@ export const splitPieceItem = (libraryId: string, pieceId: string, itemId: strin
 export const linkPieceToSession = (sessionId: string, pieceId: string, docId?: string) =>
   send<{ linked: true }>(`/api/workshop/sessions/${sessionId}/finals`, "POST", docId ? { pieceId, docId } : { pieceId });
 
+/** Adds a library version to the piece, last (POST …/pieces/:pid/items); the piece as the server holds it. */
+export const addPieceItem = (libraryId: string, pieceId: string, versionId: string) => send<Piece>(`${pieceUrl(libraryId, pieceId)}/items`, "POST", { versionId });
+
 /** Takes the version out of the piece; the version itself stays in the library. */
 export const removePieceItem = (libraryId: string, pieceId: string, itemId: string) => send<Piece>(itemUrl(libraryId, pieceId, itemId), "DELETE");
 

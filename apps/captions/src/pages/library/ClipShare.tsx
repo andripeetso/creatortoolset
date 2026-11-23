@@ -31,20 +31,21 @@ async function call<T>(url: string, method = "GET", body?: unknown): Promise<T> 
 }
 
 type Link = { row: ShareRow; url: string };
+type Target = ShareRow["target"];
 
 // one link in the making per clip: a second open while the first is on its way gets the same one
 const making = new Map<string, Promise<Link>>();
-function newLink(libraryId: string, assetId: string): Promise<Link> {
-  let p = making.get(assetId);
+function newLink(libraryId: string, target: Target): Promise<Link> {
+  let p = making.get(target.id);
   if (!p) {
-    p = createShare(libraryId, { target: { kind: "asset", id: assetId }, scope: "view", expiresInDays: 7 })
+    p = createShare(libraryId, { target, scope: "view", expiresInDays: 7 })
       .then((s) => {
         const url = `${location.origin}${s.url}`;
         rememberLink(s.id, url);
-        return { url, row: { id: s.id, target: { kind: "asset", id: assetId }, scope: "view", locked: false, createdBy: "", expiresAt: s.expiresAt, views: 0 } as ShareRow };
+        return { url, row: { id: s.id, target, scope: "view", locked: false, createdBy: "", expiresAt: s.expiresAt, views: 0 } as ShareRow };
       })
-      .finally(() => making.delete(assetId));
-    making.set(assetId, p);
+      .finally(() => making.delete(target.id));
+    making.set(target.id, p);
   }
   return p;
 }
@@ -59,10 +60,15 @@ export function ClipShare({
   title,
   open,
   onOpenChange,
+  target,
+  href,
 }: {
   libraryId: string;
   assetId: string;
   versionId: string;
+  /** Something other than a clip (a Finals piece, one version of it): what the link opens, and its page in the app. */
+  target?: Target;
+  href?: string;
   title: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -71,7 +77,8 @@ export function ClipShare({
   const [loaded, setLoaded] = useState(false);
   const [turning, setTurning] = useState(false);
   const libs = useCachedLoad<LibrarySummary[]>("/api/library", listLibraries).data;
-  const appUrl = `${location.origin}${clipHref(libs?.[0]?.id === libraryId ? null : libraryId, assetId)}`;
+  const appUrl = `${location.origin}${href ?? clipHref(libs?.[0]?.id === libraryId ? null : libraryId, assetId)}`;
+  const own: Target = target ?? { kind: "asset", id: assetId };
   const [others, setOthers] = useState<ShareRow[]>([]);
   const [lock, setLock] = useState(false); // the password row is on (its field shows)
   const [password, setPassword] = useState("");
@@ -82,7 +89,8 @@ export function ClipShare({
     if (!open) return;
     let live = true;
     (async () => {
-      const all = linksOf((await call<{ shares: ShareRow[] }>(`/api/library/${libraryId}/shares`)).shares, assetId, versionId);
+      const shares = (await call<{ shares: ShareRow[] }>(`/api/library/${libraryId}/shares`)).shares;
+      const all = target ? shares.filter((s) => s.target.kind === target.kind && s.target.id === target.id) : linksOf(shares, assetId, versionId);
       const known = all.find((s) => knownLink(s.id)); // newest first: the list is by expiry
       const current = known ? { row: known, url: knownLink(known.id)! } : null;
       if (!live) return;
@@ -94,7 +102,7 @@ export function ClipShare({
       setLoaded(true);
     })().catch((e) => live && setFailed(message(e)));
     return () => void (live = false);
-  }, [open, libraryId, assetId, versionId]);
+  }, [open, libraryId, assetId, versionId, target?.kind, target?.id]);
 
   const change = (patch: { scope?: "view" | "download"; expiresInDays?: number; password?: string | null }) => {
     if (!link) return;
@@ -121,7 +129,7 @@ export function ClipShare({
     setTurning(true);
     const id = link?.row.id;
     // a stop that failed leaves the switch on: the link still works
-    (on ? newLink(libraryId, assetId).then((l) => setLink(l)) : id ? call(`/api/library/shares/${id}`, "DELETE").then(() => setLink(null)) : Promise.resolve())
+    (on ? newLink(libraryId, own).then((l) => setLink(l)) : id ? call(`/api/library/shares/${id}`, "DELETE").then(() => setLink(null)) : Promise.resolve())
       .then(() => {
         setLock(false);
         setPassword("");
@@ -218,7 +226,7 @@ export function ClipShare({
 
         {others.length > 0 && (
           <section aria-label="Other links" className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-zinc-500">Other links to this clip</span>
+            <span className="text-xs font-medium text-zinc-500">Other links</span>
             {others.map((s) => {
               const url = knownLink(s.id);
               return (

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AssetCard, Piece, PieceItem } from "@contracts/library";
-import { PieceEditor } from "./FinalsPiece";
+import { PieceEditor, platformOfLink } from "./FinalsPiece";
 
 const card = (versionId: string, title: string, o: Partial<AssetCard> = {}): AssetCard => ({
   id: `ast_${versionId}`,
@@ -104,7 +104,28 @@ describe("FinalsPiece editor", () => {
     expect(html).toContain("Tiny post text");
   });
 
+  it("offers a new version from a file, a share link, and the post link in a row like the Content Workshop's", () => {
+    const html = render(piece);
+    expect(html).toContain("Add version");
+    expect(html).toContain("Share");
+    expect(html).toContain('aria-label="Posts"');
+    expect(html).toContain('aria-label="Content Workshop"');
+    expect(html).toContain("Posted on Instagram");
+  });
+
   it("offers no raw footage to add: a piece's versions come from Review, exports and the Content Workshop", () => {
     expect(render(piece)).not.toContain("Tiny take C");
+  });
+});
+
+describe("platformOfLink", () => {
+  it("names the platform a post link is on, and nothing for another site", () => {
+    expect(platformOfLink("https://www.instagram.com/reel/abc/")).toBe("instagram");
+    expect(platformOfLink("https://youtu.be/abc")).toBe("youtube");
+    expect(platformOfLink("https://m.facebook.com/tinyacrobatics/videos/1")).toBe("facebook");
+    expect(platformOfLink("https://www.tiktok.com/@tinyacrobatics/video/1")).toBe("tiktok");
+    expect(platformOfLink("https://twitter.com/tinyacrobatics/status/1")).toBe("x");
+    expect(platformOfLink("https://notinstagram.com/p/1")).toBeUndefined();
+    expect(platformOfLink("not a link")).toBeUndefined();
   });
 });
