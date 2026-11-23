@@ -128,7 +128,14 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
             held = Held(version: item.displayVersionString, critical: item.isCriticalUpdate || needed, since: Date())
             if chainsUpdate(relaunchedAt: UserDefaults.standard.object(forKey: Self.relaunchKey) as? Date, launched: launched, now: Date()) {
                 UserDefaults.standard.removeObject(forKey: Self.relaunchKey)
-                installNow()
+                held?.waiting = true
+                // no question, also for nobody at the Mac after a quiet one: it installs once nothing would be cut off
+                whenIdle(every: 5, inBackground: false) { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.quiet = true
+                        self?.installHeld()
+                    }
+                }
             }
         }
         whenIdle(every: 60, inBackground: true) { [weak self] in

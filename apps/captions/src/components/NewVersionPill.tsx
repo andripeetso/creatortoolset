@@ -60,7 +60,7 @@ export function UpdateButton() {
     if (!import.meta.env.PROD) return;
     const mine = document.querySelector<HTMLScriptElement>('script[type="module"][src]')?.src.split("/").pop();
     let last = 0;
-    let told = false;
+    let told = "";
     const check = () => {
       if (Date.now() - last < 60_000) return;
       last = Date.now();
@@ -70,8 +70,8 @@ export function UpdateButton() {
           const live = entryOf(html);
           if (!live || live === mine) return;
           // a release often follows the server's new pages: the Mac app looks now, so one restart brings both
-          if (!told) tellMac("update-check");
-          told = true;
+          if (live !== told) tellMac("update-check");
+          told = live;
           setReady(true);
         })
         .catch(() => {});
