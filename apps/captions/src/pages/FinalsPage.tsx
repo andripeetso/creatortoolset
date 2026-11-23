@@ -291,9 +291,13 @@ export default function FinalsPage() {
     listTrashedPieces(libId!, finals!.id),
   );
   const trashed = trash.data ?? [];
-  const error = failed ?? ((libraries ? null : libs.error) || (finals === undefined && collections.error) || (!shown.data && shown.error) || null);
+  // a facet change reads a new list: the last one of this Finals stays up meanwhile (never another workspace's)
+  const [last, setLast] = useState<{ id: string; lists: FinalsLists } | null>(null);
+  if (finals && shown.data && last?.lists !== shown.data) setLast({ id: finals.id, lists: shown.data });
+  const lists = shown.data ?? (last && last.id === finals?.id ? last.lists : undefined);
   // the pieces not read yet: the frame, never "No pieces" and zero counts
-  const reading = !!finals && !trashView && !shown.data;
+  const reading = !!finals && !trashView && !lists;
+  const error = failed ?? ((libraries ? null : libs.error) || (finals === undefined && collections.error) || (!lists && shown.error) || null);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -323,7 +327,7 @@ export default function FinalsPage() {
                 }
               />
             ) : (
-              <FinalsView hasFinals={!!finals} pieces={shown.data?.pieces ?? []} cards={shown.data?.cards ?? []} picked={picked} onFacets={setPicked} workshop={shown.data?.workshop ?? {}} />
+              <FinalsView hasFinals={!!finals} pieces={lists?.pieces ?? []} cards={lists?.cards ?? []} picked={picked} onFacets={setPicked} workshop={lists?.workshop ?? {}} />
             )}
           </>
         )}

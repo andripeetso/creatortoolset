@@ -9,7 +9,6 @@ import { PLATFORMS } from "@contracts/connectors";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
 import {
-  addPieceItem,
   addPosting,
   clearPieceCover,
   getPiece,
@@ -17,7 +16,6 @@ import {
   isFinals,
   linkPieceToSession,
   cardsOfVersions,
-  listAllAssets,
   listCollections,
   listLibraries,
   listPieces,
@@ -165,12 +163,10 @@ export function PieceEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
-  const [adding, setAdding] = useState("");
   const [pickId, setPickId] = useState<string | null>(null);
   const player = useRef<HTMLVideoElement>(null);
   const locked = busy || readOnly;
   const byVersion = new Map(cards.filter((c) => c.versionId).map((c) => [c.versionId, c]));
-  const available = cards.filter((c) => !c.trashedAt && !piece.items.some((i) => i.versionId === c.versionId));
   const kind = finalsTiles([piece], cards, false)[0]?.kind ?? "other";
   const cover = piece.items.find((i) => i.winner) ?? piece.items[0];
   // the version the cover is taken from: the one picked in the cover section, else the winner
@@ -506,34 +502,6 @@ export function PieceEditor({
         })}
       </ol>
 
-      <form
-        className="flex flex-wrap items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!adding) return;
-          void run([() => addPieceItem(libraryId, piece.id, adding)]);
-          setAdding("");
-        }}
-      >
-        <select
-          aria-label="Version to add"
-          value={adding}
-          disabled={locked || available.length === 0}
-          onChange={(e) => setAdding(e.target.value)}
-          className="min-w-0 max-w-full flex-1 rounded-md border border-zinc-500/30 bg-transparent px-2 py-1.5 text-sm sm:max-w-md"
-        >
-          <option value="">{available.length ? "Add a version from the Media Library" : "Every version in the Media Library is in this piece"}</option>
-          {available.map((c) => (
-            <option key={c.id} value={c.versionId}>
-              {c.title} · v{c.versionN}
-            </option>
-          ))}
-        </select>
-        <Button type="submit" size="sm" variant="outline" disabled={locked || !adding}>
-          Add to piece
-        </Button>
-      </form>
-
       <WorkshopLink piece={piece} disabled={locked} onOpenSession={onOpenSession} linked={linked} />
     </div>
   );
@@ -651,8 +619,7 @@ async function loadPieceView(pieceId: string): Promise<PieceView> {
 
 /**
  * /finals/:pieceId: the piece in whichever library the account can read (the first that answers, with its Finals or not).
- * A piece's cards are its own versions' (thumbnails, kind), and the library's footage for the add-a-version picker, read
- * after the piece is on screen. Reads again when the library changes (a merge or a trash elsewhere, a version added from Review).
+ * A piece's cards are its own versions' (thumbnails, kind). Reads again when the library changes (a merge or a trash elsewhere, a version added from Review).
  */
 export default function FinalsPiecePage() {
   const { pieceId = "" } = useParams();
@@ -670,10 +637,6 @@ export default function FinalsPiecePage() {
 
   const library = found?.library ?? null;
   const piece = found?.piece;
-  // the add-a-version picker's footage: read after the piece is on screen, never in its way (the piece's own versions are
-  // finished clips, which the library's list leaves out, so the two lists don't overlap)
-  const footage = useCachedLoad<AssetCard[]>(library ? `/api/library/${library.id}/assets?for=finals-picker` : null, () => listAllAssets(library!.id));
-  const shownCards = footage.data ? [...cards, ...footage.data.filter((c) => !cards.some((p) => p.versionId === c.versionId))] : cards;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -691,7 +654,7 @@ export default function FinalsPiecePage() {
             key={piece.id}
             libraryId={library.id}
             piece={piece}
-            cards={shownCards}
+            cards={cards}
             others={others}
             readOnly={!piece.writable}
             onPiece={(next) => setFound({ library, piece: { ...next, writable: piece.writable } })}

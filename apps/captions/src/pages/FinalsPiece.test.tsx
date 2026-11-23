@@ -96,10 +96,7 @@ describe("FinalsPiece editor", () => {
     expect(render({ ...piece, items: [] })).not.toContain("Download all as ZIP");
   });
 
-  it("offers only the library's versions that are not in the piece yet", () => {
-    const html = render(piece);
-    expect(html).toContain("Tiny take C");
-    expect(html).not.toContain("<option value=\"v-a\"");
-    expect(html).not.toContain("<option value=\"v-b\"");
+  it("offers no raw footage to add: a piece's versions come from Review, exports and the Content Workshop", () => {
+    expect(render(piece)).not.toContain("Tiny take C");
   });
 });

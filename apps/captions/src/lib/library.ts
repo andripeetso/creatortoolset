@@ -539,10 +539,6 @@ export const setPieceCover = (libraryId: string, pieceId: string, versionId: str
 /** Back to the automatic cover: the winner's frame. */
 export const clearPieceCover = (libraryId: string, pieceId: string) => send<Piece>(`${pieceUrl(libraryId, pieceId)}/cover`, "DELETE");
 
-/** A version of this library (not trashed) becomes the piece's last item. */
-export const addPieceItem = (libraryId: string, pieceId: string, versionId: string) =>
-  send<Piece>(`${pieceUrl(libraryId, pieceId)}/items`, "POST", { versionId });
-
 /** The item's label, its position, the winner flag (setting it clears the old winner) and its post description ("" removes it). */
 export const patchPieceItem = (
   libraryId: string,
