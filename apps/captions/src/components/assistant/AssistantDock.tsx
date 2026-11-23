@@ -61,8 +61,8 @@ import { FeedbackBar, FeedbackSlot } from "./FeedbackBar";
 import { useFeedback } from "@/lib/review-feedback";
 import { ActionCard } from "./ActionCard";
 import { ConfirmCards } from "./ConfirmCards";
-import { NoticeLine, WelcomeLine, WelcomePill, useWelcome } from "./Welcome";
-import { openSetupAt, setupFinished, useSetup, useWorkTalk } from "@/lib/setup";
+import { NoticeLine, WelcomeLine, WelcomePill, WelcomeSteps, useWelcome } from "./Welcome";
+import { openSetupAt, setupFinished, setupLeft, useSetup, useWorkTalk } from "@/lib/setup";
 
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
@@ -178,10 +178,12 @@ export function AssistantDock() {
   const { talk } = useWorkTalk();
   const setup = useSetup((s) => s.view);
   const connected = !!view && view.provider !== "none";
+  const left = setup ? setupLeft(setup) : [];
   const welcome = useWelcome({
     open: !collapsed || chatMode,
     eligible: !!view && !!setup && talk !== "chat" && setupFinished(setup) && view.messages.length === 0,
     connected,
+    left: left.length > 0,
     user: me?.username ?? "",
   });
   // the suggestions under an empty chat arrive one at a time, once the welcome has finished writing
@@ -991,7 +993,10 @@ export function AssistantDock() {
             {/* the welcome writes at the bottom, right above the message box. The suggestions come after it has finished,
                 one after another, and each grows in under it, so the line is pushed up a step at a time (owner, 2026-11-10) */}
             {welcome.showing ? (
-              <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
+              <>
+                <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
+                {welcome.stage === "ready" && left.length > 0 && <WelcomeSteps steps={left} />}
+              </>
             ) : (
               centred && (
                 // the new-chat screen: the question, what this chat is to work on (something new, or a thing in the

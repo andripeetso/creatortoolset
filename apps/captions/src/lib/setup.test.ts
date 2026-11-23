@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
-  setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
+  setupGaps, setupLeft, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
@@ -25,10 +25,31 @@ describe("setup steps", () => {
     expect(stepsFor("both", false)).not.toContain("account");
   });
 
+  it("puts the folders and the social accounts on the path after What do you make?, only when a tool picked needs them", () => {
+    expect(stepsFor("app", false, ["media"])).toEqual(["theme", "agents", "make", "folders", "job", "how"]);
+    expect(stepsFor("app", false, ["editor", "instagram"])).toEqual(["theme", "agents", "make", "folders", "social", "job", "how"]);
+    expect(stepsFor("both", true, ["instagram"])).toEqual(["theme", "agents", "make", "social", "job", "how", "own", "account"]);
+    expect(stepsFor("app", false, ["captions", "workshop"])).toEqual(SETUP_PATH);
+  });
+
   it("opens the two new screens from a link, and no old id lands on them", () => {
     expect(setupStepFromParam("theme")).toBe("theme");
     expect(setupStepFromParam("job")).toBe("job");
     for (const old of ["tools", "ai", "project", "left", "done", "try"]) expect(["theme", "job"]).not.toContain(setupStepFromParam(old));
+  });
+
+  it("lists what the tools turned on still need, and a button per screen with something left, the checklist last", () => {
+    const view = { tools: ["media", "instagram", "notes"] as Tool[], have: ["project", "ai"] as const };
+    expect(setupGaps({ ...view, have: [...view.have] }).map((n) => n.form)).toEqual(["library", "apify", "keys"]);
+    expect(setupLeft({ ...view, have: [...view.have] })).toEqual([
+      { step: "folders", label: "Set up the Media Library" },
+      { step: "social", label: "Connect social accounts" },
+      { step: "check", label: "Add API keys" },
+    ]);
+    // the Content Analyzer reads with the Apify key, and still asks for the sign-in that reads the account's own numbers
+    expect(setupLeft({ tools: ["instagram"], have: ["project", "apify"] }).map((s) => s.step)).toEqual(["social", "check"]);
+    expect(setupLeft({ tools: ["instagram"], have: ["project", "instagram"] })).toEqual([]);
+    expect(setupLeft({ tools: null, have: [] })).toEqual([]);
   });
 
   it("keeps Connect, Folders and the AI apps screen as screens a link can open alone", () => {

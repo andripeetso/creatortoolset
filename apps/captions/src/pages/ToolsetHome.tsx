@@ -18,7 +18,7 @@ import { accentFor, accentTones, currentProject, projectColor, useWorkspace } fr
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { needsLine, onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
-import { DOWNLOAD_URL, introPlays, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, shareDownload, startIntro, stillMotion, useSetup, useSetupShown } from "@/lib/setup";
+import { DOWNLOAD_URL, introPlays, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, setupGaps, shareDownload, startIntro, stillMotion, useSetup, useSetupShown } from "@/lib/setup";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -264,6 +264,20 @@ export default function ToolsetHome() {
           >
             <span>
               <span className="block text-sm text-zinc-100">Finish setup</span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
+          </button>
+        )}
+        {/* the way back to whatever was skipped: setup is finished, and a tool turned on still needs something */}
+        {view && setupFinished(view) && !phone && !setupUp && setupGaps(view).length > 0 && (!beat || beat === "all") && (
+          <button
+            type="button"
+            onClick={() => openSetupAt("check", true)}
+            className="intro-late flex items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3 text-left"
+          >
+            <span>
+              <span className="block text-sm text-zinc-100">Setup checklist</span>
+              <span className="block text-xs text-zinc-400">{needsLine(setupGaps(view))}</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
           </button>

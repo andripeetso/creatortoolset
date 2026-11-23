@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AssistantNotice } from "@/lib/assistant";
 import type { Corner } from "@/lib/dock-place";
+import { openSetupAt, type SetupStep } from "@/lib/setup";
 import { cn } from "@/lib/utils";
 
 /**
@@ -9,6 +10,9 @@ import { cn } from "@/lib/utils";
  */
 
 export const WELCOME_CONNECTED = "Hey, I'm your assistant. If you ever need anything, I'm here. Send me a message, drop a video, whatever.";
+/** The hello when a tool turned on still needs something (lib/setup.ts setupLeft): its buttons follow it (WelcomeSteps). */
+export const WELCOME_LEFT =
+  "Hey, I'm your assistant. You're set up, but a few things are still missing to get the most out of the app. Pick one when you're ready, or send me a message.";
 export const WELCOME_NOT_CONNECTED = "Hey, I'm your assistant. I can't help yet, because I need your AI connected first. It only takes a moment.";
 export const PILL_TEXT = "I'm here if you need me";
 /** Typing speed of the welcome, per character (ms). */
@@ -61,7 +65,7 @@ function setFlag(key: string): void {
  * The welcome as the dock shows it: typed out one character at a time, and where the session stands. `shown` is what
  * is typed so far; `pillDue` says the pill should appear now (it is cleared by pillDone, or when the dock opens).
  */
-export function useWelcome({ open, eligible, connected, user }: { open: boolean; eligible: boolean; connected: boolean; user: string }) {
+export function useWelcome({ open, eligible, connected, left, user }: { open: boolean; eligible: boolean; connected: boolean; left: boolean; user: string }) {
   const [stage, setStage] = useState<WelcomeStage>("idle");
   const stageRef = useRef<WelcomeStage>("idle");
   const [full, setFull] = useState("");
@@ -80,10 +84,10 @@ export function useWelcome({ open, eligible, connected, user }: { open: boolean;
   useEffect(() => {
     if (!open || !eligible || stageRef.current !== "idle" || flag(WELCOMED(user))) return;
     setFlag(WELCOMED(user));
-    setFull(connected ? WELCOME_CONNECTED : WELCOME_NOT_CONNECTED);
+    setFull(!connected ? WELCOME_NOT_CONNECTED : left ? WELCOME_LEFT : WELCOME_CONNECTED);
     setN(0);
     move("start");
-  }, [open, eligible, connected, user, move]);
+  }, [open, eligible, connected, left, user, move]);
 
   const typing = stage === "typing";
   useEffect(() => {
@@ -123,6 +127,21 @@ export function WelcomeLine({ text, typing }: { text: string; typing: boolean })
   );
 }
 
+/** The buttons under the hello after setup: each opens the one setup screen (`?setup=…&alone=1`) with something left. */
+export function WelcomeSteps({ steps }: { steps: readonly { step: SetupStep; label: string }[] }) {
+  return (
+    <div className="flex flex-wrap gap-2 pt-2 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+      {steps.map((s) => (
+        <button key={s.step} type="button" onClick={() => openSetupAt(s.step, true)} className={CHIP}>
+          {s.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const CHIP = "rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]";
+
 /** A notice a tool put in the chat: its text, and a chip that sends its words when clicked (only when an AI answers). */
 export function NoticeLine({ notice, onChip }: { notice: AssistantNotice; onChip?: (send: string) => void }) {
   const chip = notice.chip;
@@ -133,7 +152,7 @@ export function NoticeLine({ notice, onChip }: { notice: AssistantNotice; onChip
         <button
           type="button"
           onClick={() => onChip(chip.send)}
-          className="rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:border-[color-mix(in_srgb,var(--tint)_50%,transparent)] hover:text-[var(--tint)]"
+          className={CHIP}
         >
           {chip.label}
         </button>

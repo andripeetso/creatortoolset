@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
+import { LIBRARY_SETUP_DONE } from "@contracts/library";
 import {
   AtSign,
   CircleEllipsis,
@@ -34,6 +35,7 @@ import { getProviders } from "@/lib/providers";
 import { HowPicker, PictureCard } from "@/components/setup/HowPicker";
 import { LookArt } from "@/components/setup/HowArt";
 import { JobStep } from "@/components/setup/JobStep";
+import { SetupChecklist } from "@/components/setup/SetupChecklist";
 import { SocialStep } from "@/components/setup/SocialStep";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { OwnAiStep } from "@/components/setup/OwnAiStep";
@@ -58,6 +60,7 @@ import {
   startIntro,
   stepsFor,
   stillMotion,
+  takeReturn,
   toolsFor,
   toolsWithJob,
   useSetup,
@@ -84,6 +87,7 @@ const STEP: Record<SetupStep, { title: string; hint: string }> = {
   },
   how: { title: "How do you work best?", hint: "" },
   social: { title: "Connect your social accounts", hint: "A sign-in lets the app read your own numbers." },
+  check: { title: "Setup checklist", hint: "What each tool turned on needs, and what else it can do." },
   own: { title: "Add Creator Toolset to an AI app", hint: "Installs Creator Toolset in the AI apps on this computer." },
   // the screen is a sign-in card with its own title and words (setup/AccountStep.tsx): this title is read out, not shown
   account: { title: "Account", hint: "" },
@@ -138,7 +142,8 @@ export function SetupDialog() {
   const [ownSlot, setOwnSlot] = useState<HTMLElement | null>(null); // where the AI apps screen shows its rows
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const [accountStep, setAccountStep] = useState(false); // the Mac app offered a sign-in during this setup: its screen stays in the path
-  const asked = params.get("setup");
+  // the Media Library's own setup sheet is also ?setup=1: on its page the value is the library's, not this window's
+  const asked = useLocation().pathname.startsWith("/library") ? null : params.get("setup");
   // the Help screen: this Mac, and the account's other computers. It opens only from a press (Settings → Setup, ?setup=helper)
   const macApp = hasThisMac();
   const bridge = useThisMac(macApp && !!me && asked === "helper"); // asked every 3 s: only while the Help screen is up
@@ -160,6 +165,15 @@ export function SetupDialog() {
   useEffect(() => {
     if (real) void load();
   }, [real, load]);
+  // "Where are your videos?" sent the person to the Media Library's setup: when that is done, the path goes on from there
+  useEffect(() => {
+    const back = () => {
+      const s = takeReturn();
+      if (s) navigate(`/?setup=${s}`);
+    };
+    window.addEventListener(LIBRARY_SETUP_DONE, back);
+    return () => window.removeEventListener(LIBRARY_SETUP_DONE, back);
+  }, [navigate]);
   useEffect(() => {
     if (real) void loadPrefs();
   }, [real, loadPrefs]);
@@ -203,7 +217,7 @@ export function SetupDialog() {
   const mine = TOOLS.filter((t) => canUse(me, t));
   const makes = prefs.makes;
   const tools = ticked ?? view.tools ?? toolsFor(makes, mine);
-  const path = stepsFor(prefs.talk, accountStep);
+  const path = stepsFor(prefs.talk, accountStep, tools);
   const at = path.indexOf(step);
   const side = at < 0 || params.has("alone"); // `&alone=1` (openSetupAt): a path screen shown on its own
   const connected = view.have.includes("ai");
@@ -241,7 +255,12 @@ export function SetupDialog() {
     if (plays) primeIntroSound();
     setBusy(true);
     try {
-      if (step === "make") await saveMakes();
+      if (step === "make") {
+        await saveMakes();
+        // the workspace is made here, not at the end: the Media Library and the social accounts that follow belong to it
+        const name = loaded ? firstProjectName(makes, projects.length) : null;
+        if (name) await createProject({ name }).catch(() => {});
+      }
       if (at === path.length - 1) {
         // the last screen: this is the end of setup, and it never opens by itself again
         await save({ tools: toolsWithJob(tools, prefs.job, mine), done: true });
@@ -277,7 +296,7 @@ export function SetupDialog() {
   const closeLabel = "Close";
   const { hint } = STEP[step];
   // "What do you want to do first?" with nothing picked has Skip for now in place of Continue, as Connect your AI has
-  const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
+  const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (step === "folders" && !view.have.includes("library")) || (step === "social" && !view.have.includes("instagram")) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
 
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
@@ -352,7 +371,7 @@ export function SetupDialog() {
 
           {step === "connect" && <ConnectStep picked={THIS_COMPUTER} onPick={() => {}} />}
 
-          {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} />}
+          {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} inPath={!side} />}
 
           {step === "helper" && (self && providers?.devices.some((d) => d.id === self) ? <HelperSetup device={self} /> : macApp ? <HelperPair /> : (
             <p className="text-sm text-muted-foreground">Open this in the Creator Toolset app on the other computer, or add that computer in Settings → Computers.</p>
@@ -363,6 +382,8 @@ export function SetupDialog() {
           )}
 
           {step === "social" && <SocialStep />}
+
+          {step === "check" && <SetupChecklist tools={view.tools ?? tools} have={view.have} />}
 
           {step === "how" && <HowPicker value={prefs.talk} onChange={(t) => void setTalk(t)} />}
 

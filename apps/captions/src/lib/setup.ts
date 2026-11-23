@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { planWarning, type Feature, type PlanId } from "@contracts/plans";
-import { applyNeedWays, DEFAULT_TOOLS, readiness, type Have, type HomeTile, type Need, type SetupView, type Tool } from "@contracts/tools";
+import { applyNeedWays, DEFAULT_TOOLS, readiness, type Have, type HomeTile, type Need, type NeedForm, type SetupView, type Tool } from "@contracts/tools";
 import { DEFAULT_WORK_PREFS, JOBS, type Job, type Make, type WorkPrefs } from "@contracts/work-prefs";
 import { confirmDialog } from "./dialogs";
 import { useAuth } from "./auth";
@@ -18,8 +18,11 @@ export type { SetupView };
  * only: no job to do is asked of her.
  */
 export const SETUP_PATH = ["theme", "agents", "make", "job", "how"] as const;
-/** Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen (stepsFor). */
-export const SIDE_STEPS = ["connect", "folders", "own", "helper", "social"] as const;
+/**
+ * Screens that open alone from a `?setup=` link and close with Done. `own` is also the path's last screen, and `folders`
+ * and `social` join the path when a tool picked needs them (stepsFor). `check` is the whole checklist (Setup checklist).
+ */
+export const SIDE_STEPS = ["connect", "folders", "own", "helper", "social", "check"] as const;
 /** The last screen of the path when the Mac app offers a sign-in (stepsFor): the person's Creator Toolset account, skippable. */
 export const ACCOUNT_STEP = "account";
 export const SETUP_STEPS = [...SETUP_PATH, ...SIDE_STEPS, ACCOUNT_STEP] as const;
@@ -28,9 +31,14 @@ export type SetupStep = (typeof SETUP_STEPS)[number];
 /**
  * The click path: the five screens, `own` after them when the answer to the last is "In my own AI" or "Both", and last
  * of all `account` when the Mac app offers a sign-in that works (`account`; today none does, so the path ends before it).
+ * After "What do you make?": "Where are your videos?" when the Media Library or the AI Editor is on, and the social
+ * accounts when the Content Analyzer is (new users got stuck when these were left for later: owner, 2026-11-23).
  */
-export const stepsFor = (talk?: string | null, account = false): readonly SetupStep[] => [
-  ...SETUP_PATH,
+export const stepsFor = (talk?: string | null, account = false, tools: readonly Tool[] = []): readonly SetupStep[] => [
+  ...SETUP_PATH.slice(0, 3),
+  ...(tools.includes("media") || tools.includes("editor") ? (["folders"] as const) : []),
+  ...(tools.includes("instagram") ? (["social"] as const) : []),
+  ...SETUP_PATH.slice(3),
   ...(talk === "chat" || talk === "both" ? (["own"] as const) : []),
   ...(account ? ([ACCOUNT_STEP] as const) : []),
 ];
@@ -403,12 +411,50 @@ export const jobsFor = (mine: readonly Tool[]): Job[] => JOBS.filter((j) => j ==
  */
 export function jobNeeds(job: Job | null | undefined, mine: readonly Tool[], have: readonly Have[]): Need[] {
   if (!job) return [];
-  const got: Have[] = [...have, "project"];
+  return missingFor(JOB_SETUP[job].tools.filter((t) => mine.includes(t)), [...have, "project"]);
+}
+
+/** The required rows still missing for these tools, each once. */
+function missingFor(tools: readonly Tool[], have: readonly Have[]): Need[] {
   const seen = new Set<string>();
-  return JOB_SETUP[job].tools
-    .filter((t) => mine.includes(t))
-    .flatMap((t) => readiness(t, got).missing)
-    .filter((n) => !seen.has(n.anyOf.join()) && !!seen.add(n.anyOf.join()));
+  return tools.flatMap((t) => readiness(t, have).missing).filter((n) => !seen.has(n.anyOf.join()) && !!seen.add(n.anyOf.join()));
+}
+
+/** What the tools turned on still need (Home's Setup checklist card). */
+export const setupGaps = (view: Pick<SetupView, "tools" | "have">): Need[] => missingFor(view.tools ?? [], view.have);
+
+/** The setup screen each kind of missing row is set up on. */
+const GAP_STEP: Record<NeedForm, SetupStep> = { ai: "agents", library: "folders", apify: "social", keys: "check", project: "check" };
+
+/**
+ * The buttons under the assistant's hello after setup: one per screen with something left (the social sign-in counts
+ * while the Content Analyzer is on: it reads the account's own numbers), then the Setup checklist. None when nothing is.
+ */
+export function setupLeft(view: Pick<SetupView, "tools" | "have">): { step: SetupStep; label: string }[] {
+  const gaps = setupGaps(view);
+  const steps = new Set(gaps.map((n) => GAP_STEP[n.form]));
+  if (view.tools?.includes("instagram") && !view.have.includes("instagram")) steps.add("social");
+  if (!steps.size) return [];
+  const label: Partial<Record<SetupStep, string>> = {
+    agents: "Connect your AI",
+    folders: "Set up the Media Library",
+    social: "Connect social accounts",
+    check: gaps.some((n) => n.form === "keys") ? "Add API keys" : "Setup checklist",
+  };
+  return (["agents", "folders", "social", "check"] as const).filter((s) => s === "check" || steps.has(s)).map((step) => ({ step, label: label[step]! }));
+}
+
+/** The path screen "Where are your videos?" sends to the Media Library's own setup: setup opens on it again when that is done. */
+const AFTER_LIBRARY = "ct-setup-after-library";
+export const returnAfterLibrary = (step: SetupStep): void => write("session", AFTER_LIBRARY, step);
+export function takeReturn(): SetupStep | null {
+  const s = setupStepFromParam(read("session", AFTER_LIBRARY));
+  try {
+    store("session")?.removeItem(AFTER_LIBRARY);
+  } catch {
+    /* no storage: nothing was kept */
+  }
+  return s;
 }
 
 /** The tools leaving setup switches on: the ones ticked, and the job's (Add captions turns Caption Studio on), in `mine`'s order. */
