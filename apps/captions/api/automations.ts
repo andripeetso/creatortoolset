@@ -186,13 +186,17 @@ export async function runAutomation(username: string, a: Automation, ready: { ro
     });
     await finish(username, a.id, { status: "done", text, chat });
   } catch (e) {
+    const chat = (e as { chat?: string }).chat;
     // stopped by the person: the row says so, and the inbox is not told what they did themselves
     if (stops.get(a.id)?.signal.aborted) {
-      update(username, a.id, (x) => (x.lastResult = { status: "skipped", text: "Stopped", at: Date.now() }));
+      update(username, a.id, (x) => {
+        x.lastResult = { status: "skipped", text: "Stopped", at: Date.now() };
+        if (chat && x.destination !== "new_chat") x.chat = chat;
+      });
       announceSoon(username, "automations");
       return;
     }
-    await finish(username, a.id, { status: "error", text: e instanceof Error ? e.message : String(e) });
+    await finish(username, a.id, { status: "error", text: e instanceof Error ? e.message : String(e), ...(chat ? { chat } : {}) });
   }
 }
 

@@ -1980,7 +1980,8 @@ export async function runInChat(
   } catch (e) {
     const why = stop.signal.aborted ? "Stopped." : (e instanceof Error ? e.message : String(e)).slice(0, 300) || "The run failed.";
     Object.assign(messageOf(username, reply.id) ?? {}, { status: stop.signal.aborted ? "done" : "error", text: why });
-    throw new Error(why);
+    // its chat, so a one-chat task keeps the chat a stopped or failed first run made (automations.ts)
+    throw Object.assign(new Error(why), { chat: chatId });
   } finally {
     Object.assign(messageOf(username, reply.id) ?? {}, { took: Date.now() - reply.at });
     sayLater(username, reply.id);

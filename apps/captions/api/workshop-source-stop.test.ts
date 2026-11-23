@@ -16,15 +16,19 @@ vi.mock("./ai-complete", async (importOriginal) => ({
     (_s: string, _u: string, signal: AbortSignal) =>
       new Promise((_, reject) => {
         signals.push(signal);
-        signal.addEventListener("abort", () => reject(new Error("Stopped")));
+        // a stopped call winds down a moment later, as a real one does
+        signal.addEventListener("abort", () => setTimeout(() => reject(new Error("Stopped")), 20));
       }),
   ),
 }));
 
 const id = "eeeeeeee-0000-4000-8000-000000000001";
+const id2 = "eeeeeeee-0000-4000-8000-000000000002";
 mkdirSync(path.join(dataDir, "workshop", "sources"), { recursive: true });
-writeFileSync(path.join(dataDir, "workshop", "sources", `${id}.json`), JSON.stringify({ id, owner: "alex", name: "notes.txt", chars: 8, status: "new", createdAt: 1, updatedAt: 1 }));
-writeFileSync(path.join(dataDir, "workshop", "sources", `${id}.txt`), "line one");
+for (const [n, s] of [[1, id], [2, id2]] as const) {
+  writeFileSync(path.join(dataDir, "workshop", "sources", `${s}.json`), JSON.stringify({ id: s, owner: "alex", name: "notes.txt", chars: 8, status: "new", createdAt: n, updatedAt: n }));
+  writeFileSync(path.join(dataDir, "workshop", "sources", `${s}.txt`), "line one");
+}
 
 const { Hono } = await import("hono");
 const { workshopApp } = await import("./workshop");
@@ -57,4 +61,16 @@ it("Stop ends a source's read: the AI call is aborted and it is Not read again",
   await pause(30);
   expect(await status()).toBe("new");
   expect((await app.request("/api/workshop/sources/eeeeeeee-0000-4000-8000-000000000009/stop", { method: "POST" })).status).toBe(404);
+});
+
+it("Read pressed right after Stop, while the stopped read winds down, reads it again", async () => {
+  const before = signals.length;
+  await app.request(`/api/workshop/sources/${id2}/read`, { method: "POST" });
+  for (let i = 0; i < 200 && signals.length === before; i++) await pause(5);
+  await app.request(`/api/workshop/sources/${id2}/stop`, { method: "POST" });
+  await app.request(`/api/workshop/sources/${id2}/read`, { method: "POST" });
+  for (let i = 0; i < 200 && signals.length === before + 1; i++) await pause(5);
+  expect(signals.length).toBe(before + 2);
+  await app.request(`/api/workshop/sources/${id2}/stop`, { method: "POST" });
+  await pause(30);
 });

@@ -2467,6 +2467,7 @@ workshopApp.post("/sources/:id/stop", async (c) => {
   const s = await readSource(c.req.param("id"), user);
   if (!s) return c.json({ error: "Not found" }, 404);
   readStops.get(s.id)?.abort(); // first, so no write of the read's lands after the one below
+  queuedReads.delete(s.id); // a Read pressed before the stopped read has wound down is queued, not skipped
   await patchSource(s.id, (cur) => (cur.status === "reading" || cur.status === "queued" ? { ...cur, status: "new", error: undefined, waitUntil: undefined } : cur));
   announce(user.username, "workshop");
   return c.json({ ok: true });

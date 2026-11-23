@@ -192,7 +192,7 @@ function TaskRow({ a, tagged, workspaces, limits, now, onEdit, onChanged }: { a:
             label={`Actions for ${a.name}`}
             items={[
               { label: "Edit", icon: <Pencil />, onSelect: onEdit },
-              ...(a.running ? [{ label: "Stop", icon: <Square />, onSelect: () => stopAutomation(a.id).then(onChanged) }] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
+              ...(a.running ? [{ label: "Stop", icon: <Square />, onSelect: () => stopAutomation(a.id).then(onChanged).catch(() => saveFailed("Could not stop")) }] : [{ label: "Run now", icon: <Play />, onSelect: runNow }]),
               ...(chat ? [{ label: a.destination === "new_chat" ? "Open last run's chat" : "Open chat", icon: <MessageSquare />, onSelect: () => navigate(`/?chat=${encodeURIComponent(chat)}`) }] : []),
               ...moveItems(workspaces, a.project, (to) => updateAutomation(a.id, { project: to }).then(onChanged)),
               {

@@ -50,6 +50,8 @@ it("Stop ends the job as stopped, and its late sound saves nothing", async () =>
   writeFileSync(wav, "RIFF");
   await captionsHeard("local", { project, clip, cloud: true, seconds: 3, name: "Tiny Acrobatics" }, { peaks: [], seconds: 3 }, { "audio.wav": wav });
   expect(JSON.parse(readFileSync(path.join(dir, "clips", clip, "data.json"), "utf8"))).toEqual({});
+  // the late sound leaves the project free for Transcribe, exports and the Editor's captions
+  expect(captioning.has(project)).toBe(false);
   await new Promise((res) => setTimeout(res, 20));
   expect(ends).toHaveLength(1);
   expect((await app.request("/api/projects/33333333-3333-4333-8333-333333333333/captioning/stop", { method: "POST" })).status).toBe(404);

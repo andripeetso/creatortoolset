@@ -110,6 +110,8 @@ export async function captionsHeard(actor: string, input: SoundInput, sound: Sou
 
 async function hear(user: SessionUser, input: SoundInput, sound: Sound, files: Record<string, string>): Promise<{ lines: number; note?: string }> {
   const { project: projectId, clip: clipId } = input;
+  // before the mark: a sound that comes after Stop must not leave the project "being captioned"
+  if (stopped.has(projectId)) throw STOPPED;
   captioning.set(projectId, "transcribing");
   const call = routesAs(user);
   const ask = async <T>(route: string, method?: string, body?: unknown) => {

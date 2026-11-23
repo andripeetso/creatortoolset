@@ -581,7 +581,12 @@ async function onServer<T>(system: string, user: string, cancelSignal: AbortSign
   let last: AiProviderError | undefined;
   for (let attempt = 0; attempt < tries(opts); attempt++) {
     if (cancelSignal?.aborted) throw new AiProviderError("Cadence matching was stopped", "ABORTED", false);
-    const { text, mac } = await serverAnswer({ system, user, job: opts.job, label: opts.mac?.label, ...(opts.retries ? { retries: opts.retries } : {}) });
+    const answer = serverAnswer({ system, user, job: opts.job, label: opts.mac?.label, ...(opts.retries ? { retries: opts.retries } : {}) });
+    // a Stop ends the wait at once; the server's late answer is dropped (and its failure not left unhandled)
+    void answer.catch(() => {});
+    const { text, mac } = await (cancelSignal
+      ? Promise.race([answer, new Promise<never>((_, no) => cancelSignal.addEventListener("abort", () => no(new AiProviderError("Stopped", "ABORTED", false)), { once: true }))])
+      : answer);
     try {
       return parseAnswer(mac ? "mac" : "anthropic", text, parse);
     } catch (e) {

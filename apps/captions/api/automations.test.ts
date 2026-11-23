@@ -226,7 +226,8 @@ describe("the scheduler", () => {
   });
 
   it("Stop ends a run going now: its turn is aborted, the row says Stopped, and the task stays on", async () => {
-    const a = await make("alice", { name: "Stoppable", schedule: everyHour, prompt: "p" });
+    // a one-chat task: its stopped first run keeps the chat it made
+    const a = await make("alice", { name: "Stoppable", schedule: everyHour, prompt: "p", destination: "continue" });
     let asked: AbortSignal | undefined;
     const { streamMacClaude } = await import("./lib/mac-claude");
     vi.mocked(streamMacClaude).mockImplementationOnce((_s, _p, cancel) => {
@@ -240,6 +241,7 @@ describe("the scheduler", () => {
     await vi.waitFor(async () => expect((await find("alice", a.id))?.running).toBe(false));
     const after = await find("alice", a.id);
     expect(after).toMatchObject({ enabled: true, lastResult: { status: "skipped", text: "Stopped" } });
+    expect(after?.chat).toEqual(expect.any(String));
     expect((await req("bob", "POST", `/automations/${a.id}/stop`)).status).toBe(404);
   });
 
