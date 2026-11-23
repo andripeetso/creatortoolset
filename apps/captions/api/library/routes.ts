@@ -1457,10 +1457,15 @@ export async function serveGate(versionId: string, kind: string, file: { key?: s
 export const hasProxy = (versionId: string): boolean =>
   !!(db().prepare("SELECT storage_key FROM derivatives WHERE version_id = ? AND kind = 'proxy'").get(versionId) as { storage_key: string | null } | undefined)?.storage_key;
 
-/** A blob as a response: streamed with Range from local disk, or a 302 to a 15-minute signed URL on a bucket. */
+/**
+ * A blob as a response: streamed with Range from local disk, or a 302 to a 15-minute signed URL on a bucket. A blob the
+ * browser may keep (`cache`: a versioned thumb or sprite) comes through this server from a bucket too, with that header:
+ * a redirect carries none and its signed address changes, so the browser would ask again on every screen.
+ */
 export async function serveBlob(c: Context, key: string, type: string, download?: string, cache?: string): Promise<Response> {
   try {
     const at = await blobs.locate(key, 900, { contentType: type, download });
+    if (at.kind === "url" && cache) return await sendFile(c, await blobs.localCopy(key), type, download, cache);
     return at.kind === "url" ? c.redirect(at.url, 302) : await sendFile(c, at.path, type, download, cache);
   } catch {
     return c.json({ error: "Not ready", code: "conflict" }, 409);
