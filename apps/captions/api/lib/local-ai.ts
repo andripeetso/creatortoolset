@@ -747,8 +747,28 @@ function geminiLogin(bin: string): ChildProcess {
   return child;
 }
 
-/** Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds until it is done. */
-export async function signIn(id: Driver): Promise<SignInResult> {
+/** An account folder for a sign-in: an absolute folder inside the home folder, as given; null for anything else. */
+export function accountFolder(v: unknown, home = os.homedir()): string | null {
+  if (typeof v !== "string" || !path.isAbsolute(v) || v.includes("\0")) return null;
+  return path.resolve(v).startsWith(home + path.sep) ? v : null;
+}
+
+/** The variable that points each AI's sign-in at its account folder: the same one its runs set (apps/mac ClaudeRequest.swift claudeEnv). */
+const FOLDER_ENV: Partial<Record<Driver, string>> = { claude: "CLAUDE_CONFIG_DIR", codex: "CODEX_HOME" };
+/** The sign-in's environment: the folder variable set to `home`, or removed when there is none (the default folder). */
+export function folderEnv(id: Driver, home: string | undefined, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const name = FOLDER_ENV[id];
+  if (!name) return env;
+  const { [name]: _drop, ...rest } = env;
+  return home ? { ...rest, [name]: home } : rest;
+}
+
+/**
+ * Starts the vendor's sign-in (its browser opens) as a child process. The page checks the sign-in every few seconds until
+ * it is done. `home`: the provider's account folder; the sign-in must use it as its runs do, or Claude keeps the sign-in
+ * under another Keychain name and the provider stays signed out.
+ */
+export async function signIn(id: Driver, home?: string): Promise<SignInResult> {
   if (id === "antigravity") {
     const failed = await signInAgy();
     return failed ? { ok: false, ...failed } : { ok: true, message: "Your browser opens. Sign in there, then come back here." };
@@ -761,7 +781,7 @@ export async function signIn(id: Driver): Promise<SignInResult> {
   const child =
     id === "gemini"
       ? geminiLogin(bin)
-      : spawn(bin, id === "claude" ? ["auth", "login"] : (vendor?.login ?? ["login"]), { env: { ...process.env, PATH: toolPath(bin) }, stdio: ["ignore", "pipe", "pipe"] });
+      : spawn(bin, id === "claude" ? ["auth", "login"] : (vendor?.login ?? ["login"]), { env: folderEnv(id, home, { ...process.env, PATH: toolPath(bin) }), stdio: ["ignore", "pipe", "pipe"] });
   logins.set(id, child);
   const started = await new Promise<boolean>((resolve) => {
     child.once("spawn", () => resolve(true));

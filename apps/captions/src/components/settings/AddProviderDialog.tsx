@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import { DRIVERS, type Driver, type DriverCatalog, type MacReport, type PresetView, type ProviderInstance } from "@contracts/providers";
+import { DRIVERS, isDefaultHome, type Driver, type DriverCatalog, type MacReport, type PresetView, type ProviderInstance } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -205,7 +205,8 @@ export function AddProviderDialog({
   const entry = catalog?.drivers.find((d) => d.id === driver);
   const runs = !!entry?.runs;
   const found = driver ? report?.drivers.find((x) => x.driver === driver) : undefined;
-  const homes = driver ? (report?.homes ?? []).filter((h) => h.driver === driver).map((h) => h.home) : [];
+  // the tool's own default folder is the "Default folder" option, never saved as the account folder (isDefaultHome)
+  const homes = driver ? (report?.homes ?? []).filter((h) => h.driver === driver && !isDefaultHome(driver, h.home)).map((h) => h.home) : [];
   // one folder on the computer is that account; several need the person to pick one
   const chosenHome = homes.length > 1 ? home : homes.length === 1 ? homes[0]! : "";
   const label = driver ? (nameDraft ?? defaultName(driver, chosenHome)) : "";

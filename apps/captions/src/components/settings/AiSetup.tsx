@@ -97,7 +97,8 @@ export const getLocalAi = () => call<LocalAiView>("/api/setup/ai", "GET", undefi
  * already on its way). Nothing tells a page about a tool set up in Terminal.
  */
 export const useLocalAi = () => useCachedLoad<LocalAiView>("/api/setup/ai", getLocalAi, { topic: ["devices", "setup"], own: true });
-export const localSignIn = (id: LocalId) => call<SignInResult>("/api/setup/ai/signin", "POST", { id });
+/** `home`: the provider's account folder, so the sign-in lands where its runs look (api/lib/local-ai.ts signIn). */
+export const localSignIn = (id: LocalId, home?: string) => call<SignInResult>("/api/setup/ai/signin", "POST", { id, ...(home ? { home } : {}) });
 /** Antigravity's download is about 100 MB: an hour before a slow connection gives up. */
 export const localInstall = (id: LocalId) => call<SignInResult>("/api/setup/ai/install", "POST", { id }, 61 * 60_000);
 /** Antigravity's download so far, while Install runs. */

@@ -124,6 +124,35 @@ describe("tools kept in their own files", () => {
   });
 });
 
+describe("a report to the team", () => {
+  it("waits on the Send report card with the chat in it, and goes to the team only on Send report", async () => {
+    const sent: unknown[] = [];
+    const real = globalThis.fetch;
+    process.env.CT_PING_URL = "http://reports.test/api/ping";
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url) !== "http://reports.test/api/ping/report") return real(url, init);
+      sent.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    try {
+      const cookie = await cookieOf("ana");
+      const t = await turn(cookie, "Claude says test failed after I signed in");
+      const asked = await tool(t.token, "report_bug", { what: "Claude says test failed after I signed in", context: "setup_status: not connected" });
+      expect(asked.text).toContain("Send this bug report to the Creator Toolset team?");
+      await t.end();
+      expect(sent).toEqual([]);
+      const card = (await viewOf(cookie)).messages.at(-1)!.confirms![0]!;
+      expect((await app.request(`/api/assistant/confirms/${card.id}`, { method: "POST", ...json({ yes: true }, { cookie }) })).status).toBe(200);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ kind: "bug", what: "Claude says test failed after I signed in", context: "setup_status: not connected" });
+      expect((sent[0] as { chat: unknown[] }).chat.at(-1)).toEqual({ role: "user", text: "Claude says test failed after I signed in" });
+    } finally {
+      globalThis.fetch = real;
+      delete process.env.CT_PING_URL;
+    }
+  });
+});
+
 describe("a tool asks before it deletes", () => {
   it("in the dock the question waits on a card: nothing changes until Yes, which runs it as the person; No drops it; the AI is told how each was answered", async () => {
     const cookie = await cookieOf("ana");

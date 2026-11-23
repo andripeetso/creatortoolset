@@ -481,3 +481,12 @@ export interface DriverCatalog {
   drivers: DriverEntry[];
   presets?: PresetView[];
 }
+
+/**
+ * The tool's own default folder (~/.claude, ~/.codex) is not an account folder: it is what runs with no folder set.
+ * Claude keeps its sign-in in the Keychain under a name that changes once CLAUDE_CONFIG_DIR is set, even to ~/.claude,
+ * so an AI saved with ~/.claude as its folder never sees the person's own sign-in (2026-11-23: "test failed" after a
+ * sign-in that worked). Such a folder is saved as none.
+ */
+export const isDefaultHome = (driver: Driver, home: string): boolean =>
+  (driver === "claude" && /\/\.claude\/?$/.test(home)) || (driver === "codex" && /\/\.codex\/?$/.test(home));

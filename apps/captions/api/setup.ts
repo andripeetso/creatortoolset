@@ -12,7 +12,7 @@ import { publicApifyStatus, readApify } from "./lib/instagram/apify";
 import { deviceTranscribes } from "./lib/device-transcribe";
 import { connectedOwn } from "./lib/providers";
 import { agyProgress, removeAgy } from "./lib/antigravity";
-import { addMcp, connectCli, installCli, localAiView, planOf, setsUp, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
+import { accountFolder, addMcp, connectCli, installCli, localAiView, planOf, setsUp, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
 import { ownedProjects } from "./lib/workshop/workspace";
 import { ensureLibrary, mediaReady } from "./library/access";
 import { currentWorkspaceId } from "./lib/workspace-scope";
@@ -227,9 +227,12 @@ setupApp.get("/ai", async (c) => {
 
 setupApp.post("/ai/signin", async (c) => {
   if (!ownComputer(c.get("user"))) return c.json({ ok: false, message: MAC_ONLY }, 403);
-  const id = setupAiOf(((await c.req.json().catch(() => null)) as { id?: unknown } | null)?.id);
+  const b = (await c.req.json().catch(() => null)) as { id?: unknown; home?: unknown } | null;
+  const id = setupAiOf(b?.id);
   if (!id) return c.json({ error: "Pick an AI this Mac can set up" }, 400);
-  return c.json(await signIn(id));
+  const home = b?.home === undefined ? undefined : accountFolder(b.home);
+  if (home === null) return c.json({ error: "The account folder must be a folder in your home folder" }, 400);
+  return c.json(await signIn(id, home));
 });
 
 setupApp.post("/ai/connect", async (c) => {

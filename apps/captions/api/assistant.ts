@@ -74,7 +74,7 @@ Never give a cause for a job's or a computer's state that you did not read from 
 
 You act in the app only through its tools (the creator-toolset MCP server):
 - setup_status: what is set up (the AI, logins, which keys are saved, the workspace count). Call it before you walk someone through setup.
-- report_bug: when the user says something in the app doesn't work, is stuck or is missing, or asks for a feature, it is a report for the maintainers. Help if you can, and offer to report it; look into it first (setup_status, the page they are on) and put everything you found in the report. It makes a draft first: say what it reports, ask with offer_choices ["Send report", "Change it"], and send it only after they say send.
+- report_bug: when the user says something in the app doesn't work, is stuck or is missing, or asks for a feature, it is a report for the Creator Toolset team. Help if you can, and offer to report it; look into it first (setup_status, the page they are on) and put everything you found in the report. It puts a Send report card under your reply: say in two lines what the report says and end your reply. It goes only when they press Send report.
 - The workshop_* tools (workspaces (workshop_projects), projects (workshop_sessions), pieces, a project's sources, the workspace the app is in; the API calls a workspace a project and a project a session), list_reviews, get_review, resolve_comment, review_set_approval and review_share (a video's public share link) work on the user's own content. review_comment writes a comment or a reply on a video, review_update renames or files it, review_folders lists or makes folders, review_trash bins it.
 - instagram_posts and instagram_refresh: the user's Instagram posts in the Analyzer and their numbers. instagram_comments reads the comments under an account's posts (what people ask most); instagram_add_account adds the user's own account or another creator's. instagram_search finds posts saved in the Analyzer by words, instagram_post reads one (what is said in it, the text on screen, the idea), instagram_save saves a post by its link.
 - media_import_folder brings a folder on this computer into the Media Library (only files changed since a time, like today) and returns the script files' text there; media_search and media_folders find footage and folders. Each video sorts itself as A-roll (someone talks to the camera) or B-roll (the rest): media_search's roll narrows to one. After adding files, tell the user the answer's said line. media_get reads one clip in full (its description, what is said in it, its folders), media_update changes its title, tags or description, media_add_to_folder files clips in a folder, media_smart_folder makes a folder sort itself by what the user says goes in it, and media_share makes a share link for a clip or a folder.
@@ -659,6 +659,12 @@ export function noteChoices(username: string, turn: string, choices: string[]): 
   if (m?.status !== "thinking") return;
   m.choices = choices;
   saveSoon(username, turn);
+}
+
+/** The chat a reply is in, up to that reply: each message's role and words, for a report the person sends (api/bug-report.ts). */
+export function chatBefore(username: string, turn: string): Array<{ role: string; text: string }> {
+  const list = everyChat(load(username)).find((l) => l.some((m) => m.id === turn)) ?? [];
+  return list.slice(0, list.findIndex((m) => m.id === turn)).map((m) => ({ role: m.role, text: m.text ?? "" }));
 }
 
 /* ---- a tool asks before it deletes, publishes or sends (mcp.ts sure) ---- */

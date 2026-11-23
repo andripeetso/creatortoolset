@@ -276,7 +276,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
   // on an own-computer install the app signs in and installs the tool itself (the local routes)
   const signInHere = (inst: ProviderInstance) => {
     setSigningIn(inst.driver);
-    void localSignIn(inst.driver as CliId | "antigravity").then((r) => !r.ok && saveFailed(r.message ?? "Could not start the sign-in."), (e) => saveFailed(msg(e)));
+    void localSignIn(inst.driver as CliId | "antigravity", inst.home).then((r) => !r.ok && saveFailed(r.message ?? "Could not start the sign-in."), (e) => saveFailed(msg(e)));
   };
   // The app installs an AI where it can: on an own-computer install through its local routes, else through the Mac app
   // when the AI is on this Mac. Anywhere else the detail says how.

@@ -12,7 +12,7 @@ import { deviceName } from "./lib/devices";
 import { dockSkills } from "./lib/skills";
 import { readConnectors } from "./lib/connectors/store";
 import { myKeys } from "./my-keys";
-import { askConfirm, askFolder, askSend, noteAction, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended, workspaceOfTurn } from "./assistant";
+import { askConfirm, askFolder, chatBefore, askSend, noteAction, askSecret, foundIn, navigateTo, noteChoices, noteMedia, noteStep, noteWork, pastedInChat, saidInChat, setConfirmRunner, setInstallGuide, unattended, workspaceOfTurn } from "./assistant";
 import { getWorkspace, workspaceScope } from "./lib/workshop/workspace";
 import { FILE_USES, type AssistantFileUse, type AssistantMedia, type AssistantWork } from "../contracts/assistant";
 import { mimeOf, uploadLink } from "./assistant-files";
@@ -60,10 +60,6 @@ function setupView(v: SetupView) {
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
 const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "notes_get", "offer_choices", "ask_folder", "report_bug"]);
-
-/** report_bug's last draft per account and the chat turn it was made in: it is sent only from a later turn, so after the person answered. */
-const bugDrafts = new Map<string, { turn: string; body: Args; at: number }>();
-const DRAFT_MS = 3_600_000;
 /** Assistant tools a Full key gets too: use_file takes a file its own AI sent with upload_file. */
 const KEY_TOO = new Set(["use_file"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
@@ -355,10 +351,11 @@ const ASSISTANT_DEFS = [
   {
     name: "report_bug",
     description:
-      "Report a problem to the Creator Toolset maintainers: something that doesn't work (kind bug), a feature the user wants (feature), or anything else (other). Call it when the user says something is broken, stuck or missing in the app, or asks for a feature. First look into it with the tools you have (setup_status, the page they are on) so the report says what you found. Without send it makes the draft and answers it with what the app adds by itself (version, system, AI providers and their last test errors, computers and their AI programs, the last sign-ins and errors). Then tell the user in a few lines what it says, that it goes to the maintainers, and ask with offer_choices [\"Send report\", \"Change it\"]; end your reply. Only after they say send: report_bug with send=true, which sends that draft. what = the user's own words; steps = what they did, in order; expected = what they expected instead; context = everything else you know that helps fix it (what you checked and found, error text, what they already tried); page = the page they were on.",
+      "Report a problem to the Creator Toolset team: something that doesn't work (kind bug), a feature the user wants (feature), or anything else (other). Call it when the user says something is broken, stuck or missing in the app, or asks for a feature. First look into it with the tools you have (setup_status, the page they are on) so the report says what you found. The app adds this chat and its own details (version, system, AI providers and their last test errors, computers and their AI programs, the last sign-ins and errors). It puts a Send report card under your reply and sends only when the user presses it: say in two lines what the report says and end your reply. what = the user's own words; steps = what they did, in order; expected = what they expected instead; context = everything else you know that helps fix it (what you checked and found, error text, what they already tried); page = the page they were on.",
     inputSchema: {
       type: "object",
-      properties: { kind: { type: "string", enum: ["bug", "feature", "other"] }, title: str, what: str, steps: str, expected: str, context: str, page: str, send: { type: "boolean" } },
+      properties: { kind: { type: "string", enum: ["bug", "feature", "other"] }, title: str, what: str, steps: str, expected: str, context: str, page: str },
+      required: ["what"],
     },
   },
   { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
@@ -1259,21 +1256,14 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       return { status: "shown", note: "The buttons are under your reply: end the reply and wait for the answer." };
     },
     report_bug: async (a) => {
+      // the chat is read while the reply's turn is known: Yes on the card runs this call again as the person, with no turn
       const turn = jobTurn(auth.get("authorization") ?? undefined);
-      if (!turn) throw new ToolError("Only the assistant in the app can send a report.");
-      if (a.send === true) {
-        const d = bugDrafts.get(user.username);
-        if (!d || Date.now() - d.at > DRAFT_MS) throw new ToolError("No draft: call report_bug without send first, show it and ask.");
-        if (d.turn === turn) throw new ToolError("Ask the user first: offer_choices [\"Send report\", \"Change it\"], end your reply, and send only after they say send.");
-        bugDrafts.delete(user.username);
-        return json("/api/bug-report", "POST", { ...d.body, send: true });
-      }
-      someoneThere();
-      const body = pick(a, ["kind", "title", "what", "steps", "expected", "context", "page"]);
-      const r = await json<{ report?: Args; error?: string }>("/api/bug-report", "POST", body);
-      if (!r.report) throw new ToolError(r.error ?? "Could not make the report.");
-      bugDrafts.set(user.username, { turn, body, at: Date.now() });
-      return { draft: r.report, next: "Say what it reports in a few lines and that it goes to the Creator Toolset maintainers with these details, then offer_choices [\"Send report\", \"Change it\"] and end your reply." };
+      if (turn) a.chat = chatBefore(user.username, turn);
+      const body = pick(a, ["kind", "title", "what", "steps", "expected", "context", "page", "chat"]);
+      await json("/api/bug-report", "POST", body); // a report that can't go fails here, before the card
+      const what = a.kind === "feature" ? "feature request" : a.kind === "other" ? "report" : "bug report";
+      await sure(`Send this ${what} to the Creator Toolset team? It includes your session details from the app (version, AI providers and their tests, computers, recent errors and this chat) so the team can look into it and fix it.`, { yes: "Send report", no: "Not now" });
+      return json("/api/bug-report", "POST", { ...body, send: true });
     },
     ask_folder: async (a) => {
       someoneThere();

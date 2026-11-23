@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseMachine } from "./providers";
+import { isDefaultHome, parseMachine } from "./providers";
 
 describe("parseMachine", () => {
   it("keeps what a computer reports and drops what doesn't fit", () => {
@@ -50,5 +50,15 @@ describe("parseMachine", () => {
     expect(vol).toEqual({ path: "/", name: "Macintosh HD", freeGb: 1, uuid: "AAAA0000-0000-4000-8000-00000000000A" });
     expect(nas).toMatchObject({ network: true, away: true });
     expect(odd).not.toHaveProperty("uuid");
+  });
+});
+
+describe("isDefaultHome", () => {
+  it("is the tool's own folder only, so it is never saved as an account folder", () => {
+    expect(isDefaultHome("claude", "/Users/tiny/.claude")).toBe(true);
+    expect(isDefaultHome("claude", "/Users/tiny/.claude/")).toBe(true);
+    expect(isDefaultHome("claude", "/Users/tiny/.claude-work")).toBe(false);
+    expect(isDefaultHome("codex", "/Users/tiny/.codex")).toBe(true);
+    expect(isDefaultHome("codex", "/Users/tiny/.claude")).toBe(false);
   });
 });
