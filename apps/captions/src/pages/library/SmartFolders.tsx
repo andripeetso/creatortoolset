@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { Collection, ReorganizeWay, SearchQuery } from "@contracts/library";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { createCollection, deleteCollection } from "@/lib/library";
 import { undoable } from "@/lib/undo";
-import { setFolderRule, suggestWays } from "./api";
+import { confirmDialog } from "@/lib/dialogs";
+import { suggestWays } from "./api";
 
 /**
  * Smart folders (api/library/smart.ts): a folder told what goes in it fills itself from the library, now and as clips
- * come in. "What goes here…" on a folder's menu sets that; Reorganize has the AI propose whole ways to sort the
+ * come in. Folder settings sets that (its Rule); Reorganize has the AI propose whole ways to sort the
  * library, and the one picked becomes smart folders.
  */
 
@@ -157,70 +159,116 @@ export function NewFolderDialog({
   );
 }
 
-/** What goes in one folder, in the person's own words. Saving sorts the library into it again. */
-export function SmartFolderDialog({
-  libraryId,
+/** What Folder settings changed: only the rows that moved */
+export type FolderChanges = { name?: string; rule?: string | null; blur?: boolean; offline?: boolean };
+
+/**
+ * A folder's settings, one form with one Save (owner, 2026-11-22: out of the tab's menu). A row is drawn only where it
+ * is given: `name` and `rule` for who may change the folder, `blur` where the library blurs and this person may keep
+ * files as filmed, `offline` on This Mac. An empty rule takes the rule off.
+ */
+export function FolderSettingsDialog({
   folder,
+  name: nameShown,
+  rule: ruleShown,
+  blur,
+  offline,
   onClose,
-  onSaved,
+  onSave,
 }: {
-  libraryId: string;
   folder: Collection | null;
+  name: boolean;
+  rule: boolean;
+  blur?: boolean;
+  offline?: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  onSave: (folder: Collection, changes: FolderChanges) => Promise<void>;
 }) {
+  const [name, setName] = useState("");
   const [rule, setRule] = useState("");
+  const [blurs, setBlurs] = useState(true);
+  const [keeps, setKeeps] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    setName(folder?.name ?? "");
     setRule(folder?.rule ?? "");
+    setBlurs(blur ?? true);
+    setKeeps(offline ?? false);
     setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filled once per folder opened, never while typing
   }, [folder]);
-  const save = async (next: string | null) => {
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!folder) return;
+    const changes: FolderChanges = {};
+    if (nameShown && name.trim() !== folder.name) changes.name = name.trim();
+    if (ruleShown && rule.trim() !== (folder.rule ?? "")) changes.rule = rule.trim() || null;
+    if (blur !== undefined && blurs !== blur) changes.blur = blurs;
+    if (offline !== undefined && keeps !== offline) changes.offline = keeps;
+    if (changes.blur === false && !(await confirmDialog({ title: "Turn off Blur faces?", body: "Clips in this folder will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" }))) return;
     setBusy(true);
     try {
-      await setFolderRule(libraryId, folder.id, next);
-      onSaved();
+      if (Object.keys(changes).length > 0) await onSave(folder, changes);
       onClose();
     } catch (e) {
-      setError(message(e));
+      setError(`Could not save the folder: ${message(e)}`); // what was typed stays
     } finally {
       setBusy(false);
     }
   };
   return (
     <Dialog open={!!folder} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent aria-describedby={undefined} className="flex flex-col gap-3 sm:max-w-md">
-        <DialogTitle className="truncate pr-6 text-base">Rule for “{folder?.name}”</DialogTitle>
-        <Textarea
-          autoFocus
-          rows={4}
-          value={rule}
-          maxLength={600}
-          onChange={(e) => setRule(e.target.value)}
-          placeholder="Describe the clips for this folder"
-        />
-        <p className="text-xs text-zinc-500">Clips that fit the rule are filed in this folder, now and when new ones are added.</p>
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <div className="flex justify-end gap-2">
-          {folder?.rule && (
-            <Button variant="ghost" disabled={busy} onClick={() => void save(null)} className="mr-auto">
-              Delete rule
-            </Button>
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md">
+        <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4">
+          <DialogTitle className="text-base">Folder settings</DialogTitle>
+          {nameShown && (
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Name
+              <Input required value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+            </label>
           )}
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button disabled={busy || !rule.trim() || rule.trim() === folder?.rule} onClick={() => void save(rule.trim())}>
-            {busy && <Spinner />}
-            Save
-          </Button>
-        </div>
+          {ruleShown && (
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Rule
+              <span className="text-xs font-normal text-zinc-500">Clips that fit the rule are filed in this folder, now and when new ones are added.</span>
+              <Textarea rows={3} value={rule} maxLength={600} onChange={(e) => setRule(e.target.value)} placeholder="Describe the clips for this folder" />
+            </label>
+          )}
+          {blur !== undefined && (
+            <label className="flex items-start gap-2.5 text-sm">
+              <Checkbox className="mt-0.5" checked={blurs} onCheckedChange={(v) => setBlurs(v === true)} />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">Blur faces</span>
+                <span className="text-xs text-zinc-500">Off keeps every clip in this folder as filmed, later ones too.</span>
+              </span>
+            </label>
+          )}
+          {offline !== undefined && (
+            <label className="flex items-start gap-2.5 text-sm">
+              <Checkbox className="mt-0.5" checked={keeps} onCheckedChange={(v) => setKeeps(v === true)} />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">Available offline</span>
+                <span className="text-xs text-zinc-500">Keeps a copy of every clip in this folder on this computer.</span>
+              </span>
+            </label>
+          )}
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy && <Spinner />}
+              Save
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
 }
+
 
 /**
  * Reorganize: the dialog first says what it does and that it costs tokens; Read the library has the AI read it and

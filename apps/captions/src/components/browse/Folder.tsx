@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * A folder, the same in every tool: a card in the folders view (a mosaic of up to four pictures from inside it) or a
- * row in the list view. Click opens it; drop items or files on it; right-click for Open, Rename…, the tool's own
+ * row in the list view. Click opens it; drop items or files on it; right-click for Open, Rename, the tool's own
  * items, and Delete. The tool keeps its data: what is inside, what a drop does, what deleting takes with it.
  */
 export interface FolderProps {
@@ -92,7 +92,7 @@ function FolderMenu({ to, onRename, onDelete, deleteLabel = "Delete folder", men
         <ContextMenuItem asChild>
           <Link to={to}>Open</Link>
         </ContextMenuItem>
-        {onRename && <ContextMenuItem onClick={onRename}>Rename…</ContextMenuItem>}
+        {onRename && <ContextMenuItem onClick={onRename}>Rename</ContextMenuItem>}
         {menu}
         {onDelete && (
           <>

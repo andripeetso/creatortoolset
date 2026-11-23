@@ -18,7 +18,7 @@ import { LibraryHealthButton, LibraryStatusDialog } from "./library/Health";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ContextMenuCheckboxItem, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
+import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import {
   createCollection,
@@ -63,7 +63,7 @@ import { FoundInClips } from "./library/FoundInClips";
 import { clipHref, folderMoveOptions, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, takesFolders, trailOf } from "./library/folders";
 import { ClipShare } from "./library/ClipShare";
 import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./library/grid";
-import { ClipMenu, ClipPick, offlineWords, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
+import { ClipMenu, ClipPick, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
 import { setOffline, useOffline } from "./library/offline-state";
 import { thisMacDevice } from "@/lib/providers";
 import { LibrarySettings, needsAttention } from "./library/LibrarySettings";
@@ -76,7 +76,7 @@ import { useOrganize } from "./library/Organize";
 import { anyFilter, savable, withSaved } from "./library/Filters";
 import { canReveal } from "./library/clip";
 import type { LibraryFilters } from "@/lib/library";
-import { restoreFolder, tabCounts, type TabCounts } from "./library/api";
+import { restoreFolder, setFolderRule, tabCounts, type TabCounts } from "./library/api";
 import { GalleryGrid, GalleryTile } from "./library/Gallery";
 import { Near } from "./library/Near";
 import { DRAG, putBack, ROLL_LABEL, rollOfFolder, takeOut, takesRoll, type Roll } from "./library/moves";
@@ -85,7 +85,8 @@ import { ActiveFilters, LibrarySidebar, SidebarSheet, sidebarPicked } from "./li
 import { ListHeader, SORT_IDS, SortControls } from "./library/SortControls";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
 import { LibraryTabs, useHiddenTabs, withHidden, type Tab } from "./library/Tabs";
-import { automaticAbout, NewFolderDialog, ReorganizeDialog, SmartFolderDialog } from "./library/SmartFolders";
+import { automaticAbout, FolderSettingsDialog, NewFolderDialog, ReorganizeDialog, type FolderChanges } from "./library/SmartFolders";
+import { TabSettingsDialog } from "./library/TabSettings";
 import { cardColumns, LibraryViewMenu, useCardSize, useLibraryView } from "./library/views";
 
 /**
@@ -130,7 +131,8 @@ export default function LibraryPage() {
   // going and coming back shows their cards and the line as they are
   const queue = useImportQueue();
   const [sharing, setSharing] = useState<AssetCard | null>(null); // the clip whose share box is open (right-click Share…)
-  const [ruling, setRuling] = useState<Collection | null>(null); // the folder whose "What goes here…" is open (smart folders)
+  const [setting, setSetting] = useState<Collection | null>(null); // the folder whose Folder settings is open
+  const [tabSettings, setTabSettings] = useState(false);
   const [reorganizing, setReorganizing] = useState(false);
   const [tags, setTags] = useState<string[]>([]); // the library's tags, most used first (Add tag)
   const [preview, setPreview] = useState<AssetCard | null>(null);
@@ -485,21 +487,20 @@ export default function LibraryPage() {
       setError(message(e));
     }
   };
-  // Blur faces for one folder: off keeps every clip in it as filmed (A-roll, a course), the owner's or an admin's call
-  const setFolderBlur = (c: Collection, on: boolean) => {
+  // Folder settings' Save: each row that changed, in turn; Blur faces off keeps every clip in it as filmed (A-roll, a
+  // course), the owner's or an admin's call
+  const saveFolder = async (c: Collection, ch: FolderChanges) => {
     if (!libId) return;
-    folderList.set((all) => all && all.map((x) => (x.id === c.id ? (({ blur: _was, ...rest }) => (on ? rest : { ...rest, blur: "no" as const }))(x) : x)));
-    folderBlur(libId, c.id, on ? null : "no").then(reload, (e) => {
-      setError(message(e));
+    try {
+      if (ch.name !== undefined) await renameCollection(libId, c.id, ch.name);
+      if (ch.rule !== undefined) await setFolderRule(libId, c.id, ch.rule);
+      if (ch.blur !== undefined) await folderBlur(libId, c.id, ch.blur ? null : "no");
+      if (ch.offline !== undefined) await setOffline({ collection: c.id }, ch.offline);
+    } finally {
       reloadFolders();
-    });
+      if (ch.blur !== undefined) reload();
+    }
   };
-  const blurItem = (c: Collection) =>
-    faceBlur && library?.mayKeepAsFilmed && holdsClips(c) ? (
-      <ContextMenuCheckboxItem checked={c.blur !== "no"} onCheckedChange={(on) => setFolderBlur(c, on === true)}>
-        Blur faces
-      </ContextMenuCheckboxItem>
-    ) : null;
   const renameFolder = async (c: Collection) => {
     const name = await askRename("Rename folder", c.name);
     if (name && libId) await renameCollection(libId, c.id, name).then(reloadFolders, (e) => setError(message(e)));
@@ -705,9 +706,8 @@ export default function LibraryPage() {
   const sortsItself = (c: Collection) => holdsClips(c) && !isFinals(c);
   // Available offline for a clip or a folder, on this computer's list (M14); the server's answer replaces the list
   const keepOffline = (target: { version: string } | { collection: string }, on: boolean) => setOffline(target, on).catch((e: unknown) => setError(message(e)));
-  const folderKeep = (c: Collection) => (
-    <ContextMenuItem onClick={() => void keepOffline({ collection: c.id }, !offline.collections.includes(c.id))}>{offlineWords(offline.collections.includes(c.id))}</ContextMenuItem>
-  );
+  // Folder settings: whoever may change the folder, or keep it offline on This Mac
+  const settingsItem = (c: Collection) => (!readOnly || thisMacDevice() ? <ContextMenuItem onSelect={() => setSetting(c)}>Folder settings</ContextMenuItem> : null);
   const folderProps = (c: Collection): FolderProps => ({
     name: c.name,
     to: folderTo(c.id),
@@ -722,29 +722,22 @@ export default function LibraryPage() {
     onRename: readOnly ? undefined : () => void renameFolder(c),
     onDelete: readOnly ? undefined : () => removeFolder(c),
     menu:
-      (!readOnly && takesFolders(c)) || thisMacDevice() ? (
+      !readOnly || thisMacDevice() ? (
         <>
-          {!readOnly && takesFolders(c) && <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
           {!readOnly && moveFolderItem(c)}
-          {!readOnly && sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
-          {thisMacDevice() && folderKeep(c)}
-          {blurItem(c)}
+          {settingsItem(c)}
         </>
       ) : undefined,
   });
-  /** a tab's right-click menu: the folder's own (Open, Rename…, New folder inside, Delete folder) */
+  /** a tab's right-click menu (owner, 2026-11-22): Hide tab, Rename, Folder settings, Delete folder; a click opens it */
   const folderMenu = (c: Collection, tabId = c.id) => (
     <>
-      <ContextMenuItem onSelect={() => go(c.id)}>Open</ContextMenuItem>
       {hideItem(tabId)}
-      {thisMacDevice() && folderKeep(c)}
+      {!readOnly && <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename</ContextMenuItem>}
+      {!readOnly && moveFolderItem(c)}
+      {settingsItem(c)}
       {!readOnly && (
         <>
-          <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>
-          {takesFolders(c) && <ContextMenuItem onSelect={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
-          {moveFolderItem(c)}
-          {sortsItself(c) && <ContextMenuItem onSelect={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
-          {blurItem(c)}
           <ContextMenuSeparator />
           <ContextMenuItem className="text-red-400" onSelect={() => removeFolder(c)}>
             <Trash2 /> Delete folder
@@ -754,16 +747,11 @@ export default function LibraryPage() {
     </>
   );
   // the open tab hidden: the next tab still shown opens, so the click shows
-  const hideItem = (id: string) => (
-    <ContextMenuItem
-      onSelect={() => {
-        hideTab(id, true);
-        if (allTabs.find((t) => t.id === id)?.active) allTabs.find((t) => t.id !== id && !hiddenTabs.includes(t.id))?.onOpen();
-      }}
-    >
-      Hide tab
-    </ContextMenuItem>
-  );
+  const hide = (id: string) => {
+    hideTab(id, true);
+    if (allTabs.find((t) => t.id === id)?.active) allTabs.find((t) => t.id !== id && !hiddenTabs.includes(t.id))?.onOpen();
+  };
+  const hideItem = (id: string) => <ContextMenuItem onSelect={() => hide(id)}>Hide tab</ContextMenuItem>;
   const landing = useRef(false); // the open-on-first-tab move replaces the history entry, so Back is not caught by it
   /** A tab's place: a folder (`id`), or the top with a kind; a tab never keeps the kind or roll picked before */
   const go = (id: string | null, k: AssetKind | "all" = "all", r: Roll | null = null) => {
@@ -828,26 +816,25 @@ export default function LibraryPage() {
   // a hidden tab still shows while it is the open one, so the view never loses its tab
   const changing = !!library && !readOnly && !trash;
   const shownTabs = allTabs.filter((t) => t.active || !hiddenTabs.includes(t.id));
-  const hiddenShown = allTabs.filter((t) => !shownTabs.some((x) => x.id === t.id));
-  // the tab row's own items, in every tab's menu too: a full row has no empty space to right-click
-  const rowItems = (changing || hiddenShown.length > 0) && (
+  const newTab = changing && <ContextMenuItem onSelect={() => void newFolder(null)}>New tab</ContextMenuItem>;
+  const tabSettingsItem = <ContextMenuItem onSelect={() => setTabSettings(true)}>Tab settings</ContextMenuItem>;
+  // the tab row's own items (New tab on top, Tab settings last), in every tab's menu too: a full row has no empty space
+  // to right-click
+  const rowItems = (
     <>
-      {changing && <ContextMenuItem onSelect={() => void newFolder(null)}>New tab</ContextMenuItem>}
-      {changing && hiddenShown.length > 0 && <ContextMenuSeparator />}
-      {hiddenShown.map((t) => (
-        <ContextMenuItem key={t.id} onSelect={() => hideTab(t.id, false)}>
-          Show {t.label}
-        </ContextMenuItem>
-      ))}
+      {newTab}
+      {tabSettingsItem}
     </>
   );
   const tabs = shownTabs.map((t) => ({
     ...t,
     menu: (
       <>
+        {newTab}
+        {newTab && <ContextMenuSeparator />}
         {t.menu}
-        {rowItems && <ContextMenuSeparator />}
-        {rowItems}
+        <ContextMenuSeparator />
+        {tabSettingsItem}
       </>
     ),
   }));
@@ -1447,7 +1434,16 @@ export default function LibraryPage() {
       {sharing && libId && (
         <ClipShare libraryId={libId} assetId={sharing.id} versionId={sharing.versionId} title={sharing.title} open onOpenChange={(o) => !o && setSharing(null)} />
       )}
-      {libId && <SmartFolderDialog libraryId={libId} folder={ruling} onClose={() => setRuling(null)} onSaved={reloadFolders} />}
+      <FolderSettingsDialog
+        folder={setting}
+        name={!readOnly}
+        rule={!readOnly && !!setting && sortsItself(setting)}
+        blur={setting && faceBlur && library?.mayKeepAsFilmed && holdsClips(setting) ? setting.blur !== "no" : undefined}
+        offline={setting && thisMacDevice() ? offline.collections.includes(setting.id) : undefined}
+        onClose={() => setSetting(null)}
+        onSave={saveFolder}
+      />
+      <TabSettingsDialog open={tabSettings} tabs={allTabs} hidden={hiddenTabs} onShow={(id, on) => (on ? hideTab(id, false) : hide(id))} onClose={() => setTabSettings(false)} />
       {libId && <NewFolderDialog libraryId={libId} parentId={creating} folders={collections} onClose={() => setCreating(undefined)} onCreated={reloadFolders} />}
       {libId && <ReorganizeDialog libraryId={libId} open={reorganizing} folders={collections} onClose={() => setReorganizing(false)} onDone={reloadFolders} />}
       {drop.dropping && mayAdd && (

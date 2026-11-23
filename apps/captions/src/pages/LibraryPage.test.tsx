@@ -131,6 +131,7 @@ vi.mock("@/lib/library", async (importOriginal) => ({
   getLibraryStorage: async () => ({ kind: "local", keysSet: false, serverBucket: false, locked: true, days: [] }),
   listTags: async () => [{ tag: "beach", count: 2 }],
   listPlaces: async () => [],
+  renameCollection: async (_: string, id: string, name: string) => void server.changed.push(["rename", id, name]),
   deleteCollection: async (_: string, id: string) => {
     server.changed.push(["delete", id]);
     return { ok: true };
@@ -159,6 +160,7 @@ vi.mock("./library/api", () => ({
     const items = server.items as Card[];
     return { a: items.filter((x) => x.roll === "a").length, b: items.filter((x) => x.roll === "b").length, image: items.filter((x) => x.kind === "image").length, video: items.filter((x) => x.kind === "video").length };
   },
+  setFolderRule: async (_: string, id: string, rule: string | null) => void server.changed.push(["rule", id, rule]),
   restoreFolder: async (_: string, id: string) => {
     server.changed.push(["restore", id]);
     return { id };
@@ -845,7 +847,7 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(where()).toBe("?f=col_a");
   });
 
-  it("All, Videos and Photos hide from their right-click menu and come back from any tab's menu", async () => {
+  it("All, Videos and Photos hide from their right-click menu and come back from Tab settings", async () => {
     localStorage.setItem("library:view", "gallery");
     server.folders = folders;
     server.items = [clip("talk", { roll: "a" }), clip("pic", { kind: "image" })];
@@ -861,11 +863,13 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
       await act(async () => menuItem("Hide tab")!.click());
       expect(tab(host, id)).toBeNull();
     }
-    // a tab's own menu has the row's items too: New tab and the hidden ones
+    // a tab's own menu has the row's items too: New tab, and Tab settings where the hidden ones come back
     await act(async () => void rightClick(tab(host, "b")!));
     expect(menuItem("New tab")).toBeDefined();
-    expect(menuItem("Show All")).toBeDefined();
-    await act(async () => menuItem("Show Photos")!.click());
+    await act(async () => menuItem("Tab settings")!.click());
+    const photos = document.querySelector<HTMLElement>('[role="switch"][aria-label="Photos"]')!;
+    expect(photos.getAttribute("aria-checked")).toBe("false");
+    await act(async () => photos.click());
     expect(tab(host, "photos")).not.toBeNull();
     expect(tab(host, "videos")).toBeNull();
   });
@@ -945,13 +949,31 @@ describe("Media Library layout, tabs, instant moves and menus", () => {
     expect(elsewhere.defaultPrevented).toBe(true);
   });
 
+  it("Folder settings saves only the rows that changed", async () => {
+    localStorage.setItem("library:view", "gallery");
+    server.folders = folders;
+    const host = await mount();
+    await act(async () => void rightClick(tab(host, "col_m")!));
+    await act(async () => menuItem("Folder settings")!.click());
+    const name = document.querySelector<HTMLInputElement>('[role="dialog"] input')!;
+    expect(name.value).toBe("Music");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "Songs");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === "Save")!.click());
+    await settle();
+    expect(server.changed).toContainEqual(["rename", "col_m", "Songs"]);
+    expect(server.changed.some((c) => (c as unknown[])[0] === "rule")).toBe(false);
+  });
+
   it("a folder's tab menu deletes it at once and Undo brings it back", async () => {
     localStorage.setItem("library:view", "gallery"); // the tabs are the Gallery's
     server.folders = folders;
     const host = await mount();
     await act(async () => void rightClick(tab(host, "col_m")!));
-    expect(menuItem("Rename…")).toBeDefined();
-    expect(menuItem("New folder inside")).toBeDefined();
+    expect(menuItem("Rename")).toBeDefined();
+    expect(menuItem("Folder settings")).toBeDefined();
     await act(async () => menuItem("Delete folder")!.click());
     expect(tab(host, "col_m")).toBeNull();
     await settle();
