@@ -9,7 +9,7 @@ import { hasThisMac, tell, type ThisMacState } from "@/components/settings/ThisM
  * feature that does nothing. "0.0.0" = every Mac app works.
  */
 // 0.22.0: Face Blur at intake runs as the device job "faceblur-intake", which older Mac apps never claim
-export const MIN_MAC_APP = "0.22.0";
+export const MIN_MAC_APP: string = "0.22.0";
 
 /** a < b for dotted versions ("0.9.1" < "0.15.0"). A Mac app from before it reported its version counts as "0"; "dev" builds are never old. */
 export function olderThan(a: string | undefined, b: string): boolean {
