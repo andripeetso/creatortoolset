@@ -75,6 +75,15 @@ describe("estimate", () => {
     d.prepare("DELETE FROM jobs WHERE kind = 'thumb'").run();
   });
 
+  it("a clip in the trash is never work left: its jobs wait for it to come back, and no computer takes them", async () => {
+    enqueueJob(d, "lib_e", "v1", "fingerprint", "local");
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'a1'").run();
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 0, stages: [] });
+    d.prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'a1'").run();
+    expect(await progress("lib_e", "local")).toMatchObject({ left: 1, clips: 1 });
+    d.prepare("DELETE FROM jobs WHERE kind = 'fingerprint'").run();
+  });
+
   it("the whole library's status counts every clip in it, never the trash", () => {
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_e', 'v1', 'transcribe', 'failed'), ('lib_e', 'v2', 'transcribe', 'needs_key')").run();
     expect(libraryStatus("lib_e")).toEqual({

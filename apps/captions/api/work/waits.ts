@@ -25,7 +25,7 @@ import { deviceOf, isOnline, isThisMachine, listDevices, seenLately } from "../l
 import { folderFor, hostPath } from "../lib/storage";
 import { libraryChanged } from "../library/access";
 import { libraryDb } from "../library/db";
-import { firstClips, type JobRow } from "../library/jobs";
+import { firstClips, NOT_TRASHED, type JobRow } from "../library/jobs";
 import { lookHeldOn, placedOn, tookLookAfter, type PlaceRow } from "../library/mac-look";
 import { OWN, placesFor } from "../library/places";
 import { BUDGET_WAITS, MAC_WAITS } from "../library/shots";
@@ -690,8 +690,8 @@ function candidateJobs(libraryId: string, now: number): (JobRow & { source_key: 
     .prepare(
       `SELECT j.*, v.source_key FROM jobs j LEFT JOIN asset_versions v ON v.id = j.version_id
        WHERE j.library_id = ?
-         -- a clip hidden while it waits on Folders left out (library/report.ts) waits for nothing here
-         AND NOT EXISTS (SELECT 1 FROM asset_versions hv JOIN assets ha ON ha.id = hv.asset_id WHERE hv.id = j.version_id AND ha.left_hidden_at IS NOT NULL)
+         -- a clip in the trash, or hidden while it waits on Folders left out (library/report.ts), waits for nothing here
+         AND ${NOT_TRASHED}
          AND ((j.state = 'queued' AND j.run_after <= ? AND NOT ${HELD_SQL} AND j.kind IN (${marks}))
               OR (j.kind = 'look' AND j.state = 'needs_key' AND j.error = ?))
        ORDER BY j.id LIMIT 500`,

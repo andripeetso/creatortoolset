@@ -9,7 +9,7 @@ import { BUDGET_WAITS, budgetPause, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, libr
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
-import { stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
+import { NOT_TRASHED, stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
 import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
 import { deviceOf, isThisMachine, listDevices } from "../lib/devices";
 import { ownerKeeps } from "../../src/lib/wording";
@@ -435,7 +435,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const rows = db
     .prepare(
       `SELECT kind, state, ${HELD} AS held, ${AWAY} AS away, ${CW} AS cw, ${QL} AS ql, (kind = 'look' AND state = 'needs_key' AND error = $mac) AS mac, IFNULL(error, '') = ? AS budget, COUNT(*) AS n, MIN(error) AS error
-       FROM jobs WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') GROUP BY kind, state, held, away, cw, ql, mac, budget`,
+       FROM jobs j WHERE library_id = ? AND state IN ('queued', 'running', 'needs_key') AND ${NOT_TRASHED} GROUP BY kind, state, held, away, cw, ql, mac, budget`,
     )
     .all({ ...away, ...look }, LIMIT_LIKE, BUDGET_WAITS, libraryId) as { kind: string; state: string; held: number; away: number; cw: number; ql: number; mac: number; n: number; error: string | null }[];
   const pending = rows.filter((r) => (r.state !== "needs_key" || r.ql) && !r.held && !r.away);
@@ -496,7 +496,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     return { done: 0, left: 0, clips: 0, share: 0, seconds: 0, waiting, stages: [] };
   }
   const open = db
-    .prepare(`SELECT DISTINCT version_id AS v FROM jobs WHERE library_id = ? AND ((state IN ('queued', 'running') AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL})`)
+    .prepare(`SELECT DISTINCT version_id AS v FROM jobs j WHERE library_id = ? AND ${NOT_TRASHED} AND ((state IN ('queued', 'running') AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL})`)
     .all({ ...away, ...look }, libraryId, LIMIT_LIKE) as { v: string }[];
   const run = runs.get(libraryId) ?? new Set<string>();
   runs.set(libraryId, run);
