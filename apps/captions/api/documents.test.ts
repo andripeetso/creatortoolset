@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
@@ -11,15 +11,18 @@ afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
 
 // the writer is stood in for: it keeps what it was sent and answers a document or a guide's plan
 const sent: { system: string; user: string }[] = [];
+// held: the writer answers only when its Stop aborts it
+let hold = false;
 vi.mock("./ai-complete", async (real) => ({
   ...(await real<typeof import("./ai-complete")>()),
   anyAiConfigured: () => true,
-  completeWithFallback: async (system: string, user: string, _signal: unknown, parse: (t: string) => unknown) => {
+  completeWithFallback: async (system: string, user: string, signal: AbortSignal | undefined, parse: (t: string) => unknown) => {
     sent.push({ system, user });
+    if (hold) await new Promise((_, no) => signal?.addEventListener("abort", () => no(signal.reason)));
     return parse(system.startsWith("You turn a narrated") ? '{"title":"Open the shop","purpose":"Open it.","steps":[{"title":"Open the shop","instruction":"Press B.","startSec":0,"endSec":1,"atSec":0.5}]}' : "# The shop\n\nPress B.");
   },
 }));
-const { documentsApp } = await import("./documents");
+const { documentsApp, guidesWork } = await import("./documents");
 
 const app = new Hono<{ Variables: AuthVars }>();
 app.use("*", async (c, next) => {
@@ -54,5 +57,25 @@ describe("a document or a guide written from the person's recordings", () => {
     const TOLD = "Workspace: Ember Realm\\nInstructions:\\nA free online fantasy RPG server\\.\\n\\nAuthor brief:\\nFor new players\\.\\n\\n";
     expect(await write("brief")).toMatch(new RegExp(`^The workspace this document belongs to\\.[^\\n]*\\n${TOLD}Source 1 `));
     expect(await write("guide")).toMatch(new RegExp(`^The workspace this guide belongs to\\.[^\\n]*\\n${TOLD}Title: Shop tour\\n\\n`));
+  });
+});
+
+describe("Stop", () => {
+  it("ends a guide being written as Stopped and leaves its recording; another account gets 404", async () => {
+    hold = true;
+    const going = app.request("/api/documents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "guide", prompt: "", sources: [{ type: "clip", id: CLIP, name: "Shop tour" }] }) });
+    await vi.waitFor(() => expect(guidesWork("ana")).toHaveLength(1));
+    const { id } = guidesWork("ana")[0]!;
+    const bo = new Hono<{ Variables: AuthVars }>();
+    bo.use("*", async (c, next) => (c.set("user", { username: "bo", role: "user", cloud: true, off: [] }), next()));
+    bo.route("/api/documents", documentsApp);
+    expect((await bo.request(`/api/documents/${id}/stop`, { method: "POST" })).status).toBe(404);
+    expect(await (await app.request(`/api/documents/${id}/stop`, { method: "POST" })).json()).toEqual({ ok: true });
+    expect(await (await going).json()).toMatchObject({ id, status: "error", error: "Stopped" });
+    expect(guidesWork("ana")).toEqual([]);
+    expect(existsSync(path.join(dataDir, "clips", CLIP, "meta.json"))).toBe(true);
+    hold = false;
+    // nothing running: still ok
+    expect((await app.request(`/api/documents/${id}/stop`, { method: "POST" })).status).toBe(200);
   });
 });

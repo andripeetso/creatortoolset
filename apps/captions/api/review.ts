@@ -519,8 +519,14 @@ async function jobVersion(id: string, n: number, patch: Partial<Version>) {
 async function processVersion(id: string, n: number): Promise<void> {
   const key = `${id}/${n}`;
   const src = sourcePath(id, n);
+  // a Stop saved the version as stopped: this run writes nothing more of it
+  const halt = () => {
+    if (stopped.has(key)) throw new Error(STOPPED);
+  };
   try {
+    halt();
     const info = await probe(src);
+    halt();
     if (!info || (!info.vcodec && !info.acodec)) throw new Error("Could not read this file as a video");
     await jobVersion(id, n, {
       duration: info.duration,
@@ -540,6 +546,7 @@ async function processVersion(id: string, n: number): Promise<void> {
         thumbPath(id, n),
       ]).catch(() => {});
     }
+    halt();
     if (!browserPlayable(info)) {
       let last = 0;
       // ponytail: one transcode at a time on the web server; move to a worker if uploads queue up
@@ -557,13 +564,14 @@ async function processVersion(id: string, n: number): Promise<void> {
         ],
         info.duration,
         (f) => {
-          if (Date.now() - last < 1500) return;
+          if (Date.now() - last < 1500 || stopped.has(key)) return;
           last = Date.now();
           // a progress save that fails says nothing: the job's end reports
           void jobVersion(id, n, { progress: 0.1 + f * 0.9 }).catch(() => {});
         },
       );
     }
+    halt();
     await jobVersion(id, n, {
       status: "ready",
       progress: 1,
@@ -573,12 +581,32 @@ async function processVersion(id: string, n: number): Promise<void> {
     void pushCopy(id, n).catch((e) => console.error(`[review] playback copy ${id}/${n}:`, e));
   } catch (e) {
     await rm(proxyPath(id, n), { force: true }).catch(() => {});
-    await jobVersion(id, n, {
-      status: "error",
-      error: e instanceof Error ? e.message.slice(0, 400) : String(e),
-    });
+    if (!stopped.has(key)) {
+      await jobVersion(id, n, {
+        status: "error",
+        error: e instanceof Error ? e.message.slice(0, 400) : String(e),
+      });
+    }
   }
+  stopped.delete(key);
   await syncLibrary(id);
+}
+
+/** What a stopped version says (POST /:id/stop): its processing ended by the person; the uploaded file stays. */
+const STOPPED = "Stopped";
+/** Versions stopped while queued or running (`id/n`): their run ends without writing. */
+const stopped = new Set<string>();
+
+/** Stops the video's versions being processed: a queued one is skipped, a running one's ffmpeg killed. */
+async function stopProcessing(id: string): Promise<void> {
+  const meta = await readMeta(id);
+  for (const v of meta?.versions ?? []) {
+    const key = `${id}/${v.n}`;
+    if (v.status !== "processing") continue;
+    if (queued.has(key)) stopped.add(key); // one not queued (left by a restart) has no run to end
+    children.get(key)?.kill("SIGKILL");
+    await jobVersion(id, v.n, { status: "error", error: STOPPED });
+  }
 }
 
 const queued = new Set<string>();
@@ -1662,6 +1690,14 @@ reviewApp.patch("/assets/:id", async (c) => {
   if (meta.share) await writeFile(linkPath(meta.share.token), meta.id);
   if (name) await syncLibrary(meta.id);
   return c.json(publicAsset(meta, true));
+});
+
+// POST /api/review/:id/stop → { ok }: the video's versions being processed end now as Stopped; the uploaded files stay
+reviewApp.post("/:id/stop", async (c) => {
+  const v = await viewer(c);
+  if (!v?.manage) return c.json({ error: "Not found" }, 404);
+  await stopProcessing(v.meta.id);
+  return c.json({ ok: true });
 });
 
 reviewApp.delete("/assets/:id", async (c) => {

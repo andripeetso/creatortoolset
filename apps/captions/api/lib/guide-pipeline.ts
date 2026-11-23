@@ -89,8 +89,11 @@ export async function generateGuideFromClip({
   assetsDir,
   owner,
   workspace,
+  signal,
 }: {
   prompt: string;
+  /** the guide's Stop (documents.ts POST /:id/stop) */
+  signal?: AbortSignal;
   note?: string;
   /** the workspace the guide is written in (workspaceContext), so the product and its screens are named as it names them */
   workspace?: string;
@@ -138,7 +141,7 @@ Rules:
 - Skip greetings, recap, and outro.
 - No markdown.`,
     user,
-    undefined,
+    signal,
     (text) => parseGuidePlan(text, clip.duration),
     aiFor(owner, "notes", "Guide Builder"),
   );
@@ -171,6 +174,7 @@ Rules:
 
   const filled: GuideMedia[][] = [];
   for (let i = 0; i < plan.steps.length; i++) {
+    signal?.throwIfAborted();
     filled.push(await mediaFor(i, plan.steps[i].atSec, plan.steps[i].title));
   }
 

@@ -78,11 +78,12 @@ export const createDocument = (
   prompt: string,
   sources: DocSource[],
   kind: DocKind = "brief",
+  id?: string,
 ) =>
   fetch("/api/documents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, sources, kind }),
+    body: JSON.stringify({ prompt, sources, kind, id }),
   }).then((r) => json<DocumentRecord>(r));
 
 export const patchDocument = (
@@ -107,6 +108,10 @@ export const generateDocument = (id: string) =>
   fetch(`/api/documents/${id}/generate`, { method: "POST" }).then((r) =>
     json<DocumentRecord>(r),
   );
+
+/** Stop: the document or guide being written ends now; what it had stays. */
+export const stopDocument = (id: string) =>
+  fetch(`/api/documents/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: true }>(r));
 
 export const deleteDocument = (id: string) =>
   fetch(`/api/documents/${id}`, { method: "DELETE" }).then(() => undefined);

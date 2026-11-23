@@ -38,6 +38,7 @@ import {
   createDocument,
   deleteDocument,
   generateDocument,
+  stopDocument,
   getDocument,
   getDocumentsAvailability,
   listDocumentMedia,
@@ -72,6 +73,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { confirmDialog } from "@/lib/dialogs";
+import { Button } from "@/components/ui/button";
 
 function fmtMmSs(t: number): string {
   const m = Math.floor(Math.max(0, t) / 60);
@@ -107,6 +109,8 @@ function ComposeForm({
   const [picked, setPicked] = useState<DocSource[]>(initial?.sources ?? []);
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
   const [busy, setBusy] = useState(false);
+  // the document being written, for its Stop: a new one is named here before it is saved
+  const [writingId, setWritingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const dragFrom = useRef<number | null>(null);
 
@@ -149,6 +153,8 @@ function ComposeForm({
   const submit = async () => {
     setError(null);
     setBusy(true);
+    const id = existingId ?? crypto.randomUUID();
+    setWritingId(id);
     try {
       if (existingId) {
         const run = async () => {
@@ -162,12 +168,13 @@ function ComposeForm({
         };
         onUpdated?.(await (replace ? replace(run) : run()));
       } else {
-        onCreated(await createDocument(prompt, picked, kind));
+        onCreated(await createDocument(prompt, picked, kind, id));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setWritingId(null);
     }
   };
 
@@ -401,7 +408,29 @@ function ComposeForm({
           "Create document"
         )}
       </button>
+      {busy && writingId && <StopWriting id={writingId} />}
     </div>
+  );
+}
+
+/** Stop for a document or guide being written; says so when the server refuses it. */
+function StopWriting({ id }: { id: string }) {
+  const [state, setState] = useState<"busy" | "failed" | null>(null);
+  const stop = async () => {
+    setState("busy");
+    try {
+      await stopDocument(id);
+    } catch {
+      setState("failed");
+    }
+  };
+  return (
+    <span className="flex shrink-0 items-center gap-2">
+      {state === "failed" && <span className="text-xs text-red-600 dark:text-red-400">Could not stop</span>}
+      <Button variant="outline" size="sm" disabled={state === "busy"} onClick={() => void stop()}>
+        {state === "busy" ? "Stopping" : "Stop"}
+      </Button>
+    </span>
   );
 }
 
@@ -631,6 +660,7 @@ export function Editor({
           >
             Sources
           </button>
+          {busy && <StopWriting id={doc.id} />}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button

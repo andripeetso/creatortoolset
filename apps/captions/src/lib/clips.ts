@@ -237,6 +237,10 @@ export const retryClip = (id: string) =>
     json<ClipSession>(r),
   );
 
+/** Stop: the note's processing and the sections being written end now; the recording stays. */
+export const stopClip = (id: string) =>
+  fetch(`/api/clips/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: true }>(r));
+
 export const renameClip = (id: string, name: string) =>
   fetch(`/api/clips/${id}`, {
     method: "PATCH",

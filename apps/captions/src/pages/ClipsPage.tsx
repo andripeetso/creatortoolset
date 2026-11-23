@@ -36,6 +36,7 @@ import {
   isProcessing,
   listClips,
   retryClip,
+  stopClip,
   retryClipBlock,
   transcriptParagraphs,
   uploadClip,
@@ -64,6 +65,7 @@ import {
   MobileClipView,
 } from "@/pages/mobile/MobileClipView";
 import { confirmDialog } from "@/lib/dialogs";
+import { Button } from "@/components/ui/button";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
 import { FolderShareButton, FolderTrail, MoveToMenu, ToolFolderCards, ToolFolderRows } from "@/components/browse/ToolFolders";
 import { useToolFolders } from "@/lib/folders";
@@ -91,9 +93,20 @@ function stepIndex(step: ProcessStep | undefined): number {
   return PROCESS_STEPS.findIndex((s) => s.id === step);
 }
 
-function ProcessPanel({ session }: { session: ClipSession }) {
+function ProcessPanel({ session, onStopped }: { session: ClipSession; onStopped?: (s: ClipSession) => void }) {
   const at = stepIndex(session.step);
   const pct = Math.round(Math.max(0, Math.min(1, session.progress)) * 100);
+  const [stopping, setStopping] = useState<"busy" | "failed" | null>(null);
+  const stop = async () => {
+    setStopping("busy");
+    try {
+      await stopClip(session.id);
+      setStopping(null);
+      onStopped?.(await getClip(session.id));
+    } catch {
+      setStopping("failed");
+    }
+  };
   return (
     <div className="rounded-xl border border-border bg-card px-5 py-6">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -101,7 +114,15 @@ function ProcessPanel({ session }: { session: ClipSession }) {
           <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
           Processing
         </p>
-        <span className="text-sm tabular-nums text-muted-foreground">{pct}%</span>
+        <span className="flex items-center gap-3">
+          <span className="text-sm tabular-nums text-muted-foreground">{pct}%</span>
+          {stopping === "failed" && <span className="text-xs text-red-600 dark:text-red-400">Could not stop</span>}
+          {onStopped && (
+            <Button variant="outline" size="sm" disabled={stopping === "busy"} onClick={() => void stop()}>
+              {stopping === "busy" ? "Stopping" : "Stop"}
+            </Button>
+          )}
+        </span>
       </div>
       <div className="mb-5 h-2 overflow-hidden rounded-full bg-muted">
         <div
@@ -463,7 +484,7 @@ function ClipView({
         </div>
         {isProcessing(session) && (
           <div className="mt-3">
-            <ProcessPanel session={session} />
+            <ProcessPanel session={session} onStopped={editable ? onChange : undefined} />
           </div>
         )}
       </div>

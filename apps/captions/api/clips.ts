@@ -206,6 +206,16 @@ export async function notesWork(username: string, keep?: ((own?: string) => bool
 
 void mkdir(CLIPS_DIR, { recursive: true }).catch(() => {});
 
+/** What a stopped note says (Stop, POST /:id/stop): its processing ended by the person, not failed. */
+export const STOPPED = "Stopped";
+/** Each note's Stop: its processing and its sections being written take this signal at their start; Stop aborts it. */
+const stops = new Map<string, AbortController>();
+function stopSignal(id: string): AbortSignal {
+  let c = stops.get(id);
+  if (!c) stops.set(id, (c = new AbortController()));
+  return c.signal;
+}
+
 function claimKind(id: string, k: BlockKind): boolean {
   let set = generating.get(id);
   if (!set) {
@@ -245,19 +255,22 @@ async function runBlockJob(
   force: boolean,
 ): Promise<void> {
   let owner: string | undefined;
+  const signal = stopSignal(id);
   try {
     const meta = await readMeta(id);
     if (!meta) return;
     owner = meta.owner;
-    const block = await generateBlock(meta, k, force);
+    const block = await generateBlock(meta, k, force, signal);
     await afterWrite(id, async () => {
       const fresh = await readMeta(id);
-      if (!fresh) return;
+      // a section stopped meanwhile keeps what the note had
+      if (!fresh || signal.aborted) return;
       applyBlock(fresh, k, block, force);
       await persist(fresh);
     });
     blockErrors.delete(errorKey(id, k));
   } catch (e) {
+    if (signal.aborted) return; // stopped: no error to show (finally still releases it)
     blockErrors.set(
       errorKey(id, k),
       e instanceof Error ? e.message : String(e),
@@ -566,6 +579,7 @@ async function generateBlock(
   meta: Meta,
   kind: BlockKind,
   force = false,
+  signal?: AbortSignal,
 ): Promise<ClipBlock> {
   if (!force && kind === "summary" && meta.summary) {
     return { id: "summary", kind: "summary", text: meta.summary };
@@ -585,7 +599,7 @@ async function generateBlock(
     const out = await completeWithFallback(
       `Summarize this screen recording. Return JSON only: {"text":"2-4 sentences covering the whole recording"}. Ground every claim in the transcript. No markdown.`,
       user,
-      undefined,
+      signal,
       (t) => {
         const text =
           typeof parseJsonObject(t).text === "string"
@@ -604,7 +618,7 @@ async function generateBlock(
     const chapters = await completeWithFallback(
       chapterSystem(meta.duration),
       user,
-      undefined,
+      signal,
       parseChaptersPayload,
       ai,
     );
@@ -619,7 +633,7 @@ async function generateBlock(
 {"items":[{"text":"one sentence","t":seconds}]}
 ${long ? "6-10" : "3-6"} items spanning the whole talk. Each item is a real point from the transcript, not generic advice. t is optional, seconds from start, only if it maps to a [mm:ss] in the transcript. No markdown.`,
       user,
-      undefined,
+      signal,
       (t) => parseItems(t, long ? 12 : 8),
       ai,
     );
@@ -632,7 +646,7 @@ ${long ? "6-10" : "3-6"} items spanning the whole talk. Each item is a real poin
 {"items":[{"text":"imperative next step","t":seconds}]}
 ${long ? "6-12" : "3-8"} concrete todos (fix X, change Y, add Z). Skip fluff. t optional. No markdown.`,
       user,
-      undefined,
+      signal,
       (t) => parseItems(t, long ? 14 : 10),
       ai,
     );
@@ -644,7 +658,7 @@ ${long ? "6-12" : "3-8"} concrete todos (fix X, change Y, add Z). Skip fluff. t 
 {"items":[{"text":"short quote","t":seconds}]}
 ${long ? "4-8" : "3-6"} quotes, lightly cleaned, still in the speaker's voice. t in seconds from a [mm:ss] in the transcript. No markdown.`,
     user,
-    undefined,
+    signal,
     (t) => parseItems(t, long ? 10 : 8),
     ai,
   );
@@ -721,6 +735,7 @@ export async function noteFailed(id: string, error: string): Promise<void> {
 /** The words (the sound the task made, heard on the owner's key or by this computer's speech model) and the notes. */
 async function noteText(meta: Meta, user: SessionUser, heard: boolean): Promise<void> {
   const id = meta.id;
+  const signal = stopSignal(id);
   let stopCrawl = () => {};
   try {
     const onDevice = userMayCloudTranscribe(user) && !!cloudTranscribeBlock(user) && deviceTranscribes();
@@ -747,6 +762,7 @@ async function noteText(meta: Meta, user: SessionUser, heard: boolean): Promise<
           console.warn(`[clips] transcript correct skipped: ${e.message}`);
         }
       }
+      signal.throwIfAborted(); // the transcription and its correction take no signal
       if (words.length) {
         await writeFile(
           transcriptPath(id),
@@ -771,7 +787,7 @@ async function noteText(meta: Meta, user: SessionUser, heard: boolean): Promise<
 {"title":"short title, max 8 words","summary":"2-4 sentences covering the whole recording","chapters":[{"t":seconds,"title":"short chapter"}]}
 ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No markdown.`,
           await noteMaterial(meta, words),
-          undefined,
+          signal,
           parseSummary,
           aiFor(meta.owner, "notes", "Video Notes"),
         );
@@ -781,14 +797,14 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
           meta.chapters = capChapters(out.chapters, chMax);
         }
       } catch (e) {
-        if (!(e instanceof AiProviderError)) throw e;
+        if (!(e instanceof AiProviderError) || signal.aborted) throw e;
         console.warn(`[clips] AI title skipped: ${e.message}`);
       }
       if (!meta.chapters?.length) {
         try {
-          await generateBlock(meta, "chapters");
+          await generateBlock(meta, "chapters", false, signal);
         } catch (e) {
-          if (!(e instanceof AiProviderError)) throw e;
+          if (!(e instanceof AiProviderError) || signal.aborted) throw e;
           console.warn(`[clips] chapters skipped: ${e.message}`);
         }
       }
@@ -810,7 +826,8 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     await jobPersist(meta);
   } finally {
     stopCrawl();
-    await noteEnded(meta);
+    // a stopped run ended at its Stop; ending it again here could take a new run's sound away
+    if (!signal.aborted) await noteEnded(meta);
   }
 }
 
@@ -825,7 +842,9 @@ async function noteEnded(meta: Meta): Promise<void> {
       `notes:${meta.id}`,
       meta.status === "ready"
         ? { status: "done", detail: "Ready", say: `“${meta.name}” is ready.`, choices: ["Sum it up"] }
-        : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}` },
+        : meta.error === STOPPED
+          ? { status: "failed", detail: STOPPED }
+          : { status: "failed", detail: why, say: `“${meta.name}” did not finish: ${why}` },
     );
   }
   if (active.get(meta.id) === meta) active.delete(meta.id);
@@ -886,6 +905,8 @@ function enqueue(meta: Meta, user: SessionUser): void {
 export function cancel(id: string): void {
   active.delete(id);
   dropTask(NOTES_TASK, id);
+  stops.get(id)?.abort();
+  stops.delete(id);
 }
 
 async function streamFile(
@@ -1118,6 +1139,22 @@ clipsApp.patch("/:id", async (c) => {
     await persist(meta);
   }
   return c.json(publicMeta(meta));
+});
+
+// POST /api/clips/:id/stop → { ok }: the note's processing and the sections being written end now; the recording stays
+clipsApp.post("/:id/stop", async (c) => {
+  const meta = await ownedMeta(c.req.param("id"), c.get("user"));
+  if (!meta) return c.json({ error: "Not found" }, 404);
+  const processing = meta.status === "processing";
+  cancel(meta.id);
+  if (processing) {
+    meta.status = "error";
+    meta.step = undefined;
+    meta.error = STOPPED;
+    await jobPersist(meta);
+    await noteEnded(meta);
+  } else announceSoon(meta.owner, "clips"); // its sections leave `generating` as their runs end
+  return c.json({ ok: true });
 });
 
 clipsApp.post("/:id/retry", async (c) => {

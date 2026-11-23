@@ -164,17 +164,25 @@ function assertGuideSources(sources: DocSource[]): void {
 }
 
 /** Guides and documents being written (inside their request), for Home (api/activity.ts); with `keep`, one workspace's. */
-const writing = new Map<string, { owner: string; name: string; projectId?: string }>();
+const writing = new Map<string, { owner: string; name: string; projectId?: string; stop: AbortController }>();
 export const guidesWork = (username: string, keep?: ((own?: string) => boolean) | null) =>
   [...writing].filter(([, w]) => w.owner === username && (!keep || keep(w.projectId))).map(([id, w]) => ({ id, name: w.name }));
-/** Runs one writing, told to Home when it starts and when it ends, whatever the end. */
-async function written<T>(id: string, owner: string, name: string, projectId: string | undefined, fn: () => Promise<T>): Promise<T> {
-  writing.set(id, { owner, name, projectId });
+/** What a stopped writing says (POST /:id/stop): ended by the person, not failed. */
+const STOPPED = "Stopped";
+/** Runs one writing, told to Home when it starts and when it ends, whatever the end; its Stop aborts `signal`. */
+async function written<T>(id: string, owner: string, name: string, projectId: string | undefined, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const stop = new AbortController();
+  writing.set(id, { owner, name, projectId, stop });
   announce(owner, "documents");
   try {
-    return await fn();
+    const out = await fn(stop.signal);
+    // a late answer from a stopped run is not saved
+    stop.signal.throwIfAborted();
+    return out;
+  } catch (e) {
+    throw stop.signal.aborted ? new Error(STOPPED) : e;
   } finally {
-    writing.delete(id);
+    if (writing.get(id)?.stop === stop) writing.delete(id);
     announce(owner, "documents");
   }
 }
@@ -189,6 +197,7 @@ async function runGuideGenerate(
   meta: Meta,
   resolved: (DocSource & { pack: string })[],
   owner: string,
+  signal?: AbortSignal,
 ): Promise<{ title: string; markdown: string }> {
   assertGuideSources(resolved);
   const clip = resolved[0];
@@ -204,7 +213,9 @@ async function runGuideGenerate(
       assetsDir: tmp,
       owner,
       workspace: await workspaceFor(meta),
+      signal,
     });
+    signal?.throwIfAborted(); // stopped while it wrote: the guide keeps what it had
     if (existsSync(dest)) {
       await rename(dest, prev);
       movedPrev = true;
@@ -419,6 +430,7 @@ async function generateBody(
   meta: Meta,
   resolved: (DocSource & { pack: string })[],
   owner: string | undefined,
+  signal?: AbortSignal,
 ): Promise<string> {
   const { prompt } = meta;
   const workspace = await workspaceFor(meta);
@@ -450,7 +462,7 @@ Rules:
 - Put each source video on its own line as a markdown link using the Link: path (e.g. [Title](/clips/<id>)), then write the section under it.
 - Start with a single # title, then ## sections. Use lists where they help.`,
     user,
-    undefined,
+    signal,
     parseDocumentMarkdown,
     aiFor(owner, "notes", "Documents"),
   );
@@ -609,6 +621,7 @@ documentsApp.post("/", async (c) => {
     prompt?: unknown;
     sources?: unknown;
     kind?: unknown;
+    id?: unknown;
   } | null;
   let sources: DocSource[];
   try {
@@ -631,7 +644,8 @@ documentsApp.post("/", async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
-  const id = randomUUID();
+  // the page may name the new document, so its Stop can reach the writing before the document is saved
+  const id = typeof body?.id === "string" && okId(body.id) && !writing.has(body.id) && !existsSync(docDir(body.id)) ? body.id : randomUUID();
   const projectId = await currentWorkspaceId(user);
   const meta: Meta = {
     id,
@@ -647,10 +661,10 @@ documentsApp.post("/", async (c) => {
     updatedAt: Date.now(),
   };
   try {
-    const md = await written(id, user.username, resolved[0]?.name ?? meta.name, meta.projectId, async () =>
+    const md = await written(id, user.username, resolved[0]?.name ?? meta.name, meta.projectId, async (signal) =>
       kind === "guide"
-        ? (await runGuideGenerate(meta, resolved, user.username)).markdown
-        : await generateBody(meta, resolved, user.username));
+        ? (await runGuideGenerate(meta, resolved, user.username, signal)).markdown
+        : await generateBody(meta, resolved, user.username, signal));
     meta.name = titleFromBody(md, meta.name);
     await persist(meta);
     if (kind !== "guide") await writeBody(id, md);
@@ -788,10 +802,10 @@ documentsApp.post("/:id/generate", async (c) => {
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
   try {
-    const md = await written(meta.id, user.username, meta.name, meta.projectId, async () =>
+    const md = await written(meta.id, user.username, meta.name, meta.projectId, async (signal) =>
       kind === "guide"
-        ? (await runGuideGenerate(meta, resolved, user.username)).markdown
-        : await generateBody(meta, resolved, user.username));
+        ? (await runGuideGenerate(meta, resolved, user.username, signal)).markdown
+        : await generateBody(meta, resolved, user.username, signal));
     meta.name = titleFromBody(md, meta.name);
     meta.status = "ready";
     meta.error = undefined;
@@ -808,6 +822,20 @@ documentsApp.post("/:id/generate", async (c) => {
       status,
     );
   }
+});
+
+// POST /api/documents/:id/stop → { ok }: the document or guide being written ends now as Stopped; what it had stays
+documentsApp.post("/:id/stop", async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+  const w = writing.get(id);
+  // a new document is saved only once its first writing ends: the run itself says whose it is
+  if (w?.owner === user.username) {
+    w.stop.abort();
+    return c.json({ ok: true });
+  }
+  if (!(await ownedMeta(id, user))) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
 });
 
 documentsApp.delete("/:id", async (c) => {

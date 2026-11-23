@@ -86,6 +86,7 @@ import {
   assetTitle,
   cutOf,
   versionLabel,
+  stopReview,
 } from "@/lib/review";
 import { toast } from "sonner";
 import { undoable } from "@/lib/undo";
@@ -978,6 +979,7 @@ function Review({
                   <span className="block h-full bg-violet-500 transition-[width] duration-500" style={{ width: `${Math.round(version.progress * 100)}%` }} />
                 </span>
                 Preparing · {Math.round(version.progress * 100)}%
+                {manage && <StopPreparing assetId={asset.id} onStopped={reload} />}
               </div>
             ) : (
               <p className="flex max-w-md items-center gap-2 px-6 text-sm text-red-400">
@@ -2181,5 +2183,28 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+/** Stop for a video being prepared: its versions end as Stopped, the uploaded files stay. */
+function StopPreparing({ assetId, onStopped }: { assetId: string; onStopped: () => Promise<void> }) {
+  const [state, setState] = useState<"busy" | "failed" | null>(null);
+  const stop = async () => {
+    setState("busy");
+    try {
+      await stopReview(assetId);
+      setState(null);
+      await onStopped().catch(() => {});
+    } catch {
+      setState("failed");
+    }
+  };
+  return (
+    <span className="flex items-center gap-2">
+      <Button variant="outline" size="sm" disabled={state === "busy"} onClick={() => void stop()}>
+        {state === "busy" ? "Stopping" : "Stop"}
+      </Button>
+      {state === "failed" && <span className="text-xs text-red-400">Could not stop</span>}
+    </span>
   );
 }
