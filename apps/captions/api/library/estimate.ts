@@ -510,23 +510,23 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const through = db
     .prepare(
       `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed')) AS fin,
-         COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs
-       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ((state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL}) GROUP BY version_id)`,
+         COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs j
+       WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} AND ((state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL}) GROUP BY version_id)`,
     )
     .get({ ...away, ...look }, libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
-  // a clip of the run whose every step left is held is through, as far as this computer goes
+  // a clip of the run whose every step left is held, or that went to the trash, is through, as far as this computer goes
   const share = ((through.s ?? 0) + run.size - through.clips) / (run.size + toCome);
   const counts = db
     .prepare(
       // still to do counts what waits for a key or a limit too (`waiting` says why), so a line never shrinks when one parks
       `SELECT kind, SUM(state = 'done') AS done, SUM(state = 'failed') AS failed, SUM(state IN ('queued', 'running', 'needs_key')) AS open
-       FROM jobs WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) GROUP BY kind`,
+       FROM jobs j WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} GROUP BY kind`,
     )
     .all(libraryId, JSON.stringify([...run])) as { kind: string; done: number; failed: number; open: number }[];
   const working = db
     .prepare(
       `SELECT j.kind, a.title FROM jobs j JOIN asset_versions v ON v.id = j.version_id JOIN assets a ON a.id = v.asset_id
-       WHERE j.library_id = ? AND j.state = 'running' ORDER BY j.started_at`,
+       WHERE j.library_id = ? AND j.state = 'running' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL ORDER BY j.started_at`,
     )
     .all(libraryId) as { kind: string; title: string }[];
   const routes = routesOf(libraryId, username);

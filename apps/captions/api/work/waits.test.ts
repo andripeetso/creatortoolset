@@ -288,6 +288,24 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     expect(snap.waitingIds).toEqual([]);
   });
 
+  it("10b. a clip in the trash or hidden waits for nothing: no computer row for its job until it comes back", async () => {
+    const linux = pairDevice("tiny", "Linux box", undefined, "hw-linux-10b");
+    await report(linux.token, LINUX_MACHINE, "node");
+    await claimWork(linux.token, { libraryOnly: true });
+    writeFolders("tiny", [
+      { id: "fld_10b", name: "Share10b", role: "footage", origin: { host: linux.device.id, path: "/mnt/footage/Share10b" }, reach: {} },
+    ]);
+    const trashed = addVersion({ sourcePath: "/mnt/footage/Share10b/a.mov" });
+    const hidden = addVersion({ sourcePath: "/mnt/footage/Share10b/b.mov" });
+    const kept = addVersion({ sourcePath: "/mnt/footage/Share10b/c.mov" });
+    const jobs = [trashed, hidden, kept].map((v) => enqueue("lib_tiny", v, "proxy"));
+    const db = libraryDb();
+    db.prepare("UPDATE assets SET trashed_at = 1 WHERE id = ?").run(`ast_${trashed}`);
+    db.prepare("UPDATE assets SET left_hidden_at = 1 WHERE id = ?").run(`ast_${hidden}`);
+
+    expect(status("lib_tiny").queuedIds).toEqual([jobs[2]!.id]);
+  });
+
   it("13. offline: fresh-id Mac silent 3 min -> offline; LocationAgent report changes nothing; boot grace -> queued; curl-paired Linux box -> offline; carries device and devices", async () => {
     const mac = pairDevice("tiny", "Mac Studio", "0.17.6", "hw-mac-13");
     await report(mac.token, MAC_MACHINE);

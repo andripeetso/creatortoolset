@@ -75,13 +75,26 @@ describe("estimate", () => {
     d.prepare("DELETE FROM jobs WHERE kind = 'thumb'").run();
   });
 
-  it("a clip in the trash is never work left: its jobs wait for it to come back, and no computer takes them", async () => {
+  it("a clip in the trash is never work left, even one trashed partway through a run: its jobs wait for it to come back", async () => {
+    const checks = async () => {
+      const p = await progress("lib_e", "local");
+      return { left: p.left, share: p.share, line: p.stages.find((s) => s.kind === "fingerprint") };
+    };
     enqueueJob(d, "lib_e", "v1", "fingerprint", "local");
-    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'a1'").run();
-    expect(await progress("lib_e", "local")).toMatchObject({ left: 0, stages: [] });
-    d.prepare("UPDATE assets SET trashed_at = NULL WHERE id = 'a1'").run();
-    expect(await progress("lib_e", "local")).toMatchObject({ left: 1, clips: 1 });
-    d.prepare("DELETE FROM jobs WHERE kind = 'fingerprint'").run();
+    enqueueJob(d, "lib_e", "v2", "fingerprint", "local");
+    try {
+      expect(await checks()).toMatchObject({ left: 2, line: { done: 0, of: 2 } });
+      // trashed while the run is on: its line leaves with it and it counts as through (v2 is half done: 1.5 of 2)
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'a1'").run();
+      expect(await checks()).toMatchObject({ left: 1, line: { done: 0, of: 1 }, share: 0.75 });
+      d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'a2'").run();
+      expect(await checks()).toEqual({ left: 0, share: 0, line: undefined });
+      d.prepare("UPDATE assets SET trashed_at = NULL WHERE id IN ('a1', 'a2')").run();
+      expect((await checks()).left).toBe(2);
+    } finally {
+      d.prepare("UPDATE assets SET trashed_at = NULL WHERE id IN ('a1', 'a2')").run();
+      d.prepare("DELETE FROM jobs WHERE kind = 'fingerprint'").run();
+    }
   });
 
   it("the whole library's status counts every clip in it, never the trash", () => {
