@@ -1,6 +1,7 @@
 // first, so its ⌘Z listener is ahead of every page's own (lib/undo.ts)
 import "@/lib/undo";
 import { CornerNav } from "@/components/CornerNav";
+import { MacAppUpdateBanner } from "@/components/MacAppUpdateBanner";
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, type Location } from "react-router";
 import { useTelemetry } from "@/lib/telemetry";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
@@ -356,6 +357,7 @@ export default function App() {
       <AppDialogs />
       <AppToaster />
       <ViewAsBanner />
+      <MacAppUpdateBanner />
       <main className="contents">
         <Routes location={page}>
           <Route path="/" element={<ToolsetHome />} />

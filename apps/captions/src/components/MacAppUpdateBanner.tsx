@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
-import { useMacUpdate } from "@/components/NewVersionPill";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
+import { restartMac, useMacUpdate } from "@/components/NewVersionPill";
 import { hasThisMac, tell, type ThisMacState } from "@/components/settings/ThisMacSection";
 
 /**
  * The oldest Mac app these pages work with. Raise it in the same commit as a page change that needs a newer Mac app
- * (a new bridge message, or a ThisMacState field it can't do without): an older app then shows this strip instead of a
+ * (a new bridge message, or a ThisMacState field it can't do without): an older app then shows this dialog instead of a
  * feature that does nothing. "0.0.0" = every Mac app works.
  */
 // 0.22.0: Face Blur at intake runs as the device job "faceblur-intake", which older Mac apps never claim
@@ -23,8 +26,9 @@ export function olderThan(a: string | undefined, b: string): boolean {
 }
 
 /**
- * Inside a Mac app older than MIN_MAC_APP, with no update downloaded yet: a card in the bottom-left corner (CornerNav)
- * saying to update it, over the page so nothing moves. A downloaded update is UpdateButton's. A browser never shows it.
+ * Inside a Mac app older than MIN_MAC_APP: a dialog over the whole app that stays until the app is updated. The Mac app
+ * downloads the update by itself (Updates.swift), then Restart to update installs it; until then the menu's Check for
+ * Updates… is the way. A browser never shows it.
  */
 export function MacAppUpdateBanner() {
   const [old, setOld] = useState(false);
@@ -36,11 +40,33 @@ export function MacAppUpdateBanner() {
     tell("state");
     return () => window.removeEventListener("mac-this", handle);
   }, []);
-  if (!old || held) return null;
+  if (!old) return null;
   return (
-    <div role="status" className="w-72 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-lg">
-      <p className="text-sm font-medium">Update Creator Toolset</p>
-      <p className="mt-1 text-xs text-muted-foreground">Creator Toolset menu → Check for Updates…</p>
-    </div>
+    <Dialog open>
+      <DialogContent
+        showCloseButton={false}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="sm:max-w-sm"
+      >
+        <DialogHeader>
+          <DialogTitle>Update Creator Toolset</DialogTitle>
+          <DialogDescription>This server needs Creator Toolset {MIN_MAC_APP} or newer.</DialogDescription>
+        </DialogHeader>
+        {held ? (
+          <Button disabled={held.waiting} onClick={restartMac}>
+            {held.waiting ? "Updates when done" : "Restart to update"}
+          </Button>
+        ) : (
+          <>
+            <Button disabled>
+              <Spinner /> Downloading update
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">Creator Toolset menu → Check for Updates…</p>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

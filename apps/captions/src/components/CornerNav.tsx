@@ -1,4 +1,3 @@
-import { MacAppUpdateBanner } from "@/components/MacAppUpdateBanner";
 import { UpdateButton } from "@/components/NewVersionPill";
 import { useAccountInCorner } from "@/components/UserMenu";
 
@@ -11,7 +10,6 @@ export function CornerNav() {
       aria-label="Updates"
       className="fixed bottom-2 left-2 z-40 flex items-center gap-2"
     >
-      <MacAppUpdateBanner />
       <UpdateButton />
     </nav>
   );
