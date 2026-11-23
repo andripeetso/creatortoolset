@@ -1,16 +1,19 @@
-// Face Blur's automatic covers (the plug-in blur-faces, its device job "faceblur"): a photo or video that came into the
-// account's Media Library, covered on this Mac with the FaceBlur engine. It reaches this Mac the way a cut-out does
-// (Relay.swift: claimed by kind). Then, with the device token:
-//   GET  /api/devices/relay/job/faceblur/:id              the original
-//   POST /api/devices/relay/job/faceblur/:id              { faces: [{ id, picture, note }] } → { blur: [ids] }, the ones the
-//                                                         person's AI chose ("Only some faces"), or { nothing: why } → done
-//   POST /api/devices/relay/job/faceblur/:id/file         the covered copy (MP4 or JPEG), streamed
-//   or   /api/devices/relay/job/faceblur/:id/fail         { error } with a reason a person can read
-// A file with no face covered sends `nothing`, and no copy.
+// Face Blur at intake (the plug-in blur-faces, its device job "faceblur-intake"; apps/captions/docs/face-blur-intake-prd.md
+// §3a): a Media Library file marked Blur faces, covered on the Mac that has it, read where it is. It reaches this Mac the
+// way a cut-out does (Relay.swift: claimed by kind). Options: media, path (the original here), out (the folder to write
+// the copy into), the style. Then, with the device token:
+//   POST /api/devices/relay/job/faceblur-intake/:id   { back: why }               the file can't be read here: put back
+//                                                     { nothing: why, sha256 }    no face found
+//                                                     { faces, sha256 } → { blur: [ids] } (empty: none matched, done),
+//                                                       or 409 { error, back: true }: the AI provider could not answer,
+//                                                       the file is back in the queue (not a failure)
+//                                                     { made: { path, size, quick, sha256, duration?, width?, height?, thumb? } }
+//   POST /api/devices/relay/job/faceblur-intake/:id/fail   { error } with a reason a person can read
+// The original is never downloaded or uploaded; only the copy's record is sent.
 import Foundation
 
-/// The device job kind this Mac lists for Face Blur's automatic covers (the plug-in's AUTO_KIND).
-let faceBlurAutoKind = "faceblur"
+/// The device job kind this Mac lists for Face Blur at intake (the plug-in's AUTO_KIND).
+let faceBlurAutoKind = "faceblur-intake"
 
 /// Why a file can't be covered, in words for the person.
 struct FaceBlurAutoRefused: Error, Equatable {
@@ -29,12 +32,13 @@ func waitAsync<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) th
     return try result!.get()
 }
 
-/// One automatic cover, from fetching the original to the copy (or no copy) or why not. Runs on the caller's thread.
+/// One file covered at intake, from reading the original where it is to the copy's record (or no copy) or why not.
+/// Runs on the caller's thread.
 struct FaceBlurAutoJob {
     let api: DeviceAPI
     let step: EditorJob
-    /// where this job's files are kept while it runs; removed after
-    let folder: URL
+    /// the folders this Mac reads media from for this server (MediaFiles.granted): the only originals a job may open
+    var granted: [String] = MediaFiles.granted
 
     var isVideo: Bool { step.options["media"] != "photo" }
     /// the style from the job's options (look, strength, softness, size, color)
@@ -50,42 +54,64 @@ struct FaceBlurAutoJob {
         (((try? JSONSerialization.jsonObject(with: reply.data)) as? [String: Any])?["error"] as? String) ?? "HTTP \(reply.status)"
     }
 
+    /// The server put the file back (its AI provider could not answer): not this Mac's failure.
+    static func putBack(_ reply: DeviceReply) -> Bool {
+        reply.status == 409 && ((try? JSONSerialization.jsonObject(with: reply.data)) as? [String: Any])?["back"] as? Bool == true
+    }
+
+    /// What the server records of the copy: its own size, prints and card picture.
+    static func record(of copy: URL) throws -> [String: Any] {
+        guard let size = (try FileManager.default.attributesOfItem(atPath: copy.path)[.size] as? NSNumber)?.intValue,
+              let quick = Imports.quickPrint(copy.path) else { throw FaceBlurAutoRefused(why: "The blurred copy could not be read back.") }
+        var made: [String: Any] = ["path": copy.path, "size": size, "quick": quick, "sha256": try LibraryCopyJob.sha256(of: copy)]
+        let read = MacIndex.read(copy.path)
+        for key in ["duration", "width", "height", "thumb"] { made[key] = read[key] }
+        return made
+    }
+
     func run() -> (end: CardJob.End, more: Bool) {
         let base = "/api/devices/relay/job/\(faceBlurAutoKind)/\(step.id)"
-        let files = FileManager.default
-        defer { try? files.removeItem(at: folder) }
+        let post = { (body: [String: Any]) throws -> DeviceReply in try self.api.call("POST", base, body, tries: 3, timeout: 600) }
+        let ended = { (reply: DeviceReply) -> (end: CardJob.End, more: Bool) in
+            reply.status == 200 ? (.done, RelayRunner.editorWaits(reply.data)) : (.gone, false)
+        }
         let why: String
         do {
-            try files.createDirectory(at: folder, withIntermediateDirectories: true)
-            // the engine reads a file's kind from its extension; AVFoundation and ImageIO read the content whatever it is
-            let source = folder.appendingPathComponent(isVideo ? "original.mov" : "original.jpg")
-            let status = try api.download(base, to: source)
-            if status == 404 || status == 401 { return (.gone, false) }
-            guard status == 200 else { throw FaceBlurAutoRefused(why: "The file could not be read from the server (HTTP \(status)).") }
+            guard let path = step.options["path"], let out = step.options["out"] else {
+                throw FaceBlurAutoRefused(why: "This Mac app is newer than the server: update the server.")
+            }
+            let real: String
+            switch MediaFiles.gate(path, granted: granted) {
+            case .file(let p, _): real = p
+            case .status(403), .status(415): throw FaceBlurAutoRefused(why: "The file is not in a folder this Mac shares with the Media Library.")
+            default:
+                // a disk not connected, or a file moved: back in the queue for a while, not a failure
+                _ = try? post(["back": "The file is not on this Mac now."])
+                return (.gone, false)
+            }
+            let source = URL(fileURLWithPath: real)
+            let sha256 = try LibraryCopyJob.sha256(of: source)
             let preset = self.preset
             let scan = try waitAsync { try await CoverPipeline.scan(source, preset: preset) { _ in } }
-            var blur = Set(scan.faces.map(\.id))
-            if step.options["mode"] == "some" && !scan.faces.isEmpty {
-                let faces = scan.faces.map { ["id": $0.id, "picture": $0.picture, "note": $0.note] }
-                let reply = try api.call("POST", base, ["faces": faces], tries: 2, timeout: 600)
-                if reply.status == 404 || reply.status == 401 { return (.gone, false) }
-                guard reply.status == 200, let ids = Self.chosen(reply.data) else { throw FaceBlurAutoRefused(why: Self.problem(reply)) }
-                blur = ids
-            }
-            let out = folder.appendingPathComponent(isVideo ? "covered.mp4" : "covered.jpg")
-            let chosen = blur
-            do {
-                try waitAsync { try await CoverPipeline.write(scan, from: source, blur: chosen, style: preset, to: out) { _ in } }
-            } catch let nothing as CoverPipeline.NothingToCover {
-                let reply = try api.call("POST", base, ["nothing": nothing.why], tries: 3)
-                return reply.status == 200 ? (.done, RelayRunner.editorWaits(reply.data)) : (.gone, false)
-            }
-            let reply = try api.uploadFile("\(base)/file?name=\(out.lastPathComponent)", file: out, type: isVideo ? "video/mp4" : "image/jpeg")
-            if reply.status == 200 { return (.done, RelayRunner.editorWaits(reply.data)) }
-            if reply.status == 404 || reply.status == 401 { return (.gone, false) }
-            throw FaceBlurAutoRefused(why: "The server refused the covered copy: \(Self.problem(reply))")
+            if scan.faces.isEmpty { return ended(try post(["nothing": "No face found", "sha256": sha256])) }
+            let faces = scan.faces.map { ["id": $0.id, "picture": $0.picture, "note": $0.note] }
+            let reply = try post(["faces": faces, "sha256": sha256])
+            if reply.status == 404 || reply.status == 401 || Self.putBack(reply) { return (.gone, false) }
+            guard reply.status == 200, let blur = Self.chosen(reply.data) else { throw FaceBlurAutoRefused(why: Self.problem(reply)) }
+            // none matched: the server has kept the file as filmed and ended the job
+            if blur.isEmpty { return (.done, RelayRunner.editorWaits(reply.data)) }
+            let folder = URL(fileURLWithPath: out, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            // "<name> blurred.mp4" in `out`, numbered when taken; the engine writes a hidden partial file and renames it
+            let copy = CoverPipeline.outputURL(for: folder.appendingPathComponent(source.lastPathComponent), kind: scan.kind)
+            try waitAsync { try await CoverPipeline.write(scan, from: source, blur: blur, style: preset, to: copy) { _ in } }
+            let made = try post(["made": try Self.record(of: copy)])
+            if made.status == 200 || made.status == 404 || made.status == 401 { return ended(made) }
+            throw FaceBlurAutoRefused(why: "The server did not take the blurred copy: \(Self.problem(made))")
         } catch let refused as FaceBlurAutoRefused {
             why = refused.why
+        } catch let nothing as CoverPipeline.NothingToCover {
+            why = nothing.why
         } catch let media as MediaError {
             why = media.localizedDescription
         } catch {

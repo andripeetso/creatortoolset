@@ -470,7 +470,7 @@ final class RelayRunner {
             } else if step.kind == transcribeKind, let speech {
                 (end, more) = TranscribeJob(api: api, step: step, speech: speech, proxies: work.appendingPathComponent("work/proxies"), granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil)).run()
             } else if step.kind == faceBlurAutoKind {
-                (end, more) = FaceBlurAutoJob(api: api, step: step, folder: work.appendingPathComponent("faceblur/\(step.id)")).run()
+                (end, more) = FaceBlurAutoJob(api: api, step: step, granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil)).run()
             } else if step.kind == lookAwayKind {
                 (end, more) = LookAwayJob(api: api, step: step, proxies: work.appendingPathComponent("work/proxies"), granted: MediaFiles.granted(server: MediaFiles.serverKey(api.base), workspace: nil), stopped: { [weak self] in self?.isStopped ?? true }).run()
             } else if step.kind == folderListKind {
