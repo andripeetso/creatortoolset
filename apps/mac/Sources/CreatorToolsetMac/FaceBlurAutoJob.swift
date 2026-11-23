@@ -43,6 +43,17 @@ struct FaceBlurAutoJob {
     var isVideo: Bool { step.options["media"] != "photo" }
     /// the style from the job's options (look, strength, softness, size, color)
     var preset: LookPreset { LookPreset(values: step.options) }
+    /// the size and bitrate from the job's options (Settings → Face Blur)
+    var output: CoverOutput { Self.output(step.options) }
+
+    /// `longSide` "1920", "3840" or "0" (as filmed) and `bitrate` in bits per second (1–100 Mbps); anything else: the
+    /// engine's own (1920, 20 Mbps).
+    static func output(_ options: [String: String]) -> CoverOutput {
+        var out = CoverOutput()
+        if let side = options["longSide"], ["1920", "3840", "0"].contains(side) { out.longSide = CGFloat(Int(side)!) }
+        if let bits = options["bitrate"].flatMap(Int.init), (1_000_000...100_000_000).contains(bits) { out.bitrate = bits }
+        return out
+    }
 
     /// The ids `faces` lists in the server's answer, or nil when it lists none.
     static func chosen(_ data: Data) -> Set<String>? {
@@ -91,7 +102,7 @@ struct FaceBlurAutoJob {
             }
             let source = URL(fileURLWithPath: real)
             let sha256 = try LibraryCopyJob.sha256(of: source)
-            let preset = self.preset
+            let preset = self.preset, output = self.output
             let scan = try waitAsync { try await CoverPipeline.scan(source, preset: preset) { _ in } }
             if scan.faces.isEmpty { return ended(try post(["nothing": "No face found", "sha256": sha256])) }
             let faces = scan.faces.map { ["id": $0.id, "picture": $0.picture, "note": $0.note] }
@@ -104,7 +115,7 @@ struct FaceBlurAutoJob {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             // "<name> blurred.mp4" in `out`, numbered when taken; the engine writes a hidden partial file and renames it
             let copy = CoverPipeline.outputURL(for: folder.appendingPathComponent(source.lastPathComponent), kind: scan.kind)
-            try waitAsync { try await CoverPipeline.write(scan, from: source, blur: blur, style: preset, to: copy) { _ in } }
+            try waitAsync { try await CoverPipeline.write(scan, from: source, blur: blur, style: preset, to: copy, output: output) { _ in } }
             let made = try post(["made": try Self.record(of: copy)])
             if made.status == 200 || made.status == 404 || made.status == 401 { return ended(made) }
             throw FaceBlurAutoRefused(why: "The server did not take the blurred copy: \(Self.problem(made))")

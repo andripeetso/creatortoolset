@@ -6,12 +6,51 @@ import UniformTypeIdentifiers
 
 /// Writes covered copies. Every frame of a video goes through `CoverRenderer`; there is no uncovered fallback. A copy
 /// is written next to `url` first and moved there only once it checks out, so a half-written file never has the name.
+/// The size and bitrate a copy is written at. `longSide`: pixels on the long side, 0 keeps the source's size (a video at
+/// most `maxVideoLongSide`), nil each kind's own default (videos 1920, photos 4096). Never larger than the source.
+struct CoverOutput: Equatable, Sendable {
+    var longSide: CGFloat?
+    var bitrate = CoverExporter.videoBitrate
+
+    var videoLongSide: CGFloat { longSide.map { $0 > 0 ? min($0, CoverExporter.maxVideoLongSide) : CoverExporter.maxVideoLongSide } ?? CoverExporter.videoLongSide }
+    var photoLongSide: CGFloat { longSide.flatMap { $0 > 0 ? min($0, CoverExporter.photoLongSide) : nil } ?? CoverExporter.photoLongSide }
+}
+
 enum CoverExporter {
     /// Long side of exported videos: fits every messaging app without them recompressing twice.
     static let videoLongSide: CGFloat = 1920
     static let photoLongSide: CGFloat = 4096
     /// H.264 at a fixed bitrate: the copy is the working file for editing, and an export preset picks about half of this.
     static let videoBitrate = 20_000_000
+    /// The largest long side a video is written at: H.264 encoders refuse some sizes above 4096.
+    static let maxVideoLongSide: CGFloat = 3840
+
+    /// The even-sized frame a video of `upright` size is written at: `longSide` at most, never larger than the source.
+    static func frameSize(_ upright: CGSize, longSide: CGFloat) -> CGSize {
+        let scale = min(1, longSide / max(upright.width, upright.height))
+        return CGSize(
+            width: max(2, (upright.width * scale / 2).rounded(.down) * 2),
+            height: max(2, (upright.height * scale / 2).rounded(.down) * 2)
+        )
+    }
+
+    /// The writer's H.264 settings: BT.709, High profile, `bitrate` bits per second.
+    static func videoSettings(size: CGSize, bitrate: Int) -> [String: Any] {
+        [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(size.width),
+            AVVideoHeightKey: Int(size.height),
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: bitrate,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+            ],
+        ]
+    }
 
     // MARK: Video
 
@@ -19,6 +58,7 @@ enum CoverExporter {
         asset: AVAsset,
         covers: [Cover],
         to url: URL,
+        output: CoverOutput = CoverOutput(),
         progress: @escaping @Sendable (Double) -> Void
     ) async throws {
         guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else {
@@ -43,11 +83,7 @@ enum CoverExporter {
         let renderer = CoverRenderer.shared
         let ciContext = CIContext(options: [.cacheIntermediates: false])
         let upright = CGRect(origin: .zero, size: natural).applying(transform).standardized.size
-        let scale = min(1, videoLongSide / max(upright.width, upright.height))
-        let target = CGSize(
-            width: max(2, (upright.width * scale / 2).rounded(.down) * 2),
-            height: max(2, (upright.height * scale / 2).rounded(.down) * 2)
-        )
+        let target = frameSize(upright, longSide: output.videoLongSide)
         let videoComposition = try await AVMutableVideoComposition.videoComposition(
             with: composition,
             applyingCIFiltersWithHandler: { request in
@@ -69,7 +105,7 @@ enum CoverExporter {
 
         let partial = partialURL(for: url)
         defer { try? FileManager.default.removeItem(at: partial) }
-        try await write(composition, videoComposition, size: target, duration: range.duration.seconds, to: partial, progress: progress)
+        try await write(composition, videoComposition, size: target, bitrate: output.bitrate, duration: range.duration.seconds, to: partial, progress: progress)
         progress(1)
 
         // Never give a partial or empty file the copy's name.
@@ -80,12 +116,13 @@ enum CoverExporter {
         try place(partial, at: url)
     }
 
-    /// Reads the composition through the cover renderer and writes H.264 at `videoBitrate` with each sound track as
+    /// Reads the composition through the cover renderer and writes H.264 at `bitrate` with each sound track as
     /// stereo AAC. A writer adds no metadata of its own.
     private static func write(
         _ composition: AVAsset,
         _ videoComposition: AVVideoComposition,
         size: CGSize,
+        bitrate: Int,
         duration: Double,
         to url: URL,
         progress: @escaping @Sendable (Double) -> Void
@@ -99,20 +136,7 @@ enum CoverExporter {
         )
         videoOut.videoComposition = videoComposition
         videoOut.alwaysCopiesSampleData = false
-        let videoIn = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: Int(size.width),
-            AVVideoHeightKey: Int(size.height),
-            AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-            ],
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: videoBitrate,
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-            ],
-        ])
+        let videoIn = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings(size: size, bitrate: bitrate))
         videoIn.expectsMediaDataInRealTime = false
         guard reader.canAdd(videoOut), writer.canAdd(videoIn) else { throw MediaError.exportFailed("that video can't be made here.") }
         reader.add(videoOut)
@@ -183,9 +207,9 @@ enum CoverExporter {
 
     /// Renders a new JPEG. Only pixels are written: no EXIF, GPS, camera or
     /// original-date metadata comes along.
-    static func exportPhoto(image: CIImage, covers: [Cover], to url: URL) throws {
+    static func exportPhoto(image: CIImage, covers: [Cover], to url: URL, output: CoverOutput = CoverOutput()) throws {
         var source = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
-        let scale = min(1, photoLongSide / max(source.extent.width, source.extent.height))
+        let scale = min(1, output.photoLongSide / max(source.extent.width, source.extent.height))
         if scale < 1 {
             source = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }

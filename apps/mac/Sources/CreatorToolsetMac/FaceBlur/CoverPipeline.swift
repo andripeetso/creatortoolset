@@ -96,15 +96,15 @@ enum CoverPipeline {
 
     /// Writes `source` to `url` with the faces in `blur` covered (ids from the scan) in `style`; the others stay as they
     /// are. Throws `NothingToCover` (and writes nothing) when no face was found or none is chosen.
-    static func write(_ scan: FaceScan, from source: URL, blur: Set<String>, style: LookPreset? = nil, to url: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+    static func write(_ scan: FaceScan, from source: URL, blur: Set<String>, style: LookPreset? = nil, to url: URL, output: CoverOutput = CoverOutput(), progress: @escaping @Sendable (Double) -> Void) async throws {
         let covers = chosen(scan, blur: blur, style: style)
         if scan.covers.isEmpty { throw NothingToCover(why: "No face found, nothing written") }
         if covers.isEmpty { throw NothingToCover(why: "No face chosen, nothing written") }
         switch scan.kind {
         case .video:
-            try await CoverExporter.exportVideo(asset: AVURLAsset(url: source), covers: covers, to: url, progress: progress)
+            try await CoverExporter.exportVideo(asset: AVURLAsset(url: source), covers: covers, to: url, output: output, progress: progress)
         case .photo:
-            try CoverExporter.exportPhoto(image: try uprightPhoto(source), covers: covers, to: url)
+            try CoverExporter.exportPhoto(image: try uprightPhoto(source), covers: covers, to: url, output: output)
             progress(1)
         }
     }

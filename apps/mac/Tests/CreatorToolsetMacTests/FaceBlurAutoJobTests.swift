@@ -125,4 +125,22 @@ final class FaceBlurAutoJobTests: XCTestCase {
         XCTAssertGreaterThan(made["size"] as? Int ?? 0, 0)
         XCTAssertGreaterThan(made["duration"] as? Double ?? 0, 0)
     }
+
+    func testTheCopysSizeAndBitrateComeFromTheJob() {
+        XCTAssertEqual(FaceBlurAutoJob.output([:]), CoverOutput())
+        XCTAssertEqual(FaceBlurAutoJob.output([:]).videoLongSide, 1920)
+        XCTAssertEqual(FaceBlurAutoJob.output([:]).photoLongSide, 4096)
+        let big = FaceBlurAutoJob.output(["longSide": "3840", "bitrate": "50000000"])
+        XCTAssertEqual(big.videoLongSide, 3840)
+        XCTAssertEqual(big.photoLongSide, 3840)
+        XCTAssertEqual(big.bitrate, 50_000_000)
+        // as filmed: a video at most 3840 (the encoder's limit), a photo as today
+        let filmed = FaceBlurAutoJob.output(["longSide": "0"])
+        XCTAssertEqual(filmed.videoLongSide, 3840)
+        XCTAssertEqual(filmed.photoLongSide, 4096)
+        // anything else is the engine's own
+        let odd = FaceBlurAutoJob.output(["longSide": "720", "bitrate": "9999999999"])
+        XCTAssertEqual(odd, CoverOutput())
+        XCTAssertEqual(FaceBlurAutoJob.output(["bitrate": "fast"]).bitrate, 20_000_000)
+    }
 }

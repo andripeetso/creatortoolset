@@ -372,4 +372,15 @@ final class FaceBlurStyleTests: XCTestCase {
         let bad = await FaceBlurTrial.shared.answer(faceBlurAsk(#"faceblur:try:{"picture":"not base64!","look":"blur"}"#)!, allowed: [])
         XCTAssertNotNil(bad["problem"])
     }
+
+    func testTheWriterTakesTheChosenSizeAndBitrate() {
+        // a 4K upright clip: 1920 on its long side, as filmed when that is smaller, never larger
+        XCTAssertEqual(CoverExporter.frameSize(CGSize(width: 2160, height: 3840), longSide: 1920), CGSize(width: 1080, height: 1920))
+        XCTAssertEqual(CoverExporter.frameSize(CGSize(width: 2160, height: 3840), longSide: 3840), CGSize(width: 2160, height: 3840))
+        XCTAssertEqual(CoverExporter.frameSize(CGSize(width: 1080, height: 1920), longSide: 3840), CGSize(width: 1080, height: 1920))
+        let settings = CoverExporter.videoSettings(size: CGSize(width: 1080, height: 1920), bitrate: 35_000_000)
+        XCTAssertEqual(settings[AVVideoWidthKey] as? Int, 1080)
+        XCTAssertEqual(settings[AVVideoHeightKey] as? Int, 1920)
+        XCTAssertEqual((settings[AVVideoCompressionPropertiesKey] as? [String: Any])?[AVVideoAverageBitRateKey] as? Int, 35_000_000)
+    }
 }
