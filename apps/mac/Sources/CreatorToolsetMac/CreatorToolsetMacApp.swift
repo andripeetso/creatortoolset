@@ -88,6 +88,9 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
     static let shared = UpdateWhenIdle()
     /// The quiet update found its idle moment itself: no question then.
     private var quiet = false
+    /// When this process started, and the default where a relaunch onto an update writes its time (`chainsUpdate`).
+    private let launched = Date()
+    static let relaunchKey = "updateRelaunchedAt"
 
     /// The downloaded update: its version, whether its release is marked critical (release.sh CRITICAL=1), since when
     /// it waits, and whether Restart to Update was pressed and now waits for what's running (Update When Done).
@@ -112,11 +115,21 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
         if held != nil { held?.critical = true } else { updater?.checkForUpdatesInBackground() }
     }
 
+    /// A check now, unless one runs or an update is held (Sparkle does nothing then).
+    @MainActor func checkNow() {
+        guard let updater, !updater.sessionInProgress else { return }
+        updater.checkForUpdatesInBackground()
+    }
+
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                  immediateInstallationBlock install: @escaping () -> Void) -> Bool {
         MainActor.assumeIsolated {
             self.install = install
             held = Held(version: item.displayVersionString, critical: item.isCriticalUpdate || needed, since: Date())
+            if chainsUpdate(relaunchedAt: UserDefaults.standard.object(forKey: Self.relaunchKey) as? Date, launched: launched, now: Date()) {
+                UserDefaults.standard.removeObject(forKey: Self.relaunchKey)
+                installNow()
+            }
         }
         whenIdle(every: 60, inBackground: true) { [weak self] in
             MainActor.assumeIsolated {
@@ -149,11 +162,16 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
             held = nil
             install = nil
         }
+        // this launch's check found nothing newer: the relaunch it came from asks no more
+        if let at = UserDefaults.standard.object(forKey: Self.relaunchKey) as? Date, at < launched {
+            UserDefaults.standard.removeObject(forKey: Self.relaunchKey)
+        }
     }
 
     /// The relaunch opens the page the window was on, not Home.
     func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
         MainActor.assumeIsolated { AppDelegate.shell?.rememberPageForRelaunch() }
+        UserDefaults.standard.set(Date(), forKey: Self.relaunchKey)
     }
 
     /// Every install and relaunch passes here once. Something the relaunch would
@@ -221,6 +239,15 @@ final class UpdateWhenIdle: NSObject, ObservableObject, SPUUpdaterDelegate {
 /// three times in an afternoon, and each looked like a crash.
 func updateMayInstall(appActive: Bool, aiJobs: Int, recording: Bool, secondsSinceInput: Double) -> Bool {
     !appActive && aiJobs == 0 && !recording && secondsSinceInput >= 300
+}
+
+/// Whether an update the launch check just downloaded installs at once, unasked: this launch is an update's relaunch
+/// (written at `relaunchedAt`, before this process started) from under 10 minutes ago. Sparkle looks for nothing newer
+/// while it holds a download, so Restart to update landed on a version already behind (0.20.0, then 0.20.1 two minutes
+/// later) and the person had to restart twice.
+func chainsUpdate(relaunchedAt: Date?, launched: Date, now: Date) -> Bool {
+    guard let at = relaunchedAt else { return false }
+    return at <= launched && now.timeIntervalSince(at) < 600
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

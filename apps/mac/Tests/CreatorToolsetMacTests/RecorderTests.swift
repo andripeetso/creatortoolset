@@ -257,6 +257,15 @@ final class RecorderTests: XCTestCase {
         XCTAssertFalse(updateMayInstall(appActive: false, aiJobs: 0, recording: true, secondsSinceInput: 900))
     }
 
+    /// A restart onto an update that is already behind goes on to the newest without a second press, and only then.
+    func testARelaunchOntoAnOldUpdateGoesOnToTheNewest() {
+        let launched = Date()
+        XCTAssertTrue(chainsUpdate(relaunchedAt: launched - 5, launched: launched, now: launched + 60))
+        XCTAssertFalse(chainsUpdate(relaunchedAt: nil, launched: launched, now: launched + 60))
+        XCTAssertFalse(chainsUpdate(relaunchedAt: launched - 5, launched: launched, now: launched + 700))   // a release found later asks
+        XCTAssertFalse(chainsUpdate(relaunchedAt: launched + 5, launched: launched, now: launched + 60))    // written by this process
+    }
+
     /// The recorder's panels take a press the first time, also when another window has the keyboard.
     @MainActor func testTheRecordersPanelsTakeTheFirstPress() {
         XCTAssertTrue(FirstClickHostingView(rootView: Text("Stop")).acceptsFirstMouse(for: nil))

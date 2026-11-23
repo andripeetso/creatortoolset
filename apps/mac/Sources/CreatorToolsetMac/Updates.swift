@@ -18,7 +18,7 @@ final class UpdateDriver: SPUStandardUserDriver {
 
 /// A check at launch (a restart onto an update may already be one behind) and on coming back to the app after 10
 /// minutes, besides Sparkle's hourly one. A check does nothing while an update is held: the next one is looked for
-/// after it installs.
+/// after it installs, and what that launch's check finds installs at once (chainsUpdate).
 @MainActor func watchForUpdates(_ updater: SPUUpdater) {
     guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil else { return }
     do { try updater.start() } catch {

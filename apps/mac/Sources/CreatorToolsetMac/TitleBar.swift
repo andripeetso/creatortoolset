@@ -262,6 +262,10 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         case "update-install":
             // the page's Restart to update (NewVersionPill.tsx), from the site's own page only
             if message.frameInfo.isMainFrame { UpdateWhenIdle.shared.installNow() }
+        case "update-check":
+            // the server has new pages (NewVersionPill.tsx): a release made with them is held, and the page's Update
+            // becomes Restart to update, one restart for both
+            if message.frameInfo.isMainFrame { UpdateWhenIdle.shared.checkNow() }
         case let m? where m.hasPrefix("thismac-"):
             // only the site's own page, never a frame inside it (ThisMacBridge.swift)
             if message.frameInfo.isMainFrame { onThisMacCommand?(String(m.dropFirst(8))) }

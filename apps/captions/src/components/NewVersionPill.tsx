@@ -33,11 +33,11 @@ const DAY = 24 * 60 * 60_000;
 export const macUpdateLevel = (u: MacUpdate | null, now: number): "none" | "button" | "card" =>
   !u ? "none" : u.critical || now - u.since >= DAY ? "card" : "button";
 
+const tellMac = (m: string) =>
+  (window as unknown as { webkit?: { messageHandlers?: { window?: { postMessage: (m: string) => void } } } }).webkit?.messageHandlers?.window?.postMessage(m);
+
 /** Asks the Mac app to install the update it holds and relaunch (UpdateWhenIdle.installNow). */
-export const restartMac = () =>
-  (window as unknown as { webkit?: { messageHandlers?: { window?: { postMessage: (m: string) => void } } } }).webkit?.messageHandlers?.window?.postMessage(
-    "update-install",
-  );
+export const restartMac = () => tellMac("update-install");
 
 /**
  * "Update" in the bottom-left corner. In the Mac app, when it has downloaded a new version: Restart to update (the
@@ -60,6 +60,7 @@ export function UpdateButton() {
     if (!import.meta.env.PROD) return;
     const mine = document.querySelector<HTMLScriptElement>('script[type="module"][src]')?.src.split("/").pop();
     let last = 0;
+    let told = false;
     const check = () => {
       if (Date.now() - last < 60_000) return;
       last = Date.now();
@@ -67,7 +68,11 @@ export function UpdateButton() {
         .then((r) => (r.ok ? r.text() : ""))
         .then((html) => {
           const live = entryOf(html);
-          if (live && live !== mine) setReady(true);
+          if (!live || live === mine) return;
+          // a release often follows the server's new pages: the Mac app looks now, so one restart brings both
+          if (!told) tellMac("update-check");
+          told = true;
+          setReady(true);
         })
         .catch(() => {});
     };
