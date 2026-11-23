@@ -53,12 +53,16 @@ describe("a photo's picture, indexed in place", () => {
 describe("repairPictures", () => {
   it("fills the library's photos with no picture from this Mac, and counts them", async () => {
     const puts: string[] = [];
+    // as the server: a photo that got its picture leaves the list
+    const listed = [{ versionId: "v1", path: "/Volumes/Tiny/a.HEIC" }, { versionId: "v2", path: "/Volumes/Tiny/gone.HEIC" }];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (url.includes("/no-picture?device=dev_tiny"))
-        return new Response(JSON.stringify({ versions: [{ versionId: "v1", path: "/Volumes/Tiny/a.HEIC" }, { versionId: "v2", path: "/Volumes/Tiny/gone.HEIC" }] }));
+        return new Response(JSON.stringify({ versions: listed.filter((v) => !puts.some((p) => p.includes(`/${v.versionId}/`))) }));
       if (init?.method === "PUT") puts.push(url);
       return new Response("{}");
     });
+    // HEIC: the window can't decode it, the Mac makes it
+    h.decodes = false;
     h.thumb.mockImplementation(async (p: string) => (p.endsWith("a.HEIC") ? { thumb: "/9j/4A==", width: 1, height: 1 } : null));
     expect(await repairPictures("lib_tiny")).toBe(1);
     expect(puts).toEqual(["/api/library/lib_tiny/versions/v1/thumb"]);

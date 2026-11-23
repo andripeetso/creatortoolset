@@ -290,16 +290,23 @@ export function pathsInDrop(files: File[], items: { path: string; folder: boolea
 export async function repairPictures(libraryId: string, signal?: AbortSignal): Promise<number> {
   const device = await deviceHere();
   if (!device) return 0;
-  const r = await fetch(`/api/library/${libraryId}/no-picture?device=${encodeURIComponent(device)}`).catch(() => null);
-  if (!r?.ok) return 0;
-  const { versions } = (await r.json()) as { versions: { versionId: string; path: string }[] };
   let filled = 0;
-  for (const v of versions) {
-    signal?.throwIfAborted();
-    const made = await importThumb(v.path);
-    if (!made) continue;
-    const put = await fetch(`/api/library/${libraryId}/versions/${v.versionId}/thumb`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ thumb: made.thumb }) }).catch(() => null);
-    if (put?.ok) filled++;
+  // pages of 500 until one lands nothing (a picture that can't be made stays listed and would come back the same)
+  for (let page = 0; page < 20; page++) {
+    const r = await fetch(`/api/library/${libraryId}/no-picture?device=${encodeURIComponent(device)}`).catch(() => null);
+    if (!r?.ok) break;
+    const { versions } = (await r.json()) as { versions: { versionId: string; path: string }[] };
+    let landed = 0;
+    for (const v of versions) {
+      signal?.throwIfAborted();
+      // the window's own decode first (it reads any file the player can), the Mac's for HEIC and RAW
+      const { thumb } = await readIndex({ url: macMediaUrl(v.path), name: v.path.split("/").pop() ?? "", size: 0, quick: "" }, signal, v.path);
+      if (!thumb) continue;
+      const put = await fetch(`/api/library/${libraryId}/versions/${v.versionId}/thumb`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ thumb }) }).catch(() => null);
+      if (put?.ok) landed++;
+    }
+    filled += landed;
+    if (!landed) break;
   }
   return filled;
 }
