@@ -1,7 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AssetCard, Piece, PieceItem } from "@contracts/library";
-import { PieceEditor, platformOfLink } from "./FinalsPiece";
+import { addPieceItem, getAsset, uploadFile } from "@/lib/library";
+import { PieceEditor, platformOfLink, uploadVersions } from "./FinalsPiece";
+
+vi.mock("@/lib/library", async (real) => ({
+  ...(await real<typeof import("@/lib/library")>()),
+  uploadFile: vi.fn(),
+  getAsset: vi.fn(),
+  addPieceItem: vi.fn(),
+}));
 
 const card = (versionId: string, title: string, o: Partial<AssetCard> = {}): AssetCard => ({
   id: `ast_${versionId}`,
@@ -127,5 +135,28 @@ describe("platformOfLink", () => {
     expect(platformOfLink("https://twitter.com/tinyacrobatics/status/1")).toBe("x");
     expect(platformOfLink("https://notinstagram.com/p/1")).toBeUndefined();
     expect(platformOfLink("not a link")).toBeUndefined();
+  });
+});
+
+describe("uploadVersions", () => {
+  const piece = { id: "pce_tiny", label: "Tiny reel", collectionId: "col_f", createdBy: "owner", items: [] } as Piece;
+  const file = (name: string) => new File(["x"], name, { type: "video/mp4" });
+
+  it("uploads each file into the piece's collection and adds its clip's version to the piece", async () => {
+    vi.mocked(uploadFile).mockReset().mockResolvedValueOnce({ assetId: "ast_1" }).mockResolvedValueOnce({ duplicateOf: "ast_2" });
+    vi.mocked(getAsset).mockReset().mockImplementation(async (_l, id) => ({ versionId: `ver_${id}` }) as never);
+    vi.mocked(addPieceItem).mockReset().mockImplementation(async (_l, _p, v) => ({ ...piece, items: [{ versionId: v }] }) as never);
+    const out = await uploadVersions("lib_tiny", piece, [file("a.mp4"), file("b.mp4")], () => {});
+    expect(vi.mocked(uploadFile).mock.calls.map((c) => c[3])).toEqual(["col_f", "col_f"]);
+    expect(vi.mocked(addPieceItem).mock.calls.map((c) => c[2])).toEqual(["ver_ast_1", "ver_ast_2"]);
+    expect(out?.items[0].versionId).toBe("ver_ast_2");
+  });
+
+  it("stops with an error at a file that gives no clip, and adds nothing for it", async () => {
+    vi.mocked(uploadFile).mockReset().mockResolvedValueOnce({ duplicate: true });
+    vi.mocked(addPieceItem).mockReset();
+    await expect(uploadVersions("lib_tiny", piece, [file("a.mp4"), file("b.mp4")], () => {})).rejects.toThrow("Could not upload a.mp4");
+    expect(addPieceItem).not.toHaveBeenCalled();
+    expect(uploadFile).toHaveBeenCalledTimes(1);
   });
 });

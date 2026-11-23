@@ -117,6 +117,23 @@ export function platformOfLink(url: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Files as new versions of a piece, one after another: each uploaded into the library (the piece's collection, Finals),
+ * its clip's version then added to the piece, last. The piece as the server holds it after the last one; a file that
+ * gives no clip stops there with an error, and the files after it are not sent.
+ */
+export async function uploadVersions(libraryId: string, piece: Piece, files: File[], onProgress: (file: File, sent: number) => void): Promise<Piece | undefined> {
+  let next: Piece | undefined;
+  for (const f of files) {
+    onProgress(f, 0);
+    const up = await uploadFile(libraryId, f, (sent) => onProgress(f, sent), piece.collectionId ?? undefined);
+    const assetId = up.assetId ?? up.duplicateOf;
+    if (!assetId) throw new Error(`Could not upload ${f.name}`);
+    next = await addPieceItem(libraryId, piece.id, (await getAsset(libraryId, assetId)).versionId);
+  }
+  return next;
+}
+
 /** One row of the post panel: icon, title, its state, its actions; what it opens goes under it. Posts and the
  *  Content Workshop share it, so the two read alike. */
 function Card({ icon: Icon, title, status, actions, children }: { icon: LucideIcon; title: string; status: string; actions?: ReactNode; children?: ReactNode }) {
@@ -183,7 +200,7 @@ function PostingForm({ onAdd, onCancel }: { onAdd: (input: { platform: string; u
 
 /**
  * The piece's editor. It holds no copy of its own: each change calls the server and passes the piece it answers with
- * to `onPiece`. Drag order is a drag of the handle, or the up and down buttons (the same change, for touch and keyboard).
+ * to `onPiece`. Drag order is a drag of the handle, or Move up and Move down in the row's menu (the same change, for touch and keyboard).
  */
 export function PieceEditor({
   libraryId,
@@ -233,7 +250,7 @@ export function PieceEditor({
   const kind = finalsTiles([piece], cards, false)[0]?.kind ?? "other";
   const cover = piece.items.find((i) => i.winner) ?? piece.items[0];
   // the version on show (the player, its post): the one picked in the list, else the winner
-  const pick = piece.items.find((i) => i.id === pickId && i.versionId) ?? cover;
+  const pick = piece.items.find((i) => i.id === pickId) ?? cover;
   const pickVersion = pick?.versionId ?? null;
   const pickIsVideo = pickVersion ? byVersion.get(pickVersion)?.kind !== "image" : false;
   // a video this computer has plays from it (lib/play-here.ts): its original or cached proxy, as the library's player
@@ -323,21 +340,15 @@ export function PieceEditor({
     }
   };
 
-  // New versions from files: each into the library (the piece's collection, Finals), then into the piece, last; the
-  // last one added is shown
+  // New versions from files (uploadVersions); the last one added is shown
   const addFiles = async (picked: File[]) => {
     if (locked || !picked.length) return;
     setBusy(true);
     setError(null);
     try {
-      let next: Piece | undefined;
-      for (const f of picked) {
-        setUpload({ name: f.name, pct: 0 });
-        const up = await uploadFile(libraryId, f, (sent) => setUpload({ name: f.name, pct: f.size ? Math.min(100, Math.round((sent / f.size) * 100)) : 0 }), piece.collectionId ?? undefined);
-        const assetId = up.assetId ?? up.duplicateOf;
-        if (!assetId) throw new Error(`Could not upload ${f.name}`);
-        next = await addPieceItem(libraryId, piece.id, (await getAsset(libraryId, assetId)).versionId);
-      }
+      const next = await uploadVersions(libraryId, piece, picked, (f, sent) =>
+        setUpload({ name: f.name, pct: f.size ? Math.min(100, Math.round((sent / f.size) * 100)) : 0 }),
+      );
       if (next) {
         onPiece(next);
         setPickId(next.items[next.items.length - 1]?.id ?? null);
@@ -684,7 +695,7 @@ export function PieceEditor({
             </section>
           )}
 
-          <WorkshopLink piece={piece} disabled={locked} onOpenSession={onOpenSession} linked={linked} />
+          <WorkshopLink piece={piece} disabled={locked} onOpenSession={onOpenSession} onLinked={onReload} linked={linked} />
         </div>
       </div>
       {sharing && (
@@ -708,11 +719,14 @@ function WorkshopLink({
   piece,
   disabled,
   onOpenSession,
+  onLinked,
   linked,
 }: {
   piece: Piece;
   disabled: boolean;
   onOpenSession: (path: string) => void;
+  /** A link was made: the page reads the piece's link again, so the row offers Open project. */
+  onLinked: () => void;
   linked?: WorkshopFinal;
 }) {
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
@@ -737,6 +751,7 @@ function WorkshopLink({
     try {
       await linkPieceToSession(sessionId, piece.id);
       setNote("Linked");
+      onLinked();
     } catch (e) {
       setError(message(e));
     }

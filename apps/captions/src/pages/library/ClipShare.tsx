@@ -10,7 +10,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { clipHref, daysLeft, knownLink, LINK_DAYS, linksOf, rememberLink } from "./clip";
 
 /**
- * Share one clip. Opening it gives the clip's own link in the app at once, with Copy: it opens for the people who can
+ * Share one clip, or with `target` a Finals piece or one version of it. Opening it gives its own link in the app at once, with Copy: it opens for the people who can
  * open the library. "Anyone with the link" makes a public link (watch only, 7 days, no password) and the box then
  * gives that one; turning it off stops it. While it is on, rows change that same link in place (PATCH
  * /api/library/shares/:id): Allow download, Password, Stops working in. Below, the clip's other links that still work,
