@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { AudioLines, FileText, Image as ImageIcon, Laptop, Video } from "lucide-react";
 import { SPRITE_FRAMES, type AssetCard, type AssetKind } from "@contracts/library";
 import { ClipStage } from "@/components/LibraryProcessing";
@@ -289,14 +289,17 @@ export function PhotoMasonry({ assets, tile, size }: { assets: readonly AssetCar
   const byScreen = useSyncExternalStore(onColumns, columnCount, () => 2);
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
-  useEffect(() => {
+  const sized = !!size; // the slider moving changes the count, not the width: no new watcher per step
+  // measured before the first paint, so the photos never draw in the window's count and then jump to the slider's
+  useLayoutEffect(() => {
     const el = box.current;
-    if (!el || !size || typeof ResizeObserver === "undefined") return;
+    if (!el || !sized) return;
     setWidth(el.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => setWidth(el.clientWidth));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [size]);
+  }, [sized]);
   const cols = size && width ? masonryColumns(width, size) : byScreen;
   // the name under each picture counts as a fifth of a width
   const tall = (a: AssetCard) => (a.width && a.height ? a.height / a.width : 0.75) + 0.2;
