@@ -60,5 +60,6 @@ describe("Media Library folders", () => {
     const list = [...all, aroll];
     expect(names(folderMoveOptions(list, list[1]))).toEqual(["Top level", "B-roll sky", "Lost parent", "A-roll"]); // Beach, in Trip
     expect(names(folderMoveOptions(list, list[0]))).toEqual(["B-roll sky", "Lost parent", "A-roll"]); // Trip, at the top
+    expect(names(moveOptions([...list, f("talk", "Talk", "ar")], null))).toContain("A-roll / Talk"); // clips' Move to
   });
 });

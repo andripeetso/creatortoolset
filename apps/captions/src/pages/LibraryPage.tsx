@@ -505,9 +505,6 @@ export default function LibraryPage() {
     const name = await askRename("Rename folder", c.name);
     if (name && libId) await renameCollection(libId, c.id, name).then(reloadFolders, (e) => setError(message(e)));
   };
-  // gone at once, with Undo (api/library/collections.ts puts it back as it was): its folders move up one level, its
-  // clips stay in the library. They do not go into the folder above: a share or a grant on that one would then show them
-  // to someone new
   // into another folder or to the top, at once on screen, with Undo
   const moveFolder = (c: Collection, to: { id: string | null; name: string }) => {
     if (!libId) return;
@@ -545,6 +542,9 @@ export default function LibraryPage() {
       </ContextMenuSub>
     ) : null;
   };
+  // gone at once, with Undo (api/library/collections.ts puts it back as it was): its folders move up one level, its
+  // clips stay in the library. They do not go into the folder above: a share or a grant on that one would then show them
+  // to someone new
   const removeFolder = (c: Collection) => {
     if (!libId) return;
     const lib = libId;

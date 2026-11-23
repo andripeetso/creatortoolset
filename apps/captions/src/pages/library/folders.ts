@@ -46,7 +46,11 @@ export function moveOptions(all: Collection[], from: string | null): { id: strin
     ...(from ? [{ id: null, name: "Top level", depth: 0 }] : []),
     ...folderOptions(all.filter(holdsClips))
       .filter((f) => f.id !== from)
-      .map((f) => ({ id: f.id, name: f.name, depth: f.depth })),
+      .map((f) => {
+        // a folder inside the A-roll or B-roll folder (which takes no clips, so is not listed) says so
+        const roll = all.find((p) => p.id === f.parentId && rollOfFolder(p));
+        return { id: f.id, name: roll ? `${roll.name} / ${f.name}` : f.name, depth: f.depth };
+      }),
   ];
 }
 
