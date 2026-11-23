@@ -99,6 +99,20 @@ describe("Claude on the Mac", () => {
     await answer;
   });
 
+  it("a text cut in half an emoji reaches the Mac as JSON it can read (a lone \\ud83d made it drop the whole request)", async () => {
+    const cut = "Tere 😀".slice(0, 6);
+    const wait = post("/wait");
+    await new Promise((r) => setTimeout(r, 5));
+    const answer = streamMacClaude(`sys ${cut}`, "hi", undefined, () => {}, undefined, { files: { "posts/a.md": `${cut} 😀 ok` } });
+    const raw = await (await wait).text();
+    expect(raw).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i);
+    const req = JSON.parse(raw) as { id: string; system: string; files: Record<string, string> };
+    expect(req.system).toBe("sys Tere �");
+    expect(req.files["posts/a.md"]).toBe("Tere � 😀 ok");
+    await post(`/${req.id}/done`, { text: "ok" });
+    await answer;
+  });
+
   it("a Workshop folder's session goes to the Mac with its id and comes back with what became of it", async () => {
     const wait = post("/wait");
     await new Promise((r) => setTimeout(r, 5));

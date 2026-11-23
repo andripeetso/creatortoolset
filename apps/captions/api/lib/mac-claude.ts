@@ -746,14 +746,21 @@ export function packFor(r: Req, keepsBlobs: boolean) {
   return { ...p, files };
 }
 
+/**
+ * Half an emoji (a text cut between its two UTF-16 halves) as U+FFFD. JSON.stringify writes a lone half as "\ud83d",
+ * which the Mac's JSONSerialization refuses for the whole request: one cut post in a Workshop folder made every turn
+ * a claimed request the Mac dropped ("The Mac stopped answering").
+ */
+export const wellFormed = (s: string): string => s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
+
 // `model` (another Claude, e.g. Fable) only ever goes to a Claude provider: a Codex or Gemini run keeps its own model.
 const pack = (r: Req) => ({
   id: r.id,
   device: r.device,
-  system: r.system,
-  user: r.user,
+  system: wellFormed(r.system),
+  user: wellFormed(r.user),
   web: r.web,
-  ...(r.files ? { files: r.files } : {}),
+  ...(r.files ? { files: Object.fromEntries(Object.entries(r.files).map(([k, v]) => [wellFormed(k), wellFormed(v)])) } : {}),
   ...(r.provider ? { instance: r.provider.instance, driver: r.provider.driver, effort: r.provider.effort, ...(r.provider.home ? { home: r.provider.home } : {}), ...(r.provider.scope ? { scope: r.provider.scope } : {}), ...(r.provider.baseUrl ? { baseUrl: r.provider.baseUrl } : {}), ...(r.provider.envNames?.length ? { envNames: r.provider.envNames } : {}), ...(r.provider.launchArgs?.length ? { launchArgs: r.provider.launchArgs } : {}), ...(r.provider.acp ? { acp: r.provider.acp } : {}), ...(r.provider.binaryPath ? { binaryPath: r.provider.binaryPath } : {}) } : {}),
   ...(r.model || r.provider ? { model: r.provider && r.provider.driver !== "claude" ? r.provider.model : (r.model ?? r.provider?.model) } : {}),
   ...(r.session ? { session: r.session.key, ...(r.session.resume ? { resume: r.session.resume } : {}) } : {}),
