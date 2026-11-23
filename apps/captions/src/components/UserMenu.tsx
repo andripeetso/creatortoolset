@@ -120,7 +120,7 @@ export function UserMenu({ compact }: { /** The picture alone, where room is sho
           <DropdownMenuItem onSelect={() => navigate("/community")} className="text-xs">
             <Globe /> Community
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => navigate("/settings/usage")} className="text-xs">
+          <DropdownMenuItem onSelect={() => navigate("/usage")} className="text-xs">
             <BarChart3 /> Usage
           </DropdownMenuItem>
           {pluginItems.map((item) => (

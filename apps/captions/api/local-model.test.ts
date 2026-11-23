@@ -268,7 +268,7 @@ describe("a local model costs nothing", () => {
       await as(admin).put({ url: address, model });
       const onUsage = vi.fn();
       await completeWithFallback("sys", "user", undefined, (t) => t, { ...aiFor(admin, "captions", "Costs nothing"), onUsage });
-      expect(onUsage.mock.calls).toEqual([[{ tokens: 42, costUsd: 0 }]]);
+      expect(onUsage.mock.calls).toMatchObject([[{ tokens: 42, costUsd: 0 }]]);
     }
     await new Promise((r) => setTimeout(r, 50));
     expect(Object.values(await macUsageSince(Date.now() - 3_600_000)).flatMap((h) => Object.keys(h)).filter((l) => l.startsWith("Costs nothing"))).toEqual([]);

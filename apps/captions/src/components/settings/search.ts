@@ -101,10 +101,9 @@ const STATIC_ROWS = [
   // Memory: the rules the assistant keeps from one chat to the next
   { section: "memory", id: "memory-workspaces", title: "Workspaces", keywords: ["memory", "remember", "workspace", "shared", "each", "separate", "apart", "client"] },
   { section: "memory", id: "memory-rules", title: "Rules", keywords: ["memory", "remember", "rule", "chat", "assistant", "forget", "workspace"] },
-  // Usage
-  { section: "usage", id: "plan-limits", title: "Plan limits", keywords: ["session", "weekly", "reset", "left", "quota", "limit", "plan"] },
-  { section: "usage", id: "your-plan", title: "Plan", description: "On Pro or Plus, big jobs start after a confirmation", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
-  { section: "usage", id: "activity", title: "Activity", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage", "workspace", "period"] },
+  // Usage: the plan here, the numbers on the Usage page (/usage)
+  { section: "providers", id: "your-plan", title: "Plan", description: "On Pro or Plus, big jobs start after a confirmation", keywords: ["plan", "pro", "plus", "max", "chatgpt", "claude", "subscription", "limit"] },
+  { section: "providers", id: "usage-page", title: "Usage", keywords: ["cost", "tokens", "calls", "tool", "api price", "usage", "workspace", "period", "limits", "session", "weekly", "quota", "spend"] },
   // Details: one workspace's own settings (the workspace form, components/workshop/ProjectForm.tsx)
   { section: "workspace", id: "workspace-name", title: "Name", keywords: ["workspace", "rename", "brand"] },
   { section: "workspace", id: "workspace-colour", title: "Colour", keywords: ["workspace", "color", "dot"] },

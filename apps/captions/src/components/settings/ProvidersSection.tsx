@@ -1,7 +1,7 @@
 import { groupComputers } from "./computers-group";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { Plus } from "lucide-react";
+import { ArrowUpRight, Plus } from "lucide-react";
 import {
   addInstanceTo,
   DRIVERS,
@@ -29,6 +29,7 @@ import { ProviderDetail } from "./ProviderDetail";
 import { DriverMark, PROVIDER_ROW, ProviderInstanceCard, providerStatus, withInstance, type ProviderStatus } from "./ProviderInstanceCard";
 import { isLocalCli, LocalAiRows, localInstall, localInstallProgress, localRemoveProgram, localSignIn, useLocalAi } from "./AiSetup";
 import { LocalModelRow } from "./LocalModelRow";
+import { YourPlan } from "./UsageSection";
 import { useMyKeys } from "./MyKeysSection";
 import { InUse } from "./kit-controls";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, markSave, saveFailed, Status, StatusDot } from "./ui";
@@ -542,6 +543,24 @@ export function ProvidersSection({ sub }: { sub?: string }) {
           </Section>
         </div>
       )}
+
+      <div className={cn("mt-8", sub && "hidden lg:block")}>
+        <Section
+          id="usage-page"
+          title="Usage"
+          action={
+            <Button size="xs" variant="ghost" asChild>
+              <Link to="/usage">
+                Open <ArrowUpRight className="size-3" />
+              </Link>
+            </Button>
+          }
+        >
+          <Card>
+            <YourPlan />
+          </Card>
+        </Section>
+      </div>
 
       {adding && tabDevice && (
         <AddProviderDialog

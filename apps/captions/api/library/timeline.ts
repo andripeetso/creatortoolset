@@ -552,7 +552,7 @@ async function answerOf(r: Response, model: GeminiModel, a: number, b: number, s
   const text = (body.candidates?.[0]?.content?.parts ?? []).filter((p) => !p.thought && p.text).map((p) => p.text).join("");
   const u = body.usageMetadata ?? {};
   const out = (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0);
-  const usage = { tokens: (u.promptTokenCount ?? 0) + out, costUsd: ((u.promptTokenCount ?? 0) * GEMINI_PRICE[model].in + out * GEMINI_PRICE[model].out) / 1e6 };
+  const usage = { tokens: (u.promptTokenCount ?? 0) + out, costUsd: ((u.promptTokenCount ?? 0) * GEMINI_PRICE[model].in + out * GEMINI_PRICE[model].out) / 1e6, input: u.promptTokenCount ?? 0, output: out, model };
   return { events: parseTimeline(text, a, b, sound), usage, inTokens: u.promptTokenCount ?? 0, outTokens: out };
 }
 

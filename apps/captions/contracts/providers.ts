@@ -442,9 +442,25 @@ export interface ProvidersView {
   models: Record<string, string[]>;
   /**
    * this account's usage (admins: the workspace's too), 90 days by hour (UTC). `workspace`: the Workshop workspace the
-   * calls ran in, by its id; absent for calls made in none and for all recorded before 2026-11-16
+   * calls ran in, by its id; absent for calls made in none and for all recorded before 2026-11-16. `model` and the token
+   * types (input not from the cache, cache read, cache write, output) are there on calls recorded since 2026-11-23 whose
+   * answer gave them; tokens beyond their sum were not split
    */
-  usage: Array<{ hour: string; label: string; scope: Scope; instance?: string; workspace?: string; calls: number; tokens: number; costUsd: number }>;
+  usage: Array<{
+    hour: string;
+    label: string;
+    scope: Scope;
+    instance?: string;
+    workspace?: string;
+    model?: string;
+    calls: number;
+    tokens: number;
+    costUsd: number;
+    input?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    output?: number;
+  }>;
   /** the plan limits of the identities this account's visible providers run on (never another person's) */
   limits: LimitsIdentity[];
   /**

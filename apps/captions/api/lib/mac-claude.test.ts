@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "mac-claude-")); // the usage tally lands here
 const { isOnline, pairDevice } = await import("./devices");
-const { macUsageLines, macUsageSince, patienceMs, recordUsage, relayRoutes, streamMacClaude: streamOnMac, usageIn } = await import("./mac-claude");
+const { macUsageLines, macUsageSince, patienceMs, recordUsage, relayRoutes, streamMacClaude: streamOnMac, usageIn, usageOf } = await import("./mac-claude");
 const { workspaceScope } = await import("./workshop/workspace");
 import type { MacOpts, MacUsage } from "./mac-claude";
 
@@ -40,7 +40,7 @@ describe("Claude on the Mac", () => {
     await post(`/${req.id}/done`, { text: '{"reply":"Hi there"}', usage: { input: 10, output: 5, cache_read: 0, cache_write: 0, cost_usd: 0.25 } });
     expect(await answer).toBe('{"reply":"Hi there"}');
     expect(seen).toEqual(['{"reply":"Hi', '{"reply":"Hi there"']);
-    expect(usage).toEqual({ tokens: 15, costUsd: 0.25, cacheRead: 0 });
+    expect(usage).toEqual({ tokens: 15, costUsd: 0.25, input: 10, cacheRead: 0, cacheWrite: 0, output: 5, model: "claude-opus-5-5" });
     expect(Object.values(await macUsageSince(Date.now() - 3_600_000))).toMatchObject([{ Workshop: { calls: 1, tokens: 15, costUsd: 0.25 } }]);
     expect((await post(`/${req.id}/text`, { text: "late" })).status).toBe(404); // gone: the Mac stops
   });
@@ -281,7 +281,7 @@ describe("usage per workspace", () => {
     const req = (await (await wait).json()) as { id: string };
     await post(`/${req.id}/done`, { text: "ok", usage: { input: 4, output: 2, cost_usd: 0.5 } });
     await answer;
-    await vi.waitFor(async () => expect(await linesOf("In a workspace")).toEqual([{ key: "workspace:claude", workspace: "brand-one", calls: 1, tokens: 6, costUsd: 0.5 }]));
+    await vi.waitFor(async () => expect(await linesOf("In a workspace")).toEqual([{ key: "workspace:claude", workspace: "brand-one", model: "claude-opus-5-5", calls: 1, tokens: 6, costUsd: 0.5, input: 4, cacheRead: 0, cacheWrite: 0, output: 2 }]));
   });
 
   it("work outside a request names its workspace; a call in none, or with an id that is not one, counts in none; the totals hold them all", async () => {
@@ -290,12 +290,37 @@ describe("usage per workspace", () => {
     await workspaceScope.run({ id: "brand-one" }, () => usageIn("brand-two", () => recordUsage("Split", u))); // the work's own wins over the request's
     await recordUsage("Split", u, "claude", "alex");
     await workspaceScope.run({ id: "../not an id" }, () => recordUsage("Split", u));
+    const none = { calls: 1, tokens: 10, costUsd: 1, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }; // no split given
     expect(await linesOf("Split")).toEqual([
-      { key: "alex:claude", workspace: "brand-two", calls: 1, tokens: 10, costUsd: 1 },
-      { workspace: "brand-two", calls: 1, tokens: 10, costUsd: 1 },
-      { key: "alex:claude", calls: 1, tokens: 10, costUsd: 1 },
-      { calls: 1, tokens: 10, costUsd: 1 },
+      { key: "alex:claude", workspace: "brand-two", ...none },
+      { workspace: "brand-two", ...none },
+      { key: "alex:claude", ...none },
+      none,
     ]);
     expect(Object.values(await macUsageSince(since())).map((h) => h.Split).find(Boolean)).toMatchObject({ calls: 4, tokens: 40, by: { "alex:claude": { calls: 2 } } });
+  });
+
+  it("each model and its token types are a line of their own; calls recorded before models were kept stay a line with no model", async () => {
+    await recordUsage("Mixed", { tokens: 10, costUsd: 1, input: 2, cacheRead: 4, cacheWrite: 0, output: 4, model: "m1" }, "claude", "alex", "brand-one");
+    await recordUsage("Mixed", { tokens: 20, costUsd: 2, input: 5, output: 15, model: "m2" }, "claude", "alex", "brand-one");
+    // two calls from before 2026-11-23, in the totals and their splits only (no leaf)
+    const entry = Object.values(await macUsageSince(since())).map((h) => h.Mixed).find(Boolean)!;
+    const old = (x: { calls: number; tokens: number; costUsd: number }) => Object.assign(x, { calls: x.calls + 2, tokens: x.tokens + 30, costUsd: x.costUsd + 3 });
+    old(entry);
+    old(entry.by!["alex:claude"]!);
+    old(entry.ws!["brand-one"]!);
+    old(entry.ws!["brand-one"]!.by!["alex:claude"]!);
+    const at = { key: "alex:claude", workspace: "brand-one" };
+    expect(await linesOf("Mixed")).toEqual([
+      { ...at, model: "m1", calls: 1, tokens: 10, costUsd: 1, input: 2, cacheRead: 4, cacheWrite: 0, output: 4 },
+      { ...at, model: "m2", calls: 1, tokens: 20, costUsd: 2, input: 5, cacheRead: 0, cacheWrite: 0, output: 15 },
+      { ...at, calls: 2, tokens: 30, costUsd: 3 },
+    ]);
+  });
+
+  it("a relay answer names its model: the one asked for among the answer's models, else the first", () => {
+    expect(usageOf({ input: 1, output: 2, models: ["claude-haiku-5-5", "claude-opus-5-5"] }, "claude-opus-5-5")?.model).toBe("claude-opus-5-5");
+    expect(usageOf({ input: 1, output: 2, models: ["gpt-5.5"] }, "")?.model).toBe("gpt-5.5");
+    expect(usageOf({ input: 1, output: 2 }, "")).not.toHaveProperty("model");
   });
 });

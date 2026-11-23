@@ -92,6 +92,7 @@ const MobileWorkshopSessionPage = lazy(() =>
 );
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const CommunityPage = lazy(() => import("./pages/CommunityPage"));
+const UsagePage = lazy(() => import("./pages/UsagePage"));
 
 function PhoneTool({ children }: { children: ReactNode }) {
   return (
@@ -207,6 +208,17 @@ function CommunityModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Usage, a page of its own over the page behind it (not Settings): every signed-in account. */
+function UsageModal({ onClose }: { onClose: () => void }) {
+  const me = useMe();
+  if (!me) return <Navigate to="/" replace />;
+  return (
+    <Suspense fallback={null}>
+      <UsagePage onClose={onClose} />
+    </Suspense>
+  );
+}
+
 /** ⌘, opens Settings (the account menu shows it). */
 function SettingsShortcut() {
   const navigate = useNavigate();
@@ -291,13 +303,14 @@ export default function App() {
     if (location.pathname !== "/") endIntro();
   }, [location.pathname]);
   const navigate = useNavigate();
-  // /settings/*, /community/* and /projects are modals: the page you were on stays mounted behind (home when opened directly)
+  // /settings/*, /community/*, /projects and /usage are modals: the page you were on stays mounted behind (home when opened directly)
   const inSettings = /^\/settings(?:\/|$)/.test(location.pathname);
   const inCommunity = /^\/community(?:\/|$)/.test(location.pathname);
   const inProjects = location.pathname === "/projects";
+  const inUsage = location.pathname === "/usage";
   const behind = useRef<Location | null>(null);
   const behindIdx = useRef<number | null>(null); // react-router's history index of the page behind
-  if (inSettings || inProjects || inCommunity) historyDepth.modal.add(window.history.state?.idx ?? 0);
+  if (inSettings || inProjects || inCommunity || inUsage) historyDepth.modal.add(window.history.state?.idx ?? 0);
   else {
     historyDepth.modal.delete(window.history.state?.idx ?? 0);
     behind.current = location;
@@ -305,14 +318,14 @@ export default function App() {
   }
   // one modal replacing another (Community's Settings button, a link in Settings to Community) shows no fade: the backdrop
   // would vanish with the old one and fade in again with the new, and the whole window blinks (index.css, data-modal-swap)
-  const modal = inSettings ? "settings" : inCommunity ? "community" : inProjects ? "projects" : null;
+  const modal = inSettings ? "settings" : inCommunity ? "community" : inProjects ? "projects" : inUsage ? "usage" : null;
   const lastModal = useRef(modal);
   useLayoutEffect(() => {
     if (!modal) document.documentElement.removeAttribute("data-modal-swap");
     else if (lastModal.current && lastModal.current !== modal) document.documentElement.setAttribute("data-modal-swap", "");
     lastModal.current = modal;
   }, [modal]);
-  const page = inSettings || inProjects || inCommunity ? (behind.current ?? { ...location, pathname: "/", search: "", hash: "" }) : location;
+  const page = inSettings || inProjects || inCommunity || inUsage ? (behind.current ?? { ...location, pathname: "/", search: "", hash: "" }) : location;
   // closing steps back to the page behind, so Back never reopens the modal; opened straight from a URL there is
   // nothing behind it, so it is replaced by that page (or home)
   const closeSettings = () => {
@@ -432,6 +445,7 @@ export default function App() {
       {inSettings && <SettingsModal onClose={closeSettings} />}
       {inCommunity && <CommunityModal onClose={closeSettings} />}
       {inProjects && <ProjectsRoute onClose={closeSettings} />}
+      {inUsage && <UsageModal onClose={closeSettings} />}
     </>
   );
 }

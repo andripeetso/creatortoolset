@@ -39,7 +39,9 @@ describe("/settings/providers?add=1 (the address of the Add provider dialog)", (
     putCached("sam", "/api/setup/ai", { local: false, rows: [] });
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (init?.method && init.method !== "GET") writes.push(`${init.method} ${url}`);
-      const body = String(url) === "/api/providers" ? view : String(url) === "/api/setup/ai" ? { local: false, rows: [] } : { drivers: [] };
+      // the Plan row reads the setup answer
+      const setup = { tools: null, plan: null, detected: null, done: true, have: [], mcpTo: [] };
+      const body = String(url) === "/api/providers" ? view : String(url) === "/api/setup/ai" ? { local: false, rows: [] } : String(url) === "/api/setup" ? setup : { drivers: [] };
       return new Response(JSON.stringify(body), { status: 200 });
     });
     root = createRoot(document.body.appendChild(document.createElement("div")));

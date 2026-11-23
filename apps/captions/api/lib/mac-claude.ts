@@ -40,6 +40,12 @@ export interface MacUsage {
   costUsd: number;
   /** input tokens read from Claude's prompt cache */
   cacheRead?: number;
+  /** the rest of the split, where the answer gives one: input not from the cache, input written to it, and output */
+  input?: number;
+  cacheWrite?: number;
+  output?: number;
+  /** the model that answered, as the provider names it */
+  model?: string;
   /** how big a kept Claude session is after this answer (its last message's whole input), from the Mac relay */
   context?: number;
 }
@@ -121,7 +127,15 @@ type Split = Tally & { by?: Record<string, Tally> };
  * hour → label → totals with their split, and under `ws` the part of them each workspace's calls made (by the
  * workspace's id). A call recorded before workspaces were kept (2026-11-16), or made in none, is in the totals only.
  */
-export type UsageTally = Record<string, Record<string, Split & { ws?: Record<string, Split> }>>;
+export type UsageTally = Record<string, Record<string, Split & { ws?: Record<string, Split>; lines?: Record<string, Leaf> }>>;
+/** Token types, summed over the calls whose answer gave them (the rest of `tokens` is not split). */
+type Types = { input: number; cacheRead: number; cacheWrite: number; output: number };
+/**
+ * One provider, workspace and model's part of a label's hour (`lines`, keyed `${key}\t${workspace}\t${model}`, empty
+ * parts for none), with its token types. Calls recorded before 2026-11-23 have no leaf: they count in the totals only.
+ */
+type Leaf = Tally & Types;
+const leafKey = (key = "", workspace = "", model = "") => `${key}\t${workspace}\t${model}`;
 const USAGE_FILE = () => path.join(env.dataDir, "mac-claude-usage.json");
 let tally: Promise<UsageTally> | null = null;
 let saving: Promise<void> = Promise.resolve();
@@ -168,6 +182,14 @@ export async function recordUsage(label: string, u: MacUsage, instance?: string,
   };
   count(t);
   if (workspace) count(((t.ws ??= {})[workspace] ??= zero()));
+  const leaf = ((t.lines ??= {})[leafKey(instance && `${scope}:${instance}`, workspace ?? "", u.model)] ??= { ...zero(), input: 0, cacheRead: 0, cacheWrite: 0, output: 0 });
+  add(leaf);
+  if (u.input !== undefined || u.output !== undefined) {
+    leaf.input += u.input ?? 0;
+    leaf.cacheRead += u.cacheRead ?? 0;
+    leaf.cacheWrite += u.cacheWrite ?? 0;
+    leaf.output += u.output ?? 0;
+  }
   for (const h of Object.keys(all).sort().slice(0, -24 * 90)) delete all[h]; // 90 days
   const json = JSON.stringify(all);
   saving = saving
@@ -185,8 +207,12 @@ export async function macUsageSince(since: number): Promise<UsageTally> {
   return Object.fromEntries(Object.entries(await loadTally()).filter(([h]) => h >= from));
 }
 
-/** One line of the tally: an hour's calls for one label, one provider (`key`, `${scope}:${instance}`; none = no provider) and one workspace (none = recorded in none). */
-export type UsageLine = Tally & { hour: string; label: string; key?: string; workspace?: string };
+/**
+ * One line of the tally: an hour's calls for one label, one provider (`key`, `${scope}:${instance}`; none = no
+ * provider), one workspace (none = recorded in none) and one model (none = not recorded). The token types are there
+ * on lines recorded since 2026-11-23; tokens beyond their sum were not split by the answer.
+ */
+export type UsageLine = Tally & { hour: string; label: string; key?: string; workspace?: string; model?: string } & Partial<Types>;
 
 /**
  * The tally since `since` (ms) as lines that add up to its totals: each workspace's calls, then what was recorded in
@@ -207,9 +233,21 @@ export async function macUsageLines(since: number): Promise<UsageLine[]> {
         for (const [key, x] of by) push(x, key, workspace);
         push(less(s, by.map(([, x]) => x)), undefined, workspace); // no provider: the API path, a stopped run
       };
+      const start = out.length;
       const ws = Object.entries(t.ws ?? {});
       for (const [id, s] of ws) lines(s, id);
       lines({ ...less(t, ws.map(([, s]) => s)), by: Object.fromEntries(Object.entries(t.by ?? {}).map(([key, x]) => [key, less(x, ws.flatMap(([, s]) => s.by?.[key] ?? []))])) });
+      // the calls with a leaf leave the line they are in: what stays there is the older calls', with no model
+      const leaves = Object.entries(t.lines ?? {});
+      if (!leaves.length) continue;
+      const older = out.splice(start);
+      for (const [k, x] of leaves) {
+        const [key, workspace, model] = k.split("\t");
+        const o = older.find((l) => (l.key ?? "") === key && (l.workspace ?? "") === workspace);
+        if (o) Object.assign(o, less(o, [x]));
+        if (x.calls > 0) out.push({ hour, label, ...(key ? { key } : {}), ...(workspace ? { workspace } : {}), ...(model ? { model } : {}), calls: x.calls, tokens: x.tokens, costUsd: x.costUsd, input: x.input, cacheRead: x.cacheRead, cacheWrite: x.cacheWrite, output: x.output });
+      }
+      out.push(...older.filter((l) => l.calls > 0));
     }
   }
   return out;
@@ -662,12 +700,12 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
     const r = mine(c);
     const b = await body(c);
     if (!r) {   // stopped meanwhile: its tokens are still tallied, as /fail does
-      const usage = usageOf(b.usage);
+      const usage = usageOf(b.usage, "");
       if (usage) void recordUsage("Stopped", usage, undefined, undefined, null);
       return c.json({ error: "Not found" }, 404);
     }
     await r.chain; // what streamed lands before the final answer
-    r.done(typeof b.text === "string" ? b.text : r.text, usageOf(b.usage) ?? { tokens: 0, costUsd: 0 }, r.session ? sessionOf(b) : undefined);
+    r.done(typeof b.text === "string" ? b.text : r.text, usageOf(b.usage, askedModel(r)) ?? { tokens: 0, costUsd: 0 }, r.session ? sessionOf(b) : undefined);
     return c.json({ ok: true });
   });
 
@@ -675,7 +713,7 @@ export function relayRoutes(deviceOf: (c: Context) => string | null, editorWaits
   app.post("/:id/fail", async (c) => {
     const r = mine(c);
     const b = await body(c);
-    const usage = usageOf(b.usage);
+    const usage = usageOf(b.usage, r ? askedModel(r) : "");
     if (usage) void recordUsage(r?.label ?? "Stopped", usage, r?.provider?.instance, r?.provider?.scope, r?.workspace ?? null, r?.sink);
     if (!r) return c.json({ error: "Not found" }, 404);
     const error = String(b.error ?? "failed").slice(0, 300);
@@ -762,19 +800,32 @@ const pack = (r: Req) => ({
   web: r.web,
   ...(r.files ? { files: Object.fromEntries(Object.entries(r.files).map(([k, v]) => [wellFormed(k), wellFormed(v)])) } : {}),
   ...(r.provider ? { instance: r.provider.instance, driver: r.provider.driver, effort: r.provider.effort, ...(r.provider.home ? { home: r.provider.home } : {}), ...(r.provider.scope ? { scope: r.provider.scope } : {}), ...(r.provider.baseUrl ? { baseUrl: r.provider.baseUrl } : {}), ...(r.provider.envNames?.length ? { envNames: r.provider.envNames } : {}), ...(r.provider.launchArgs?.length ? { launchArgs: r.provider.launchArgs } : {}), ...(r.provider.acp ? { acp: r.provider.acp } : {}), ...(r.provider.binaryPath ? { binaryPath: r.provider.binaryPath } : {}) } : {}),
-  ...(r.model || r.provider ? { model: r.provider && r.provider.driver !== "claude" ? r.provider.model : (r.model ?? r.provider?.model) } : {}),
+  ...(r.model || r.provider ? { model: askedModel(r) } : {}),
   ...(r.session ? { session: r.session.key, ...(r.session.resume ? { resume: r.session.resume } : {}) } : {}),
   ...(r.mcp ? { mcp: r.mcp } : {}),
   ...(r.onAsk ? { asks: true } : {}),
 });
 const body = (c: { req: { json: () => Promise<unknown> } }) =>
   c.req.json().then((b) => (b && typeof b === "object" ? (b as Record<string, unknown>) : {})).catch(() => ({}) as Record<string, unknown>);
-/** The usage a relay post carries (done or fail), or undefined. */
-function usageOf(raw: unknown): MacUsage | undefined {
+const askedModel = (r: Pick<Req, "model" | "provider">): string => (r.provider && r.provider.driver !== "claude" ? r.provider.model : (r.model ?? r.provider?.model ?? ""));
+
+/** The usage a relay post carries (done or fail), or undefined. `asked`: the model the request named, picked out of the answer's models. */
+export function usageOf(raw: unknown, asked: string): MacUsage | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const u = raw as Record<string, unknown>;
   const n = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
-  return { tokens: n("input") + n("output") + n("cache_read") + n("cache_write"), costUsd: n("cost_usd"), cacheRead: n("cache_read"), ...(n("context") ? { context: n("context") } : {}) };
+  const names = Array.isArray(u.models) ? u.models.filter((m): m is string => typeof m === "string" && !!m) : [];
+  const model = (asked && names.find((m) => m.startsWith(asked))) || names[0] || asked;
+  return {
+    tokens: n("input") + n("output") + n("cache_read") + n("cache_write"),
+    costUsd: n("cost_usd"),
+    input: n("input"),
+    cacheRead: n("cache_read"),
+    cacheWrite: n("cache_write"),
+    output: n("output"),
+    ...(model ? { model } : {}),
+    ...(n("context") ? { context: n("context") } : {}),
+  };
 }
 
 /** The Claude session a done post names (the Mac relay): its id, and whether it was new, resumed or lost. */

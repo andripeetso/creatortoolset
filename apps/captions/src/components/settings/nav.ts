@@ -1,4 +1,4 @@
-import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, FolderOpen, HardDrive, Gauge, KeyRound, LayoutGrid, Mic, Monitor, Palette, Puzzle, Server, Settings2, Share2, ShieldCheck, SlidersHorizontal, Tag, UserRound, Users, Volume2 } from "lucide-react";
+import { AudioLines, Bookmark, Bot, CalendarClock, Clapperboard, Cpu, FolderOpen, HardDrive, KeyRound, LayoutGrid, Mic, Monitor, Palette, Puzzle, Server, Settings2, Share2, ShieldCheck, SlidersHorizontal, Tag, UserRound, Users, Volume2 } from "lucide-react";
 import { PLUGINS_GROUP, settingsWithPlugins, toolSectionsFor, visibleSettings, type PluginSettingsSection, type SettingsEntry } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 
@@ -11,7 +11,7 @@ type PluginList = ReadonlyArray<{ settings?: PluginSettingsSection[]; replaces?:
 
 /** Every page id a Settings route can open. Adding one: add it here, to BUILTIN, and to PAGE_BODIES (pages.tsx). */
 export const SETTINGS_PAGE_IDS = [
-  "general", "appearance", "tools", "folders", "storage", "library", "sound-effects", "providers", "voice", "dictation", "devices", "automations", "memory", "usage", "connectors", "keys", "own-ai",
+  "general", "appearance", "tools", "folders", "storage", "library", "sound-effects", "providers", "voice", "dictation", "devices", "automations", "memory", "connectors", "keys", "own-ai",
   "servers", "policies", "team", "admin", "account", "plugin", "workspace",
 ] as const;
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -52,7 +52,6 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "servers", title: "Servers", icon: Server, group: "You", macOnly: true },
   { id: "own-ai", title: "Headless access", icon: Bot, group: "You" },
   { id: "providers", title: "Providers", icon: Cpu, group: "AI" },
-  { id: "usage", title: "Usage", icon: Gauge, group: "AI" },
   { id: "workspace", title: "Details", icon: Tag, group: "Workspace" },
   { id: "connectors", title: "Social accounts", icon: Share2, group: "Workspace" },
   { id: "folders", title: "Folders", icon: FolderOpen, group: "Workspace" },
@@ -79,6 +78,8 @@ export const RETIRED_PATHS: Readonly<Record<string, string>> = {
   packs: "/community/installed",
   editor: "/settings/tools/editor",
   skills: "/community/skills",
+  // a page of its own, not Settings (pages/UsagePage.tsx); the Plan row is on Providers
+  usage: "/usage",
 };
 
 /** Every section this install and person may open (sidebar and account page), with the plug-ins' sections placed in. */

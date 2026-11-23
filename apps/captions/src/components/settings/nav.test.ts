@@ -8,7 +8,7 @@ describe("the sidebar per install and role", () => {
   it("a local browser: You, AI, the Workspace pages, then Storage and API keys under Server; no servers or team", () => {
     expect(listed(at(false, true))).toEqual([
       "general", "appearance", "tools", "voice", "devices", "own-ai",
-      "providers", "usage",
+      "providers",
       "workspace", "connectors", "folders", "library", "sound-effects", "automations", "memory",
       "policies", "storage", "keys",
     ]);

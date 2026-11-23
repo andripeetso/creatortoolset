@@ -14,6 +14,7 @@ import { addSpend, budgetLeft } from "./lib/workspaces";
 import { keyFor, teamAiKey } from "./my-keys";
 import { fewestTokens, localModelOf, tooLongFor } from "./local-model";
 import type { LocalModel } from "../contracts/service-keys";
+import { PRICE_PER_MTOK } from "../contracts/model-prices";
 import { findUser, type SessionUser } from "./users";
 import { onComputer } from "./work/on-computer";
 
@@ -184,17 +185,6 @@ interface Provider {
 /** Some AI can answer this caller: a provider of theirs, or their own Anthropic key. */
 export const anyAiConfigured = (who: Who) => !aiFor(who, "notes", "check").off;
 
-/**
- * API-equivalent prices in $ per million tokens, for the models this app
- * sends on the API path. Read 2026-11-04 from the claude-api skill's bundled
- * model table (cached 2026-10-06), not from the live pricing page. Cache
- * writes are the 5-minute price (1.25x input). An unlisted model reports
- * tokens and $0.
- */
-const PRICE_PER_MTOK: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
-};
-
 /** Anthropic's usage fields (message_start / message_delta on a stream, the body's usage otherwise). */
 export interface AnthropicUsage {
   input_tokens?: number;
@@ -210,7 +200,15 @@ export function apiUsage(u: AnthropicUsage, model: string): MacUsage {
   const costUsd = p
     ? (n(u.input_tokens) * p.input + n(u.output_tokens) * p.output + n(u.cache_read_input_tokens) * p.cacheRead + n(u.cache_creation_input_tokens) * p.cacheWrite) / 1e6
     : 0;
-  return { tokens: n(u.input_tokens) + n(u.output_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens), costUsd };
+  return {
+    tokens: n(u.input_tokens) + n(u.output_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens),
+    costUsd,
+    input: n(u.input_tokens),
+    cacheRead: n(u.cache_read_input_tokens),
+    cacheWrite: n(u.cache_creation_input_tokens),
+    output: n(u.output_tokens),
+    ...(model ? { model } : {}),
+  };
 }
 
 /** An API answer's usage: the same hourly tally as the Mac's, under "<label> (API)" so the two stay apart. */

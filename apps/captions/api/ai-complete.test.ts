@@ -159,7 +159,7 @@ describe("apiUsage", () => {
     const u = apiUsage({ input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 5000, cache_creation_input_tokens: 100 }, "claude-opus-5-5");
     expect(u.tokens).toBe(6300);
     expect(u.costUsd).toBeCloseTo(0.0095, 9);
-    expect(apiUsage({ input_tokens: 5 }, "claude-unlisted")).toEqual({ tokens: 5, costUsd: 0 });
+    expect(apiUsage({ input_tokens: 5 }, "claude-unlisted")).toEqual({ tokens: 5, costUsd: 0, input: 5, cacheRead: 0, cacheWrite: 0, output: 0, model: "claude-unlisted" });
   });
 });
 

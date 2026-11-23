@@ -5,7 +5,7 @@ import { useProviders } from "@/lib/providers";
 
 /**
  * In the bar on top of every page, beside the account: an amber line while an AI plan is used up or nearly (lib/limits.ts
- * planAlert), opening Settings → Usage. Nothing while every plan has room. On a phone it is an amber dot on the account
+ * planAlert), opening the Usage page's Limits. Nothing while every plan has room. On a phone it is an amber dot on the account
  * button's corner, taking no room in the bar, so the bar keeps its one row (AppBar puts the two in one box).
  */
 export function PlanLimitPill() {
@@ -20,7 +20,7 @@ export function PlanLimitPill() {
   return (
     <Link
       data-plan-pill
-      to="/settings/usage"
+      to="/usage?view=limits"
       title={alert.full}
       className="flex h-8 max-w-72 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 text-xs font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-300 max-sm:absolute max-sm:-right-1.5 max-sm:-top-1.5 max-sm:z-10 max-sm:size-5 max-sm:justify-center max-sm:border-0 max-sm:bg-transparent max-sm:p-0 max-sm:hover:bg-transparent"
     >
