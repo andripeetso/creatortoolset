@@ -889,6 +889,8 @@ export default function FinalsPiecePage() {
     <Dialog open onOpenChange={(open) => !open && close()}>
       <DialogContent
         aria-describedby={undefined}
+        // opening a piece is to look at it: the name field takes focus only when clicked
+        onOpenAutoFocus={(e) => e.preventDefault()}
         className="flex max-h-[92dvh] w-full flex-col gap-0 overflow-hidden p-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:max-w-none max-sm:rounded-none max-sm:border-0 sm:max-w-5xl"
       >
         <DialogTitle className="sr-only">{piece?.label ?? "Piece"}</DialogTitle>
