@@ -5,6 +5,8 @@ import { Card, Row, Section, Status } from "@/components/settings/ui";
 import { updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
+import { useMe } from "@/lib/auth";
+import { faceBlurOn } from "./face-blur";
 import { thisComputer, storeName } from "../LibraryStorage";
 import { LibraryCopies } from "./Copies";
 import { MemberSettings, OwnerDownloads } from "./MemberSettings";
@@ -58,6 +60,8 @@ export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & { o
  */
 export function LibrarySettingsBody({ library, watch, onChange, onError, workspace }: BodyProps & { workspace?: string | null }) {
   const windowWorkspace = useWorkspace((s) => s.currentProjectId);
+  const me = useMe();
+  const faceBlur = useWorkspace((st) => faceBlurOn(me, st.pluginsOff, workspace ?? st.currentProjectId));
   if (library.readOnly) return <MemberSettings library={library} />;
   const s = library.settings;
   const level = levelOf(s);
@@ -77,7 +81,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
         <Proxies library={library} save={save} />
       </Section>
       <Section title={LIBRARY_WORDS.hostedTitle}>
-        <Hosted library={library} watch={watch} save={save} />
+        <Hosted library={library} watch={watch} save={save} faceBlur={faceBlur} />
       </Section>
       <OwnerDownloads library={library} />
       <Section title={LIBRARY_WORDS.analysisTitle}>
@@ -145,7 +149,7 @@ function Proxies({ library, save }: { library: LibrarySummary; save: (s: Partial
  * component as setup's last step (./settings/Hosted.tsx). On This Mac, with the server on this computer, there is no
  * server to upload to: the row says so and nothing else is shown.
  */
-function Hosted({ library, watch, save }: { library: LibrarySummary; watch: WatchStatus; save: (s: Partial<Settings>) => Promise<unknown> }) {
+function Hosted({ library, watch, save, faceBlur }: { library: LibrarySummary; watch: WatchStatus; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean }) {
   const noServer = !!thisMacBridge() && watch.allowed;
   return (
     <Card>
@@ -156,7 +160,8 @@ function Hosted({ library, watch, save }: { library: LibrarySummary; watch: Watc
           value={hostedOf(library.settings)}
           onChange={(m) => void save(hostedSettings(m, library.settings.finalsUpload))}
           blurFaces={!!library.settings.blurFaces}
-          onBlurFaces={(on, m) => void save({ blurFaces: on, ...hostedSettings(m, library.settings.finalsUpload) })}
+          // only with Face Blur on in this workspace (it makes the blurred copies), or to turn an old one off
+          onBlurFaces={faceBlur || library.settings.blurFaces ? (on, m) => void save({ blurFaces: on, ...hostedSettings(m, library.settings.finalsUpload) }) : undefined}
         />
       )}
     </Card>

@@ -9,6 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { confirmDialog } from "@/lib/dialogs";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
+import { useWorkspace } from "@/lib/workspace";
+import { BLUR_WORDS, blurState, faceBlurOn, useFaceBlurAuto } from "./face-blur";
 import { fmtBytes } from "@/lib/exports";
 import { alikeShots, getAsset, getWhere, listTags, relatedAssets, rerunJobs, setAssetBlur, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
 import { undoable } from "@/lib/undo";
@@ -75,6 +77,10 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   const navigate = useNavigate();
   const me = useMe();
   const a = detail ?? asset;
+  // a file waiting for its blurred copy: what Face Blur is doing with it (face-blur.ts)
+  const faceBlur = useWorkspace((s) => faceBlurOn(me, s.pluginsOff, s.currentProjectId));
+  const { auto, retry } = useFaceBlurAuto(faceBlur && !!a.notBlurred);
+  const blur = faceBlur ? blurState(a.versionId, !!a.notBlurred, auto) : null;
   const win = useClipView() === "window";
   // where its original is, asked when the clip opens (the card's word until then)
   const [where, setWhere] = useState<PlaceWord | null>(null);
@@ -306,6 +312,16 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
           Blur faces
           <Switch checked={a.blur === "yes"} onCheckedChange={(on) => void changeBlur(on)} />
         </label>
+      )}
+      {blur && (
+        <div className="flex items-center justify-between gap-2 text-sm text-zinc-400">
+          {BLUR_WORDS[blur.kind]}
+          {blur.kind === "failed" && !fixed && (
+            <Button size="sm" variant="outline" className="h-7" onClick={() => void retry(a.versionId).catch((e: unknown) => onError(message(e)))}>
+              Retry
+            </Button>
+          )}
+        </div>
       )}
       <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
       {placeWord ? (

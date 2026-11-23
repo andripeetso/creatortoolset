@@ -47,6 +47,8 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacBridge } from "@/lib/thisMac";
 import { addRefused, scanWatchNow } from "@/lib/library";
 import { canChange, useMe } from "@/lib/auth";
+import { faceBlurOn, keptAsFilmed, rememberKeepAsFilmed } from "./library/face-blur";
+import { useWorkspace } from "@/lib/workspace";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
 import { libraryFacets } from "@/lib/library-slots";
@@ -154,7 +156,8 @@ export default function LibraryPage() {
   const sources = sourceList ?? [];
   const picker = useRef<HTMLInputElement>(null);
   // Blur faces unticked by the owner or an admin: the library whose next files are kept as filmed (contracts Blur "no")
-  const [asFilmed, setAsFilmed] = useState<string | null>(null);
+  // remembered per library in this browser (face-blur.ts keptAsFilmed)
+  const [asFilmed, setAsFilmed] = useState<string[]>(keptAsFilmed);
   const seq = useRef(0);
   const loading = useRef<string | null>(null); // the cursor of the page on its way
   const loc = useLocation();
@@ -166,6 +169,7 @@ export default function LibraryPage() {
   /** a workspace given to this person by its owner, or the Media Library on Read for them: to look at and download from,
    *  never change (the server refuses). `canAdd`: the owner's library takes their uploads all the same (Read & write). */
   const me = useMe();
+  const faceBlur = useWorkspace((s) => faceBlurOn(me, s.pluginsOff, s.currentProjectId));
   const readOnly = !!library?.readOnly || (!!me && !canChange(me, "media"));
   // the page's own writes read these again too ({ own }): a refresh right after a write can join a read that started
   // before it, and without the write's own notice that read's answer would stand (an Undo that never showed)
@@ -431,7 +435,6 @@ export default function LibraryPage() {
   const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
     if (!libId) return;
     addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, blur: !!library?.settings.blurFaces, asFilmed: keepsAsFilmed, cost: levelOf(library?.settings ?? {}) !== "off" });
-    setAsFilmed(null); // the box is ticked again for the next drop
   };
   // a file of this library went in: its clips (and the folder's count) read again
   useEffect(
@@ -899,12 +902,17 @@ export default function LibraryPage() {
   const changing = !!library && !readOnly && !trash;
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
   // the Blur faces checkbox beside Upload: only where the library blurs and this person may keep files as filmed
-  const blurChoice = mayAdd && !!library.settings.blurFaces && library.mayKeepAsFilmed;
-  const keepsAsFilmed = blurChoice && asFilmed === library.id;
+  const blurChoice = mayAdd && faceBlur && !!library.settings.blurFaces && library.mayKeepAsFilmed;
+  const keepsAsFilmed = blurChoice && asFilmed.includes(library.id);
   const chooseBlur = async (on: boolean) => {
-    if (on || !library) return setAsFilmed(null);
+    if (!library) return;
+    const keep = (k: boolean) => {
+      rememberKeepAsFilmed(library.id, k);
+      setAsFilmed((was) => [...was.filter((id) => id !== library.id), ...(k ? [library.id] : [])]);
+    };
+    if (on) return keep(false);
     const ok = await confirmDialog({ title: "Turn off Blur faces?", body: "These files will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" });
-    if (ok) setAsFilmed(library.id);
+    if (ok) keep(true);
   };
   // Look for new files (the ⋯ menu): the server reads this computer's folders itself (This Mac, the owner), or the Mac
   // app reads its own Source media folders for a server elsewhere (the owner, or a member who may add, on their computer)

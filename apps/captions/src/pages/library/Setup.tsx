@@ -12,6 +12,7 @@ import { updateLibrary } from "@/lib/library";
 import { chooseFolderOnMac, droppedOnMac, importMake, pairThisMac, pickFolderOnMac } from "@/lib/thisMac";
 import { thisMacDevice } from "@/lib/providers";
 import { useAuth } from "@/lib/auth";
+import { faceBlurOn } from "./face-blur";
 import { currentProject, useWorkspace } from "@/lib/workspace";
 import { ModelRows } from "./settings/Models";
 import { HostedSwitches } from "./settings/Hosted";
@@ -263,6 +264,8 @@ export function LibrarySetup({ library, inline = false, onDone, onClose }: { lib
   const project = useWorkspace((s) => currentProject(s));
   const workspace = { id: project?.id ?? "", name: project?.name ?? "Media Library" };
   const kind: Kind = useAuth((s) => s.kind);
+  const me = useAuth((s) => s.me);
+  const faceBlur = useWorkspace((s) => faceBlurOn(me, s.pluginsOff, s.currentProjectId));
   // the server's own name, as the member page's Server row shows it (api/work/server-work-routes.ts serverNameOf)
   const [serverName, setServerName] = useState<string | null>(null);
   useEffect(() => {
@@ -591,7 +594,7 @@ export function LibrarySetup({ library, inline = false, onDone, onClose }: { lib
     // hosted: only on a server or Cloud
     return (
       <Card>
-        <HostedSwitches value={a.hosted} onChange={(m) => set({ hosted: m })} blurFaces={a.blurFaces} onBlurFaces={(on, m) => set({ blurFaces: on, hosted: m })} />
+        <HostedSwitches value={a.hosted} onChange={(m) => set({ hosted: m })} blurFaces={a.blurFaces} onBlurFaces={faceBlur ? (on, m) => set({ blurFaces: on, hosted: m }) : undefined} />
       </Card>
     );
   };
