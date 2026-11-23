@@ -1,5 +1,5 @@
 import { Switch } from "@/components/ui/switch";
-import { Card, Row, SettingsSelect } from "./ui";
+import { Card, Row, SettingsSelect, markSave } from "./ui";
 import { tell, useThisMac } from "./ThisMacSection";
 
 /** The screen's longest side and the camera's height, in pixels, as the Mac app takes them (RecordTypes.swift RecordPrefs). */
@@ -22,7 +22,7 @@ const CAMERA = [
 export function RecorderSettings() {
   const r = useThisMac(true)?.recorder;
   if (!r) return null;
-  const set = (what: string, value: string) => tell(`recorder:${what}:${value}`);
+  const set = (what: string, value: string) => void markSave(tell(`recorder:${what}:${value}`));
   return (
     <Card>
       <Row

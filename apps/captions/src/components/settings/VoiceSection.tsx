@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { LANGUAGES, SAME, engineOptions, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage } from "@/lib/voice";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, saveFailed } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, markSave, saveFailed } from "./ui";
 import { msg } from "./helpers";
 import { Dictation } from "./DictationSettings";
 import { hasThisMac, useThisMac, type ThisMacState } from "./ThisMacSection";
@@ -31,7 +31,7 @@ export function VoiceSection() {
   const save = async (body: Body, shown: VoiceView) => {
     set(shown);
     try {
-      set(await putVoice(body));
+      set(await markSave(putVoice(body)));
     } catch (e) {
       set(data);
       saveFailed(msg(e));

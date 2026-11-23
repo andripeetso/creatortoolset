@@ -3,7 +3,7 @@ import { Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Card, InUse, ListRow, Row, RowMenu, Section, SettingsSelect, Status } from "./ui";
+import { Card, InUse, ListRow, markSave, Row, RowMenu, Section, SettingsSelect, Status } from "./ui";
 import { tell, type DictationAction, type ThisMacState } from "./ThisMacSection";
 
 const KEEP = [5, 10, 25, 50, 100];
@@ -51,6 +51,8 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
   const d = mac?.dictation;
   if (!d) return null;
   const set = (what: string, value = "") => tell(`dictation:${what}:${value}`);
+  // a setting the Mac app keeps (told, not answered), marked in the header like every other change
+  const pref = (what: string, value: string) => void markSave(set(what, value));
   // the button shows the key and changes it
   const key = (action: DictationAction, id?: "dictation-key-talk" | "dictation-key-cancel") => (
     <Row
@@ -78,7 +80,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
             title="Dictation"
             description="Types what is said at the cursor."
             status={!d.on ? undefined : d.paused ? d.paused : d.needs ? <Status tone="attention">Needs {d.needs}</Status> : undefined}
-            control={<Switch checked={d.on} aria-label="Dictation" onCheckedChange={(on) => set("on", on ? "1" : "0")} />}
+            control={<Switch checked={d.on} aria-label="Dictation" onCheckedChange={(on) => pref("on", on ? "1" : "0")} />}
           />
           {d.on && (
             <>
@@ -88,7 +90,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
               <Row
                 id="dictation-sounds"
                 title="Sound cues"
-                control={<Switch checked={d.sounds} aria-label="Sound cues" onCheckedChange={(on) => set("sounds", on ? "1" : "0")} />}
+                control={<Switch checked={d.sounds} aria-label="Sound cues" onCheckedChange={(on) => pref("sounds", on ? "1" : "0")} />}
               />
               <Row id="dictation-history" title="History" description="Recent recordings, to copy or redo." control={open("history", "Open history")} />
               {key("history")}
@@ -98,7 +100,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                   <SettingsSelect
                     label="Recordings kept"
                     value={String(d.keep)}
-                    onValueChange={(v) => set("keep", v)}
+                    onValueChange={(v) => pref("keep", v)}
                     options={keep.map((n) => ({ value: String(n), label: String(n) }))}
                     className="sm:min-w-28"
                   />
@@ -115,7 +117,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                     <SettingsSelect
                       label="Dictation engine"
                       value={d.engine}
-                      onValueChange={(v) => set("engine", v)}
+                      onValueChange={(v) => pref("engine", v)}
                       options={[{ value: "mac", label: d.server ? "Your server, then this Mac" : "This Mac" }, { value: "server", label: "Deepgram or OpenAI (your key)" }]}
                     />
                   }

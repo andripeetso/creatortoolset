@@ -14,14 +14,14 @@ function pane(scrollTop: number) {
 
 describe("takesWheel", () => {
   it("lets a pane scroll while it has room that way", () => {
-    expect(takesWheel(pane(0), 0, 40)).toBe(true);
-    expect(takesWheel(pane(100), 0, -40)).toBe(true);
+    expect(takesWheel(pane(0), 40)).toBe(true);
+    expect(takesWheel(pane(100), -40)).toBe(true);
   });
 
   it("drops the wheel at a pane's end, on the page and on the backdrop", () => {
-    expect(takesWheel(pane(200), 0, 40)).toBe(false);
-    expect(takesWheel(pane(0), 0, -40)).toBe(false);
-    expect(takesWheel(document.body, 0, 40)).toBe(false);
-    expect(takesWheel(document.body.appendChild(document.createElement("div")), 0, 40)).toBe(false);
+    expect(takesWheel(pane(200), 40)).toBe(false);
+    expect(takesWheel(pane(0), -40)).toBe(false);
+    expect(takesWheel(document.body, 40)).toBe(false);
+    expect(takesWheel(document.body.appendChild(document.createElement("div")), 40)).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import { putCached, readCached } from "@/lib/local-cache";
 import { postToApp } from "@/lib/mac-record";
-import { Row } from "./ui";
+import { Row, markSave } from "./ui";
 
 /** Inside the Mac app (it sets <html data-mac-this-mac>): Settings shows this Mac's switch and the servers. A browser never does. */
 export const hasThisMac = () => typeof document !== "undefined" && document.documentElement.dataset.macThisMac === "1";
@@ -177,7 +177,7 @@ export function SharedDrivesRow({ bridge }: { bridge: ThisMacState | null }) {
       id="shared-drives"
       title="Shared drives"
       description="Connects the shared drives this Mac used, with the saved sign-in, when they are reachable."
-      control={<Switch checked={bridge.shares} aria-label="Shared drives" onCheckedChange={(on) => tell(on ? "shares:on" : "shares:off")} />}
+      control={<Switch checked={bridge.shares} aria-label="Shared drives" onCheckedChange={(on) => void markSave(tell(on ? "shares:on" : "shares:off"))} />}
     />
   );
 }

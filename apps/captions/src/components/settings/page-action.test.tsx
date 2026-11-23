@@ -20,7 +20,10 @@ describe("SaveMark", () => {
     await act(async () => (done(), await p));
     expect(el.textContent).toBe("Saved");
 
+    // a save still running when the person opens another page marks nothing there
+    act(() => void (p = markSave(new Promise<void>((r) => (done = r)))));
     act(() => root.render(<SaveMark page="/settings/b" />));
+    await act(async () => (done(), await p));
     expect(el.textContent).toBe("");
 
     await act(async () => void (await markSave(Promise.reject(new Error("x"))).catch(() => {})));

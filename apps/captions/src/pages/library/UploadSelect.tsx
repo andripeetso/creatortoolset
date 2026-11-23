@@ -1,5 +1,5 @@
 import { LIBRARY_UPLOADS, type LibrarySummary, type LibraryUpload } from "@contracts/library";
-import { Row, SettingsSelect } from "@/components/settings/ui";
+import { Row, SettingsSelect, markSave } from "@/components/settings/ui";
 import { updateLibrary } from "@/lib/library";
 
 /**
@@ -59,7 +59,7 @@ export function UploadRow({ value, onChange, disabled, off = [], facts, finals =
 /** The footage row and the finals row, each saved at once. */
 export function UploadSelect({ library, onChange, onError, facts }: { library: LibrarySummary; onChange: (l: LibrarySummary) => void; onError: (e: string) => void; facts?: string }) {
   const save = (settings: { upload: LibraryUpload } | { finalsUpload: LibraryUpload }) =>
-    void updateLibrary(library.id, { settings })
+    void markSave(updateLibrary(library.id, { settings }))
       .then(onChange)
       .catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)));
   return (

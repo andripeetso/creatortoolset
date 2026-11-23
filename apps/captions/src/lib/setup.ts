@@ -324,7 +324,8 @@ export function onSettingsClosed(again: () => void): () => void {
 interface WorkPrefsState {
   prefs: WorkPrefs | null;
   load: () => Promise<void>;
-  put: (p: Partial<WorkPrefs>) => Promise<void>;
+  /** Resolves false when the server did not take it (the change stays on screen). */
+  put: (p: Partial<WorkPrefs>) => Promise<boolean>;
 }
 /** The work preferences' saved copy (lib/local-cache.ts): the setup window opens from it without waiting for the server. */
 const PREFS_KEY = "/api/work-prefs";
@@ -351,13 +352,14 @@ export const useWorkPrefs = create<WorkPrefsState>((set, get) => ({
       .then((r) => (r.ok ? (r.json() as Promise<WorkPrefs>) : null))
       .then((w) => {
         if (w) (putCached(me(), PREFS_KEY, w), set({ prefs: w }));
+        return !!w;
       })
-      .catch(() => {});
+      .catch(() => false);
   },
 }));
 
 /** How they want to work with the AI (work-prefs `talk`), loaded on first use. `talk` is null until it is known (the saved copy, else the server's answer). */
-export function useWorkTalk(): { talk: WorkPrefs["talk"] | null; setTalk: (v: WorkPrefs["talk"]) => Promise<void> } {
+export function useWorkTalk(): { talk: WorkPrefs["talk"] | null; setTalk: (v: WorkPrefs["talk"]) => Promise<boolean> } {
   const prefs = useWorkPrefs((s) => s.prefs);
   const load = useWorkPrefs((s) => s.load);
   useEffect(() => {

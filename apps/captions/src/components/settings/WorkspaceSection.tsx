@@ -16,7 +16,7 @@ import { webPlugins } from "@/plugins.gen";
 import { useCachedLoad } from "@/lib/local-cache";
 import { createInvite, getWorkspace, inviteUrl, offAfterToggle, removeMember, renameWorkspace, revokeInvite, setSignInWith, setTeamAi, updateInvite, updateMember } from "@/lib/workspaces";
 import { AskEveryone, Tick, useServerAccounts } from "@/components/AdminPanel";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, saveFailed } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, TextField, markSave, saveFailed } from "./ui";
 import { useSignInApps } from "./AccountSection";
 import { lastActiveText, msg } from "./helpers";
 
@@ -124,7 +124,7 @@ export function WorkspaceSection() {
     );
   }
   // every change reloads the view; a failure throws, so the control that asked shows its toast
-  const act = (p: Promise<unknown>) => p.then(load);
+  const act = (p: Promise<unknown>) => markSave(p).then(load);
   const attempt = (p: Promise<unknown>) => act(p).catch((e) => saveFailed(msg(e)));
   const brands: Brand[] = view.brands ?? [];
   /** A row menu's "Workspaces…": only when the owner has workspaces to give. */
@@ -460,7 +460,7 @@ export function WorkspacesDialog({ who, brands, given, onClose, onSave }: { who:
   const change = (next: string[]) => {
     const before = ids;
     setIds(next);
-    onSave(next).catch((e) => {
+    markSave(onSave(next)).catch((e) => {
       saveFailed(msg(e));
       setIds(before);
     });
@@ -502,8 +502,7 @@ function AccessGrid({ rows, gates }: { rows: AccessRow[]; gates: { id: string; n
   const now = (r: AccessRow): Access => draft[r.key] ?? { off: r.off, read: r.read, scripts: r.scripts };
   const change = (r: AccessRow, next: Access, patch: AccessPatch) => {
     setDraft((d) => ({ ...d, [r.key]: next }));
-    void r
-      .save(patch)
+    void markSave(r.save(patch))
       .catch((e) => saveFailed(msg(e)))
       .finally(() => setDraft((d) => (d[r.key] === next ? (({ [r.key]: _, ...rest }) => rest)(d) : d)));
   };

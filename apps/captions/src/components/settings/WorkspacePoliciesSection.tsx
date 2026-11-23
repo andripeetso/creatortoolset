@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ServerWorkView } from "@contracts/work";
 import { Switch } from "@/components/ui/switch";
 import { call, msg } from "./ServerWorkSection";
-import { Card, ErrorRow, LoadingRow, Row, saveFailed, Section } from "./ui";
+import { Card, ErrorRow, LoadingRow, Row, saveFailed, Section, markSave } from "./ui";
 
 /** The admin's view of the server (GET /api/work/server-work): the switch and its workspaces; set only on a server by address. */
 type Admin = NonNullable<ServerWorkView["admin"]>;
@@ -37,7 +37,7 @@ export function WorkspacePoliciesSection() {
     );
   const a = view.admin;
   const save = (body: { on: boolean } | { all: true } | { only: string[] }) =>
-    call<Admin>("/api/work/server-work", body).then((next) => setView((v) => (v ? { ...v, admin: next } : v)), (e) => saveFailed(msg(e)));
+    markSave(call<Admin>("/api/work/server-work", body)).then((next) => setView((v) => (v ? { ...v, admin: next } : v)), (e) => saveFailed(msg(e)));
   return (
     <Section title="Workspace policies">
       <Card>

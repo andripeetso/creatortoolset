@@ -9,7 +9,7 @@ import { useSetup } from "@/lib/setup";
 import { tokensLabel } from "@/lib/workshop";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "./ProviderLogos";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, PageAction, Row, Section, SettingsSelect, Status, WorkspacePick, saveFailed, useSettingsWorkspace } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, PageAction, Row, Section, SettingsSelect, Status, WorkspacePick, saveFailed, useSettingsWorkspace, markSave } from "./ui";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 // The Macs post their readings every five minutes, and nothing tells the page when one lands (a reading and an answer's
@@ -119,7 +119,7 @@ export function PlanLimits({ view, now, bridge, setup }: { view: ProvidersView; 
  */
 function YourPlan({ setup }: { setup: SetupView | null }) {
   if (!setup) return null;
-  const save = (v: string) => void useSetup.getState().save({ plan: v === "none" ? null : (v as PlanId) }).catch(() => saveFailed("That did not save. Try again."));
+  const save = (v: string) => void markSave(useSetup.getState().save({ plan: v === "none" ? null : (v as PlanId) })).catch(() => saveFailed("That did not save. Try again."));
   // the first choice follows the account: the plan it names, or Not set when it names none. Choosing it drops a pick
   // made by hand, so every choice in the list does something (Not set beside a found plan used to jump straight back)
   const found = PLANS.find((x) => x.id === setup.detected);

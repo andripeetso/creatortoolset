@@ -28,7 +28,7 @@ import { activeSet, effectiveSelection, effortLabel, modelName, modelsOf, usePro
 import { useCachedLoad } from "@/lib/local-cache";
 import { claudeLimitReset } from "@/lib/limits";
 import { useWorkspace } from "@/lib/workspace";
-import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, type SettingsWorkspace } from "./ui";
+import { Card, EmptyRow, ErrorRow, FormDialog, ListRow, LoadingRow, Row, RowMenu, Section, SettingsSelect, Status, WorkspacePick, WorkspaceTag, markSave, moveItems, saveFailed, useSettingsWorkspace, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
 
 /** This window's own saves read the list again too: the read after a save is never one that started before it. */
@@ -184,7 +184,7 @@ function TaskRow({ a, tagged, workspaces, limits, now, onEdit, onChanged }: { a:
         <>
           <Switch
             checked={a.enabled}
-            onCheckedChange={(on) => updateAutomation(a.id, { enabled: on }).then(onChanged).catch((e) => saveFailed(msg(e)))}
+            onCheckedChange={(on) => markSave(updateAutomation(a.id, { enabled: on })).then(onChanged).catch((e) => saveFailed(msg(e)))}
             aria-label={`Turn ${a.name} on or off`}
           />
           <RowMenu

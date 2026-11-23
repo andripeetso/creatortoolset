@@ -3,7 +3,7 @@ import { Laptop, Monitor, Server } from "lucide-react";
 import { DEFAULT_WEIGHT, LOAD_PREFERENCES, type Balance } from "@contracts/providers";
 import type { ServerWorkView } from "@contracts/work";
 import { Switch } from "@/components/ui/switch";
-import { Card, ErrorRow, ListRow, Row, saveFailed, Section, SettingsSelect } from "./ui";
+import { Card, ErrorRow, ListRow, Row, saveFailed, Section, SettingsSelect, markSave } from "./ui";
 import type { Listed } from "./computers-group";
 
 /**
@@ -60,7 +60,7 @@ export function LoadBalancing({ computers }: { computers: Listed[] }) {
     return LOAD_PREFERENCES.some((p) => p.value === v) ? v : DEFAULT_WEIGHT;
   };
   const save = (id: string, v: number) =>
-    call<Balance>("/api/devices/balance", { weights: { [id]: v } }).then(
+    markSave(call<Balance>("/api/devices/balance", { weights: { [id]: v } })).then(
       (b) => (setBalance(b), id === SERVER_PLACE && setView((cur) => (cur?.place ? { ...cur, place: { ...cur.place, weight: v } } : cur))),
       (e) => saveFailed(msg(e)),
     );
@@ -81,7 +81,7 @@ export function LoadBalancing({ computers }: { computers: Listed[] }) {
         <Row
           title="Automatic"
           description="New jobs start on the computer with the most free CPU and memory."
-          control={<Switch checked={balance.on} aria-label="Automatic" onCheckedChange={(on) => void call<Balance>("/api/devices/balance", { on }).then((b) => (setBalance(b), window.dispatchEvent(new CustomEvent(BALANCE_EVENT, { detail: b }))), (e) => saveFailed(msg(e)))} />}
+          control={<Switch checked={balance.on} aria-label="Automatic" onCheckedChange={(on) => void markSave(call<Balance>("/api/devices/balance", { on })).then((b) => (setBalance(b), window.dispatchEvent(new CustomEvent(BALANCE_EVENT, { detail: b }))), (e) => saveFailed(msg(e)))} />}
         />
         {balance.on && workers.map((d) => row(d.id, d.name, d.report?.machine?.os === "mac" || !d.report?.machine ? <Laptop className="size-4" /> : <Monitor className="size-4" />, weightOf(d.id) === 0 ? OFF_LINE : d.online ? undefined : "Offline"))}
         {balance.on && server && row(SERVER_PLACE, "This server", <Server className="size-4" />, "After your computers, unless set to Prefer")}

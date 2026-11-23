@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, RowMenu, Section, Status } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, markSave, Row, RowMenu, Section, Status } from "./ui";
 import { CopyBox } from "./copy-box";
 import { fmtAgo } from "./helpers";
 import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNames } from "./computers-group";
@@ -266,7 +266,7 @@ function ThisMacSwitch({ bridge }: { bridge: ThisMacState | null }) {
         description="This Mac runs this server's jobs for your account while Creator Toolset is open: AI requests, editor steps and media library work."
         status={bridge?.lastError ? <Status tone="broken">{bridge.lastError}</Status> : undefined}
         control={
-          <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Take work from this server" onCheckedChange={(on) => tell(on ? "ai:on" : "ai:off")} />
+          <Switch checked={!!bridge?.aiOn} disabled={!bridge} aria-label="Take work from this server" onCheckedChange={(on) => void markSave(tell(on ? "ai:on" : "ai:off"))} />
         }
       />
       <SharedDrivesRow bridge={bridge} />
@@ -345,7 +345,7 @@ function LibraryWork({ device }: { device: string }) {
   const only = balance.libraries?.[device];
   const originals = balance.originals?.[device] ?? !["linux", "windows"].includes(d.report?.machine?.os ?? "");
   const save = (body: Partial<Record<"libraries" | "originals", unknown>>) =>
-    call<Balance>("/api/devices/balance", "PUT", body).then(setBalance, (e: Error) => setProblem(e.message));
+    markSave(call<Balance>("/api/devices/balance", "PUT", body)).then(setBalance, (e: Error) => setProblem(e.message));
   const pick = (id: string, on: boolean) => {
     const next = new Set(only ?? libraries.map((l) => l.id));
     if (on) next.add(id);

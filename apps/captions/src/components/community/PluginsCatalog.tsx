@@ -4,7 +4,7 @@ import type { StepRow, StepsView } from "@contracts/editor-steps";
 import { isHomeTile, type HomeTile } from "@contracts/tools";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Card, ListRow, LoadingRow, RowMenu, saveFailed, Section } from "@/components/settings/ui";
+import { Card, ListRow, LoadingRow, RowMenu, saveFailed, Section, markSave } from "@/components/settings/ui";
 import { PluginHereSwitch } from "@/components/settings/PluginWorkspaces";
 import { StepRowView } from "@/components/settings/EditorStepsSection";
 import { addEditStep, getEditSteps, setEditStep } from "@/lib/editor";
@@ -54,7 +54,7 @@ export function ToolPlugins({ steps, tool, q, switches = false }: { steps: Steps
   const rows = stepsFor(steps.view, tool, q);
   if (!rows.length) return null;
   const change = (id: string, c: { use?: boolean; values?: Record<string, string> }) =>
-    setEditStep(id, c).then(steps.setView, () => saveFailed("That did not save. Try again."));
+    markSave(setEditStep(id, c)).then(steps.setView, () => saveFailed("That did not save. Try again."));
   return (
     <Section title="Plug-ins">
       <Card>

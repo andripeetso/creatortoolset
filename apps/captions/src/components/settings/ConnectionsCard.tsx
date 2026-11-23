@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { getEndpoints, getPhoneNotifications, hostOf, setPhoneNotifications, type Endpoint, type PhoneNotifications } from "@/lib/access";
 import { setNetworkAccess, setReachFromAnywhere } from "@/lib/thisMac";
-import { Card, Row, Section, Status } from "./ui";
+import { Card, Row, Section, Status, markSave } from "./ui";
 import type { ThisMacState } from "./ThisMacSection";
 
 /** Reach from anywhere's line for each state the Mac app reports. */
@@ -54,7 +54,7 @@ export function PhoneNotificationsRow() {
   const turn = async (on: boolean) => {
     setBusy(true);
     setProblem(null);
-    await setPhoneNotifications(on).then(setState, (e: Error) => setProblem(e.message));
+    await markSave(setPhoneNotifications(on)).then(setState, (e: Error) => setProblem(e.message));
     setBusy(false);
   };
   return (

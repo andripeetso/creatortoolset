@@ -21,7 +21,7 @@ import { EditorDefaultsSection } from "./EditorDefaultsDialog";
 import { toolSectionsFor } from "@/lib/plugin";
 import { webPlugins } from "@/plugins.gen";
 import { PublishButton } from "@/components/community/PublishDialog";
-import { Card, LoadingRow, Section, Status, saveFailed } from "./ui";
+import { Card, LoadingRow, Section, Status, saveFailed, markSave } from "./ui";
 
 /** The hidden list after one tile's switch changes: on removes it from the list, off adds it. */
 export function hiddenAfter(hidden: readonly HomeTile[], tile: HomeTile, on: boolean): HomeTile[] {
@@ -63,7 +63,7 @@ function useHomeSwitches() {
   const set = (tile: HomeTile, on: boolean) => {
     const next = hiddenAfter(hidden, tile, on);
     setMine(next);
-    save({ hidden: next }).catch(() => {
+    markSave(save({ hidden: next })).catch(() => {
       setMine(null);
       saveFailed("Home tools not saved. Try again.");
     });

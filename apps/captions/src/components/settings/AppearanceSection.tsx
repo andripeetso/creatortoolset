@@ -10,7 +10,7 @@ import { persistChatWave, persistHomeGlow, persistOwnColour, persistProjectTint,
 import { cn } from "@/lib/utils";
 import { isHexColour, PROJECT_COLORS, projectColor, useWorkspace, type ProjectColor } from "@/lib/workspace";
 import { persistClipView, useClipView, type ClipView } from "@/pages/library/clip";
-import { Card, Row, Section, SettingsSelect } from "./ui";
+import { Card, markSave, Row, Section, SettingsSelect } from "./ui";
 
 const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: LucideIcon }> = [
   { id: "system", label: "System", icon: Monitor },
@@ -112,7 +112,7 @@ export function AppearanceSection() {
             id="chat-wave"
             title="Transition effect"
             description="A wave from the button when chat mode turns on or off."
-            control={<Switch checked={chatWave} aria-label="Transition effect" onCheckedChange={persistChatWave} />}
+            control={<Switch checked={chatWave} aria-label="Transition effect" onCheckedChange={(on) => void markSave(persistChatWave(on))} />}
           />
         </Card>
       </Section>
@@ -126,7 +126,7 @@ export function AppearanceSection() {
               <SettingsSelect
                 label="Clip view"
                 value={clipView}
-                onValueChange={(v) => persistClipView(v as ClipView)}
+                onValueChange={(v) => void markSave(persistClipView(v as ClipView))}
                 options={[
                   { value: "window", label: "Window" },
                   { value: "side", label: "Side panel" },
@@ -179,7 +179,7 @@ export function DefaultViews() {
               <SettingsSelect
                 label={`${BROWSE_VIEWS[t].label}: default view`}
                 value={views[t]}
-                onValueChange={(v) => persistDefaultView(t, v === "list" ? "list" : "grid")}
+                onValueChange={(v) => void markSave(persistDefaultView(t, v === "list" ? "list" : "grid"))}
                 options={[
                   { value: "grid", label: "Cards" },
                   { value: "list", label: "List" },
@@ -244,7 +244,7 @@ function Colour({ dark }: { dark: boolean }) {
         dark && (
           <label data-settings-row="background-glow" className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             Glow behind Home
-            <Switch checked={homeGlow} aria-label="Glow behind Home" onCheckedChange={persistHomeGlow} />
+            <Switch checked={homeGlow} aria-label="Glow behind Home" onCheckedChange={(on) => void markSave(persistHomeGlow(on))} />
           </label>
         )
       }
@@ -254,7 +254,7 @@ function Colour({ dark }: { dark: boolean }) {
           "project",
           "Workspace",
           projectTint,
-          () => persistProjectTint(true),
+          () => void markSave(persistProjectTint(true)),
           <span className="flex flex-1 items-center justify-center bg-muted">
             {dots.map((c, i) => (
               <span key={c} className={cn("size-4 rounded-full ring-2 ring-muted", i > 0 && "-ml-1.5")} style={{ background: fill(c) }} />
@@ -262,7 +262,7 @@ function Colour({ dark }: { dark: boolean }) {
           </span>,
         )}
         {COLOURS.map((c) =>
-          tile(c, name(c), !projectTint && ownColour === c, () => persistOwnColour(c), <span className="flex-1" style={{ background: fill(c) }} />),
+          tile(c, name(c), !projectTint && ownColour === c, () => void markSave(persistOwnColour(c)), <span className="flex-1" style={{ background: fill(c) }} />),
         )}
         {tile(
           "custom",
@@ -279,7 +279,7 @@ function Colour({ dark }: { dark: boolean }) {
           aria-label="Custom colour"
           className="sr-only"
           value={custom ?? "#7c3aed"}
-          onChange={(e) => persistOwnColour(e.target.value)}
+          onChange={(e) => void markSave(persistOwnColour(e.target.value))}
         />
       </div>
     </Section>

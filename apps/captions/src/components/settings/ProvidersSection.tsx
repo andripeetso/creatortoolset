@@ -31,7 +31,7 @@ import { isLocalCli, LocalAiRows, localInstall, localInstallProgress, localRemov
 import { LocalModelRow } from "./LocalModelRow";
 import { useMyKeys } from "./MyKeysSection";
 import { InUse } from "./kit-controls";
-import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, saveFailed, Status, StatusDot } from "./ui";
+import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, markSave, saveFailed, Status, StatusDot } from "./ui";
 import type { SearchRowId } from "./search";
 
 /** The tools the Mac app can start a sign-in for: in Terminal (the Mac's signInCommands), Muse Code's in the browser. */
@@ -243,7 +243,7 @@ export function ProvidersSection({ sub }: { sub?: string }) {
       if (--saves.current === 0) setPending(null);
     }
   };
-  const save = (next: ProviderSettings) => saveSet(next).catch((e) => saveFailed(msg(e)));
+  const save = (next: ProviderSettings) => markSave(saveSet(next)).catch((e) => saveFailed(msg(e)));
 
   // Changes one AI's fields and saves. The Default shows the AI's model and thinking level while it is the Default.
   const patch = (inst: ProviderInstance, p: Partial<ProviderInstance>) => {

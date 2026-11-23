@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CameraLut } from "@contracts/camera";
 import { Button } from "@/components/ui/button";
 import { addLut, deleteLut, listLuts, renameLut } from "@/lib/editor";
-import { RowMenu, saveFailed, TextField } from "./ui";
+import { RowMenu, saveFailed, TextField, markSave } from "./ui";
 
 /**
  * The LUTs added under Colour (api/editor/luts.ts): one row each, its name to change and ⋯ → Delete, and Add LUT for a
@@ -30,7 +30,7 @@ export function CameraLuts() {
       <span className="text-muted-foreground">LUTs</span>
       {luts?.map((l) => (
         <div key={l.id} className="flex items-center gap-2">
-          <TextField label={`Name of ${l.name}`} value={l.name} className="w-full sm:w-80" onCommit={async (v) => setLuts(await renameLut(l.id, v))} />
+          <TextField label={`Name of ${l.name}`} value={l.name} className="w-full sm:w-80" onCommit={async (v) => setLuts(await markSave(renameLut(l.id, v)))} />
           <span className="shrink-0 text-xs text-muted-foreground">{l.size}-point</span>
           <RowMenu
             label={`More for ${l.name}`}

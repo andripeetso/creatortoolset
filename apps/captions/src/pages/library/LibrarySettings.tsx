@@ -1,7 +1,7 @@
 import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, hostsProxies, levelOf, organizeOf, proxyQualityOf, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Card, Row, Section, Status } from "@/components/settings/ui";
+import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
 import { updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
@@ -66,7 +66,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
   const s = library.settings;
   const level = levelOf(s);
   const save = (settings: Partial<Settings>) =>
-    updateLibrary(library.id, { settings })
+    markSave(updateLibrary(library.id, { settings }))
       .then(onChange)
       .catch((e: unknown) => onError(message(e)));
   return (

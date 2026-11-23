@@ -18,17 +18,20 @@ export function PageAction({ children }: { children: ReactNode }) {
   return slot ? createPortal(children, slot) : null;
 }
 
-const useSaves = create<{ pending: number; saved: boolean }>(() => ({ pending: 0, saved: false }));
+// page: bumped when the header's page changes, so a save that lands after the person moved on marks nothing
+const useSaves = create<{ pending: number; saved: boolean; page: number }>(() => ({ pending: 0, saved: false, page: 0 }));
 
 /**
  * A save on a page that saves each change at once: the header says "Saving", then "Saved" (owner, 2026-11-22: a change
- * should be seen to land). Hands the promise's result or error on unchanged.
+ * should be seen to land). A save kept in this browser (localStorage) is handed in as its result. Hands the result or error
+ * on unchanged.
  */
-export function markSave<T>(p: Promise<T>): Promise<T> {
+export function markSave<T>(p: Promise<T> | T): Promise<T> {
+  const page = useSaves.getState().page;
   useSaves.setState((s) => ({ pending: s.pending + 1, saved: false }));
-  return p.then(
+  return Promise.resolve(p).then(
     (v) => {
-      useSaves.setState((s) => ({ pending: s.pending - 1, saved: true }));
+      useSaves.setState((s) => ({ pending: s.pending - 1, saved: s.page === page }));
       return v;
     },
     (e: unknown) => {
@@ -41,7 +44,7 @@ export function markSave<T>(p: Promise<T>): Promise<T> {
 /** The header's save state (SettingsPage); a page opened afresh starts with none. */
 export function SaveMark({ page }: { page: string }) {
   const { pending, saved } = useSaves();
-  useEffect(() => () => useSaves.setState({ saved: false }), [page]);
+  useEffect(() => () => useSaves.setState((s) => ({ saved: false, page: s.page + 1 })), [page]);
   if (pending) return <span className="text-sm text-muted-foreground">Saving</span>;
   return saved ? <InUse>Saved</InUse> : null;
 }

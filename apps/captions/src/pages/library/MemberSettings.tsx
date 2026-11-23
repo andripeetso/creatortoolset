@@ -4,7 +4,7 @@ import { FOLDER_LABELS, type StorageView } from "@contracts/storage";
 import type { ServerWorkView } from "@contracts/work";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Card, Row, Section } from "@/components/settings/ui";
+import { Card, Row, Section, markSave } from "@/components/settings/ui";
 import { AddFolderDialog, call, getStorage } from "@/components/settings/StorageRows";
 import { thisMacDevice, useProviders } from "@/lib/providers";
 import { downloadsOf, setDownloads, useOffline, type Downloads } from "./offline-state";
@@ -37,7 +37,7 @@ export function DownloadsCard({ library }: { library: LibrarySummary }) {
   const d = downloadsOf(offline, library.id);
   const auto = d.mode !== "none";
   const keep = d.mode === "all";
-  const save = (next: Downloads) => setDownloads(library.id, next).then(() => setError(""), (e: unknown) => setError(message(e)));
+  const save = (next: Downloads) => markSave(setDownloads(library.id, next)).then(() => setError(""), (e: unknown) => setError(message(e)));
   // at least one kind stays on while offline is on (the server refuses neither off)
   const kind = (k: "proxies" | "originals", title: string) => {
     const on = keep && hosted[k] && !!d[k];

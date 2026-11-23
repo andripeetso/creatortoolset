@@ -6,8 +6,19 @@ import { cachedUsage, clearAccountCache } from "@/lib/local-cache";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
 import { canRecordScreen } from "@/lib/mac-record";
 import { useWorkPrefs } from "@/lib/setup";
-import { Card, Row, Section, saveFailed } from "./ui";
+import { Card, markSave, Row, Section, saveFailed } from "./ui";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
+
+/** A work pref changed at once, marked in the header; a save the server refused says so. */
+const putPref = (p: Parameters<ReturnType<typeof useWorkPrefs.getState>["put"]>[0]) =>
+  void markSave(
+    useWorkPrefs
+      .getState()
+      .put(p)
+      .then((ok) => {
+        if (!ok) throw new Error("Could not save");
+      }),
+  ).catch((e: Error) => saveFailed(e.message));
 
 const size = (bytes: number) =>
   bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
@@ -41,7 +52,7 @@ function Working() {
               aria-label="Confirm deletes"
               onCheckedChange={(on) => {
                 setConfirm(on);
-                persistConfirmDeletes(on);
+                void markSave(persistConfirmDeletes(on));
               }}
             />
           }
@@ -55,7 +66,7 @@ function Working() {
               aria-label="Workshop status colours"
               onCheckedChange={(on) => {
                 setBars(on);
-                persistStatusBars(on);
+                void markSave(persistStatusBars(on));
               }}
             />
           }
@@ -78,7 +89,7 @@ function AskFit() {
       id="ask-fit"
       title="Footage workspace prompt"
       description="The assistant asks when dropped footage does not fit the open workspace."
-      control={<Switch checked={prefs.askFit !== false} aria-label="Footage workspace prompt" onCheckedChange={(on) => void useWorkPrefs.getState().put({ askFit: on })} />}
+      control={<Switch checked={prefs.askFit !== false} aria-label="Footage workspace prompt" onCheckedChange={(on) => putPref({ askFit: on })} />}
     />
   );
 }
@@ -93,13 +104,13 @@ function UsageLimits() {
         id="auto-resume-limited"
         title="Auto-resume"
         description="A chat stopped by a usage limit resumes when the limit resets."
-        control={<Switch checked={prefs.autoResume !== false} aria-label="Auto-resume" onCheckedChange={(on) => void useWorkPrefs.getState().put({ autoResume: on })} />}
+        control={<Switch checked={prefs.autoResume !== false} aria-label="Auto-resume" onCheckedChange={(on) => putPref({ autoResume: on })} />}
       />
       <Row
         id="snooze-limited"
         title="Limit snooze"
         description="A chat stopped by a usage limit is snoozed until the limit resets."
-        control={<Switch checked={prefs.snoozeLimited === true} aria-label="Limit snooze" onCheckedChange={(on) => void useWorkPrefs.getState().put({ snoozeLimited: on })} />}
+        control={<Switch checked={prefs.snoozeLimited === true} aria-label="Limit snooze" onCheckedChange={(on) => putPref({ snoozeLimited: on })} />}
       />
     </>
   );
@@ -181,8 +192,10 @@ function Reports() {
   const toggle = async (on: boolean) => {
     setState({ ...state, on });
     try {
-      const r = await fetch("/api/telemetry", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
-      if (!r.ok) throw new Error(String(r.status));
+      const r = await markSave(fetch("/api/telemetry", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) }).then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r;
+      }));
       setState(await r.json());
     } catch {
       setState({ ...state, on: !on });
