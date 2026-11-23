@@ -184,7 +184,8 @@ newest one. A release reaches everyone's Mac, so make one only when the maintain
   for the restart in a card at once. Keep it for those; everything else waits in the corner's Restart to update.
 - A server's pages can be newer than someone's Mac app (teammates update at different times). When a page change
   needs a newer Mac app, raise `MIN_MAC_APP` (`apps/captions/src/components/MacAppUpdateBanner.tsx`) to that
-  release in the same commit: older apps then show "Update Creator Toolset" instead of a feature that does nothing.
+  release in the same commit: once an older app has downloaded the update, a dialog blocks it until it restarts
+  (Restart to update), instead of a feature that does nothing.
 
 ## The words for where work lives
 

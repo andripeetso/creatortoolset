@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
 import { restartMac, useMacUpdate } from "@/components/NewVersionPill";
 import { hasThisMac, tell, type ThisMacState } from "@/components/settings/ThisMacSection";
 
 /**
  * The oldest Mac app these pages work with. Raise it in the same commit as a page change that needs a newer Mac app
- * (a new bridge message, or a ThisMacState field it can't do without): an older app then shows this dialog instead of a
- * feature that does nothing. "0.0.0" = every Mac app works.
+ * (a new bridge message, or a ThisMacState field it can't do without): an older app is then blocked by this dialog
+ * until it restarts into the update, instead of showing a feature that does nothing. "0.0.0" = every Mac app works.
  */
 // 0.22.0: Face Blur at intake runs as the device job "faceblur-intake", which older Mac apps never claim
 export const MIN_MAC_APP: string = "0.22.0";
@@ -26,9 +25,9 @@ export function olderThan(a: string | undefined, b: string): boolean {
 }
 
 /**
- * Inside a Mac app older than MIN_MAC_APP: a dialog over the whole app that stays until the app is updated. The Mac app
- * downloads the update by itself (Updates.swift), then Restart to update installs it; until then the menu's Check for
- * Updates… is the way. A browser never shows it.
+ * Inside a Mac app older than MIN_MAC_APP, once it has downloaded the update (it does so by itself, Updates.swift): a
+ * dialog over the whole app until Restart to update. Before that nothing shows, so a server that takes the new pages
+ * before their release exists never locks anyone out. A browser never shows it.
  */
 export function MacAppUpdateBanner() {
   const [old, setOld] = useState(false);
@@ -40,7 +39,7 @@ export function MacAppUpdateBanner() {
     tell("state");
     return () => window.removeEventListener("mac-this", handle);
   }, []);
-  if (!old) return null;
+  if (!old || !held) return null;
   return (
     <Dialog open>
       <DialogContent
@@ -54,18 +53,9 @@ export function MacAppUpdateBanner() {
           <DialogTitle>Update Creator Toolset</DialogTitle>
           <DialogDescription className="text-pretty">This server needs Creator Toolset {MIN_MAC_APP} or newer.</DialogDescription>
         </DialogHeader>
-        {held ? (
-          <Button disabled={held.waiting} onClick={restartMac}>
-            {held.waiting ? "Updates when done" : "Restart to update"}
-          </Button>
-        ) : (
-          <>
-            <Button disabled>
-              <Spinner /> Downloading update
-            </Button>
-            <p className="text-pretty text-center text-xs text-muted-foreground">Creator Toolset menu → Check for Updates…</p>
-          </>
-        )}
+        <Button disabled={held.waiting} onClick={restartMac}>
+          {held.waiting ? "Updates when done" : "Restart to update"}
+        </Button>
       </DialogContent>
     </Dialog>
   );
