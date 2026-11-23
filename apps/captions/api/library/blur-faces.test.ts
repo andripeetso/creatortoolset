@@ -455,6 +455,15 @@ describe("a strip made again on the Mac (an old 16:9 strip)", () => {
     expect(await putSprite("lib_strips", "v_strip", JPEG)).toBe(false);
     expect(d.prepare("SELECT storage_key FROM derivatives WHERE version_id = 'v_strip' AND kind = 'sprite'").get()).toEqual({ storage_key: "k-old-strip" });
   });
+
+  it("asks for the strip and card picture of a blurred copy that became its clip's version with neither, and stops once it has them", () => {
+    lib("lib_copy", { upload: "none" });
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_copy', 'lib_copy', 'video', 'Copy', 'v_copy', 'tinyacrobatics', 0)").run();
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe, mac_path, mac_device, blurred_of) VALUES ('v_copy', 'a_copy', 2, 'mac:v_copy', 9, 'h2', 'ready', 'tinyacrobatics', 0, ?, '/Volumes/Tiny Footage/Copy blurred.mp4', ?, ?)").run(JSON.stringify({ duration: 3, width: 1080, height: 1920 }), MAC, "a".repeat(64));
+    expect(strayStrips("lib_copy", MAC)).toEqual([{ versionId: "v_copy", path: "/Volumes/Tiny Footage/Copy blurred.mp4", thumb: true }]);
+    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes, cell_w, cell_h) VALUES ('v_copy', 'sprite', 'k-strip', 1, 144, 256), ('v_copy', 'thumb', 'k-thumb', 1, NULL, NULL)").run();
+    expect(strayStrips("lib_copy", MAC)).toEqual([]);
+  });
 });
 
 describe("the chat dock under Blur faces", () => {

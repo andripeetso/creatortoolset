@@ -345,25 +345,34 @@ async function keepJpeg(libraryId: string, versionId: string, kind: "thumb" | "s
 /**
  * This library's videos with an old strip (16:9 cuts, no frame size noted) that isn't their shape, whose file `device`
  * has: the computer makes each strip again from the file (repairStrips) and PUTs it. An old strip that is the clip's
- * shape is noted as it is, so it is never looked at again.
- * shortcut: looks at the newest 500 old strips a pass; a library with more settles them over later passes
+ * shape is noted as it is, so it is never looked at again. A video with no strip or no card picture at all (a blurred copy
+ * that became the clip's version on a Mac) is listed too, `thumb` when its card picture is missing.
+ * shortcut: looks at the newest 500 a pass; a library with more settles them over later passes
  */
-export function strayStrips(libraryId: string, device: string, limit = 50): { versionId: string; path: string }[] {
+export function strayStrips(libraryId: string, device: string, limit = 50): { versionId: string; path: string; thumb?: true }[] {
   const d = libraryDb();
   const rows = d
     .prepare(
-      `SELECT v.id AS versionId, v.probe, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
+      `SELECT v.id AS versionId, v.probe, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path,
+              s.version_id IS NOT NULL AS strip, s.cell_w IS NOT NULL AS sized,
+              EXISTS (SELECT 1 FROM derivatives t WHERE t.version_id = v.id AND t.kind = 'thumb') AS pictured
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-         JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
+         LEFT JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite'
         WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
+          AND (s.version_id IS NULL OR s.cell_w IS NULL OR NOT EXISTS (SELECT 1 FROM derivatives t WHERE t.version_id = v.id AND t.kind = 'thumb'))
           ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no strip of a clip not blurred is made again here (putSprite) */ : ""}
         ORDER BY a.created_at DESC LIMIT 500`,
     )
-    .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null }[];
-  const out: { versionId: string; path: string }[] = [];
+    .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null; strip: number; sized: number; pictured: number }[];
+  const out: { versionId: string; path: string; thumb?: true }[] = [];
   for (const r of rows) {
-    if (!strayStrip(watchedAspect(r.probe))) d.prepare("UPDATE derivatives SET cell_w = ?, cell_h = ? WHERE version_id = ? AND kind = 'sprite'").run(OLD_CELL.w, OLD_CELL.h, r.versionId);
-    else if (r.path && out.length < limit) out.push({ versionId: r.versionId, path: r.path });
+    const oldStrip = r.strip && !r.sized;
+    // an old strip that is the clip's shape is kept as it is; the clip is listed only when its card picture is missing
+    if (oldStrip && !strayStrip(watchedAspect(r.probe))) {
+      d.prepare("UPDATE derivatives SET cell_w = ?, cell_h = ? WHERE version_id = ? AND kind = 'sprite'").run(OLD_CELL.w, OLD_CELL.h, r.versionId);
+      if (r.pictured) continue;
+    }
+    if (r.path && out.length < limit) out.push({ versionId: r.versionId, path: r.path, ...(r.pictured ? {} : { thumb: true as const }) });
   }
   return out;
 }

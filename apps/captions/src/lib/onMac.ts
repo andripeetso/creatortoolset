@@ -306,21 +306,32 @@ export async function repairPictures(libraryId: string, signal?: AbortSignal): P
 
 /**
  * Videos whose old 16:9 strip isn't their shape (an upright clip's), made again here from the file on this Mac with the
- * same read as an index (readIndex) and handed in: the card shows the old strip until the new one lands. Returns how many.
+ * same read as an index (readIndex) and handed in: the card shows the old strip until the new one lands. A video with no
+ * strip or card picture at all (a blurred copy that became its clip's version) gets both. Asks again while a page lands
+ * something, so hundreds settle in one pass. Returns how many.
  */
 export async function repairStrips(libraryId: string, signal?: AbortSignal): Promise<number> {
   const device = await deviceHere();
   if (!device) return 0;
-  const r = await fetch(`/api/library/${libraryId}/stray-strips?device=${encodeURIComponent(device)}`).catch(() => null);
-  if (!r?.ok) return 0;
-  const { versions } = (await r.json()) as { versions: { versionId: string; path: string }[] };
+  const put = (versionId: string, kind: "sprite" | "thumb", b64: string) =>
+    fetch(`/api/library/${libraryId}/versions/${versionId}/${kind}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ [kind]: b64 }) }).then((r) => r.ok, () => false);
   let made = 0;
-  for (const v of versions) {
-    signal?.throwIfAborted();
-    const { sprite } = await readIndex({ url: macMediaUrl(v.path), name: v.path.split("/").pop() ?? "", size: 0, quick: "" }, signal, v.path);
-    if (!sprite) continue;
-    const put = await fetch(`/api/library/${libraryId}/versions/${v.versionId}/sprite`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ sprite }) }).catch(() => null);
-    if (put?.ok) made++;
+  for (let page = 0; page < 40; page++) {
+    const r = await fetch(`/api/library/${libraryId}/stray-strips?device=${encodeURIComponent(device)}`).catch(() => null);
+    if (!r?.ok) break;
+    const { versions } = (await r.json()) as { versions: { versionId: string; path: string; thumb?: true }[] };
+    let landed = 0;
+    for (const v of versions) {
+      signal?.throwIfAborted();
+      const { sprite, thumb } = await readIndex({ url: macMediaUrl(v.path), name: v.path.split("/").pop() ?? "", size: 0, quick: "" }, signal, v.path);
+      const strip = !!sprite && (await put(v.versionId, "sprite", sprite));
+      const card = !v.thumb || (!!thumb && (await put(v.versionId, "thumb", thumb)));
+      // counted only when it leaves the list, so the next page is new work
+      if (strip && card) landed++;
+    }
+    made += landed;
+    // a page that landed nothing would come back the same
+    if (!landed) break;
   }
   return made;
 }
