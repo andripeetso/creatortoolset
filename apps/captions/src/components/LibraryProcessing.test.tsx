@@ -45,7 +45,7 @@ async function render() {
 }
 
 describe("the library's processing line", () => {
-  it("Stop takes every kind's queued work off the queue, the ones Library status has a Cancel for", async () => {
+  it("Stop asks the server to take the library's queued work off the queue", async () => {
     const posts: string[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (init?.method === "POST") posts.push(url);
@@ -55,7 +55,7 @@ describe("the library's processing line", () => {
     const stop = [...el.querySelectorAll("button")].find((b) => b.textContent === "Stop")!;
     act(() => stop.click());
     await flush();
-    expect(posts.map((u) => u.split("/made/")[1]).sort()).toEqual(["describe/stop", "embed/stop", "fingerprint/stop", "look/stop", "pictures/stop", "proxy/stop", "sprite/stop", "timeline/stop", "transcribe/stop"]);
+    expect(posts).toEqual([expect.stringMatching(/^\/api\/library\/lib_[\d.]+\/stop$/)]);
   });
 
   it("is one line with a moving bar until opened; opened, it lists the steps and what waits, and stays open next time", async () => {

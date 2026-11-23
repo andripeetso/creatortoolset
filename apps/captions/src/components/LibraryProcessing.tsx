@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { MADE_KINDS, NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { getProgress, getWatch, stopMade } from "@/lib/library";
+import { getProgress, getWatch, stopLibrary } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { cn } from "@/lib/utils";
 import { ownMacLine } from "@/lib/wording";
@@ -134,8 +134,6 @@ const remembered = () => {
  * When nothing runs, what waits for a key, an AI or the plan's limit is said by itself: it is why nothing moves.
  */
 type Waiting = LibraryProgress["waiting"][number];
-/** The kinds a Stop takes off the queue: the ones Library status has a Cancel for. */
-const STOPPABLE = MADE_KINDS.filter((k) => !k.auto && !k.ready).map((k) => k.kind);
 /** What only the person can change: a key or an AI provider, or (their own) a computer setting no computer can get past. */
 const needsYou = (w: Waiting) => (!w.limit && !w.computer && !w.away && !w.wait) || (w.wait === "needs" && !!w.mine);
 
@@ -174,7 +172,7 @@ export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
   const stop = async () => {
     setStopping("busy");
     try {
-      await Promise.all(STOPPABLE.map((k) => stopMade(libraryId, k)));
+      await stopLibrary(libraryId);
       setStopping(null);
       await progress.refresh().catch(() => {});
     } catch {

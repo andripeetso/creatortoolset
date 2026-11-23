@@ -164,6 +164,7 @@ describe("appRows", () => {
       ["next.mp4", "Export · queued", "/captions"],
     ]);
     expect(rows[2]).not.toHaveProperty("progress");
+    expect(rows.map((r) => r.choices?.[0]?.post)).toEqual(["/api/editor/e1/stop", "/api/exports/x1/stop", "/api/exports/x2/stop"]);
   });
 
   it("lists each tool's running work: the thing, the tool and what it does, how far when it is not waiting", () => {
@@ -200,6 +201,13 @@ describe("appRows", () => {
     ]);
     expect(rows.every((r) => r.state === "working")).toBe(true);
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+    // each has Stop, posting to its tool's own stop route
+    expect(rows.map((r) => r.choices)).toEqual(rows.map(() => [{ label: "Stop", post: expect.stringMatching(/^\/api\/.+\/(stop|cancel)$/) }]));
+    expect(rows.map((r) => r.choices![0]!.post)).toEqual([
+      "/api/instagram/p1/stop", "/api/instagram/p2/stop", "/api/instagram/accounts/a1/stop", "/api/instagram/ideas/stop",
+      "/api/clips/n1/stop", "/api/clips/n2/stop", "/api/enhance/s1/cancel", "/api/enhance/s2/cancel", "/api/review/r1/stop",
+      "/api/documents/g1/stop", "/api/projects/c1/captioning/stop", "/api/workshop/sources/k1/stop",
+    ]);
   });
 });
 

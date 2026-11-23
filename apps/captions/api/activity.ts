@@ -191,6 +191,9 @@ async function appWork(user: SessionUser): Promise<AppWork> {
   return { libraries: may(user, "media") ? await libraryWork(user) : [], edits, exports: await activeExports(user), analyzer, notes, enhance, review, guides, captioning, knowledge };
 }
 
+/** A running row's Stop: a POST to the tool's own stop route, which ends the work and keeps what it worked on. */
+const stopAt = (post: string): Partial<ActivityRow> => ({ choices: [{ label: "Stop", post }] });
+const enc = encodeURIComponent;
 const count = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const STEP: Record<string, [string, string]> = {
@@ -216,7 +219,7 @@ export function appRows(w: AppWork): ActivityRow[] {
     const up = lib.uploading;
     if (up) add("upload", `Uploading ${count(up.files, "file")} · ${pct(up.received / Math.max(1, up.size))}`, { progress: up.received / Math.max(1, up.size) });
     const p = lib.progress;
-    if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.share)}`, { progress: p.share });
+    if (p.left > 0) add("prepare", `Preparing ${count(p.clips, "clip")} · ${pct(p.share)}`, { progress: p.share, ...stopAt(`/api/library/${enc(lib.id)}/stop`) });
     const ids = new Set<string>();
     for (const x of p.waiting) {
       const [one, many] = STEP[x.step] ?? ["file", "files"];
@@ -244,22 +247,23 @@ export function appRows(w: AppWork): ActivityRow[] {
       }
     }
   }
-  for (const e of w.edits) rows.push({ id: `editor:${e.id}`, title: e.name, detail: "Editor", state: "working", href: `/editor/${e.id}` });
+  for (const e of w.edits) rows.push({ id: `editor:${e.id}`, title: e.name, detail: "Editor", state: "working", href: `/editor/${e.id}`, ...stopAt(`/api/editor/${enc(e.id)}/stop`) });
   // the other tools: the thing worked on, the tool and what it does; how far, when the tool knows and it is not waiting
-  const work = (id: string, title: string, tool: string, doing: string, href: string, x: { waits?: boolean; progress?: number } = {}) =>
-    rows.push({ id, title, detail: `${tool} · ${x.waits ? "queued" : doing}`, state: "working", href, ...(!x.waits && x.progress !== undefined ? { progress: x.progress } : {}) });
+  const work = (id: string, title: string, tool: string, doing: string, href: string, stop: string, x: { waits?: boolean; progress?: number } = {}) =>
+    rows.push({ id, title, detail: `${tool} · ${x.waits ? "queued" : doing}`, state: "working", href, ...(!x.waits && x.progress !== undefined ? { progress: x.progress } : {}), ...stopAt(stop) });
   const ANALYZER = { post: ["reading the post", "/instagram/"], account: ["pulling the account", "/instagram/accounts/"], ideas: ["finding ideas", "/instagram"] } as const;
   for (const a of w.analyzer ?? []) {
     const [doing, page] = ANALYZER[a.kind];
-    work(`analyzer:${a.kind}:${a.id}`, a.name, "Content Analyzer", doing, a.kind === "ideas" ? page : `${page}${a.id}`, { waits: a.waits });
+    const stop = a.kind === "ideas" ? "/api/instagram/ideas/stop" : `/api/instagram/${a.kind === "account" ? "accounts/" : ""}${enc(a.id)}/stop`;
+    work(`analyzer:${a.kind}:${a.id}`, a.name, "Content Analyzer", doing, a.kind === "ideas" ? page : `${page}${a.id}`, stop, { waits: a.waits });
   }
-  for (const n of w.notes ?? []) work(`notes:${n.id}${n.section ? ":section" : ""}`, n.name, "Video Notes", n.section ? "writing a section" : "making the note", `/clips/${n.id}`, n);
-  for (const e of w.enhance ?? []) work(`enhance:${e.id}`, e.name, "Audio Enhancer", "enhancing", `/enhance/${e.id}`, e);
-  for (const r of w.review ?? []) work(`review:${r.id}`, r.name, "Review", "preparing the video", `/review/${r.assetId}`, r);
-  for (const g of w.guides ?? []) work(`guides:${g.id}`, g.name, "Guide Builder", "writing", "/documents");
+  for (const n of w.notes ?? []) work(`notes:${n.id}${n.section ? ":section" : ""}`, n.name, "Video Notes", n.section ? "writing a section" : "making the note", `/clips/${n.id}`, `/api/clips/${enc(n.id)}/stop`, n);
+  for (const e of w.enhance ?? []) work(`enhance:${e.id}`, e.name, "Audio Enhancer", "enhancing", `/enhance/${e.id}`, `/api/enhance/${enc(e.id)}/cancel`, e);
+  for (const r of w.review ?? []) work(`review:${r.id}`, r.name, "Review", "preparing the video", `/review/${r.assetId}`, `/api/review/${enc(r.assetId)}/stop`, r);
+  for (const g of w.guides ?? []) work(`guides:${g.id}`, g.name, "Guide Builder", "writing", "/documents", `/api/documents/${enc(g.id)}/stop`);
   // the project list, not the project: it is opened once its captions are in (api/captions-job.ts)
-  for (const c of w.captioning ?? []) work(`captions:${c.id}`, c.name, "Caption Studio", "captioning", "/captions?view=projects");
-  for (const k of w.knowledge ?? []) work(`knowledge:${k.id}`, k.name, "Content Workshop", "reading the source", "/workshop");
+  for (const c of w.captioning ?? []) work(`captions:${c.id}`, c.name, "Caption Studio", "captioning", "/captions?view=projects", `/api/projects/${enc(c.id)}/captioning/stop`);
+  for (const k of w.knowledge ?? []) work(`knowledge:${k.id}`, k.name, "Content Workshop", "reading the source", "/workshop", `/api/workshop/sources/${enc(k.id)}/stop`);
   for (const j of w.exports) {
     const running = j.status === "running";
     rows.push({
@@ -269,6 +273,7 @@ export function appRows(w: AppWork): ActivityRow[] {
       state: "working",
       href: j.projectId ? `/captions?project=${encodeURIComponent(j.projectId)}` : "/captions",
       ...(running ? { progress: j.progress } : {}),
+      ...stopAt(`/api/exports/${enc(j.id)}/stop`),
     });
   }
   return rows;

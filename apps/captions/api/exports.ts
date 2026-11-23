@@ -791,6 +791,15 @@ exportsApp.post("/:id/content", async (c) => {
   return c.json({ finals: job.finals }, job.finals?.status === "sent" ? 201 : 409);
 });
 
+/* Stop: a queued or running job ends (Home's Activity); a finished one is left as it is */
+exportsApp.post("/:id/stop", async (c) => {
+  await loaded;
+  const job = jobs.get(c.req.param("id"));
+  if (!job || !canSee(job, c.get("user"))) return c.json({ error: "Not found" }, 404);
+  if (job.status === "queued" || job.status === "running") await removeJob(job.id);
+  return c.json({ ok: true });
+});
+
 /* cancel a running job, or delete a finished one */
 exportsApp.delete("/:id", async (c) => {
   await loaded;

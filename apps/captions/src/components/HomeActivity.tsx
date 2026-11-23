@@ -287,7 +287,7 @@ function ActivityButton({ me }: { me: Me }) {
         <p className="border-b px-3 py-2 text-sm font-medium">Activity</p>
         <div className="max-h-96 overflow-y-scroll pb-1">
           {!running.length && !waiting.length && <p className="px-3 py-8 text-center text-xs text-muted-foreground">No activity</p>}
-          <Part label="Running" lines={running} />
+          <Part label="Running" lines={running} onChoice={(c) => void choose(c).then(() => server.refresh())} />
           <Part label="Waiting on you" lines={waiting} onClear={(ids) => void clear(ids)} onChoice={(c) => void choose(c).then(() => server.refresh())} />
         </div>
       </PopoverContent>
@@ -356,7 +356,7 @@ function Part({ label, lines, onClear, onChoice }: { label: string; lines: Line[
   );
 }
 
-/** A waiting row's buttons, under it: a service's page opens in the browser, an app page here, the others ask the server. */
+/** A row's buttons, under it (a running row's Stop, a waiting row's way out): a service's page opens in the browser, an app page here, the others ask the server. */
 function Choices({ choices, onChoice }: { choices: ActivityChoice[]; onChoice: (c: ActivityChoice) => void }) {
   const look = "rounded-md border px-2 py-0.5 text-[11px] font-medium hover:bg-accent outline-none focus-visible:ring-1 focus-visible:ring-ring";
   return (
@@ -384,5 +384,5 @@ function Choices({ choices, onChoice }: { choices: ActivityChoice[]; onChoice: (
 export async function choose(c: ActivityChoice): Promise<void> {
   if (!c.post) return;
   const r = await fetch(c.post, { method: "POST" }).catch(() => null);
-  if (!r?.ok) toast.error(((await r?.json().catch(() => null)) as { error?: string } | null)?.error ?? "Could not be saved");
+  if (!r?.ok) toast.error(((await r?.json().catch(() => null)) as { error?: string } | null)?.error ?? (c.label === "Stop" ? "Could not stop" : "Could not be saved"));
 }

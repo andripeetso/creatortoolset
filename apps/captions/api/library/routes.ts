@@ -1172,6 +1172,14 @@ libraryApp.post("/:id/made/:kind/stop", (c) => {
   return c.json({ files: stopQueued(libraryId, kind, user.username) });
 });
 
+// POST /api/library/:id/stop → { files }: Stop, every kind's queued work taken off the queue (each Cancel at once)
+libraryApp.post("/:id/stop", (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json({ files: MADE_KINDS.filter((k) => !k.auto && !k.ready).reduce((n, k) => n + stopQueued(libraryId, k.kind, user.username), 0) });
+});
+
 // POST /api/library/:id/retry/:kind → { files }: the step's failed jobs queued again (the Status view's Retry)
 libraryApp.post("/:id/retry/:kind", (c) => {
   const user = c.get("user");
