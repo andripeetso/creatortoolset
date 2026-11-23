@@ -39,6 +39,7 @@ import {
   deleteDocument,
   generateDocument,
   stopDocument,
+  newDocumentId,
   getDocument,
   getDocumentsAvailability,
   listDocumentMedia,
@@ -153,7 +154,7 @@ function ComposeForm({
   const submit = async () => {
     setError(null);
     setBusy(true);
-    const id = existingId ?? crypto.randomUUID();
+    const id = existingId ?? newDocumentId();
     setWritingId(id);
     try {
       if (existingId) {

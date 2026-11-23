@@ -22,6 +22,12 @@ vi.mock("./ai-complete", async (real) => ({
     return parse(system.startsWith("You turn a narrated") ? '{"title":"Open the shop","purpose":"Open it.","steps":[{"title":"Open the shop","instruction":"Press B.","startSec":0,"endSec":1,"atSec":0.5}]}' : "# The shop\n\nPress B.");
   },
 }));
+// held: looking up the workspace waits for `opened`, the gap before a writing's run starts
+let gate: Promise<void> | null = null;
+vi.mock("./lib/workspace-scope", async (real) => {
+  const actual = await real<typeof import("./lib/workspace-scope")>();
+  return { ...actual, currentWorkspaceId: async (...a: Parameters<typeof actual.currentWorkspaceId>) => (await gate, actual.currentWorkspaceId(...a)) };
+});
 const { documentsApp, guidesWork } = await import("./documents");
 
 const app = new Hono<{ Variables: AuthVars }>();
@@ -77,5 +83,37 @@ describe("Stop", () => {
     hold = false;
     // nothing running: still ok
     expect((await app.request(`/api/documents/${id}/stop`, { method: "POST" })).status).toBe(200);
-  });
+  }, 30_000);
+
+  const create = (body: Record<string, unknown>) => app.request("/api/documents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "guide", prompt: "", sources: [{ type: "clip", id: CLIP, name: "Shop tour" }], ...body }) });
+
+  it("holds a Stop pressed before the writing has started: it starts stopped and asks the writer nothing", async () => {
+    let open!: () => void;
+    gate = new Promise((done) => (open = done));
+    const id = "dddddddd-0000-4000-8000-000000000013";
+    sent.length = 0;
+    const going = create({ id });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(guidesWork("ana")).toEqual([]);
+    expect(await (await app.request(`/api/documents/${id}/stop`, { method: "POST" })).json()).toEqual({ ok: true });
+    open();
+    gate = null;
+    expect(await (await going).json()).toMatchObject({ id, status: "error", error: "Stopped" });
+    expect(sent).toHaveLength(0);
+  }, 30_000);
+
+  it("writes one guide once at a time, and a stopped regenerate keeps the guide it had", async () => {
+    const made = (await (await create({})).json()) as { id: string; body: string; guide?: unknown };
+    expect(made.body).toContain("Open the shop");
+    hold = true;
+    const first = app.request(`/api/documents/${made.id}/generate`, { method: "POST" });
+    await vi.waitFor(() => expect(guidesWork("ana").map((g) => g.id)).toContain(made.id));
+    expect((await app.request(`/api/documents/${made.id}/generate`, { method: "POST" })).status).toBe(409);
+    await app.request(`/api/documents/${made.id}/stop`, { method: "POST" });
+    expect((await first).status).toBe(400);
+    hold = false;
+    const after = (await (await app.request(`/api/documents/${made.id}`)).json()) as { body: string; guide?: unknown };
+    expect(after.body).toBe(made.body);
+    expect(after.guide).toEqual(made.guide);
+  }, 30_000);
 });

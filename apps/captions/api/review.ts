@@ -603,10 +603,25 @@ async function stopProcessing(id: string): Promise<void> {
   for (const v of meta?.versions ?? []) {
     const key = `${id}/${v.n}`;
     if (v.status !== "processing") continue;
-    if (queued.has(key)) stopped.add(key); // one not queued (left by a restart) has no run to end
+    // also one still being copied in, not queued yet: its run starts when the copy lands and ends at once
+    stopped.add(key);
     children.get(key)?.kill("SIGKILL");
     await jobVersion(id, v.n, { status: "error", error: STOPPED });
   }
+}
+
+/**
+ * Retry (POST /:id/retry): the video's versions that ended in an error, their uploaded file here, are prepared again.
+ * False while a stopped one's run has not ended yet (it would write its end over the new run's).
+ */
+async function retryProcessing(id: string): Promise<boolean> {
+  const versions = (await readMeta(id))?.versions.filter((v) => v.status === "error" && existsSync(sourcePath(id, v.n))) ?? [];
+  if (versions.some((v) => queued.has(`${id}/${v.n}`) || stopped.has(`${id}/${v.n}`))) return false;
+  for (const v of versions) {
+    await jobVersion(id, v.n, { status: "processing", progress: 0, error: undefined });
+    enqueue(id, v.n);
+  }
+  return true;
 }
 
 const queued = new Set<string>();
@@ -647,6 +662,7 @@ function placeInBackground(id: string, n: number, placed: Promise<void>, onPlace
       },
       (e) => {
         console.error(`[review] relay ${id}/${n}:`, e);
+        stopped.delete(`${id}/${n}`); // no run follows to clear a Stop
         return jobVersion(id, n, { status: "error", error: "Could not get the uploaded file. Upload it again." });
       },
     )
@@ -1269,6 +1285,7 @@ export async function addVersion(
     if (options.relay) placeInBackground(id, n, place(sourcePath(id, n)), emitAdded);
     else await place(sourcePath(id, n));
   } catch (e) {
+    stopped.delete(`${id}/${n}`); // no run follows to clear a Stop
     await setVersion(id, n, { status: "error", error: "Upload incomplete. Upload it again." });
     throw e;
   }
@@ -1697,6 +1714,13 @@ reviewApp.post("/:id/stop", async (c) => {
   const v = await viewer(c);
   if (!v?.manage) return c.json({ error: "Not found" }, 404);
   await stopProcessing(v.meta.id);
+  return c.json({ ok: true });
+});
+
+reviewApp.post("/:id/retry", async (c) => {
+  const v = await viewer(c);
+  if (!v?.manage) return c.json({ error: "Not found" }, 404);
+  if (!(await retryProcessing(v.meta.id))) return c.json({ error: "Still stopping, try again in a moment", code: "conflict" }, 409);
   return c.json({ ok: true });
 });
 

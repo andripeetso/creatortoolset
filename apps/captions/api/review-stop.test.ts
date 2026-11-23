@@ -53,4 +53,42 @@ it("stops a version being processed: Stopped, its file kept, and the killed run 
   expect(await version()).toMatchObject({ status: "error", error: "Stopped" });
   expect(existsSync(sourcePath(id, (await version()).n))).toBe(true);
   expect((await app.request(`/${id}/stop`, { method: "POST" })).status).toBe(200);
-});
+}, 30_000);
+
+it("Retry prepares a stopped version again, to ready", async () => {
+  hold = true;
+  const added = await addVersion(undefined, { owner: "ana", name: "Again.avi", mime: "video/x-msvideo", bytes: 1, workspace: WS }, async (dest) => execFileSync("cp", [clip, dest]));
+  const id = added!.meta.id;
+  const version = async () => (await (await app.request(`/assets/${id}`)).json()).asset.versions[0];
+  await app.request(`/${id}/stop`, { method: "POST" });
+  await reviewJobsDone();
+  hold = false;
+  expect((await app.request(`/${id}/retry`, { method: "POST", headers: { "x-as": "bo" } })).status).toBe(404);
+  expect(await (await app.request(`/${id}/retry`, { method: "POST" })).json()).toEqual({ ok: true });
+  expect((await version()).status).toBe("processing");
+  await reviewJobsDone();
+  const ready = await version();
+  expect(ready.status).toBe("ready");
+  expect(ready.error).toBeUndefined();
+}, 30_000);
+
+it("a Stop while the upload is still being copied in holds: the run that follows the copy writes nothing", async () => {
+  let land!: () => void;
+  const copied = new Promise<void>((done) => (land = done));
+  const adding = addVersion(undefined, { owner: "ana", name: "Slow.avi", mime: "video/x-msvideo", bytes: 1, workspace: WS }, async (dest) => {
+    await copied;
+    execFileSync("cp", [clip, dest]);
+  });
+  let id = "";
+  for (let i = 0; i < 50 && !id; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    const list = (await (await app.request("/")).json()) as { id: string; name: string }[];
+    id = list.find((a) => a.name.startsWith("Slow"))?.id ?? "";
+  }
+  expect(id).not.toBe("");
+  await app.request(`/${id}/stop`, { method: "POST" });
+  land();
+  await adding;
+  await reviewJobsDone();
+  expect((await (await app.request(`/assets/${id}`)).json()).asset.versions[0]).toMatchObject({ status: "error", error: "Stopped" });
+}, 30_000);

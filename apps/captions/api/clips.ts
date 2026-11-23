@@ -215,6 +215,10 @@ function stopSignal(id: string): AbortSignal {
   if (!c) stops.set(id, (c = new AbortController()));
   return c.signal;
 }
+/** A run's end: the note's Stop goes once nothing of it runs (a newer run's Stop stays). */
+function releaseStop(id: string, signal: AbortSignal): void {
+  if (stops.get(id)?.signal === signal && !active.has(id) && !generating.get(id)?.size) stops.delete(id);
+}
 
 function claimKind(id: string, k: BlockKind): boolean {
   let set = generating.get(id);
@@ -277,6 +281,7 @@ async function runBlockJob(
     );
   } finally {
     releaseKind(id, k);
+    releaseStop(id, signal);
     announceSoon(owner, "clips"); // the block (or its error) is in, and it is no longer generating
   }
 }
@@ -717,6 +722,8 @@ export async function noteFiled(id: string, made: NoteMade, files: Record<string
   if (made.duration) meta.duration = made.duration;
   if (files["thumb.jpg"]) await keep(files["thumb.jpg"], thumbPath(id));
   if (files.sound) await keep(files.sound, wavPath(id));
+  // stopped while its files were kept: no words are written, and the sound kept after its Stop goes
+  if (active.get(id) !== meta) return void (await rm(wavPath(id), { force: true }).catch(() => {}));
   const user = ownerSession(meta);
   if (!user) return noteFailed(id, "The note's account is gone");
   void noteText(meta, user, !!files.sound);
@@ -828,6 +835,7 @@ ${chapterHint} First chapter near 0:00. t matches [mm:ss] in the transcript. No 
     stopCrawl();
     // a stopped run ended at its Stop; ending it again here could take a new run's sound away
     if (!signal.aborted) await noteEnded(meta);
+    releaseStop(id, signal);
   }
 }
 
@@ -902,6 +910,9 @@ function enqueue(meta: Meta, user: SessionUser): void {
 }
 
 /** Stops a clip's work; a workspace being deleted stops its clips' too (lib/workspace-delete.ts). */
+/** For tests: how many notes hold a Stop. */
+export const stopsHeld = () => stops.size;
+
 export function cancel(id: string): void {
   active.delete(id);
   dropTask(NOTES_TASK, id);

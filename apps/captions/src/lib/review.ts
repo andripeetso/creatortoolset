@@ -242,6 +242,8 @@ const send = (method: string, body?: unknown): RequestInit => ({
 export const listReviewAssets = () => call<ReviewAsset[]>("/api/review");
 /** Stop: the video's versions being prepared end now; the uploaded files stay. */
 export const stopReview = (assetId: string) => call<{ ok: true }>(`/api/review/${assetId}/stop`, send("POST"));
+/** Retry: the video's versions that ended in an error are prepared again. */
+export const retryReview = (assetId: string) => call<{ ok: true }>(`/api/review/${assetId}/retry`, send("POST"));
 
 /** A screen recording's pointer log and the look saved for it (null until one is). */
 export const getScreenRecording = (assetId: string, n: number) =>

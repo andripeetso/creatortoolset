@@ -110,6 +110,11 @@ export const generateDocument = (id: string) =>
   );
 
 /** Stop: the document or guide being written ends now; what it had stays. */
+/** A new document's id, made by the page so its Stop reaches the writing before it is saved. `crypto.randomUUID` is
+ *  only on HTTPS and localhost; a server opened by a plain http:// address gets 32 random hex characters instead. */
+export const newDocumentId = (): string =>
+  typeof crypto.randomUUID === "function" ? crypto.randomUUID() : [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+
 export const stopDocument = (id: string) =>
   fetch(`/api/documents/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: true }>(r));
 

@@ -167,14 +167,19 @@ function assertGuideSources(sources: DocSource[]): void {
 const writing = new Map<string, { owner: string; name: string; projectId?: string; stop: AbortController }>();
 export const guidesWork = (username: string, keep?: ((own?: string) => boolean) | null) =>
   [...writing].filter(([, w]) => w.owner === username && (!keep || keep(w.projectId))).map(([id, w]) => ({ id, name: w.name }));
+/** Writings asked for whose run has not started yet (sources read, workspace looked up): a Stop then is kept for the start. */
+const starting = new Map<string, { owner: string; stopped: boolean }>();
 /** What a stopped writing says (POST /:id/stop): ended by the person, not failed. */
 const STOPPED = "Stopped";
 /** Runs one writing, told to Home when it starts and when it ends, whatever the end; its Stop aborts `signal`. */
 async function written<T>(id: string, owner: string, name: string, projectId: string | undefined, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const stop = new AbortController();
+  if (starting.get(id)?.stopped) stop.abort();
+  starting.delete(id);
   writing.set(id, { owner, name, projectId, stop });
   announce(owner, "documents");
   try {
+    stop.signal.throwIfAborted();
     const out = await fn(stop.signal);
     // a late answer from a stopped run is not saved
     stop.signal.throwIfAborted();
@@ -638,14 +643,16 @@ documentsApp.post("/", async (c) => {
     }
   }
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 4000) : "";
+  // the page may name the new document, so its Stop can reach the writing before the document is saved
+  const id = typeof body?.id === "string" && okId(body.id) && !writing.has(body.id) && !starting.has(body.id) && !existsSync(docDir(body.id)) ? body.id : randomUUID();
+  starting.set(id, { owner: user.username, stopped: false });
   let resolved: (DocSource & { pack: string })[];
   try {
     resolved = await Promise.all(sources.map((s) => resolveSource(s, user)));
   } catch (e) {
+    starting.delete(id);
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
-  // the page may name the new document, so its Stop can reach the writing before the document is saved
-  const id = typeof body?.id === "string" && okId(body.id) && !writing.has(body.id) && !existsSync(docDir(body.id)) ? body.id : randomUUID();
   const projectId = await currentWorkspaceId(user);
   const meta: Meta = {
     id,
@@ -791,7 +798,10 @@ documentsApp.post("/:id/generate", async (c) => {
   if (!anyAiConfigured(user)) {
     return c.json({ error: "Needs an AI provider" }, 400);
   }
+  // one writing at a time: a second would race the first on its pictures, and Stop would reach only one
+  if (writing.has(meta.id) || starting.has(meta.id)) return c.json({ error: "Already being written", code: "conflict" }, 409);
   const kind = parseDocKind(meta.kind);
+  starting.set(meta.id, { owner: user.username, stopped: false });
   let resolved: (DocSource & { pack: string })[];
   try {
     if (kind === "guide") assertGuideSources(meta.sources);
@@ -799,6 +809,7 @@ documentsApp.post("/:id/generate", async (c) => {
       meta.sources.map((s) => resolveSource(s, user)),
     );
   } catch (e) {
+    starting.delete(meta.id);
     return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
   }
   try {
@@ -832,6 +843,12 @@ documentsApp.post("/:id/stop", async (c) => {
   // a new document is saved only once its first writing ends: the run itself says whose it is
   if (w?.owner === user.username) {
     w.stop.abort();
+    return c.json({ ok: true });
+  }
+  // asked for, its run not started yet: it starts stopped
+  const s = starting.get(id);
+  if (s?.owner === user.username) {
+    s.stopped = true;
     return c.json({ ok: true });
   }
   if (!(await ownedMeta(id, user))) return c.json({ error: "Not found" }, 404);

@@ -87,6 +87,7 @@ import {
   cutOf,
   versionLabel,
   stopReview,
+  retryReview,
 } from "@/lib/review";
 import { toast } from "sonner";
 import { undoable } from "@/lib/undo";
@@ -979,11 +980,12 @@ function Review({
                   <span className="block h-full bg-violet-500 transition-[width] duration-500" style={{ width: `${Math.round(version.progress * 100)}%` }} />
                 </span>
                 Preparing · {Math.round(version.progress * 100)}%
-                {manage && <StopPreparing assetId={asset.id} onStopped={reload} />}
+                {manage && <PrepareAction run={() => stopReview(asset.id)} label="Stop" busy="Stopping" failed="Could not stop" onDone={reload} />}
               </div>
             ) : (
               <p className="flex max-w-md items-center gap-2 px-6 text-sm text-red-400">
                 <TriangleAlert className="h-4 w-4 shrink-0" /> {version.error || "Could not prepare this version. Upload it again."}
+                {manage && <PrepareAction run={() => retryReview(asset.id)} label="Retry" busy="Queueing" failed="Could not retry" onDone={reload} />}
               </p>
             )}
           </div>
@@ -2186,25 +2188,25 @@ function Chip({
   );
 }
 
-/** Stop for a video being prepared: its versions end as Stopped, the uploaded files stay. */
-function StopPreparing({ assetId, onStopped }: { assetId: string; onStopped: () => Promise<void> }) {
+/** Stop for a video being prepared (its versions end as Stopped, the uploaded files stay), Retry for one that ended. */
+function PrepareAction({ run, label, busy, failed, onDone }: { run: () => Promise<unknown>; label: string; busy: string; failed: string; onDone: () => Promise<void> }) {
   const [state, setState] = useState<"busy" | "failed" | null>(null);
-  const stop = async () => {
+  const go = async () => {
     setState("busy");
     try {
-      await stopReview(assetId);
+      await run();
       setState(null);
-      await onStopped().catch(() => {});
+      await onDone().catch(() => {});
     } catch {
       setState("failed");
     }
   };
   return (
     <span className="flex items-center gap-2">
-      <Button variant="outline" size="sm" disabled={state === "busy"} onClick={() => void stop()}>
-        {state === "busy" ? "Stopping" : "Stop"}
+      <Button variant="outline" size="sm" disabled={state === "busy"} onClick={() => void go()}>
+        {state === "busy" ? busy : label}
       </Button>
-      {state === "failed" && <span className="text-xs text-red-400">Could not stop</span>}
+      {state === "failed" && <span className="text-xs text-red-400">{failed}</span>}
     </span>
   );
 }
