@@ -3,7 +3,7 @@
 // turned; anything else, an older app, a browser or an `ext_` item is returned as it is.
 
 /** The Mac app that keeps thumbs on this Mac answers ctlocal://thumb/ (mark 1 or more). */
-const localThumbsMark = () =>
+export const localThumbsMark = () =>
   typeof document === "undefined" ? 0 : Number(document.documentElement.dataset.macLocalThumbs) || 0;
 
 const THUMB_PATH = /^\/api\/library\/media\/(?!ext_)([A-Za-z0-9_-]+)\/(thumb|sprite)(\?[A-Za-z0-9_=&.-]*)?$/;
