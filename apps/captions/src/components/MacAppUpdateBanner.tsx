@@ -52,7 +52,7 @@ export function MacAppUpdateBanner() {
       >
         <DialogHeader>
           <DialogTitle>Update Creator Toolset</DialogTitle>
-          <DialogDescription>This server needs Creator Toolset {MIN_MAC_APP} or newer.</DialogDescription>
+          <DialogDescription className="text-pretty">This server needs Creator Toolset {MIN_MAC_APP} or newer.</DialogDescription>
         </DialogHeader>
         {held ? (
           <Button disabled={held.waiting} onClick={restartMac}>
@@ -63,7 +63,7 @@ export function MacAppUpdateBanner() {
             <Button disabled>
               <Spinner /> Downloading update
             </Button>
-            <p className="text-center text-xs text-muted-foreground">Creator Toolset menu → Check for Updates…</p>
+            <p className="text-pretty text-center text-xs text-muted-foreground">Creator Toolset menu → Check for Updates…</p>
           </>
         )}
       </DialogContent>
