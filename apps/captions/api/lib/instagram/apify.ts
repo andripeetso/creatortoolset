@@ -823,20 +823,18 @@ export async function fetchProfileViaApify(
 
 export async function fetchCatalogViaApify(
   url: string,
-  opts: ApifyFetchOptions & { cap: number; reels?: boolean },
+  opts: ApifyFetchOptions & { cap: number; tabs?: ("posts" | "reels")[] },
 ): Promise<CatalogPage> {
   const cap = Math.max(1, Math.min(500, opts.cap));
-  const wantReels = opts.reels !== false;
+  const tabs = opts.tabs ?? ["posts", "reels"];
   const run = (resultsType: "posts" | "reels") =>
     apifyRun(POST_ACTOR, { directUrls: [url], resultsType, resultsLimit: cap }, opts);
-  let posts: unknown[] = [];
-  let reels: unknown[] = [];
+  let lists: unknown[][];
   try {
-    if (wantReels) [posts, reels] = await Promise.all([run("posts"), run("reels")]);
-    else posts = await run("posts");
+    lists = await Promise.all(tabs.map(run));
   } catch (e) {
-    if (!(e instanceof InstagramError && e.code === "FAILED")) throw e;
-    posts = await run("posts");
+    if (!(e instanceof InstagramError && e.code === "FAILED") || tabs.length < 2) throw e;
+    lists = [await run("posts")];
   }
   const map = new Map<string, CatalogItem>();
   const ingest = (items: unknown[]) => {
@@ -852,8 +850,7 @@ export async function fetchCatalogViaApify(
       }
     }
   };
-  ingest(posts);
-  ingest(reels);
+  lists.forEach(ingest);
   const list = [...map.values()].sort((a, b) => b.takenAt - a.takenAt);
   return { items: list.slice(0, cap), more: list.length >= cap };
 }

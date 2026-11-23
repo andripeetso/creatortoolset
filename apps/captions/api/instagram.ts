@@ -1755,9 +1755,30 @@ async function fetchAccountFeed(
   }
   if (mode === "discovery") {
     const bd = await discovered(acc.username, user, signal);
-    if (bd) return { items: bd.items, more: false };
+    if (bd) return withApifyReels(bd.items, url, user, cap, signal);
   }
   return fetchCatalogViaApify(url, { username: user, cap, signal });
+}
+
+/**
+ * Business Discovery lists only the 25 newest grid posts, so reels kept off the grid are missing. With a working
+ * Apify key the account's Reels tab is read too (one run) and merged; without one, or when that read fails, the
+ * free list stands.
+ */
+async function withApifyReels(
+  items: CatalogItem[],
+  url: string,
+  user: string,
+  cap: number,
+  signal?: AbortSignal,
+): Promise<CatalogPage> {
+  const apify = await readApify(user);
+  if (!apify || apify.valid === false) return { items, more: false };
+  const reels = await fetchCatalogViaApify(url, { username: user, cap, signal, tabs: ["reels"] }).catch(() => null);
+  if (!reels) return { items, more: false };
+  const seen = new Set(items.map((i) => i.shortcode));
+  const merged = [...items, ...reels.items.filter((i) => !seen.has(i.shortcode))];
+  return { items: merged.sort((a, b) => b.takenAt - a.takenAt), more: false };
 }
 
 /**
@@ -1803,7 +1824,7 @@ async function scrapeMinePublicGrid(acc: AccountMeta, user: string, signal?: Abo
   if (apify && apify.valid !== false) {
     try {
       const url = canonicalProfileUrl(acc.username);
-      const page = await fetchCatalogViaApify(url, { username: user, cap: MINE_CATALOG_CAP, signal, reels: false });
+      const page = await fetchCatalogViaApify(url, { username: user, cap: MINE_CATALOG_CAP, signal, tabs: ["posts"] });
       const grid = packPublicGrid(page.items, page.more, expected);
       if (grid.ok) {
         for (const code of free.shortcodes) grid.shortcodes.add(code);

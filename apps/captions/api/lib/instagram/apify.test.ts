@@ -13,6 +13,7 @@ const {
   checkApify,
   clearApify,
   commentsFromApify,
+  fetchCatalogViaApify,
   fetchPostViaApify,
   ingestGate,
   normalizeApifyPost,
@@ -359,6 +360,23 @@ describe("apify run limiter and retries", () => {
     expect(info.shortcode).toBe("TestPost001");
     expect(sleeps).toEqual([15_000]);
     expect(activeApifyRuns(OWNER)).toBe(0);
+  });
+
+  it("a catalog read of the reels tab alone runs one reels run", async () => {
+    await writeApify(OWNER, stored());
+    const asked: string[] = [];
+    const fetchImpl = vi.fn(async (_u: string, init?: RequestInit) => {
+      asked.push(JSON.parse(String(init?.body)).resultsType);
+      return jsonRes(200, [{ ...samplePost, type: "Video", shortCode: "HiddenReel01", url: "https://www.instagram.com/reel/HiddenReel01/" }]);
+    });
+    const page = await fetchCatalogViaApify("https://www.instagram.com/tinyacrobatics/", {
+      username: OWNER,
+      cap: 10,
+      tabs: ["reels"],
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(asked).toEqual(["reels"]);
+    expect(page.items.map((i) => [i.shortcode, i.kind])).toEqual([["HiddenReel01", "reel"]]);
   });
 
   it("does not retry a credit refusal", async () => {
