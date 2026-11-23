@@ -5,21 +5,17 @@ import { canSpeak, useReadAloud } from "@/lib/read-aloud";
 import { LANGUAGES, SAME, engineOptions, languageName, modelOf, needWords, putModel, putVoice, useVoice, withLanguage } from "@/lib/voice";
 import { Card, EmptyRow, ErrorRow, ListRow, LoadingRow, Row, Section, SettingsSelect, Status, markSave, saveFailed } from "./ui";
 import { msg } from "./helpers";
-import { Dictation } from "./DictationSettings";
-import { hasThisMac, useThisMac, type ThisMacState } from "./ThisMacSection";
 
 type Body = Parameters<typeof putVoice>[0];
 
 /**
  * Settings → Voice: the languages the person speaks, which engine turns speech into text (a default and one per use),
- * the speech models on their computers, dictation and the assistant's read-aloud. Each choice saves at once; what each
+ * the speech models on their computers and the assistant's read-aloud (dictation has its own page, DictationSettings.tsx). Each choice saves at once; what each
  * use runs on comes from the server (`resolved`, api/lib/speech.ts), never worked out here. The language of a
  * workspace's videos is the workspace's own (Settings → Workspace → Details); one with none set uses the list here.
  */
 export function VoiceSection() {
   const { data, error, refresh, set } = useVoice();
-  // dictation lives in the Mac app: its group shows only where the app reports it
-  const mac = useThisMac(hasThisMac());
   // read-aloud is kept in this browser: it never waits for (or fails with) the server's voice settings
   if (!data)
     return (
@@ -44,10 +40,10 @@ export function VoiceSection() {
       saveFailed(msg(e));
     }
   };
-  return <VoiceBody view={data} save={(body, shown) => void save(body, shown)} want={(c, m, k) => void want(c, m, k)} mac={mac} />;
+  return <VoiceBody view={data} save={(body, shown) => void save(body, shown)} want={(c, m, k) => void want(c, m, k)} />;
 }
 
-export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: VoiceView; save: (body: Body, shown: VoiceView) => void; want?: (computer: string, model: string, keep: boolean) => void; mac?: ThisMacState | null }) {
+export function VoiceBody({ view, save, want = () => {} }: { view: VoiceView; save: (body: Body, shown: VoiceView) => void; want?: (computer: string, model: string, keep: boolean) => void }) {
   const setLanguages = (languages: string[]) => save({ languages }, { ...view, languages });
   const setChoice = (use: SpeechUse | "default", value: string) => {
     if (use === "default") {
@@ -119,8 +115,6 @@ export function VoiceBody({ view, save, want = () => {}, mac = null }: { view: V
       </Section>
 
       <SpeechModels computers={view.computers} want={want} />
-
-      <Dictation mac={mac} serverNeeds={needsOf(view.resolved.find((r) => r.use === "mic"))} />
 
       <TextToSpeech />
     </div>
@@ -212,6 +206,3 @@ export function TextToSpeech() {
     </Section>
   );
 }
-
-/** What a use still needs to run ("Needs a Deepgram key"), or undefined when it runs. */
-const needsOf = (r: SttResolved | undefined) => (r && "needs" in r ? r.needs : undefined);

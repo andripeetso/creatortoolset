@@ -68,7 +68,7 @@ describe("the sidebar blocks", () => {
   it("a hosted admin's blocks, by whose setting it is: You, AI, Workspace, Server", () => {
     const blocks = navBlocks(navListFor(at(true, true, true), []));
     expect(blocks.map((b) => b.heading)).toEqual(["You", "AI", "Workspace", "Server"]);
-    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "voice", "devices", "servers", "own-ai"]);
+    expect(blocks[0].items.map((s) => s.id)).toEqual(["general", "appearance", "tools", "voice", "dictation", "devices", "servers", "own-ai"]);
     expect(blocks[2].items.map((s) => s.id)).toEqual(["workspace", "connectors", "folders", "library", "sound-effects", "automations", "memory"]);
     expect(blocks[3].items.map((s) => s.id)).toEqual(["policies", "team", "storage", "keys"]);
   });

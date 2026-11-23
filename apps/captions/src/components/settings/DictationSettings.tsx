@@ -3,16 +3,35 @@ import { Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Card, InUse, ListRow, markSave, Row, RowMenu, Section, SettingsSelect, Status } from "./ui";
-import { tell, type DictationAction, type ThisMacState } from "./ThisMacSection";
+import { useVoice } from "@/lib/voice";
+import { Card, InUse, ListRow, LoadingRow, markSave, Row, RowMenu, Section, SettingsSelect, Status } from "./ui";
+import { hasThisMac, tell, useThisMac, type DictationAction, type ThisMacState } from "./ThisMacSection";
+
+/** Settings → Dictation (Mac app only): this Mac's dictation, and what the server's engine still needs for it. */
+export function DictationSection() {
+  const mac = useThisMac(hasThisMac());
+  const { data } = useVoice();
+  const mic = data?.resolved.find((r) => r.use === "mic");
+  if (!mac?.dictation)
+    return (
+      <Card>
+        {mac ? <Row title="Dictation" status={<Status tone="attention">Needs a newer Mac app</Status>} /> : <LoadingRow />}
+      </Card>
+    );
+  return (
+    <div className="space-y-8">
+      <Dictation mac={mac} serverNeeds={mic && "needs" in mic ? mic.needs : undefined} />
+    </div>
+  );
+}
 
 const KEEP = [5, 10, 25, 50, 100];
 /** Each key's row: its title, and what the key does in one sentence. */
 const KEYS: Record<DictationAction, { title: string; does?: string }> = {
-  talk: { title: "Talk key", does: "Starts dictation on a tap, or while it is held." },
-  cancel: { title: "Cancel key", does: "Stops dictation without typing the words." },
-  history: { title: "History key" },
-  file: { title: "File transcription key" },
+  talk: { title: "Talk", does: "Starts dictation on a tap, or while it is held." },
+  cancel: { title: "Cancel", does: "Stops dictation without typing the words." },
+  history: { title: "History", does: "Opens the recent recordings." },
+  file: { title: "File transcription", does: "Opens file transcription." },
 };
 /** What each of the Mac's models is good at, in a few words; a model this page doesn't know shows its size alone. */
 const GOOD_AT: Record<string, string> = {
@@ -60,7 +79,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
       title={KEYS[action].title}
       description={KEYS[action].does}
       control={
-        <Button size="sm" variant="outline" className="min-w-24" aria-label={KEYS[action].title} title="Change key" onClick={() => set("pick", action)}>
+        <Button size="sm" variant="outline" className="min-w-24" aria-label={`${KEYS[action].title} key`} title="Change key" onClick={() => set("pick", action)}>
           <Keyboard className="text-muted-foreground" aria-hidden />
           {d.picking === action ? "Press a key…" : d.keys[action] || "Not set"}
         </Button>
@@ -85,15 +104,28 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
           {d.on && (
             <>
               <Row title="Setup" control={open("guide", "Open setup")} />
-              {key("talk", "dictation-key-talk")}
-              {key("cancel", "dictation-key-cancel")}
               <Row
                 id="dictation-sounds"
                 title="Sound cues"
                 control={<Switch checked={d.sounds} aria-label="Sound cues" onCheckedChange={(on) => pref("sounds", on ? "1" : "0")} />}
               />
-              <Row id="dictation-history" title="History" description="Recent recordings, to copy or redo." control={open("history", "Open history")} />
+            </>
+          )}
+        </Card>
+      </Section>
+      {d.on && (
+        <>
+          <Section title="Keys">
+            <Card>
+              {key("talk", "dictation-key-talk")}
+              {key("cancel", "dictation-key-cancel")}
               {key("history")}
+              {key("file")}
+            </Card>
+          </Section>
+          <Section title="History">
+            <Card>
+              <Row id="dictation-history" title="Recent recordings" description="Copy or redo a recent dictation." control={open("history", "Open history")} />
               <Row
                 title="Recordings kept"
                 control={
@@ -107,39 +139,44 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                 }
               />
               <Row id="dictation-file" title="File transcription" description="Transcribes an audio or video file on this Mac." control={open("file", "Open file transcription")} />
-              {key("file")}
-              {d.engine && (
-                <Row
-                  id="dictation-engine"
-                  title="Engine"
-                  status={d.engine === "server" && serverNeeds ? <Status tone="attention">{serverNeeds}</Status> : undefined}
-                  control={
-                    <SettingsSelect
-                      label="Dictation engine"
-                      value={d.engine}
-                      onValueChange={(v) => pref("engine", v)}
-                      options={[{ value: "mac", label: d.server ? "Your server, then this Mac" : "This Mac" }, { value: "server", label: "Deepgram or OpenAI (your key)" }]}
-                    />
-                  }
-                />
-              )}
-              {d.engine !== "server" && d.server !== undefined && (
-                <Row
-                  id="dictation-server"
-                  title="Speech server"
-                  description={d.server ? undefined : "The address of a speech server of your own, tried before this Mac."}
-                  status={d.server && d.serverAnswers === false
-                    ? <Status tone="attention">{d.models.find((m) => m.id === d.model)?.here ? "Offline · transcribed on this Mac" : "Offline · recordings kept in History"}</Status>
-                    : undefined}
-                  control={<ServerField value={d.server} save={(v) => set("server", v)} />}
-                />
-              )}
-            </>
+            </Card>
+          </Section>
+          {(d.engine || (d.engine !== "server" && d.server !== undefined)) && (
+            <Section title="Transcription">
+              <Card>
+                {d.engine && (
+                  <Row
+                    id="dictation-engine"
+                    title="Engine"
+                    status={d.engine === "server" && serverNeeds ? <Status tone="attention">{serverNeeds}</Status> : undefined}
+                    control={
+                      <SettingsSelect
+                        label="Dictation engine"
+                        value={d.engine}
+                        onValueChange={(v) => pref("engine", v)}
+                        options={[{ value: "mac", label: d.server ? "Your server, then this Mac" : "This Mac" }, { value: "server", label: "Deepgram or OpenAI (your key)" }]}
+                      />
+                    }
+                  />
+                )}
+                {d.engine !== "server" && d.server !== undefined && (
+                  <Row
+                    id="dictation-server"
+                    title="Speech server"
+                    description={d.server ? undefined : "The address of a speech server of your own, tried before this Mac."}
+                    status={d.server && d.serverAnswers === false
+                      ? <Status tone="attention">{d.models.find((m) => m.id === d.model)?.here ? "Offline · transcribed on this Mac" : "Offline · recordings kept in History"}</Status>
+                      : undefined}
+                    control={<ServerField value={d.server} save={(v) => set("server", v)} />}
+                  />
+                )}
+              </Card>
+            </Section>
           )}
-        </Card>
-      </Section>
+        </>
+      )}
       {d.on && d.engine !== "server" && (
-        <Section id="dictation-model" title="Dictation model">
+        <Section id="dictation-model" title="Model">
           <Card>
             {d.models.map((m) => {
               const chosen = m.id === d.model;

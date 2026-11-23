@@ -21,6 +21,7 @@ import { ServersSection } from "./ServersSection";
 import { GeneralSection } from "./GeneralSection";
 import { ToolsSection } from "./ToolsSection";
 import { VoiceSection } from "./VoiceSection";
+import { DictationSection } from "./DictationSettings";
 import { PluginSettingsPage } from "./PluginWorkspaces";
 
 /**
@@ -40,6 +41,7 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   "sound-effects": SoundEffectsSection,
   providers: ProvidersSection,
   voice: VoiceSection,
+  dictation: DictationSection,
   devices: ComputersSection,
   automations: AutomationsSection,
   memory: MemorySection,

@@ -55,7 +55,7 @@ describe("the dictation group", () => {
 
   it("names what the keys do and shows each setting", () => {
     const html = renderToStaticMarkup(<Dictation mac={state({ dictation: dictation() })} />);
-    for (const text of ["Talk key", "Hold fn", "F16", "Not set</button>", "File transcription", 'aria-label="Open setup"', "Dictation model", "Sound cues", ">Open</button>"]) {
+    for (const text of ["Talk", "Hold fn", "F16", "Not set</button>", "File transcription", 'aria-label="Open setup"', 'data-settings-row="dictation-model"', "Sound cues", ">Open</button>"]) {
       expect(html).toContain(text);
     }
     // every model is listed with what it is good at; the chosen one, on this Mac, is In use
