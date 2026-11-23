@@ -2444,7 +2444,8 @@ async function processPost(id: string): Promise<void> {
         }
         await persist(meta);
       } catch (e) {
-        if ((e instanceof InstagramError && e.code === "CANCELLED") || e instanceof WaitsForComputer) throw e;
+        // stopped: its Stop wrote "Stopped" on the job already
+        if ((e instanceof InstagramError && e.code === "CANCELLED") || e instanceof WaitsForComputer || signal.aborted) throw e;
         meta.jobs = patchJob(meta.jobs, job, {
           status: "error",
           error: errorMessage(e).slice(0, 300),
@@ -2456,6 +2457,7 @@ async function processPost(id: string): Promise<void> {
     if (!still()) return;
     await writeSearchText(meta);
     await saveEmbedding(meta);
+    if (!still()) return;
     meta.status = "ready";
     meta.step = undefined;
     meta.progress = 1;
@@ -2499,13 +2501,17 @@ async function processPost(id: string): Promise<void> {
     if (again) setTimeout(() => void autoRetry(id).catch(() => {}), AUTO_RETRY_MS[tries]).unref();
   } finally {
     stopCrawl();
-    active.delete(id);
-    aborts.delete(id);
-    jobUsers.delete(id);
-    jobKinds.delete(id);
-    jobOpts.delete(id);
-    const next = followUps.get(id);
-    followUps.delete(id);
+    if (aborts.get(id) === ac) aborts.delete(id);
+    // stopped, its entries went with the Stop; a Retry since then owns them now
+    const mine = active.get(id) === meta;
+    if (mine) {
+      active.delete(id);
+      jobUsers.delete(id);
+      jobKinds.delete(id);
+      jobOpts.delete(id);
+    }
+    const next = mine ? followUps.get(id) : undefined;
+    if (mine) followUps.delete(id);
     if (next && existsSync(metaPath(id))) {
       enqueue(meta, next.user, next.jobs, next.opts);
       await persist(meta).catch(() => {});
@@ -2625,8 +2631,8 @@ const AUTO_RETRY_MS = [30_000, 5 * 60_000, 30 * 60_000];
 async function autoRetry(id: string): Promise<void> {
   if (active.has(id)) return;
   const meta = await readMeta(id);
-  // retried by hand, removed, or its owner is gone or has no key now: leave it
-  if (!meta || meta.status !== "error" || !canMove(POST_STATUS_MOVES, meta.status, "processing")) return;
+  // retried by hand, stopped, removed, or its owner is gone or has no key now: leave it
+  if (!meta || meta.status !== "error" || meta.error === "Stopped" || !canMove(POST_STATUS_MOVES, meta.status, "processing")) return;
   const user = sessionUserFor(meta.owner);
   if (!user || !(await ingestGate(user.username)).ok) return;
   const open = (meta.jobs ?? []).filter((j) => j.status === "error" || j.status === "pending").map((j) => j.type);
@@ -2709,8 +2715,9 @@ function stopAccount(id: string): void {
   const at = queue.findIndex((q) => q.kind === "account" && q.id === id);
   if (at >= 0) queue.splice(at, 1);
   const live = accountActive.get(id);
-  if (live) {
-    live.status = move(POST_STATUS_MOVES, live.status, "error", "account");
+  // a pull that has just ended Ready keeps it; one that just failed is Stopped all the same
+  if (live && live.status !== "ready") {
+    if (live.status === "processing") live.status = move(POST_STATUS_MOVES, live.status, "error", "account");
     live.step = undefined;
     live.error = "Stopped";
     live.jobs = (live.jobs ?? []).map((j) => (j.status === "running" || j.status === "pending" ? { ...j, status: "error" as JobStatus, error: "Stopped" } : j));
@@ -2731,8 +2738,9 @@ function cancel(id: string): void {
   if (at >= 0) queue.splice(at, 1);
   // Terminal on disk too: a cancelled run must not look "processing" to the boot pass.
   const live = active.get(id);
-  if (live) {
-    live.status = move(POST_STATUS_MOVES, live.status, "error", "post");
+  // a run that has just ended Ready keeps it; one that just failed is Stopped all the same, so autoRetry leaves it
+  if (live && live.status !== "ready") {
+    if (live.status === "processing") live.status = move(POST_STATUS_MOVES, live.status, "error", "post");
     live.step = undefined;
     live.error = "Stopped";
     live.jobs = (live.jobs ?? []).map((j) =>
@@ -2890,6 +2898,8 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
         bumpUsage(user.username, { aiRuns: 1 });
       }
     }
+    // stopped while a step swallowed the abort (the stats and Reels reads): it stays Stopped
+    if (accountActive.get(id) !== meta || signal.aborted) return;
     meta.status = "ready";
     meta.step = undefined;
     meta.progress = 1;
@@ -2905,13 +2915,17 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
     console.warn(`[instagram] account @${meta.username} failed: ${meta.error}`);
     await notifyAccountRunDone(meta, jobs, meta.error);
   } finally {
-    accountActive.delete(id);
-    aborts.delete(`a:${id}`);
-    jobUsers.delete(`a:${id}`);
-    accountJobKinds.delete(id);
-    accountJobOpts.delete(id);
-    const next = accountFollowUps.get(id);
-    accountFollowUps.delete(id);
+    if (aborts.get(`a:${id}`) === ac) aborts.delete(`a:${id}`);
+    // as a post's: a pull started after a Stop keeps its own entries
+    const mine = accountActive.get(id) === meta;
+    if (mine) {
+      accountActive.delete(id);
+      jobUsers.delete(`a:${id}`);
+      accountJobKinds.delete(id);
+      accountJobOpts.delete(id);
+    }
+    const next = mine ? accountFollowUps.get(id) : undefined;
+    if (mine) accountFollowUps.delete(id);
     if (next && existsSync(accountDir(id))) {
       enqueueAccount(meta, next.user, next.jobs, next.opts);
       await persistAccount(meta).catch(() => {});
@@ -3797,7 +3811,13 @@ instagramApp.post("/ideas", async (c) => {
 // POST /api/instagram/ideas/stop → { ok }: every idea board this account is finding now ends, as "Stopped"
 instagramApp.post("/ideas/stop", (c) => {
   const user = c.get("user");
-  for (const [key, stop] of boardStops) if (key.startsWith(`${user.username}:`)) stop.abort();
+  for (const [key, stop] of boardStops) {
+    if (!key.startsWith(`${user.username}:`)) continue;
+    stop.abort();
+    // the lock goes now, not when the stopped run unwinds, so Find ideas right after starts a new one
+    boardLocks.delete(key);
+    boardStops.delete(key);
+  }
   announceSoon(user.username, "instagram");
   return c.json({ ok: true });
 });
