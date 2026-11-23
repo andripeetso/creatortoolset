@@ -6,6 +6,7 @@ import {
   Check,
   Globe,
   Laptop,
+  LifeBuoy,
   LogOut,
   Plus,
   Server,
@@ -20,6 +21,7 @@ import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 import { switchServer } from "@/components/settings/ServersSection";
 import { webPlugins } from "@/plugins.gen";
 import { isPublicReviewPath, isPublicSharePath } from "./AuthGate";
+import { ReportProblemDialog } from "./ReportProblemDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +51,7 @@ export function UserMenu({ compact }: { /** The picture alone, where room is sho
   const me = useAuth((s) => s.me);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [reporting, setReporting] = useState(false);
   // the app's servers, asked only while the menu is open (its last answer paints at once)
   const mac = useThisMac(open && hasThisMac());
   const servers = mac?.servers ?? [];
@@ -125,6 +128,9 @@ export function UserMenu({ compact }: { /** The picture alone, where room is sho
               <item.icon /> {item.label}
             </DropdownMenuItem>
           ))}
+          <DropdownMenuItem onSelect={() => setReporting(true)} className="text-xs">
+            <LifeBuoy /> Report a problem
+          </DropdownMenuItem>
 
           {required && (
             <>
@@ -139,6 +145,7 @@ export function UserMenu({ compact }: { /** The picture alone, where room is sho
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {reporting && <ReportProblemDialog onClose={() => setReporting(false)} />}
     </span>
   );
 }

@@ -53,6 +53,7 @@ import { designsApp } from "./designs";
 import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
 import { reportCrash, startTelemetry, telemetryApp } from "./lib/telemetry";
+import { bugReportApp } from "./bug-report";
 import { transcribeApp } from "./transcribe";
 import { authApp, getApiKeyUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
 import { adminApp } from "./admin";
@@ -622,6 +623,8 @@ app.route("/api/designs", designsApp);
 app.route("/api/folders", foldersApp);
 app.route("/api/account-profile", accountProfileApp);
 app.route("/api/telemetry", telemetryApp);
+// Report a problem: the person's own report to the maintainers, sent only when they press Send (bug-report.ts)
+app.route("/api/bug-report", bugReportApp);
 // plug-ins (plugins/<id>/plugin.ts, generated into api/plugins.gen.ts) mount under /api/x/<id>, behind the same login
 // a plug-in off in the workspace a request works in refuses it (lib/plugin-workspaces.ts); mounted before its routes
 guardPlugins(app, serverPlugins);

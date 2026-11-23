@@ -37,7 +37,7 @@ export const telemetryBuild = () => process.env.CT_CHANNEL === "release" && proc
 const offFile = () => path.join(env.dataDir, "no-ping");
 const crashFile = () => path.join(env.dataDir, "crash-pending.json");
 export const telemetryOn = () => telemetryBuild() && !existsSync(offFile());
-const pingUrl = () => (process.env.CT_PING_URL || "https://creatortoolset.com/api/ping").replace(/\/$/, "");
+export const pingUrl = () => (process.env.CT_PING_URL || "https://creatortoolset.com/api/ping").replace(/\/$/, "");
 
 function installId(): string {
   const file = path.join(env.dataDir, "install-id");
@@ -49,7 +49,7 @@ function installId(): string {
   return id;
 }
 
-const base = () => ({ id: installId(), version: process.env.CT_VERSION ?? "", os: platform(), arch: arch() });
+export const base = () => ({ id: installId(), version: process.env.CT_VERSION ?? "", os: platform(), arch: arch() });
 
 const post = (url: string, body: unknown) =>
   fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) })
@@ -97,6 +97,8 @@ export const scrub = (s: string) =>
     .replace(/(['"`])(?:~|\/|[A-Za-z]:\\)[^'"`]*\1/g, "$1<path>$1")
     .replace(/(^|[\s(=:])(?:~|\/(?!\/))[^\s'"`(),]*/g, "$1<path>")
     .split(homedir()).join("~");
+const RECENT_ERRORS = 20;
+export const recentErrors: Array<{ at: number; where: "server" | "web"; message: string }> = [];
 const lastSent = new Map<string, number>();
 const repeats = new Map<string, number>();
 let hourFrom = 0;
@@ -104,9 +106,12 @@ let inHour = 0;
 
 /** A crash or an error. The same message is sent once an hour at most (its repeats ride along as `count`), 20 an hour in all. */
 export function reportCrash(where: "server" | "web", error: unknown, now = Date.now()): void {
-  if (!telemetryOn()) return;
   const e = error instanceof Error ? error : new Error(String(error));
   const message = scrub(`${e.name && e.name !== "Error" ? `${e.name}: ` : ""}${e.message}`).slice(0, 500);
+  // kept even with reports off: a bug report the person sends themselves carries the last few (api/bug-report.ts)
+  recentErrors.push({ at: now, where, message });
+  if (recentErrors.length > RECENT_ERRORS) recentErrors.shift();
+  if (!telemetryOn()) return;
   const key = `${where}|${message}`;
   if (now - (lastSent.get(key) ?? -Infinity) < HOUR) return void repeats.set(key, (repeats.get(key) ?? 0) + 1);
   if (now - hourFrom >= HOUR) [hourFrom, inHour] = [now, 0];

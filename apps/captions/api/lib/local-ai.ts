@@ -712,6 +712,13 @@ export async function installCli(id: Driver): Promise<SignInResult> {
 const logins = new Map<Driver, ChildProcess>();
 
 /**
+ * The last sign-in each AI ran here: when it started, how it ended and the end of what it printed (links without their
+ * query, which holds the sign-in's one-time values). A bug report carries them (api/bug-report.ts): a sign-in whose
+ * browser step never reached the CLI shows here as one that ended without exit code 0, or never ended.
+ */
+export const lastSignIns = new Map<Driver, { at: number; ended?: number; code?: number | null; signal?: string | null; out: string }>();
+
+/**
  * Gemini CLI has no sign-in command. Its editor mode (`--acp`, the Agent Client Protocol: JSON lines on stdin and stdout)
  * signs in when asked: `authenticate` with its Google-account method opens Google's sign-in in the browser, waits for it
  * (five minutes at most), saves the login (probeCli reads that) and answers. The answer, either way, ends the child.
@@ -765,14 +772,18 @@ export async function signIn(id: Driver): Promise<SignInResult> {
     return { ok: false, message: `Couldn't start ${nameOf(id)} sign-in. Try again.` };
   }
   const timer = setTimeout(() => child.kill(), LOGIN_MS);
-  child.on("exit", (code) => {
+  const kept: { at: number; ended?: number; code?: number | null; signal?: string | null; out: string } = { at: Date.now(), out: "" };
+  lastSignIns.set(id, kept);
+  child.on("exit", (code, signal) => {
     clearTimeout(timer);
     if (logins.get(id) === child) logins.delete(id);
     if (code === 0 && vendor) loggedIn.add(id);
+    Object.assign(kept, { ended: Date.now(), code, signal });
   });
   if (id !== "musecode") {
-    child.stdout?.resume();
-    child.stderr?.resume();
+    const note = (d: Buffer) => void (kept.out = (kept.out + d.toString().replace(/(https?:\/\/[^\s?]+)\?\S*/g, "$1?…")).slice(-1500));
+    child.stdout?.on("data", note);
+    child.stderr?.on("data", note);
     return { ok: true, message: "Your browser opens. Sign in there, then come back here." };
   }
   // Meta's sign-in opens no browser itself: its page is opened here, and the row shows the code to confirm there

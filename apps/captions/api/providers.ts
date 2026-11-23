@@ -43,7 +43,7 @@ const visibleDevices = (u: SessionUser) => listDevices((d) => d.owner === u.user
 /** Settings for the page: a plug-in instance's endpoint (baseUrl) stays on the server and the Mac, never in the page. */
 const forPage = (s: ProviderSettings): ProviderSettings => ({ ...s, instances: s.instances.map((i) => ({ ...i, baseUrl: undefined })) });
 
-async function viewFor(u: SessionUser): Promise<ProvidersView> {
+export async function viewFor(u: SessionUser): Promise<ProvidersView> {
   const admin = u.role === "admin";
   const ws = providerSettings();
   const own = ownSettings(u.username);

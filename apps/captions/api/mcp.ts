@@ -59,7 +59,11 @@ function setupView(v: SetupView) {
 }
 
 /** The tools only the assistant's job token may call (the dock, assistant.ts). */
-const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "notes_get", "offer_choices", "ask_folder"]);
+const ASSISTANT_TOOLS = new Set(["setup_status", "save_setup", "ask_secret", "navigate", "show_video", "notes_get", "offer_choices", "ask_folder", "report_bug"]);
+
+/** report_bug's last draft per account and the chat turn it was made in: it is sent only from a later turn, so after the person answered. */
+const bugDrafts = new Map<string, { turn: string; body: Args; at: number }>();
+const DRAFT_MS = 3_600_000;
 /** Assistant tools a Full key gets too: use_file takes a file its own AI sent with upload_file. */
 const KEY_TOO = new Set(["use_file"]);
 const isJob = (auth: Headers) => /^Bearer ctj_/.test(auth.get("authorization") ?? "");
@@ -347,6 +351,15 @@ const ASSISTANT_DEFS = [
     name: "ask_folder",
     description: "Ask the user to choose a folder on their computer (a shoot to edit, footage to bring in): a Choose a folder button under your reply. why = what the folder is for, in a few words. Their choice comes with their next message. Ask for it in your reply too.",
     inputSchema: { type: "object", properties: { why: str }, required: ["why"] },
+  },
+  {
+    name: "report_bug",
+    description:
+      "Report a problem to the Creator Toolset maintainers: something that doesn't work (kind bug), a feature the user wants (feature), or anything else (other). Call it when the user says something is broken, stuck or missing in the app, or asks for a feature. First look into it with the tools you have (setup_status, the page they are on) so the report says what you found. Without send it makes the draft and answers it with what the app adds by itself (version, system, AI providers and their last test errors, computers and their AI programs, the last sign-ins and errors). Then tell the user in a few lines what it says, that it goes to the maintainers, and ask with offer_choices [\"Send report\", \"Change it\"]; end your reply. Only after they say send: report_bug with send=true, which sends that draft. what = the user's own words; steps = what they did, in order; expected = what they expected instead; context = everything else you know that helps fix it (what you checked and found, error text, what they already tried); page = the page they were on.",
+    inputSchema: {
+      type: "object",
+      properties: { kind: { type: "string", enum: ["bug", "feature", "other"] }, title: str, what: str, steps: str, expected: str, context: str, page: str, send: { type: "boolean" } },
+    },
   },
   { name: "navigate", description: "Open a page of the app for the user: a relative path such as /workshop or /settings/connectors.", inputSchema: { type: "object", properties: { path: str }, required: ["path"] } },
   {
@@ -1245,6 +1258,23 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       if (turn) noteChoices(user.username, turn, [...new Set(choices)]);
       return { status: "shown", note: "The buttons are under your reply: end the reply and wait for the answer." };
     },
+    report_bug: async (a) => {
+      const turn = jobTurn(auth.get("authorization") ?? undefined);
+      if (!turn) throw new ToolError("Only the assistant in the app can send a report.");
+      if (a.send === true) {
+        const d = bugDrafts.get(user.username);
+        if (!d || Date.now() - d.at > DRAFT_MS) throw new ToolError("No draft: call report_bug without send first, show it and ask.");
+        if (d.turn === turn) throw new ToolError("Ask the user first: offer_choices [\"Send report\", \"Change it\"], end your reply, and send only after they say send.");
+        bugDrafts.delete(user.username);
+        return json("/api/bug-report", "POST", { ...d.body, send: true });
+      }
+      someoneThere();
+      const body = pick(a, ["kind", "title", "what", "steps", "expected", "context", "page"]);
+      const r = await json<{ report?: Args; error?: string }>("/api/bug-report", "POST", body);
+      if (!r.report) throw new ToolError(r.error ?? "Could not make the report.");
+      bugDrafts.set(user.username, { turn, body, at: Date.now() });
+      return { draft: r.report, next: "Say what it reports in a few lines and that it goes to the Creator Toolset maintainers with these details, then offer_choices [\"Send report\", \"Change it\"] and end your reply." };
+    },
     ask_folder: async (a) => {
       someoneThere();
       const turn = jobTurn(auth.get("authorization") ?? undefined);
@@ -1303,6 +1333,7 @@ const STEPS: Record<string, string> = {
   show_video: "Showing the video",
   offer_choices: "Offering answers",
   ask_folder: "Asking for a folder",
+  report_bug: "Writing the report",
   use_file: "Sending your file",
   notes_get: "Reading the Video Note",
   save_setup: "Saving your setup",
@@ -1673,8 +1704,8 @@ export async function handle(call: Call, auth: Headers, msg: Args, origin: strin
  */
 const READS = new Set("captions_get captions_list chat_read chats_list design_get folder_list editor_get editor_list finals_pieces get_review get_work_prefs instagram_post instagram_posts instagram_search list_reviews list_scheduled_tasks media_folders media_get media_search notes_list setup_status skill_read workshop_projects workshop_session workshop_sessions workshop_wait workspace_files navigate show_video offer_choices".split(" "));
 const REPLACES = new Set("delete_scheduled_task design_update editor_delete editor_stop editor_update finals_piece_trash finals_piece_update forget media_update review_trash review_update workshop_edit_piece workshop_project_update workshop_sources workshop_update_session".split(" "));
-const ADDS = new Set("channel_posts find_sound_effects instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_feedback editor_retry editor_run editor_style_save editor_style_propose animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share media_smart_folder notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
-const OUTSIDE = new Set(["channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
+const ADDS = new Set("report_bug channel_posts find_sound_effects instagram_comments review_folders ask_folder ask_secret captions_export design_make editor_create editor_cut editor_feedback editor_retry editor_run editor_style_save editor_style_propose animation_style_save carousel_style_save editor_style_use finals_link_session instagram_add_account instagram_refresh instagram_save media_add_to_folder media_import_folder media_share media_smart_folder notes_get remember resolve_comment review_comment review_set_approval review_share run_scheduled_task_now save_setup schedule_task set_work_prefs upload_file use_file workshop_chat workshop_new_piece workshop_new_session workshop_set_project voice_make".split(" "));
+const OUTSIDE = new Set(["report_bug", "channel_posts", "instagram_comments", "instagram_add_account", "instagram_refresh", "instagram_save", "media_share", "review_share"]);
 export const LABELLED = new Set([...READS, ...REPLACES, ...ADDS]);
 export const annotationsOf = (name: string) => ({
   title: name.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase()),
