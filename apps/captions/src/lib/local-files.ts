@@ -37,6 +37,18 @@ export const askMediaFolder = (folder: string): Promise<string[]> => mediaAccess
 /** The folders the Mac app lets the page play original files from ([] outside the app). */
 export const listMediaFolders = (): Promise<string[]> => mediaAccess({ list: true });
 
+/**
+ * What this Mac reads besides the server's rows (apps/mac MediaFiles.readList): every folder it was given (a drop, a pick,
+ * Allow folder) and `reads`, the ones allowed in its open panel, whose files are imported where they are. null outside
+ * the app or from an app that doesn't list them.
+ */
+export async function macReadFolders(remove?: string): Promise<{ folders: string[]; reads: string[] } | null> {
+  const a = await askMac(remove ? { remove, list: true } : { list: true });
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((f): f is string => typeof f === "string") : null);
+  const folders = strings(a?.folders);
+  return folders ? { folders, reads: strings(a?.reads) ?? [] } : null;
+}
+
 /** Whether the Mac app's granted folders hold every one of these paths (in one Unicode form: a name may be stored decomposed). */
 export const allGranted = (paths: string[], folders: string[]) =>
   paths.every((p) => folders.some((f) => p.normalize("NFC").startsWith((f.endsWith("/") ? f : `${f}/`).normalize("NFC"))));

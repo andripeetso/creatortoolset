@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
-import { Storage, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
+import { AllowedRows, Storage, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
 import type { SettingsWorkspace } from "./workspace-pick";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
@@ -206,5 +206,20 @@ describe("Show in Finder, in the Mac app", () => {
     expect(asks).toEqual([`reveal:${JSON.stringify({ folder: "/Volumes/Footage SSD/Creator Toolset" })}`]);
     inMacApp(true, { ok: false, problem: "Folder not found on this Mac" });
     await expect(revealFolder(library)).rejects.toThrow("Folder not found on this Mac");
+  });
+});
+
+describe("Allowed folders (the Mac app's read list)", () => {
+  const draw = (folders: string[], reads: string[], rows: string[] = []) =>
+    renderToStaticMarkup(<AllowedRows list={{ folders, reads }} rows={rows} busy={false} onAsk={() => async () => {}} onRemove={async () => {}} />);
+
+  it("lists each folder this Mac reads outside its rows, each with its menu; a drop's is copied on import with Allow", () => {
+    const html = draw(["/Volumes/NAS/FOOTAGE", "/Users/tiny/Downloads", "/Volumes/Tiny/Footage/Imports/2026-11-23"], ["/Volumes/NAS/FOOTAGE"], ["/Volumes/Tiny/Footage"]);
+    expect(html).toContain("Allowed folders");
+    expect(html).toContain('aria-label="Actions for FOOTAGE"');
+    expect(html).toContain('aria-label="Actions for Downloads"');
+    expect(html).not.toContain("Imports/2026-11-23"); // under a row: the row says it
+    expect(html.match(/Copied on import/g)).toHaveLength(1);
+    expect(html.match(/>Allow</g)).toHaveLength(1);
   });
 });

@@ -11,6 +11,8 @@ const shoots = (state: StorageFolder["folderState"]): StorageFolder => ({
   id: "f_1", role: "footage", name: "Shoots", origin: { host: "dev_1", path: "/Volumes/Tiny Drive/Shoots" }, make: false, createdAt: 0, reach: {}, folderState: state,
 });
 const flush = () => act(() => new Promise<void>((done) => setTimeout(done, 0)));
+/** What the page asked the Mac app beside reading its folder list (Allowed folders): a grant only when pressed. */
+const asks = (m: { postMessage: { mock: { calls: unknown[][] } } }) => m.postMessage.mock.calls.filter(([b]) => JSON.stringify(b) !== '{"list":true}');
 const button = (label: string) => [...document.querySelectorAll("button")].find((b) => b.textContent === label);
 
 afterEach(() => {
@@ -38,7 +40,7 @@ describe("a folder on this Mac", () => {
   it("Needs your OK: Allow on this Mac asks the app only when pressed", async () => {
     const { mediaAccess, onChanged } = await show(shoots("needs_ok"));
     expect(document.body.textContent).toContain("Needs your OK");
-    expect(mediaAccess.postMessage).not.toHaveBeenCalled();
+    expect(asks(mediaAccess)).toEqual([]);
     await act(async () => button("Allow on this Mac")!.click());
     await flush();
     expect(mediaAccess.postMessage).toHaveBeenCalledWith({ folderGrant: { path: "/Volumes/Tiny Drive/Shoots", folder: "f_1" } });
@@ -60,6 +62,6 @@ describe("a folder on this Mac", () => {
     const { mediaAccess } = await show({ ...shoots("needs_ok"), origin: { host: "dev_2", path: "/Volumes/Tiny Drive/Shoots" } }, [mac, laptop]);
     expect(document.body.textContent).toContain("Needs your OK");
     expect(button("Allow on this Mac")).toBeUndefined();
-    expect(mediaAccess.postMessage).not.toHaveBeenCalled();
+    expect(asks(mediaAccess)).toEqual([]);
   });
 });

@@ -447,7 +447,8 @@ extension AppWebView {
 
     /// "mediaAccess": only the open server's own main frame may ask. The page's folder is only where the panel starts:
     /// what is kept is the folder chosen in the panel, which may be a higher one. Cancelled, or a panel already open:
-    /// { granted: [] }. No ask ({list: true}): this server's grants. {folderGrant: {path}} → {granted} (Settings →
+    /// { granted: [] }. No ask ({list: true}): this server's grants, with {folders, reads} (MediaFiles.readList); {remove: path}
+    /// first takes that folder off (Settings → Folders' Remove; it only ever narrows what is read). {folderGrant: {path}} → {granted} (Settings →
     /// Folders' Allow on this Mac); {placesState: {paths}} → {states, disks} (MediaFiles.placeState); {look: true} → the
     /// location agents pass again (a folder added in Settings → Folders).
     fileprivate func mediaAccess(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
@@ -481,7 +482,11 @@ extension AppWebView {
             }
             return
         }
-        guard let ask = body["ask"] as? String else { return replyHandler(["granted": MediaFiles.granted(server: server, workspace: nil)], nil) }
+        guard let ask = body["ask"] as? String else {
+            var reply: [String: Any] = MediaFiles.readList()
+            reply["granted"] = MediaFiles.granted(server: server, workspace: nil)
+            return replyHandler(reply, nil)
+        }
         guard !mediaPanelOpen, let window else { return replyHandler(["granted": [String]()], nil) }
         mediaPanelOpen = true
         let panel = NSOpenPanel()
@@ -496,7 +501,7 @@ extension AppWebView {
         panel.beginSheetModal(for: window) { [weak self] answer in
             self?.mediaPanelOpen = false
             guard answer == .OK, let chosen = panel.url else { return replyHandler(["granted": [String]()], nil) }
-            MediaFiles.add(chosen.path)
+            MediaFiles.allowRead(chosen.path)
             replyHandler(["granted": MediaFiles.granted(server: server, workspace: nil)], nil)
         }
     }

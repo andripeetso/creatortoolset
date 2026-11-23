@@ -79,6 +79,20 @@ final class MediaFilesGateTests: XCTestCase {
         XCTAssertTrue(MediaFiles.isAllowed(footage, server: "s"))
     }
 
+    func testOnlyAPanelAllowIsAReadFolderAndRemoveTakesItAllOff() {
+        let dropped = root.appendingPathComponent("Card").path
+        MediaFiles.add(dropped)                 // a drop: read what was given, copied on import
+        MediaFiles.allowRead(root.path)         // Allow folder in the open panel
+        MediaFiles.grantPicked([URL(fileURLWithPath: file)])   // a picked file alone is no folder
+        XCTAssertEqual(MediaFiles.readList()["folders"], [dropped, root.path])
+        XCTAssertEqual(MediaFiles.readList()["reads"], [root.path])
+        MediaFiles.setServerFolders([.init(id: "f1", path: footage, workspaces: ["*"], use: "media")], server: "s")
+        MediaFiles.remove(root.path)
+        XCTAssertEqual(MediaFiles.readList()["reads"], [])
+        XCTAssertFalse(MediaFiles.granted.contains(root.path))
+        XCTAssertFalse(MediaFiles.isAllowed(footage, server: "s"))   // its pick no longer OKs the rows under it
+    }
+
     func testGrantsAreReplacedOnPull() {
         let s = "s"
         let other = root.appendingPathComponent("Other").path

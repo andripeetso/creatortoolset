@@ -5,7 +5,7 @@ import { EVERY_WORKSPACE, importTarget, leftOutBy, underFolder, type StorageFold
 import { PLACES_MAX } from "@contracts/places";
 import { Button } from "@/components/ui/button";
 import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
-import { allGranted, folderGrant, listMediaFolders } from "@/lib/local-files";
+import { allGranted, folderGrant, listMediaFolders, macReadFolders } from "@/lib/local-files";
 import { indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice, useProviders } from "@/lib/providers";
 import { importCopy, importPrint, importScan, macImports, macMediaUrl, NOT_A_COPY_FOLDER, pathOnMac, thisMacBridge } from "@/lib/thisMac";
@@ -13,8 +13,9 @@ import { WORDS } from "@/lib/wording";
 
 /**
  * How files come into the Media Library: the one import rule (contracts/storage.ts importTarget), no question. A file
- * inside a Media folder on this computer is indexed where it is; one from outside, a loose file or a dropped folder's,
- * is copied once into the first Media folder's Imports/ (copyInto), then indexed in place from there.
+ * this computer already reads (a Media folder here, or a folder allowed on this Mac: readFoldersHere) is indexed where
+ * it is; one from outside, a loose file or a dropped folder's, is copied once into the first Media folder's Imports/
+ * (copyInto), then indexed in place from there. Owner, 2026-11-23: "No copies of files a computer already has."
  */
 
 /**
@@ -37,6 +38,16 @@ export async function sourceRowsHere(): Promise<string[]> {
   return (await sourceFoldersHere()).map((f) => f.origin.path);
 }
 
+/**
+ * The Source media rows here (`rows`: copies go under the first) and every folder a file added from this Mac is used
+ * where it is from (`inPlace`): those rows and the folders allowed on this Mac in its open panel (Allow folder, Settings
+ * → Folders' Allowed folders). A drop or a pick (a card, Downloads) is not one of them: its files are copied.
+ */
+export async function readFoldersHere(): Promise<{ rows: string[]; inPlace: string[] }> {
+  const [rows, mac] = await Promise.all([sourceRowsHere(), macReadFolders()]);
+  return { rows, inPlace: [...rows, ...(mac?.reads ?? [])] };
+}
+
 /** The same rows whole: their Folders left out too (leftOutBy). */
 async function sourceFoldersHere(): Promise<StorageFolder[]> {
   const me = thisMacDevice();
@@ -48,15 +59,15 @@ async function sourceFoldersHere(): Promise<StorageFolder[]> {
 
 /**
  * Where one file added from this Mac is read from, by the import rule (an edit's footage, EditorPage): its own place when
- * it is inside a Media folder here, else a copy made once in the first Media folder's Imports/<name>/. Undefined: no copy
+ * this Mac reads it already (readFoldersHere), else a copy made once in the first Media folder's Imports/<name>/. Undefined: no copy
  * to read (a browser, an older Mac app, or a file the library has already, which is never copied again). Throws when a
  * file from outside has no Media folder to go to, or the copy fails (its drive isn't connected).
  */
 export async function importPlace(libraryId: string, file: File, name?: string): Promise<string | undefined> {
   const at = macImports() ? await pathOnMac(file) : undefined;
   if (!at) return undefined;
-  const rows = await sourceRowsHere();
-  if (rows.some((r) => underFolder(at, r))) return at;
+  const { rows, inPlace } = await readFoldersHere();
+  if (inPlace.some((r) => underFolder(at, r))) return at;
   if ((await checkUpload(libraryId, file.size, `mac:${await quickPrint(file)}`).catch(() => null))?.duplicateOf) return undefined;
   const dir = importTarget(rows, name);
   if (!dir) throw new Error("Add a Media folder in Settings → Folders");
@@ -275,7 +286,7 @@ export interface ImportLook {
 
 /**
  * The import rule applied to an add (LibraryPage addFiles), with no question. `prepare` finds where the files are;
- * `answer` resolves to where each copy goes: none for a file inside a Media folder here or a browser's upload, each
+ * `answer` resolves to where each copy goes: none for a file this Mac reads already (readFoldersHere) or a browser's upload, each
  * file from outside under the first Media folder's Imports/<the day>/, or null when there is no Media folder on this
  * computer (the add is refused, `onError` says so). A file the library has already is never copied (import-queue.ts).
  */
@@ -293,10 +304,10 @@ export function useImportQuestion({ serverHere, onError }: { serverHere: boolean
 
   const answer = async (look: ImportLook, files: File[]): Promise<Map<File, string> | null> => {
     if (look.from === "browser" || !look.paths) return new Map();
-    const rows = await sourceRowsHere();
+    const { rows, inPlace } = await readFoldersHere();
     const want = files.filter((f) => {
       const at = look.paths!.get(f);
-      return at && !rows.some((r) => underFolder(at, r));
+      return at && !inPlace.some((r) => underFolder(at, r));
     });
     // shortcut: an older Mac app can't copy, so a file from outside is indexed where it is, as before; gone once every Mac has 0.19
     if (!want.length || !copyAvailable(look.from)) return new Map();

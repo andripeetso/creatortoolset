@@ -7,10 +7,10 @@ import type { PlacesReport } from "@contracts/places";
 import { EmptyDrop } from "./EmptyDrop";
 import { CantRead, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
 
-const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
+const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), macReadFolders: vi.fn(async () => null as { folders: string[]; reads: string[] } | null), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint, importCopy: m.importCopy, pathOnMac: m.pathOnMac }));
 vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/library")>()), checkUpload: m.checkUpload, versionPlaces: m.versionPlaces, reportPlaces: m.reportPlaces }));
-vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant }));
+vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant, macReadFolders: m.macReadFolders }));
 vi.mock("@/lib/providers", async (orig) => ({ ...(await orig<typeof import("@/lib/providers")>()), useProviders: () => ({ data: { devices: m.devices } }) }));
 vi.mock("@/lib/onMac", async (orig) => ({ ...(await orig<typeof import("@/lib/onMac")>()), indexOnMac: m.indexOnMac }));
 
@@ -274,6 +274,14 @@ describe("the import rule, with no question", () => {
     expect((await answerWith(both, [file, inMedia])).result).toEqual(new Map([[file, `/Volumes/Tiny/Footage/Imports/${day}/a.mp4`]]));
   });
 
+  it("copies nothing from a folder allowed on this Mac; a dropped folder it reads is still copied", async () => {
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    const nas = new File(["x"], "d.mp4");
+    const nasMac = { from: "mac" as const, paths: new Map([[nas, "/Volumes/NAS/FOOTAGE/2025/d.mp4"], [file, "/Users/tiny/Downloads/a.mp4"]]) };
+    m.macReadFolders.mockResolvedValueOnce({ folders: ["/Volumes/NAS/FOOTAGE", "/Users/tiny/Downloads"], reads: ["/Volumes/NAS/FOOTAGE"] });
+    expect((await answerWith(nasMac, [nas, file])).result).toEqual(new Map([[file, `/Volumes/Tiny/Footage/Imports/${day}/a.mp4`]]));
+  });
+
   it("a browser's files copy nothing", async () => {
     storage([{ path: "/Volumes/Tiny/Footage" }]);
     expect((await answerWith({ from: "browser" }, [file])).result).toEqual(new Map());
@@ -312,6 +320,13 @@ describe("an edit's footage from this Mac (importPlace)", () => {
   it("a Mac app that doesn't copy into that Imports/ yet: the file is used where it is, never refused", async () => {
     m.importCopy.mockResolvedValue({ copied: [], failed: [{ from: "/Users/tiny/Downloads/a.mp4", error: "Not a folder this app copies into." }] });
     expect(await importPlace("lib", file, "Summer reel")).toBe("/Users/tiny/Downloads/a.mp4");
+  });
+
+  it("a file in a folder allowed on this Mac is used where it is", async () => {
+    m.macReadFolders.mockResolvedValueOnce({ folders: ["/Users/tiny/Downloads"], reads: ["/Users/tiny/Downloads"] });
+    m.importCopy.mockClear();
+    expect(await importPlace("lib", file, "Summer reel")).toBe("/Users/tiny/Downloads/a.mp4");
+    expect(m.importCopy).not.toHaveBeenCalled();
   });
 
   it("its drive away: the copy fails and says so", async () => {

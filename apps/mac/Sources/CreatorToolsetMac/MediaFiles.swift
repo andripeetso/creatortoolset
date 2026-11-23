@@ -255,10 +255,27 @@ enum MediaFiles {
         return (there ? "here" : "not_here", nil)
     }
 
+    /// Settings → Folders' Remove: the folder's grant, its root grant, its read OK and its pick all go.
     static func remove(_ folder: String) {
         defaults.set(granted.filter { $0 != folder }, forKey: key)
         saveRoots(rootGrants.filter { $0.path != folder })
+        defaults.set(reads.filter { $0 != folder }, forKey: readsKey)
+        defaults.set((defaults.stringArray(forKey: pickedKey) ?? []).filter { $0 != folder }, forKey: pickedKey)
     }
+
+    /// The folders allowed in this app's own open panel (Allow folder): a file inside one is imported where it is, never
+    /// copied (src/pages/library/Import.tsx). A drop or a file pick is a grant to read what was given, never one of these:
+    /// a card dropped once would otherwise be read in place every time after.
+    private static let readsKey = "readFolders"
+    static var reads: [String] { defaults.stringArray(forKey: readsKey) ?? [] }
+    static func allowRead(_ folder: String) {
+        if !reads.contains(folder) { defaults.set(reads + [folder], forKey: readsKey) }
+        add(folder)
+    }
+
+    /// Settings → Folders' list of what this Mac reads besides the server's rows: every granted folder (a picked file's
+    /// own grant is left out), and which of them were allowed in the panel.
+    static func readList() -> [String: [String]] { ["folders": granted.filter { !isMedia($0) }, "reads": reads] }
 
     /// A granted folder by its root: the folder as granted, its disk's root key, and the folder inside that disk.
     struct RootGrant: Codable, Equatable {

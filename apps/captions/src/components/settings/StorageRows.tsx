@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, underFolder, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports, pairThisMac, thisMacBridge, thisMacState, type ThisMacState } from "@/lib/thisMac";
-import { folderGrant, foldersChanged } from "@/lib/local-files";
+import { askMediaFolder, folderGrant, foldersChanged, macReadFolders } from "@/lib/local-files";
 import { thisMacDevice } from "@/lib/providers";
 import { timeAgo } from "@/lib/exports";
 import { WORDS, diskAway, onComputer, uncheckedOn } from "@/lib/wording";
@@ -200,7 +200,86 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
       <FolderList role="library" storage={storage} w={w} {...shared} />
       <FolderList role="projects" storage={storage} w={w} {...shared} />
       <FolderList role="footage" storage={storage} w={w} {...shared} />
+      <AllowedFolders rows={storage.folders.filter((f) => f.origin.host === thisMacDevice()).map((f) => f.origin.path)} />
     </Card>
+  );
+}
+
+type ReadList = { folders: string[]; reads: string[] };
+
+/**
+ * In the Mac app: the folders this Mac reads media from besides `rows` (this Mac's own rows above), from its open panel
+ * (Allow folder), a drop or a pick (apps/mac MediaFiles.readList). Files in an allowed one are added where they are; a
+ * drop's or a pick's are copied on import (Import.tsx readFoldersHere), and Allow makes one allowed. Remove takes the
+ * folder off this Mac's list. The page never grants a folder itself: Add folder and Allow open the Mac's own panel.
+ */
+export function AllowedFolders({ rows }: { rows: string[] }) {
+  const [list, setList] = useState<ReadList | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void macReadFolders().then((l) => live && setList(l));
+    return () => void (live = false);
+  }, []);
+  if (!list) return null;
+  // the panel's answer comes back after a wait: the button is off meanwhile, and the list read again after it
+  const ask = (start: string) => async () => {
+    setBusy(true);
+    try {
+      await askMediaFolder(start);
+      setList((await macReadFolders()) ?? list);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <AllowedRows list={list} rows={rows} busy={busy} onAsk={ask} onRemove={async (f) => setList((await macReadFolders(f)) ?? list)} />;
+}
+
+/** The rows of AllowedFolders, drawn from its list (the tests draw them alone). */
+export function AllowedRows({ list, rows, busy, onAsk, onRemove }: {
+  list: ReadList; rows: string[]; busy: boolean; onAsk: (start: string) => () => Promise<void>; onRemove: (folder: string) => Promise<void>;
+}) {
+  const shown = list.folders.filter((f) => !rows.some((r) => underFolder(f, r)));
+  return (
+    <>
+      <Row
+        title="Allowed folders"
+        description="Folders this Mac reads media from; files in them are added where they are."
+        control={
+          <Button size="sm" variant="outline" disabled={busy} onClick={onAsk("/Volumes")}>
+            Add folder
+          </Button>
+        }
+      />
+      {shown.map((f) => {
+        const name = f.split("/").filter(Boolean).pop() ?? f;
+        const allowed = list.reads.includes(f);
+        return (
+          <ListRow
+            key={f}
+            className="pl-8 sm:pl-10"
+            title={name}
+            subtitle={f}
+            status={
+              allowed ? undefined : (
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  <Status tone="attention">Copied on import</Status>
+                  <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy} onClick={onAsk(f)}>
+                    Allow
+                  </Button>
+                </span>
+              )
+            }
+            actions={
+              <RowMenu
+                label={`Actions for ${name}`}
+                items={[{ label: "Remove", destructive: true, confirm: { title: `Remove ${name}?`, body: "The folder's files are not deleted.", ok: "Remove" }, onSelect: () => onRemove(f) }]}
+              />
+            }
+          />
+        );
+      })}
+    </>
   );
 }
 
