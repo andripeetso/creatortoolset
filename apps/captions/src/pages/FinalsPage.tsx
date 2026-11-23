@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { Clapperboard, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, RotateCcw } from "lucide-react";
+import { Clapperboard, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, RotateCcw, Trash2 } from "lucide-react";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { undoable } from "@/lib/undo";
 import type { AssetCard, Collection, LibrarySummary, Piece } from "@contracts/library";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { cardsOfVersions, getWorkshopFinals, isFinals, listCollections, listLibraries, listPieces, listTrashedPieces, pieceVersions, restorePiece, type WorkshopFinal } from "@/lib/library";
+import { cardsOfVersions, getWorkshopFinals, isFinals, listCollections, listLibraries, listPieces, listTrashedPieces, pieceVersions, restorePiece, trashPiece, type WorkshopFinal } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { libraryBadges, libraryFacets, pickedFor } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
@@ -94,6 +96,7 @@ export function FinalsView({
   picked,
   onFacets,
   workshop = {},
+  onTrash,
 }: {
   hasFinals: boolean;
   pieces: Piece[];
@@ -102,6 +105,8 @@ export function FinalsView({
   onFacets: (next: Record<string, string[]>) => void;
   /** Workshop sessions linked to pieces, by piece id: the Ready to post badge and the post description */
   workshop?: Record<string, WorkshopFinal>;
+  /** right-click → Move to trash on a piece the account may change */
+  onTrash?: (piece: Piece) => void;
 }) {
   const [kind, setKind] = useState<FinalsKind | null>(null);
   const [view, setView] = useBrowseView("finals");
@@ -174,17 +179,36 @@ export function FinalsView({
       ) : view === "list" ? (
         <div className="flex flex-col gap-1.5">
           {shown.map((t) => (
-            <PieceRow key={t.piece.id} tile={t} work={workshop[t.piece.id]} />
+            <PieceMenu key={t.piece.id} piece={t.piece} onTrash={onTrash}>
+              <PieceRow tile={t} work={workshop[t.piece.id]} />
+            </PieceMenu>
           ))}
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-5">
           {shown.map((t) => (
-            <PieceCard key={t.piece.id} tile={t} work={workshop[t.piece.id]} />
+            <PieceMenu key={t.piece.id} piece={t.piece} onTrash={onTrash}>
+              <PieceCard tile={t} work={workshop[t.piece.id]} />
+            </PieceMenu>
           ))}
         </div>
       )}
     </>
+  );
+}
+
+/** A piece's right-click menu (grid and list): Move to trash, with Undo. */
+function PieceMenu({ piece, onTrash, children }: { piece: Piece; onTrash?: (piece: Piece) => void; children: React.ReactElement }) {
+  if (!onTrash || piece.writable === false) return children;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger className="block">{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => onTrash(piece)}>
+          <Trash2 /> Move to trash
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -336,7 +360,14 @@ export default function FinalsPage() {
                 }
               />
             ) : (
-              <FinalsView hasFinals={!!finals} pieces={lists?.pieces ?? []} cards={lists?.cards ?? []} picked={picked} onFacets={setPicked} workshop={lists?.workshop ?? {}} />
+              <FinalsView hasFinals={!!finals} pieces={lists?.pieces ?? []} cards={lists?.cards ?? []} picked={picked} onFacets={setPicked} workshop={lists?.workshop ?? {}}
+                onTrash={(p) =>
+                  void trashPiece(library.id, p.id).then(() => {
+                    void shown.refresh();
+                    undoable("piece moved to trash", () => restorePiece(library.id, p.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
+                  }, (e: unknown) => setError(message(e)))
+                }
+              />
             )}
           </>
         )}
