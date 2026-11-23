@@ -98,5 +98,13 @@ describe("Smart folders: a date a Mac reads later", () => {
     expect(inFolder("IMG_6249.MOV")).toEqual([]);
     expect(await refileShoots(d, lib)).toBe(0);
     expect(inFolder("IMG_6249.MOV")).toEqual([]);
+
+    // a server probe kept a sent file's write time (before 11-23): the computer's read again replaces it, the file's offset stays
+    const probed = () => d.prepare("SELECT v.probe FROM asset_versions v JOIN assets a ON a.current_version_id = v.id WHERE a.id = ?").get(asset) as { probe: string };
+    d.prepare("UPDATE asset_versions SET probe = json_set(json_remove(probe, '$.camera'), '$.capturedAt', ?, '$.tz', -300) WHERE id = (SELECT current_version_id FROM assets WHERE id = ?)").run(FILMED + 86_400_000, asset);
+    const f = files[0]!;
+    const res = await app.request("/api/devices/relay/filmed", { method: "POST", headers: auth, body: JSON.stringify({ folder: id, path: f.path, size: f.bytes, capturedAt: FILMED, tz: -360, camera: false }) });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(probed().probe)).toMatchObject({ capturedAt: FILMED, tz: -300, camera: false });
   });
 });

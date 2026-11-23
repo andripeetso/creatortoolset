@@ -121,8 +121,9 @@ export function parseFilmed(b: Record<string, unknown>): Filmed {
 }
 
 /**
- * What a computer read later of when, where and by what a known version was filmed, into its probe: only what the probe
- * lacks (a date it has stays), and `camera` always, so it is never asked again. True when its date or place is new.
+ * What a computer read later of when, where and by what a known version was filmed, into its probe: its date always (a
+ * server probe before 11-23 kept an edited or sent file's write time), the rest only where the probe lacks it, and
+ * `camera` always, so it is never asked again. True when its date or place is new.
  */
 export async function patchFilmed(d: ReturnType<typeof libraryDb>, versionId: string, f: Filmed): Promise<boolean> {
   const row = d.prepare("SELECT probe FROM asset_versions WHERE id = ?").get(versionId) as { probe: string | null } | undefined;
@@ -130,7 +131,8 @@ export async function patchFilmed(d: ReturnType<typeof libraryDb>, versionId: st
   const p = JSON.parse(row.probe ?? "{}") as Partial<ProbeSummary>;
   // `camera` marks it read: what the server read itself stays
   const add: Record<string, unknown> = p.camera === undefined ? { camera: f.camera ?? false } : {};
-  if (!((p.capturedAt ?? 0) > 631152000000) && f.capturedAt) Object.assign(add, { capturedAt: f.capturedAt }, f.tz !== undefined ? { tz: f.tz } : {});
+  // the file's own offset, when the server read one, beats the computer's guess from its clock
+  if (f.capturedAt && f.capturedAt !== p.capturedAt) Object.assign(add, { capturedAt: f.capturedAt }, p.tz === undefined && f.tz !== undefined ? { tz: f.tz } : {});
   const country = !p.country && f.location ? await countryOf({ format: { tags: { location: f.location } } }) : "";
   if (country) add.country = country;
   if (f.alpha && !p.pixFmt) add.pixFmt = "rgba";

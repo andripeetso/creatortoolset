@@ -713,4 +713,8 @@ export const MIGRATIONS: string[] = [
   // a folder kept as filmed (its menu's Blur faces off): every clip in it reads blur no (db.ts BLUR_SQL), clips filed later too
   `ALTER TABLE collections ADD COLUMN blur TEXT;
   CREATE INDEX IF NOT EXISTS collection_items_asset ON collection_items(asset_id);`,
+  // a server probe read a video's filming date from creation_time, the time an edited or sent file was written (media/
+  // probe.ts, fixed 11-23): every video is read again once, by its computer (report.ts) or where it is (organize.ts)
+  `UPDATE asset_versions SET probe = json_remove(probe, '$.camera')
+    WHERE json_type(probe, '$.camera') IS NOT NULL AND asset_id IN (SELECT id FROM assets WHERE kind = 'video');`,
 ];

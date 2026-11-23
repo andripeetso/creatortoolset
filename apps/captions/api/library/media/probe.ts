@@ -53,9 +53,11 @@ export function parseProbe(json: { format?: Json; streams?: Json[]; stream_group
   // rotation is the negative of that; older builds wrote a `rotate` tag already clockwise. Read both, copy neither.
   const matrix = v?.side_data_list?.find((d: Json) => d.rotation !== undefined)?.rotation;
   const turn = matrix !== undefined ? -Number(matrix) : Number(v?.tags?.rotate ?? 0);
-  const capturedAt = Date.parse(json.format?.tags?.creation_time ?? "");
-  // an iPhone's local creation date ("2026-11-12T14:03:22-0600"): only its offset is kept
-  const tz = offsetOf(/[+-]\d\d:?\d\d$/.exec(String(json.format?.tags?.["com.apple.quicktime.creationdate"] ?? ""))?.[0]);
+  // an iPhone's (or a pair of glasses') own filming date ("2026-11-12T14:03:22-0600"); creation_time is when the file was
+  // written, which for an edited, exported or sent clip is days later. creation_time only when the file has no other
+  const filmedTag = String(json.format?.tags?.["com.apple.quicktime.creationdate"] ?? "");
+  const capturedAt = Date.parse(filmedTag.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")) || Date.parse(json.format?.tags?.creation_time ?? "");
+  const tz = offsetOf(/[+-]\d\d:?\d\d$/.exec(filmedTag)?.[0]);
   // only a string in the strict timecode shape is kept, never the tag object
   const timecode = [v?.tags?.timecode, json.format?.tags?.timecode, ...(json.streams ?? []).map((s) => s.tags?.timecode)].find(
     (t) => typeof t === "string" && TIMECODE.test(t),

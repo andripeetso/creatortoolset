@@ -90,6 +90,15 @@ describe("probe", () => {
     expect(parseProbe(video({})).rotation).toBe(0);
   });
 
+  it("reads the filming date from the iPhone tag over creation_time (an edited or sent file's write time)", () => {
+    const tags = (t: object) => parseProbe({ format: { format_name: "mov,mp4", tags: t }, streams: [{ codec_type: "video" }] });
+    const sent = tags({ creation_time: "2026-10-31T21:56:21.000000Z", "com.apple.quicktime.creationdate": "2026-10-30T19:07:57Z" });
+    expect(sent.capturedAt).toBe(Date.parse("2026-10-30T19:07:57Z"));
+    const local = tags({ creation_time: "2026-11-04T15:30:52.000000Z", "com.apple.quicktime.creationdate": "2026-11-04T09:30:52-0600" });
+    expect([local.capturedAt, local.tz]).toEqual([Date.parse("2026-11-04T15:30:52Z"), -360]);
+    expect(tags({ creation_time: "2024-01-02T03:04:05Z" }).capturedAt).toBe(Date.parse("2024-01-02T03:04:05Z"));
+  });
+
   it("an iPhone HEIC's size is its tile grid's, not one 512 px tile's", () => {
     const tile = { codec_type: "video", codec_name: "hevc", width: 512, height: 512 };
     const grid = (w: number, h: number, main: number) => ({ type: "Tile Grid", disposition: { default: main }, components: [{ width: w, height: h }] });
