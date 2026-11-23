@@ -1,6 +1,7 @@
 import type { Collection } from "@contracts/library";
 import { folderOptions, folderPath } from "@/components/browse/browse";
 import { byName, matches } from "@/components/browse/views";
+import { rollOfFolder } from "./moves";
 
 /**
  * The Media Library's folders are its collections (api/library/collections.ts): a plain one holds clips, a saved
@@ -45,6 +46,19 @@ export function moveOptions(all: Collection[], from: string | null): { id: strin
     ...(from ? [{ id: null, name: "Top level", depth: 0 }] : []),
     ...folderOptions(all.filter(holdsClips))
       .filter((f) => f.id !== from)
+      .map((f) => ({ id: f.id, name: f.name, depth: f.depth })),
+  ];
+}
+
+/** A folder folders go in: a plain one, or the A-roll or B-roll folder (its folders group the footage filed so). */
+export const takesFolders = (c: Collection) => holdsClips(c) || !!rollOfFolder(c);
+
+/** A folder's "Move to": the top (when it is inside one), then every folder that takes folders; never itself, one inside it or where it is. */
+export function folderMoveOptions(all: Collection[], c: Collection): { id: string | null; name: string; depth: number }[] {
+  return [
+    ...(c.parentId ? [{ id: null, name: "Top level", depth: 0 }] : []),
+    ...folderOptions(all.filter((x) => takesFolders(x) || x.id === c.id), c.id)
+      .filter((f) => f.id !== c.parentId)
       .map((f) => ({ id: f.id, name: f.name, depth: f.depth })),
   ];
 }

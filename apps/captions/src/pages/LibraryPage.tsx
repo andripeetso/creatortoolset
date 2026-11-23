@@ -18,7 +18,7 @@ import { LibraryHealthButton, LibraryStatusDialog } from "./library/Health";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ContextMenuCheckboxItem, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+import { ContextMenuCheckboxItem, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
 import {
   createCollection,
@@ -34,6 +34,7 @@ import {
   listLibraries,
   listSources,
   changeFolderItems,
+  moveCollection,
   renameCollection,
   folderBlur,
   searchLibrary,
@@ -59,7 +60,7 @@ import { ImportSummary, PlaceholderTile, commonAspect, going, placeholderShown, 
 import { addImports, cancelImports, onImported, retryImport, useImportQueue } from "@/lib/import-queue";
 import { ClipView } from "./library/ClipView";
 import { FoundInClips } from "./library/FoundInClips";
-import { clipHref, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, trailOf } from "./library/folders";
+import { clipHref, folderMoveOptions, folderTo, foldersAt, holdsClips, moveOptions, moveSteps, takesFolders, trailOf } from "./library/folders";
 import { ClipShare } from "./library/ClipShare";
 import { useEndOfList, useEscapeSteps, useSelectAll, watchesEnd } from "./library/grid";
 import { ClipMenu, ClipPick, offlineWords, PickBar, redoKinds, RevealItem, saveFile, usePicks } from "./library/Selection";
@@ -188,6 +189,8 @@ export default function LibraryPage() {
   const smart = openFolder?.kind === "smart" ? openFolder : undefined;
   /** the plain folder open: clips move out of it, uploads and new folders go in it */
   const into = openFolder && holdsClips(openFolder) ? openFolder.id : null;
+  /** the folder open takes folders: a plain one, or the A-roll or B-roll folder */
+  const nestHere = openFolder && takesFolders(openFolder) ? openFolder.id : null;
   // the footage folders (the owner's view; anyone else gets an error and no settings): an empty grid says whether clips
   // are on their way from one
   const watchLoad = useCachedLoad<WatchStatus>(libId ? `/api/library/${libId}/watch` : null, () => getWatch(libId!));
@@ -468,7 +471,7 @@ export default function LibraryPage() {
   // a new folder goes in the open one, or in the folder whose menu asked
   // a new folder goes in the open one, or in the folder whose menu asked: plain, with a rule, or automatic (NewFolderDialog)
   const [creating, setCreating] = useState<string | null | undefined>(undefined); // the new folder's parent; undefined: closed
-  const newFolder = (parent: string | null = into) => setCreating(parent);
+  const newFolder = (parent: string | null = nestHere) => setCreating(parent);
   // Finder's New folder with selection: made where the clips are, then they move into it (with the move's Undo)
   const folderWith = async (ids: string[]) => {
     const name = await askFolderName();
@@ -504,6 +507,43 @@ export default function LibraryPage() {
   // gone at once, with Undo (api/library/collections.ts puts it back as it was): its folders move up one level, its
   // clips stay in the library. They do not go into the folder above: a share or a grant on that one would then show them
   // to someone new
+  // into another folder or to the top, at once on screen, with Undo
+  const moveFolder = (c: Collection, to: { id: string | null; name: string }) => {
+    if (!libId) return;
+    const lib = libId;
+    const put = (p: string | null) => folderList.set((all) => all && all.map((x) => (x.id === c.id ? { ...x, parentId: p } : x)));
+    put(to.id);
+    const sent = moveCollection(lib, c.id, to.id);
+    sent.then(reloadFolders, (e) => {
+      put(c.parentId);
+      setError(`Could not move the folder: ${message(e)}`);
+    });
+    undoable(
+      `moved to ${to.name}`,
+      async () => {
+        put(c.parentId);
+        await sent;
+        await moveCollection(lib, c.id, c.parentId);
+        reloadFolders();
+      },
+      1,
+    );
+  };
+  const moveFolderItem = (c: Collection) => {
+    const options = rollOfFolder(c) ? [] : folderMoveOptions(collections, c);
+    return options.length > 0 ? (
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>Move to</ContextMenuSubTrigger>
+        <ContextMenuSubContent className="max-h-80 overflow-y-auto">
+          {options.map((o) => (
+            <ContextMenuItem key={o.id ?? "top"} style={{ paddingLeft: 8 + o.depth * 12 }} onSelect={() => moveFolder(c, o)}>
+              {o.name}
+            </ContextMenuItem>
+          ))}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+    ) : null;
+  };
   const removeFolder = (c: Collection) => {
     if (!libId) return;
     const lib = libId;
@@ -682,9 +722,10 @@ export default function LibraryPage() {
     onRename: readOnly ? undefined : () => void renameFolder(c),
     onDelete: readOnly ? undefined : () => removeFolder(c),
     menu:
-      (!readOnly && holdsClips(c)) || thisMacDevice() ? (
+      (!readOnly && takesFolders(c)) || thisMacDevice() ? (
         <>
-          {!readOnly && holdsClips(c) && <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
+          {!readOnly && takesFolders(c) && <ContextMenuItem onClick={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
+          {!readOnly && moveFolderItem(c)}
           {!readOnly && sortsItself(c) && <ContextMenuItem onClick={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
           {thisMacDevice() && folderKeep(c)}
           {blurItem(c)}
@@ -700,7 +741,8 @@ export default function LibraryPage() {
       {!readOnly && (
         <>
           <ContextMenuItem onSelect={() => void renameFolder(c)}>Rename…</ContextMenuItem>
-          {holdsClips(c) && <ContextMenuItem onSelect={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
+          {takesFolders(c) && <ContextMenuItem onSelect={() => void newFolder(c.id)}>New folder inside</ContextMenuItem>}
+          {moveFolderItem(c)}
           {sortsItself(c) && <ContextMenuItem onSelect={() => setRuling(c)}>Folder rule…</ContextMenuItem>}
           {blurItem(c)}
           <ContextMenuSeparator />
@@ -746,7 +788,7 @@ export default function LibraryPage() {
                     id: r,
                     label: f.name,
                     count: counts.data?.[r],
-                    active: viewRoll === r && (!open || !!smart),
+                    active: (viewRoll === r && (!open || !!smart)) || topOpen === f.id,
                     onOpen: () => go(f.id),
                     onItems: readOnly ? undefined : (ids) => void fileAs(ids, r),
                     menu: folderMenu(f, r),
@@ -1219,7 +1261,7 @@ export default function LibraryPage() {
                 )}
                 {/* Status is the owner's (its counts are the owner's routes) */}
                 {library && !readOnly && <LibraryHealthButton library={library} open={statusOpen} onOpen={() => setStatusOpen(true)} />}
-                {changing && !smart && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
+                {changing && (!smart || !!nestHere) && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
                 {blurChoice && (
                   <label className="flex h-8 items-center gap-1.5 text-sm">
                     <Checkbox checked={!keepsAsFilmed} onCheckedChange={(v) => void chooseBlur(v === true)} />
@@ -1240,7 +1282,7 @@ export default function LibraryPage() {
                 items={
                   mayAdd && (
                     <>
-                      {changing && !smart && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
+                      {changing && (!smart || !!nestHere) && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
                       <ContextMenuItem onSelect={chooseFiles}>Upload…</ContextMenuItem>
                       {(pickable.length > 0 || canLook) && <ContextMenuSeparator />}
                       {pickable.length > 0 && <ContextMenuItem onSelect={() => void pickAll()}>Select all</ContextMenuItem>}

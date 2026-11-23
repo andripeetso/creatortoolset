@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Collection } from "@contracts/library";
-import { clipHref, foldersAt, moveOptions, moveSteps, trailOf } from "./folders";
+import { clipHref, folderMoveOptions, foldersAt, moveOptions, moveSteps, trailOf } from "./folders";
 
 const f = (id: string, name: string, parentId: string | null = null, kind: Collection["kind"] = "manual"): Collection => ({ id, name, parentId, kind, createdBy: "admin" });
 const all = [
@@ -53,5 +53,12 @@ describe("Media Library folders", () => {
   it("a clip's link names its library only when it is not the first", () => {
     expect(clipHref(null, "a 1")).toBe("/library?clip=a%201");
     expect(clipHref("lib_2", "a1")).toBe("/library?clip=a1&library=lib_2");
+  });
+
+  it("a folder moves into a plain folder or the A-roll folder; never itself, one inside it, where it is or a saved search", () => {
+    const aroll: Collection = { ...f("ar", "A-roll", null, "smart"), query: { roll: "a" } };
+    const list = [...all, aroll];
+    expect(names(folderMoveOptions(list, list[1]))).toEqual(["Top level", "B-roll sky", "Lost parent", "A-roll"]); // Beach, in Trip
+    expect(names(folderMoveOptions(list, list[0]))).toEqual(["B-roll sky", "Lost parent", "A-roll"]); // Trip, at the top
   });
 });
