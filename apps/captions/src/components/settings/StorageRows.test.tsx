@@ -59,15 +59,28 @@ describe("every workspace's folders (Settings on All workspaces)", () => {
     return renderToStaticMarkup(<Storage devices={[mac]} storage={view(folders)} onChanged={() => {}} w={all} />);
   };
 
-  it("Exports, Projects and Media are each one list, with no Finals row per workspace", () => {
+  it("a card per workspace (Media, Projects, Exports in that order), then the folders for every workspace with no Add folder", () => {
     const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...songs, workspace: "*" }]);
-    expect(html.match(/>Exports</g)).toHaveLength(1);
+    expect(html.indexOf(">Tiny Acrobatics<")).toBeLessThan(html.indexOf(">Tiny Swimmers<"));
+    expect(html.indexOf(">Tiny Swimmers<")).toBeLessThan(html.indexOf(">Every workspace<"));
+    expect(html.match(/>Exports</g)).toHaveLength(2); // one per workspace; none in Every workspace, which has only Media
+    expect(html.match(/>Add folder</g)).toHaveLength(6); // Media, Projects, Exports in each workspace's card
+    expect(html.indexOf(">Media<")).toBeLessThan(html.indexOf(">Projects<"));
+    expect(html.indexOf(">Projects<")).toBeLessThan(html.indexOf(">Exports<"));
     expect(html.match(/>Change</g)).toBeNull();
-    expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, Projects, Media
-    expect(html).toContain("/Volumes/Footage SSD/Songs");
+    expect(html.indexOf("/Volumes/Footage SSD/Songs")).toBeGreaterThan(html.indexOf(">Every workspace<"));
   });
 
-  it("every Exports folder is listed, one of a workspace that is not listed too", () => {
+  it("one workspace shown: Exports lists the folder it uses, its own before the one for every workspace", () => {
+    const one = { id: "ws-a", all: false, workspaces, many: true, cacheKey: "ws-a", name: () => "" } as unknown as SettingsWorkspace;
+    const html = renderToStaticMarkup(
+      <Storage devices={[mac]} storage={view([{ ...library, id: "lib_every", workspace: "*", origin: { host: "dev_1", path: "/Volumes/Every/Exports" } }, { ...library, workspace: "ws-a" }])} onChanged={() => {}} w={one} />,
+    );
+    expect(html).not.toContain("/Volumes/Every/Exports");
+    expect(html.match(/aria-label="Actions for Creator Toolset"/g)).toHaveLength(1);
+  });
+
+  it("every Exports folder is listed, one of a workspace that is not listed too (under Other workspaces)", () => {
     const html = shown({}, [{ ...library, workspace: "ws-a" }, { ...library, id: "lib_2", workspace: "ws-elsewhere", origin: { host: "dev_1", path: "/Volumes/Other/Exports" } }]);
     expect(html.match(/aria-label="Actions for Creator Toolset"/g)).toHaveLength(2);
     expect(html).toContain("/Volumes/Other/Exports");

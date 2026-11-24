@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, underFolder, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, folderIn, underFolder, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,8 +11,9 @@ import { askMediaFolder, folderGrant, foldersChanged, macReadFolders } from "@/l
 import { thisMacDevice } from "@/lib/providers";
 import { timeAgo } from "@/lib/exports";
 import { WORDS, diskAway, onComputer, uncheckedOn } from "@/lib/wording";
-import { Card, FormDialog, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, WorkspacesDialog, inWorkspace, saveFailed, type SettingsWorkspace } from "./ui";
+import { Card, FormDialog, Section, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, WorkspacesDialog, inWorkspace, saveFailed, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
+import { cn } from "@/lib/utils";
 
 /** The computers an account owns (the list the Storage rows pick from). */
 export type Computer = ProvidersView["devices"][number];
@@ -192,16 +193,50 @@ const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? nu
  * workspace) and Media (any number). Each is a header row with Add folder and its folders indented under it with their menu.
  * Used by Settings → Folders and the setup's Folders step. `w`: the workspace Settings shows (workspace-pick.tsx).
  */
+/** Media first, then Projects, then Exports (owner, 2026-11-23): the order work goes through. */
+const ORDER = ["footage", "projects", "library"] as const;
+
+/** A folder for every workspace, or one from before workspaces kept their own. */
+const everyWorkspace = (f: StorageFolder) => f.workspace === EVERY_WORKSPACE || (!f.workspace && !f.workspaces?.length);
+
+/**
+ * The page's folders. One workspace: its lists in one card, Exports and Projects only the folder it uses (its own before
+ * the one for every workspace, exportsOf). All workspaces: a card per workspace, then the folders for every workspace.
+ * Allowed folders last: everything this Mac reads besides them.
+ */
 export function Storage({ devices, storage, onChanged, w }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void; w?: SettingsWorkspace }) {
   if (!storage) return null;
-  const shared = { devices, serverDisks: storage.serverDisks, onChanged };
+  const shared = { devices, serverDisks: storage.serverDisks, onChanged, w };
+  const allowed = <AllowedFolders rows={storage.folders.filter((f) => f.origin.host === thisMacDevice()).map((f) => f.origin.path)} />;
+  if (!w?.all || !w.many) {
+    return (
+      <Card>
+        {ORDER.map((role) => (
+          <FolderList key={role} role={role} storage={storage} inUse searchable {...shared} />
+        ))}
+        {allowed}
+      </Card>
+    );
+  }
+  const groups = [
+    ...w.workspaces.map((p) => ({ id: p.id as string | null, name: p.name, folders: storage.folders.filter((f) => !everyWorkspace(f) && folderIn(f, (own) => own === p.id)) })),
+    { id: null, name: "Every workspace", folders: storage.folders.filter(everyWorkspace) },
+    // a folder of a workspace not in the list (another person's, one removed): still listed, never hidden
+    { id: null, name: "Other workspaces", folders: storage.folders.filter((f) => !everyWorkspace(f) && !w.workspaces.some((p) => folderIn(f, (own) => own === p.id))) },
+  ].filter((g) => g.id !== null || g.folders.length > 0);
   return (
-    <Card>
-      <FolderList role="library" storage={storage} w={w} {...shared} />
-      <FolderList role="projects" storage={storage} w={w} {...shared} />
-      <FolderList role="footage" storage={storage} w={w} {...shared} />
-      <AllowedFolders rows={storage.folders.filter((f) => f.origin.host === thisMacDevice()).map((f) => f.origin.path)} />
-    </Card>
+    <div className="space-y-6">
+      {groups.map((g, i) => (
+        <Section key={g.id ?? g.name} title={g.name}>
+          <Card>
+            {ORDER.filter((role) => g.id !== null || g.folders.some((f) => f.role === role)).map((role) => (
+              <FolderList key={role} role={role} storage={{ ...storage, folders: g.folders }} forWorkspace={g.id} searchable={i === 0} {...shared} />
+            ))}
+          </Card>
+        </Section>
+      ))}
+      <Card>{allowed}</Card>
+    </div>
   );
 }
 
@@ -295,27 +330,37 @@ const LISTS = {
  * the Media Library takes in (footage, music, sound effects: the Library sorts them; a music folder from before is one of
  * them, api/lib/storage.ts mediaFolders). Only folders someone added are listed.
  */
-function FolderList({ role, storage, devices, serverDisks, w, onChanged }: {
+function FolderList({ role, storage, devices, serverDisks, w, onChanged, forWorkspace, inUse, searchable }: {
   role: keyof typeof LISTS; storage: StorageView; devices: Computer[]; serverDisks: Disk[]; w?: SettingsWorkspace; onChanged: () => void;
+  /** in the All workspaces view: the workspace this card is (null: the folders for every workspace, added from a workspace's own) */
+  forWorkspace?: string | null;
+  /** one workspace shown: Exports and Projects list only the folder it uses */
+  inUse?: boolean;
+  /** the row search lands on (once per page) */
+  searchable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const mine = storage.folders.filter((f) => f.role === role);
+  const all = storage.folders.filter((f) => f.role === role);
+  const used = inUse && role !== "footage" ? (all.find((f) => !everyWorkspace(f)) ?? all[0]) : undefined;
+  const mine = used ? [used] : all;
   return (
     <>
       <Row
-        id={LISTS[role].id}
+        id={searchable ? LISTS[role].id : undefined}
         title={LISTS[role].title}
         description={LISTS[role].description}
         control={
-          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-            Add folder
-          </Button>
+          forWorkspace !== null && (
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+              Add folder
+            </Button>
+          )
         }
       />
       {mine.map((f) => (
         <FolderRow key={f.id} folder={f} devices={devices} w={w} onChanged={onChanged} />
       ))}
-      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} here={storage.here} w={w} onChanged={onChanged} />
+      <AddFolderDialog open={open} onOpenChange={setOpen} role={role} devices={devices} serverDisks={serverDisks} here={storage.here} w={w} workspace={forWorkspace} onChanged={onChanged} />
     </>
   );
 }
@@ -557,6 +602,7 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
   const [pickWorkspace, setPickWorkspace] = useState("");
   const [pickHost, setPickHost] = useState("");
   const [path, setPath] = useState("");
+  const [typing, setTyping] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // in the Mac app, on a server this Mac isn't on yet: "This Mac" is offered, and added to the server when the folder is
@@ -565,6 +611,7 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
     if (!open) return;
     setPickWorkspace("");
     setPath("");
+    setTyping(false);
     setErr(null);
     void thisMacState().then(setMac);
   }, [open]);
@@ -575,10 +622,14 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
   const known = (id?: string | null) => (id && w?.workspaces.some((p) => p.id === id) ? id : null);
   const workspace = forWorkspace ?? known(pickWorkspace) ?? known(w?.id) ?? known(windowIn) ?? w?.workspaces[0]?.id ?? null;
 
+  // a folder on this Mac is chosen in its own panel: no drive list, no path to type (owner, 2026-11-23)
+  const here = macImports() && (host === NEW_MAC || host === thisMacDevice());
+
   const submit = async () => {
+    const p = path.trim();
+    if (!p) return setErr("Needs a folder");
     setBusy(true);
     setErr(null);
-    const p = path.trim();
     const add = async () => {
       try {
         const on = host === NEW_MAC ? (await pairThisMac())?.device : host;
@@ -605,17 +656,31 @@ export function AddFolderDialog({ open, onOpenChange, role, devices, serverDisks
         <Status tone="attention">Needs a computer</Status>
       ) : (
         <>
-          {w?.many && workspace && (
+          {w?.many && workspace && forWorkspace === undefined && w.all && (
             <SettingsSelect label="Workspace" value={workspace} onValueChange={setPickWorkspace} options={w.workspaces.map((p) => ({ value: p.id, label: p.name }))} className="sm:w-full" />
           )}
-          <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={hosts.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
-          <DriveSelect disks={host === NEW_MAC ? [] : disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
-          <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "projects" ? "/Volumes/Drive/Projects" : role === "library" ? "/Volumes/Drive/Exports" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
-          {/* chosen in the Mac app's picker: the Mac app may read it (and copy a dropped final into it) with no Allow after */}
-          {macImports() && (role !== "footage" || host === NEW_MAC || host === thisMacDevice()) && (
-            <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => void chooseFolderOnMac().then((p) => p && setPath(p))}>
-              Choose folder
-            </Button>
+          {hosts.length > 1 && (
+            <SettingsSelect label="Computer" value={host} onValueChange={setPickHost} options={hosts.map((d) => ({ value: d.id, label: d.name }))} className="sm:w-full" />
+          )}
+          {here && !typing ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <Button type="button" variant="outline" className="shrink-0" onClick={() => void chooseFolderOnMac().then((p) => p && setPath(p))}>
+                  Choose folder
+                </Button>
+                <span className={cn("min-w-0 truncate text-sm", path ? "text-foreground" : "text-muted-foreground")} title={path || undefined}>
+                  {path || "No folder"}
+                </span>
+              </div>
+              <button type="button" className="self-start text-xs text-muted-foreground hover:text-foreground" onClick={() => setTyping(true)}>
+                Type a path
+              </button>
+            </div>
+          ) : (
+            <>
+              <DriveSelect disks={host === NEW_MAC ? [] : disksFor(devices, host, serverDisks)} path={path} onPick={setPath} onLook={onChanged} />
+              <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={role === "projects" ? "/Volumes/Drive/Projects" : role === "library" ? "/Volumes/Drive/Exports" : "/Volumes/Drive/Footage"} aria-label="Folder path" required />
+            </>
           )}
         </>
       )}
