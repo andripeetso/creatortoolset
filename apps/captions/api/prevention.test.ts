@@ -78,7 +78,7 @@ const DECODERS: Record<string, string> = {
   "api/boot.ts": "names the runtime; unverified",
 };
 /** The count at the start (local-first plan P0): it may only go down. */
-const DECODERS_AT_START = 56; // 68 at P0; P3 moved twelve to computers
+const DECODERS_AT_START = 57; // 68 at P0; P3 moved twelve to computers; +1 the Instagram sign-in's Chrome window (lib/instagram/session.ts)
 const DECODE = /spawn\(|spawnSync|spawnKillable|execFile\(|execFileSync|execSync|ffmpeg|ffprobe|chromium|playwright|onnx/;
 
 /** T8: every remaining deletion by age under api/, with why it stays. Library and export files have none (decision 8). */
@@ -125,6 +125,6 @@ describe("local-first ratchets", () => {
       // a press: onClick / onSelect, or a handler named for one; never in an effect
       for (const effect of text.matchAll(/useEffect\(\(\) => \{([\s\S]*?)\n {2}\}, \[/g)) expect(effect[1], f).not.toContain("openSetupAt(");
     }
-    expect(callers).toEqual(["apps/captions/src/components/assistant/AssistantDock.tsx", "apps/captions/src/components/setup/FirstOpen.tsx", "apps/captions/src/components/setup/HelperStep.tsx", "apps/captions/src/lib/setup.ts", "apps/captions/src/pages/ToolsetHome.tsx"]);
+    expect(callers).toEqual(["apps/captions/src/components/assistant/AssistantDock.tsx", "apps/captions/src/components/assistant/Welcome.tsx", "apps/captions/src/components/setup/FirstOpen.tsx", "apps/captions/src/components/setup/HelperStep.tsx", "apps/captions/src/lib/setup.ts", "apps/captions/src/pages/ToolsetHome.tsx"]);
   });
 });

@@ -332,7 +332,7 @@ export function retryFailed(libraryId: string, kind: string): number {
 
 /**
  * The jobs that failed only because a photo's card picture came out empty (media/thumb.ts seeked into a
- * one-frame file, so ffmpeg wrote nothing and the rename failed) are queued again; once they land the clip is ready.
+ * one-frame file, so the encoder wrote nothing and the rename failed) are queued again; once they land the clip is ready.
  * Asked by a computer that reads photos with no seek (work/routes.ts): an older one would fail them again.
  */
 export function retryEmptyPictures(): number {

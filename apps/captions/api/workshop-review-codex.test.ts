@@ -47,7 +47,10 @@ const DOC = "bbbbbbbb-0000-4000-8000-000000000002";
 beforeAll(() => {
   const sdir = path.join(dataDir, "workshop", "sessions", SESSION);
   mkdirSync(path.join(sdir, "docs"), { recursive: true });
-  writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id: SESSION, owner: "nico", title: "Lifting", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
+  // a read needs the workspace's personas (workshop.ts /reviews)
+  mkdirSync(path.join(dataDir, "workshop", "projects"), { recursive: true });
+  writeFileSync(path.join(dataDir, "workshop", "projects", "cccccccc-0000-4000-8000-000000000003.json"), JSON.stringify({ id: "cccccccc-0000-4000-8000-000000000003", owner: "nico", name: "Tiny Acrobatics", audience: "", voice: "", cta: "", notes: "", createdAt: 1, updatedAt: 1, personas: [{ name: "Mia", about: "A new parent who lifts at home" }] }));
+  writeFileSync(path.join(sdir, "meta.json"), JSON.stringify({ id: SESSION, owner: "nico", projectId: "cccccccc-0000-4000-8000-000000000003", title: "Lifting", query: "", sources: [], drafts: [], createdAt: 1, updatedAt: 1 }));
   writeFileSync(path.join(sdir, "docs", `${DOC}.json`), JSON.stringify({ id: DOC, sessionId: SESSION, kind: "carousel", title: "Carousel", frameworkIds: [], versions: [], nextBlock: 2, nextVersion: 1, createdAt: 1, updatedAt: 2, blocks: [{ id: "b1", text: "Lift twice a week.", author: "ai", at: 1 }] }));
   writeFileSync(path.join(sdir, "chat.json"), JSON.stringify({ messages: [] }));
 });
