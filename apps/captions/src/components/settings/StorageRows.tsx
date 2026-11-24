@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useWorkspace } from "@/lib/workspace";
+import { PROJECT_COLORS, projectColor, useWorkspace } from "@/lib/workspace";
 import { chooseFolderOnMac, macImports, pairThisMac, thisMacBridge, thisMacState, type ThisMacState } from "@/lib/thisMac";
 import { askMediaFolder, folderGrant, foldersChanged, macReadFolders } from "@/lib/local-files";
 import { thisMacDevice } from "@/lib/providers";
@@ -54,7 +54,10 @@ const nameOf = (devices: Computer[], f: StorageFolder) =>
   f.origin.host === THIS_COMPUTER ? "This computer" : f.missing ? UNKNOWN_COMPUTER : (devices.find((d) => d.id === f.origin.host)?.name ?? UNKNOWN_COMPUTER);
 
 /** A folder as the row shows it: the computer it is on, then its full path (the Library's own Footage too). */
-const whereOf = (f: StorageFolder, devices: Computer[]) => `${nameOf(devices, f)} · ${f.origin.path}`;
+/** Where a folder is: a network share by its server and path there (any computer that connects it reads the same
+ *  folder; the rows under it say which do), else the computer that added it and its path. */
+export const whereOf = (f: StorageFolder, devices: Computer[]) =>
+  f.mount ? `${f.mount.server} · ${[f.mount.share.replace(/^\/+/, ""), f.mount.sub].filter(Boolean).join("/")}` : `${nameOf(devices, f)} · ${f.origin.path}`;
 
 /** Show in Finder for a folder on this very Mac, in a Mac app that shows Settings → Folders folders (its mark). */
 export const canRevealFolder = (f?: StorageFolder): f is StorageFolder =>
@@ -248,7 +251,8 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
             )
           }
         >
-          <Card>
+          {/* outlined in the workspace's colour, as its letters are: each card reads as that workspace at a glance */}
+          <Card style={g.ws ? { borderColor: `rgb(${PROJECT_COLORS[projectColor(g.ws)].rgb} / 0.45)` } : undefined}>
             {ORDER.filter((role) => g.id !== null || g.folders.some((f) => f.role === role)).map((role) => (
               <FolderList key={role} role={role} storage={{ ...storage, folders: g.folders }} forWorkspace={g.id} searchable={i === 0} {...shared} />
             ))}

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
-import { AllowedRows, removeBody, Storage, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
+import { AllowedRows, removeBody, Storage, whereOf, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
 import type { SettingsWorkspace } from "./workspace-pick";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
@@ -28,6 +28,12 @@ describe("Storage rows", () => {
     // no Finals row any more: Finals reads Exports, so the folder shows once
     expect(html).not.toContain("/Creator Toolset/Finished");
     expect(html.match(/>Add folder</g)).toHaveLength(3); // Exports, Projects, Media
+  });
+
+  it("a folder on a network share is named by the share's server and its path there, not the computer that added it", () => {
+    const onShare: StorageFolder = { ...library, origin: { host: "dev_1", path: "/Volumes/home/Tiny/Exports" }, mount: { fs: "smb", server: "tiny-nas", share: "home", sub: "Tiny/Exports" } };
+    expect(whereOf(onShare, [mac])).toBe("tiny-nas · home/Tiny/Exports");
+    expect(whereOf(library, [mac])).toContain("Sam's Mac Studio · ");
   });
 
   it("a Projects folder is listed under Projects with its menu", () => {

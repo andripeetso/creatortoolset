@@ -1,4 +1,4 @@
-import { Children, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { Children, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ChevronRight, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,9 +35,9 @@ export function Section({ id, title, action, children, className }: { id?: Searc
 }
 
 /** A rounded card of rows, with hairlines between its children. Rows, ListRows and EmptyRows go inside. */
-export function Card({ children, className }: { children: ReactNode; className?: string }) {
+export function Card({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   return (
-    <div className={cn("rounded-xl border border-border/60 bg-card/40 text-foreground [&>*+*]:border-t [&>*+*]:border-border/50", className)}>
+    <div style={style} className={cn("rounded-xl border border-border/60 bg-card/40 text-foreground [&>*+*]:border-t [&>*+*]:border-border/50", className)}>
       {children}
     </div>
   );
