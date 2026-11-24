@@ -92,7 +92,7 @@ describe("Finals pieces: merge, split, trash", () => {
     await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_cc/merge", { from: "pc_ca" });
     const early = await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_cb/restore");
     expect(early.status).toBe(409);
-    expect((await early.json()).error).toContain("Chain C");
+    expect(((await early.json()) as { error: string }).error).toContain("Chain C");
     expect((await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_ca/restore")).status).toBe(200);
     const b = await data(call("owner-a", "POST", "/api/library/lib_a/pieces/pc_cb/restore"));
     expect(b.items.map((i: any) => i.versionId)).toEqual(["c1-v1"]);
