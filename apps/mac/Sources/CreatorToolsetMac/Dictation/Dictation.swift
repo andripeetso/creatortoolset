@@ -854,10 +854,14 @@ final class Dictation: ObservableObject {
     /// Downloads `m` into this app's folder, with its progress in the pill (while setting up) and in Settings. The one
     /// Download: Settings' Dictation row, a first dictation and the Voice page's (through the server, SpeechModels.swift).
     /// `asked`: the person got it on this Mac, so the server keeps it. One set aside comes back without a download.
-    func fetch(_ m: TranscriptionModel, asked: Bool = true) {
+    /// `use`: Settings' Download, so dictation switches to it once it is here (the one in use keeps working meanwhile).
+    func fetch(_ m: TranscriptionModel, asked: Bool = true, use: Bool = false) {
         guard download == nil else { return }
         if asked { SpeechModels.shared.asked(m.id) }
-        if let variant = m.whisperKitID, SpeechModels.restore(variant) { return SpeechModels.shared.changed() }
+        if let variant = m.whisperKitID, SpeechModels.restore(variant) {
+            if use { update { $0.model = m.id } }
+            return SpeechModels.shared.changed()
+        }
         guard !m.onDisk else { return }
         download = (m.id, 0)
         SpeechModels.shared.changed()
@@ -892,6 +896,7 @@ final class Dictation: ObservableObject {
                 fetching = nil
                 fetchMark = nil
                 SpeechModels.shared.finished(m.id, ok: true)
+                if use { update { $0.model = m.id } }
                 if m.id == model.id {
                     if showing, needs == nil { pill.show(.message("Getting the speech model ready")) }
                     try? await currentTranscriber().load()
@@ -961,7 +966,7 @@ final class Dictation: ObservableObject {
         case "guide": SetupGuide.showFromPage()
         case "model": if ModelRegistry.find(value) != nil { update { $0.model = value } }
         case "engine": if let e = DictationEngine(rawValue: value) { update { $0.engine = e } }
-        case "download": if let m = ModelRegistry.find(value) { fetch(m) }
+        case "download": if let m = ModelRegistry.find(value) { fetch(m, use: true) }
         case "cancel": cancelDownload(value, why: "Cancel in Settings")
         case "remove": remove(value)
         case "keep": if let n = Int(value), (1...500).contains(n) { update { $0.keep = n } }
