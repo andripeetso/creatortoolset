@@ -440,10 +440,6 @@ function AccountRow({ row, a, back, tag, items, signIn }: { row: PlatformRow; a:
   );
 }
 
-/**
- * Add one platform's account: its sign-in where this server has one (recommended: the account's own numbers), or its
- * handle, read from the public page on the person's Apify key (public posts only, the row then says Not signed in).
- */
 /** After a sign-in that returned several new accounts: each one with its own Add; closing adds none. */
 function ChooseAccountDialog({ choose, onDone }: { choose: ConnectorsView["choose"]; onDone: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -487,6 +483,7 @@ function ChooseAccountDialog({ choose, onDone }: { choose: ConnectorsView["choos
   );
 }
 
+/** Add one platform's account: with its sign-in where this server has one, or by handle (public posts only). */
 function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: {
   platform: SocialPlatform | null;
   signIn: boolean;
@@ -524,22 +521,23 @@ function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: 
           <DialogTitle>{`Add ${label}`}</DialogTitle>
         </DialogHeader>
         {signIn && platform && (
-          <div className="space-y-1.5">
-            <div className="flex items-center text-xs font-medium">
-              With sign-in
-              <InfoTip label="With sign-in" text={platform === "instagram" ? `${gives}. ${IG_NEEDS}.` : `${gives}.`} />
+          <>
+            <div className="space-y-1.5">
+              <div className="flex items-center text-xs font-medium">
+                With sign-in
+                <InfoTip label="With sign-in" text={platform === "instagram" ? `${gives}. ${IG_NEEDS}.` : `${gives}.`} />
+              </div>
+              <Button type="button" className="w-full" disabled={busy} onClick={() => onSignIn(platform)}>
+                {/* Instagram signs in through the Facebook login */}
+                {`Sign in with ${platform === "instagram" ? "Facebook" : label}`}
+              </Button>
             </div>
-            <Button type="button" className="w-full" disabled={busy} onClick={() => onSignIn(platform)}>
-              {`Sign in with ${label}`}
-            </Button>
-          </div>
-        )}
-        {signIn && (
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="h-px flex-1 bg-border" />
-            or
-            <span className="h-px flex-1 bg-border" />
-          </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="h-px flex-1 bg-border" />
+              or
+              <span className="h-px flex-1 bg-border" />
+            </div>
+          </>
         )}
         <form
           className="space-y-1.5"
