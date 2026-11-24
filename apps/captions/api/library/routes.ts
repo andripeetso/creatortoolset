@@ -1222,6 +1222,8 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const s = b?.settings ?? {};
   // true/false: the upload switch's older values (db.ts uploadOf), kept so a stored boolean still maps the same way
   const upload = s.upload === true ? "all" : s.upload === false ? "none" : s.upload;
+  // read before this save writes Upload or Blur faces: the proxy backfill below is for the save that turns hosting on
+  const wasHosted = hostsProxies(libraryUpload(libraryId));
   // Blur faces: Upload is Off or Blurred then, never Originals (contracts BLURRED_UPLOADS); checked before anything is written
   const blurs = typeof s.blurFaces === "boolean" ? s.blurFaces : blursFaces(libraryId);
   if (blurs && !BLURRED_UPLOADS.includes(LIBRARY_UPLOADS.includes(upload as LibraryUpload) ? (upload as LibraryUpload) : libraryUploadStored(libraryId))) {
@@ -1253,8 +1255,9 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   if (typeof proxy === "boolean") put("proxy", proxy);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
   if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')").run(libraryId);
-  // only Hosted proxies backfill (a proxy is all the server keeps then); the switch alone makes them for new files (made.ts)
-  if (hosted) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
+  // only Hosted proxies backfill (a proxy is all the server keeps then), and only on the save that turns hosting on: any
+  // other save (Effort, a folder) queues nothing; the switch alone makes them for new files (made.ts)
+  if (hosted && !wasHosted) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {
