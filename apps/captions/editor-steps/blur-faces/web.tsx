@@ -414,7 +414,7 @@ const gbPerHour = (mbps: number) => (mbps * 9) / 20;
 const WHERE: Record<Settings["location"], string> = {
   folder: "Imports/Blurred in the Media Library's folder",
   beside: "The same folder as each original",
-  custom: "No folder chosen",
+  custom: "No folder chosen, so the Imports folder",
 };
 
 /** How the automatic blurred copies of Media Library files are written, and where on the Mac (plugin.ts outOf). */
