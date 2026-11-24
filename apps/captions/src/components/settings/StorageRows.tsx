@@ -212,7 +212,7 @@ const everyWorkspace = (f: StorageFolder) => f.workspace === EVERY_WORKSPACE || 
 /**
  * The page's folders. One workspace: its lists in one card, Exports and Projects only the folder it uses (its own before
  * the one for every workspace, exportsOf). All workspaces: a card per workspace, then the folders for every workspace.
- * What this Mac may read is Settings → You → Folder access (FolderAccessSection), the same in every workspace.
+ * What this Mac may read is Settings → Computers, Folder access (FolderAccessSection), the same in every workspace.
  */
 export function Storage({ devices, storage, onChanged, w }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void; w?: SettingsWorkspace }) {
   if (!storage) return null;

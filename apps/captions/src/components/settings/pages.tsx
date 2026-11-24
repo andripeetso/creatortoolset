@@ -21,7 +21,6 @@ import { GeneralSection } from "./GeneralSection";
 import { ToolsSection } from "./ToolsSection";
 import { VoiceSection } from "./VoiceSection";
 import { DictationSection } from "./DictationSettings";
-import { FolderAccessSection } from "./FolderAccessSection";
 import { PluginSettingsPage } from "./PluginWorkspaces";
 
 /**
@@ -43,7 +42,6 @@ export const PAGE_BODIES: Record<SettingsPageId, PageBody> = {
   voice: VoiceSection,
   dictation: DictationSection,
   devices: ComputersSection,
-  "folder-access": FolderAccessSection,
   automations: AutomationsSection,
   memory: MemorySection,
   connectors: ConnectorsSection,
