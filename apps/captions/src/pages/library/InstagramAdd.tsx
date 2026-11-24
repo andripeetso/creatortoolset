@@ -33,7 +33,9 @@ export const ABOUT = [
   "Only the account's sign-in is kept on this Mac, never its password; Disconnect removes it.",
 ];
 export const RISK =
-  "Instagram's terms forbid automated reading, so it may ask the account to confirm it is you, limit it or lock it. Use a second account, never your main or business one.";
+  "Instagram's terms forbid automated reading: it may ask the account to confirm it is you, limit it or lock it, and other accounts used on this Mac can be affected too. The account signed in here carries that risk, so use a second account, never your main or business one.";
+/** Signed in: the risk stays on screen in one line. */
+export const RISK_SHORT = "Reads go out as this account; Instagram may limit or lock it.";
 
 /** Media Library → Add from Instagram: a post or reel by its link, read with the person's own Instagram account. */
 export function InstagramAdd({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -117,6 +119,7 @@ export function InstagramAdd({ open, onOpenChange }: { open: boolean; onOpenChan
           <p className="font-medium text-foreground">{RISK}</p>
         </div>
       )}
+      {login?.signedIn && <p className="text-xs text-amber-700 dark:text-amber-400">{RISK_SHORT}</p>}
       {login?.signedIn && (
         <label className="block space-y-1 text-sm">
           <span className="block">Link</span>
