@@ -124,4 +124,15 @@ describe("a post by its link", () => {
     expect(await ingestGate("owner")).toEqual({ ok: true, mode: "session" });
     expect((await ingestGate("nobody")).ok).toBe(false);
   });
+
+  it("an account whose id is known reads no profile first", async () => {
+    saveCookies("owner", { sessionid: "s", csrftoken: "c", ds_user_id: "1" });
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      asked.push(url.replace("https://www.instagram.com", "").split("?")[0]!);
+      return url.includes("/feed/user/") ? Response.json({ items: [], more_available: false }) : Response.json({ items: [], paging_info: { more_available: false } });
+    });
+    await readAccount("owner", "tinyacrobatics", 50, undefined, "42");
+    expect(asked).toEqual(["/api/v1/feed/user/42/", "/api/v1/clips/user/"]);
+  });
 });

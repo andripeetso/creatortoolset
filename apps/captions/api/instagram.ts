@@ -1771,7 +1771,8 @@ async function fetchAccountFeed(
     if (!after) return fetchMineCatalogAll({ signal, since });
     return fetchMineCatalog({ cap, after, signal });
   }
-  if (mode === "session") return { items: await readSessionAccount(user, acc.username, cap, signal), more: false };
+  // the account's id is known after its first profile read: no second profile call
+  if (mode === "session") return { items: await readSessionAccount(user, acc.username, cap, signal, /^\d+$/.test(acc.igUserId) ? acc.igUserId : undefined), more: false };
   if (mode === "discovery") {
     const bd = await discovered(acc.username, user, signal);
     if (bd) return withApifyReels(bd.items, url, user, cap, signal);
@@ -2809,17 +2810,24 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
   try {
     const mode = await accountPullMode(user.username, meta);
     const url = canonicalProfileUrl(meta.username);
+    // the profile once per run: each read is a paid Apify run or a call on the Instagram sign-in's account
+    let profiled = false;
+    const profileOnce = async () => {
+      if (profiled) return;
+      await refreshProfile(meta, url, mode, user.username, signal);
+      profiled = true;
+    };
     for (const job of jobs) {
       meta.step = job;
       meta.progress = job === "profile" ? 0.2 : job === "catalog" ? 0.5 : 0.8;
       await persistAccount(meta);
       if (job === "profile") {
-        await refreshProfile(meta, url, mode, user.username, signal);
+        await profileOnce();
       } else if (job === "catalog" || job === "stats") {
         const existing = await loadCatalog(meta.id);
         // Apify bills each read: an Update's stats read (below) lists the new posts too, so its catalog read is skipped
         if (job === "catalog" && mode !== "graph" && !opts.more && existing.length && jobs.includes("stats")) continue;
-        await refreshProfile(meta, url, mode, user.username, signal);
+        await profileOnce();
         if (job === "stats") {
           if (existing.length > 0) {
             const page = await fetchAccountFeed(

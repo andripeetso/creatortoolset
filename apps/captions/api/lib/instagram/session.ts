@@ -285,9 +285,9 @@ export async function readProfile(u: string, handle: string, signal?: AbortSigna
 }
 
 /** The account's grid and its Reels tab (reels kept off the grid too), newest first, up to `cap`. */
-export async function readAccount(u: string, handle: string, cap: number, signal?: AbortSignal): Promise<CatalogItem[]> {
+export async function readAccount(u: string, handle: string, cap: number, signal?: AbortSignal, id?: string): Promise<CatalogItem[]> {
   const what = `@${handle}`;
-  const w = { id: (await readProfile(u, handle, signal)).igUserId };
+  const w = { id: id ?? (await readProfile(u, handle, signal)).igUserId };
   const found = new Map<string, CatalogItem>();
   const take = (list: FeedItem[] = []) => list.map(catalogItemOf).forEach((c) => c && !found.has(c.shortcode) && found.set(c.shortcode, c));
   for (let max = "", n = 0; n < cap; ) {
