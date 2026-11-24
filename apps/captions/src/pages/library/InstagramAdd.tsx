@@ -27,7 +27,8 @@ const LOGIN = "/api/library/instagram/login";
 /** What the sign-in allows, and what it risks (owner, 2026-11-23: "information there" and a second confirm). */
 export const ABOUT = [
   "Adds a post or reel to the Media Library by its link: each of its videos and photos.",
-  "Each read goes out as this account, one at a time and only when Add is pressed; nothing runs in the background.",
+  "Reads an own account with no Meta sign-in in the Content Analyzer: its posts and its Reels tab.",
+  "Each read goes out as this account, one at a time, a few seconds apart.",
   "Only the account's sign-in is kept on this Mac, never its password; Disconnect removes it.",
 ];
 export const RISK =

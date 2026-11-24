@@ -42,6 +42,7 @@ import {
   updateApify,
 } from "./lib/instagram/apify";
 import { applyMineVisibility, fetchMineAccountStats, fetchPublicGridKeys, publicGridFromCatalog, type PublicGridKeys, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, graphConfigured, graphCredsFor, discoveryCredsFor, fetchBusinessDiscovery, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, type MineAccountStats } from "./lib/instagram/graph";
+import { hasInstagramSession, readAccount as readSessionAccount, readProfile as readSessionProfile } from "./lib/instagram/session";
 import { mergeAccountStats, nextGraphDaily, type GraphDaily, type InsightDay } from "./lib/instagram/account-insights";
 import { annotateComments, QUESTION_MIN } from "./lib/instagram/comment-judge";
 import {
@@ -1042,6 +1043,19 @@ export async function findOwnPost(user: SessionUser, shortcode: string, accountI
 }
 
 /**
+ * The stored comments on some of the user's own posts, read from files only (nothing is fetched): Graph's thread where
+ * it has one, else the Content Analyzer's read. For the persona builder. `accountId` is one ownAccountContextFor gave.
+ */
+export async function storedOwnComments(user: SessionUser, accountId: string, shortcodes: string[]): Promise<Record<string, Comment[]>> {
+  const graph = await readFile(accountGraphCommentsPath(accountId), "utf-8").then((t) => JSON.parse(t) as Record<string, Comment[]>, () => ({}) as Record<string, Comment[]>);
+  const out: Record<string, Comment[]> = Object.fromEntries(shortcodes.map((s) => [s, graph[s] ?? []]));
+  const want = new Set(shortcodes.filter((s) => !out[s]!.length));
+  if (!want.size) return out;
+  for (const m of await allMetas()) if (want.has(m.shortcode) && canSee(m, user)) out[m.shortcode] = (await loadComments(m.id))?.comments ?? [];
+  return out;
+}
+
+/**
  * The comments on one of the user's own posts, for a Workshop share link's Questions: the
  * Graph thread (read again when `fresh`; scraped instead when Graph sends no names), or the Analyzer's scrape; and the
  * account's own earlier replies to comments, across its posts, as examples of how it answers.
@@ -1707,8 +1721,8 @@ async function snapshotAccount(acc: AccountMeta, source: Snapshot["source"]): Pr
   });
 }
 
-/** graph = the account's own login; discovery = another professional account through Meta's Business Discovery; apify = by handle. */
-type AccountPullMode = IngestMode | "graph" | "discovery";
+/** graph = the account's own login; session = an own account with no Meta login, through the Instagram sign-in of Media Library → Add from Instagram; discovery = another professional account through Meta's Business Discovery; apify = by handle. */
+type AccountPullMode = IngestMode | "graph" | "discovery" | "session";
 
 async function refreshProfile(
   acc: AccountMeta,
@@ -1732,6 +1746,7 @@ async function loadProfile(
   signal?: AbortSignal,
 ): Promise<ProfileInfo> {
   if (mode === "graph") return fetchMineProfile({ signal });
+  if (mode === "session") return readSessionProfile(user, username, signal);
   if (mode === "discovery") {
     const bd = await discovered(username, user, signal);
     if (bd) return bd.profile;
@@ -1753,6 +1768,7 @@ async function fetchAccountFeed(
     if (!after) return fetchMineCatalogAll({ signal, since });
     return fetchMineCatalog({ cap, after, signal });
   }
+  if (mode === "session") return { items: await readSessionAccount(user, acc.username, cap, signal), more: false };
   if (mode === "discovery") {
     const bd = await discovered(acc.username, user, signal);
     if (bd) return withApifyReels(bd.items, url, user, cap, signal);
@@ -1800,6 +1816,7 @@ async function discovered(handle: string, user: string, signal?: AbortSignal): P
 
 async function accountPullMode(user: string, acc: { mine?: boolean; owner?: string }): Promise<AccountPullMode> {
   if (mineUsesGraph(acc)) return "graph";
+  if (acc.mine && hasInstagramSession(user)) return "session";
   if (discoveryCredsFor(user)) return "discovery";
   const gate = await ingestGate(user);
   if (!gate.ok) throw new InstagramError(gate.error, "APIFY", false);
@@ -2841,7 +2858,8 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
           let cap = incremental && mode === "apify" ? 100 : pageSize;
           let after: string | undefined;
           if (opts.more) {
-            if (mode !== "apify" && meta.catalogCursor) {
+            // a session read has no cursor: it reads the newest `cap` again, as Apify does
+            if (mode !== "apify" && mode !== "session" && meta.catalogCursor) {
               after = meta.catalogCursor;
               cap = pageSize;
             } else {

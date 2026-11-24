@@ -5,7 +5,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "ig-session-"));
 process.env.DATA_DIR = dir;
-const { filesOf, loginState, mediaIdOf, PACE, readPost, saveCookies, shortcodeOf } = await import("./session");
+const { filesOf, loginState, mediaIdOf, PACE, readAccount, readPost, saveCookies, shortcodeOf } = await import("./session");
 PACE.ms = 0;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => vi.unstubAllGlobals());
@@ -55,5 +55,30 @@ describe("a post by its link", () => {
     saveCookies("owner", { sessionid: "s", csrftoken: "c", ds_user_id: "1" });
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ items: [{ code: "BA", user: { username: "tinyacrobatics" }, video_versions: [{ url: "v", width: 720 }] }] })));
     expect(await readPost("owner", "https://www.instagram.com/p/BA/")).toEqual({ username: "tinyacrobatics", code: "BA", files: [{ url: "v", kind: "video" }] });
+  });
+
+  it("reads an account's grid and its Reels tab, a reel kept off the grid included, newest first", async () => {
+    saveCookies("owner", { sessionid: "s", csrftoken: "c", ds_user_id: "1" });
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      asked.push(`${init.method} ${url.replace("https://www.instagram.com", "")}${init.body ? ` ${String(init.body)}` : ""}`);
+      if (url.includes("web_profile_info")) return Response.json({ data: { user: { id: "42", username: "tinyacrobatics" } } });
+      if (url.includes("/feed/user/"))
+        return Response.json({ items: [{ code: "GRID", pk: "7_42", taken_at: 200, media_type: 1, like_count: 5, caption: { text: "hello" } }, { code: "SHARED", taken_at: 100, product_type: "clips" }], more_available: false });
+      return Response.json({ items: [{ media: { code: "SHARED", taken_at: 100, product_type: "clips" } }, { media: { code: "OFFGRID", taken_at: 300, product_type: "clips", play_count: 900 } }], paging_info: { more_available: false } });
+    });
+    const items = await readAccount("owner", "tinyacrobatics", 50);
+    expect(items.map((i) => [i.shortcode, i.kind, i.takenAt])).toEqual([
+      ["OFFGRID", "reel", 300_000],
+      ["GRID", "post", 200_000],
+      ["SHARED", "reel", 100_000],
+    ]);
+    expect(items[0]!.counts.plays).toBe(900);
+    expect(items[1]).toMatchObject({ graphId: "7", captionPreview: "hello", counts: { likes: 5 }, url: "https://www.instagram.com/p/GRID/" });
+    expect(asked).toEqual([
+      "GET /api/v1/users/web_profile_info/?username=tinyacrobatics",
+      "GET /api/v1/feed/user/42/?count=33",
+      "POST /api/v1/clips/user/ target_user_id=42&page_size=24&include_feed_video=true",
+    ]);
   });
 });
