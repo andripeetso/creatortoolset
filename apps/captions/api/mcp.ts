@@ -1262,7 +1262,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const body = pick(a, ["kind", "title", "what", "steps", "expected", "context", "page", "chat"]);
       await json("/api/bug-report", "POST", body); // a report that can't go fails here, before the card
       const what = a.kind === "feature" ? "feature request" : a.kind === "other" ? "report" : "bug report";
-      await sure(`Send this ${what} to the Creator Toolset team? It includes your session details from the app (version, AI providers and their tests, computers, what failed lately, and this chat) so the team can look into it and fix it.`, { yes: "Send report", no: "Not now" });
+      await sure(`Send this ${what} to the Creator Toolset team? It includes your session details from the app (version, AI providers and their tests, computers, what failed lately with its error messages, which can name your files, and this chat) so the team can look into it and fix it.`, { yes: "Send report", no: "Not now" });
       return json("/api/bug-report", "POST", { ...body, send: true });
     },
     ask_folder: async (a) => {

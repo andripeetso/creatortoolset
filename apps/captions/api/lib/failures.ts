@@ -12,6 +12,7 @@ export type FailureKind = "request" | "work";
 type Failure = { at: number; user: string; kind: FailureKind; what: string; status?: number; error?: string; ref?: string; count: number };
 
 const KEEP = 20;
+const TOTAL = 5000;
 const MAX_AGE = 14 * 24 * 60 * 60_000;
 const file = () => path.join(env.dataDir, "recent-failures.json");
 
@@ -56,7 +57,8 @@ export function noteFailure(user: string, kind: FailureKind, what: string, f: { 
   } else rows.push({ at: now, user, kind, what: what.slice(0, 200), ...(f.status ? { status: f.status } : {}), ...(error ? { error } : {}), ...(f.ref ? { ref: f.ref } : {}), count: 1 });
   const mine = rows.filter((r) => r.user === user && r.kind === kind);
   const drop = new Set(mine.slice(0, Math.max(0, mine.length - KEEP)));
-  list = rows.filter((r) => !drop.has(r) && now - r.at < MAX_AGE);
+  // the newest TOTAL of the whole server's: many accounts (Cloud) never make the file big or slow to write
+  list = rows.filter((r) => !drop.has(r) && now - r.at < MAX_AGE).slice(-TOTAL);
   saveSoon();
 }
 

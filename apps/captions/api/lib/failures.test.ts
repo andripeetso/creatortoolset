@@ -25,4 +25,10 @@ describe("recent failures", () => {
     await vi.waitFor(() => expect(existsSync(path.join(process.env.DATA_DIR!, "recent-failures.json"))).toBe(true), { timeout: 3000 });
     expect(readFileSync(path.join(process.env.DATA_DIR!, "recent-failures.json"), "utf-8")).toContain("Encoder stopped");
   });
+
+  it("keeps the newest 5000 of the whole server's", () => {
+    for (let n = 0; n < 5100; n++) noteFailure(`u${n}`, "request", "GET /api/x", { status: 500 }, NOW + 100 + n);
+    expect(failuresOf("u0", "request", NOW + 6000)).toEqual([]);
+    expect(failuresOf("u5099", "request", NOW + 6000)).toHaveLength(1);
+  });
 });

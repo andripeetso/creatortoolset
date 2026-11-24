@@ -351,6 +351,8 @@ app.route("/api/connect", connectPublicApp);
 // a picture or video in a card an AI app shows (mcp-cards.ts): a signed link, since the card's frame has no sign-in
 app.route("/", cardApp((path, init) => Promise.resolve(app.request(path, init))));
 
+// each failed request, for the account's next Report a problem (bug-report.ts): before the gate, so its own refusals count
+app.use("/api/*", noteFailures);
 // account gate (active only when APP_SECRET is set — see api/auth.ts)
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/auth")) return next();
@@ -389,6 +391,7 @@ app.use("/api/*", async (c, next) => {
       ? viewAsTarget(c.req.header("cookie"))
       : null;
   if (viewed && c.req.method !== "GET" && c.req.method !== "HEAD") {
+    c.set("user", signedIn!);
     return c.json({ error: `Viewing as ${viewed.username}: read-only`, code: "VIEW_AS" }, 403);
   }
   const user = viewed ? sessionOf(viewed) : signedIn;
@@ -423,13 +426,16 @@ app.use("/api/*", async (c, next) => {
       if (c.req.path === "/api/mcp") c.header("WWW-Authenticate", mcpChallenge(c));
       return c.json({ error: "Unauthorized" }, 401);
     }
+    // set before the refusal below too: a refused request is the account's (noteFailures)
+    c.set("user", keyUser);
     // same rule as a signed-in user below: an unlinked member's AI key doesn't get past the team's sign-in
     if (ruleFor(keyUser.username)?.missing) {
       return c.json({ error: "Your team signs in with Google or Apple: link one in Settings → Account", code: "LINK_SIGNIN" }, 403);
     }
-    c.set("user", keyUser);
     return next();
   }
+  // set before the refusals below: a refused request is the account's (noteFailures)
+  c.set("user", user);
   // the team signs in with Google / Apple and this account has neither linked: only /api/auth until it links one
   if (ruleFor(user.username)?.missing) {
     return c.json({ error: "Your team signs in with Google or Apple: link one in Settings → Account", code: "LINK_SIGNIN" }, 403);
@@ -442,12 +448,9 @@ app.use("/api/*", async (c, next) => {
   if (writeGate && !mayChange(user, writeGate[1])) {
     return c.json({ error: `${TOOL_NAMES[writeGate[1]]} is read-only for your account`, code: "READ_ONLY" }, 403);
   }
-  c.set("user", user);
   if (!viewed) touchActive(user.username);
   return next();
 });
-// each failed request, for the account's next Report a problem (bug-report.ts)
-app.use("/api/*", noteFailures);
 // the workspace the window is in (X-CT-Workspace): every tool keeps its things to it (lib/workspace-scope.ts)
 app.use("/api/*", inRequestWorkspace);
 // live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs

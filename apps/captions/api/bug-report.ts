@@ -24,8 +24,8 @@ import { VISITOR, type SessionUser } from "./users";
  * server answered with an error, work that ended failed), the failed library jobs and computer tasks it started, from the assistant the chat up to the report, and on a server
  * the person owns (This Mac, or an admin's own server) the last sign-ins started here, the server's last errors with the
  * top of their stack, and every account's failed jobs: those are the whole server's, so a team member or a Cloud account
- * never gets them. No key, no name of a computer or provider, no file or folder name: a home folder is written ~, a path
- * in an error <path>.
+ * never gets them. No key, no name of a computer or provider: a home folder is written ~, a path in an error <path>.
+ * Error messages go as the app showed them, so one can name a file; the dialog shows all of it before Send.
  */
 export const KINDS = ["bug", "feature", "other"] as const;
 const LIMITS = { title: 200, what: 8000, steps: 4000, expected: 2000, context: 12_000, page: 1000 } as const;
@@ -188,7 +188,7 @@ bugReportApp.post("/", async (c) => {
   if (typeof report === "string") return c.json({ error: report }, 400);
   const body = fit(report);
   if (!body) return c.json({ error: "The report is too long: shorten the text" }, 413);
-  if (b.send !== true) return c.json({ sent: false, report });
+  if (b.send !== true) return c.json({ sent: false, report: JSON.parse(body) as unknown }); // as trimmed
   const r = await fetch(`${pingUrl()}/report`, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(15_000) }).catch(() => null);
   if (!r) return c.json({ error: "Could not send the report. Check the internet connection and try again." }, 502);
   if (!r.ok) return c.json({ error: r.status === 429 ? "Could not send the report: too many reports today. Try again tomorrow." : r.status === 413 ? "The report is too long: shorten the text" : "Could not send the report. Try again later." }, 502);

@@ -30,7 +30,7 @@ MODULES.push({
 });
 const wiped: string[] = [];
 
-const { createUser, newApiKey } = await import("./users");
+const { createUser, findUser, newApiKey } = await import("./users");
 const app = (await import("./boot")).default;
 const { handle, pluginToolsOf } = await import("./mcp");
 const { checkWork, routeOf, runInChat, sweepWork, WAKE, workEnded } = await import("./assistant");
@@ -173,16 +173,25 @@ describe("Report a problem (the dialog)", () => {
     try {
       const cookie = await cookieOf("ana");
       await app.request("/api/still-not-a-thing", { headers: { cookie } });
+      // a refusal of the account gate itself counts too
+      findUser("ana")!.read = ["enhance"];
+      try {
+        expect((await app.request("/api/enhance/x", { method: "POST", headers: { cookie } })).status).toBe(403);
+      } finally {
+        findUser("ana")!.read = undefined;
+      }
       const shown = (await (await app.request("/api/bug-report", { headers: { cookie } })).json()) as Record<string, unknown>;
       expect(Object.keys(shown)).toEqual(expect.arrayContaining(["id", "version", "os", "system", "server", "role", "providers", "computers", "failedRequests", "failedWork", "failedJobs"]));
       expect(JSON.stringify(shown.failedRequests)).toContain("GET /api/still-not-a-thing");
+      expect(shown.failedRequests).toEqual(expect.arrayContaining([expect.objectContaining({ what: "POST /api/enhance/x", status: 403, error: "Audio Enhancer is read-only for your account" })]));
       const draft = await app.request("/api/bug-report", { method: "POST", ...json({ what: "Export never finishes", page: "/exports" }, { cookie }) });
-      expect(((await draft.json()) as { sent: boolean }).sent).toBe(false);
+      const drafted = (await draft.json()) as { sent: boolean; report: Record<string, unknown> };
+      expect(drafted.sent).toBe(false);
       expect(sent).toEqual([]);
       const r = await app.request("/api/bug-report", { method: "POST", ...json({ kind: "bug", what: "Export never finishes", steps: "Pressed Export", page: "/exports", send: true }, { cookie }) });
       expect(await r.json()).toMatchObject({ sent: true });
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({ kind: "bug", what: "Export never finishes", page: "/exports", id: shown.id, failedRequests: shown.failedRequests });
+      expect(sent[0]).toMatchObject({ kind: "bug", what: "Export never finishes", page: "/exports", id: shown.id, failedRequests: drafted.report.failedRequests });
     } finally {
       globalThis.fetch = real;
       delete process.env.CT_PING_URL;
