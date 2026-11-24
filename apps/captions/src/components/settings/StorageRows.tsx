@@ -15,6 +15,7 @@ import { Card, FormDialog, Section, ListRow, Row, RowMenu, SettingsDialog, Setti
 import { msg } from "./helpers";
 import { WorkspaceBadge } from "@/components/assistant/Workspaces";
 import { cn } from "@/lib/utils";
+import { ChevronDown } from "lucide-react";
 
 /** The computers an account owns (the list the Storage rows pick from). */
 export type Computer = ProvidersView["devices"][number];
@@ -302,19 +303,21 @@ export function AllowedFolders() {
 export function AllowedRows({ list, busy, onAsk, onRemove }: {
   list: ReadList; busy: boolean; onAsk: (start: string) => () => Promise<void>; onRemove: (folder: string) => Promise<void>;
 }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? list.folders : list.folders.slice(0, FOLDERS_SHOWN);
   return (
     <>
       <Row
         id="folder-access"
         title="This Mac"
-        description="Folders this Mac reads media from; files in them are added where they are."
+        description="Folders this Mac reads media from, never changing or deleting their files."
         control={
           <Button size="sm" variant="outline" disabled={busy} onClick={onAsk("/Volumes")}>
             Add folder
           </Button>
         }
       />
-      {list.folders.map((f) => {
+      {shown.map((f) => {
         const name = f.split("/").filter(Boolean).pop() ?? f;
         const allowed = list.reads.includes(f);
         return (
@@ -342,9 +345,20 @@ export function AllowedRows({ list, busy, onAsk, onRemove }: {
           />
         );
       })}
+      {list.folders.length > FOLDERS_SHOWN && (
+        <div className="px-4 py-2 pl-8 sm:pl-10">
+          <Button type="button" variant="ghost" size="xs" aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? "Show less" : `Show ${list.folders.length - FOLDERS_SHOWN} more`}
+            <ChevronDown className={cn("transition-transform", all && "rotate-180")} />
+          </Button>
+        </div>
+      )}
     </>
   );
 }
+
+/** Folder access lists this many folders, the rest behind Show more. */
+const FOLDERS_SHOWN = 5;
 
 /** The three lists of folders: Exports (where finished edits are saved), Projects (the AI Editor's working files), Media (what the Media Library takes in). */
 const LISTS = {
