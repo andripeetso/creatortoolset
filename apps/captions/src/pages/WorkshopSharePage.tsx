@@ -215,6 +215,8 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
         placeholder="Name"
         className="rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-600"
       />
+      {/* done with finals uploaded: nothing left to switch back to */}
+      {data.progress?.state === "done" && data.deliveries.length ? null : (
       <div className="grid grid-cols-2 gap-2">
         <button type="button" disabled={!!busy} onClick={() => void mark("producing")} className={`${btn} ${data.progress?.state === "producing" ? "bg-amber-500 text-black" : "border border-amber-500/50 text-amber-200 hover:bg-amber-500/15"}`}>
           <Hammer className="h-3.5 w-3.5" /> In production
@@ -223,6 +225,7 @@ function Production({ token, data, onChange, list = true }: { token: string; dat
           <CheckCircle2 className="h-3.5 w-3.5" /> Done
         </button>
       </div>
+      )}
       {data.progress ? (
         <p className="text-[11px] text-zinc-500">
           {data.progress.state === "done" ? "Marked done" : "Marked in production"}
