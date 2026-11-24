@@ -10,6 +10,7 @@ import type { AuthVars } from "./auth";
 import { creditBack, creditOut, isOutOfCredits, outOfCreditsMessage } from "./credits";
 import type { EnhanceStatus } from "../contracts/enhance";
 import { env } from "./lib/env";
+import { noteFailure } from "./lib/failures";
 import { keyFor, type Actor } from "./my-keys";
 import { enhancePiece, NvidiaRefused, readWav, SR as NV_SR } from "./lib/nvidia-voice";
 import { recordService } from "./lib/service-usage";
@@ -554,6 +555,7 @@ export async function enhanceFailed(id: string, run: string, error: string): Pro
   setStatus(meta, missing ? "needs_key" : "error");
   meta.error = missing ?? error;
   meta.run = undefined;
+  if (meta.owner) noteFailure(meta.owner, "work", "Audio Enhancer", { error: meta.error, ref: `${id}:${run}` });
   active.delete(id);
   await rm(finishInput(id), { force: true });
   await jobPersist(meta);

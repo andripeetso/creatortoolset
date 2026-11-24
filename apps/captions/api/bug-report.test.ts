@@ -7,7 +7,8 @@ process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), "bug-report-"));
 
 vi.mock("./plugins.gen", () => ({ serverPlugins: [] }));
 const { libraryDb } = await import("./library/db");
-const { diagnosticsOf, failedJobsOf, noteFailure, noteFailures, reportOf, unhome } = await import("./bug-report");
+const { diagnosticsOf, failedJobsOf, fit, noteFailures, reportOf, unhome } = await import("./bug-report");
+const { noteFailure } = await import("./lib/failures");
 const { reportCrash } = await import("./lib/telemetry");
 import type { ProvidersView } from "../contracts/providers";
 import { Hono } from "hono";
@@ -49,11 +50,21 @@ describe("bug report", () => {
     expect(stack).not.toContain("Tiny Shoot");
   });
 
-  it("carries each account's own failed requests, a repeat counted", () => {
-    noteFailure("tiny", "POST", "/api/exports/1", 500, "spawn /Users/tiny/bin/ffmpeg ENOENT", NOW - 60_000);
-    noteFailure("tiny", "POST", "/api/exports/1", 500, "spawn /Users/tiny/bin/ffmpeg ENOENT", NOW);
-    noteFailure("alex", "GET", "/api/library", 404, "Not found", NOW);
-    expect(diagnosticsOf(view, "tiny", false, NOW).failedRequests).toEqual([{ minutesAgo: 0, method: "POST", path: "/api/exports/1", status: 500, error: "spawn <path> ENOENT", count: 2 }]);
+  it("carries each account's own failed requests and work", () => {
+    noteFailure("tiny", "request", "POST /api/exports/1", { status: 500, error: "spawn /Users/tiny/bin/ffmpeg ENOENT" }, NOW);
+    noteFailure("tiny", "work", "Export", { error: "The encoder stopped", ref: "export:1" }, NOW);
+    noteFailure("alex", "request", "GET /api/library", { status: 404, error: "Not found" }, NOW);
+    const d = diagnosticsOf(view, "tiny", false, NOW);
+    expect(d.failedRequests).toEqual([{ minutesAgo: 0, what: "POST /api/exports/1", status: 500, error: "spawn <path> ENOENT" }]);
+    expect(d.failedWork).toEqual([{ minutesAgo: 0, what: "Export", error: "The encoder stopped" }]);
+  });
+
+  it("cuts the details to fit the site, never the person's words", () => {
+    const r = { ref: "ab", what: "It stops", chat: Array.from({ length: 30 }, (_, n) => ({ role: "user", text: `${n}`.padEnd(2000, "x") })), errors: [{ message: "e" }] };
+    const body = JSON.parse(fit(r, 20_000)!) as typeof r & { trimmed?: boolean };
+    expect(body).toMatchObject({ what: "It stops", trimmed: true, errors: [{ message: "e" }] });
+    expect(body.chat.at(-1)!.text.startsWith("29")).toBe(true);
+    expect(fit({ what: "x".repeat(30_000) }, 20_000)).toBeNull();
   });
 
   it("notes a failed answer with its error line, and nothing for a fine one or a visitor", async () => {
@@ -70,7 +81,7 @@ describe("bug report", () => {
     await app.request("/api/ok", { headers: { "x-who": "sam" } });
     await app.request("/api/bad");
     await new Promise((r) => setTimeout(r, 10));
-    expect(diagnosticsOf(view, "sam", false).failedRequests).toMatchObject([{ method: "GET", path: "/api/bad", status: 409, error: "Could not read the folder" }]);
+    expect(diagnosticsOf(view, "sam", false).failedRequests).toMatchObject([{ what: "GET /api/bad", status: 409, error: "Could not read the folder" }]);
     expect(diagnosticsOf(view, "visitor", false).failedRequests).toEqual([]);
   });
 

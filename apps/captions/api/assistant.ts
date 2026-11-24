@@ -11,6 +11,7 @@ import { cleanTitle, sourceOf, TITLE_SYSTEM, titlePrompt, type TitleSource } fro
 import { findUser } from "./users";
 import { jobTurn, mintJobToken, revokeJobTokens, touchJobTokens } from "./auth";
 import { announceSoon } from "./lib/announce-soon";
+import { noteFailure } from "./lib/failures";
 import { env, hasTeam, serverKind } from "./lib/env";
 import { MODEL_RE, routeFor, routeForInstance, runFields, type Route } from "./lib/providers";
 import { EFFORTS, type Selection } from "../contracts/providers";
@@ -746,6 +747,8 @@ const cardOf = (id: string, idStart: string) => id === idStart || id.startsWith(
  * whether a card was running.
  */
 export function workEnded(username: string, idStart: string, end: WorkEnd & { say?: string; choices?: string[]; media?: AssistantMedia[]; href?: string; action?: ActionNeeded; wake?: boolean; redone?: boolean }): boolean {
+  // every tool's work ends here, started in the chat or not: a failure is kept for the person's next report
+  if (end.status === "failed") noteFailure(username, "work", WORK_NAMES[idStart.split(":")[0]!] ?? idStart.split(":")[0]!, { error: end.detail, ref: idStart });
   const conv = load(username);
   let hit = false;
   let said = false;
@@ -835,6 +838,9 @@ export function workResumed(username: string, idStart: string, waited: string): 
 }
 
 /** How a card ends: what it says once its work is over. */
+/** A work card's id start (workEnded), as a report names the tool. */
+const WORK_NAMES: Record<string, string> = { export: "Export", captions: "Caption Studio", notes: "Video Notes", edit: "AI Editor", workshop: "Content Workshop writer", "library-save": "Media Library save" };
+
 export type WorkEnd = { status: "done" | "failed" | "stopped"; detail?: string };
 /** A card's work, asked by its card id: null while it still runs, its end once it is over, undefined when the card is not this check's. */
 export type WorkCheck = (id: string, username: string) => WorkEnd | null | undefined | Promise<WorkEnd | null | undefined>;
@@ -1465,7 +1471,10 @@ async function runReply(username: string, replyId: string, answer: (run: { cance
     const m = messageOf(username, replyId);
     // stopped: what it had written stays, marked as stopped
     if (stop.signal.aborted) Object.assign(m ?? {}, { status: "done", text: m?.text ? `${m.text}\n\n*Stopped.*` : "*Stopped.*" });
-    else Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "Reply failed", ...limitOf(username, e) });
+    else {
+      Object.assign(m ?? {}, { status: "error", text: (e instanceof Error ? e.message : String(e)).slice(0, 300) || "Reply failed", ...limitOf(username, e) });
+      noteFailure(username, "work", "Assistant reply", { error: m?.text });
+    }
   } finally {
     // what it asked and nobody answered can't be done any more
     const m = messageOf(username, replyId);

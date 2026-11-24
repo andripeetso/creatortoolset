@@ -125,7 +125,7 @@ describe("tools kept in their own files", () => {
 });
 
 describe("a report to the team", () => {
-  it("waits on the Send report card with the chat in it, and goes to the team only on Send report", async () => {
+  it("waits on the Send report card with the chat and what failed in it, and goes to the team only on Send report", async () => {
     const sent: unknown[] = [];
     const real = globalThis.fetch;
     process.env.CT_PING_URL = "http://reports.test/api/ping";
@@ -136,6 +136,9 @@ describe("a report to the team", () => {
     }) as typeof fetch;
     try {
       const cookie = await cookieOf("ana");
+      // what failed for ana before she asked: a request and an export
+      expect((await app.request("/api/no-such-thing", { headers: { cookie } })).status).toBe(404);
+      workEnded("ana", "export:x1", { status: "failed", detail: "The encoder stopped" });
       const t = await turn(cookie, "Claude says test failed after I signed in");
       const asked = await tool(t.token, "report_bug", { what: "Claude says test failed after I signed in", context: "setup_status: not connected" });
       expect(asked.text).toContain("Send this bug report to the Creator Toolset team?");
@@ -146,6 +149,40 @@ describe("a report to the team", () => {
       expect(sent).toHaveLength(1);
       expect(sent[0]).toMatchObject({ kind: "bug", what: "Claude says test failed after I signed in", context: "setup_status: not connected" });
       expect((sent[0] as { chat: unknown[] }).chat.at(-1)).toEqual({ role: "user", text: "Claude says test failed after I signed in" });
+      expect(sent[0]).toMatchObject({
+        failedRequests: expect.arrayContaining([expect.objectContaining({ what: "GET /api/no-such-thing", status: 404, error: "Not Found" })]),
+        failedWork: expect.arrayContaining([expect.objectContaining({ what: "Export", error: "The encoder stopped" })]),
+      });
+    } finally {
+      globalThis.fetch = real;
+      delete process.env.CT_PING_URL;
+    }
+  });
+});
+
+describe("Report a problem (the dialog)", () => {
+  it("shows what failed and every field it sends, and sends nothing before Send", async () => {
+    const sent: unknown[] = [];
+    const real = globalThis.fetch;
+    process.env.CT_PING_URL = "http://reports.test/api/ping";
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).startsWith("http://reports.test/")) return real(url, init);
+      sent.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    try {
+      const cookie = await cookieOf("ana");
+      await app.request("/api/still-not-a-thing", { headers: { cookie } });
+      const shown = (await (await app.request("/api/bug-report", { headers: { cookie } })).json()) as Record<string, unknown>;
+      expect(Object.keys(shown)).toEqual(expect.arrayContaining(["id", "version", "os", "system", "server", "role", "providers", "computers", "failedRequests", "failedWork", "failedJobs"]));
+      expect(JSON.stringify(shown.failedRequests)).toContain("GET /api/still-not-a-thing");
+      const draft = await app.request("/api/bug-report", { method: "POST", ...json({ what: "Export never finishes", page: "/exports" }, { cookie }) });
+      expect(((await draft.json()) as { sent: boolean }).sent).toBe(false);
+      expect(sent).toEqual([]);
+      const r = await app.request("/api/bug-report", { method: "POST", ...json({ kind: "bug", what: "Export never finishes", steps: "Pressed Export", page: "/exports", send: true }, { cookie }) });
+      expect(await r.json()).toMatchObject({ sent: true });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ kind: "bug", what: "Export never finishes", page: "/exports", id: shown.id, failedRequests: shown.failedRequests });
     } finally {
       globalThis.fetch = real;
       delete process.env.CT_PING_URL;

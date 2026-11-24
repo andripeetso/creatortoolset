@@ -7,6 +7,7 @@ import { viewFor } from "./providers";
 import { isCloud, serverKind } from "./lib/env";
 import { lastSignIns } from "./lib/local-ai";
 import { base, pingUrl, recentErrors, scrub } from "./lib/telemetry";
+import { failuresOf, noteFailure } from "./lib/failures";
 import { libraryDb } from "./library/db";
 import { VISITOR, type SessionUser } from "./users";
 
@@ -19,8 +20,8 @@ import { VISITOR, type SessionUser } from "./users";
  *
  * What it carries beyond their words: the app's version, the system, the server's kind, each AI provider this account
  * sees (kind, on or off, model, its last test with the error), each of its computers (Mac app version, online, the AI
- * programs found there, signed in or not, with plan), the last requests of this account the server answered with an error,
- * the failed library jobs and computer tasks it started, from the assistant the chat up to the report, and on a server
+ * programs found there, signed in or not, with plan), what failed for this account lately (lib/failures.ts: requests the
+ * server answered with an error, work that ended failed), the failed library jobs and computer tasks it started, from the assistant the chat up to the report, and on a server
  * the person owns (This Mac, or an admin's own server) the last sign-ins started here, the server's last errors with the
  * top of their stack, and every account's failed jobs: those are the whole server's, so a team member or a Cloud account
  * never gets them. No key, no name of a computer or provider, no file or folder name: a home folder is written ~, a path
@@ -77,23 +78,7 @@ export function diagnosticsOf(view: ProvidersView, username: string, owner: bool
     output: unhome(s.out).trim(),
   }));
   const errors = (owner ? recentErrors : []).map((e) => ({ minutesAgo: Math.round((now - e.at) / 60_000), where: e.where, message: e.message, ...(e.stack ? { stack: e.stack } : {}) }));
-  const failedRequests = (failures.get(username) ?? []).map(({ at, count, ...f }) => ({ minutesAgo: Math.round((now - at) / 60_000), ...f, ...(count > 1 ? { count } : {}) }));
-  return { providers, using: view.using, computers: devices, signIns, errors, failedRequests };
-}
-
-type Failure = { at: number; method: string; path: string; status: number; error?: string; count: number };
-const FAILURES = 20;
-const failures = new Map<string, Failure[]>();
-
-/** A request of this account the server answered with an error: the last 20 are kept for its next report, a repeat counted. */
-export function noteFailure(username: string, method: string, path: string, status: number, error?: string, now = Date.now()): void {
-  const list = failures.get(username) ?? [];
-  const f = { method, path: unhome(path).slice(0, 200), status, ...(error ? { error: scrub(error).slice(0, 300) } : {}) };
-  const last = list.at(-1);
-  if (last && last.method === f.method && last.path === f.path && last.status === f.status && last.error === f.error) return void Object.assign(last, { at: now, count: last.count + 1 });
-  list.push({ at: now, count: 1, ...f });
-  if (list.length > FAILURES) list.shift();
-  failures.set(username, list);
+  return { providers, using: view.using, computers: devices, signIns, errors, failedRequests: failuresOf(username, "request", now), failedWork: failuresOf(username, "work", now) };
 }
 
 /** Mounted after the account gate (boot.ts): each signed-in request answered 400 or more, with its error line. */
@@ -103,7 +88,7 @@ export const noteFailures: MiddlewareHandler<{ Variables: AuthVars }> = async (c
   const { status } = c.res;
   if (status < 400 || !u || u.role === VISITOR.role || /^\/api\/(bug-report|telemetry)/.test(c.req.path)) return;
   const type = c.res.headers.get("content-type") ?? "";
-  const note = (error?: string) => noteFailure(u.username, c.req.method, c.req.path, status, error);
+  const note = (error?: string) => noteFailure(u.username, "request", `${c.req.method} ${unhome(c.req.path)}`, { status, error });
   if (!/json|text\/plain/.test(type)) return note();
   // read off a copy, so the answer is not held up
   void c.res
@@ -171,6 +156,23 @@ export function reportOf(b: Body, details: object, ref: string) {
   };
 }
 
+/** The lists a report gives up first when it is too big for the site, the oldest of the biggest one at a time. */
+const TRIM = ["chat", "errors", "failedRequests", "failedWork", "failedJobs", "signIns"] as const;
+
+/** The report as JSON within MAX_BYTES: the details are cut (marked `trimmed`), never the person's words; null when those alone are too long. */
+export function fit(report: Record<string, unknown>, max = MAX_BYTES): string | null {
+  const r = { ...report };
+  let body = JSON.stringify(r);
+  while (Buffer.byteLength(body) > max) {
+    const k = TRIM.filter((k) => Array.isArray(r[k]) && (r[k] as unknown[]).length).sort((a, b) => JSON.stringify(r[b]).length - JSON.stringify(r[a]).length)[0];
+    if (!k) return null;
+    r[k] = (r[k] as unknown[]).slice(1);
+    r.trimmed = true;
+    body = JSON.stringify(r);
+  }
+  return body;
+}
+
 export const bugReportApp = new Hono<{ Variables: AuthVars }>();
 
 bugReportApp.get("/", async (c) => {
@@ -184,8 +186,8 @@ bugReportApp.post("/", async (c) => {
   if (!b || typeof b !== "object") return c.json({ error: "Send the report as JSON" }, 400);
   const report = reportOf(b, await detailsFor(c.get("user")), randomBytes(4).toString("hex"));
   if (typeof report === "string") return c.json({ error: report }, 400);
-  const body = JSON.stringify(report);
-  if (Buffer.byteLength(body) > MAX_BYTES) return c.json({ error: "The report is too long: shorten the text" }, 413);
+  const body = fit(report);
+  if (!body) return c.json({ error: "The report is too long: shorten the text" }, 413);
   if (b.send !== true) return c.json({ sent: false, report });
   const r = await fetch(`${pingUrl()}/report`, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(15_000) }).catch(() => null);
   if (!r) return c.json({ error: "Could not send the report. Check the internet connection and try again." }, 502);

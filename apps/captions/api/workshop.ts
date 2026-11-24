@@ -16,6 +16,7 @@ import { CONTEXT_CAPACITY_CHARS } from "../contracts/knowledge";
 import { limitResetAt } from "../contracts/plans";
 import { MAC_MISS, MacClaudeError, streamMacClaude, type MacErrorKind, type MacOpts, type MacSession, type MacUsage } from "./lib/mac-claude";
 import { env } from "./lib/env";
+import { noteFailure } from "./lib/failures";
 import { freeBytes, shortOfReserve } from "./lib/uploads";
 import type { SessionUser, UserRecord } from "./users";
 import { findOwnPost, findPostsForUser, libraryCountFor, libraryForWorkshop, mineAccountId, scopeOldAnalyzer, ownAccountContextFor, ownPostComments, ownPostsForWorkshop, storedOwnComments, loadGraphStats, packPostsForUser, postsForUser, sourceIndexForUser, transcribeForUser } from "./instagram";
@@ -1876,6 +1877,7 @@ async function runTurn(session: SessionMeta, user: SessionUser, ask: ChatMessage
     outcome = signal.aborted ? "Stopped" : "Failed";
     failed = signal.aborted ? TURN_STOPPED : errorMessage(e).slice(0, 300);
     await patchMessage(session.id, assistantId, { status: "error", stage: undefined, error: signal.aborted ? TURN_STOPPED : errorMessage(e).slice(0, 300), usage });
+    if (!signal.aborted) noteFailure(user.username, "work", "Content Workshop chat", { error: errorMessage(e) });
     console.warn(`[workshop] turn ${assistantId} failed: ${errorMessage(e)}`);
   } finally {
     chatting.delete(assistantId);
