@@ -110,7 +110,7 @@ const picks = new Map<string, Promise<{ faces: Face[]; blur: string[] }>>();
 let example: Promise<string> | null = null;
 const examplePicture = () => (example ??= call<{ picture: string }>(`${API}/example`).then((r) => r.picture));
 
-/** Faces and Which faces, the top rows of Settings → Face Blur → Blur (the page only links there). */
+/** Faces and Which faces, the top rows of Settings → Face Blur → Blur settings (the page only links there). */
 function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
   if (!settings) return null;
   return (
@@ -132,7 +132,7 @@ function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
       {settings.mode === "some" && (
         <Row
           title="Which faces"
-          description="AI picks the faces that match this text."
+          description="Faces that match this text are covered."
           control={<TextField label="Which faces" value={settings.who} maxLength={500} onCommit={(who) => save({ ...settings, who })} />}
         >
           <div className="flex flex-wrap gap-1.5">
@@ -165,10 +165,10 @@ function StyleSlider({ label, value, min = 0, max = 1, onMove, onCommit }: { lab
 }
 
 /**
- * The style: the look and the adjustments the Mac and iPhone draw with (strength, soft edge, size, Solid's colour), and the
+ * Blur settings: which faces, then the look and the adjustments the Mac and iPhone draw with (strength, soft edge, size, Solid's colour), and the
  * example covered in it, drawn by the Mac app as the sliders move.
  */
-function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
+function BlurCard({ settings, save }: ReturnType<typeof useSettings>) {
   // the style while a slider moves, before it is saved
   const [draft, setDraft] = useState<Style | null>(null);
   if (!settings) return null;
@@ -182,13 +182,16 @@ function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
   const lookTo = (look: Style["look"]) =>
     commit({ look, softness: look === "solid" ? 0 : settings.look === "solid" ? 0.45 : settings.softness });
   return (
-    <>
+    <Card>
       {/* the app's own two-pane classes (Settings → Providers): a plug-in folder can use only classes the app has */}
       <div className="lg:grid lg:grid-cols-[20rem_minmax(0,1fr)]">
         <div className="p-3 lg:border-r lg:border-border/50">
           <Preview settings={settings} style={style} />
         </div>
         <div className="min-w-0 [&>*+*]:border-t [&>*+*]:border-border/50">
+          <SettingsRows settings={settings} save={save} />
+          {/* who is covered above, how it looks below */}
+          <div aria-hidden className="h-1.5 bg-muted/40" />
           <Row
             title="Look"
             control={
@@ -228,7 +231,7 @@ function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
           <Row title="Size" description="How far the cover reaches past the face." control={<StyleSlider label="Size" value={style.size} min={0.8} max={2} onMove={(size) => move({ size })} onCommit={(size) => commit({ size })} />} />
         </div>
       </div>
-    </>
+    </Card>
   );
 }
 
@@ -331,7 +334,7 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
       {problem && <p><ProblemLine problem={problem} /></p>}
       {shown && !busy && (
         <p className="text-xs text-muted-foreground">
-          {shown.faces.length ? `${covered} of ${shown.faces.length} ${shown.faces.length === 1 ? "face" : "faces"} covered${some ? ", chosen by AI" : ""}` : "No face found"}
+          {shown.faces.length ? `${covered} of ${shown.faces.length} ${shown.faces.length === 1 ? "face" : "faces"} covered` : "No face found"}
         </p>
       )}
       {shown && shown.faces.length > 0 && (
@@ -355,39 +358,67 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
   );
 }
 
-/**
- * New Media Library files marked Blur faces are covered on the Mac that has them: nothing shows while that works. What is
- * missing ("Needs an AI provider"), a pause at the AI provider's usage limit, and the files that failed, each with Retry.
- */
-function AutoRows({ settings }: ReturnType<typeof useSettings>) {
+/** plugin.ts GET /auto: what stops new Media Library files (Needs…, a pause at the usage limit) and the files that failed. */
+function useAuto() {
   const [auto, setAuto] = useState<Auto | null>(null);
   const load = () => void call<Auto>(`${API}/auto`).then(setAuto, () => setAuto(null));
   useEffect(load, []);
-  if (!settings || !auto || (auto.can && !auto.pausedUntil && !auto.failed.length)) return null;
+  return { auto, load };
+}
+
+/** What stops new Media Library files from being covered, as the first row of Output; nothing while it works. */
+function AutoStatus({ auto }: { auto: Auto | null }) {
+  if (!auto) return null;
+  if (!auto.can) return <Row title="New Media Library files" description={auto.why} />;
+  if (!auto.pausedUntil) return null;
+  return <Row title="New Media Library files" description={`Paused until ${new Date(auto.pausedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`} />;
+}
+
+const FAILED_SHOWN = 5;
+
+/** The files the Mac could not cover, five at a time, each with Retry. */
+function FailedFiles({ auto, load }: ReturnType<typeof useAuto>) {
+  const [all, setAll] = useState(false);
+  const failed = auto?.failed ?? [];
+  if (!failed.length) return null;
   const retry = (versionId: string) => call(`${API}/auto/retry`, "POST", { versionId }).then(load, (e: Error) => saveFailed(e.message));
-  const until = auto.pausedUntil && new Date(auto.pausedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const more = failed.length - FAILED_SHOWN;
   return (
-    <Card>
-      {!auto.can && <Row title="New Media Library files" description={auto.why} />}
-      {auto.can && until && <Row title="New Media Library files" description={`Paused until ${until}`} />}
-      {auto.failed.map((f) => (
-        <Row
-          key={f.versionId}
-          title={f.title}
-          description={f.error}
-          control={
-            <Button size="sm" variant="outline" onClick={() => void retry(f.versionId)}>
-              Retry
-            </Button>
-          }
-        />
-      ))}
-    </Card>
+    <Section title="Failed files">
+      <Card>
+        {(all ? failed : failed.slice(0, FAILED_SHOWN)).map((f) => (
+          <Row
+            key={f.versionId}
+            title={f.title}
+            description={f.error}
+            control={
+              <Button size="sm" variant="outline" onClick={() => void retry(f.versionId)}>
+                Retry
+              </Button>
+            }
+          />
+        ))}
+        {more > 0 && (
+          <button type="button" className="w-full px-4 py-2.5 text-left text-sm text-muted-foreground hover:text-foreground" onClick={() => setAll(!all)}>
+            {all ? "Show fewer" : `Show ${more} more`}
+          </button>
+        )}
+      </Card>
+    </Section>
   );
 }
 
+/** About how many GB an hour of video takes at `mbps` megabits a second. */
+const gbPerHour = (mbps: number) => (mbps * 9) / 20;
+
+const WHERE: Record<Settings["location"], string> = {
+  folder: "Imports/Blurred in the Media Library's folder",
+  beside: "The same folder as each original",
+  custom: "No folder chosen",
+};
+
 /** How the automatic blurred copies of Media Library files are written, and where on the Mac (plugin.ts outOf). */
-function CopiesCard({ settings, save }: ReturnType<typeof useSettings>) {
+function OutputCard({ settings, save, auto }: ReturnType<typeof useSettings> & { auto: Auto | null }) {
   if (!settings) return null;
   const choose = async () => {
     const folder = await chooseFolderOnMac();
@@ -395,6 +426,7 @@ function CopiesCard({ settings, save }: ReturnType<typeof useSettings>) {
   };
   return (
     <Card>
+      <AutoStatus auto={auto} />
       <Row
         title="Resolution"
         control={
@@ -412,6 +444,7 @@ function CopiesCard({ settings, save }: ReturnType<typeof useSettings>) {
       />
       <Row
         title="Bitrate"
+        description={`About ${gbPerHour(settings.bitrate)} GB per hour of video.`}
         control={
           <SettingsSelect
             label="Bitrate"
@@ -423,50 +456,43 @@ function CopiesCard({ settings, save }: ReturnType<typeof useSettings>) {
       />
       <Row
         title="Location"
+        description={settings.location === "custom" && settings.folder ? settings.folder : WHERE[settings.location]}
         control={
-          <SettingsSelect
-            label="Location"
-            value={settings.location}
-            onValueChange={(v) => void save({ ...settings, location: v as Settings["location"] })}
-            options={[
-              { value: "folder", label: "Blurred folder" },
-              { value: "beside", label: "Beside the original" },
-              { value: "custom", label: "Custom folder" },
-            ]}
-          />
+          <div className="flex items-center gap-2">
+            {settings.location === "custom" && (
+              <Button size="sm" variant="outline" onClick={() => void choose()}>
+                {settings.folder ? "Change" : "Choose folder"}
+              </Button>
+            )}
+            <SettingsSelect
+              label="Location"
+              value={settings.location}
+              onValueChange={(v) => void save({ ...settings, location: v as Settings["location"] })}
+              options={[
+                { value: "folder", label: "Imports folder" },
+                { value: "beside", label: "Beside the original" },
+                { value: "custom", label: "Custom folder" },
+              ]}
+            />
+          </div>
         }
       />
-      {settings.location === "custom" && (
-        <Row
-          title="Folder"
-          control={
-            <div className="flex items-center gap-2">
-              <TextField label="Folder" value={settings.folder} maxLength={1000} onCommit={(folder) => save({ ...settings, folder: folder.trim() })} />
-              <Button size="sm" variant="outline" onClick={() => void choose()}>
-                Choose folder
-              </Button>
-            </div>
-          }
-        />
-      )}
     </Card>
   );
 }
 
 function FaceBlurSettings() {
   const s = useSettings();
+  const a = useAuto();
   return (
     <div className="space-y-4">
-      <Section title="Blur">
-        <Card>
-          <SettingsRows {...s} />
-          <StyleCard {...s} />
-        </Card>
+      <Section title="Blur settings">
+        <BlurCard {...s} />
       </Section>
       <Section title="Output">
-        <CopiesCard {...s} />
-        <AutoRows {...s} />
+        <OutputCard {...s} auto={a.auto} />
       </Section>
+      <FailedFiles {...a} />
     </div>
   );
 }
