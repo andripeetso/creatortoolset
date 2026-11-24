@@ -237,7 +237,7 @@ and answers:
 - Where things live (the app's one system; put new work in the matching place):
   - **Home** = the tools you use (its groups are `TOOL_GROUPS` in `contracts/tools.ts`; `src/lib/tools.ts` is the
     top bar's tool menu and the plug-in tiles). **Settings** = how the app is set up, grouped by whose setting it
-    is: You (General, Appearance, Tools, Voice, Computers, Servers, Headless access: the same in every workspace), AI
+    is: You (General, Appearance, Tools, Voice, Dictation, Computers, Servers, Headless access: the same in every workspace), AI
     (Providers, Usage), Workspace (Details, Social accounts, Folders, Media Library, Scheduled tasks, Memory: what
     belongs to one workspace), Server (Team, Storage, API keys: who is on this server and what it keeps; an admin
     sees everyone's, a member their own), Tool settings. There is no Admin page: the server's own accounts are in

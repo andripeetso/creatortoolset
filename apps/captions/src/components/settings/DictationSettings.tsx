@@ -31,7 +31,7 @@ const KEYS: Record<DictationAction, { title: string; does?: string }> = {
   talk: { title: "Talk", does: "Starts dictation on a tap, or while it is held." },
   cancel: { title: "Cancel", does: "Stops dictation without typing the words." },
   history: { title: "History", does: "Opens the recent recordings." },
-  file: { title: "File transcription", does: "Opens file transcription." },
+  file: { title: "File transcription" },
 };
 /** What each of the Mac's models is good at, in a few words; a model this page doesn't know shows its size alone. */
 const GOOD_AT: Record<string, string> = {
@@ -104,6 +104,7 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
           {d.on && (
             <>
               <Row title="Setup" control={open("guide", "Open setup")} />
+              <Row id="dictation-file" title="File transcription" description="Transcribes an audio or video file on this Mac." control={open("file", "Open file transcription")} />
               <Row
                 id="dictation-sounds"
                 title="Sound cues"
@@ -138,10 +139,9 @@ export function Dictation({ mac, serverNeeds }: { mac: ThisMacState | null; serv
                   />
                 }
               />
-              <Row id="dictation-file" title="File transcription" description="Transcribes an audio or video file on this Mac." control={open("file", "Open file transcription")} />
             </Card>
           </Section>
-          {(d.engine || (d.engine !== "server" && d.server !== undefined)) && (
+          {(d.engine || d.server !== undefined) && (
             <Section title="Transcription">
               <Card>
                 {d.engine && (
