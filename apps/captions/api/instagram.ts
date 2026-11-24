@@ -100,7 +100,7 @@ import { accountOwnsPost, nextMineFlags, postInProject } from "./lib/instagram/m
 import { accountProjects, inProject, resolveProjectId, unlinkAccount } from "./lib/workshop/workspace";
 import { workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { instagramLogin } from "./lib/connectors/store";
-import { catalogNewestAt, insightIdsToRead, mergeCatalog, mergeCatalogCounts, parseCatalogCount } from "./lib/instagram/catalog";
+import { catalogNewestAt, insightIdsToRead, mergeCatalog, parseCatalogCount } from "./lib/instagram/catalog";
 import { publicGridReader } from "./lib/connectors/provider";
 import { IG_ROOT, InstagramError, igCredsDir, igUserFile } from "./lib/instagram/base";
 import type {
@@ -2795,8 +2795,10 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
       if (job === "profile") {
         await refreshProfile(meta, url, mode, user.username, signal);
       } else if (job === "catalog" || job === "stats") {
-        await refreshProfile(meta, url, mode, user.username, signal);
         const existing = await loadCatalog(meta.id);
+        // Apify bills each read: an Update's stats read (below) lists the new posts too, so its catalog read is skipped
+        if (job === "catalog" && mode !== "graph" && !opts.more && existing.length && jobs.includes("stats")) continue;
+        await refreshProfile(meta, url, mode, user.username, signal);
         if (job === "stats") {
           if (existing.length > 0) {
             const page = await fetchAccountFeed(
@@ -2809,7 +2811,7 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
             );
             const library = (await allMetas()).filter((m) => listedFor(m, user) && accountOwnsPost(meta, m));
             let merged = mergeLibraryIntoCatalog(
-              mode === "graph" ? mergeCatalog(existing, page.items) : mergeCatalogCounts(existing, page.items),
+              mergeCatalog(existing, page.items),
               library,
             );
             if (mode === "graph") {
@@ -2828,12 +2830,10 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
             }
           }
         } else {
-          const pageSize =
-            meta.mine || mode === "graph" ? MINE_CATALOG_CAP : parseCatalogCount(opts.count);
-          // Apify reads at most the newest 500 and says "more" whenever it filled them, so waiting for "no more" made
-          // every Update of an own account read those 500 again (two runs, paid) and add nothing: it reads the newest 100
+          // only the Meta sign-in (free) lists everything; a paid read lists the number the person picked
+          const pageSize = mode === "graph" ? MINE_CATALOG_CAP : parseCatalogCount(opts.count);
           const watermark =
-            meta.catalogHasMore === false || mode === "apify"
+            meta.catalogHasMore === false
               ? (meta.catalogNewestAt ?? catalogNewestAt(existing))
               : undefined;
           const incremental = Boolean(meta.mine && !opts.more && existing.length && watermark);

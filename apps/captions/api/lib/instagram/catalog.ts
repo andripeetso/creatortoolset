@@ -81,27 +81,3 @@ export function mergeCatalog(prev: CatalogItem[], next: CatalogItem[]): CatalogI
   for (const row of next) map.set(row.shortcode, keepMarks(map.get(row.shortcode), row));
   return [...map.values()].sort((a, b) => b.takenAt - a.takenAt);
 }
-
-/** Refresh counts/thumbs on known rows only — stats must not grow the catalog. */
-export function mergeCatalogCounts(prev: CatalogItem[], next: CatalogItem[]): CatalogItem[] {
-  const fresh = new Map(next.map((row) => [row.shortcode, row]));
-  return prev.map((old) => {
-    const row = fresh.get(old.shortcode);
-    if (!row) return old;
-    return keepMarks(old, {
-      ...old,
-      kind: row.kind || old.kind,
-      takenAt: row.takenAt || old.takenAt,
-      thumbnailUrl: row.thumbnailUrl || old.thumbnailUrl,
-      captionPreview: row.captionPreview || old.captionPreview,
-      caption: row.caption ?? old.caption,
-      graphId: row.graphId ?? old.graphId,
-      graph: row.graph ?? old.graph,
-      visibility: row.visibility ?? old.visibility,
-      visibilityBasis: row.visibility ? row.visibilityBasis : old.visibilityBasis,
-      isSharedToFeed: row.isSharedToFeed ?? old.isSharedToFeed,
-      insights: carryInsights(old.insights, row.insights),
-      counts: row.counts,
-    });
-  });
-}

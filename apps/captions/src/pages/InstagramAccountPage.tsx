@@ -246,7 +246,8 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
     setError(null);
     try {
       const next = await runAccountJobs(account.id, types, {
-        ...(account.mine ? {} : { count: clampCatalogCount(count) }),
+        // a paid read lists the number picked; the Meta sign-in (labelled posts) lists everything
+        ...(split ? {} : { count: clampCatalogCount(count) }),
         more: extra.more,
       });
       setAccount((cur) =>
@@ -708,10 +709,10 @@ export default function InstagramAccountPage({ accountId: fixedId, onOpenPost, o
                       className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-[11px] text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
                     >
                       {busy === "more" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                      Load {account.mine ? "more" : clampCatalogCount(count) + " more"}
+                      Load {split ? "more" : clampCatalogCount(count) + " more"}
                     </button>
-                    {/* how many posts Load more (and Update) lists for someone else's account */}
-                    {!account.mine && (
+                    {/* how many posts Load more lists, for an account read without the Meta sign-in */}
+                    {!split && (
                       <>
                         <input
                           type="number"

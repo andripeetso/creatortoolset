@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeCatalog, mergeCatalogCounts, parseCatalogCount, catalogNewestAt, catalogCrossedSince, insightIdsToRead, INSIGHT_REREAD_MS } from "./catalog";
+import { mergeCatalog, parseCatalogCount, catalogNewestAt, catalogCrossedSince, insightIdsToRead, INSIGHT_REREAD_MS } from "./catalog";
 import type { CatalogItem } from "./types";
 
 const row = (shortcode: string, extra: Partial<CatalogItem> = {}): CatalogItem => ({
@@ -57,12 +57,8 @@ describe("mergeCatalog", () => {
   });
 });
 
-describe("mergeCatalogCounts", () => {
-  it("stays empty when stats has no catalog rows to refresh", () => {
-    expect(mergeCatalogCounts([], [row("brandnew")])).toEqual([]);
-  });
-
-  it("never lengthens the list and keeps marks", () => {
+describe("mergeCatalog marks", () => {
+  it("an Update's read refreshes the listed posts, adds the new ones and keeps marks", () => {
     const prev = [
       row("keep", { ideaStatus: "done", rank: 3, counts: { plays: 10 } }),
       row("stale", { counts: { plays: 4 } }),
@@ -71,15 +67,16 @@ describe("mergeCatalogCounts", () => {
       row("keep", { counts: { plays: 22, likes: 1 } }),
       row("brandnew", { counts: { plays: 999 } }),
     ];
-    const merged = mergeCatalogCounts(prev, next);
-    expect(merged.map((r) => r.shortcode)).toEqual(["keep", "stale"]);
-    expect(merged[0]).toMatchObject({
+    const merged = mergeCatalog(prev, next);
+    const by = (code: string) => merged.find((r) => r.shortcode === code);
+    expect(merged.map((r) => r.shortcode).sort()).toEqual(["brandnew", "keep", "stale"]);
+    expect(by("keep")).toMatchObject({
       ideaStatus: "done",
       rank: 3,
       counts: { plays: 22, likes: 1 },
       prevCounts: { plays: 10 },
     });
-    expect(merged[1]?.counts.plays).toBe(4);
+    expect(by("stale")?.counts.plays).toBe(4);
   });
 
   it("keeps the Graph block and visibility basis when a newer row lacks them", () => {
@@ -103,9 +100,6 @@ describe("mergeCatalogCounts", () => {
       graph: { mediaUrl: "https://cdn/new.mp4", seenAt: 9, insightsAt: 5 },
       insights: { views: 3 },
     });
-    expect(mergeCatalogCounts(prev, next)[0]).toMatchObject({
-      graph: { mediaUrl: "https://cdn/new.mp4", seenAt: 9, insightsAt: 5 },
-    });
   });
 
   it("moves the visibility basis together with the visibility", () => {
@@ -115,10 +109,6 @@ describe("mergeCatalogCounts", () => {
       visibilityBasis: "not_shared_to_feed",
     });
     expect(mergeCatalog(prev, [row("aaa", { visibility: "public" })])[0]?.visibilityBasis).toBeUndefined();
-    expect(mergeCatalogCounts(prev, [row("aaa", { visibility: "trial", visibilityBasis: "not_shared_to_feed" })])[0]).toMatchObject({
-      visibility: "trial",
-      visibilityBasis: "not_shared_to_feed",
-    });
   });
 
   it("keeps Graph visibility and insights when a newer row has them", () => {
@@ -159,13 +149,6 @@ describe("reel insights across pulls", () => {
       }),
     ];
     expect(mergeCatalog(prev, listing)[0]?.insights).toEqual({
-      views: 12,
-      reach: 9,
-      avgWatchMs: 4200,
-      follows: 2,
-      profileVisits: 5,
-    });
-    expect(mergeCatalogCounts(prev, listing)[0]?.insights).toEqual({
       views: 12,
       reach: 9,
       avgWatchMs: 4200,
