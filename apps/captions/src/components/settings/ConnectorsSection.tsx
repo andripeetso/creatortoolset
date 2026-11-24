@@ -12,7 +12,9 @@ import {
   LOGINS,
   PLATFORMS,
   addHandle,
+  chooseAccount,
   disconnectAccount,
+  dropChoice,
   getConnectors,
   linkAccount,
   loginHref,
@@ -185,6 +187,10 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
     setAdding(null);
     toast(`${fresh.map((a) => at(a.handle)).join(", ")} connected`);
   }, [view]);
+  // a sign-in that returned several accounts asks which one: the Add dialog gives way to that choice
+  useEffect(() => {
+    if (view?.choose) setAdding(null);
+  }, [view?.choose]);
   // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
   useEffect(() => {
     const onFocus = () => void reload();
@@ -208,7 +214,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
       toast(connected === "1" ? "Account connected" : `${connected} accounts connected`);
       watch();
     }
-    setParams((p) => (p.delete("connected"), p.delete("error"), p), { replace: true });
+    setParams((p) => (p.delete("connected"), p.delete("error"), p.delete("pick"), p), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // `?add=<platform>` starts that platform's sign-in once, where its row has Add, then the parameter goes. A link is not
@@ -262,7 +268,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
     const login = loginOf(platform);
     if (!login || !(await offered(login, view))) return;
     waiting.current = newestSignIn(view.accounts);
-    window.location.assign(loginHref(login, { back, projectId: projectId() }));
+    window.location.assign(loginHref(login, { back, projectId: projectId(), platform }));
   };
 
   // An account by its handle, read from its public page on the person's Apify key. Instagram's is the Analyzer's account
@@ -370,6 +376,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
         onAdd={addByHandle}
         onKeyChanged={() => void reload()}
       />
+      <ChooseAccountDialog choose={view.choose} onDone={() => void reload()} />
     </Card>
   );
   if (pinned) return title ? <Section title={title}>{card}</Section> : card;
@@ -437,6 +444,49 @@ function AccountRow({ row, a, back, tag, items, signIn }: { row: PlatformRow; a:
  * Add one platform's account: its sign-in where this server has one (recommended: the account's own numbers), or its
  * handle, read from the public page on the person's Apify key (public posts only, the row then says Not signed in).
  */
+/** After a sign-in that returned several new accounts: each one with its own Add; closing adds none. */
+function ChooseAccountDialog({ choose, onDone }: { choose: ConnectorsView["choose"]; onDone: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const pick = async (key: string) => {
+    setBusy(key);
+    try {
+      await chooseAccount(key);
+      onDone();
+    } catch (e) {
+      saveFailed(msg(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <SettingsDialog open={!!choose} onOpenChange={(o) => !o && void dropChoice().finally(onDone)}>
+      <SettingsDialogContent aria-describedby={undefined} className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{choose?.platform === "facebook" ? "Choose a Page" : "Choose an account"}</DialogTitle>
+        </DialogHeader>
+        <div className="divide-y rounded-md border">
+          {choose?.options.map((o) => {
+            const key = `${o.platform}:${o.platformId}`;
+            return (
+              <ListRow
+                key={key}
+                icon={o.avatar ? <img src={o.avatar} alt="" className="size-6 rounded-full" /> : <PlatformLogo platform={o.platform} className="size-4" />}
+                title={o.name || at(o.handle)}
+                subtitle={summaryOf(o.handle, o.followers)}
+                actions={
+                  <Button size="sm" variant="outline" aria-label={`Add ${o.name || o.handle}`} disabled={!!busy} onClick={() => void pick(key)}>
+                    {busy === key ? "Adding" : "Add"}
+                  </Button>
+                }
+              />
+            );
+          })}
+        </div>
+      </SettingsDialogContent>
+    </SettingsDialog>
+  );
+}
+
 function AddAccountDialog({ platform, signIn, apify, busy, onClose, onSignIn, onAdd, onKeyChanged }: {
   platform: SocialPlatform | null;
   signIn: boolean;

@@ -26,7 +26,14 @@ export const connectorsApp = new Hono<{ Variables: AuthVars }>();
 
 const KINDS: LoginKind[] = ["meta", "google", "tiktok"];
 const STATE_MS = 15 * 60_000;
-const states = new Map<string, { user: string; kind: LoginKind; issuer: Issuer; projectId?: string; verifier?: string; at: number; back: string }>();
+const states = new Map<string, { user: string; kind: LoginKind; issuer: Issuer; projectId?: string; verifier?: string; at: number; back: string; want?: SocialPlatform }>();
+type Fresh = Parameters<typeof saveAccounts>[1][number];
+/** A sign-in that came back with more than one new account: the person picks one in Settings (tokens stay here, 15 minutes). */
+const picks = new Map<string, { at: number; platform?: SocialPlatform; options: Fresh[] }>();
+const pickOf = (user: string) => {
+  const p = picks.get(user);
+  return p && Date.now() - p.at < STATE_MS ? p : undefined;
+};
 
 const nobody = (u: SessionUser) => u.role === "visitor";
 
@@ -50,6 +57,7 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
     apify: { configured: apify.configured, valid: apify.valid },
     youtubeKey: !!keyFor(user, "YOUTUBE_API_KEY").key,
     accounts: readConnectors(user.username).accounts.map(publicAccount),
+    ...(pickOf(user.username) ? { choose: { platform: pickOf(user.username)!.platform, options: pickOf(user.username)!.options.map(({ platform, platformId, handle, name, avatar, stats }) => ({ platform, platformId, handle, name, avatar, followers: stats?.followers })) } } : {}),
     extras: { sessions: sessionSources() },
   };
 }
@@ -98,7 +106,9 @@ connectorsApp.get("/login/:kind", async (c) => {
   // a new account goes to the workspace the sign-in was started in, when that is one of this person's
   const asked = c.req.query("projectId");
   const projectId = asked && (await getWorkspace(user)).projects.some((p) => p.id === asked) ? asked : undefined;
-  states.set(state, { user: user.username, kind, issuer, projectId, verifier, at: Date.now(), back });
+  // the row's Add that started it: only that platform's accounts are added (a Meta sign-in returns Pages and Instagram both)
+  const want = PLATFORMS.find((p) => p.id === c.req.query("platform") && p.login === kind)?.id;
+  states.set(state, { user: user.username, kind, issuer, projectId, verifier, at: Date.now(), back, want });
   return c.redirect(url);
 });
 
@@ -121,6 +131,7 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
   const back = (q: string) => {
     if (here) return c.redirect(`${to}${to.includes("?") ? "&" : "?"}${q}`);
     const p = new URLSearchParams(q);
+    if (p.get("pick")) return c.html(plainPage("Choose an account", "Choose which account to add in Creator Toolset. This tab can be closed."));
     return p.get("connected") ? c.html(plainPage("Connected", "The account is in Settings → Social accounts. This tab can be closed.")) : c.html(plainPage("Not connected", escHtml(p.get("error") ?? "")), 400);
   };
   if (!st || st.kind !== kind || Date.now() - st.at > STATE_MS) return back(`error=${encodeURIComponent("The sign-in expired")}`);
@@ -133,15 +144,38 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
     const got = st.issuer === "service" ? await accountsFromGrant(kind, await serviceRedeem(c.req.query("ticket") ?? "", st.verifier!)) : await finishLogin(kind, c.req.query("code") ?? "", redirectFor(c, kind), st.verifier);
     // connectedAt is this sign-in's moment, also for an account that was connected before: the page that started it
     // (often in another window: the Mac app sends the sign-in to the computer's browser) knows by it that it finished
-    const saved = saveAccounts(user, got.map((a) => ({ ...a, connectedAt: Date.now(), issuer: st.issuer, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) })));
+    const fresh = got.map((a) => ({ ...a, connectedAt: Date.now(), issuer: st.issuer, loginStatus: "connected" as const, pullError: undefined, ...(st.projectId ? { projectId: st.projectId } : {}) }));
+    // accounts already added get the new sign-in; of the rest, only the platform the row's Add asked for, and one at a time
+    const have = new Set(readConnectors(user).accounts.map((a) => a.key));
+    const known = fresh.filter((a) => have.has(`${a.platform}:${a.platformId}`));
+    const offered = fresh.filter((a) => !have.has(`${a.platform}:${a.platformId}`) && (!st.want || a.platform === st.want));
+    if (st.want && !known.some((a) => a.platform === st.want) && !offered.length) throw new Error(`${PLATFORMS.find((p) => p.id === st.want)!.label} account not found in this sign-in`);
+    // shortcut: a sign-in not started from a row's Add (setup's Sign in) still adds every account it returns
+    const ask = !!st.want && offered.length > 1;
+    const saved = saveAccounts(user, ask ? known : [...known, ...offered]);
+    if (ask) picks.set(user, { at: Date.now(), platform: st.want, options: offered });
     // told to the person's open windows now, since this way back is no write of theirs (no session, a GET)
     announce(user, "connectors");
     for (const a of saved) void pullOne(user, a.key);
-    return back(`connected=${saved.length}`);
+    return back(ask ? "pick=1" : `connected=${saved.length}`);
   } catch (e) {
     return back(`error=${encodeURIComponent(e instanceof Error ? e.message : String(e))}`);
   }
 });
+
+/** The account picked from a sign-in that returned several; DELETE drops the choice. */
+connectorsApp.post("/choose", async (c) => {
+  const user = c.get("user").username;
+  const body = (await c.req.json().catch(() => null)) as { key?: unknown } | null;
+  const a = pickOf(user)?.options.find((o) => `${o.platform}:${o.platformId}` === body?.key);
+  if (!a) return c.json({ error: "Account not found" }, 404);
+  picks.delete(user);
+  const [saved] = saveAccounts(user, [a]);
+  announce(user, "connectors");
+  void pullOne(user, saved!.key);
+  return c.json(publicAccount(saved!), 201);
+});
+connectorsApp.delete("/choose", (c) => (picks.delete(c.get("user").username), c.json({ ok: true })));
 
 /** Add an account by handle, read on the user's own Apify token (public numbers). Instagram handles go to the Analyzer. */
 connectorsApp.post("/handles", async (c) => {

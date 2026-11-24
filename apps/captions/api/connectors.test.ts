@@ -57,6 +57,31 @@ describe("connectors", () => {
     expect(JSON.stringify(view)).not.toContain("page-token");
   });
 
+  it("Add Facebook adds the one Page picked, a business portfolio's included; the Instagram it brings and the Pages already added are not offered", async () => {
+    const to = new URL((await app.request("/api/connectors/login/meta?platform=facebook")).headers.get("location")!);
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes("/oauth/access_token")) return Response.json({ access_token: "long" });
+      if (u.includes("/me/accounts")) return Response.json({ data: [{ id: "p1", name: "Tiny Acrobatics", access_token: "t1" }, { id: "p2", name: "Side page", access_token: "t2", instagram_business_account: { id: "ig2", username: "side" } }] });
+      if (u.includes("/me/businesses")) return Response.json({ data: [{ owned_pages: { data: [{ id: "p3", name: "Tiny Acrobatics Studio", access_token: "t3" }, { id: "p4", name: "No access" }] } }] });
+      return Response.json({ data: [] });
+    });
+    const done = await app.request(`/api/connectors/callback/meta?state=${to.searchParams.get("state")}&code=abc`);
+    expect(done.headers.get("location")).toBe("/settings/connectors?pick=1");
+    const view = (await (await app.request("/api/connectors")).json()) as { choose?: { platform: string; options: Array<{ platformId: string }> } };
+    expect(view.choose?.platform).toBe("facebook");
+    expect(view.choose?.options.map((o) => o.platformId)).toEqual(["p2", "p3"]);
+    expect(JSON.stringify(view)).not.toContain("t3");
+    const r = await app.request("/api/connectors/choose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "facebook:p3" }) });
+    expect(r.status).toBe(201);
+    const keys = readConnectors("ana").accounts.map((a) => a.key);
+    expect(keys).toContain("facebook:p3");
+    expect(keys).not.toContain("facebook:p2");
+    expect(keys).not.toContain("instagram:ig2");
+    expect(readConnectors("ana").accounts.find((a) => a.key === "facebook:p1")?.token).toBe("t1");
+    expect(((await (await app.request("/api/connectors")).json()) as { choose?: unknown }).choose).toBeUndefined();
+  });
+
   it("a handle is read on the user's own Apify and its posts reach its project's Workshop folder", async () => {
     expect(apifyPost("tiktok", { id: "7", webVideoUrl: "https://t/7", createTimeISO: "2026-11-01T00:00:00Z", text: "crawl", playCount: 1200, diggCount: 80 })).toMatchObject({ views: 1200, likes: 80 });
     const r = await app.request("/api/connectors/handles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: "tiktok", handle: "https://www.tiktok.com/@TinyAcrobatics", projectId: "proj-1" }) });

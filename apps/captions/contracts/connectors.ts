@@ -127,6 +127,8 @@ export interface ConnectorsView {
   /** A YouTube Data API key serves this person: public channels are read through YouTube's own API, not Apify. */
   youtubeKey?: boolean;
   accounts: ConnectedAccount[];
+  /** A sign-in returned several new accounts (a Meta login lists every Page it manages): the person picks one (POST /choose). */
+  choose?: { platform?: SocialPlatform; options: Array<{ platform: SocialPlatform; platformId: string; handle: string; name?: string; avatar?: string; followers?: number }> };
   /** Session sources registered on this server. Empty in the public build, so the section stays hidden. */
   extras: { sessions: SessionSource[] };
 }

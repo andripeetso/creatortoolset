@@ -142,8 +142,13 @@ export async function accountsFromGrant(kind: LoginKind, t: Grant): Promise<NewA
     const long = t;
     const fields = "id,name,username,access_token,followers_count,picture{url},instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}";
     const pages = await getJson(`${META}/me/accounts?${new URLSearchParams({ fields, limit: "100", access_token: str(long.access_token) })}`);
+    // a Page a person reaches through a business portfolio (not a role on the Page itself) is missing from /me/accounts
+    const biz = await getJson(`${META}/me/businesses?${new URLSearchParams({ fields: `owned_pages.limit(100){${fields}},client_pages.limit(100){${fields}}`, limit: "50", access_token: str(long.access_token) })}`).catch(() => ({}));
+    const listed = (x: unknown) => (isRec(x) && Array.isArray(x.data) ? x.data.filter(isRec) : []);
+    const all = [...listed(pages), ...listed(biz).flatMap((b) => [...listed(b.owned_pages), ...listed(b.client_pages)])];
     const out: NewAccount[] = [];
-    for (const p of Array.isArray(pages.data) ? pages.data.filter(isRec) : []) {
+    const seen = new Set<string>();
+    for (const p of all.filter((p) => str(p.access_token) && !seen.has(str(p.id)) && seen.add(str(p.id)))) {
       const token = str(p.access_token); // a Page token from a long-lived user token does not expire
       const pic = isRec(p.picture) && isRec(p.picture.data) ? str(p.picture.data.url) : undefined;
       out.push({ platform: "facebook", platformId: str(p.id), handle: str(p.username) || str(p.name), name: str(p.name), avatar: pic, via: "login", token, stats: { followers: num(p.followers_count) } });
