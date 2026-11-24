@@ -509,7 +509,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   // ponytail: search by meaning is queued after a transcript, so a clip's share steps back by one step of its six then
   const through = db
     .prepare(
-      `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed')) AS fin,
+      `SELECT SUM(CASE WHEN unread THEN 0 ELSE CAST(fin AS REAL) / n END) AS s, COUNT(*) AS clips FROM (SELECT SUM(state IN ('done', 'failed', 'stopped')) AS fin,
          COUNT(*) AS n, MAX(kind = 'probe' AND state IN ('queued', 'running')) AS unread FROM jobs j
        WHERE library_id = ? AND version_id IN (SELECT value FROM json_each(?)) AND ${NOT_TRASHED} AND ((state != 'needs_key' AND NOT ${HELD} AND NOT ${AWAY}) OR ${QL}) GROUP BY version_id)`,
     )
