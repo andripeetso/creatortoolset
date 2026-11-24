@@ -56,22 +56,3 @@ export function useFaceBlurAuto(on: boolean): { auto: FaceBlurAuto | null; retry
   };
   return { auto, retry };
 }
-
-const KEEP_KEY = "library-keep-as-filmed";
-/** The libraries whose Blur faces checkbox was last left unticked (R11): this browser's own memory, never required. */
-export function keptAsFilmed(): string[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(KEEP_KEY) ?? "[]") as unknown;
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-export function rememberKeepAsFilmed(libraryId: string, keep: boolean): void {
-  try {
-    const rest = keptAsFilmed().filter((id) => id !== libraryId);
-    localStorage.setItem(KEEP_KEY, JSON.stringify(keep ? [...rest, libraryId] : rest));
-  } catch {
-    // no storage here: the choice lasts while the page is open
-  }
-}

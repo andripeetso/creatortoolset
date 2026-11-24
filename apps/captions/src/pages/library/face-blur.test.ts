@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import type { Me } from "@/lib/auth";
-import { blurState, faceBlurOn, keptAsFilmed, rememberKeepAsFilmed } from "./face-blur";
+import { blurState, faceBlurOn } from "./face-blur";
 
 const me = (role: string, off: string[] = []) => ({ role, off }) as unknown as Me;
 const installed = [{ id: "blur-faces" }];
@@ -26,15 +26,5 @@ describe("blurState", () => {
     expect(blurState("v2", true, auto)).toEqual({ kind: "running" });
     expect(blurState("v3", true, auto)).toEqual({ kind: "failed" });
     expect(blurState("v3", true, null)).toEqual({ kind: "queued" });
-  });
-});
-
-describe("keep as filmed", () => {
-  it("is remembered per library", () => {
-    localStorage.clear();
-    rememberKeepAsFilmed("a", true);
-    rememberKeepAsFilmed("b", true);
-    rememberKeepAsFilmed("a", false);
-    expect(keptAsFilmed()).toEqual(["b"]);
   });
 });

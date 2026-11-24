@@ -16,7 +16,6 @@ import { LibrarySetup } from "./library/Setup";
 import { LibraryProgressBar } from "@/components/LibraryProcessing";
 import { LibraryHealthButton, LibraryStatusDialog } from "./library/Health";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/context-menu";
 import { ProjectSwitcher } from "@/components/workspace/ProjectSwitcher";
@@ -49,7 +48,8 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacBridge } from "@/lib/thisMac";
 import { addRefused, scanWatchNow } from "@/lib/library";
 import { canChange, useAuth, useMe } from "@/lib/auth";
-import { faceBlurOn, keptAsFilmed, rememberKeepAsFilmed } from "./library/face-blur";
+import { faceBlurOn } from "./library/face-blur";
+import { ImportChoices, type ImportAsk, type ImportChoice } from "./library/ImportChoices";
 import { useWorkspace } from "@/lib/workspace";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
@@ -161,9 +161,8 @@ export default function LibraryPage() {
   const [sourceList, setSources] = useState<{ id: string; label: string }[] | null>(null); // null: not read yet
   const sources = sourceList ?? [];
   const picker = useRef<HTMLInputElement>(null);
-  // Blur faces unticked by the owner or an admin: the library whose next files are kept as filmed (contracts Blur "no")
-  // remembered per library in this browser (face-blur.ts keptAsFilmed)
-  const [asFilmed, setAsFilmed] = useState<string[]>(keptAsFilmed);
+  // the add's own choices (./library/ImportChoices.tsx): Blur faces and Proxies for these files
+  const [importAsk, setImportAsk] = useState<ImportAsk | null>(null);
   const seq = useRef(0);
   const loading = useRef<string | null>(null); // the cursor of the page on its way
   const loc = useLocation();
@@ -443,13 +442,32 @@ export default function LibraryPage() {
     const here = onMac || (look.paths ? look.paths.size === all.length : false);
     // a drop or a pick goes in at once (11-19: no "Add N files?"): Effort, models and the monthly budget were chosen in
     // setup, and the budget holds the analysis at its cap
-    void importQ.answer(look, all).then((copies) => copies && start(all, here, look.paths, copies));
+    const copies = await importQ.answer(look, all);
+    if (!copies) return;
+    const c = await chooseImport(all.length);
+    if (c) start(all, here, look.paths, copies, c);
+  };
+
+  // Blur faces where this Mac keeps the original (an owner or admin may untick it where the library blurs); Proxies where
+  // the server is elsewhere and the library keeps proxies. No row to show: the library's settings, without asking
+  const chooseImport = (count: number): Promise<ImportChoice | null> => {
+    const libraryBlurs = !!library?.settings.blurFaces;
+    const blur = libraryBlurs && openFolder?.blur !== "no";
+    const blurRow = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
+    const proxiesRow = macRemote && hostsProxies(upload.current);
+    if (!blurRow && !proxiesRow) return Promise.resolve({ blur, proxies: true });
+    return new Promise((done) =>
+      setImportAsk({ count, libraryBlurs, ...(blurRow ? { blur } : {}), ...(proxiesRow ? { proxies: true } : {}), done: (c) => (setImportAsk(null), done(c)) }),
+    );
   };
 
   // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
-  const start = (files: File[], here = false, paths?: Map<File, string>, copies?: Map<File, string>) => {
+  const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, c: ImportChoice) => {
     if (!libId) return;
-    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac: onMac, blur: !!library?.settings.blurFaces, asFilmed: keepsAsFilmed, cost: levelOf(library?.settings ?? {}) !== "off" });
+    const libraryBlurs = !!library?.settings.blurFaces;
+    // blurred, or no proxy asked for: indexed on this Mac and nothing sent (the blurred video goes later, as the proxy)
+    const mac = onMac || (macRemote && (c.blur || !c.proxies));
+    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac, blur: c.blur, asFilmed: libraryBlurs && !c.blur, askBlur: !libraryBlurs && c.blur, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
   // a file of this library went in: its clips (and the folder's count) read again
   useEffect(
@@ -1014,19 +1032,6 @@ export default function LibraryPage() {
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
   // the Instagram sign-in opens a Chrome window on the server's own screen: its owner, never on Creator Toolset Cloud
   const instagramAdd = mayAdd && me?.role === "admin" && serverKind !== "cloud";
-  // the Blur faces checkbox beside Upload: only where the library blurs and this person may keep files as filmed
-  const blurChoice = mayAdd && faceBlur && !!library.settings.blurFaces && library.mayKeepAsFilmed;
-  const keepsAsFilmed = blurChoice && asFilmed.includes(library.id);
-  const chooseBlur = async (on: boolean) => {
-    if (!library) return;
-    const keep = (k: boolean) => {
-      rememberKeepAsFilmed(library.id, k);
-      setAsFilmed((was) => [...was.filter((id) => id !== library.id), ...(k ? [library.id] : [])]);
-    };
-    if (on) return keep(false);
-    const ok = await confirmDialog({ title: "Turn off Blur faces?", body: "These files will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" });
-    if (ok) keep(true);
-  };
   // Look for new files (the ⋯ menu): the server reads this computer's folders itself (This Mac, the owner), or the Mac
   // app reads its own Source media folders for a server elsewhere (the owner, or a member who may add, on their computer)
   const serverReads = !!watch?.allowed;
@@ -1266,12 +1271,6 @@ export default function LibraryPage() {
                 {/* Status is the owner's (its counts are the owner's routes) */}
                 {library && !readOnly && <LibraryHealthButton library={library} open={statusOpen} onOpen={() => setStatusOpen(true)} />}
                 {changing && (!smart || !!nestHere) && <NewFolderButton className="h-8" onClick={() => void newFolder()} />}
-                {blurChoice && (
-                  <label className="flex h-8 items-center gap-1.5 text-sm">
-                    <Checkbox checked={!keepsAsFilmed} onCheckedChange={(v) => void chooseBlur(v === true)} />
-                    Blur faces
-                  </label>
-                )}
                 {mayAdd && (
                   <Button size="sm" className="h-8" onClick={chooseFiles}>
                     <Upload className="h-4 w-4" />
@@ -1453,6 +1452,7 @@ export default function LibraryPage() {
       {sharing && libId && (
         <ClipShare libraryId={libId} assetId={sharing.id} versionId={sharing.versionId} title={sharing.title} open onOpenChange={(o) => !o && setSharing(null)} />
       )}
+      <ImportChoices ask={importAsk} />
       <FolderSettingsDialog
         folder={setting}
         name={!readOnly}
