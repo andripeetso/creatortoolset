@@ -455,13 +455,26 @@ export function setupGapIds(view: Pick<SetupView, "tools" | "have">): string[] {
  * missing shows the reminders again; "*" (Settings → General, Setup reminders off) hides them for good. In this browser.
  */
 const REMINDERS_OFF = "ct-setup-reminders-off";
-export const useReminders = create<{ off: string[] }>(() => ({ off: (read("local", REMINDERS_OFF) ?? "").split(",").filter(Boolean) }));
-export function hideReminders(ids: readonly string[]): void {
+/** `until`: the chat's Tomorrow or Next week, when the reminders show again (ms; 0 = now). */
+const REMINDERS_UNTIL = "ct-setup-reminders-until";
+export const useReminders = create<{ off: string[]; until: number }>(() => ({
+  off: (read("local", REMINDERS_OFF) ?? "").split(",").filter(Boolean),
+  until: Number(read("local", REMINDERS_UNTIL)) || 0,
+}));
+export function hideReminders(ids: readonly string[], until = 0): void {
   write("local", REMINDERS_OFF, ids.join(","));
-  useReminders.setState({ off: [...ids] });
+  write("local", REMINDERS_UNTIL, String(until));
+  useReminders.setState({ off: [...ids], until });
 }
-export const remindersOn = (view: Pick<SetupView, "tools" | "have">, off: readonly string[]): boolean =>
-  !off.includes("*") && setupGapIds(view).some((id) => !off.includes(id));
+export const remindersOn = (view: Pick<SetupView, "tools" | "have">, r: { off: readonly string[]; until: number }, now = Date.now()): boolean =>
+  !r.off.includes("*") && now >= r.until && setupGapIds(view).some((id) => !r.off.includes(id));
+
+/** The chat's answers to Hide: show the reminders again in a day or a week, or never (Settings → General turns them back on). */
+export type RemindLater = "tomorrow" | "week" | "never";
+export function remindLater(r: RemindLater, now = Date.now()): void {
+  if (r === "never") return hideReminders(["*"]);
+  hideReminders([], now + (r === "tomorrow" ? 1 : 7) * 86_400_000);
+}
 
 /** The tools leaving setup switches on: the ones ticked, and the job's (Add captions turns Caption Studio on), in `mine`'s order. */
 export const toolsWithJob = (ticked: readonly Tool[], job: Job | null | undefined, mine: readonly Tool[]): Tool[] =>

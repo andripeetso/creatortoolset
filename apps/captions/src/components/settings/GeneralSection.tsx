@@ -41,7 +41,7 @@ export function GeneralSection() {
 function SetupRows() {
   const navigate = useNavigate();
   const view = useSetup((s) => s.view);
-  const off = useReminders((s) => s.off);
+  const { off, until } = useReminders();
   const gaps = view ? setupGaps(view) : [];
   return (
     <>
@@ -59,7 +59,7 @@ function SetupRows() {
         id="setup-reminders"
         title="Setup reminders"
         description="Shows the Home card and the chat's list while a tool still needs something."
-        control={<Switch checked={!off.includes("*")} aria-label="Setup reminders" onCheckedChange={(on) => void markSave(hideReminders(on ? [] : ["*"]))} />}
+        control={<Switch checked={!off.includes("*") && until <= Date.now()} aria-label="Setup reminders" onCheckedChange={(on) => void markSave(hideReminders(on ? [] : ["*"]))} />}
       />
     </>
   );

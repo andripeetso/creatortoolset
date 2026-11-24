@@ -76,7 +76,7 @@ const canUseKey = (me: Me | null, k: Key) => (k === "finals" ? canUse(me, "media
 export default function ToolsetHome() {
   const location = useLocation();
   const setupUp = useSetupShown((s) => s.shown);
-  const remindOff = useReminders((s) => s.off);
+  const reminders = useReminders();
   const [shared, setShared] = useState<Awaited<ReturnType<typeof shareDownload>> | null>(null);
   const openTool = useOpenTool();
   const me = useMe();
@@ -271,7 +271,7 @@ export default function ToolsetHome() {
         )}
         {/* the way back to whatever was skipped, for everyone (an account from before this setup too): a tool turned on
             still needs something. Not beside Finish setup, which leads there itself; Hide keeps it away until something new is missing */}
-        {view && !phone && !setupUp && !(!setupFinished(view) && setupDismissed()) && setupGaps(view).length > 0 && remindersOn(view, remindOff) && (!beat || beat === "all") && (
+        {view && !phone && !setupUp && !(!setupFinished(view) && setupDismissed()) && setupGaps(view).length > 0 && remindersOn(view, reminders) && (!beat || beat === "all") && (
           <div className="intro-late flex items-center gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 py-3 pl-4 pr-2">
             <button type="button" onClick={() => openSetupAt("check", true)} className="flex flex-1 items-center justify-between gap-3 text-left">
               <span>

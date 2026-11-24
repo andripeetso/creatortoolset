@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
-  hideReminders, remindersOn, setupGapIds, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
+  hideReminders, remindLater, remindersOn, setupGapIds, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
@@ -52,14 +52,21 @@ describe("setup steps", () => {
     expect(setupLeft({ tools: null, have: [] })).toEqual([]);
   });
 
-  it("hides the reminders until something new is missing, and for good with *", () => {
+  it("hides the reminders until something new is missing, for a day or a week, or for good", () => {
     const view = { tools: ["media", "instagram"] as Tool[], have: ["project", "apify"] as Have[] };
+    const r = () => useReminders.getState();
     expect(setupGapIds(view)).toEqual(["library", "instagram"]);
-    expect(remindersOn(view, [])).toBe(true);
-    hideReminders(setupGapIds(view));
-    expect(remindersOn(view, useReminders.getState().off)).toBe(false);
-    expect(remindersOn({ ...view, tools: [...view.tools, "notes"] }, useReminders.getState().off)).toBe(true); // a Deepgram key now missing
-    expect(remindersOn({ ...view, tools: [...view.tools, "notes"] }, ["*"])).toBe(false);
+    expect(remindersOn(view, r())).toBe(true);
+    hideReminders(setupGapIds(view)); // Home's ✕
+    expect(remindersOn(view, r())).toBe(false);
+    expect(remindersOn({ ...view, tools: [...view.tools, "notes"] }, r())).toBe(true); // a Deepgram key now missing
+    remindLater("tomorrow", 1000);
+    expect(remindersOn(view, r(), 1000 + 86_400_000 - 1)).toBe(false);
+    expect(remindersOn(view, r(), 1000 + 86_400_000)).toBe(true);
+    remindLater("week", 0);
+    expect(remindersOn(view, r(), 6 * 86_400_000)).toBe(false);
+    remindLater("never");
+    expect(remindersOn({ ...view, tools: [...view.tools, "notes"] }, r(), Infinity)).toBe(false);
     hideReminders([]);
   });
 

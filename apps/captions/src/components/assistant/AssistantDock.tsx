@@ -62,8 +62,8 @@ import { FeedbackBar, FeedbackSlot } from "./FeedbackBar";
 import { useFeedback } from "@/lib/review-feedback";
 import { ActionCard } from "./ActionCard";
 import { ConfirmCards } from "./ConfirmCards";
-import { NoticeLine, WelcomeLine, WelcomePill, SetupSteps, useWelcome } from "./Welcome";
-import { hideReminders, openSetupAt, remindersOn, setupFinished, setupGapIds, setupLeft, useReminders, useSetup, useWorkTalk } from "@/lib/setup";
+import { NoticeLine, WelcomeLine, WelcomePill, RemindAsk, REMIND_REPLY, SetupSteps, useWelcome } from "./Welcome";
+import { openSetupAt, remindLater, remindersOn, setupFinished, setupLeft, useReminders, type RemindLater, useSetup, useWorkTalk } from "@/lib/setup";
 
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
@@ -182,9 +182,14 @@ export function AssistantDock() {
   const setup = useSetup((s) => s.view);
   const connected = !!view && view.provider !== "none";
   const left = setup ? setupLeft(setup) : [];
-  const remindOff = useReminders((s) => s.off);
-  // after the hello, an empty chat keeps the list until everything is set up or Hide is pressed
-  const remind = !!setup && left.length > 0 && remindersOn(setup, remindOff);
+  const reminders = useReminders();
+  // after the hello, an empty chat keeps the list until everything is set up or Hide is answered
+  const remind = !!setup && left.length > 0 && remindersOn(setup, reminders);
+  // Hide pressed: the question, then what was answered (its reply stays until the chat is next drawn)
+  const [hiding, setHiding] = useState<"ask" | RemindLater | null>(null);
+  useEffect(() => {
+    if (collapsed) setHiding(null);
+  }, [collapsed]);
   const welcome = useWelcome({
     open: !collapsed || chatMode,
     eligible: !!view && !!setup && talk !== "chat" && setupFinished(setup) && view.messages.length === 0,
@@ -1031,9 +1036,15 @@ export function AssistantDock() {
                 </div>
               )
             )}
-            {!welcome.showing && remind && (
+            {!welcome.showing && (remind || (hiding && hiding !== "ask")) && (
               <div className={cn("pb-3", centred && "mx-auto w-full max-w-sm")}>
-                <SetupSteps steps={left} onHide={() => hideReminders(setupGapIds(setup!))} />
+                {hiding === null ? (
+                  <SetupSteps steps={left} onHide={() => setHiding("ask")} />
+                ) : hiding === "ask" ? (
+                  <RemindAsk onPick={(r) => (remindLater(r), setHiding(r))} />
+                ) : (
+                  <WelcomeLine text={REMIND_REPLY[hiding]} typing={false} />
+                )}
               </div>
             )}
             {!centred && chips}

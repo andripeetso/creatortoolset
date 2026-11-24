@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AssistantNotice } from "@/lib/assistant";
 import type { Corner } from "@/lib/dock-place";
-import { openSetupAt, type SetupStep } from "@/lib/setup";
+import { openSetupAt, type RemindLater, type SetupStep } from "@/lib/setup";
 import { cn } from "@/lib/utils";
 
 /**
@@ -158,6 +158,30 @@ export function SetupSteps({ steps, onHide }: { steps: readonly { step: SetupSte
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+const REMIND_LABEL: Record<RemindLater, string> = { tomorrow: "Tomorrow", week: "Next week", never: "Don't remind me" };
+/** What the assistant says to each answer: client text, never sent to the AI. */
+export const REMIND_REPLY: Record<RemindLater, string> = {
+  tomorrow: "Okay, I'll remind you tomorrow.",
+  week: "Okay, I'll remind you next week.",
+  never: "Okay, I won't remind you again. Tell me whenever you want to set these up.",
+};
+
+/** Hide on Still to set up asks first: remind again tomorrow, next week, or never. */
+export function RemindAsk({ onPick }: { onPick: (r: RemindLater) => void }) {
+  return (
+    <div className="flex flex-col items-start gap-2 pt-2 leading-relaxed motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+      <p>Should I remind you again?</p>
+      <div className="flex flex-wrap gap-2">
+        {(["tomorrow", "week", "never"] as const).map((r) => (
+          <button key={r} type="button" onClick={() => onPick(r)} className={CHIP}>
+            {REMIND_LABEL[r]}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
