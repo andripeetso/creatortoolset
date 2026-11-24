@@ -42,7 +42,7 @@ import {
   updateApify,
 } from "./lib/instagram/apify";
 import { applyMineVisibility, fetchMineAccountStats, fetchPublicGridKeys, publicGridFromCatalog, type PublicGridKeys, fetchMineCatalog, fetchMineCatalogAll, fetchMineComments, fetchMineDailyInsights, fetchMineInsights, fetchMineProfile, fetchMineSharedToFeed, graphConfigured, graphCredsFor, discoveryCredsFor, fetchBusinessDiscovery, mineUsesGraph, MINE_CATALOG_CAP, withGraphCreds, type MineAccountStats } from "./lib/instagram/graph";
-import { hasInstagramSession, readAccount as readSessionAccount, readProfile as readSessionProfile } from "./lib/instagram/session";
+import { hasInstagramSession, readAccount as readSessionAccount, readComments as readSessionComments, readPostInfo as readSessionPostInfo, readProfile as readSessionProfile } from "./lib/instagram/session";
 import { mergeAccountStats, nextGraphDaily, type GraphDaily, type InsightDay } from "./lib/instagram/account-insights";
 import { annotateComments, QUESTION_MIN } from "./lib/instagram/comment-judge";
 import {
@@ -341,7 +341,7 @@ function prefetchInfo(meta: PostMeta, user: SessionUser): void {
   if (!meta.url || !meta.shortcode || meta.platform === "youtube") return;
   const p = (async () => {
     const gate = await ingestGate(user.username);
-    if (!gate.ok) return null;
+    if (!gate.ok || gate.mode === "session") return null;
     return postBatcherFor(user.username).request(meta.url, meta.kind === "reel");
   })();
   p.catch(() => {});
@@ -1094,7 +1094,9 @@ export async function ownPostComments(
   // Graph sends no usernames without Meta's comment permission (every one reads "instagram"), so the author's own replies
   // can't be told apart; when asked to read again, the post is scraped instead (the visitor's Apify key)
   if (fresh && !comments.some((c) => c.user.id)) {
-    const scraped = await fetchCommentsViaApify(`https://www.instagram.com/p/${shortcode}/`, { username: user.username, cap: MAX_COMMENTS }).catch(() => null);
+    const postUrl = `https://www.instagram.com/p/${shortcode}/`;
+    const viaSession = (await ingestGate(user.username)).mode === "session";
+    const scraped = await (viaSession ? readSessionComments(user.username, postUrl, MAX_COMMENTS) : fetchCommentsViaApify(postUrl, { username: user.username, cap: MAX_COMMENTS })).catch(() => null);
     if (scraped?.comments.length) comments = scraped.comments;
   }
   const handle = (acc?.username ?? meta?.creator.username)?.toLowerCase();
@@ -1596,6 +1598,7 @@ async function loadPostInfo(
     if (!ref) throw new InstagramError("Not a YouTube link", "NOT_FOUND", false);
     return fetchYoutubeViaApify(ref, { username, signal });
   }
+  if (mode === "session") return readSessionPostInfo(username, meta.url, signal);
   const pre = infoPrefetch.get(meta.id);
   infoPrefetch.delete(meta.id);
   if (pre) {
@@ -2557,7 +2560,8 @@ async function collectCommentsForPost(
   const have = existing?.comments.length ?? 0;
   const cap = more ? have + countReplies(existing?.comments ?? []) + MAX_COMMENTS : MAX_COMMENTS;
   try {
-    const result: { comments: Comment[]; status: CommentsFile["status"]; cursor?: string } = await fetchCommentsViaApify(meta.url, { username, cap, signal });
+    const result: { comments: Comment[]; status: CommentsFile["status"]; cursor?: string } =
+      mode === "session" ? await readSessionComments(username, meta.url, cap, signal) : await fetchCommentsViaApify(meta.url, { username, cap, signal });
     const merged = mergeComments(existing?.comments ?? [], result.comments);
     // Jev scores new comments; the word filter decides without a key
     const { filteredOut, questions, keywords } = await annotateComments(typesafeFor(username), merged, { caption: meta.caption, handle: meta.creator.username }, signal);

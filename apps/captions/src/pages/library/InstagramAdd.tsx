@@ -28,6 +28,7 @@ const LOGIN = "/api/library/instagram/login";
 export const ABOUT = [
   "Adds a post or reel to the Media Library by its link: each of its videos and photos.",
   "Reads an own account with no Meta sign-in in the Content Analyzer: its posts and its Reels tab.",
+  "With no Apify key, the Content Analyzer reads posts, comments, counts and other accounts through it too.",
   "Each read goes out as this account, one at a time, a few seconds apart.",
   "Only the account's sign-in is kept on this Mac, never its password; Disconnect removes it.",
 ];

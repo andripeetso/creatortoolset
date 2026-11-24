@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { env, isCloud } from "../env";
 import type { SessionUser } from "../../users";
-import type { CatalogItem, ProfileInfo } from "./types";
+import type { CatalogItem, Comment, CommentsStatus, PostInfo, PostInfoSlide, ProfileInfo } from "./types";
 import { canonicalPostUrl } from "./url";
 
 // The person's own Instagram account, signed in once in a Chrome window on their Mac (they type, never this code), so
@@ -140,6 +140,7 @@ export interface PostFile {
 interface Version {
   url: string;
   width?: number;
+  height?: number;
 }
 interface Item {
   code?: string;
@@ -232,6 +233,10 @@ export const hasInstagramSession = (u: string) => !!cookiesOf(u);
 
 interface FeedItem extends Item {
   pk?: string | number;
+  user?: { username?: string; full_name?: string; pk?: string | number };
+  video_duration?: number;
+  accessibility_caption?: string;
+  carousel_media?: FeedItem[];
   taken_at?: number;
   media_type?: number;
   product_type?: string;
@@ -318,4 +323,87 @@ interface WebUser {
   edge_followed_by?: { count?: number };
   edge_follow?: { count?: number };
   edge_owner_to_timeline_media?: { count?: number };
+}
+
+/* ---- one post in full, and its comments (the Content Analyzer's own reads, when there is no Apify key) ---- */
+
+const largest = (v?: Version[]) => v?.reduce<Version | undefined>((a, b) => (!a || (b.width ?? 0) > (a.width ?? 0) ? b : a), undefined);
+
+/** A post as the Content Analyzer's pipeline takes it: its slides (videos with their poster), caption and counts. */
+export async function readPostInfo(u: string, url: string, signal?: AbortSignal): Promise<{ raw: unknown; info: PostInfo }> {
+  const code = shortcodeOf(url);
+  if (!code) throw new InstagramRefused("Needs a link to an Instagram post or reel");
+  const body = await igCall<{ items?: FeedItem[] }>(u, `/api/v1/media/${mediaIdOf(code)}/info/`, { signal });
+  const raw = body.items?.[0];
+  if (!raw) throw new InstagramRefused("Post not found");
+  const card = catalogItemOf(raw);
+  const slideOf = (i: FeedItem, index: number): PostInfoSlide | null => {
+    const video = largest(i.video_versions);
+    const pic = largest(i.image_versions2?.candidates);
+    const v = video ?? pic;
+    if (!v) return null;
+    return {
+      index,
+      kind: video ? "video" : "image",
+      url: v.url,
+      width: v.width ?? 0,
+      height: v.height ?? 0,
+      ...(video && i.video_duration ? { durationS: i.video_duration } : {}),
+      ...(video && pic ? { coverUrl: pic.url } : {}),
+      ...(i.accessibility_caption ? { accessibilityCaption: i.accessibility_caption } : {}),
+    };
+  };
+  const slides = (raw.carousel_media?.length ? raw.carousel_media : [raw]).map(slideOf).filter((x): x is PostInfoSlide => !!x);
+  return {
+    raw,
+    info: {
+      shortcode: raw.code ?? code,
+      mediaId: String(raw.pk ?? mediaIdOf(code)).split("_")[0]!,
+      kind: card?.kind ?? "post",
+      url: card?.url ?? url,
+      creator: { username: raw.user?.username ?? "", ...(raw.user?.full_name ? { fullName: raw.user.full_name } : {}), id: String(raw.user?.pk ?? "") },
+      takenAt: (raw.taken_at ?? 0) * 1000,
+      caption: raw.caption?.text ?? "",
+      counts: card?.counts ?? {},
+      slides,
+    },
+  };
+}
+
+interface WebComment {
+  pk?: string | number;
+  text?: string;
+  created_at?: number;
+  user?: { pk?: string | number; username?: string };
+  comment_like_count?: number;
+  child_comment_count?: number;
+}
+
+/** A post's comments, newest pages first, up to `cap` (their replies are counted, not read). */
+export async function readComments(u: string, url: string, cap: number, signal?: AbortSignal): Promise<{ comments: Comment[]; status: CommentsStatus; cursor?: string }> {
+  const code = shortcodeOf(url);
+  if (!code) throw new InstagramRefused("Needs a link to an Instagram post or reel");
+  const comments: Comment[] = [];
+  let cursor = "";
+  for (;;) {
+    const page = await igCall<{ comments?: WebComment[]; next_min_id?: string; has_more_comments?: boolean; has_more_headload_comments?: boolean }>(
+      u,
+      `/api/v1/media/${mediaIdOf(code)}/comments/?can_support_threading=true&permalink_enabled=false${cursor ? `&min_id=${encodeURIComponent(cursor)}` : ""}`,
+      { signal },
+    );
+    for (const c of page.comments ?? [])
+      comments.push({
+        id: String(c.pk ?? ""),
+        text: c.text ?? "",
+        createdAt: (c.created_at ?? 0) * 1000,
+        user: { username: c.user?.username ?? "", id: String(c.user?.pk ?? "") },
+        likeCount: c.comment_like_count ?? 0,
+        replyCount: c.child_comment_count ?? 0,
+        replies: [],
+      });
+    const more = !!page.next_min_id && (page.has_more_comments || page.has_more_headload_comments) && !!page.comments?.length;
+    if (!more) return { comments: comments.slice(0, cap), status: "complete" };
+    cursor = page.next_min_id!;
+    if (comments.length >= cap) return { comments: comments.slice(0, cap), status: "capped", cursor };
+  }
 }

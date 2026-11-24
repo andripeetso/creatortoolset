@@ -104,8 +104,8 @@ API-key path at all.
 their web pages, logged in or not; no browser automation of other services. Two exceptions sign in with the person's
 own account, in a Chrome window on their own Mac: Adobe Enhance Speech, a team plug-in they download and switch on
 (`apps/captions/editor-steps/adobe-enhance`), and Media Library → Add from Instagram, one post or reel at a time by its
-link, and the Content Analyzer's read of an own account with no Meta sign-in; the owner of a server on their own Mac
-only (`api/lib/instagram/session.ts`). The one page fetch is Knowledge → Add a
+link, the Content Analyzer's read of an own account with no Meta sign-in, and its reads where there is no working
+Apify key (`ingestGate` mode `session`); the owner of a server on their own Mac only (`api/lib/instagram/session.ts`). The one page fetch is Knowledge → Add a
 link (`webPageText` in `api/lib/workshop/source-files.ts`): the single public page the user pasted, no login, no
 crawling, inside addresses and social platforms refused.
 

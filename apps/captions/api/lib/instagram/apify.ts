@@ -15,6 +15,8 @@ import type {
   PostKind,
   ProfileInfo,
 } from "./types";
+import { hasInstagramSession } from "./session";
+
 
 /**
  * Reading other creators' public posts, profiles and comment threads: Apify actors on the user's own Apify token,
@@ -35,7 +37,8 @@ export const APIFY_MISSING_MSG =
 export const APIFY_INVALID_MSG =
   "Needs a new Apify key: paste one from console.apify.com in Settings → API keys";
 /** How a post or profile was read: the one way left for other creators' posts (snapshots keep it as their source). */
-export type IngestMode = "apify";
+/** apify: the person's Apify key; session: no working key, but the Instagram sign-in of Media Library → Add from Instagram */
+export type IngestMode = "apify" | "session";
 
 export interface StoredApify {
   token: string;
@@ -185,6 +188,7 @@ export function publicApifyStatus(s: StoredApify | null): ApifyStatus {
 
 export async function ingestGate(username: string): Promise<IngestGate> {
   const a = await readApify(username);
+  if ((!a || a.valid === false) && hasInstagramSession(username)) return { ok: true, mode: "session" };
   if (!a) return { ok: false, mode: "apify", error: APIFY_MISSING_MSG, code: "NO_APIFY" };
   if (a.valid === false) return { ok: false, mode: "apify", error: APIFY_INVALID_MSG, code: "APIFY_INVALID" };
   return { ok: true, mode: "apify" };
@@ -192,7 +196,7 @@ export async function ingestGate(username: string): Promise<IngestGate> {
 
 export async function availabilitySnapshot(username: string): Promise<{ available: boolean; apify: ApifyStatus }> {
   const apify = publicApifyStatus(await readApify(username));
-  return { available: apify.configured && apify.valid !== false, apify };
+  return { available: (apify.configured && apify.valid !== false) || hasInstagramSession(username), apify };
 }
 
 /**
