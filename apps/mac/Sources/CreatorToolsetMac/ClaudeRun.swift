@@ -223,7 +223,7 @@ func claudeAnswer(_ req: RelayRequest, _ opts: RelayOptions, cli: String, work: 
         let said = resultText(result)
         // signed in in Terminal, not for this folder: the folder's login is a keychain item of its own
         let message = !home.isEmpty && said.range(of: "not logged in", options: .caseInsensitive) != nil
-            ? "Claude is not signed in for the settings folder \(home): run CLAUDE_CONFIG_DIR=\(home) claude and sign in, or clear the folder in Settings → Providers"
+            ? "Claude is not signed in for the settings folder \(home): press Sign in in Settings → Providers, or clear the folder"
             : "Claude: \(said)"
         throw ClaudeFailure(message: message, usage: failedRow(result, model: opts.model))
     }

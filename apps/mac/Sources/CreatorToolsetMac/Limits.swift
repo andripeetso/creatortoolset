@@ -123,9 +123,10 @@ func claudeKeychainService(home: String) -> String {
 
 /// The folder a run names in CLAUDE_CONFIG_DIR. Claude Code names its keychain login after that variable whenever it is
 /// set, even to ~/.claude, so the default folder runs without it (and finds the login `claude` made in Terminal) unless
-/// a login was made for it with the variable. "" = no variable.
+/// a login was made for it with the variable. "" = no variable. Only whether that item exists is asked (no `-w`): the
+/// login itself is read only with the plan-limits opt-in.
 func claudeConfigDir(home: String, defaultHome: String = realPath(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude").path),
-                     hasLogin: (String) -> Bool = { keychainJSON(service: $0)?["claudeAiOauth"] != nil }) -> String {
+                     hasLogin: (String) -> Bool = { runResult("/usr/bin/security", ["find-generic-password", "-s", $0], seconds: 5)?.status == 0 }) -> String {
     home == defaultHome && !hasLogin(claudeKeychainService(home: home)) ? "" : home
 }
 
