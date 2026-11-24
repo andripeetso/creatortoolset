@@ -732,6 +732,8 @@ export interface Piece {
   coverWaits?: string;
   /** Whether the viewer may change it: every item is theirs to change. Set on the single-piece read only. */
   writable?: boolean;
+  /** merged into another piece (it waits in the Finals trash): that piece's name, and how many versions Restore takes back */
+  merged?: { into: string; versions: number };
 }
 
 export interface PieceItem {

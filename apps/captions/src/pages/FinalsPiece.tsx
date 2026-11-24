@@ -36,7 +36,7 @@ import {
   listPieces,
   pieceVersions,
   mergePiece,
-  unmergePiece,
+  restorePiece,
   patchPieceItem,
   pieceZipUrl,
   removePieceItem,
@@ -323,7 +323,7 @@ export function PieceEditor({
       onPiece(next);
       onReload();
       // onReload reads the open piece again, whichever is open by then
-      undoable("pieces merged", () => unmergePiece(libraryId, fromId).then(onReload, (e: unknown) => setError(message(e))));
+      undoable("pieces merged", () => restorePiece(libraryId, fromId).then(onReload, (e: unknown) => setError(message(e))));
     } catch (e) {
       setError(message(e));
     } finally {

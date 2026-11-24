@@ -69,18 +69,18 @@ describe("Finals pieces: merge, split, trash", () => {
     expect(list.pieces.map((p: any) => p.id)).not.toContain("pc_source");
   });
 
-  it("unmerge (Undo) puts the merged piece back with its items, and a second unmerge finds nothing", async () => {
+  it("a merged piece waits in the trash; Restore (Undo) puts it back with its items", async () => {
     seedPiece("pc_into", "Into", ["m4"]);
     seedPiece("pc_back", "Back", ["s2"]);
     libraryDb().prepare("UPDATE piece_items SET winner = 1 WHERE id = 'pc_back-i0'").run();
     await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_into/merge", { from: "pc_back" });
-    expect((await data(call("owner-a", "GET", "/api/library/lib_a/pieces?trash=1"))).pieces.map((p: any) => p.id)).not.toContain("pc_back");
-    const back = await data(call("owner-a", "POST", "/api/library/lib_a/pieces/pc_back/unmerge"));
+    const trash = await data(call("owner-a", "GET", "/api/library/lib_a/pieces?trash=1"));
+    expect(trash.pieces.find((p: any) => p.id === "pc_back").merged).toEqual({ into: "Into", versions: 1 });
+    const back = await data(call("owner-a", "POST", "/api/library/lib_a/pieces/pc_back/restore"));
     expect(back.items.map((i: any) => [i.versionId, i.winner])).toEqual([["s2-v1", true]]);
     const list = await data(call("owner-a", "GET", "/api/library/lib_a/pieces"));
     expect(list.pieces.find((p: any) => p.id === "pc_into").items.map((i: any) => i.versionId)).toEqual(["m4-v1"]);
-    expect(list.pieces.map((p: any) => p.id)).toContain("pc_back");
-    expect((await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_back/unmerge")).status).toBe(404);
+    expect(list.pieces.find((p: any) => p.id === "pc_back").merged).toBeUndefined();
   });
 
   it("merge refuses when both pieces hold the same version (409, nothing moves)", async () => {
@@ -105,7 +105,7 @@ describe("Finals pieces: merge, split, trash", () => {
     const live = await data(call("owner-a", "GET", "/api/library/lib_a/pieces"));
     expect(live.pieces.map((p: any) => p.id)).not.toContain("pc_trash");
     const trashed = await data(call("owner-a", "GET", "/api/library/lib_a/pieces?trash=1"));
-    expect(trashed.pieces.map((p: any) => p.id)).toEqual(["pc_trash"]);
+    expect(trashed.pieces.filter((p: any) => !p.merged).map((p: any) => p.id)).toEqual(["pc_trash"]);
     expect((await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_trash/restore")).status).toBe(200);
     const back = await data(call("owner-a", "GET", "/api/library/lib_a/pieces"));
     expect(back.pieces.map((p: any) => p.id)).toContain("pc_trash");

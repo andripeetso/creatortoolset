@@ -570,8 +570,6 @@ export const restorePiece = (libraryId: string, pieceId: string) => send<Piece>(
 export const mergePiece = (libraryId: string, pieceId: string, fromId: string) => send<Piece>(`${pieceUrl(libraryId, pieceId)}/merge`, "POST", { from: fromId });
 
 /** The item leaves for a piece of its own (postings go with it); resolves to that new piece. */
-/** Undo of a merge: the merged piece `pieceId` comes back with its items. */
-export const unmergePiece = (libraryId: string, pieceId: string) => send<Piece>(`${pieceUrl(libraryId, pieceId)}/unmerge`, "POST");
 export const splitPieceItem = (libraryId: string, pieceId: string, itemId: string) => send<Piece>(`${itemUrl(libraryId, pieceId, itemId)}/split`, "POST");
 
 /** Links this Finals piece to a Workshop session: its versions get a post description per version there. */

@@ -34,7 +34,6 @@ import {
   removePosting,
   restorePiece,
   trashPiece,
-  unmergePiece,
   type WorkshopFinal,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -451,7 +450,7 @@ export default function FinalsPage() {
                   onMerge: (p, from) =>
                     void mergePiece(library.id, p.id, from.id).then(() => {
                       void shown.refresh();
-                      undoable("pieces merged", () => unmergePiece(library.id, from.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
+                      undoable("pieces merged", () => restorePiece(library.id, from.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
                     }, (e: unknown) => setError(message(e))),
                   onTrash: (p) =>
                     void trashPiece(library.id, p.id).then(() => {
@@ -524,11 +523,17 @@ function TrashList({ pieces, onRestore }: { pieces: Piece[]; onRestore: (piece: 
     <ul aria-label="Finals trash" className="flex flex-col divide-y divide-zinc-500/25 rounded-xl border border-zinc-500/25">
       {pieces.map((p) => (
         <li key={p.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-          <Link to={`/finals/${p.id}`} state={FROM_LIST} className="min-w-0 flex-1 truncate text-sm font-medium hover:underline">
-            {p.label}
-          </Link>
+          {p.merged ? (
+            // an empty piece until Restore takes its versions back: nothing to open
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.label}</span>
+          ) : (
+            <Link to={`/finals/${p.id}`} state={FROM_LIST} className="min-w-0 flex-1 truncate text-sm font-medium hover:underline">
+              {p.label}
+            </Link>
+          )}
           <span className="text-xs text-zinc-500">
-            {p.items.length} {p.items.length === 1 ? "version" : "versions"}
+            {p.merged ? `Merged into ${p.merged.into || "a piece"} · ` : ""}
+            {p.merged?.versions ?? p.items.length} {(p.merged?.versions ?? p.items.length) === 1 ? "version" : "versions"}
           </span>
           <Button size="sm" variant="outline" onClick={() => onRestore(p)}>
             <RotateCcw className="h-4 w-4" /> Restore

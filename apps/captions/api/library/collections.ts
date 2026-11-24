@@ -571,7 +571,14 @@ function pieceOf(p: PieceRow): Piece {
         ),
       }),
     ),
+    ...(p.merged ? { merged: mergedOf(p.merged) } : {}),
   };
+}
+
+function mergedOf(json: string): Piece["merged"] {
+  const was = JSON.parse(json) as Merged;
+  const into = db().prepare("SELECT label FROM pieces WHERE id = ?").get(was.into) as { label: string } | undefined;
+  return { into: into?.label ?? "", versions: was.items.length };
 }
 
 /**
@@ -602,7 +609,7 @@ collectionApp.get("/:id/pieces", async (c) => {
   if (!viewer) return notFound(c);
   const cid = c.req.query("collectionId") ?? null;
   const rows = db()
-    .prepare("SELECT * FROM pieces WHERE library_id = ? AND (? IS NULL OR collection_id = ?) AND ((trashed_at IS NOT NULL) = ?) AND merged IS NULL ORDER BY created_at, id")
+    .prepare("SELECT * FROM pieces WHERE library_id = ? AND (? IS NULL OR collection_id = ?) AND ((trashed_at IS NOT NULL) = ?) ORDER BY created_at, id")
     .all(libraryId, cid, cid, c.req.query("trash") === "1" ? 1 : 0) as unknown as PieceRow[];
   const pieces: Piece[] = [];
   for (const p of rows.map(pieceOf)) {
@@ -658,6 +665,7 @@ async function setPieceTrashed(c: Ctx, trash: boolean) {
   const libraryId = c.req.param("id") ?? "";
   const row = await writablePiece(c.get("user").username, libraryId, c.req.param("pid") ?? "");
   if (!row) return notFound(c);
+  if (!trash && row.merged) return unmerge(c, row);
   db().prepare("UPDATE pieces SET trashed_at = ? WHERE id = ?").run(trash ? Date.now() : null, row.id);
   // its versions' playback copies go at once, unless still a Final in another piece (lib/play-copies.ts)
   if (trash) {
@@ -692,22 +700,21 @@ collectionApp.post("/:id/pieces/:pid/merge", async (c) => {
   return c.json(pieceOf(target));
 });
 
-// POST /api/library/:id/pieces/:pid/unmerge → Piece: a merge taken back (Undo). The merged piece `pid` comes out of the
-// trash, and each of its items still in the piece it joined goes back with its old place and winner.
-collectionApp.post("/:id/pieces/:pid/unmerge", async (c) => {
-  const libraryId = c.req.param("id");
-  const user = c.get("user").username;
-  const from = await writablePiece(user, libraryId, c.req.param("pid"));
-  const was = from?.merged ? (JSON.parse(from.merged) as { into: string; items: { id: string; position: number; winner: number }[] }) : undefined;
-  const target = was ? await writablePiece(user, libraryId, was.into) : undefined;
-  if (!from || !was || !target) return notFound(c);
+type Merged = { into: string; items: { id: string; position: number; winner: number }[] };
+
+// Restore of a merged piece (Undo, or the Finals trash): it comes out of the trash, and each of its items still in the
+// piece it joined goes back with its old place and winner.
+async function unmerge(c: Ctx, from: PieceRow) {
+  const was = JSON.parse(from.merged!) as Merged;
+  const target = await writablePiece(c.get("user").username, from.library_id, was.into);
+  if (!target) return notFound(c);
   inTx(() => {
     const back = db().prepare("UPDATE piece_items SET piece_id = ?, position = ?, winner = ? WHERE id = ? AND piece_id = ?");
     for (const i of was.items) back.run(from.id, i.position, i.winner, i.id, target.id);
     db().prepare("UPDATE pieces SET trashed_at = NULL, merged = NULL WHERE id = ?").run(from.id);
   });
   return c.json(pieceOf({ ...from, trashed_at: null, merged: null }));
-});
+}
 
 // POST /api/library/:id/pieces/:pid/items/:iid/split → 201 Piece: the item leaves for a piece of its own (named as the item,
 // in the same collection). Its postings go with it; the piece it left keeps the rest.
