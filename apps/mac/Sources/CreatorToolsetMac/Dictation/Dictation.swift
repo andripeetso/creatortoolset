@@ -899,8 +899,10 @@ final class Dictation: ObservableObject {
                 if use { update { $0.model = m.id } }
                 if m.id == model.id {
                     if showing, needs == nil { pill.show(.message("Getting the speech model ready")) }
-                    try? await currentTranscriber().load()
+                    let loaded = (try? await currentTranscriber().load()) != nil
                     if showing { showSetup() }
+                    // Settings' Download: the swap is said on the Mac too, as Settings may be closed by now
+                    else if use, loaded, prefs.on, m.id == model.id { pill.showMessage("\(m.displayName) in use") }
                 }
             } catch {
                 DictationLog.error("download of \(m.id) stopped: \(error)")
