@@ -235,7 +235,8 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
           </Card>
         </Section>
       ))}
-      <Card>{allowed}</Card>
+      {/* empty outside the Mac app (AllowedFolders draws nothing there): no bare border */}
+      <Card className="empty:hidden">{allowed}</Card>
     </div>
   );
 }
@@ -348,7 +349,8 @@ function FolderList({ role, storage, devices, serverDisks, w, onChanged, forWork
       <Row
         id={searchable ? LISTS[role].id : undefined}
         title={LISTS[role].title}
-        description={LISTS[role].description}
+        // said once on the page: in All workspaces only the first card carries it
+        description={searchable ? LISTS[role].description : undefined}
         control={
           forWorkspace !== null && (
             <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
