@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveSection, sectionsFor, type NavContext } from "@/components/settings/nav";
+import { PLUGINS_GROUP } from "@/lib/plugin";
 
 const local: NavContext = { team: false, admin: true, mac: false };
 const localMember: NavContext = { team: false, admin: false, mac: false };
@@ -18,8 +19,8 @@ describe("Settings sections by server mode", () => {
     expect(ids(hostedAdmin)).toContain("team");
   });
 
-  it("keeps General first and the server's pages last", () => {
-    const all = ids(hostedAdmin).filter((id) => id !== "account" && id !== "admin" && id !== "plugin"); // routable, not in the sidebar
+  it("keeps General first and the server's pages last, before the Tool settings block", () => {
+    const all = sectionsFor(hostedAdmin, []).filter((s) => s.group !== PLUGINS_GROUP).map((s) => s.id).filter((id) => id !== "account" && id !== "admin" && id !== "plugin"); // routable, not in the sidebar
     expect(all[0]).toBe("general");
     expect(all.at(-1)).toBe("keys");
   });
