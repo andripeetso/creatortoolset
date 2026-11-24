@@ -257,6 +257,10 @@ final class SpeechModelsTests: XCTestCase {
         XCTAssertTrue(WhisperKitTranscriber.isUnreadable(NSError(domain: "com.apple.CoreML", code: 3)))
         XCTAssertFalse(WhisperKitTranscriber.isUnreadable(NSError(domain: "com.apple.CoreML", code: 0)))
         XCTAssertFalse(WhisperKitTranscriber.isUnreadable(URLError(.timedOut)))
+        // once per model for the whole run, however many transcribers ask
+        let variant = "test-\(UUID())"
+        XCTAssertTrue(WhisperKitTranscriber.mayRedownload(variant))
+        XCTAssertFalse(WhisperKitTranscriber.mayRedownload(variant))
     }
 
     func testTheEngineIsKeptOnThisMac() {

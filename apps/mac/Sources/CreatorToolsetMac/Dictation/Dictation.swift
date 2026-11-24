@@ -854,9 +854,11 @@ final class Dictation: ObservableObject {
     /// Downloads `m` into this app's folder, with its progress in the pill (while setting up) and in Settings. The one
     /// Download: Settings' Dictation row, a first dictation and the Voice page's (through the server, SpeechModels.swift).
     /// `asked`: the person got it on this Mac, so the server keeps it. One set aside comes back without a download.
-    /// `use`: Settings' Download, so dictation switches to it once it is here (the one in use keeps working meanwhile).
+    /// `use`: Settings' Download, so dictation switches to it once it is here (the one in use keeps working meanwhile),
+    /// unless another model was picked meanwhile.
     func fetch(_ m: TranscriptionModel, asked: Bool = true, use: Bool = false) {
         guard download == nil else { return }
+        let pickedAtStart = prefs.model
         if asked { SpeechModels.shared.asked(m.id) }
         if let variant = m.whisperKitID, SpeechModels.restore(variant) {
             if use { update { $0.model = m.id } }
@@ -896,7 +898,7 @@ final class Dictation: ObservableObject {
                 fetching = nil
                 fetchMark = nil
                 SpeechModels.shared.finished(m.id, ok: true)
-                if use { update { $0.model = m.id } }
+                if use, prefs.model == pickedAtStart { update { $0.model = m.id } }
                 if m.id == model.id {
                     if showing, needs == nil { pill.show(.message("Getting the speech model ready")) }
                     let loaded = (try? await currentTranscriber().load()) != nil

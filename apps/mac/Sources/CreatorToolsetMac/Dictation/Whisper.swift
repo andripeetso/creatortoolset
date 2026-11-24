@@ -1,5 +1,6 @@
 import CoreML
 import Foundation
+import os
 import WhisperKit
 
 actor WhisperKitTranscriber: Transcriber {
@@ -34,8 +35,12 @@ actor WhisperKitTranscriber: Transcriber {
     }
 
     private var loading: Task<Void, Error>?
-    /// Set once a copy on disk was unreadable and fetched again, so a second failure is reported, not looped on.
-    private var redownloaded = false
+    /// Models fetched again this run. Static: each Media Library transcript makes a new transcriber, and a copy still
+    /// unreadable after one fetch must fail, not be fetched for every transcript.
+    private static let redownloaded = OSAllocatedUnfairLock<Set<String>>(initialState: [])
+
+    /// True the first time this run `variant` is to be fetched again, false after.
+    static func mayRedownload(_ variant: String) -> Bool { redownloaded.withLock { $0.insert(variant).inserted } }
 
     /// Core ML's "Error in reading the MIL network": the model's files on disk are broken, not the audio.
     static func isUnreadable(_ error: Error) -> Bool {
@@ -81,9 +86,8 @@ actor WhisperKitTranscriber: Transcriber {
         let loaded: WhisperKit
         do {
             loaded = try await WhisperKit(config)
-        } catch where Self.isUnreadable(error) && !redownloaded {
+        } catch where Self.isUnreadable(error) && Self.mayRedownload(whisperKitID) {
             // a copy Core ML can't read (a download cut short) failed every dictation forever: drop it and fetch it once more
-            redownloaded = true
             DictationLog.warning("\(model.id) on disk can't be read (\(error.localizedDescription)); downloading it again")
             if base == DictationPaths.base { ModelFiles.remove(whisperKitID) } else { SpeechModels.setAside(whisperKitID) }
             return try await load(progress: progress)
