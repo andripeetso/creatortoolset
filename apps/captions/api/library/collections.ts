@@ -460,6 +460,8 @@ interface PieceRow {
   cover_version_id: string | null;
   cover_at: number | null;
   trashed_at?: number | null;
+  /** merged into another piece: JSON { into, items } for Undo (unmerge) */
+  merged?: string | null;
 }
 interface ItemRow {
   id: string;
@@ -600,7 +602,7 @@ collectionApp.get("/:id/pieces", async (c) => {
   if (!viewer) return notFound(c);
   const cid = c.req.query("collectionId") ?? null;
   const rows = db()
-    .prepare("SELECT * FROM pieces WHERE library_id = ? AND (? IS NULL OR collection_id = ?) AND ((trashed_at IS NOT NULL) = ?) ORDER BY created_at, id")
+    .prepare("SELECT * FROM pieces WHERE library_id = ? AND (? IS NULL OR collection_id = ?) AND ((trashed_at IS NOT NULL) = ?) AND merged IS NULL ORDER BY created_at, id")
     .all(libraryId, cid, cid, c.req.query("trash") === "1" ? 1 : 0) as unknown as PieceRow[];
   const pieces: Piece[] = [];
   for (const p of rows.map(pieceOf)) {
@@ -666,7 +668,8 @@ async function setPieceTrashed(c: Ctx, trash: boolean) {
 }
 
 // POST /api/library/:id/pieces/:pid/merge { from } → Piece: the piece `from` joins this one. Its items move over (this
-// piece keeps its label, winner and cover) and `from` goes. A version both pieces hold refuses the merge (409), so no
+// piece keeps its label, winner and cover) and `from` waits in the trash, out of its list, with where each item was, so
+// unmerge can take it back; the trash purge removes it. A version both pieces hold refuses the merge (409), so no
 // posting is lost in the move.
 collectionApp.post("/:id/pieces/:pid/merge", async (c) => {
   const libraryId = c.req.param("id");
@@ -681,12 +684,29 @@ collectionApp.post("/:id/pieces/:pid/merge", async (c) => {
     .get(from.id, target.id);
   if (both) return c.json({ error: "A version is in both pieces: remove it from one first", code: "conflict" }, 409);
   inTx(() => {
+    const items = db().prepare("SELECT id, position, winner FROM piece_items WHERE piece_id = ?").all(from.id);
     const top = (db().prepare("SELECT COALESCE(MAX(position), 0) AS p FROM piece_items WHERE piece_id = ?").get(target.id) as { p: number }).p;
     db().prepare("UPDATE piece_items SET piece_id = ?, position = position + ?, winner = 0 WHERE piece_id = ?").run(target.id, top, from.id);
-    db().prepare("DELETE FROM pieces WHERE id = ?").run(from.id);
+    db().prepare("UPDATE pieces SET trashed_at = ?, merged = ? WHERE id = ?").run(Date.now(), JSON.stringify({ into: target.id, items }), from.id);
   });
-  if (from.cover_key) await blobs.delete(from.cover_key).catch(() => {});
   return c.json(pieceOf(target));
+});
+
+// POST /api/library/:id/pieces/:pid/unmerge → Piece: a merge taken back (Undo). The merged piece `pid` comes out of the
+// trash, and each of its items still in the piece it joined goes back with its old place and winner.
+collectionApp.post("/:id/pieces/:pid/unmerge", async (c) => {
+  const libraryId = c.req.param("id");
+  const user = c.get("user").username;
+  const from = await writablePiece(user, libraryId, c.req.param("pid"));
+  const was = from?.merged ? (JSON.parse(from.merged) as { into: string; items: { id: string; position: number; winner: number }[] }) : undefined;
+  const target = was ? await writablePiece(user, libraryId, was.into) : undefined;
+  if (!from || !was || !target) return notFound(c);
+  inTx(() => {
+    const back = db().prepare("UPDATE piece_items SET piece_id = ?, position = ?, winner = ? WHERE id = ? AND piece_id = ?");
+    for (const i of was.items) back.run(from.id, i.position, i.winner, i.id, target.id);
+    db().prepare("UPDATE pieces SET trashed_at = NULL, merged = NULL WHERE id = ?").run(from.id);
+  });
+  return c.json(pieceOf({ ...from, trashed_at: null, merged: null }));
 });
 
 // POST /api/library/:id/pieces/:pid/items/:iid/split → 201 Piece: the item leaves for a piece of its own (named as the item,

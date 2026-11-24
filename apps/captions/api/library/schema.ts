@@ -717,4 +717,7 @@ export const MIGRATIONS: string[] = [
   // probe.ts, fixed 11-23): every video is read again once, by its computer (report.ts) or where it is (organize.ts)
   `UPDATE asset_versions SET probe = json_remove(probe, '$.camera')
     WHERE json_type(probe, '$.camera') IS NOT NULL AND asset_id IN (SELECT id FROM assets WHERE kind = 'video');`,
+  // a piece merged into another waits in the trash with what Undo needs (collections.ts unmerge): { into, items: [{ id,
+  // position, winner }] }. It is left out of the Finals trash and goes with the trash purge
+  `ALTER TABLE pieces ADD COLUMN merged TEXT;`,
 ];

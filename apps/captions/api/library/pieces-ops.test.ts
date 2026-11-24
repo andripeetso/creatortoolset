@@ -69,6 +69,20 @@ describe("Finals pieces: merge, split, trash", () => {
     expect(list.pieces.map((p: any) => p.id)).not.toContain("pc_source");
   });
 
+  it("unmerge (Undo) puts the merged piece back with its items, and a second unmerge finds nothing", async () => {
+    seedPiece("pc_into", "Into", ["m4"]);
+    seedPiece("pc_back", "Back", ["s2"]);
+    libraryDb().prepare("UPDATE piece_items SET winner = 1 WHERE id = 'pc_back-i0'").run();
+    await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_into/merge", { from: "pc_back" });
+    expect((await data(call("owner-a", "GET", "/api/library/lib_a/pieces?trash=1"))).pieces.map((p: any) => p.id)).not.toContain("pc_back");
+    const back = await data(call("owner-a", "POST", "/api/library/lib_a/pieces/pc_back/unmerge"));
+    expect(back.items.map((i: any) => [i.versionId, i.winner])).toEqual([["s2-v1", true]]);
+    const list = await data(call("owner-a", "GET", "/api/library/lib_a/pieces"));
+    expect(list.pieces.find((p: any) => p.id === "pc_into").items.map((i: any) => i.versionId)).toEqual(["m4-v1"]);
+    expect(list.pieces.map((p: any) => p.id)).toContain("pc_back");
+    expect((await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_back/unmerge")).status).toBe(404);
+  });
+
   it("merge refuses when both pieces hold the same version (409, nothing moves)", async () => {
     const r = await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_target/merge", { from: "pc_clash" });
     expect(r.status).toBe(409);

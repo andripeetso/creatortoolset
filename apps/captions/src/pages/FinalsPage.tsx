@@ -31,8 +31,10 @@ import {
   mergePiece,
   pieceVersions,
   pieceZipUrl,
+  removePosting,
   restorePiece,
   trashPiece,
+  unmergePiece,
   type WorkshopFinal,
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
@@ -132,7 +134,7 @@ export function FinalsView({
   onFacets: (next: Record<string, string[]>) => void;
   /** Workshop sessions linked to pieces, by piece id: the Ready to post badge and the post description */
   workshop?: Record<string, WorkshopFinal>;
-  /** a piece's right-click menu, on a piece the account may change */
+  /** a piece's right-click menu; none in a Media Library this account only looks at */
   actions?: PieceActions;
 }) {
   const [kind, setKind] = useState<FinalsKind | null>(null);
@@ -232,15 +234,15 @@ export interface PieceActions {
   onShare: (piece: Piece) => void;
   /** opens the post link form for the piece's winner (else its first version) */
   onPostLink: (piece: Piece) => void;
-  /** `from`'s versions move into `piece` */
+  /** `from`'s versions move into `piece`, with Undo */
   onMerge: (piece: Piece, from: Piece) => void;
   onTrash: (piece: Piece) => void;
 }
 
 /** A piece's right-click menu (grid and list): Open, Download, Share, Add post link, Merge piece, Move to trash. */
 function PieceMenu({ piece, others, actions, children }: { piece: Piece; others: Piece[]; actions?: PieceActions; children: React.ReactElement }) {
-  if (!actions || piece.writable === false) return children;
-  const into = others.filter((o) => o.id !== piece.id && o.writable !== false);
+  if (!actions) return children;
+  const into = others.filter((o) => o.id !== piece.id);
   const has = piece.items.length > 0;
   return (
     <ContextMenu>
@@ -442,11 +444,15 @@ export default function FinalsPage() {
               />
             ) : (
               <FinalsView hasFinals={!!finals} pieces={lists?.pieces ?? []} cards={lists?.cards ?? []} picked={picked} onFacets={setPicked} workshop={lists?.workshop ?? {}}
-                actions={{
+                actions={library.readOnly ? undefined : {
                   zipUrl: (p) => pieceZipUrl(library.id, p.id),
                   onShare: setSharing,
                   onPostLink: setPosting,
-                  onMerge: (p, from) => void mergePiece(library.id, p.id, from.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))),
+                  onMerge: (p, from) =>
+                    void mergePiece(library.id, p.id, from.id).then(() => {
+                      void shown.refresh();
+                      undoable("pieces merged", () => unmergePiece(library.id, from.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
+                    }, (e: unknown) => setError(message(e))),
                   onTrash: (p) =>
                     void trashPiece(library.id, p.id).then(() => {
                       void shown.refresh();
@@ -479,7 +485,12 @@ export default function FinalsPage() {
               onAdd={(input) => {
                 const item = posting.items.find((i) => i.winner) ?? posting.items[0];
                 setPosting(null);
-                void addPosting(library.id, posting.id, item.id, input).then(() => shown.refresh(), (e: unknown) => setError(message(e)));
+                void addPosting(library.id, posting.id, item.id, input).then((next) => {
+                  void shown.refresh();
+                  // the new posting is the item's highest id
+                  const added = Math.max(...(next.items.find((i) => i.id === item.id)?.postings.map((x) => x.id) ?? []));
+                  if (added > 0) undoable("post link added", () => removePosting(library.id, next.id, item.id, added).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
+                }, (e: unknown) => setError(message(e)));
               }}
             />
           )}

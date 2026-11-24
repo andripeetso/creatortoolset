@@ -150,7 +150,7 @@ export async function addToFinals(input: FinalsAdd, source: FinalsSource): Promi
     const collectionId = finalsCollectionId(input.libraryId);
     // a member adds to a piece of their own only: one of the owner's with the same name is never theirs to fill or link
     let piece = d
-      .prepare("SELECT id FROM pieces WHERE library_id = ? AND collection_id = ? AND label = ? AND (? OR created_by = ?) ORDER BY created_at, id LIMIT 1")
+      .prepare("SELECT id FROM pieces WHERE library_id = ? AND collection_id = ? AND label = ? AND merged IS NULL AND (? OR created_by = ?) ORDER BY created_at, id LIMIT 1")
       .get(input.libraryId, collectionId, input.label, Number(as === "owner"), input.owner) as { id: string } | undefined;
     if (!piece) {
       const id = `pce_${randomUUID().replace(/-/g, "").slice(0, 16)}`;

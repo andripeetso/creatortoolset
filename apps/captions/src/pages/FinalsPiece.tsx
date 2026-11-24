@@ -36,6 +36,7 @@ import {
   listPieces,
   pieceVersions,
   mergePiece,
+  unmergePiece,
   patchPieceItem,
   pieceZipUrl,
   removePieceItem,
@@ -51,6 +52,7 @@ import { useCachedLoad } from "@/lib/local-cache";
 import { createSession, listSessions, sessionPath, type SessionRow } from "@/lib/workshop";
 import { finalsTiles, KIND_BADGE, KIND_LABEL } from "./FinalsPage";
 import { confirmDialog } from "@/lib/dialogs";
+import { undoable } from "@/lib/undo";
 import { localOf } from "@/lib/here";
 import { usePlayFrom } from "@/lib/play-here";
 
@@ -320,6 +322,8 @@ export function PieceEditor({
       const next = await mergePiece(libraryId, piece.id, fromId);
       onPiece(next);
       onReload();
+      // onReload reads the open piece again, whichever is open by then
+      undoable("pieces merged", () => unmergePiece(libraryId, fromId).then(onReload, (e: unknown) => setError(message(e))));
     } catch (e) {
       setError(message(e));
     } finally {
