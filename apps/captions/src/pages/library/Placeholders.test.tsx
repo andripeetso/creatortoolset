@@ -55,6 +55,11 @@ describe("the cards of a drop", () => {
     act(() => root!.render(<PlaceholderTile upload={up(1, "copying", { sent: 5 })} onRetry={() => {}} onCancel={() => {}} />));
     expect(host!.querySelector<HTMLElement>('[aria-label="Adding"] div')?.style.width).toBe("50%");
     expect(host!.textContent).toContain("Tiny 1.mp4");
+    act(() => root!.render(<PlaceholderTile upload={up(1, "waiting")} onRetry={() => {}} onCancel={() => {}} />));
+    expect(host!.textContent).toContain("Queued");
+    act(() => root!.render(<PlaceholderTile upload={up(1, "added", { assetId: "a_off" })} onRetry={() => {}} onCancel={() => {}} />));
+    expect(host!.textContent).not.toContain("Queued");
+    expect(host!.querySelector('[aria-label="Added"]')).not.toBeNull();
   });
 
   it("a failed card has its red mark and Retry", () => {

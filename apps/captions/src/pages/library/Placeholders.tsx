@@ -1,4 +1,4 @@
-import { AlertCircle, MoreHorizontal } from "lucide-react";
+import { AlertCircle, Check, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { aboutTime, aboutUsd } from "@/components/LibraryProcessing";
@@ -9,7 +9,7 @@ import type { Upload } from "./Uploads";
 
 /**
  * A drop's files as they go in (11-19, the way a photo library fills in): each is a card in the grid at once, a grey
- * frame with its name; working, a thin bar runs along its foot; once indexed the clip's own card takes its place. A
+ * frame with its name; waiting, it says Queued; working, a thin bar runs along its foot; added, a green check until the clip's own card takes its place. A
  * failed one has a red mark and Retry; Cancel is in its menu. Above the grid one quiet line counts them, with Cancel
  * all. There is no list of uploads. A card is the size its clip's card will be, so nothing moves when it takes its
  * place (11-19, Andri: "fill the row height"): in the Gallery the file's own shape (tall: a cell, wide: two) once read,
@@ -56,6 +56,9 @@ export function PlaceholderTile({ upload: u, onRetry, onCancel, gallery, wide }:
             {part === null ? <div className="h-full w-1/3 animate-pulse bg-violet-600" /> : <div className="h-full bg-violet-600 transition-[width]" style={{ width: `${Math.round(part * 100)}%` }} />}
           </div>
         )}
+        {/* a card still to start and one already in look alike otherwise, so a drop seemed to run from its middle (11-24) */}
+        {u.status === "waiting" && <span className="absolute left-2 top-2 text-xs text-zinc-500">Queued</span>}
+        {done(u) && <Check aria-label="Added" className="absolute left-2 top-2 h-4 w-4 text-emerald-500" />}
         {failed && <AlertCircle aria-label="Not added" className="absolute left-2 top-2 h-4 w-4 text-red-500" />}
         {failed && (
           <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
