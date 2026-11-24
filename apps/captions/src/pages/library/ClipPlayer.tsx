@@ -58,7 +58,7 @@ export function ClipPlayer({
   fill?: boolean;
   /** false when the server plays nothing of this clip (Upload none, not shared with members): a copy only this computer has plays */
   serverPlays?: boolean;
-  /** where the Allow folder and Connect buttons go (the side panel, under where the clip is); none: under the player */
+  /** where the Allow folder and Connect buttons go: the side panel, under where the clip is (never on the player) */
   actions?: HTMLElement | null;
 }) {
   const [muted, setMuted] = useState(false);
@@ -273,7 +273,7 @@ export function ClipPlayer({
         <audio key={src} ref={bind} src={src || undefined} controls preload="auto" className="w-full" {...events} />
         {note && <Note note={note} file={original(a, detail)} />}
         {awayNote}
-        {placed ?? buttons}
+        {placed}
       </>
     );
   }
@@ -366,7 +366,7 @@ export function ClipPlayer({
           </button>
         )}
       </div>
-      {placed ?? (buttons && <div className="shrink-0 px-2">{buttons}</div>)}
+      {placed}
     </div>
   );
 }

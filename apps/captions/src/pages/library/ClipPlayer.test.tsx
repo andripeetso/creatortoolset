@@ -42,17 +42,20 @@ afterEach(async () => {
 // the player's skin is its own chunk (React.lazy): rendered, then that chunk waited for
 const skin = () => act(async () => void (await import("./SkinPlayer")));
 const open = async (a: AssetCard = card) => {
-  await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} />));
+  await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} actions={slot} />));
   await skin();
 };
 const openWith = async (detail: unknown) => {
-  await act(async () => r.render(<ClipPlayer asset={card} detail={detail as AssetDetail} media={createRef()} startAt={0} />));
+  await act(async () => r.render(<ClipPlayer asset={card} detail={detail as AssetDetail} media={createRef()} startAt={0} actions={slot} />));
   await skin();
 };
 const video = () => host.querySelector("video")!;
 const badge = () => host.querySelector("span.rounded")?.textContent;
 const fire = (type: string) => act(async () => void video().dispatchEvent(new Event(type)));
-const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === text);
+// the side panel's place for the player's buttons (ClipPanel): they are drawn there, never on the player
+const slot = document.createElement("div");
+document.body.append(slot);
+const button = (text: string) => [...host.querySelectorAll("button"), ...slot.querySelectorAll("button")].find((b) => b.textContent === text);
 
 describe("without the Mac app's mark", () => {
   it("plays the server's address as before, asks nothing and shows no badge", async () => {
@@ -222,7 +225,7 @@ describe("with it", () => {
 // Upload none (no team shares the library): the server plays nothing of a clip this computer lacks, so no address is asked
 describe("under Upload none", () => {
   const openNone = async (a: AssetCard = card) => {
-    await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+    await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} actions={slot} />));
     await skin();
   };
 
@@ -286,7 +289,7 @@ describe("under Upload none", () => {
 
 describe("where a clip is, when this Mac cannot play it (decision 5, A4/A5)", () => {
   const openNone = async (a: AssetCard = card) => {
-    await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} />));
+    await act(async () => r.render(<ClipPlayer asset={a} detail={null} media={createRef()} startAt={0} serverPlays={false} actions={slot} />));
     await skin();
   };
 

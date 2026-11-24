@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { StorageFolder, StorageView } from "@contracts/storage";
-import { AllowedRows, Storage, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
+import { AllowedRows, removeBody, Storage, type Computer, canRevealFolder, driveLabel, driveOf, driveStart, folderLine, revealFolder, shareAddress } from "./StorageRows";
 import type { SettingsWorkspace } from "./workspace-pick";
 
 const mac = { id: "dev_1", name: "Sam's Mac Studio", owner: "sam", online: true } as unknown as Computer;
@@ -78,6 +78,20 @@ describe("every workspace's folders (Settings on All workspaces)", () => {
     );
     expect(html).not.toContain("/Volumes/Every/Exports");
     expect(html.match(/aria-label="Actions for Creator Toolset"/g)).toHaveLength(1);
+  });
+
+  it("one workspace shown: every Projects folder is listed (one per computer), not only one", () => {
+    const one = { id: "ws-a", all: false, workspaces, many: true, cacheKey: "ws-a", name: () => "" } as unknown as SettingsWorkspace;
+    const p = (id: string, host: string, at: string): StorageFolder => ({ id, role: "projects", name: "Projects", origin: { host, path: at }, make: true, createdAt: 0, reach: {}, workspace: "ws-a" });
+    const html = renderToStaticMarkup(<Storage devices={[mac]} storage={view([p("p1", "dev_1", "/Volumes/A/Projects"), p("p2", "dev_2", "/Volumes/B/Projects")])} onChanged={() => {}} w={one} />);
+    expect(html).toContain("/Volumes/A/Projects");
+    expect(html).toContain("/Volumes/B/Projects");
+  });
+
+  it("Remove of a folder in two workspaces names both; of one, only that its files stay", () => {
+    const all = { id: null, all: true, workspaces, many: true, cacheKey: "*", name: () => "" } as unknown as SettingsWorkspace;
+    expect(removeBody({ ...library, workspace: "ws-a", workspaces: ["ws-a", "ws-b"] }, all)).toBe("Removes it from Tiny Acrobatics, Tiny Swimmers; its files are not deleted.");
+    expect(removeBody({ ...library, workspace: "ws-a" }, all)).toBe("The folder's files are not deleted.");
   });
 
   it("every Exports folder is listed, one of a workspace that is not listed too (under Other workspaces)", () => {

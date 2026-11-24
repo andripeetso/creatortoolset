@@ -680,7 +680,7 @@ async function ingest(libraryId: string, f: WatchFolder & { blur?: Blur | null }
       sha256 = await sha256File(file);
     }
     // a clip a Mac indexed has no whole-file hash ("mac:<quick>"): the same file is also matched by size and quick fingerprint
-    const quick = (await quickPrint(f.mode === "copy" ? staged : file)) ?? "";
+    const quick = (await quickPrint(f.mode === "copy" ? staged : file)) ?? null; // null never equals a stored empty quick
     const dup = db()
       .prepare(
         `SELECT v.id, v.asset_id, v.state, v.source_key, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, folderIn, underFolder, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, exportsOf, folderIn, underFolder, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -187,6 +187,12 @@ export function DriveSelect({ disks, path, onPick, onLook }: { disks: readonly D
 }
 
 /** The workspaces a folder is in, as its tag and its Workspaces name them: null for one every workspace uses. */
+/** A Remove confirm: a folder in two or more workspaces names them all, since it goes from each (a card shows one). */
+export const removeBody = (f: StorageFolder, w?: SettingsWorkspace): string => {
+  const names = (workspacesOf(f) ?? []).map((id) => w?.workspaces.find((p) => p.id === id)?.name).filter((n): n is string => !!n);
+  return names.length > 1 ? `Removes it from ${names.join(", ")}; its files are not deleted.` : "The folder's files are not deleted.";
+};
+
 const workspacesOf = (f: StorageFolder) => (f.workspace === EVERY_WORKSPACE ? null : (f.workspaces ?? (f.workspace ? [f.workspace] : [])));
 
 /**
@@ -356,7 +362,8 @@ function FolderList({ role, storage, devices, serverDisks, w, onChanged, forWork
 }) {
   const [open, setOpen] = useState(false);
   const all = storage.folders.filter((f) => f.role === role);
-  const used = inUse && role !== "footage" ? (all.find((f) => !everyWorkspace(f)) ?? all[0]) : undefined;
+  // Exports only: Projects is one folder per computer, so every row of it is in use
+  const used = inUse && role === "library" ? exportsOf(all) : undefined;
   const mine = used ? [used] : all;
   return (
     <>
@@ -455,7 +462,7 @@ export function FolderRow({ folder: f, devices, w, onChanged, locked }: { folder
                   {
                     label: "Remove",
                     destructive: true,
-                    confirm: { title: `Remove ${f.name}?`, body: "The folder's files are not deleted.", ok: "Remove" },
+                    confirm: { title: `Remove ${f.name}?`, body: removeBody(f, w), ok: "Remove" },
                     onSelect: () => removeStorageFolder(f.id).then(onChanged),
                   },
                 ]),
