@@ -242,13 +242,13 @@ describe("Show in Finder, in the Mac app", () => {
   });
 });
 
-describe("Allowed folders (the Mac app's read list)", () => {
+describe("Folder access (the Mac app's read list)", () => {
   const draw = (folders: string[], reads: string[], rows: string[] = []) =>
     renderToStaticMarkup(<AllowedRows list={{ folders, reads }} rows={rows} busy={false} onAsk={() => async () => {}} onRemove={async () => {}} />);
 
   it("lists each folder this Mac reads outside its rows, each with its menu; a drop's is copied on import with Allow", () => {
     const html = draw(["/Volumes/NAS/FOOTAGE", "/Users/tiny/Downloads", "/Volumes/Tiny/Footage/Imports/2026-11-23"], ["/Volumes/NAS/FOOTAGE"], ["/Volumes/Tiny/Footage"]);
-    expect(html).toContain("Allowed folders");
+    expect(html).toContain(">This Mac<");
     expect(html).toContain('aria-label="Actions for FOOTAGE"');
     expect(html).toContain('aria-label="Actions for Downloads"');
     expect(html).not.toContain("Imports/2026-11-23"); // under a row: the row says it

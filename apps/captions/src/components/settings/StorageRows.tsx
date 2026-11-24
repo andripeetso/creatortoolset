@@ -212,19 +212,17 @@ const everyWorkspace = (f: StorageFolder) => f.workspace === EVERY_WORKSPACE || 
 /**
  * The page's folders. One workspace: its lists in one card, Exports and Projects only the folder it uses (its own before
  * the one for every workspace, exportsOf). All workspaces: a card per workspace, then the folders for every workspace.
- * Allowed folders last: everything this Mac reads besides them.
+ * What this Mac may read is Settings → You → Folder access (FolderAccessSection), the same in every workspace.
  */
 export function Storage({ devices, storage, onChanged, w }: { devices: Computer[]; storage: StorageView | null; onChanged: () => void; w?: SettingsWorkspace }) {
   if (!storage) return null;
   const shared = { devices, serverDisks: storage.serverDisks, onChanged, w };
-  const allowed = <AllowedFolders rows={storage.folders.filter((f) => f.origin.host === thisMacDevice()).map((f) => f.origin.path)} />;
   if (!w?.all || !w.many) {
     return (
       <Card>
         {ORDER.map((role) => (
           <FolderList key={role} role={role} storage={storage} inUse searchable {...shared} />
         ))}
-        {allowed}
       </Card>
     );
   }
@@ -259,8 +257,6 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
           </Card>
         </Section>
       ))}
-      {/* empty outside the Mac app (AllowedFolders draws nothing there): no bare border */}
-      <Card className="empty:hidden">{allowed}</Card>
     </div>
   );
 }
@@ -303,7 +299,8 @@ export function AllowedRows({ list, rows, busy, onAsk, onRemove }: {
   return (
     <>
       <Row
-        title="Allowed folders"
+        id="folder-access"
+        title="This Mac"
         description="Folders this Mac reads media from; files in them are added where they are."
         control={
           <Button size="sm" variant="outline" disabled={busy} onClick={onAsk("/Volumes")}>
