@@ -228,17 +228,18 @@ describe("Settings → Media Library, the owner's page", () => {
     const asks: string[] = [];
     vi.stubGlobal("confirm", (m: string) => (asks.push(m), false));
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
-    expect(bodyText()).toContain("Not made for 4 files · 10 of 14 · Uses tokens");
-    expect(bodyText()).toContain("Done · 14 of 14 · Free");
+    expect(bodyText()).toContain("4 missing · 10 of 14 made");
+    expect(bodyText()).toContain("Done");
+    expect(bodyText()).not.toContain("14 of 14");
     const sw = host!.querySelector('[aria-label="Descriptions and tags for new files"]') as HTMLButtonElement;
     await act(async () => sw.click());
     expect(patches.at(-1)).toEqual({ settings: { describe: !library.settings.describe } });
     expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false);
-    const button = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Make for 4 missing")!;
+    const button = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Make 4 missing")!;
     await act(async () => button.click());
-    expect(asks[0]).toContain("Claude on the AI provider sign-in, about $2.00 of usage at API prices, counted toward the plan's limits, queues 4 jobs");
+    expect(asks[0]).toContain("Claude on the AI provider sign-in, about $2.00 of plan usage, queues 4 jobs");
     expect(asked.some(([r]) => r.startsWith("POST"))).toBe(false); // Cancel queues nothing
-    expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make for 0"))).toBe(false);
+    expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make 0"))).toBe(false);
   });
 
   it("asks nothing about how to import: where a file is decides", async () => {
