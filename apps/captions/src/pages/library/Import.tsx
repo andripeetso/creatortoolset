@@ -5,17 +5,19 @@ import { EVERY_WORKSPACE, importTarget, leftOutBy, underFolder, type StorageFold
 import { PLACES_MAX } from "@contracts/places";
 import { Button } from "@/components/ui/button";
 import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
-import { allGranted, folderGrant, listMediaFolders, macReadFolders } from "@/lib/local-files";
+import { chooseDialog } from "@/lib/dialogs";
+import { allGranted, folderGrant, listMediaFolders, macReadFolders, readWhereTheyAre } from "@/lib/local-files";
 import { indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice, useProviders } from "@/lib/providers";
 import { importCopy, importPrint, importScan, macImports, macMediaUrl, NOT_A_COPY_FOLDER, pathOnMac, thisMacBridge } from "@/lib/thisMac";
 import { WORDS } from "@/lib/wording";
 
 /**
- * How files come into the Media Library: the one import rule (contracts/storage.ts importTarget), no question. A file
- * this computer already reads (a Media folder here, or a folder allowed on this Mac: readFoldersHere) is indexed where
- * it is; one from outside, a loose file or a dropped folder's, is copied once into the first Media folder's Imports/
- * (copyInto), then indexed in place from there. Owner, 2026-11-23: "No copies of files a computer already has."
+ * How files come into the Media Library: the one import rule (contracts/storage.ts importTarget). A file this computer
+ * already reads (a Media folder here, or a folder on this Mac's reading list: readFoldersHere) is indexed where it is;
+ * for files from outside, a loose file or a dropped folder's, one question (askWhereTheyAre): use them where they are
+ * (their folder goes on the reading list), or copy them once into the first Media folder's Imports/ (copyInto), then
+ * index them in place from there. Owner, 2026-11-23: "No copies of files a computer already has."
  */
 
 /**
@@ -43,9 +45,29 @@ export async function sourceRowsHere(): Promise<string[]> {
  * where it is from (`inPlace`): those rows and the folders allowed on this Mac in its open panel (Allow folder, Settings
  * → Folders' Allowed folders). A drop or a pick (a card, Downloads) is not one of them: its files are copied.
  */
-export async function readFoldersHere(): Promise<{ rows: string[]; inPlace: string[] }> {
+export async function readFoldersHere(): Promise<{ rows: string[]; inPlace: string[]; readGiven: boolean }> {
   const [rows, mac] = await Promise.all([sourceRowsHere(), macReadFolders()]);
-  return { rows, inPlace: [...rows, ...(mac?.reads ?? [])] };
+  return { rows, inPlace: [...rows, ...(mac?.reads ?? [])], readGiven: !!mac?.readGiven };
+}
+
+/**
+ * Files from outside every folder this Mac reads: asked once per add (owner, 2026-11-23). "Use where they are" puts the
+ * folder each came in by on the reading list (readWhereTheyAre) and leaves the ones now read in place; "Copy to Media
+ * Library" leaves them all to be copied. The files still to copy, or null when cancelled. An app without the ask: all copied.
+ */
+export async function askWhereTheyAre(want: string[], readGiven: boolean): Promise<string[] | null> {
+  if (!want.length || !readGiven) return want;
+  const one = want.length === 1;
+  const choice = await chooseDialog({
+    title: "Folder access",
+    body: `Use ${one ? "the file" : `the ${want.length} files`} where ${one ? "it is" : "they are"} and add ${one ? "its folder" : "their folders"} to Folder access, or copy ${one ? "it" : "them"} into the Media Library.`,
+    ok: "Use where they are",
+    other: "Copy to Media Library",
+  });
+  if (!choice) return null;
+  if (choice === "other") return want;
+  const reads = (await readWhereTheyAre(want)) ?? [];
+  return want.filter((at) => !reads.some((r) => underFolder(at, r)));
 }
 
 /** The same rows whole: their Folders left out too (leftOutBy). */
@@ -285,10 +307,10 @@ export interface ImportLook {
 }
 
 /**
- * The import rule applied to an add (LibraryPage addFiles), with no question. `prepare` finds where the files are;
- * `answer` resolves to where each copy goes: none for a file this Mac reads already (readFoldersHere) or a browser's upload, each
- * file from outside under the first Media folder's Imports/<the day>/, or null when there is no Media folder on this
- * computer (the add is refused, `onError` says so). A file the library has already is never copied (import-queue.ts).
+ * The import rule applied to an add (LibraryPage addFiles). `prepare` finds where the files are; `answer` resolves to
+ * where each copy goes: none for a file this Mac reads already (readFoldersHere), one used where it is (askWhereTheyAre)
+ * or a browser's upload, each other file from outside under the first Media folder's Imports/<the day>/, or null when
+ * cancelled or there is no Media folder on this computer (the add is refused, `onError` says so). A file the library has already is never copied (import-queue.ts).
  */
 export function useImportQuestion({ serverHere, onError }: { serverHere: boolean; onError: (e: string) => void }) {
   const prepare = async (files: File[], paths?: Map<File, string>): Promise<ImportLook> => {
@@ -304,13 +326,17 @@ export function useImportQuestion({ serverHere, onError }: { serverHere: boolean
 
   const answer = async (look: ImportLook, files: File[]): Promise<Map<File, string> | null> => {
     if (look.from === "browser" || !look.paths) return new Map();
-    const { rows, inPlace } = await readFoldersHere();
-    const want = files.filter((f) => {
+    const { rows, inPlace, readGiven } = await readFoldersHere();
+    const outside = files.filter((f) => {
       const at = look.paths!.get(f);
       return at && !inPlace.some((r) => underFolder(at, r));
     });
     // shortcut: an older Mac app can't copy, so a file from outside is indexed where it is, as before; gone once every Mac has 0.19
-    if (!want.length || !copyAvailable(look.from)) return new Map();
+    if (!outside.length || !copyAvailable(look.from)) return new Map();
+    const copy = await askWhereTheyAre(outside.map((f) => look.paths!.get(f)!), readGiven);
+    if (!copy) return null;
+    const want = outside.filter((f) => copy.includes(look.paths!.get(f)!));
+    if (!want.length) return new Map();
     const dir = importTarget(rows);
     if (!dir) {
       onError("Add a Media folder in Settings → Folders");

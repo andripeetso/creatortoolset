@@ -42,11 +42,21 @@ export const listMediaFolders = (): Promise<string[]> => mediaAccess({ list: tru
  * Allow folder) and `reads`, the ones allowed in its open panel, whose files are imported where they are. null outside
  * the app or from an app that doesn't list them.
  */
-export async function macReadFolders(remove?: string): Promise<{ folders: string[]; reads: string[] } | null> {
+export async function macReadFolders(remove?: string): Promise<{ folders: string[]; reads: string[]; readGiven: boolean } | null> {
   const a = await askMac(remove ? { remove, list: true } : { list: true });
-  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((f): f is string => typeof f === "string") : null);
   const folders = strings(a?.folders);
-  return folders ? { folders, reads: strings(a?.reads) ?? [] } : null;
+  return folders ? { folders, reads: strings(a?.reads) ?? [], readGiven: a?.readGiven === true } : null;
+}
+
+const strings = (v: unknown) => (Array.isArray(v) ? v.filter((f): f is string => typeof f === "string") : null);
+
+/**
+ * "Use where they are": the folder each of these dropped or picked paths came in by goes on this Mac's reading list
+ * (apps/mac MediaFiles.allowReadGiven; a path the Mac was never given adds nothing). The reading list after, or null
+ * from an app that doesn't take it (readGiven false) or outside the app.
+ */
+export async function readWhereTheyAre(paths: string[]): Promise<string[] | null> {
+  return strings((await askMac({ read: paths }))?.reads);
 }
 
 /** Whether the Mac app's granted folders hold every one of these paths (in one Unicode form: a name may be stored decomposed). */

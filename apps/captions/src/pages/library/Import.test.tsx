@@ -7,10 +7,11 @@ import type { PlacesReport } from "@contracts/places";
 import { EmptyDrop } from "./EmptyDrop";
 import { CantRead, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
 
-const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), macReadFolders: vi.fn(async () => null as { folders: string[]; reads: string[] } | null), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
+const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), macReadFolders: vi.fn(async () => null as { folders: string[]; reads: string[]; readGiven?: boolean } | null), readWhereTheyAre: vi.fn(), chooseDialog: vi.fn(), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint, importCopy: m.importCopy, pathOnMac: m.pathOnMac }));
 vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/library")>()), checkUpload: m.checkUpload, versionPlaces: m.versionPlaces, reportPlaces: m.reportPlaces }));
-vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant, macReadFolders: m.macReadFolders }));
+vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant, macReadFolders: m.macReadFolders, readWhereTheyAre: m.readWhereTheyAre }));
+vi.mock("@/lib/dialogs", () => ({ chooseDialog: m.chooseDialog }));
 vi.mock("@/lib/providers", async (orig) => ({ ...(await orig<typeof import("@/lib/providers")>()), useProviders: () => ({ data: { devices: m.devices } }) }));
 vi.mock("@/lib/onMac", async (orig) => ({ ...(await orig<typeof import("@/lib/onMac")>()), indexOnMac: m.indexOnMac }));
 
@@ -280,6 +281,31 @@ describe("the import rule, with no question", () => {
     const nasMac = { from: "mac" as const, paths: new Map([[nas, "/Volumes/NAS/FOOTAGE/2025/d.mp4"], [file, "/Users/tiny/Downloads/a.mp4"]]) };
     m.macReadFolders.mockResolvedValueOnce({ folders: ["/Volumes/NAS/FOOTAGE", "/Users/tiny/Downloads"], reads: ["/Volumes/NAS/FOOTAGE"] });
     expect((await answerWith(nasMac, [nas, file])).result).toEqual(new Map([[file, `/Volumes/Tiny/Footage/Imports/${day}/a.mp4`]]));
+  });
+
+  it("asks once for files from outside: Use where they are reads their folder in place, Copy copies, Cancel adds nothing", async () => {
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    const read = { folders: ["/Users/tiny/Downloads"], reads: [], readGiven: true };
+    m.macReadFolders.mockResolvedValueOnce(read);
+    m.chooseDialog.mockResolvedValueOnce("ok");
+    m.readWhereTheyAre.mockResolvedValueOnce(["/Users/tiny/Downloads"]);
+    expect((await answerWith(mac, [file])).result).toEqual(new Map());
+    expect(m.readWhereTheyAre).toHaveBeenCalledWith(["/Users/tiny/Downloads/a.mp4"]);
+    expect(m.chooseDialog).toHaveBeenCalledTimes(1);
+    m.macReadFolders.mockResolvedValueOnce(read);
+    m.chooseDialog.mockResolvedValueOnce("other");
+    expect((await answerWith(mac, [file])).result).toEqual(new Map([[file, `/Volumes/Tiny/Footage/Imports/${day}/a.mp4`]]));
+    m.macReadFolders.mockResolvedValueOnce(read);
+    m.chooseDialog.mockResolvedValueOnce(null);
+    expect((await answerWith(mac, [file])).result).toBeNull();
+  });
+
+  it("a Mac app that can't add to the reading list asks nothing and copies", async () => {
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    m.chooseDialog.mockClear();
+    m.macReadFolders.mockResolvedValueOnce({ folders: [], reads: [] });
+    expect((await answerWith(mac, [file])).result).toEqual(new Map([[file, `/Volumes/Tiny/Footage/Imports/${day}/a.mp4`]]));
+    expect(m.chooseDialog).not.toHaveBeenCalled();
   });
 
   it("a browser's files copy nothing", async () => {

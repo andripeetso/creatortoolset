@@ -90,6 +90,11 @@ function Box({ ask, close }: { ask: Ask; close: (v: boolean | string | null) => 
               Cancel
             </AlertDialogCancel>
           )}
+          {ask.other && (
+            <AlertDialogAction onClick={() => finish("other")} className="border border-zinc-800 bg-transparent text-zinc-200 hover:bg-zinc-900 hover:text-zinc-100">
+              {ask.other}
+            </AlertDialogAction>
+          )}
           <AlertDialogAction
             onClick={yes}
             className={ask.danger ? "bg-rose-600 text-white hover:bg-rose-500" : undefined}

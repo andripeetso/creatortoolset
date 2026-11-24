@@ -6,9 +6,9 @@ import { pathsInDrop } from "@/lib/onMac";
 import { holdsMediaFolder } from "./Import";
 
 /**
- * Files and folders dropped anywhere on the Media Library page, with no question: a dropped folder's media files and
- * loose files go to addFiles, where the import rule decides (./Import.tsx): inside a Media folder they are indexed where
- * they are, from outside they are copied into Imports/. A browser's files upload. Returns the page root's handlers,
+ * Files and folders dropped anywhere on the Media Library page: a dropped folder's media files and loose files go to
+ * addFiles, where the import rule decides (./Import.tsx): inside a folder this Mac reads they are indexed where they are,
+ * from outside one question says whether they are used where they are or copied into Imports/. A browser's files upload. Returns the page root's handlers,
  * whether files are held over it and the dialog. A drag of the type `ignore` (the page's own clips) is not a drop of files.
  */
 

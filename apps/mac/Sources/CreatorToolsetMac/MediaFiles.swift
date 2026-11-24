@@ -273,6 +273,30 @@ enum MediaFiles {
         add(folder)
     }
 
+    /// The folder "Use where they are" (an import's question, the page's {read: paths}) puts on the reading list for one
+    /// path the page names: the deepest granted folder holding it (a dropped or picked folder, a loose file's folder), or
+    /// for a file granted alone (picked) its own folder. Nil for a path this Mac was never given, a whole disk or the home
+    /// folder: the page never reads a folder it wasn't given.
+    static func readFolder(for path: String) -> String? {
+        guard isPlain(path) else { return nil }
+        let p = path.precomposedStringWithCanonicalMapping
+        let folder = granted.filter { !isMedia($0) && underByName(p, [$0]) }.max { $0.count < $1.count }
+            ?? (granted.contains { $0.precomposedStringWithCanonicalMapping == p } ? (path as NSString).deletingLastPathComponent : nil)
+        guard let folder, !["/", "/Users", "/Volumes", NSHomeDirectory()].contains(folder) else { return nil }
+        return folder
+    }
+
+    /// {read: paths}: each path's readFolder on the reading list, unless it holds or is in another server's Media folder
+    /// that must be blurred (blurredElsewhere, as at the drop). The folders added.
+    @discardableResult
+    static func allowReadGiven(_ paths: [String], server: String, signedIn: (String) -> Bool = { DeviceVault.token(for: $0) != nil },
+                               reachable: (String) -> Bool = { Places.shared.reachable($0) }) -> [String] {
+        let folders = Array(Set(paths.compactMap(readFolder(for:)))).sorted()
+        let ok = folders.filter { blurredElsewhere([$0], server: server, signedIn: signedIn, reachable: reachable) == nil }
+        ok.forEach(allowRead)
+        return ok
+    }
+
     /// Settings → Folders' list of what this Mac reads besides the server's rows: every granted folder (a picked file's
     /// own grant is left out), and which of them were allowed in the panel.
     static func readList() -> [String: [String]] { ["folders": granted.filter { !isMedia($0) }, "reads": reads] }

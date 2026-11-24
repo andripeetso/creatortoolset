@@ -448,7 +448,8 @@ extension AppWebView {
     /// "mediaAccess": only the open server's own main frame may ask. The page's folder is only where the panel starts:
     /// what is kept is the folder chosen in the panel, which may be a higher one. Cancelled, or a panel already open:
     /// { granted: [] }. No ask ({list: true}): this server's grants, with {folders, reads} (MediaFiles.readList); {remove: path}
-    /// first takes that folder off (Settings → Folders' Remove; it only ever narrows what is read). {folderGrant: {path}} → {granted} (Settings →
+    /// first takes that folder off (Settings → Folders' Remove; it only ever narrows what is read). {read: paths} → {folders,
+    /// reads, added}: each path's dropped or picked folder on the reading list (MediaFiles.allowReadGiven). {folderGrant: {path}} → {granted} (Settings →
     /// Folders' Allow on this Mac); {placesState: {paths}} → {states, disks} (MediaFiles.placeState); {look: true} → the
     /// location agents pass again (a folder added in Settings → Folders).
     fileprivate func mediaAccess(_ message: WKScriptMessage, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
@@ -465,6 +466,13 @@ extension AppWebView {
             return replyHandler(["granted": granted], nil)
         }
         // a Settings → Folders folder just added on this page: the location agent reads the list again now, not at the next wake
+        // an import's "Use where they are": only folders this Mac was given (a drop or a pick) go on the reading list
+        if let paths = body["read"] as? [String] {
+            let added = MediaFiles.allowReadGiven(Array(paths.prefix(500)), server: server)
+            var reply: [String: Any] = MediaFiles.readList()
+            reply["added"] = added
+            return replyHandler(reply, nil)
+        }
         if body["look"] as? Bool == true {
             LocationAgents.shared.poke()
             return replyHandler(["ok": true], nil)
@@ -485,6 +493,7 @@ extension AppWebView {
         guard let ask = body["ask"] as? String else {
             var reply: [String: Any] = MediaFiles.readList()
             reply["granted"] = MediaFiles.granted(server: server, workspace: nil)
+            reply["readGiven"] = true   // this app takes {read: paths}
             return replyHandler(reply, nil)
         }
         guard !mediaPanelOpen, let window else { return replyHandler(["granted": [String]()], nil) }

@@ -6,7 +6,8 @@
 import { storedConfirmDeletes } from "./settings";
 
 /** `deleting`: a reversible delete (to the trash, a comment). Skipped when Settings → General turns confirms off. */
-export type DialogOpts = { title: string; body?: string; ok?: string; danger?: boolean; deleting?: boolean };
+/** `other`: a second answer beside `ok` (chooseDialog). */
+export type DialogOpts = { title: string; body?: string; ok?: string; other?: string; danger?: boolean; deleting?: boolean };
 export type DialogAsk = DialogOpts & { kind: "confirm" | "prompt" | "alert"; value?: string; done: (v: boolean | string | null) => void };
 
 let show: ((a: DialogAsk) => void) | null = null;
@@ -23,6 +24,13 @@ export function confirmDialog(o: DialogOpts): Promise<boolean> {
   if (!show) return Promise.resolve(window.confirm(plain(o)));
   const host = show;
   return new Promise((done) => host({ ...o, kind: "confirm", done: (v) => done(v === true) }));
+}
+
+/** Two answers and Cancel: "ok" or "other", or null when cancelled. */
+export function chooseDialog(o: DialogOpts & { ok: string; other: string }): Promise<"ok" | "other" | null> {
+  if (!show) return Promise.resolve(window.confirm(plain(o)) ? "ok" : null);
+  const host = show;
+  return new Promise((done) => host({ ...o, kind: "confirm", done: (v) => done(v === true ? "ok" : v === "other" ? "other" : null) }));
 }
 
 /** The text typed, or null when cancelled. */

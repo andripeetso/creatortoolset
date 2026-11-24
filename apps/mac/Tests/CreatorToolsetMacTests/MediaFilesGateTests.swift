@@ -93,6 +93,28 @@ final class MediaFilesGateTests: XCTestCase {
         XCTAssertFalse(MediaFiles.isAllowed(footage, server: "s"))   // its pick no longer OKs the rows under it
     }
 
+    func testUseWhereTheyAreReadsOnlyWhatThisMacWasGiven() {
+        let none = { (_: String) in false }
+        let card = root.appendingPathComponent("Card").path, loose = root.appendingPathComponent("Downloads/b.mov").path
+        MediaFiles.grantDropped([["path": card, "folder": true]])
+        MediaFiles.grantPicked([URL(fileURLWithPath: loose)])
+        // a dropped folder's file: that folder; a picked file alone: its own folder; anything else: nothing
+        XCTAssertEqual(MediaFiles.allowReadGiven([card + "/sub/a.mov", loose, file, "/etc/x.mov"], server: "s", signedIn: none), [card, root.appendingPathComponent("Downloads").path])
+        XCTAssertEqual(MediaFiles.reads.sorted(), [card, root.appendingPathComponent("Downloads").path])
+        XCTAssertNil(MediaFiles.readFolder(for: card + "/../x.mov"))
+        // a whole home folder is never read from one file picked in it
+        MediaFiles.grantPicked([URL(fileURLWithPath: NSHomeDirectory() + "/c.mov")])
+        XCTAssertNil(MediaFiles.readFolder(for: NSHomeDirectory() + "/c.mov"))
+    }
+
+    func testUseWhereTheyAreKeepsTheBlurredElsewhereGuard() {
+        let card = root.appendingPathComponent("Card").path
+        MediaFiles.setServerFolders([.init(id: "f1", path: card + "/Media", workspaces: ["*"], use: "media", guarded: ["Tiny"])], server: "other.test")
+        MediaFiles.grantDropped([["path": card, "folder": true]])
+        XCTAssertEqual(MediaFiles.allowReadGiven([card + "/a.mov"], server: "s", signedIn: { $0 == "other.test" }, reachable: { _ in false }), [])
+        XCTAssertEqual(MediaFiles.reads, [])
+    }
+
     func testGrantsAreReplacedOnPull() {
         let s = "s"
         let other = root.appendingPathComponent("Other").path
