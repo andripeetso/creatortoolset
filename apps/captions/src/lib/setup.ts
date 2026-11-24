@@ -43,6 +43,9 @@ export const stepsFor = (talk?: string | null, account = false, tools: readonly 
   ...(account ? ([ACCOUNT_STEP] as const) : []),
 ];
 
+/** `?setup=` as this window reads it: on the Media Library, `1` is the library's own setup sheet, not a screen of setup. */
+export const setupAsked = (pathname: string, raw: string | null): string | null => (pathname.startsWith("/library") && raw === "1" ? null : raw);
+
 /** Ids from the older, longer setups still open the screen they now belong to. */
 const OLD_STEP: Record<string, SetupStep> = { tools: "make", ai: "agents", project: "make", left: "make", done: "make", try: "make" };
 

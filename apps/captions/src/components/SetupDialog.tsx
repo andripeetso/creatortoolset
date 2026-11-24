@@ -37,7 +37,7 @@ import { JobStep } from "@/components/setup/JobStep";
 import { SetupChecklist } from "@/components/setup/SetupChecklist";
 import { SocialStep } from "@/components/setup/SocialStep";
 import { LibrarySetup } from "@/pages/library/Setup";
-import { listLibraries } from "@/lib/library";
+import { getWatch, listLibraries } from "@/lib/library";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { OwnAiStep } from "@/components/setup/OwnAiStep";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
@@ -60,6 +60,7 @@ import {
   setupStepFromParam,
   startIntro,
   stepsFor,
+  setupAsked,
   stillMotion,
   toolsFor,
   toolsWithJob,
@@ -142,8 +143,7 @@ export function SetupDialog() {
   const [ownSlot, setOwnSlot] = useState<HTMLElement | null>(null); // where the AI apps screen shows its rows
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const [accountStep, setAccountStep] = useState(false); // the Mac app offered a sign-in during this setup: its screen stays in the path
-  // the Media Library's own setup sheet is also ?setup=1: on its page the value is the library's, not this window's
-  const asked = useLocation().pathname.startsWith("/library") ? null : params.get("setup");
+  const asked = setupAsked(useLocation().pathname, params.get("setup"));
   // the Help screen: this Mac, and the account's other computers. It opens only from a press (Settings → Setup, ?setup=helper)
   const macApp = hasThisMac();
   const bridge = useThisMac(macApp && !!me && asked === "helper"); // asked every 3 s: only while the Help screen is up
@@ -166,7 +166,11 @@ export function SetupDialog() {
     if (real) void load();
   }, [real, load]);
   useEffect(() => {
-    if (open && step === "folders" && library === undefined) void listLibraries().then((l) => setLibrary(l[0] ?? null), () => setLibrary(null));
+    if (open && step === "folders" && library === undefined)
+      // the owner's only, as on the Media Library page: its watch list answers no one else
+      void listLibraries()
+        .then(async (l) => (l[0] && (await getWatch(l[0].id)) ? l[0] : null))
+        .then(setLibrary, () => setLibrary(null));
   }, [open, step, library]);
   useEffect(() => {
     if (real) void loadPrefs();
@@ -293,10 +297,11 @@ export function SetupDialog() {
   const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (step === "folders" && !view.have.includes("library")) || (step === "social" && !view.have.includes("instagram")) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
 
   // "Where are your videos?" is the Media Library's own setup, in place of this window: its Done goes on (and ticks the
-  // row), its Finish later skips. With no library to set up (loading, or none) the window's own screen says Skip
+  // row), its Finish later skips. Nothing while it loads; with none to set up (not the owner) the window's own screen says Skip
+  if (step === "folders" && library === undefined) return null;
   if (step === "folders" && library) {
     const on = () => (side ? leave() : void next());
-    return <LibrarySetup library={library} onDone={() => (void load(), on())} onClose={on} />;
+    return <LibrarySetup library={library} onDone={() => (void load(), on())} onClose={on} stay={!side} />;
   }
 
   return (

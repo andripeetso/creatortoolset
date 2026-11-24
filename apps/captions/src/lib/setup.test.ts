@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
-  hideReminders, remindLater, remindersOn, setupGapIds, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
+  hideReminders, remindLater, remindersOn, setupGapIds, setupAsked, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
@@ -30,6 +30,12 @@ describe("setup steps", () => {
     expect(stepsFor("app", false, ["editor", "instagram"])).toEqual(["theme", "agents", "make", "folders", "social", "job", "how"]);
     expect(stepsFor("both", true, ["instagram"])).toEqual(["theme", "agents", "make", "social", "job", "how", "own", "account"]);
     expect(stepsFor("app", false, ["captions", "workshop"])).toEqual(SETUP_PATH);
+  });
+
+  it("leaves the Media Library's own ?setup=1 to it, and still opens a setup screen asked for on its page", () => {
+    expect(setupAsked("/library", "1")).toBeNull();
+    expect(setupAsked("/library", "social")).toBe("social");
+    expect(setupAsked("/", "1")).toBe("1");
   });
 
   it("opens the two new screens from a link, and no old id lands on them", () => {
