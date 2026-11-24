@@ -22,7 +22,22 @@ const isKey = (h: Have): h is MyKeyEnv => MY_KEYS.some((k) => k.env === h);
 /** The screen that sets one row up: the same form Settings has, never a second copy. */
 function NeedForm({ need }: { need: Need }) {
   const here = useLocation();
-  if (need.form === "keys") return <MyKeysSection only={need.anyOf.filter(isKey)} />;
+  if (need.form === "keys")
+    return (
+      <>
+        <MyKeysSection only={need.anyOf.filter(isKey)} />
+        {/* the free way (api/setup.ts haveFor): a speech model on one of the person's computers meets the row too */}
+        {need.alsoMetBy?.includes("deviceTranscripts") && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Free instead: a speech model on one of your computers, in{" "}
+            <Link to="/settings/voice" className="underline">
+              Settings → Voice
+            </Link>
+            .
+          </p>
+        )}
+      </>
+    );
   if (need.form === "apify") return <ConnectorsSection back={here.pathname + here.search} compact />;
   if (need.form === "project") return <ProjectForm busy={false} onSave={(f, files) => createProject(f).then((p) => (files.length ? addProjectFiles(p.id, files) : undefined))} />;
   if (need.form === "library")

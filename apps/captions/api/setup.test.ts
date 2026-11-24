@@ -66,6 +66,23 @@ describe("setup: my tools, my plan, what is set up", () => {
     who = was;
   });
 
+  it("says transcripts work without a key on a server once one of the person's computers has a speech model", async () => {
+    const { setDeviceKinds, deviceOf } = await import("./lib/devices");
+    const { declareModels } = await import("./lib/computer-transcribe");
+    const { TRANSCRIBE_KIND } = await import("../contracts/devices");
+    const was = who;
+    who = { username: "kit", role: "user", cloud: true, off: [] };
+    try {
+      const { device } = pairDevice("kit", "Kit's PC");
+      setDeviceKinds(device.id, [TRANSCRIBE_KIND]);
+      expect((await get()).have).not.toContain("deviceTranscripts"); // a computer with no model yet
+      declareModels(deviceOf(device.id)!, ["whisper-base"], []);
+      expect((await get()).have).toContain("deviceTranscripts");
+    } finally {
+      who = was;
+    }
+  });
+
   it("says transcripts work without a key only when the server is on the person's own computer", async () => {
     expect((await get()).have).not.toContain("deviceTranscripts");
     process.env.CT_LOCAL = "1";

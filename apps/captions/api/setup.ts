@@ -9,7 +9,7 @@ import { connectState } from "./connect/state";
 import { joinServer, saveJoin } from "./lib/server-join";
 import { readConnectors } from "./lib/connectors/store";
 import { publicApifyStatus, readApify } from "./lib/instagram/apify";
-import { deviceTranscribes } from "./lib/device-transcribe";
+import { availableEngines } from "./lib/speech";
 import { connectedOwn } from "./lib/providers";
 import { agyProgress, removeAgy } from "./lib/antigravity";
 import { accountFolder, addMcp, connectCli, installCli, localAiView, planOf, setsUp, signIn, updateCli, CLI_IDS, MAC_ONLY, OTHER_AIS } from "./lib/local-ai";
@@ -86,7 +86,9 @@ export async function haveFor(user: SessionUser): Promise<Have[]> {
     (k) => k.env,
   );
   if (anyAiConfigured(user)) have.push("ai");
-  if (deviceTranscribes()) have.push("deviceTranscripts");
+  // transcripts without a key: This Mac's own model, or a speech model on one of the person's computers (lib/speech.ts)
+  // shortcut: one Have for every use; the AI Editor takes only Parakeet on a computer that is not a Mac (computersFor), so its row can tick early
+  if (availableEngines(user, "transcripts").includes("local")) have.push("deviceTranscripts");
   // the Workshop's own check (workshop.ts workshopAi): its route, an admin's workspace AI included
   if (connectedOwn(u) || !aiFor(user, "workshop", "Workshop").off) have.push("ownAi");
   if ((await ownedProjects(u)).length) have.push("project");
