@@ -379,8 +379,8 @@ export function clearAccountCache(user: string | null | undefined) {
   for (const k of [...mem.keys()]) if (k.startsWith(base)) drop(k);
 }
 
-/** Sign-out: every account's saved lists go, and a fetch still in flight can't save into the cleared store. */
-export function clearLocalCache() {
+/** Sign-out (and the crash screen's Reload): every account's saved lists go, and a fetch still in flight can't save into the cleared store. */
+export function clearLocalCache(): Promise<void> {
   epoch++;
   versions.clear();
   for (const k of [...mem.keys()]) drop(k);
@@ -393,11 +393,18 @@ export function clearLocalCache() {
       /* storage off: nothing saved */
     }
   }
-  void db().then((d) => {
-    try {
-      d?.transaction(STORE, "readwrite").objectStore(STORE).clear();
-    } catch {
-      /* closed: nothing to clear */
-    }
-  });
+  // resolves once the disk copy is gone too, so a reload right after reads nothing back
+  return db().then(
+    (d) =>
+      new Promise<void>((resolve) => {
+        try {
+          if (!d) return resolve();
+          const tx = d.transaction(STORE, "readwrite");
+          tx.objectStore(STORE).clear();
+          tx.oncomplete = tx.onerror = tx.onabort = () => resolve();
+        } catch {
+          resolve(); // closed: nothing to clear
+        }
+      }),
+  );
 }

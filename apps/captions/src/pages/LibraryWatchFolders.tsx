@@ -7,6 +7,7 @@ import { Card, ErrorRow, ListRow, Section, SettingsSelect, Status } from "@/comp
 import { folderName } from "@/components/LibraryProcessing";
 import { useCachedLoad } from "@/lib/local-cache";
 import { chooseFolderOnMac, thisMacBridge } from "@/lib/thisMac";
+import { bodyOf } from "@/lib/body";
 
 /**
  * The library's footage folders, for its owner, in the library's own settings sheet (api/library/watch.ts): folders on
@@ -24,7 +25,7 @@ async function call(libraryId: string, folders?: Change[]): Promise<WatchStatus>
     headers: folders ? { "content-type": "application/json" } : undefined,
     body: folders ? JSON.stringify({ folders }) : undefined,
   });
-  const body = (await r.json().catch(() => ({}))) as WatchStatus & { error?: string };
+  const body = (await bodyOf(r)) as WatchStatus & { error?: string };
   if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
   return body;
 }

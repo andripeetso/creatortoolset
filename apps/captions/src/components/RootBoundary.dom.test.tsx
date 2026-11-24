@@ -2,7 +2,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearLocalCache } from "@/lib/local-cache";
 import { RETRY_MS, RootBoundary } from "./StaleBuild";
+
+vi.mock("@/lib/local-cache", () => ({ clearLocalCache: vi.fn(() => Promise.resolve()) }));
 
 // a screen that breaks while its data is bad (a reply cut off by the network) and draws once the data is good again
 let bad = false;
@@ -51,5 +54,17 @@ describe("RootBoundary", () => {
     // the person comes back to the window: it draws again
     act(() => window.dispatchEvent(new Event("focus")));
     expect(host.textContent).toBe("Clips");
+  });
+
+  it("Reload clears the saved lists first, so a bad saved copy can't break the screen again", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload, pathname: "/library" });
+    bad = true;
+    draw();
+    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === "Reload")!;
+    await act(async () => button.click());
+    expect(clearLocalCache).toHaveBeenCalled();
+    expect(reload).toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

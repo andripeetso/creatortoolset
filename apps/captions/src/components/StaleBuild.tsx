@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { clearLocalCache } from "@/lib/local-cache";
 import { entryOf } from "./NewVersionPill";
 
 /**
@@ -48,9 +49,12 @@ export const RETRY_MS = 5_000;
 const RETRY_GAP_MS = 60_000;
 
 /** The error into the Mac app's log (AppLog.swift's appLog): a screen caught here reaches no window error event. */
+let lastLogged = "";
 function logToMac(error: unknown, where?: string | null) {
   // WebKit's stack has no message line: both
   const what = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+  if (what === lastLogged) return; // the same break on every focus: once in the log
+  lastLogged = what;
   const handler = (window as unknown as { webkit?: { messageHandlers?: { appLog?: { postMessage: (m: string) => void } } } }).webkit
     ?.messageHandlers?.appLog;
   try {
@@ -65,6 +69,13 @@ function logToMac(error: unknown, where?: string | null) {
  * render that broke on a moment's bad data (a reply cut off when the network dropped) draws again a few seconds later,
  * and again whenever the window is shown or focused, so the Reload screen stays only while the screen keeps breaking.
  */
+/**
+ * Reload with no saved lists: a bad saved copy would break the screen again before it could ask the server anew.
+ * At most a second's wait for the disk, so the button always reloads.
+ */
+export const reloadClean = () =>
+  void Promise.race([clearLocalCache(), new Promise((r) => setTimeout(r, 1000))]).finally(() => window.location.reload());
+
 export class RootBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { broken: false };
   private lastTry = 0;
@@ -113,7 +124,7 @@ export class RootBoundary extends Component<{ children: ReactNode }, State> {
         <p>This screen stopped working.</p>
         <button
           type="button"
-          onClick={() => window.location.reload()}
+          onClick={reloadClean}
           className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-500"
         >
           Reload

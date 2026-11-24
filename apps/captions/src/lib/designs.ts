@@ -1,4 +1,5 @@
 import { DESIGN_GAP, DESIGN_LIMITS, type Design, type DesignListed, type DesignPage, type DesignStyles, type NewDesign, type SplitAnswer } from "@contracts/design";
+import { bodyOf } from "@/lib/body";
 
 /** The designer's calls to api/designs.ts. */
 
@@ -21,7 +22,7 @@ async function send<T>(url: string, method = "GET", body?: unknown, signal?: Abo
   // the browser's limit is in bytes, shared with its other such requests: refused, it is sent the plain way
   const small = keepalive && new Blob([text ?? ""]).size < 60_000;
   const r = await (small ? fetch(url, { ...init, keepalive: true }).catch(() => fetch(url, init)) : fetch(url, init));
-  const out = (await r.json().catch(() => ({}))) as T & { error?: string; design?: Design; code?: string; device?: { id: string; name: string } };
+  const out = (await bodyOf(r)) as T & { error?: string; design?: Design; code?: string; device?: { id: string; name: string } };
   if (r.status === 409 && out.design) throw new DesignChanged(out.design);
   if (!r.ok) throw Object.assign(new Error(out.error ?? `Request failed (${r.status})`), { code: out.code, device: out.device, status: r.status }) as SendError;
   return out;

@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth";
 import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacDevice, useProviders } from "@/lib/providers";
 import { thisMacBridge } from "@/lib/thisMac";
+import { bodyOf } from "@/lib/body";
 
 /**
  * Copies (Settings → Media Library and the library's sheet, and the library's first-run screen): folders on the owner's
@@ -22,7 +23,7 @@ type Computer = ProvidersView["devices"][number];
 
 const ask = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const r = await fetch(url, init).catch(() => null);
-  const body = (await r?.json().catch(() => ({}))) as T & { error?: string };
+  const body = (r && (await bodyOf(r))) as T & { error?: string };
   if (!r?.ok) throw Object.assign(new Error(body?.error ?? "Could not reach the server. Try again."), { status: r?.status });
   return body;
 };

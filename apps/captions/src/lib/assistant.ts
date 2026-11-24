@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AssistantImage, AssistantTurnInput, AssistantView } from "@contracts/assistant";
 import { snapshot } from "@/lib/page-context";
+import { bodyOf } from "@/lib/body";
 
 /**
  * The dock's client (components/assistant/AssistantDock.tsx) and its server calls (api/assistant.ts). The dock is open
@@ -89,7 +90,7 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<{ 
     body: body === undefined ? undefined : JSON.stringify(body),
   }).catch(() => null);
   if (!r) return { ok: false, error: "Can't reach the server" };
-  const data = (await r.json().catch(() => ({}))) as T & { error?: string; code?: string };
+  const data = (await bodyOf(r)) as T & { error?: string; code?: string };
   return r.ok ? { ok: true, data } : { ok: false, error: data.error ?? `Failed (${r.status})`, code: data.code };
 }
 
@@ -102,7 +103,7 @@ export const sendTurnTo = (chat: string, input: AssistantTurnInput) => call<Assi
 /** Stop the reply being written, else the first that waits; with `reply`, that one. */
 export const stopTurn = (reply?: string) => call<AssistantView>("/stop", "POST", reply ? { reply } : undefined);
 /** The dock's answer to a reply's send (api/assistant.ts POST /sends/:reply): the upload it started, or that the file is gone. */
-export const sendAnswer = (reply: string, b: { id: string } | { gone: true }) => call<AssistantView>(`/sends/${encodeURIComponent(reply)}`, "POST", b);
+export const sendAnswer = (reply: string, b: { id: string } | { gone: true } | { added: string }) => call<AssistantView>(`/sends/${encodeURIComponent(reply)}`, "POST", b);
 export const keySaved = (env: string) => call<AssistantView>("/saved", "POST", { env });
 export const cancelSecret = () => call<AssistantView>("/cancel", "POST");
 export const navigated = () => call<AssistantView>("/navigated", "POST");
