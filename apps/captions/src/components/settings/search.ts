@@ -50,6 +50,8 @@ const STATIC_ROWS = [
   { section: "dictation", id: "dictation-history", title: "Recent recordings", description: "Copy or redo a recent dictation", keywords: ["dictation", "history", "recordings", "transcript", "key", "shortcut", "f14", "mac app"], needs: "mac" },
   { section: "dictation", id: "dictation-file", title: "File transcription", description: "Transcribes an audio or video file on this Mac", keywords: ["dictation", "transcribe", "file", "audio", "video", "key", "shortcut", "f15", "mac app"], needs: "mac" },
   { section: "dictation", id: "dictation-sounds", title: "Sound cues", keywords: ["dictation", "sound", "beep", "mac app"], needs: "mac" },
+  { section: "general", id: "setup-checklist", title: "Setup checklist", description: "What each tool turned on still needs", keywords: ["setup", "onboarding", "checklist", "missing", "keys", "getting started"] },
+  { section: "general", id: "setup-reminders", title: "Setup reminders", description: "The Home card and the chat's list while a tool still needs something", keywords: ["setup", "onboarding", "reminder", "hide", "checklist"] },
   { section: "general", id: "app-version", title: "Version", description: "Which Creator Toolset Mac app this is", keywords: ["version", "update", "release", "about", "mac app"], needs: "mac" },
   { section: "general", id: "usage-reports", title: "Usage and crash reports", keywords: ["telemetry", "analytics", "crash", "privacy", "usage", "report", "mac app"], needs: "mac" },
   { section: "general", id: "saved-lists", title: "Cache", description: "Lists saved on this computer so screens open at once", keywords: ["cache", "clear", "storage", "saved", "lists", "screens", "reload"] },

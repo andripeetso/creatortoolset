@@ -5,7 +5,9 @@ import { useAuth } from "@/lib/auth";
 import { cachedUsage, clearAccountCache } from "@/lib/local-cache";
 import { persistConfirmDeletes, persistStatusBars, storedConfirmDeletes, storedStatusBars } from "@/lib/settings";
 import { canRecordScreen } from "@/lib/mac-record";
-import { useWorkPrefs } from "@/lib/setup";
+import { useNavigate } from "react-router";
+import { needsLine } from "@contracts/tools";
+import { hideReminders, setupGaps, useReminders, useSetup, useWorkPrefs } from "@/lib/setup";
 import { Card, markSave, Row, Section, saveFailed } from "./ui";
 import { hasThisMac, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 
@@ -31,6 +33,34 @@ export function GeneralSection() {
       <Working />
       <ScreenRecording mac={canRecordScreen() ? mac : null} />
       <ThisComputer version={mac?.version} />
+    </>
+  );
+}
+
+/** The Setup checklist (it opens over Home) and the switch for its reminders, kept in this browser (lib/setup.ts). */
+function SetupRows() {
+  const navigate = useNavigate();
+  const view = useSetup((s) => s.view);
+  const off = useReminders((s) => s.off);
+  const gaps = view ? setupGaps(view) : [];
+  return (
+    <>
+      <Row
+        id="setup-checklist"
+        title="Setup checklist"
+        description={gaps.length ? needsLine(gaps) : undefined}
+        control={
+          <Button size="sm" variant="outline" onClick={() => navigate("/?setup=check&alone=1")}>
+            Open
+          </Button>
+        }
+      />
+      <Row
+        id="setup-reminders"
+        title="Setup reminders"
+        description="Shows the Home card and the chat's list while a tool still needs something."
+        control={<Switch checked={!off.includes("*")} aria-label="Setup reminders" onCheckedChange={(on) => void markSave(hideReminders(on ? [] : ["*"]))} />}
+      />
     </>
   );
 }
@@ -73,6 +103,7 @@ function Working() {
         />
         <AskFit />
         <UsageLimits />
+        <SetupRows />
       </Card>
     </Section>
   );

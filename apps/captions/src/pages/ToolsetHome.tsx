@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type CSSProperties } from "react";
 import { Link, Navigate, useLocation } from "react-router";
-import { ArrowRight, ChevronRight, Lock, ScreenShare, Star, type LucideIcon } from "lucide-react";
+import { ArrowRight, ChevronRight, Lock, ScreenShare, Star, X, type LucideIcon } from "lucide-react";
 import { canUse, canUseTile, useMe, type Me } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { isPhoneHub } from "@/lib/mobile";
@@ -18,7 +18,7 @@ import { accentFor, accentTones, currentProject, projectColor, useWorkspace } fr
 import { useAppearance } from "@/lib/settings";
 import { useShareTheme } from "@/components/ShareTheme";
 import { needsLine, onHome, readiness, TOOL_GROUPS, TOOL_NAMES, type HomeTile, type Tool } from "@contracts/tools";
-import { DOWNLOAD_URL, introPlays, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, setupFinished, setupGaps, shareDownload, startIntro, stillMotion, useSetup, useSetupShown } from "@/lib/setup";
+import { DOWNLOAD_URL, introPlays, onSettingsClosed, openSetupAt, resumeStep, setupDismissed, hideReminders, remindersOn, setupFinished, setupGapIds, setupGaps, shareDownload, useReminders, startIntro, stillMotion, useSetup, useSetupShown } from "@/lib/setup";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -76,6 +76,7 @@ const canUseKey = (me: Me | null, k: Key) => (k === "finals" ? canUse(me, "media
 export default function ToolsetHome() {
   const location = useLocation();
   const setupUp = useSetupShown((s) => s.shown);
+  const remindOff = useReminders((s) => s.off);
   const [shared, setShared] = useState<Awaited<ReturnType<typeof shareDownload>> | null>(null);
   const openTool = useOpenTool();
   const me = useMe();
@@ -268,19 +269,21 @@ export default function ToolsetHome() {
             <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
           </button>
         )}
-        {/* the way back to whatever was skipped: setup is finished, and a tool turned on still needs something */}
-        {view && setupFinished(view) && !phone && !setupUp && setupGaps(view).length > 0 && (!beat || beat === "all") && (
-          <button
-            type="button"
-            onClick={() => openSetupAt("check", true)}
-            className="intro-late flex items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 px-4 py-3 text-left"
-          >
-            <span>
-              <span className="block text-sm text-zinc-100">Setup checklist</span>
-              <span className="block text-xs text-zinc-400">{needsLine(setupGaps(view))}</span>
-            </span>
-            <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
-          </button>
+        {/* the way back to whatever was skipped, for everyone (an account from before this setup too): a tool turned on
+            still needs something. Not beside Finish setup, which leads there itself; Hide keeps it away until something new is missing */}
+        {view && !phone && !setupUp && !(!setupFinished(view) && setupDismissed()) && setupGaps(view).length > 0 && remindersOn(view, remindOff) && (!beat || beat === "all") && (
+          <div className="intro-late flex items-center gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 py-3 pl-4 pr-2">
+            <button type="button" onClick={() => openSetupAt("check", true)} className="flex flex-1 items-center justify-between gap-3 text-left">
+              <span>
+                <span className="block text-sm text-zinc-100">Setup checklist</span>
+                <span className="block text-xs text-zinc-400">{needsLine(setupGaps(view))}</span>
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
+            </button>
+            <button type="button" aria-label="Hide setup checklist" onClick={() => hideReminders(setupGapIds(view))} className="rounded-md p-1.5 text-zinc-500 hover:text-zinc-200">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         )}
 
         {/* the boxed groups (Plan, Make, Distribute) in a row with arrows between, then Extras: quieter, a centred label */}

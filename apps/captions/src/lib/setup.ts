@@ -444,18 +444,24 @@ export function setupLeft(view: Pick<SetupView, "tools" | "have">): { step: Setu
   return (["agents", "folders", "social", "check"] as const).filter((s) => s === "check" || steps.has(s)).map((step) => ({ step, label: label[step]! }));
 }
 
-/** The path screen "Where are your videos?" sends to the Media Library's own setup: setup opens on it again when that is done. */
-const AFTER_LIBRARY = "ct-setup-after-library";
-export const returnAfterLibrary = (step: SetupStep): void => write("session", AFTER_LIBRARY, step);
-export function takeReturn(): SetupStep | null {
-  const s = setupStepFromParam(read("session", AFTER_LIBRARY));
-  try {
-    store("session")?.removeItem(AFTER_LIBRARY);
-  } catch {
-    /* no storage: nothing was kept */
-  }
-  return s;
+/** What is left, as ids: each missing row, and the social sign-in while the Content Analyzer is on (setupLeft). */
+export function setupGapIds(view: Pick<SetupView, "tools" | "have">): string[] {
+  const ids = setupGaps(view).map((n) => n.anyOf.join());
+  return view.tools?.includes("instagram") && !view.have.includes("instagram") ? [...ids, "instagram"] : ids;
 }
+
+/**
+ * Hide on a setup reminder (Home's Setup checklist card, the chat's Still to set up): the ids it hid, so something new
+ * missing shows the reminders again; "*" (Settings → General, Setup reminders off) hides them for good. In this browser.
+ */
+const REMINDERS_OFF = "ct-setup-reminders-off";
+export const useReminders = create<{ off: string[] }>(() => ({ off: (read("local", REMINDERS_OFF) ?? "").split(",").filter(Boolean) }));
+export function hideReminders(ids: readonly string[]): void {
+  write("local", REMINDERS_OFF, ids.join(","));
+  useReminders.setState({ off: [...ids] });
+}
+export const remindersOn = (view: Pick<SetupView, "tools" | "have">, off: readonly string[]): boolean =>
+  !off.includes("*") && setupGapIds(view).some((id) => !off.includes(id));
 
 /** The tools leaving setup switches on: the ones ticked, and the job's (Add captions turns Caption Studio on), in `mine`'s order. */
 export const toolsWithJob = (ticked: readonly Tool[], job: Job | null | undefined, mine: readonly Tool[]): Tool[] =>

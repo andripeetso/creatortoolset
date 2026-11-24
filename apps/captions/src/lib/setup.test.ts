@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   dismissSetup, DOWNLOAD_URL, endIntro, firstProjectName, introPlays, introSeen, jobNeeds, openSetupAt, jobsFor, MAKE_NAMES, markIntroSeen, resumeStep, startIntro, toolsWithJob, useIntro, SETUP_PATH, SIDE_STEPS, setupDismissed, setupFinished, setupOpen, setupOpensItself,
-  setupGaps, setupLeft, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
+  hideReminders, remindersOn, setupGapIds, setupGaps, setupLeft, useReminders, setupStepFromParam, shareDownload, stepsFor, toolForPath, toolsFor, seedSetup, useWorkPrefs,
 } from "./setup";
 import { useAuth } from "./auth";
 import { putCached, readCached } from "./local-cache";
-import { readiness, TOOLS, type Tool } from "@contracts/tools";
+import { readiness, TOOLS, type Have, type Tool } from "@contracts/tools";
 import { JOBS } from "@contracts/work-prefs";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -50,6 +50,17 @@ describe("setup steps", () => {
     expect(setupLeft({ tools: ["instagram"], have: ["project", "apify"] }).map((s) => s.step)).toEqual(["social", "check"]);
     expect(setupLeft({ tools: ["instagram"], have: ["project", "instagram"] })).toEqual([]);
     expect(setupLeft({ tools: null, have: [] })).toEqual([]);
+  });
+
+  it("hides the reminders until something new is missing, and for good with *", () => {
+    const view = { tools: ["media", "instagram"] as Tool[], have: ["project", "apify"] as Have[] };
+    expect(setupGapIds(view)).toEqual(["library", "instagram"]);
+    expect(remindersOn(view, [])).toBe(true);
+    hideReminders(setupGapIds(view));
+    expect(remindersOn(view, useReminders.getState().off)).toBe(false);
+    expect(remindersOn({ ...view, tools: [...view.tools, "notes"] }, useReminders.getState().off)).toBe(true); // a Deepgram key now missing
+    expect(remindersOn({ ...view, tools: [...view.tools, "notes"] }, ["*"])).toBe(false);
+    hideReminders([]);
   });
 
   it("keeps Connect, Folders and the AI apps screen as screens a link can open alone", () => {

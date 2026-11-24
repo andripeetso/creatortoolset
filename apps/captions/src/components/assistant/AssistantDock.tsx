@@ -62,8 +62,8 @@ import { FeedbackBar, FeedbackSlot } from "./FeedbackBar";
 import { useFeedback } from "@/lib/review-feedback";
 import { ActionCard } from "./ActionCard";
 import { ConfirmCards } from "./ConfirmCards";
-import { NoticeLine, WelcomeLine, WelcomePill, WelcomeSteps, useWelcome } from "./Welcome";
-import { openSetupAt, setupFinished, setupLeft, useSetup, useWorkTalk } from "@/lib/setup";
+import { NoticeLine, WelcomeLine, WelcomePill, SetupSteps, useWelcome } from "./Welcome";
+import { hideReminders, openSetupAt, remindersOn, setupFinished, setupGapIds, setupLeft, useReminders, useSetup, useWorkTalk } from "@/lib/setup";
 
 /** Width of the chat docked to the right edge; the page moves over by as much. */
 const DOCK_W = 400;
@@ -182,6 +182,9 @@ export function AssistantDock() {
   const setup = useSetup((s) => s.view);
   const connected = !!view && view.provider !== "none";
   const left = setup ? setupLeft(setup) : [];
+  const remindOff = useReminders((s) => s.off);
+  // after the hello, an empty chat keeps the list until everything is set up or Hide is pressed
+  const remind = !!setup && left.length > 0 && remindersOn(setup, remindOff);
   const welcome = useWelcome({
     open: !collapsed || chatMode,
     eligible: !!view && !!setup && talk !== "chat" && setupFinished(setup) && view.messages.length === 0,
@@ -1013,7 +1016,7 @@ export function AssistantDock() {
             {welcome.showing ? (
               <>
                 <WelcomeLine text={welcome.shown} typing={welcome.stage === "typing"} />
-                {welcome.stage === "ready" && left.length > 0 && <WelcomeSteps steps={left} />}
+                {welcome.stage === "ready" && left.length > 0 && <SetupSteps steps={left} />}
               </>
             ) : (
               centred && (
@@ -1027,6 +1030,11 @@ export function AssistantDock() {
                   </div>
                 </div>
               )
+            )}
+            {!welcome.showing && remind && (
+              <div className={cn("pb-3", centred && "mx-auto w-full max-w-sm")}>
+                <SetupSteps steps={left} onHide={() => hideReminders(setupGapIds(setup!))} />
+              </div>
             )}
             {!centred && chips}
           </div>

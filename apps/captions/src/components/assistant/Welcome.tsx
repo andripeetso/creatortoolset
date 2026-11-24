@@ -127,15 +127,37 @@ export function WelcomeLine({ text, typing }: { text: string; typing: boolean })
   );
 }
 
-/** The buttons under the hello after setup: each opens the one setup screen (`?setup=…&alone=1`) with something left. */
-export function WelcomeSteps({ steps }: { steps: readonly { step: SetupStep; label: string }[] }) {
+/**
+ * What setup still has to do, as a numbered list of buttons in the theme colour: each opens the one setup screen
+ * (`?setup=…&alone=1`). Under the hello after setup, and in an empty chat as Still to set up (`onHide`) until all is done.
+ */
+export function SetupSteps({ steps, onHide }: { steps: readonly { step: SetupStep; label: string }[]; onHide?: () => void }) {
   return (
-    <div className="flex flex-wrap gap-2 pt-2 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
-      {steps.map((s) => (
-        <button key={s.step} type="button" onClick={() => openSetupAt(s.step, true)} className={CHIP}>
-          {s.label}
-        </button>
-      ))}
+    <div className="pt-2 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+      {onHide && (
+        <div className="flex items-center justify-between pb-1.5">
+          <p className="text-xs font-medium text-muted-foreground">Still to set up</p>
+          <button type="button" onClick={onHide} className="text-xs text-muted-foreground hover:text-foreground">
+            Hide
+          </button>
+        </div>
+      )}
+      <ol className="flex flex-col gap-1.5">
+        {steps.map((s, i) => (
+          <li key={s.step} className="flex items-center gap-2">
+            <span aria-hidden className="grid size-5 shrink-0 place-items-center rounded-full border border-[var(--tint)] text-[11px] font-semibold text-[var(--tint)]">
+              {i + 1}
+            </span>
+            <button
+              type="button"
+              onClick={() => openSetupAt(s.step, true)}
+              className="rounded-full border border-[var(--tint)] px-3 py-1 text-xs font-medium text-[var(--tint)] transition-colors hover:bg-[color-mix(in_srgb,var(--tint)_12%,transparent)]"
+            >
+              {s.label}
+            </button>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

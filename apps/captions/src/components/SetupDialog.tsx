@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { LIBRARY_SETUP_DONE } from "@contracts/library";
+import type { LibrarySummary } from "@contracts/library";
 import {
   AtSign,
   CircleEllipsis,
@@ -26,7 +26,6 @@ import { AccountSetupView, offersAccount, useMacAccount } from "@/components/set
 import { AgentsStep } from "@/components/setup/AgentsStep";
 import { Choice } from "@/components/setup/Choice";
 import { ConnectStep, HERE } from "@/components/setup/ConnectStep";
-import { FoldersStep } from "@/components/setup/FoldersStep";
 import { HelperPair, HelperSetup } from "@/components/setup/HelperStep";
 import { hasThisMac, useThisMac } from "@/components/settings/ThisMacSection";
 import type { ProvidersView } from "@contracts/providers";
@@ -37,6 +36,8 @@ import { LookArt } from "@/components/setup/HowArt";
 import { JobStep } from "@/components/setup/JobStep";
 import { SetupChecklist } from "@/components/setup/SetupChecklist";
 import { SocialStep } from "@/components/setup/SocialStep";
+import { LibrarySetup } from "@/pages/library/Setup";
+import { listLibraries } from "@/lib/library";
 import { useShareTheme, type ThemeChoice } from "@/components/ShareTheme";
 import { OwnAiStep } from "@/components/setup/OwnAiStep";
 import { ToolsPicker } from "@/components/setup/ToolNeeds";
@@ -60,7 +61,6 @@ import {
   startIntro,
   stepsFor,
   stillMotion,
-  takeReturn,
   toolsFor,
   toolsWithJob,
   useSetup,
@@ -138,7 +138,7 @@ export function SetupDialog() {
   const [ticked, setTicked] = useState<Tool[] | null>(null);
   const [note, setNote] = useState(false);
   const [busy, setBusy] = useState(false); // leaving "What do you make?" saves first: one press, one project
-  const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null); // the folders screen portals its buttons in
+  const [library, setLibrary] = useState<LibrarySummary | null>(); // "Where are your videos?": the library its setup is for (null: none)
   const [ownSlot, setOwnSlot] = useState<HTMLElement | null>(null); // where the AI apps screen shows its rows
   const [unsure, setUnsure] = useState<boolean | null>(null); // "Not sure yet" ticked here; null = read it from the saved answers
   const [accountStep, setAccountStep] = useState(false); // the Mac app offered a sign-in during this setup: its screen stays in the path
@@ -165,15 +165,9 @@ export function SetupDialog() {
   useEffect(() => {
     if (real) void load();
   }, [real, load]);
-  // "Where are your videos?" sent the person to the Media Library's setup: when that is done, the path goes on from there
   useEffect(() => {
-    const back = () => {
-      const s = takeReturn();
-      if (s) navigate(`/?setup=${s}`);
-    };
-    window.addEventListener(LIBRARY_SETUP_DONE, back);
-    return () => window.removeEventListener(LIBRARY_SETUP_DONE, back);
-  }, [navigate]);
+    if (open && step === "folders" && library === undefined) void listLibraries().then((l) => setLibrary(l[0] ?? null), () => setLibrary(null));
+  }, [open, step, library]);
   useEffect(() => {
     if (real) void loadPrefs();
   }, [real, loadPrefs]);
@@ -298,6 +292,13 @@ export function SetupDialog() {
   // "What do you want to do first?" with nothing picked has Skip for now in place of Continue, as Connect your AI has
   const skips = !side && ((step === "agents" && !connected) || (step === "job" && !prefs.job) || (step === "folders" && !view.have.includes("library")) || (step === "social" && !view.have.includes("instagram")) || (at >= 0 && step === "account" && account.account.state !== "signedIn"));
 
+  // "Where are your videos?" is the Media Library's own setup, in place of this window: its Done goes on (and ticks the
+  // row), its Finish later skips. With no library to set up (loading, or none) the window's own screen says Skip
+  if (step === "folders" && library) {
+    const on = () => (side ? leave() : void next());
+    return <LibrarySetup library={library} onDone={() => (void load(), on())} onClose={on} />;
+  }
+
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
       <DialogContent
@@ -371,8 +372,6 @@ export function SetupDialog() {
 
           {step === "connect" && <ConnectStep picked={THIS_COMPUTER} onPick={() => {}} />}
 
-          {step === "folders" && <FoldersStep onNext={close} actions={footerSlot} inPath={!side} />}
-
           {step === "helper" && (self && providers?.devices.some((d) => d.id === self) ? <HelperSetup device={self} /> : macApp ? <HelperPair /> : (
             <p className="text-sm text-muted-foreground">Open this in the Creator Toolset app on the other computer, or add that computer in Settings → Computers.</p>
           ))}
@@ -411,9 +410,7 @@ export function SetupDialog() {
                 Back
               </Button>
             )}
-            {/* the folders screen puts its own buttons here (Skip for now, Use these N folders) */}
-            {step === "folders" && <div ref={setFooterSlot} className="flex items-center gap-2" />}
-            {side && step !== "folders" && (
+            {side && (
               <Button onClick={close} className={PRIMARY}>
                 Done
               </Button>
