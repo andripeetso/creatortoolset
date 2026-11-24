@@ -18,9 +18,9 @@ import { MAC_MISS, MacClaudeError, streamMacClaude, type MacErrorKind, type MacO
 import { env } from "./lib/env";
 import { freeBytes, shortOfReserve } from "./lib/uploads";
 import type { SessionUser, UserRecord } from "./users";
-import { findOwnPost, findPostsForUser, libraryCountFor, libraryForWorkshop, mineAccountId, scopeOldAnalyzer, ownAccountContextFor, ownPostComments, ownPostsForWorkshop, packPostsForUser, postsForUser, sourceIndexForUser, transcribeForUser } from "./instagram";
+import { findOwnPost, findPostsForUser, libraryCountFor, libraryForWorkshop, mineAccountId, scopeOldAnalyzer, ownAccountContextFor, ownPostComments, ownPostsForWorkshop, storedOwnComments, loadGraphStats, packPostsForUser, postsForUser, sourceIndexForUser, transcribeForUser } from "./instagram";
 import { liveEnd, listen, liveText } from "./lib/workshop/live";
-import { type Folder, frameworkFiles, libraryFiles, outsideWords, keptPer1k, ownPostFiles, pastedFile, postFile, pastedWords, sessionFile, sessionsIndex, sessionText, slug, sourceFile } from "./lib/workshop/folder";
+import { type Folder, type OwnPost, frameworkFiles, libraryFiles, outsideWords, keptPer1k, ownPostFiles, pastedFile, postFile, pastedWords, sessionFile, sessionsIndex, sessionText, slug, sourceFile } from "./lib/workshop/folder";
 import { linkCandidates, matchPosted, postingsOf, postWords, postedFromUrl, setPostings, tfidf } from "./lib/workshop/posted";
 import { finished, keptByWeek, keptShare } from "./lib/workshop/kept";
 import { closestPairs, closestPosts } from "./lib/workshop/closest";
@@ -94,7 +94,7 @@ import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFet
 import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, renderDocument, unansweredBefore, wantsComments } from "./lib/workshop/chat-prompt";
-import { PERSONAS_SYSTEM, REVIEW_MODEL, buildReviewPrompt, parsePersonaDraft, type ReviewPost } from "./lib/workshop/review";
+import { PERSONAS_SYSTEM, REVIEW_MODEL, buildReviewPrompt, parsePersonaDraft, renderAudienceComments, renderAudienceNumbers, type ReviewPost } from "./lib/workshop/review";
 import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
@@ -2194,36 +2194,62 @@ const givenFiles = (raw: unknown, max: number): GivenFile[] =>
     .slice(0, max);
 const fileWords = async (f: GivenFile) => (typeof f.text === "string" ? f.text : documentText(f.name, Buffer.from(f.data ?? "", "base64")));
 
-/** A social account for the AI: its bio and stats, then its 40 most-viewed posts (what was said or on the slides). "" when it can't be read. */
-async function accountMaterial(user: SessionUser, id: string): Promise<string> {
-  const views = (p: { item: { insights?: { views?: number }; counts: { plays?: number } } }) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
+/** A social account for the AI: its bio and stats, then its 40 most-viewed posts (what was said or on the slides, saves and shares). Empty when it can't be read. */
+async function accountMaterial(user: SessionUser, id: string | null | undefined): Promise<{ text: string; id?: string; handle?: string; top: OwnPost[] }> {
+  const views = (p: OwnPost) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
   const [account, own] = await Promise.all([ownAccountContextFor(user, id), ownPostsForWorkshop(user, id)]);
-  if (!account) return "";
-  const posts = [...(own?.posts ?? [])]
-    .sort((a, b) => views(b) - views(a))
-    .slice(0, 40)
-    .map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
-  return `${renderAccountContext(account)}${posts.length ? `\n\nIts most-viewed posts (what was said or on the slides):\n${posts.join("\n")}` : ""}`;
+  if (!account) return { text: "", top: [] };
+  const top = [...(own?.posts ?? [])].sort((a, b) => views(b) - views(a)).slice(0, 40);
+  const kept = (p: OwnPost) => (p.item.insights?.saved !== undefined ? `, ${p.item.insights.saved} saves, ${p.item.insights.shares ?? 0} shares` : "");
+  const posts = top.map((p) => `- ${new Date(p.item.takenAt).toISOString().slice(0, 10)}, ${views(p)} views${kept(p)}: ${(p.slides?.join(" / ") || p.item.caption || "").replace(/\s+/g, " ").slice(0, 400)}`);
+  const text = `${renderAccountContext(account)}${posts.length ? `\n\nIts most-viewed posts (what was said or on the slides):\n${posts.join("\n")}` : ""}`;
+  return { text, id: account.id, handle: account.username, top };
 }
 
-/** The persona builder: drafts the workspace's personas from its instructions, its account and what the person typed. Saved by PATCH /projects/:id. */
+/**
+ * The persona builder: drafts the workspace's personas from everything known about who watches: the account's audience
+ * numbers, the comments under its most-viewed posts, its posts, its instructions, context files and Memory, and what the
+ * person typed or dropped in now. Answers what it used, so the builder can say it. Saved by PATCH /projects/:id.
+ */
 workshopApp.post("/projects/:id/personas/draft", async (c) => {
   const user = c.get("user");
   const project = await readProject(c.req.param("id"), user);
   if (!project) return c.json({ error: "Not found" }, 404);
-  const body = (await c.req.json().catch(() => null)) as { said?: unknown } | null;
+  const body = (await c.req.json().catch(() => null)) as { said?: unknown; files?: unknown } | null;
   const said = typeof body?.said === "string" ? body.said.slice(0, DRAFT_TEXT).trim() : "";
-  const account = projectAccount(project);
-  const material = account ? await accountMaterial(user, account) : "";
-  if (!said && !project.notes.trim() && !material) return c.json({ error: "Needs a few words about who watches" }, 400);
+  const given = givenFiles(body?.files, 20);
+  const [account, files, knowledge] = await Promise.all([
+    accountMaterial(user, projectAccount(project)),
+    Promise.all(given.map((f) => fileWords(f).then((t) => ({ name: f.name, text: t }), () => ({ name: f.name, text: "" })))),
+    knowledgeFor(user, project),
+  ]);
+  const [stats, comments] = account.id
+    ? await Promise.all([
+        loadGraphStats(account.id),
+        storedOwnComments(user, account.id, account.top.slice(0, 15).map((p) => p.item.shortcode)).then((by) =>
+          renderAudienceComments(account.top.slice(0, 15).map((p) => ({ post: p.item.caption || p.slides?.[0] || p.item.shortcode, comments: by[p.item.shortcode] ?? [] })), account.handle ?? ""),
+        ),
+      ])
+    : [undefined, { text: "", count: 0 }];
+  const numbers = renderAudienceNumbers(stats);
+  const now = new Set(files.map((f) => f.name));
+  const all = [...files, ...[...new Map(knowledge.map((f) => [f.name, { name: f.name, text: f.text }])).values()].filter((f) => !now.has(f.name))].filter((f) => f.text.trim());
+  const memory = memoryFor(user.username, project.id);
+  const lines = (fs: Array<{ text: string }>) => fs.map((f) => `- ${f.text}`).join("\n");
+  const used = { posts: account.top.length, comments: comments.count, numbers: !!numbers, files: all.length, unread: files.filter((f) => !f.text.trim()).map((f) => f.name) };
+  if (!said && !project.notes.trim() && !used.posts && !used.files) return c.json({ error: "Needs posts, files or a few words about who watches" }, 400);
   const prompt = [
     `Workspace: ${project.name}`,
-    said ? `What they said about who watches:\n${said}` : "",
+    numbers,
+    comments.text,
+    account.text,
+    said ? `What the creator wrote about who watches:\n${said}` : "",
     project.notes.trim() ? `The workspace's instructions:\n${project.notes.trim()}` : "",
-    material,
+    memory.here.length ? `Kept in Memory for this workspace:\n${lines(memory.here)}` : "",
+    all.length ? `The workspace's files:\n${inlineFiles(all, 200_000)}` : "",
   ].filter(Boolean).join("\n\n");
   try {
-    return c.json({ personas: await completeWithFallback(PERSONAS_SYSTEM, prompt, undefined, parsePersonaDraft, route(user, "workshop", "Personas")) });
+    return c.json({ personas: await completeWithFallback(PERSONAS_SYSTEM, prompt, undefined, parsePersonaDraft, route(user, "workshop", "Personas")), used });
   } catch (e) {
     return c.json({ error: errorMessage(e) }, 502);
   }
@@ -2243,7 +2269,7 @@ workshopApp.post("/projects/draft-notes", async (c) => {
   // each part on its own: one that can't be read is said, the rest still drafts
   const [parts, files] = await Promise.all([
     Promise.all([
-      ...ids.map((id) => accountMaterial(user, id)),
+      ...ids.map((id) => accountMaterial(user, id).then((a) => a.text)),
       ...links.map((url) =>
         webPageText(url).then(
           (p) => `The page ${url} (${p.title}):\n${p.text.slice(0, 12_000)}`,

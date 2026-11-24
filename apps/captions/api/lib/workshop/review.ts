@@ -34,24 +34,64 @@ export function pieceAsPosted(doc: Document): string {
 export const MAX_PERSONAS = 4;
 const PERSONA_NAME = 60;
 const PERSONA_ABOUT = 800;
+const PERSONA_BASIS = 300;
 
-/** The personas as saved or drafted: a name and a paragraph each, empty ones dropped, at most MAX_PERSONAS. */
+/** The personas as saved or drafted: a name and a paragraph each (and what it rests on), empty ones dropped, at most MAX_PERSONAS. */
 export function parsePersonas(raw: unknown): Persona[] {
   const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
   return (Array.isArray(raw) ? raw : [])
-    .map((p: { name?: unknown; about?: unknown } | null) => ({ name: str(p?.name, PERSONA_NAME), about: str(p?.about, PERSONA_ABOUT) }))
+    .map((p: { name?: unknown; about?: unknown; basis?: unknown } | null) => {
+      const basis = str(p?.basis, PERSONA_BASIS);
+      return { name: str(p?.name, PERSONA_NAME), about: str(p?.about, PERSONA_ABOUT), ...(basis ? { basis } : {}) };
+    })
     .filter((p) => p.name && p.about)
     .slice(0, MAX_PERSONAS);
 }
 
-export const PERSONAS_SYSTEM = `A creator wants their drafts read by the people they make them for, before posting. From what you're given about the workspace (its instructions, the account, its posts), write ${MAX_PERSONAS - 1} to ${MAX_PERSONAS} personas of the people who actually watch it.
+type Split = Array<{ label: string; value: number }>;
 
-- Each is one real kind of viewer, different from the others in what they want and how much they already know or trust the account. One is someone who doesn't follow the account yet and sees it come up among strangers' posts.
+/** The account's audience numbers from its Meta sign-in, as shares: who actually watches. "" with none. */
+export function renderAudienceNumbers(s: { ages?: Split; genders?: Split; countries?: Split; viewsByFollower?: Split } | undefined): string {
+  const line = (name: string, rows: Split | undefined, n: number) => {
+    const total = rows?.reduce((t, r) => t + r.value, 0) ?? 0;
+    if (!rows?.length || !total) return "";
+    return `${name}: ${[...rows].sort((a, b) => b.value - a.value).slice(0, n).map((r) => `${r.label} ${Math.round((r.value * 100) / total)}%`).join(", ")}`;
+  };
+  const lines = [line("Ages", s?.ages, 6), line("Genders", s?.genders, 3), line("Countries", s?.countries, 6), line("Views, last 30 days", s?.viewsByFollower, 2)].filter(Boolean);
+  return lines.length ? `Who watches (the account's audience numbers):\n${lines.join("\n")}` : "";
+}
+
+/** What viewers wrote under the account's posts, the account's own replies left out, most-liked first: the audience in its own words. */
+export function renderAudienceComments(byPost: Array<{ post: string; comments: Array<{ text: string; user: { username: string }; likeCount: number }> }>, handle: string, perPost = 20): { text: string; count: number } {
+  let count = 0;
+  const blocks = byPost
+    .map(({ post, comments }) => {
+      const theirs = comments
+        .filter((c) => c.user.username.toLowerCase() !== handle.toLowerCase() && c.text.trim())
+        .sort((a, b) => b.likeCount - a.likeCount)
+        .slice(0, perPost);
+      count += theirs.length;
+      return theirs.length ? `Under "${post.replace(/\s+/g, " ").slice(0, 120)}":\n${theirs.map((c) => `- ${c.text.replace(/\s+/g, " ").slice(0, 240)}`).join("\n")}` : "";
+    })
+    .filter(Boolean);
+  return { text: blocks.length ? `What viewers wrote under its most-viewed posts:\n\n${blocks.join("\n\n")}` : "", count };
+}
+
+export const PERSONAS_SYSTEM = `A creator wants each draft read, before posting, by the people who actually watch their account. From the material on the workspace, write ${MAX_PERSONAS - 1} to ${MAX_PERSONAS} personas of those people.
+
+Weigh the evidence in this order, and say which you used:
+1. The audience numbers (ages, countries, followers against non-followers): who is really there, in what share.
+2. The comments: the viewers' own words. What they ask, struggle with, praise, tag others for, and the words they use.
+3. The posts: which got the most views, and which were saved and shared most, tell what each kind of viewer comes for.
+4. The account's bio, the workspace's instructions, its files and what the creator wrote: what it offers and who it means to reach. Where the creator says who watches, that corrects the data; where they only say who they want, keep the personas to who is there.
+
+- Split by what people want and how much they already know and trust the account, not by age alone. Bigger groups first.
+- One persona is someone who doesn't follow the account yet, seeing it among strangers' posts; base them on the non-follower share where there is one.
 - "name": a short label a person would say, like "New parent, follows for tips" (no first names).
-- "about": one paragraph in the second person ("You…"): who you are, your situation, what you scroll for, what makes you stop, save or send, what makes you swipe away, and whether you follow the account.
-- Only what the material supports; where it says little, keep the persona plain rather than invent detail.
+- "about": one paragraph in the second person ("You…"): your situation, what you scroll for, what you already know, what makes you stop, save or send, what makes you swipe away, and whether you follow the account. Use words the comments use.
+- "basis": one line on the evidence behind it ("Ages 25–34 are 41%; comments ask about sleep"). Where the material says little, say so and keep the persona plain rather than invent detail.
 
-Answer with JSON only: {"personas":[{"name":"…","about":"…"}]}`;
+Answer with JSON only: {"personas":[{"name":"…","about":"…","basis":"…"}]}`;
 
 /** The AI's answer: the JSON object (or a bare array) anywhere in the text. */
 export function parsePersonaDraft(text: string): Persona[] {

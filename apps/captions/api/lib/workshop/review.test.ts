@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, parsePersonaDraft, parsePersonas, pieceAsPosted } from "./review";
+import { buildReviewPrompt, parsePersonaDraft, parsePersonas, pieceAsPosted, renderAudienceComments, renderAudienceNumbers } from "./review";
 import { newDocument } from "./doc";
 import { buildTurnPrompt } from "./chat-prompt";
 
@@ -77,5 +77,29 @@ describe("personas", () => {
     expect(parsePersonaDraft(JSON.stringify(one))).toEqual(one);
     expect(() => parsePersonaDraft("no json")).toThrow("Could not read");
     expect(() => parsePersonaDraft('{"personas":[]}')).toThrow("Could not read");
+  });
+});
+
+describe("what personas are drafted from", () => {
+  it("keeps the evidence line with each persona", () => {
+    expect(parsePersonas([{ name: "Stranger", about: "You don't follow.", basis: " Non-followers are 70% of views " }])).toEqual([{ name: "Stranger", about: "You don't follow.", basis: "Non-followers are 70% of views" }]);
+  });
+
+  it("turns the audience numbers into shares, biggest first", () => {
+    const text = renderAudienceNumbers({ ages: [{ label: "18-24", value: 10 }, { label: "25-34", value: 30 }], viewsByFollower: [{ label: "Non-followers", value: 3 }, { label: "Followers", value: 1 }] });
+    expect(text).toContain("Ages: 25-34 75%, 18-24 25%");
+    expect(text).toContain("Views, last 30 days: Non-followers 75%, Followers 25%");
+    expect(renderAudienceNumbers(undefined)).toBe("");
+  });
+
+  it("quotes viewers' comments, most-liked first, and leaves out the account's own replies", () => {
+    const c = (username: string, text: string, likeCount: number) => ({ text, user: { username }, likeCount });
+    const { text, count } = renderAudienceComments(
+      [{ post: "Puppy sleep tips", comments: [c("viewer1", "Does this work at 4 months?", 1), c("TinyAcrobatics", "Yes!", 9), c("viewer2", "Saved this", 5)] }],
+      "tinyacrobatics",
+    );
+    expect(count).toBe(2);
+    expect(text).toContain('Under "Puppy sleep tips":\n- Saved this\n- Does this work at 4 months?');
+    expect(text).not.toContain("Yes!");
   });
 });

@@ -52,6 +52,17 @@ export interface WorkshopProject {
 export interface Persona {
   name: string;
   about: string;
+  /** The evidence the draft rested on; shown in the builder only. */
+  basis?: string;
+}
+
+/** What a persona draft was built from. */
+export interface PersonaDraftUsed {
+  posts: number;
+  comments: number;
+  numbers: boolean;
+  files: number;
+  unread: string[];
 }
 
 export type ProjectFields = Pick<
@@ -337,8 +348,10 @@ export const patchProject = async (id: string, fields: Partial<ProjectFields>) =
   return p;
 };
 /** The persona builder's draft from the workspace's instructions, its account and what the person typed; saved with patchProject. */
-export const draftPersonas = (id: string, said: string) =>
-  fetch(`/api/workshop/projects/${id}/personas/draft`, jsonInit({ said })).then((r) => json<{ personas: Persona[] }>(r));
+export const draftPersonas = async (id: string, said: string, files: File[]) =>
+  fetch(`/api/workshop/projects/${id}/personas/draft`, jsonInit({ said, files: await Promise.all(files.map(materialOf)) })).then((r) =>
+    json<{ personas: Persona[]; used: PersonaDraftUsed }>(r),
+  );
 /** What deleting a workspace deletes with it (the confirm's counts). */
 export const workspaceContents = (id: string) => fetch(`/api/workshop/projects/${id}/contents`).then((r) => json<WorkspaceContents>(r));
 export const deleteProject = async (id: string) => {

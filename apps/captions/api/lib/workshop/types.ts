@@ -24,6 +24,8 @@ import type { SourceKind, SourceSection } from "../../../contracts/knowledge";
 export interface Persona {
   name: string;
   about: string;
+  /** The evidence the draft rested on ("Ages 25–34 are 41%; comments ask about sleep"); shown in the builder, never to the reader. */
+  basis?: string;
 }
 
 export interface Project {
