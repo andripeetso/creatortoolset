@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, parsePersonaDraft, parsePersonas, pieceAsPosted, renderAudienceComments, renderAudienceNumbers } from "./review";
+import { buildReviewPrompt, joinReads, parsePersonaDraft, parsePersonas, pieceAsPosted, renderAudienceComments, renderAudienceNumbers } from "./review";
 import { newDocument } from "./doc";
 import { buildTurnPrompt } from "./chat-prompt";
 
@@ -74,7 +74,8 @@ describe("personas", () => {
   it("are read from the drafted answer, with or without text around the JSON", () => {
     const one = [{ name: "Stranger", about: "You don't follow yet." }];
     expect(parsePersonaDraft(`Here:\n{"personas":${JSON.stringify(one)}}\nDone`)).toEqual(one);
-    expect(parsePersonaDraft(JSON.stringify(one))).toEqual(one);
+    expect(parsePersonaDraft(`\`\`\`json\n{"personas":${JSON.stringify(one)}}\n\`\`\``)).toEqual(one);
+    expect(parsePersonaDraft(`{"personas":${JSON.stringify(one)}}\n(based on [the comments])`)).toEqual(one);
     expect(() => parsePersonaDraft("no json")).toThrow("Could not read");
     expect(() => parsePersonaDraft('{"personas":[]}')).toThrow("Could not read");
   });
@@ -101,5 +102,18 @@ describe("what personas are drafted from", () => {
     expect(count).toBe(2);
     expect(text).toContain('Under "Puppy sleep tips":\n- Saved this\n- Does this work at 4 months?');
     expect(text).not.toContain("Yes!");
+  });
+});
+
+describe("the personas' reads in one message", () => {
+  const personas = [
+    { name: "Parent", about: "You follow." },
+    { name: "Stranger", about: "You don't follow." },
+  ];
+  it("keeps each read under its persona, in order, a read still coming as …", () => {
+    expect(joinReads(personas, ["I'd save it. ", ""])).toBe("Parent\nI'd save it.\n\n———\n\nStranger\n…");
+  });
+  it("says which persona could not read and keeps the others", () => {
+    expect(joinReads(personas, ["I'd save it.", "half a read"], [null, "Mac offline"])).toBe("Parent\nI'd save it.\n\n———\n\nStranger\nCould not read: Mac offline");
   });
 });

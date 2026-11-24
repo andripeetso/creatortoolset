@@ -349,9 +349,13 @@ export const patchProject = async (id: string, fields: Partial<ProjectFields>) =
 };
 /** The persona builder's draft from the workspace's instructions, its account and what the person typed; saved with patchProject. */
 export const draftPersonas = async (id: string, said: string, files: File[]) =>
-  fetch(`/api/workshop/projects/${id}/personas/draft`, jsonInit({ said, files: await Promise.all(files.map(materialOf)) })).then((r) =>
-    json<{ personas: Persona[]; used: PersonaDraftUsed }>(r),
-  );
+  fetch(`/api/workshop/projects/${id}/personas/draft`, jsonInit({ said, files: await Promise.all(files.map(materialOf)) }))
+    .then((r) => json<{ personas: Persona[]; used: PersonaDraftUsed; error?: string }>(r))
+    .then((j) => {
+      // the answer is streamed (a long draft): its status is sent before a failure is known
+      if (j.error) throw new Error(j.error);
+      return j;
+    });
 /** What deleting a workspace deletes with it (the confirm's counts). */
 export const workspaceContents = (id: string) => fetch(`/api/workshop/projects/${id}/contents`).then((r) => json<WorkspaceContents>(r));
 export const deleteProject = async (id: string) => {

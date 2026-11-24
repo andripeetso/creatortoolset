@@ -55,7 +55,7 @@ export function setupProjectFields(
 }
 
 const DOC = /\.(docx|odt|epub)$/i;
-const ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.odt,.epub,text/*,application/pdf";
+export const ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.odt,.epub,text/*,application/pdf";
 const readable = (file: File) => DOC.test(file.name) || ["text", "pdf"].includes(attachKind(file));
 /** At most this many files (a dropped folder brings all of its own); DRAFT_FILES in api/workshop.ts. */
 const MAX_FILES = 300;

@@ -4,10 +4,10 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { ACCEPT } from "./ProjectForm";
 import { addProjectFiles, draftPersonas, patchProject, type Persona, type PersonaDraftUsed } from "@/lib/workshop";
 
 const field = "w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
-const ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.odt,.epub,text/*,application/pdf";
 
 /** "40 posts, 212 comments, audience numbers, 2 files": what a draft was built from. */
 export function usedLine(u: PersonaDraftUsed): string {
@@ -83,7 +83,7 @@ export function PersonaBuilder({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Set up personas</DialogTitle>
-            <DialogDescription>Read as a follower needs personas: the people who watch this workspace, drafted from its account's posts, comments and audience numbers.</DialogDescription>
+            <DialogDescription>Read as a follower needs personas: the people who watch this workspace.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>

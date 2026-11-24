@@ -94,7 +94,7 @@ import { askedForCaption, askedOnlyForCaption, editsForNewDocument, isAccountFet
 import { packInstructions, runsWithoutTools } from "./lib/packs";
 import { skillFiles, skillLines, skillsFor } from "./lib/skills";
 import { buildTurnPrompt, renderDocument, unansweredBefore, wantsComments } from "./lib/workshop/chat-prompt";
-import { PERSONAS_SYSTEM, REVIEW_MODEL, buildReviewPrompt, parsePersonaDraft, renderAudienceComments, renderAudienceNumbers, type ReviewPost } from "./lib/workshop/review";
+import { PERSONAS_SYSTEM, REVIEW_MODEL, buildReviewPrompt, joinReads, parsePersonaDraft, renderAudienceComments, renderAudienceNumbers, type ReviewPost } from "./lib/workshop/review";
 import { type EditPair, chatPairs, editsFile, mergeLog, pairsOf, renderPairs } from "./lib/workshop/edit-log";
 import { buildLinesPrompt, parseLines } from "./lib/workshop/lines";
 import { buildAsidePrompt } from "./lib/workshop/aside";
@@ -1932,7 +1932,7 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
     const write = progressWriter(session.id, messageId);
     // each persona reads on its own, so one read never colours another; the message shows them in order as they stream
     const reads = personas.map(() => "");
-    const joined = () => personas.map((p, i) => `${p.name}\n${reads[i]!.trim() || "…"}`).join("\n\n———\n\n");
+    const joined = () => joinReads(personas, reads);
     const usages: MacUsage[] = [];
     const settled = await Promise.allSettled(
       personas.map((persona, i) => {
@@ -1943,10 +1943,9 @@ async function runReview(session: SessionMeta, user: SessionUser, messageId: str
       }),
     );
     // one persona that fails says so in its place; only when every one fails is the read an error
-    const failed = settled.map((r) => (r.status === "rejected" ? r.reason : null));
-    if (failed.every(Boolean)) throw failed[0];
-    failed.forEach((e, i) => e && (reads[i] = `Could not read: ${errorMessage(e).slice(0, 200)}`));
-    const text = joined();
+    const failed = settled.map((r) => (r.status === "rejected" ? errorMessage(r.reason) : null));
+    if (failed.every((e) => e !== null)) throw settled.find((r) => r.status === "rejected")!.reason;
+    const text = joinReads(personas, reads, failed);
     const usage: MacUsage | undefined = usages.length ? { tokens: usages.reduce((n, u) => n + u.tokens, 0), costUsd: usages.reduce((n, u) => n + u.costUsd, 0) } : undefined;
     await write({}, true);
     // a non-Claude reader (a member whose only AI is Codex) keeps its own model: name the CLI that actually read it
@@ -2194,6 +2193,25 @@ const givenFiles = (raw: unknown, max: number): GivenFile[] =>
     .slice(0, max);
 const fileWords = async (f: GivenFile) => (typeof f.text === "string" ? f.text : documentText(f.name, Buffer.from(f.data ?? "", "base64")));
 
+/**
+ * A long AI job answered as JSON: a space every 15 s keeps the proxies in front from closing the request. The status is
+ * sent first, so a failure is `{ error }` in the body: the client reads it there.
+ */
+function keptAlive(c: Parameters<typeof stream>[0], work: () => Promise<unknown>): Response {
+  c.header("Content-Type", "application/json");
+  c.header("X-Accel-Buffering", "no");
+  return stream(c, async (out) => {
+    const tick = setInterval(() => void out.write(" ").catch(() => {}), 15_000);
+    try {
+      await out.write(JSON.stringify(await work()));
+    } catch (e) {
+      await out.write(JSON.stringify({ error: errorMessage(e) }));
+    } finally {
+      clearInterval(tick);
+    }
+  });
+}
+
 /** A social account for the AI: its bio and stats, then its 40 most-viewed posts (what was said or on the slides, saves and shares). Empty when it can't be read. */
 async function accountMaterial(user: SessionUser, id: string | null | undefined): Promise<{ text: string; id?: string; handle?: string; top: OwnPost[] }> {
   const views = (p: OwnPost) => p.item.insights?.views ?? p.item.counts.plays ?? 0;
@@ -2248,11 +2266,8 @@ workshopApp.post("/projects/:id/personas/draft", async (c) => {
     memory.here.length ? `Kept in Memory for this workspace:\n${lines(memory.here)}` : "",
     all.length ? `The workspace's files:\n${inlineFiles(all, 200_000)}` : "",
   ].filter(Boolean).join("\n\n");
-  try {
-    return c.json({ personas: await completeWithFallback(PERSONAS_SYSTEM, prompt, undefined, parsePersonaDraft, route(user, "workshop", "Personas")), used });
-  } catch (e) {
-    return c.json({ error: errorMessage(e) }, 502);
-  }
+  // a big account's draft can take minutes
+  return keptAlive(c, async () => ({ personas: await completeWithFallback(PERSONAS_SYSTEM, prompt, undefined, parsePersonaDraft, route(user, "workshop", "Personas")), used }));
 });
 
 workshopApp.post("/projects/draft-notes", async (c) => {
@@ -2318,19 +2333,8 @@ workshopApp.post("/projects/draft-notes", async (c) => {
       return c.json({ error: errorMessage(e) }, 502);
     }
   }
-  // reading a folder can take minutes: a space every 15 s keeps the proxies in front from closing the request
-  c.header("Content-Type", "application/json");
-  c.header("X-Accel-Buffering", "no");
-  return stream(c, async (out) => {
-    const tick = setInterval(() => void out.write(" ").catch(() => {}), 15_000);
-    try {
-      await out.write(JSON.stringify(await draft()));
-    } catch (e) {
-      await out.write(JSON.stringify({ error: errorMessage(e) }));
-    } finally {
-      clearInterval(tick);
-    }
-  });
+  // reading a folder can take minutes
+  return keptAlive(c, draft);
 });
 
 workshopApp.patch("/projects/:id", async (c) => {

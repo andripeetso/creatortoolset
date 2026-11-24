@@ -1,4 +1,5 @@
 import type { Document, Persona } from "./types";
+import { jsonObject } from "./plans";
 
 /**
  * "Read as a follower": a button, not a pass. A second
@@ -93,18 +94,21 @@ Weigh the evidence in this order, and say which you used:
 
 Answer with JSON only: {"personas":[{"name":"…","about":"…","basis":"…"}]}`;
 
-/** The AI's answer: the JSON object (or a bare array) anywhere in the text. */
+/** The AI's answer: the {"personas": […]} object in it, fences and notes around it left out. */
 export function parsePersonaDraft(text: string): Persona[] {
-  const at = text.search(/[[{]/);
-  let raw: unknown = null;
+  let list: Persona[] = [];
   try {
-    raw = JSON.parse(text.slice(at, Math.max(text.lastIndexOf("}"), text.lastIndexOf("]")) + 1));
+    list = parsePersonas(jsonObject(text).personas);
   } catch {
-    throw new Error("Could not read the drafted personas");
+    // a reply with no readable JSON: the same message as an empty one, never the parser's own words
   }
-  const list = parsePersonas(Array.isArray(raw) ? raw : (raw as { personas?: unknown } | null)?.personas);
   if (!list.length) throw new Error("Could not read the drafted personas");
   return list;
+}
+
+/** The personas' reads as one chat message, in the personas' order: a read still coming is "…", a failed one says so. */
+export function joinReads(personas: Persona[], reads: string[], failed: Array<string | null> = []): string {
+  return personas.map((p, i) => `${p.name}\n${failed[i] ? `Could not read: ${failed[i]!.slice(0, 200)}` : reads[i]?.trim() || "…"}`).join("\n\n———\n\n");
 }
 
 export function buildReviewPrompt(input: { doc: Document; handle?: string; persona: Persona; best: ReviewPost[]; packText?: string }): { system: string; user: string } {
