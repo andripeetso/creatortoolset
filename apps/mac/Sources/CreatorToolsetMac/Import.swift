@@ -231,12 +231,23 @@ final class Imports: @unchecked Sendable {
         return reply
     }
 
-    /// One file, 8 MB at a time, into a new file that must not exist yet (O_EXCL: nothing is overwritten, a link there is
-    /// refused). Cancelled or failed: the partial file is removed. The copy keeps the original's modification date.
+    /// Where a copy is written until it is whole: a hidden file beside `to`, which a folder scan skips (LocationAgent.list),
+    /// so a half-written clip is never indexed under its real name.
+    static func partPath(_ to: String) -> String {
+        let url = URL(fileURLWithPath: to)
+        return url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).copying").path
+    }
+
+    /// One file, 8 MB at a time, into a hidden part file (partPath), renamed to `to` once whole; neither may exist yet
+    /// (O_EXCL, RENAME_EXCL: nothing is overwritten, a link there is refused). Cancelled or failed: the part file is
+    /// removed. The copy keeps the original's modification date.
     private func copyFile(_ from: String, to: String, id: String) throws {
         let input = try FileHandle(forReadingFrom: URL(fileURLWithPath: from))
         defer { try? input.close() }
-        let fd = open(to, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
+        let part = Self.partPath(to)
+        // a part file left by a copy that crashed is this app's own: start again
+        unlink(part)
+        let fd = open(part, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         do {
@@ -247,14 +258,25 @@ final class Imports: @unchecked Sendable {
                 _ = with(id) { $0.bytes += Int64(chunk.count) }
             }
             try output.close()
+            try Self.renameNew(part, to)
         } catch {
             try? output.close()
-            unlink(to)
+            unlink(part)
             throw error
         }
         if let date = (try? FileManager.default.attributesOfItem(atPath: from))?[.modificationDate] {
             try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: to)
         }
+    }
+
+    /// Renames `from` to `to`, never over a file there. A share that can't refuse in the rename itself (SMB, some exFAT)
+    /// is checked first. shortcut: that check and the rename can race another writer of the same name; none writes into Imports/ but this app.
+    static func renameNew(_ from: String, _ to: String) throws {
+        if renamex_np(from, to, UInt32(RENAME_EXCL)) == 0 { return }
+        guard errno == ENOTSUP || errno == EINVAL else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        var st = stat()
+        if lstat(to, &st) == 0 { throw POSIXError(.EEXIST) }
+        guard rename(from, to) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 
     /// Where a file of `size` bytes meant for `to` goes: `to` when nothing is there; `copied` when a file of that size is

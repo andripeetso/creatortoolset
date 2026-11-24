@@ -49,6 +49,12 @@ final class LocationAgentTests: XCTestCase {
         XCTAssertEqual(l.unreadable, [])
     }
 
+    /// A clip still being copied in (Imports.partPath) is never listed, so it is never indexed half-written.
+    func testListingSkipsACopyInProgress() throws {
+        try Data("half".utf8).write(to: URL(fileURLWithPath: Imports.partPath(footage + "/Day 1/C0001.MP4")))
+        XCTAssertEqual(LocationAgent.list(footage, places: places()).files.map(\.path), [footage + "/Day 1/b.MP4", footage + "/a.mov"])
+    }
+
     /// A share that doesn't answer: nothing listed, its folder unreadable (the server leaves its rows unchecked), and
     /// the folder reads disk_away, never not_found.
     func testGuardedNilLeavesTheDirectoryUnchecked() {

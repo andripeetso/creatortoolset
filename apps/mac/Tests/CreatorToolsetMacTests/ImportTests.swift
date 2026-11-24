@@ -100,6 +100,7 @@ final class ImportTests: XCTestCase {
         let copied = reply["copied"] as? [[String: String]] ?? []
         XCTAssertEqual(copied.map { $0["to"] }, [at("Lib/Footage/Drop/A001.mov"), at("Lib/Footage/B 2.mov")])
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: at("Lib/Footage/Drop/A001.mov"))), Data(repeating: 1, count: 3000))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Imports.partPath(at("Lib/Footage/Drop/A001.mov"))))   // renamed once whole
         XCTAssertEqual(try String(contentsOfFile: at("Lib/Footage/B.mov"), encoding: .utf8), "other")
         XCTAssertEqual((reply["failed"] as? [[String: String]])?.count, 1)
         XCTAssertNil(reply["stopped"])
