@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -10,20 +10,34 @@ import { confirmDialog } from "@/lib/dialogs";
  * `blur`/`proxies` absent: no such row. Proxies hides while Blur faces is ticked: the blurred video is then the proxy.
  */
 export type ImportChoice = { blur: boolean; proxies: boolean };
-export type ImportAsk = { count: number; blur?: boolean; proxies?: boolean; libraryBlurs: boolean; done: (c: ImportChoice | null) => void };
+export type ImportAsk = { id: number; count: number; blur?: boolean; proxies?: boolean; done: (c: ImportChoice | null) => void };
 
+/**
+ * The answer as an add's options (lib/import-queue.ts AddOptions): blurred, or no proxy asked for, the files are indexed on
+ * this Mac and nothing is sent (the blurred video goes later, as the proxy). `asFilmed` unticks the library's Blur faces;
+ * `askBlur` ticks it where the library doesn't blur.
+ */
+export function importOptions(c: ImportChoice, at: { libraryBlurs: boolean; macRemote: boolean; onMac: boolean }) {
+  return {
+    mac: at.onMac || (at.macRemote && (c.blur || !c.proxies)),
+    blur: c.blur,
+    asFilmed: at.libraryBlurs && !c.blur,
+    askBlur: !at.libraryBlurs && c.blur,
+  };
+}
+
+/** A new add starts from its own ticks (keyed by the ask), never the last one's. */
 export function ImportChoices({ ask }: { ask: ImportAsk | null }) {
-  const [blur, setBlur] = useState(false);
-  const [proxies, setProxies] = useState(true);
-  useEffect(() => {
-    if (!ask) return;
-    setBlur(!!ask.blur);
-    setProxies(ask.proxies ?? true);
-  }, [ask]);
-  if (!ask) return null;
+  return ask ? <Sheet key={ask.id} ask={ask} /> : null;
+}
+
+function Sheet({ ask }: { ask: ImportAsk }) {
+  const [blur, setBlur] = useState(!!ask.blur);
+  const [proxies, setProxies] = useState(ask.proxies ?? true);
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (ask.libraryBlurs && !blur && !(await confirmDialog({ title: "Turn off Blur faces?", body: "These files will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" }))) return;
+    // only when the person unticked it: a folder kept as filmed starts unticked
+    if (ask.blur && !blur && !(await confirmDialog({ title: "Turn off Blur faces?", body: "These files will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" }))) return;
     ask.done({ blur, proxies });
   };
   return (

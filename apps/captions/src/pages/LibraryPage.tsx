@@ -49,7 +49,7 @@ import { thisMacBridge } from "@/lib/thisMac";
 import { addRefused, scanWatchNow } from "@/lib/library";
 import { canChange, useAuth, useMe } from "@/lib/auth";
 import { faceBlurOn } from "./library/face-blur";
-import { ImportChoices, type ImportAsk, type ImportChoice } from "./library/ImportChoices";
+import { ImportChoices, importOptions, type ImportAsk, type ImportChoice } from "./library/ImportChoices";
 import { useWorkspace } from "@/lib/workspace";
 import { confirmDialog } from "@/lib/dialogs";
 import { undoable } from "@/lib/undo";
@@ -440,12 +440,12 @@ export default function LibraryPage() {
     // picked or dropped in the Mac app on its own server: they are added where they are (lib/library.ts uploadFile)
     // indexed on this Mac: nothing uploads either
     const here = onMac || (look.paths ? look.paths.size === all.length : false);
-    // a drop or a pick goes in at once (11-19: no "Add N files?"): Effort, models and the monthly budget were chosen in
-    // setup, and the budget holds the analysis at its cap
-    const copies = await importQ.answer(look, all);
-    if (!copies) return;
+    // the one question before an add is Blur faces and Proxies (owner, 2026-11-24), asked before Folder access, whose
+    // "Use where they are" saves folders at once; Effort, models and the monthly budget were chosen in setup
     const c = await chooseImport(all.length);
-    if (c) start(all, here, look.paths, copies, c);
+    if (!c) return;
+    const copies = await importQ.answer(look, all);
+    if (copies) start(all, here, look.paths, copies, c);
   };
 
   // Blur faces where this Mac keeps the original (an owner or admin may untick it where the library blurs); Proxies where
@@ -454,20 +454,19 @@ export default function LibraryPage() {
     const libraryBlurs = !!library?.settings.blurFaces;
     const blur = libraryBlurs && openFolder?.blur !== "no";
     const blurRow = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
-    const proxiesRow = macRemote && hostsProxies(upload.current);
+    // a library that keeps originals too sends them whatever is ticked: no row there
+    const proxiesRow = macRemote && hostsProxies(upload.current) && !hostsOriginals(upload.current);
     if (!blurRow && !proxiesRow) return Promise.resolve({ blur, proxies: true });
     return new Promise((done) =>
-      setImportAsk({ count, libraryBlurs, ...(blurRow ? { blur } : {}), ...(proxiesRow ? { proxies: true } : {}), done: (c) => (setImportAsk(null), done(c)) }),
+      setImportAsk({ id: Date.now(), count, ...(blurRow ? { blur } : {}), ...(proxiesRow ? { proxies: true } : {}), done: (c) => (setImportAsk(null), done(c)) }),
     );
   };
 
   // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
   const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, c: ImportChoice) => {
     if (!libId) return;
-    const libraryBlurs = !!library?.settings.blurFaces;
-    // blurred, or no proxy asked for: indexed on this Mac and nothing sent (the blurred video goes later, as the proxy)
-    const mac = onMac || (macRemote && (c.blur || !c.proxies));
-    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, mac, blur: c.blur, asFilmed: libraryBlurs && !c.blur, askBlur: !libraryBlurs && c.blur, cost: levelOf(library?.settings ?? {}) !== "off" });
+    const o = importOptions(c, { libraryBlurs: !!library?.settings.blurFaces, macRemote, onMac });
+    addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, ...o, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
   // a file of this library went in: its clips (and the folder's count) read again
   useEffect(
