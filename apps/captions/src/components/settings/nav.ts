@@ -46,7 +46,6 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "general", title: "General", icon: SlidersHorizontal, group: "You" },
   { id: "appearance", title: "Appearance", icon: Palette, group: "You" },
   { id: "tools", title: "Tools", icon: LayoutGrid, group: "You" },
-  { id: "voice", title: "Voice", icon: AudioLines, group: "You" },
   { id: "dictation", title: "Dictation", icon: Mic, group: "You", macOnly: true },
   { id: "devices", title: "Computers", icon: Monitor, group: "You" },
   { id: "servers", title: "Servers", icon: Server, group: "You", macOnly: true },
@@ -63,6 +62,8 @@ const BUILTIN: ReadonlyArray<BuiltinEntry> = [
   { id: "team", title: "Team", icon: Users, group: "Server", teamOnly: true },
   { id: "storage", title: "Storage", icon: HardDrive, group: "Server" },
   { id: "keys", title: "API keys", icon: KeyRound, group: "Server" },
+  // a tool, so with the tools' pages (withToolPages puts those first in this block)
+  { id: "voice", title: "Voice", icon: AudioLines, group: PLUGINS_GROUP },
   { id: "account", title: "Account", icon: UserRound, listed: false },
   { id: "admin", title: "Admin", icon: ShieldCheck, listed: false },
   // one installed plug-in's page (/settings/plugin/<id>): its workspaces and settings, opened from Community
