@@ -153,7 +153,7 @@ function Card({ icon: Icon, title, status, actions, children }: { icon: LucideIc
 }
 
 /** A post link: pasted, its platform picked from the address (changeable for a short link). */
-function PostingForm({ onAdd, onCancel }: { onAdd: (input: { platform: string; url?: string }) => void; onCancel: () => void }) {
+export function PostingForm({ onAdd, onCancel }: { onAdd: (input: { platform: string; url?: string }) => void; onCancel: () => void }) {
   const [platform, setPlatform] = useState<string>(PLATFORMS[0].id);
   const [url, setUrl] = useState("");
   return (

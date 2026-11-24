@@ -1,13 +1,40 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { Clapperboard, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, RotateCcw, Trash2 } from "lucide-react";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Clapperboard, Download, ExternalLink, GalleryHorizontalEnd, ImageOff, Layers, LayoutGrid, Link2, Merge, RotateCcw, Share2, Trash2 } from "lucide-react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ClipShare } from "./library/ClipShare";
+import { PostingForm } from "./FinalsPiece";
 import { undoable } from "@/lib/undo";
 import type { AssetCard, Collection, LibrarySummary, Piece } from "@contracts/library";
 import { LibraryFacetBar } from "@/components/LibraryFacetBar";
 import { AppBar } from "@/components/AppBar";
 import { Button } from "@/components/ui/button";
-import { cardsOfVersions, getWorkshopFinals, isFinals, listCollections, listLibraries, listPieces, listTrashedPieces, pieceVersions, restorePiece, trashPiece, type WorkshopFinal } from "@/lib/library";
+import {
+  addPosting,
+  cardsOfVersions,
+  getWorkshopFinals,
+  isFinals,
+  listCollections,
+  listLibraries,
+  listPieces,
+  listTrashedPieces,
+  mergePiece,
+  pieceVersions,
+  pieceZipUrl,
+  restorePiece,
+  trashPiece,
+  type WorkshopFinal,
+} from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { libraryBadges, libraryFacets, pickedFor } from "@/lib/library-slots";
 import { cn } from "@/lib/utils";
@@ -96,7 +123,7 @@ export function FinalsView({
   picked,
   onFacets,
   workshop = {},
-  onTrash,
+  actions,
 }: {
   hasFinals: boolean;
   pieces: Piece[];
@@ -105,8 +132,8 @@ export function FinalsView({
   onFacets: (next: Record<string, string[]>) => void;
   /** Workshop sessions linked to pieces, by piece id: the Ready to post badge and the post description */
   workshop?: Record<string, WorkshopFinal>;
-  /** right-click → Move to trash on a piece the account may change */
-  onTrash?: (piece: Piece) => void;
+  /** a piece's right-click menu, on a piece the account may change */
+  actions?: PieceActions;
 }) {
   const [kind, setKind] = useState<FinalsKind | null>(null);
   const [view, setView] = useBrowseView("finals");
@@ -120,6 +147,8 @@ export function FinalsView({
   const all = finalsTiles(pieces, cards, faceted);
   const kept = all.filter((t) => (!kind || t.kind === kind) && matches(find, t.piece.label));
   const byName = sort === "name" || sort === "name-za";
+  // the right-click menu's Merge piece list: every piece here, by name
+  const mergeList = actions ? [...pieces].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" })) : [];
   const ordered = byName ? [...kept].sort((a, b) => a.piece.label.localeCompare(b.piece.label, undefined, { numeric: true, sensitivity: "base" })) : kept;
   const shown = sort === "newest" || sort === "name-za" ? [...ordered].reverse() : ordered;
   const kinds: (FinalsKind | null)[] = [null, "reel", "carousel", "other"];
@@ -179,7 +208,7 @@ export function FinalsView({
       ) : view === "list" ? (
         <div className="flex flex-col gap-1.5">
           {shown.map((t) => (
-            <PieceMenu key={t.piece.id} piece={t.piece} onTrash={onTrash}>
+            <PieceMenu key={t.piece.id} piece={t.piece} others={mergeList} actions={actions}>
               <PieceRow tile={t} work={workshop[t.piece.id]} />
             </PieceMenu>
           ))}
@@ -187,7 +216,7 @@ export function FinalsView({
       ) : (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-5">
           {shown.map((t) => (
-            <PieceMenu key={t.piece.id} piece={t.piece} onTrash={onTrash}>
+            <PieceMenu key={t.piece.id} piece={t.piece} others={mergeList} actions={actions}>
               <PieceCard tile={t} work={workshop[t.piece.id]} />
             </PieceMenu>
           ))}
@@ -197,14 +226,63 @@ export function FinalsView({
   );
 }
 
-/** A piece's right-click menu (grid and list): Move to trash, with Undo. */
-function PieceMenu({ piece, onTrash, children }: { piece: Piece; onTrash?: (piece: Piece) => void; children: React.ReactElement }) {
-  if (!onTrash || piece.writable === false) return children;
+/** What a piece's right-click menu does: the piece window's own calls (lib/library). */
+export interface PieceActions {
+  zipUrl: (piece: Piece) => string;
+  onShare: (piece: Piece) => void;
+  /** opens the post link form for the piece's winner (else its first version) */
+  onPostLink: (piece: Piece) => void;
+  /** `from`'s versions move into `piece` */
+  onMerge: (piece: Piece, from: Piece) => void;
+  onTrash: (piece: Piece) => void;
+}
+
+/** A piece's right-click menu (grid and list): Open, Download, Share, Add post link, Merge piece, Move to trash. */
+function PieceMenu({ piece, others, actions, children }: { piece: Piece; others: Piece[]; actions?: PieceActions; children: React.ReactElement }) {
+  if (!actions || piece.writable === false) return children;
+  const into = others.filter((o) => o.id !== piece.id && o.writable !== false);
+  const has = piece.items.length > 0;
   return (
     <ContextMenu>
       <ContextMenuTrigger className="block">{children}</ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onSelect={() => onTrash(piece)}>
+        <ContextMenuItem asChild>
+          <Link to={`/finals/${piece.id}`} state={FROM_LIST}>
+            <ExternalLink /> Open
+          </Link>
+        </ContextMenuItem>
+        {has && (
+          <ContextMenuItem asChild>
+            <a href={actions.zipUrl(piece)} download>
+              <Download /> Download
+            </a>
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={() => actions.onShare(piece)}>
+          <Share2 /> Share
+        </ContextMenuItem>
+        {has && (
+          <ContextMenuItem onSelect={() => actions.onPostLink(piece)}>
+            <Link2 /> Add post link
+          </ContextMenuItem>
+        )}
+        {into.length > 0 && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <Merge /> Merge piece
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="max-h-80 overflow-y-auto">
+              {into.map((o) => (
+                <ContextMenuItem key={o.id} onSelect={() => actions.onMerge(piece, o)}>
+                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                  <span className="text-xs text-zinc-500">{o.items.length}</span>
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onSelect={() => actions.onTrash(piece)}>
           <Trash2 /> Move to trash
         </ContextMenuItem>
       </ContextMenuContent>
@@ -305,6 +383,9 @@ export default function FinalsPage() {
   const [failed, setError] = useState<string | null>(null);
   // the Finals trash: pieces taken out, listed until restored or gone for good (5 days)
   const [trashView, setTrashView] = useState(false);
+  // the right-click menu's Share and Add post link: the piece they are for
+  const [sharing, setSharing] = useState<Piece | null>(null);
+  const [posting, setPosting] = useState<Piece | null>(null);
   const library = libraries?.[0] ?? null;
   const libId = library?.id;
   const collections = useCachedLoad<Collection[]>(libId ? `/api/library/${libId}/collections` : null, () => listCollections(libId!));
@@ -361,17 +442,49 @@ export default function FinalsPage() {
               />
             ) : (
               <FinalsView hasFinals={!!finals} pieces={lists?.pieces ?? []} cards={lists?.cards ?? []} picked={picked} onFacets={setPicked} workshop={lists?.workshop ?? {}}
-                onTrash={(p) =>
-                  void trashPiece(library.id, p.id).then(() => {
-                    void shown.refresh();
-                    undoable("piece moved to trash", () => restorePiece(library.id, p.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
-                  }, (e: unknown) => setError(message(e)))
-                }
+                actions={{
+                  zipUrl: (p) => pieceZipUrl(library.id, p.id),
+                  onShare: setSharing,
+                  onPostLink: setPosting,
+                  onMerge: (p, from) => void mergePiece(library.id, p.id, from.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))),
+                  onTrash: (p) =>
+                    void trashPiece(library.id, p.id).then(() => {
+                      void shown.refresh();
+                      undoable("piece moved to trash", () => restorePiece(library.id, p.id).then(() => shown.refresh(), (e: unknown) => setError(message(e))));
+                    }, (e: unknown) => setError(message(e))),
+                }}
               />
             )}
           </>
         )}
       </main>
+      {library && sharing && (
+        <ClipShare
+          libraryId={library.id}
+          assetId=""
+          versionId=""
+          target={{ kind: "piece", id: sharing.id }}
+          href={`/finals/${sharing.id}`}
+          title={sharing.label}
+          open
+          onOpenChange={(o) => !o && setSharing(null)}
+        />
+      )}
+      <Dialog open={!!posting} onOpenChange={(o) => !o && setPosting(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle>Add post link</DialogTitle>
+          {library && posting && (
+            <PostingForm
+              onCancel={() => setPosting(null)}
+              onAdd={(input) => {
+                const item = posting.items.find((i) => i.winner) ?? posting.items[0];
+                setPosting(null);
+                void addPosting(library.id, posting.id, item.id, input).then(() => shown.refresh(), (e: unknown) => setError(message(e)));
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

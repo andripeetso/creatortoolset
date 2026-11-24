@@ -8,15 +8,25 @@ import { FinalsView } from "./FinalsPage";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const piece = (id: string, writable?: boolean): Piece => ({ id, label: `Tiny ${id}`, collectionId: "col_f", createdBy: "owner", items: [], ...(writable === undefined ? {} : { writable }) });
+const item = (n: number) => ({ id: `i${n}`, label: null, position: n, winner: n === 1, versionId: `v${n}`, externalRef: null, postDescription: null, postings: [] });
+const piece = (id: string, writable?: boolean, versions = 0): Piece => ({
+  id,
+  label: `Tiny ${id}`,
+  collectionId: "col_f",
+  createdBy: "owner",
+  items: Array.from({ length: versions }, (_, i) => item(i + 1)),
+  ...(writable === undefined ? {} : { writable }),
+});
 
-async function rightClick(p: Piece, onTrash: (p: Piece) => void): Promise<string> {
+const actionsWith = (onTrash: (p: Piece) => void) => ({ zipUrl: () => "/zip", onShare: vi.fn(), onPostLink: vi.fn(), onMerge: vi.fn(), onTrash });
+
+async function rightClick(p: Piece, onTrash: (p: Piece) => void, others: Piece[] = []): Promise<string> {
   const host = document.body.appendChild(document.createElement("div"));
   const root = createRoot(host);
   await act(async () =>
     root.render(
       <MemoryRouter>
-        <FinalsView hasFinals pieces={[p]} cards={[]} picked={{}} onFacets={() => {}} onTrash={onTrash} />
+        <FinalsView hasFinals pieces={[p, ...others]} cards={[]} picked={{}} onFacets={() => {}} actions={actionsWith(onTrash)} />
       </MemoryRouter>,
     ),
   );
@@ -33,8 +43,16 @@ async function rightClick(p: Piece, onTrash: (p: Piece) => void): Promise<string
 describe("a Finals piece's right-click menu", () => {
   it("moves the piece to the trash", async () => {
     const onTrash = vi.fn();
-    expect(await rightClick(piece("a"), onTrash)).toContain("Move to trash");
+    const menu = await rightClick(piece("a", true, 1), onTrash, [piece("c")]);
+    for (const word of ["Open", "Download", "Share", "Add post link", "Merge piece", "Move to trash"]) expect(menu).toContain(word);
     expect(onTrash).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }));
+  });
+
+  it("offers no download, post link or merge where there is nothing to act on", async () => {
+    const menu = await rightClick(piece("d"), vi.fn());
+    expect(menu).not.toContain("Download");
+    expect(menu).not.toContain("Add post link");
+    expect(menu).not.toContain("Merge piece");
   });
 
   it("offers nothing on a piece the account may not change", async () => {
