@@ -100,15 +100,6 @@ provider. The server's keys serve only the admin's own work, never their AI (an 
 own key), with one exception: the admin's Team use switch (Settings → API keys → Server keys) gives the admin's own team the server's keys, and members on a team budget run their AI on its Anthropic key, billed to that budget (`serverKeyOf`, `teamAiKey`). AI with no provider and no own key fails with a message saying what to add; the Workshop has no
 API-key path at all.
 
-**No scraping.** Social platforms come only from the official logins and the user's own Apify key, never from
-their web pages, logged in or not; no browser automation of other services. Two exceptions sign in with the person's
-own account, in a Chrome window on their own Mac: Adobe Enhance Speech, a team plug-in they download and switch on
-(`apps/captions/editor-steps/adobe-enhance`), and Media Library → Add from Instagram, one post or reel at a time by its
-link, the Content Analyzer's read of an own account with no Meta sign-in, and its reads where there is no working
-Apify key (`ingestGate` mode `session`); the owner of a server on their own Mac only (`api/lib/instagram/session.ts`). The one page fetch is Knowledge → Add a
-link (`webPageText` in `api/lib/workshop/source-files.ts`): the single public page the user pasted, no login, no
-crawling, inside addresses and social platforms refused.
-
 **Accounts and access.** With `APP_SECRET` unset the server is open and every request runs as a local admin.
 That is for one person's own machine only. Production refuses to start without `APP_SECRET`; the owner account is
 made from it on first start (`api/users.ts`). Someone with no session on a share link is `VISITOR` (every app off);
