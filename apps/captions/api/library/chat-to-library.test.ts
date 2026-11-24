@@ -35,7 +35,7 @@ vi.mock("../plugins.gen", async () => {
 vi.mock("../lib/uploads", async (real) => ({ ...(await real<typeof import("../lib/uploads")>()), freeBytes: async () => 100 * 1024 ** 3 }));
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); // a late background write can race the delete (ENOTEMPTY)
 });
 
 const STORE_WS = store.ws;
