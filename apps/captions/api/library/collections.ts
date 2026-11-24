@@ -613,6 +613,8 @@ collectionApp.get("/:id/pieces", async (c) => {
     .all(libraryId, cid, cid, c.req.query("trash") === "1" ? 1 : 0) as unknown as PieceRow[];
   const pieces: Piece[] = [];
   for (const p of rows.map(pieceOf)) {
+    // a merged piece is empty, so the item check below would show it to anyone: only its owner, who can restore it
+    if (p.merged && viewer.role !== "owner") continue;
     const seen = await visibleItems(viewer, libraryId, p);
     if (seen.items.length || !p.items.length) pieces.push(seen);
   }
@@ -708,6 +710,10 @@ async function unmerge(c: Ctx, from: PieceRow) {
   const was = JSON.parse(from.merged!) as Merged;
   const target = await writablePiece(c.get("user").username, from.library_id, was.into);
   if (!target) return notFound(c);
+  // a later merge took the target's versions on (B into A, then A into C): that one comes back first, or B returns empty
+  const where = db().prepare("SELECT p.label FROM piece_items i JOIN pieces p ON p.id = i.piece_id WHERE i.id = ? AND i.piece_id <> ?");
+  const moved = was.items.map((i) => where.get(i.id, target.id) as { label: string } | undefined).find(Boolean);
+  if (moved) return c.json({ error: `Its versions are in ${moved.label}: restore that first`, code: "conflict" }, 409);
   inTx(() => {
     const back = db().prepare("UPDATE piece_items SET piece_id = ?, position = ?, winner = ? WHERE id = ? AND piece_id = ?");
     for (const i of was.items) back.run(from.id, i.position, i.winner, i.id, target.id);

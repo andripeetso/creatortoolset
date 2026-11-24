@@ -83,6 +83,21 @@ describe("Finals pieces: merge, split, trash", () => {
     expect(list.pieces.find((p: any) => p.id === "pc_back").merged).toBeUndefined();
   });
 
+  it("Restore after a chain of merges (B into A, A into C) waits for A, so B never returns empty", async () => {
+    for (const v of ["c1", "c2"]) seedVideo(v);
+    seedPiece("pc_ca", "Chain A", ["c2"]);
+    seedPiece("pc_cb", "Chain B", ["c1"]);
+    seedPiece("pc_cc", "Chain C", []);
+    await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_ca/merge", { from: "pc_cb" });
+    await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_cc/merge", { from: "pc_ca" });
+    const early = await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_cb/restore");
+    expect(early.status).toBe(409);
+    expect((await early.json()).error).toContain("Chain C");
+    expect((await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_ca/restore")).status).toBe(200);
+    const b = await data(call("owner-a", "POST", "/api/library/lib_a/pieces/pc_cb/restore"));
+    expect(b.items.map((i: any) => i.versionId)).toEqual(["c1-v1"]);
+  });
+
   it("merge refuses when both pieces hold the same version (409, nothing moves)", async () => {
     const r = await call("owner-a", "POST", "/api/library/lib_a/pieces/pc_target/merge", { from: "pc_clash" });
     expect(r.status).toBe(409);
