@@ -77,7 +77,7 @@ export function loginUrl(kind: LoginKind, redirect: string, state: string): { ur
   }
   if (kind === "google") {
     const u = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    Object.entries({ client_id: app.id, redirect_uri: redirect, state, scope: GOOGLE_SCOPES.join(" "), response_type: "code", access_type: "offline", prompt: "consent", include_granted_scopes: "true" }).forEach(([k, v]) =>
+    Object.entries({ client_id: app.id, redirect_uri: redirect, state, scope: GOOGLE_SCOPES.join(" "), response_type: "code", access_type: "offline", prompt: "select_account consent", include_granted_scopes: "true" }).forEach(([k, v]) =>
       u.searchParams.set(k, v),
     );
     return { url: u.toString() };
