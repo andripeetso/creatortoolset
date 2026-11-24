@@ -110,11 +110,11 @@ const picks = new Map<string, Promise<{ faces: Face[]; blur: string[] }>>();
 let example: Promise<string> | null = null;
 const examplePicture = () => (example ??= call<{ picture: string }>(`${API}/example`).then((r) => r.picture));
 
-/** Faces and Which faces, in Settings → Face Blur (the page only links there). */
+/** Faces and Which faces, the top rows of Settings → Face Blur → Blur (the page only links there). */
 function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
   if (!settings) return null;
   return (
-    <Card>
+    <>
       <Row
         title="Faces"
         control={
@@ -144,7 +144,7 @@ function SettingsRows({ settings, save }: ReturnType<typeof useSettings>) {
           </div>
         </Row>
       )}
-    </Card>
+    </>
   );
 }
 
@@ -182,7 +182,7 @@ function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
   const lookTo = (look: Style["look"]) =>
     commit({ look, softness: look === "solid" ? 0 : settings.look === "solid" ? 0.45 : settings.softness });
   return (
-    <Card>
+    <>
       {/* the app's own two-pane classes (Settings → Providers): a plug-in folder can use only classes the app has */}
       <div className="lg:grid lg:grid-cols-[20rem_minmax(0,1fr)]">
         <div className="p-3 lg:border-r lg:border-border/50">
@@ -228,7 +228,7 @@ function StyleCard({ settings, save }: ReturnType<typeof useSettings>) {
           <Row title="Size" description="How far the cover reaches past the face." control={<StyleSlider label="Size" value={style.size} min={0.8} max={2} onMove={(size) => move({ size })} onCommit={(size) => commit({ size })} />} />
         </div>
       </div>
-    </Card>
+    </>
   );
 }
 
@@ -457,14 +457,16 @@ function FaceBlurSettings() {
   const s = useSettings();
   return (
     <div className="space-y-4">
-      <SettingsRows {...s} />
-      <Section title="Style">
-        <StyleCard {...s} />
+      <Section title="Blur">
+        <Card>
+          <SettingsRows {...s} />
+          <StyleCard {...s} />
+        </Card>
       </Section>
-      <Section title="Blurred copies">
+      <Section title="Output">
         <CopiesCard {...s} />
+        <AutoRows {...s} />
       </Section>
-      <AutoRows {...s} />
     </div>
   );
 }

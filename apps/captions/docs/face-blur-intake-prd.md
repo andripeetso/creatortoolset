@@ -90,7 +90,7 @@ today (`/api/devices/relay/job/faceblur-intake/:id`, `…/:id/fail`); there is n
 
 Claim options (all strings): `media` (`video` | `photo`), `path` (the original's absolute path on this Mac: the
 version's `mac_path`, claimed only by its `mac_device`), `out` (an absolute folder on this Mac to write the copy into,
-by Settings → Face Blur → Blurred copies → Location: "Blurred folder" is the library's Imports/Blurred there, or
+by Settings → Face Blur → Output → Location: "Blurred folder" is the library's Imports/Blurred there, or
 Blurred/ beside the original when there is none; "Beside the original" is the original's own folder; "Custom folder"
 is the folder chosen), `longSide` (`1920` | `3840` | `0`, 0 keeping the original's size: Resolution 1080p / 4K /
 Original), `bitrate` (bits per second, `10000000` … `80000000`: Bitrate 10 / 20 / 40 / 80 Mbps), and the style
