@@ -242,6 +242,16 @@ describe("Settings → Media Library, the owner's page", () => {
     expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Make 0"))).toBe(false);
   });
 
+  it("Blur faces is set in Proxy workflow, where the blurred copies are the proxies", async () => {
+    const blurs = { ...library, settings: { ...library.settings, blurFaces: true, upload: "proxies" as const } };
+    await render(<LibrarySettingsBody library={blurs} watch={watch} onChange={() => {}} onError={() => {}} />);
+    const sw = [...host!.querySelectorAll('[aria-label="Blur faces"]')];
+    expect(sw).toHaveLength(1); // not again under Hosted media
+    expect(bodyText()).toContain("Blurred copies");
+    await act(async () => (sw[0] as HTMLButtonElement).click());
+    expect(patches.at(-1)).toMatchObject({ settings: { blurFaces: false } });
+  });
+
   it("asks nothing about how to import: where a file is decides", async () => {
     await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
     expect(bodyText()).not.toContain("How should imported media behave?");

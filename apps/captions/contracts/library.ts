@@ -951,6 +951,7 @@ export const LIBRARY_WORDS = {
   chooseFiles: "Choose files",
   noClipsYet: "No clips yet",
   proxiesHostedOn: "On while proxies are hosted",
+  proxiesBlurred: "Blurred copies",
   recommended: "Recommended",
   budget: {
     label: "Monthly budget",
