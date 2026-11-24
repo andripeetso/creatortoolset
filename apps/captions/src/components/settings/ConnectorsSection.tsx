@@ -27,7 +27,7 @@ import {
   type SocialPlatform,
 } from "@/lib/connectors";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Card, ErrorRow, SettingsDialog, SettingsDialogContent, ListRow, LoadingRow, RowMenu, Section, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, InUse, type RowMenuItem } from "./ui";
+import { Card, ErrorRow, InfoTip, SettingsDialog, SettingsDialogContent, ListRow, LoadingRow, RowMenu, Section, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, InUse, type RowMenuItem } from "./ui";
 import { ApifyKeyRow } from "./ApiKeysSection";
 import { PlatformLogo } from "./PlatformLogos";
 import { inputCls, msg } from "./helpers";
@@ -369,12 +369,10 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
       <AddAccountDialog
         platform={adding}
         signIn={!!adding && !!loginOf(adding) && !!view.logins[loginOf(adding)!] && !off.includes(loginOf(adding)!)}
-        apify={view.apify.configured && view.apify.valid !== false}
         busy={!!asking}
         onClose={() => setAdding(null)}
         onSignIn={(p) => void choose(p)}
         onAdd={addByHandle}
-        onKeyChanged={() => void reload()}
       />
       <ChooseAccountDialog choose={view.choose} onDone={() => void reload()} />
     </Card>
@@ -487,15 +485,13 @@ function ChooseAccountDialog({ choose, onDone }: { choose: ConnectorsView["choos
   );
 }
 
-function AddAccountDialog({ platform, signIn, apify, busy, onClose, onSignIn, onAdd, onKeyChanged }: {
+function AddAccountDialog({ platform, signIn, busy, onClose, onSignIn, onAdd }: {
   platform: SocialPlatform | null;
   signIn: boolean;
-  apify: boolean;
   busy: boolean;
   onClose: () => void;
   onSignIn: (p: SocialPlatform) => void;
   onAdd: (p: SocialPlatform, handle: string) => Promise<void>;
-  onKeyChanged: () => void;
 }) {
   const [handle, setHandle] = useState("");
   const [saving, setSaving] = useState(false);
@@ -508,7 +504,6 @@ function AddAccountDialog({ platform, signIn, apify, busy, onClose, onSignIn, on
   const gives = platform ? LOGINS.find((l) => l.id === loginOf(platform))?.gives : undefined;
   const add = async () => {
     if (!platform) return;
-    if (!apify) return setError("Needs an Apify key");
     setSaving(true);
     setError(null);
     try {
@@ -522,30 +517,27 @@ function AddAccountDialog({ platform, signIn, apify, busy, onClose, onSignIn, on
   };
   return (
     <SettingsDialog open={!!platform} onOpenChange={(o) => !o && onClose()}>
-      <SettingsDialogContent aria-describedby={undefined} className="sm:max-w-sm">
+      <SettingsDialogContent aria-describedby={undefined} className="gap-5 sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{`Add ${label}`}</DialogTitle>
         </DialogHeader>
         {signIn && platform && (
-          <>
-            <div className="space-y-2">
-              <Button type="button" className="w-full" disabled={busy} onClick={() => onSignIn(platform)}>
-                Sign in
-              </Button>
-              {gives && <p className="text-center text-xs text-muted-foreground">{gives}.</p>}
-              {platform === "instagram" && <p className="text-center text-xs text-muted-foreground">{IG_NEEDS}.</p>}
+          <div className="space-y-1.5">
+            <div className="flex items-center text-xs font-medium">
+              With sign-in
+              <InfoTip label="With sign-in" text={platform === "instagram" ? `${gives}. ${IG_NEEDS}.` : `${gives}.`} />
             </div>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="h-px flex-1 bg-border" />
-              or
-              <span className="h-px flex-1 bg-border" />
-            </div>
-          </>
+            <Button type="button" className="w-full" disabled={busy} onClick={() => onSignIn(platform)}>
+              {`Sign in with ${label}`}
+            </Button>
+          </div>
         )}
-        {!apify && (
-          <Card>
-            <ApifyKeyRow onChanged={onKeyChanged} />
-          </Card>
+        {signIn && (
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            or
+            <span className="h-px flex-1 bg-border" />
+          </div>
         )}
         <form
           className="space-y-1.5"
@@ -554,14 +546,19 @@ function AddAccountDialog({ platform, signIn, apify, busy, onClose, onSignIn, on
             if (!saving) void add();
           }}
         >
-          <label htmlFor="add-account-handle" className="block text-xs font-medium">Handle</label>
+          <div className="flex items-center text-xs font-medium">
+            <label htmlFor="add-account-handle">Without sign-in</label>
+            <InfoTip label="Without sign-in" text={`Any ${label} account by its handle: its public posts and numbers only.`} />
+          </div>
           <div className="flex gap-2">
-            <input id="add-account-handle" className={cn(inputCls, "min-w-0 flex-1 text-sm")} value={handle} onChange={(e) => setHandle(e.target.value)} required disabled={saving} />
+            <div className={cn(inputCls, "flex h-9 min-w-0 flex-1 items-center gap-0.5 px-3 text-sm focus-within:border-violet-500")}>
+              <span className="text-muted-foreground" aria-hidden>@</span>
+              <input id="add-account-handle" className="min-w-0 flex-1 bg-transparent outline-none" value={handle} onChange={(e) => setHandle(e.target.value)} required disabled={saving} />
+            </div>
             <Button type="submit" variant={signIn ? "outline" : "default"} disabled={saving}>
               {saving ? "Adding" : "Add"}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">Public posts only.</p>
           {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
         </form>
       </SettingsDialogContent>
