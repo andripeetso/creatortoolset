@@ -100,5 +100,10 @@ describe("scrub", () => {
     expect(scrub(`cannot read ${homedir()}/Movies/Tia.mov now`)).toBe("cannot read <path> now");
     expect(scrub("GET /api/files/Tia.mov failed at http://127.0.0.1:3000/x")).toBe("GET <path> failed at http://127.0.0.1:3000/x");
     expect(scrub("Expected a number")).toBe("Expected a number");
+    // a name with spaces, unquoted, is hidden whole
+    expect(scrub("/Users/tiny/Tiny Shoot.mov: No such file or directory")).toBe("<path>: No such file or directory");
+    expect(scrub("could not open /Volumes/My Drive/Tiny Shoot 3/clip one.mov now")).toBe("could not open <path> now");
+    expect(scrub("the folder /Volumes/My Drive/Tiny Shoot is not connected, try again")).toBe("the folder <path>, try again");
+    expect(scrub("spawn /Users/tiny/my tools/ffmpeg ENOENT")).toBe("spawn <path> ENOENT");
   });
 });

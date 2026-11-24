@@ -95,6 +95,8 @@ export const scrub = (s: string) =>
   s
     .split(appDir).join("<app>")
     .replace(/(['"`])(?:~|\/|[A-Za-z]:\\)[^'"`]*\1/g, "$1<path>$1")
+    // a person's own folders, whose names may have spaces: up to the file's extension, else to an error code (ENOENT) or the next ":", ",", bracket or line end
+    .replace(/(^|[\s(=:])(?:~|\/(?:Users|home|Volumes|mnt|media))\/(?:[^\n'"`(),:]*?\.[A-Za-z0-9]{1,5}(?=[\s:,)'"`]|$)(?![^\n:,()'"`]*\/)|[^\n'"`(),:]*?(?= [A-Z][A-Z0-9_]{2,}\b|[\n'"`(),:]|$))/g, "$1<path>")
     .replace(/(^|[\s(=:])(?:~|\/(?!\/))[^\s'"`(),]*/g, "$1<path>")
     .split(homedir()).join("~");
 const RECENT_ERRORS = 20;
