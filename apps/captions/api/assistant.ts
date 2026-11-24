@@ -31,7 +31,8 @@ import { deviceOf, isThisMachine } from "./lib/devices";
 import { storageOf } from "./devices-storage";
 import { FOLDER_LIST, folderHere, knownDurations, listing, walkFolder, walkOnMac } from "./lib/folder-list";
 import { watchAllowed } from "./library/watch";
-import { clipsHere } from "./library/access";
+import { clipsHere, libraryRole } from "./library/access";
+import { libraryDb } from "./library/db";
 import { inCurrentWorkspace } from "./lib/workspace-scope";
 import { exportsOf, FOLDER_LABELS, folderIn, sourcesOf, THIS_COMPUTER, type StorageFolder } from "../contracts/storage";
 import { onChatMoves, resolveProjectId, workspaceScope } from "./lib/workshop/workspace";
@@ -244,6 +245,9 @@ interface Held {
   fit?: string;
   /** A reply that carries on once a file on the user's computer is on this server (askSend): the tool it goes to. */
   send?: AssistantFileUse;
+  /** The send answered by the dock with the file read where it is on the user's computer (a Media Library clip's version):
+   *  nothing uploads (POST /sends/:reply { added }). */
+  added?: string;
   /** Starts without waiting for its videos (the turn's `later`): the client keeps uploading them after it ends. */
   later?: true;
   /** Its chat's own AI when it was sent (Chat.ai); one that can't run any more falls back to the default (startHeld). */
@@ -1677,7 +1681,7 @@ async function pumpOnce(username: string): Promise<void> {
       changed = true;
     }
     // a send waits for the dock to start its upload first; a `later` turn starts while its videos go on uploading
-    const missing = h.send && !h.files.length ? [""] : h.later ? [] : h.files.filter((id) => !inNow(id));
+    const missing = h.send && !h.files.length && !h.added ? [""] : h.later ? [] : h.files.filter((id) => !inNow(id));
     // a scheduled run being written in its own chat goes first there too
     const runningBefore = list.slice(0, i).some((x) => x.status === "thinking" && !held[x.id]);
     let wait: AssistantMessage["wait"];
@@ -1746,7 +1750,9 @@ function startHeld(username: string, conv: Conv, list: AssistantMessage[], i: nu
     const f = imageFile(username, im.id);
     return f ? [{ name: im.name, type: f.type, data: readFileSync(f.file).toString("base64"), bytes: Buffer.alloc(0) }] : [];
   });
-  const sent = h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
+  const sent = h.added
+    ? `"${reply.send?.name ?? "The file"}" is in the Media Library now, read where it is on the user's computer (version_id ${h.added}): don't use_file it again; carry on with the rest of what the user asked.`
+    : h.send && files[0] ? `"${files[0].name}" is on this server now, file id ${files[0].id}: carry on, use_file with it to ${h.send}, then the rest of what the user asked.` : undefined;
   const uploading = (asked.files ?? []).filter((f) => f.uploading).map(({ id, name }) => ({ id, name }));
   const input: TurnInput = { text: asked.text, images, pasted: h.pasted, fileIds: h.files, files, uploading, paths: asked.folders ?? [], local: asked.localFiles ?? [], clipIds: [], clips: asked.clips ?? [], dir: placeOf(username, reply.id), context: h.context, note: [sent, h.fit].filter(Boolean).join("\n") || undefined };
   if (h.context?.mac) fromMac.add(reply.id);
@@ -2508,17 +2514,25 @@ assistantApp.post("/saved", async (c) => {
 /**
  * The dock's answer to a reply's send (askSend): { id } is the upload it started for that file (the reply carries on once it
  * is in), { gone: true } says the file isn't in that window any more (it was reloaded), and the reply says to drop it again.
+ * { added: assetId }: a send to the Media Library of a file on the reading list, indexed where it is on that Mac instead
+ * (a clip of a library this account has, new or already there).
  */
 assistantApp.post("/sends/:reply", async (c) => {
   const u = c.get("user");
-  const b = (await c.req.json().catch(() => null)) as { id?: unknown; gone?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { id?: unknown; gone?: unknown; added?: unknown } | null;
   const conv = load(u.username);
   const reply = c.req.param("reply");
   const h = conv.held?.[reply];
   const m = messageOf(u.username, reply);
   if (!h?.send || !m?.send || m.send.id) return c.json({ error: "No message is waiting for that file" }, 404);
   if (b?.gone === true) endHeld(u.username, m, "gone");
-  else {
+  else if (typeof b?.added === "string") {
+    const a = libraryDb().prepare("SELECT library_id AS l, current_version_id AS v FROM assets WHERE id = ?").get(b.added) as { l: string; v: string | null } | undefined;
+    if (h.send !== "library" || !a?.v || !libraryRole(u.username, a.l)) return c.json({ error: "Clip not found" }, 400);
+    h.added = a.v;
+    m.send.id = a.v;
+    save(u.username);
+  } else {
     const id = typeof b?.id === "string" ? b.id : "";
     if (!(await uploadOf(u.username, id))) return c.json({ error: "Upload not found" }, 400);
     h.files = [id];

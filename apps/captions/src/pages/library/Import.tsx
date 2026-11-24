@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import type { LibrarySummary } from "@contracts/library";
+import { hostsOriginals, hostsProxies, uploadSent, type LibrarySummary } from "@contracts/library";
 import { folderName } from "@/components/LibraryProcessing";
 import { EVERY_WORKSPACE, importTarget, leftOutBy, underFolder, type StorageFolder, type StorageView } from "@contracts/storage";
 import { PLACES_MAX } from "@contracts/places";
 import { Button } from "@/components/ui/button";
-import { checkUpload, reportPlaces, versionPlaces } from "@/lib/library";
+import { checkUpload, getWatch, listLibraries, reportPlaces, versionPlaces } from "@/lib/library";
 import { chooseDialog } from "@/lib/dialogs";
 import { allGranted, folderGrant, listMediaFolders, macReadFolders, readWhereTheyAre } from "@/lib/local-files";
 import { indexOnMac, quickPrint } from "@/lib/onMac";
@@ -68,6 +68,39 @@ export async function askWhereTheyAre(want: string[], readGiven: boolean): Promi
   if (choice === "other") return want;
   const reads = (await readWhereTheyAre(want)) ?? [];
   return want.filter((at) => !reads.some((r) => underFolder(at, r)));
+}
+
+/**
+ * The chat's question for files dropped in it from outside every folder this Mac reads (askWhereTheyAre, with no Copy to
+ * do now: a file the chat later puts in the Media Library is uploaded and copied in as before). Asked only by a Mac app
+ * that takes the reading list ask; `ask` draws the two buttons and resolves to the choice, or null when dismissed.
+ */
+export async function chatWhereTheyAre(paths: string[], ask: () => Promise<"ok" | "other" | null>): Promise<void> {
+  if (!paths.length || !macImports()) return;
+  const { inPlace, readGiven } = await readFoldersHere();
+  const outside = paths.filter((at) => !inPlace.some((r) => underFolder(at, r)));
+  if (!outside.length || !readGiven) return;
+  // a server on this computer reads a chat's footage where it is already (media_import_folder): nothing to ask
+  const lib = (await listLibraries().catch(() => []))[0];
+  if (lib && (await getWatch(lib.id).catch(() => null))?.allowed) return;
+  if ((await ask()) === "ok") await readWhereTheyAre(outside);
+}
+
+/**
+ * A chat's send to the Media Library of a file this Mac reads where it is (the reading list, a Media folder here), on a
+ * server elsewhere: indexed in place, as the Media Library page does, never uploaded. The clip's id, or null to upload it
+ * as before (outside every read folder, a library that keeps originals or proxies, or the index failed).
+ */
+export async function chatAddInPlace(file: File, at: string): Promise<string | null> {
+  if (!macImports()) return null;
+  const { inPlace } = await readFoldersHere();
+  if (!inPlace.some((r) => underFolder(at, r))) return null;
+  const lib = (await listLibraries().catch(() => []))[0];
+  const sent = lib && uploadSent(lib.settings);
+  if (!lib || !sent || hostsOriginals(sent) || hostsProxies(sent)) return null;
+  // a file dropped in a chat is kept as filmed (api/assistant-files.ts useFile); the server decides who may
+  const r = await indexOnMac(lib.id, file, at, undefined, undefined, !!lib.settings.blurFaces, true).catch(() => null);
+  return r?.assetId ?? r?.duplicateOf ?? null;
 }
 
 /** The same rows whole: their Folders left out too (leftOutBy). */

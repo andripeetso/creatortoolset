@@ -566,6 +566,18 @@ describe("a video dropped in the Mac app goes as its path", () => {
     expect(v.messages.at(-1)).toMatchObject({ id: sendReply.id, text: "In Review.", status: "done" });
   });
 
+  it("a send answered as read where it is takes only a Media Library send of a clip of this account's", async () => {
+    const p = await person("ula");
+    await p.send({ text: "Captions please", localFiles: ["/Volumes/Card/flip.mov"] });
+    const job = await p.claim();
+    await tool(job.mcp.token, "use_file", { path: "/Volumes/Card/flip.mov", to: "captions" });
+    await p.answer(job.id, "Sending it first.");
+    const reply = (await p.view()).messages.at(-1)!;
+    // not a Media Library send, and no such clip: refused, and the send still waits for its file
+    expect((await app.request(`/api/assistant/sends/${reply.id}`, { method: "POST", ...json({ added: "v_nobody" }, { cookie: p.cookie }) })).status).toBe(400);
+    expect((await app.request(`/api/assistant/sends/${reply.id}`, { method: "POST", ...json({ gone: true }, { cookie: p.cookie }) })).status).toBe(200);
+  });
+
   it("a send whose file isn't in the window any more says in one line to drop it again", async () => {
     const p = await person("sid");
     await p.send({ text: "Captions please", localFiles: ["/Users/tiny/Movies/old.mov"] });

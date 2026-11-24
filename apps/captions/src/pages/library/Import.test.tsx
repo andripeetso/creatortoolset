@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import type { PlacesReport } from "@contracts/places";
 import { EmptyDrop } from "./EmptyDrop";
-import { CantRead, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
+import { CantRead, chatAddInPlace, chatWhereTheyAre, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
 
-const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), macReadFolders: vi.fn(async () => null as { folders: string[]; reads: string[]; readGiven?: boolean } | null), readWhereTheyAre: vi.fn(), chooseDialog: vi.fn(), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
+const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), macReadFolders: vi.fn(async () => null as { folders: string[]; reads: string[]; readGiven?: boolean } | null), readWhereTheyAre: vi.fn(), chooseDialog: vi.fn(), listLibraries: vi.fn(), getWatch: vi.fn(), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint, importCopy: m.importCopy, pathOnMac: m.pathOnMac }));
-vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/library")>()), checkUpload: m.checkUpload, versionPlaces: m.versionPlaces, reportPlaces: m.reportPlaces }));
+vi.mock("@/lib/library", async (orig) => ({ ...(await orig<typeof import("@/lib/library")>()), checkUpload: m.checkUpload, versionPlaces: m.versionPlaces, reportPlaces: m.reportPlaces, listLibraries: m.listLibraries, getWatch: m.getWatch }));
 vi.mock("@/lib/local-files", async (orig) => ({ ...(await orig<typeof import("@/lib/local-files")>()), listMediaFolders: m.listMediaFolders, folderGrant: m.folderGrant, macReadFolders: m.macReadFolders, readWhereTheyAre: m.readWhereTheyAre }));
 vi.mock("@/lib/dialogs", () => ({ chooseDialog: m.chooseDialog }));
 vi.mock("@/lib/providers", async (orig) => ({ ...(await orig<typeof import("@/lib/providers")>()), useProviders: () => ({ data: { devices: m.devices } }) }));
@@ -227,6 +227,46 @@ describe("Folders this Mac may not read yet", () => {
     await act(async () => root!.render(<Bar />));
     expect(host.textContent).toBe("Creator Toolset can't read Media yet; open the Mac app on Studio Mac and press Allow on this Mac to add its files to the Media Library.");
     expect(host.querySelector("button")).toBeNull();
+  });
+});
+
+describe("videos dropped in the chat", () => {
+  const lib = { id: "lib", settings: { upload: "none", blurFaces: false } } as unknown as LibrarySummary;
+  beforeEach(() => {
+    document.documentElement.dataset.macImport = "1";
+    document.documentElement.dataset.macDevice = "mac_1";
+    storage([{ path: "/Volumes/Tiny/Footage" }]);
+    m.listLibraries.mockResolvedValue([lib]);
+    m.getWatch.mockResolvedValue({ allowed: false });
+  });
+
+  it("asks only for videos from outside, and Use where they are puts them on the reading list", async () => {
+    m.macReadFolders.mockResolvedValue({ folders: [], reads: [], readGiven: true });
+    m.readWhereTheyAre.mockClear();
+    const ask = vi.fn(async () => "ok" as const);
+    await chatWhereTheyAre(["/Volumes/Tiny/Footage/a.mov"], ask);
+    expect(ask).not.toHaveBeenCalled();
+    await chatWhereTheyAre(["/Volumes/Card/b.mov"], ask);
+    expect(m.readWhereTheyAre).toHaveBeenCalledWith(["/Volumes/Card/b.mov"]);
+    // Copy: nothing changes now (a send uploads it as before); a server on this computer: no question
+    await chatWhereTheyAre(["/Volumes/Card/b.mov"], async () => "other");
+    m.getWatch.mockResolvedValueOnce({ allowed: true });
+    await chatWhereTheyAre(["/Volumes/Card/c.mov"], ask);
+    expect(m.readWhereTheyAre).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledTimes(1);
+    m.macReadFolders.mockReset();
+  });
+
+  it("a send to the Media Library of a file on the reading list is indexed in place; anything else uploads", async () => {
+    m.macReadFolders.mockResolvedValue({ folders: ["/Volumes/Card"], reads: ["/Volumes/Card"], readGiven: true });
+    m.indexOnMac.mockResolvedValue({ assetId: "ast_1" });
+    const f = new File(["x"], "b.mov");
+    expect(await chatAddInPlace(f, "/Volumes/Card/b.mov")).toBe("ast_1");
+    expect(m.indexOnMac.mock.calls.at(-1)!.slice(0, 3)).toEqual(["lib", f, "/Volumes/Card/b.mov"]);
+    expect(await chatAddInPlace(f, "/Users/tiny/Downloads/b.mov")).toBeNull();
+    m.listLibraries.mockResolvedValueOnce([{ ...lib, settings: { upload: "all" } }]);
+    expect(await chatAddInPlace(f, "/Volumes/Card/b.mov")).toBeNull();
+    m.macReadFolders.mockReset();
   });
 });
 

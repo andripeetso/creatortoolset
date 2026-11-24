@@ -6,6 +6,7 @@ import { isLimitLine } from "@contracts/plans";
 import type { Selection } from "@contracts/providers";
 import { LinkedText, ReplyText } from "@/components/ReplyText";
 import { Button } from "@/components/ui/button";
+import { chatAddInPlace, chatWhereTheyAre } from "@/pages/library/Import";
 import { Input } from "@/components/ui/input";
 import { useMe } from "@/lib/auth";
 import {
@@ -158,6 +159,8 @@ export function AssistantDock() {
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // dropped videos from outside every folder this Mac reads: the two buttons over the message box (chatWhereTheyAre)
+  const [whereAsk, setWhereAsk] = useState<((v: "ok" | "other" | null) => void) | null>(null);
   const [place, setPlaceState] = useState<Place>(storedPlace);
   const [closing, setClosing] = useState(false);
   /** The last message you've seen (undefined until the first load): a newer reply while closed nudges the bubble. */
@@ -583,15 +586,28 @@ export function AssistantDock() {
       }
       const at = (p: { pct: number; error?: string }) => setSendState((s) => ({ ...s, [reply]: p }));
       at({ pct: 0 });
-      sends.current.set(
-        reply,
+      const upload = () =>
         uploadVideo(file, {
           pct: (pct) => at({ pct }),
           id: (id) => void sendAnswer(reply, { id }).then((r) => r.ok && setView(r.data)),
           done: () => at({ pct: 100 }),
           error: (error) => at({ pct: 0, error }),
-        }),
-      );
+        });
+      if (m.send.to !== "Media Library") {
+        sends.current.set(reply, upload());
+        continue;
+      }
+      // a file this Mac reads where it is goes into the Media Library in place, never uploaded (Use where they are)
+      sends.current.set(reply, null);
+      const path = m.send.path;
+      void chatAddInPlace(file, path).then((added) => {
+        if (!added) return void sends.current.set(reply, upload());
+        void sendAnswer(reply, { added }).then((r) => {
+          if (!r.ok) return void sends.current.set(reply, upload());
+          at({ pct: 100 });
+          setView(r.data);
+        });
+      });
     }
   }, [view?.messages]);
   /** A message (and the highlighted text it asks about) back in the box, after what's there. */
@@ -876,6 +892,8 @@ export function AssistantDock() {
           (d) => {
             if (d.folders.length) setDraft((cur) => ({ ...cur, folders: [...new Set([...cur.folders, ...d.folders])].slice(0, MAX_FOLDERS) }));
             if (d.files.length || !d.folders.length) void addFiles(d.files, d.folder, d.paths);
+            const videos = [...d.paths].filter(([f]) => !isPicture(f) && isMediaFile(f)).map(([, p]) => p);
+            void chatWhereTheyAre(videos, () => new Promise((done) => setWhereAsk(() => (v: "ok" | "other" | null) => (setWhereAsk(null), done(v)))));
           },
           (err) => setError(err instanceof Error ? err.message : String(err)),
         );
@@ -1089,6 +1107,13 @@ export function AssistantDock() {
           {/* a question still waiting for a press sits over the message box, however far up its reply is (owner,
               2026-11-12: he opened a chat that asked for his approval and could not see where); answered, it goes back
               under its reply */}
+          {whereAsk && (
+            <div role="group" aria-label="Folder access" className="mb-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs">
+              <span className="min-w-0 flex-1">Use the videos where they are and add their folders to Folder access, or copy them into the Media Library.</span>
+              <Button type="button" size="sm" onClick={() => whereAsk("ok")}>Use where they are</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => whereAsk("other")}>Copy to Media Library</Button>
+            </div>
+          )}
           <ApprovalCards approvals={view?.messages.flatMap((m) => m.approvals ?? []).filter((x) => x.status === "waiting")} />
           <ConfirmCards confirms={view?.messages.flatMap((m) => m.confirms ?? []).filter((x) => x.status === "waiting")} onView={setView} />
           {shownQueue.length > 0 && (
