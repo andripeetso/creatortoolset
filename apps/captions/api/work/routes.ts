@@ -23,6 +23,7 @@ import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
 import { serveAi, serveCall } from "./serve";
+import { retryEmptyPictures } from "../library/made";
 
 /** The most one result file may weigh (a preview, a generated clip, a cache file). */
 const FILE_MAX = 8 * 1024 ** 3;
@@ -67,6 +68,9 @@ workApp.route("/lib", libWorkApp);
 workApp.route("/pictures", picturesWorkApp);
 // computer tasks (local-first P3): their own ids, under work/task/:id/
 workApp.route("/task", taskWorkApp);
+
+// once a process: photos failed on an empty card picture go again when a computer that reads them with no seek asks
+let stillsRetried = false;
 
 workApp.post("/claim", async (c) => {
   const d = caller(c);
@@ -141,6 +145,11 @@ workApp.post("/claim", async (c) => {
     ...(tooOld !== undefined ? { tooOld } : {}),
     at: now,
   });
+  if (library && b?.stills === true && !stillsRetried) {
+    stillsRetried = true;
+    const n = retryEmptyPictures();
+    if (n) console.log(`[library] ${n} jobs with an empty card picture queued again`);
+  }
   // the cache it reported is its proxy places (version_places kind 'proxy'): what "On this computer" and Locate read
   if (cache?.versions || empty) noteProxyCache(d.id, empty ? [] : (cache?.versions ?? []));
   const end = Date.now() + CLAIM_POLL.holdMs;

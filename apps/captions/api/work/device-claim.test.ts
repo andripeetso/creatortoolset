@@ -306,3 +306,15 @@ describe.skipIf(rootReplaced)("the server's own loop", () => {
     }
   });
 });
+
+describe("photos failed on an empty card picture", () => {
+  it("go again when a computer that reads them with no seek asks, never for an older one", async () => {
+    const empty = "ENOENT: no such file or directory, rename '/x/thumb.jpg.part.jpg' -> '/x/thumb.jpg'";
+    libraryDb().prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error) VALUES ('lib_maker', 'ver_up', 'send', 'failed', 'maker', ?)").run(empty);
+    const state = () => (libraryDb().prepare("SELECT state FROM jobs WHERE version_id = 'ver_up' AND kind = 'send'").get() as { state: string }).state;
+    await post(laptop.token, "/api/devices/relay/work/claim", { v: WORK_V, steps: [], library: true, libraryOnly: true });
+    expect(state()).toBe("failed");
+    await post(laptop.token, "/api/devices/relay/work/claim", { v: WORK_V, steps: [], library: true, libraryOnly: true, stills: true });
+    expect(state()).not.toBe("failed");
+  });
+});

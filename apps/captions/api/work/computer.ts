@@ -212,6 +212,7 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
           library: true,
           libraryKinds: LIBRARY_HERE,
           proof: true,
+          stills: true, // a photo's card picture is read with no seek (media/thumb.ts): what failed on an empty one comes again
           ...(only ? { libraryOnly: true } : runsPictureModel() ? { pictures: true } : {}),
           ...(only ? {} : { tasks: taskKinds() }),
           machine: await machineNow(),
