@@ -61,6 +61,7 @@ import { workspaceApp } from "./workspace";
 import { viewAsTarget } from "./lib/view-as";
 import { grantsApp } from "./library/grants";
 import { bulkApp } from "./library/bulk";
+import { instagramAddApp } from "./library/instagram-add";
 import { assistantApp, resumeFromDisk } from "./assistant";
 import { answersAtRisk, leave } from "./lib/mac-claude";
 import { captionJobsAtRisk } from "./captions-job";
@@ -567,6 +568,7 @@ app.route("/api/library", watchApp);
 app.route("/api/library", storageApp);
 app.route("/api/library", grantsApp);
 app.route("/api/library", bulkApp);
+app.route("/api/library", instagramAddApp);
 // the chat's editor commands, on whichever editor answers below (editor/nle-bridge.ts)
 app.route("/api/editor/nle", nleBridgeApp);
 // a plug-in that replaces the AI Editor answers its root paths first (the old URLs the Mac worker posts to)

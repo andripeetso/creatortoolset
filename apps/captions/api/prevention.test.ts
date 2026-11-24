@@ -31,6 +31,7 @@ const DECODERS: Record<string, string> = {
   "api/library/timeline.ts": "DECODES look: the watch-part encode only in a server look; a Mac's copy goes whole (askAntigravity)",
   "api/library/pictures.ts": "the picture model's crops of card pictures and sheets: picturesHere (work/place.ts mayRunHere)",
   "api/library/watch.ts": "textutil reads a script document's text on a Mac server, no video or sound",
+  "api/lib/instagram/session.ts": "a Chrome window for the owner's own Instagram sign-in, on a server on their own Mac (mayUseInstagram); no video or sound",
   // AI Editor steps: placeOf puts a step that reads video or sound on a computer; the server takes it only through
   // serverMayTake (work/place.ts mayRunHere)
   "api/editor/analyze.ts": "mayRunHere (placeOf)",

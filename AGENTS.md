@@ -101,9 +101,10 @@ own key), with one exception: the admin's Team use switch (Settings → API keys
 API-key path at all.
 
 **No scraping.** Social platforms come only from the official logins and the user's own Apify key, never from
-their web pages, logged in or not; no browser automation of other services. The one exception is a team plug-in the
-person downloads and switches on, which signs in with that person's own account: Adobe Enhance Speech
-(`apps/captions/editor-steps/adobe-enhance`). The one page fetch is Knowledge → Add a
+their web pages, logged in or not; no browser automation of other services. Two exceptions sign in with the person's
+own account, in a Chrome window on their own Mac: Adobe Enhance Speech, a team plug-in they download and switch on
+(`apps/captions/editor-steps/adobe-enhance`), and Media Library → Add from Instagram, one post or reel at a time by its
+link, the owner of a server on their own Mac only (`api/lib/instagram/session.ts`). The one page fetch is Knowledge → Add a
 link (`webPageText` in `api/lib/workshop/source-files.ts`): the single public page the user pasted, no login, no
 crawling, inside addresses and social platforms refused.
 

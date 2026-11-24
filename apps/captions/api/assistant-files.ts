@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { jobTurn, type AuthVars } from "./auth";
 import { env } from "./lib/env";
 import { assembleParts, freeBytes, MAX_UPLOAD_BYTES, PART_SIZE, partCount, partsStatus, readUploadState, receivedParts, receivePart, shortOfReserve, startUpload } from "./lib/uploads";
@@ -255,6 +258,16 @@ export async function fileFromPath(user: string, p: string): Promise<AssistantFi
   const id = randomUUID();
   await linkOrCopy(real, fileOf(user, id));
   const meta: AssistantFile = { id, name, mime: mimeOf(name), size: st.size };
+  await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
+  return meta;
+}
+
+/** A file the server fetched itself (an Instagram post added by its link), kept like a dropped one. */
+export async function keepFetched(user: string, name: string, mime: string, body: ReadableStream<Uint8Array>): Promise<AssistantFile> {
+  const id = randomUUID();
+  await mkdir(dirOf(user, id), { recursive: true });
+  await pipeline(Readable.fromWeb(body as import("node:stream/web").ReadableStream), createWriteStream(fileOf(user, id), { mode: 0o600 }));
+  const meta: AssistantFile = { id, name, mime, size: (await stat(fileOf(user, id))).size };
   await writeFile(path.join(dirOf(user, id), "meta.json"), JSON.stringify({ ...meta, at: Date.now() }), { mode: 0o600 });
   return meta;
 }

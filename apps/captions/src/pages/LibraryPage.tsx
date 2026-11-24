@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { Activity, FolderCog, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
+import { Activity, FolderCog, Instagram, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySort, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
 import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS, uploadSent } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
@@ -85,6 +85,7 @@ import { CLIP_CARDS, type DraggedClip } from "@/lib/chat-clips";
 import { ActiveFilters, LibrarySidebar, SidebarSheet, sidebarPicked } from "./library/Sidebar";
 import { ListHeader, SORT_IDS, SortControls } from "./library/SortControls";
 import { noBrowserMenu, SpaceMenu } from "./library/SpaceMenu";
+import { InstagramAdd } from "./library/InstagramAdd";
 import { LibraryTabs, useHiddenTabs, withHidden, type Tab } from "./library/Tabs";
 import { automaticAbout, FolderSettingsDialog, NewFolderDialog, ReorganizeDialog, type FolderChanges } from "./library/SmartFolders";
 import { TabSettingsDialog } from "./library/TabSettings";
@@ -1008,6 +1009,7 @@ export default function LibraryPage() {
 
   // the Upload button's handler: the page's button, its right-click menu and the first screen's second way all call it
   const chooseFiles = () => picker.current?.click();
+  const [instagramOpen, setInstagramOpen] = useState(false);
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
   // the Blur faces checkbox beside Upload: only where the library blurs and this person may keep files as filmed
   const blurChoice = mayAdd && faceBlur && !!library.settings.blurFaces && library.mayKeepAsFilmed;
@@ -1205,6 +1207,7 @@ export default function LibraryPage() {
                             </DropdownMenuItem>
                           )}
                           {!trash && <SourceMediaItems canLook={canLook} onLook={() => void lookNow()} onError={setError} />}
+                          {mayAdd && !trash && <DropdownMenuItem onSelect={() => setInstagramOpen(true)}><Instagram /> Add from Instagram</DropdownMenuItem>}
                           {watch && !readOnly && !trash && library && redoKinds(library.settings).length > 0 && (
                             <>
                               <DropdownMenuSeparator />
@@ -1275,6 +1278,7 @@ export default function LibraryPage() {
               </BrowseBar>
               )}
 
+              {mayAdd && <InstagramAdd open={instagramOpen} onOpenChange={setInstagramOpen} />}
               <SpaceMenu
                 className="flex flex-1 flex-col gap-4"
                 items={
@@ -1282,6 +1286,7 @@ export default function LibraryPage() {
                     <>
                       {changing && (!smart || !!nestHere) && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
                       <ContextMenuItem onSelect={chooseFiles}>Upload…</ContextMenuItem>
+                      <ContextMenuItem onSelect={() => setInstagramOpen(true)}>Add from Instagram…</ContextMenuItem>
                       {(pickable.length > 0 || canLook) && <ContextMenuSeparator />}
                       {pickable.length > 0 && <ContextMenuItem onSelect={() => void pickAll()}>Select all</ContextMenuItem>}
                       {canLook && <ContextMenuItem onSelect={() => void lookNow()}>Look for new files</ContextMenuItem>}

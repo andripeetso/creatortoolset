@@ -6,7 +6,7 @@
 # Adobe Enhance Speech is a team plug-in in apps/captions/editor-steps/adobe-enhance since 2026-11-11, by the owner's word ("Yes, that's why I asked to build Adobe.")
 # Not naming a product a pattern came from ("like Figma/Adobe")
 Figma/Adobe
-# Instagram's private web endpoints (session or anonymous cookies) are never read by the public app: official logins and the user's own Apify key only
-instagram\.com/api/v1|[Xx]-IG-App-ID|INSTAGRAM_COOKIE
+# Instagram's web API is read only by Media Library → Add from Instagram, with the owner's own sign-in (api/lib/instagram/session.ts), since 2026-11-23 by the owner's word ("Build it, put it inside the media library"); never with a cookie from the environment
+INSTAGRAM_COOKIE
 # Apple's system typeface (the San Francisco family) cannot be redistributed; the public app uses its own fonts (see the font files under public/)
 SF[ ]Pro
