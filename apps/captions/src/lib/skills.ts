@@ -1,4 +1,5 @@
 import type { SharedSkill, Skill, SkillDraft, SkillPlace } from "@contracts/skills";
+import { bodyOf } from "@/lib/body";
 
 /** Community → Skills: the page's calls to /api/skills (api/skills.ts). A refusal's own words are the error. */
 async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -9,7 +10,7 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
     body: body === undefined ? undefined : JSON.stringify(body),
   }).catch(() => null);
   if (!r) throw new Error("Can't reach the server");
-  const data = (await r.json().catch(() => ({}))) as T & { error?: string };
+  const data = (await bodyOf(r)) as T & { error?: string };
   if (!r.ok) throw new Error(data.error ?? `Failed (${r.status})`);
   return data;
 }

@@ -2,6 +2,7 @@ import type { Automation, Destination, Schedule, Weekday } from "@contracts/auto
 import type { Selection } from "@contracts/providers";
 import { fmtAgo } from "@/components/settings/helpers";
 import { inWorkspace } from "@/components/settings/workspace-pick";
+import { bodyOf } from "@/lib/body";
 
 /** Settings → Scheduled tasks' calls (api/automations.ts). The assistant's schedule_task tool sends the same body. */
 
@@ -58,7 +59,7 @@ async function call<T>(path: string, method = "GET", body?: unknown, workspace?:
     body: body === undefined ? undefined : JSON.stringify(body),
   })).catch(() => null);
   if (!r) throw new Error("Could not reach the server");
-  const data = (await r.json().catch(() => ({}))) as T & { error?: string };
+  const data = (await bodyOf(r)) as T & { error?: string };
   if (!r.ok) throw new Error(data.error ?? `Failed (${r.status})`);
   return data;
 }

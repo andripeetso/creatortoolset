@@ -33,12 +33,13 @@ import { boot, onTopic, seqNow, whenVisible } from "@/lib/sync";
 import { macMediaUrl, macPageMarked, pathOnMac } from "@/lib/thisMac";
 import { addFromMac, deviceHere, indexOnMac, quickPrint } from "@/lib/onMac";
 import { thisMacDevice } from "@/lib/providers";
+import { bodyOf } from "@/lib/body";
 
 /** The Media Library's calls to api/library/routes.ts, and the chunked upload that follows its offset protocol. */
 
 /** The body, or the server's error with its `code` ("too_large": a refusal that a retry cannot change). */
 async function json<T>(r: Response): Promise<T> {
-  const body = (await r.json().catch(() => ({}))) as T & { error?: string; code?: string };
+  const body = (await bodyOf(r)) as T & { error?: string; code?: string };
   if (!r.ok) throw Object.assign(new Error(body.error ?? `Request failed (${r.status})`), { code: body.code });
   return body;
 }
@@ -603,7 +604,7 @@ export function reorderedPositions(items: { id: string; position: number }[], fr
 /** Look for new files on a server that reads this computer's folders itself (This Mac): how many came in, and how many still settle. */
 export async function scanWatchNow(libraryId: string): Promise<{ added: number; settling: number }> {
   const r = await fetch(`/api/library/${libraryId}/watch/scan`, { method: "POST" });
-  const body = (await r.json().catch(() => ({}))) as { added?: number; settling?: number; error?: string };
+  const body = (await bodyOf(r)) as { added?: number; settling?: number; error?: string };
   if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
   return { added: body.added ?? 0, settling: body.settling ?? 0 };
 }

@@ -1,9 +1,10 @@
 import type { Collection, ReorganizeWay } from "@contracts/library";
+import { bodyOf } from "@/lib/body";
 
 /** The page's own calls to api/library/collections.ts that lib/library.ts has no use for elsewhere. */
 
 async function json<T>(r: Response): Promise<T> {
-  const body = (await r.json().catch(() => ({}))) as T & { error?: string };
+  const body = (await bodyOf(r)) as T & { error?: string };
   if (!r.ok) throw new Error(body.error ?? `Request failed (${r.status})`);
   return body;
 }

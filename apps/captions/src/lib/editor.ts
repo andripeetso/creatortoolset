@@ -5,6 +5,7 @@ import type { ItemEdit } from "@contracts/edit-timeline";
 import type { NleRun } from "./nle/commands";
 import type { NleTimeline } from "./nle/model";
 import type { Draft, EditorChatView, LineTakes, TimelineSource, Edit, EditPatch, EditSlot, EditStep, EditSummary, EditVoice, EditorDefaults, FootageTarget, MadeVoice, NewEdit, NewVoice, PlansPatch, Sentence, Take, VersionMark, VersionPlan, VoicesView } from "@contracts/editor";
+import { bodyOf } from "@/lib/body";
 
 /** The Editor's calls to api/editor/routes.ts. */
 
@@ -15,7 +16,7 @@ async function send<T>(url: string, method = "GET", body?: unknown, workspace?: 
     headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(workspace ? { "X-CT-Workspace": workspace } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const out = (await r.json().catch(() => ({}))) as T & { error?: string };
+  const out = (await bodyOf(r)) as T & { error?: string };
   if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
   return out;
 }
@@ -66,7 +67,7 @@ export async function addLut(file: File): Promise<CameraLut[]> {
   const form = new FormData();
   form.append("file", file);
   const r = await fetch("/api/edit-steps/luts", { method: "POST", body: form });
-  const out = (await r.json().catch(() => ({}))) as CameraLut[] & { error?: string };
+  const out = (await bodyOf(r)) as CameraLut[] & { error?: string };
   if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
   return out;
 }
@@ -85,7 +86,7 @@ export async function proposeStyle(from: File[] | "finished"): Promise<StyleProp
   const form = new FormData();
   for (const f of from) form.append("file", f);
   const r = await fetch("/api/editor/styles/propose", { method: "POST", body: form });
-  const out = (await r.json().catch(() => ({}))) as StyleProposal & { error?: string };
+  const out = (await bodyOf(r)) as StyleProposal & { error?: string };
   if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
   return out;
 }
@@ -112,7 +113,7 @@ export async function addStylePictures(id: string, files: File[], kind: StyleKin
   for (const f of files) form.append("file", f);
   if (made) form.append("made", "1");
   const r = await fetch(`${stylesAt(kind)}/${id}/pictures`, { method: "POST", body: form });
-  const out = (await r.json().catch(() => ({}))) as AnimationStyle & { error?: string };
+  const out = (await bodyOf(r)) as AnimationStyle & { error?: string };
   if (!r.ok) throw new Error(out.error ?? `Request failed (${r.status})`);
   return out;
 }

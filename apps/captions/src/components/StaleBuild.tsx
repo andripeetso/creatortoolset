@@ -43,16 +43,67 @@ export async function reloadIfNewBuild(now = Date.now()): Promise<boolean> {
 
 type State = { broken: false | "checking" | true };
 
-/** Around the whole app: see the note at the top of this file. */
+/** A broken screen draws itself again by itself this long after, at most once a minute (and each time the window is shown). */
+export const RETRY_MS = 5_000;
+const RETRY_GAP_MS = 60_000;
+
+/** The error into the Mac app's log (AppLog.swift's appLog): a screen caught here reaches no window error event. */
+function logToMac(error: unknown, where?: string | null) {
+  // WebKit's stack has no message line: both
+  const what = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+  const handler = (window as unknown as { webkit?: { messageHandlers?: { appLog?: { postMessage: (m: string) => void } } } }).webkit
+    ?.messageHandlers?.appLog;
+  try {
+    handler?.postMessage(`screen error at ${location.pathname}: ${what}${where ? `\n${where.trim().split("\n").slice(0, 6).join("\n")}` : ""}`);
+  } catch {
+    /* not in the Mac app */
+  }
+}
+
+/**
+ * Around the whole app: see the note at the top of this file. A window left open for hours must not stay broken: a
+ * render that broke on a moment's bad data (a reply cut off when the network dropped) draws again a few seconds later,
+ * and again whenever the window is shown or focused, so the Reload screen stays only while the screen keeps breaking.
+ */
 export class RootBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { broken: false };
+  private lastTry = 0;
+  private timer: ReturnType<typeof setTimeout> | undefined;
   static getDerivedStateFromError(error: unknown): State {
     return { broken: isMissingCode(error) ? "checking" : true };
   }
-  componentDidCatch(error: unknown) {
-    if (!isMissingCode(error)) return console.error(error);
-    void reloadIfNewBuild().then((reloading) => !reloading && this.setState({ broken: true }));
+  componentDidCatch(error: unknown, info: { componentStack?: string | null }) {
+    if (!isMissingCode(error)) {
+      console.error(error);
+      logToMac(error, info.componentStack);
+      return this.retrySoon();
+    }
+    void reloadIfNewBuild().then((reloading) => {
+      if (reloading) return;
+      this.setState({ broken: true });
+      this.retrySoon();
+    });
   }
+  componentDidMount() {
+    document.addEventListener("visibilitychange", this.onShown);
+    window.addEventListener("focus", this.onShown);
+  }
+  componentWillUnmount() {
+    document.removeEventListener("visibilitychange", this.onShown);
+    window.removeEventListener("focus", this.onShown);
+    clearTimeout(this.timer);
+  }
+  private retrySoon() {
+    clearTimeout(this.timer);
+    if (Date.now() - this.lastTry > RETRY_GAP_MS) this.timer = setTimeout(this.retry, RETRY_MS);
+  }
+  private retry = () => {
+    this.lastTry = Date.now();
+    this.setState({ broken: false });
+  };
+  private onShown = () => {
+    if (!document.hidden && this.state.broken === true) this.retry();
+  };
   render() {
     if (!this.state.broken) return this.props.children;
     // while the build is being checked (a moment), nothing: either the reload follows or the screen below does

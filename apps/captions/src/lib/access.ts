@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { AccessSnapshot, ClientSession, CreatedPairingLink, PairingLink, Scope, ServerEndpoint } from "../../api/lib/clients";
+import { bodyOf } from "@/lib/body";
 
 // the server's own contract types (api/lib/clients.ts), under the names this page uses
 export type AccessScope = Scope;
@@ -24,7 +25,7 @@ async function send<T>(url: string, body?: unknown): Promise<T> {
     headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const out = (await r.json().catch(() => ({}))) as T & { error?: string };
+  const out = (await bodyOf(r)) as T & { error?: string };
   if (!r.ok) throw Object.assign(new Error(out.error ?? `Request failed (${r.status})`), { status: r.status });
   return out;
 }

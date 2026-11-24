@@ -1,10 +1,11 @@
 import type { ConnectedAccount, ConnectorsView, LoginKind, SocialPlatform } from "@contracts/connectors";
+import { bodyOf } from "@/lib/body";
 
 export * from "@contracts/connectors";
 
 /** Client for Settings → Social accounts (api/connectors.ts). */
 async function json<T>(r: Response): Promise<T> {
-  const body = (await r.json().catch(() => ({}))) as T & { error?: string };
+  const body = (await bodyOf(r)) as T & { error?: string };
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
   return body;
 }
