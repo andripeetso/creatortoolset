@@ -13,6 +13,7 @@ import { timeAgo } from "@/lib/exports";
 import { WORDS, diskAway, onComputer, uncheckedOn } from "@/lib/wording";
 import { Card, FormDialog, Section, ListRow, Row, RowMenu, SettingsDialog, SettingsDialogContent, SettingsSelect, Status, WorkspaceTag, WorkspacesDialog, inWorkspace, saveFailed, type SettingsWorkspace } from "./ui";
 import { msg } from "./helpers";
+import { WorkspaceBadge } from "@/components/assistant/Workspaces";
 import { cn } from "@/lib/utils";
 
 /** The computers an account owns (the list the Storage rows pick from). */
@@ -219,15 +220,28 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
     );
   }
   const groups = [
-    ...w.workspaces.map((p) => ({ id: p.id as string | null, name: p.name, folders: storage.folders.filter((f) => !everyWorkspace(f) && folderIn(f, (own) => own === p.id)) })),
-    { id: null, name: "Every workspace", folders: storage.folders.filter(everyWorkspace) },
+    ...w.workspaces.map((p) => ({ id: p.id as string | null, name: p.name, ws: p as { id: string; name: string; color?: string } | undefined, folders: storage.folders.filter((f) => !everyWorkspace(f) && folderIn(f, (own) => own === p.id)) })),
+    { id: null, name: "Every workspace", ws: undefined, folders: storage.folders.filter(everyWorkspace) },
     // a folder of a workspace not in the list (another person's, one removed): still listed, never hidden
-    { id: null, name: "Other workspaces", folders: storage.folders.filter((f) => !everyWorkspace(f) && !w.workspaces.some((p) => folderIn(f, (own) => own === p.id))) },
+    { id: null, name: "Other workspaces", ws: undefined, folders: storage.folders.filter((f) => !everyWorkspace(f) && !w.workspaces.some((p) => folderIn(f, (own) => own === p.id))) },
   ].filter((g) => g.id !== null || g.folders.length > 0);
   return (
     <div className="space-y-6">
       {groups.map((g, i) => (
-        <Section key={g.id ?? g.name} title={g.name}>
+        <Section
+          key={g.id ?? g.name}
+          title={
+            g.ws ? (
+              // the workspace's coloured letters, as in the chat list: each card tells itself apart at a glance
+              <span className="inline-flex items-center gap-2">
+                <WorkspaceBadge ws={g.ws} className="h-5 min-w-6 text-[10px]" />
+                {g.name}
+              </span>
+            ) : (
+              g.name
+            )
+          }
+        >
           <Card>
             {ORDER.filter((role) => g.id !== null || g.folders.some((f) => f.role === role)).map((role) => (
               <FolderList key={role} role={role} storage={{ ...storage, folders: g.folders }} forWorkspace={g.id} searchable={i === 0} {...shared} />
