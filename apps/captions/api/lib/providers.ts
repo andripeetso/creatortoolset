@@ -73,14 +73,14 @@ function savedFor(scope: Scope): ProviderSettings | null {
   if (!validScope(scope)) return null;
   if (!saved.has(scope)) saved.set(scope, readJson<ProviderSettings>(FILE(scope)));
   const s = saved.get(scope) ?? null;
-  return s && withPresetEndpoints(s);
+  return s && asRun(s);
 }
 
 /**
  * Each instance added from a plug-in preset gets that preset's endpoint now (a preset's endpoint is never saved), and
  * one saved before 2026-11-23 with the tool's default folder as its account folder runs with none (isDefaultHome).
  */
-export function withPresetEndpoints(s: ProviderSettings): ProviderSettings {
+function asRun(s: ProviderSettings): ProviderSettings {
   return {
     ...s,
     instances: s.instances.map(({ home, ...i }) => {
