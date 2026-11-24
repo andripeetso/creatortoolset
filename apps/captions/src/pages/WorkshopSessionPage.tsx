@@ -1535,6 +1535,7 @@ export default function WorkshopSessionPage() {
         <PersonaBuilder
           projectId={session.projectId}
           initial={personas ?? []}
+          intro={!personas?.length}
           onClose={() => setPersonasOpen(false)}
           onSaved={(saved) => {
             setPersonasOpen(false);

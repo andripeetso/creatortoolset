@@ -20,8 +20,22 @@ export function usedLine(u: PersonaDraftUsed): string {
  * The persona builder: "Read as a follower" opens it the first time, in a workspace with no personas. The person's AI
  * drafts them from the account (its audience numbers, comments and posts), the workspace's instructions and files, and
  * what they type or add here; they edit, then Save starts the read. Files added here are kept as context files.
+ * `intro` (the first press): it asks first, Set up personas or Skip, and Set up starts the draft at once.
  */
-export function PersonaBuilder({ projectId, initial, onClose, onSaved }: { projectId: string; initial: Persona[]; onClose: () => void; onSaved: (personas: Persona[]) => void }) {
+export function PersonaBuilder({
+  projectId,
+  initial,
+  intro = false,
+  onClose,
+  onSaved,
+}: {
+  projectId: string;
+  initial: Persona[];
+  intro?: boolean;
+  onClose: () => void;
+  onSaved: (personas: Persona[]) => void;
+}) {
+  const [asking, setAsking] = useState(intro);
   const [personas, setPersonas] = useState<Persona[]>(initial);
   const [said, setSaid] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -62,6 +76,26 @@ export function PersonaBuilder({ projectId, initial, onClose, onSaved }: { proje
   };
 
   const edit = (i: number, patch: Partial<Persona>) => setPersonas((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+
+  if (asking)
+    return (
+      <Dialog open onOpenChange={(o) => !o && onClose()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Set up personas</DialogTitle>
+            <DialogDescription>Read as a follower needs personas: the people who watch this workspace, drafted from its account's posts, comments and audience numbers.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Skip
+            </Button>
+            <Button type="button" onClick={() => (setAsking(false), void draft())}>
+              Set up personas
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
 
   return (
     <Dialog open onOpenChange={(o) => !o && busy !== "save" && onClose()}>
