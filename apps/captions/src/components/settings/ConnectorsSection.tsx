@@ -24,7 +24,8 @@ import {
   type OwnInstagram,
   type SocialPlatform,
 } from "@/lib/connectors";
-import { Card, ErrorRow, FormDialog, ListRow, LoadingRow, RowMenu, Section, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, InUse, type RowMenuItem } from "./ui";
+import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, ErrorRow, SettingsDialog, SettingsDialogContent, ListRow, LoadingRow, RowMenu, Section, Status, WorkspacePick, WorkspaceTag, moveItems, saveFailed, useSettingsWorkspace, InUse, type RowMenuItem } from "./ui";
 import { ApifyKeyRow } from "./ApiKeysSection";
 import { PlatformLogo } from "./PlatformLogos";
 import { inputCls, msg } from "./helpers";
@@ -469,37 +470,50 @@ function AddAccountDialog({ platform, signIn, apify, busy, onClose, onSignIn, on
     }
   };
   return (
-    <FormDialog
-      open={!!platform}
-      onOpenChange={(o) => !o && onClose()}
-      title={`Add ${label}`}
-      description={signIn ? "Sign-in is recommended: an account added by handle shows its public posts only." : "An account added by handle shows its public posts only."}
-      submitLabel="Add"
-      busy={saving}
-      error={error}
-      onSubmit={add}
-    >
-      {signIn && platform && (
-        <div className="space-y-1 rounded-lg border border-border/60 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium">Sign-in</span>
-            <Button type="button" size="sm" disabled={busy} onClick={() => onSignIn(platform)}>
-              Sign in
+    <SettingsDialog open={!!platform} onOpenChange={(o) => !o && onClose()}>
+      <SettingsDialogContent aria-describedby={undefined} className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{`Add ${label}`}</DialogTitle>
+        </DialogHeader>
+        {signIn && platform && (
+          <>
+            <div className="space-y-2">
+              <Button type="button" className="w-full" disabled={busy} onClick={() => onSignIn(platform)}>
+                Sign in
+              </Button>
+              {gives && <p className="text-center text-xs text-muted-foreground">{gives}.</p>}
+              {platform === "instagram" && <p className="text-center text-xs text-muted-foreground">{IG_NEEDS}.</p>}
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="h-px flex-1 bg-border" />
+              or
+              <span className="h-px flex-1 bg-border" />
+            </div>
+          </>
+        )}
+        {!apify && (
+          <Card>
+            <ApifyKeyRow onChanged={onKeyChanged} />
+          </Card>
+        )}
+        <form
+          className="space-y-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!saving) void add();
+          }}
+        >
+          <label htmlFor="add-account-handle" className="block text-xs font-medium">Handle</label>
+          <div className="flex gap-2">
+            <input id="add-account-handle" className={cn(inputCls, "min-w-0 flex-1 text-sm")} value={handle} onChange={(e) => setHandle(e.target.value)} required disabled={saving} />
+            <Button type="submit" variant={signIn ? "outline" : "default"} disabled={saving}>
+              {saving ? "Adding" : "Add"}
             </Button>
           </div>
-          {gives && <p className="text-xs text-muted-foreground">{gives}.</p>}
-          {platform === "instagram" && <p className="text-xs text-muted-foreground">{IG_NEEDS}.</p>}
-        </div>
-      )}
-      {!apify && (
-        <Card>
-          <ApifyKeyRow onChanged={onKeyChanged} />
-        </Card>
-      )}
-      <label className="block space-y-1.5">
-        <span className="block text-xs font-medium">Handle</span>
-        <input className={cn(inputCls, "w-full text-sm")} value={handle} onChange={(e) => setHandle(e.target.value)} required disabled={saving} />
-      </label>
-    </FormDialog>
+          <p className="text-xs text-muted-foreground">Public posts only.</p>
+          {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+        </form>
+      </SettingsDialogContent>
+    </SettingsDialog>
   );
 }
