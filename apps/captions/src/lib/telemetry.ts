@@ -3,7 +3,8 @@ import { useEffect } from "react";
 /**
  * The page's half of the anonymous usage and crash reports (api/lib/telemetry.ts): each page opened, by its first
  * path part only ("/workshop/abc" → "workshop"), and the page's uncaught errors, told to this app's own server, which
- * sends them on only in the downloaded app with the switch on (Settings → General). Asked once per load.
+ * sends them on only in the downloaded app with the switch on (Settings → General). Asked once per load. An error is
+ * told to the server even with the switch off: it keeps the last few for a report the person sends (api/bug-report.ts).
  */
 let on: Promise<boolean> | null = null;
 const isOn = () =>
@@ -26,7 +27,7 @@ function onError(e: unknown) {
   const err = e instanceof Error ? e : null;
   const message = err?.message ?? String(e);
   if (!message || NOISE.test(message)) return;
-  send("/api/telemetry/error", { name: err?.name ?? "Error", message, stack: err?.stack ?? "" });
+  void fetch("/api/telemetry/error", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: err?.name ?? "Error", message, stack: err?.stack ?? "" }), keepalive: true }).catch(() => {});
 }
 
 let listening = false;

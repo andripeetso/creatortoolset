@@ -30,11 +30,11 @@ export function ReportProblemDialog({ onClose }: { onClose: () => void }) {
     let live = true;
     fetch("/api/bug-report")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not load the details"))))
-      .then((d) => live && setDetails(JSON.stringify(d, null, 2)), (e) => live && setDetails(msg(e)));
+      .then((d) => live && setDetails(JSON.stringify({ page: pathname, ...d }, null, 2)), (e) => live && setDetails(msg(e)));
     return () => {
       live = false;
     };
-  }, []);
+  }, [pathname]);
 
   const send = async () => {
     setSending(true);

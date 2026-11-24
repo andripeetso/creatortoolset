@@ -98,7 +98,7 @@ export const scrub = (s: string) =>
     .replace(/(^|[\s(=:])(?:~|\/(?!\/))[^\s'"`(),]*/g, "$1<path>")
     .split(homedir()).join("~");
 const RECENT_ERRORS = 20;
-export const recentErrors: Array<{ at: number; where: "server" | "web"; message: string }> = [];
+export const recentErrors: Array<{ at: number; where: "server" | "web"; message: string; stack?: string }> = [];
 const lastSent = new Map<string, number>();
 const repeats = new Map<string, number>();
 let hourFrom = 0;
@@ -109,7 +109,8 @@ export function reportCrash(where: "server" | "web", error: unknown, now = Date.
   const e = error instanceof Error ? error : new Error(String(error));
   const message = scrub(`${e.name && e.name !== "Error" ? `${e.name}: ` : ""}${e.message}`).slice(0, 500);
   // kept even with reports off: a bug report the person sends themselves carries the last few (api/bug-report.ts)
-  recentErrors.push({ at: now, where, message });
+  const stack = scrub(e.stack ?? "").split("\n").slice(1, 7).map((l) => l.trim()).filter(Boolean).join("\n");
+  recentErrors.push({ at: now, where, message, ...(stack ? { stack } : {}) });
   if (recentErrors.length > RECENT_ERRORS) recentErrors.shift();
   if (!telemetryOn()) return;
   const key = `${where}|${message}`;

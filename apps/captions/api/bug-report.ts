@@ -1,13 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { homedir, release } from "node:os";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import type { ProvidersView } from "../contracts/providers";
 import type { AuthVars } from "./auth";
 import { viewFor } from "./providers";
 import { isCloud, serverKind } from "./lib/env";
 import { lastSignIns } from "./lib/local-ai";
-import { base, pingUrl, recentErrors } from "./lib/telemetry";
-import type { SessionUser } from "./users";
+import { base, pingUrl, recentErrors, scrub } from "./lib/telemetry";
+import { libraryDb } from "./library/db";
+import { VISITOR, type SessionUser } from "./users";
 
 /**
  * Report a problem (owner, 2026-11-23: "when somebody is stuck… submits a bug report and pulls in all the information
@@ -18,10 +19,12 @@ import type { SessionUser } from "./users";
  *
  * What it carries beyond their words: the app's version, the system, the server's kind, each AI provider this account
  * sees (kind, on or off, model, its last test with the error), each of its computers (Mac app version, online, the AI
- * programs found there, signed in or not, with plan), from the assistant the chat up to the report, and on a server
- * the person owns (This Mac, or an admin's own server) the last sign-ins started here and the server's last errors: those
- * are the whole server's, so a team member or a Cloud account never gets them. No key, no name of a computer or provider,
- * no file or folder name: a home folder is written ~.
+ * programs found there, signed in or not, with plan), the last requests of this account the server answered with an error,
+ * the failed library jobs and computer tasks it started, from the assistant the chat up to the report, and on a server
+ * the person owns (This Mac, or an admin's own server) the last sign-ins started here, the server's last errors with the
+ * top of their stack, and every account's failed jobs: those are the whole server's, so a team member or a Cloud account
+ * never gets them. No key, no name of a computer or provider, no file or folder name: a home folder is written ~, a path
+ * in an error <path>.
  */
 export const KINDS = ["bug", "feature", "other"] as const;
 const LIMITS = { title: 200, what: 8000, steps: 4000, expected: 2000, context: 12_000, page: 1000 } as const;
@@ -73,14 +76,74 @@ export function diagnosticsOf(view: ProvidersView, username: string, owner: bool
     ended: s.ended === undefined ? "still running" : s.code === 0 ? "exit 0" : `exit ${s.code ?? s.signal}`,
     output: unhome(s.out).trim(),
   }));
-  const errors = (owner ? recentErrors : []).map((e) => ({ minutesAgo: Math.round((now - e.at) / 60_000), where: e.where, message: e.message }));
-  return { providers, using: view.using, computers: devices, signIns, errors };
+  const errors = (owner ? recentErrors : []).map((e) => ({ minutesAgo: Math.round((now - e.at) / 60_000), where: e.where, message: e.message, ...(e.stack ? { stack: e.stack } : {}) }));
+  const failedRequests = (failures.get(username) ?? []).map(({ at, count, ...f }) => ({ minutesAgo: Math.round((now - at) / 60_000), ...f, ...(count > 1 ? { count } : {}) }));
+  return { providers, using: view.using, computers: devices, signIns, errors, failedRequests };
+}
+
+type Failure = { at: number; method: string; path: string; status: number; error?: string; count: number };
+const FAILURES = 20;
+const failures = new Map<string, Failure[]>();
+
+/** A request of this account the server answered with an error: the last 20 are kept for its next report, a repeat counted. */
+export function noteFailure(username: string, method: string, path: string, status: number, error?: string, now = Date.now()): void {
+  const list = failures.get(username) ?? [];
+  const f = { method, path: unhome(path).slice(0, 200), status, ...(error ? { error: scrub(error).slice(0, 300) } : {}) };
+  const last = list.at(-1);
+  if (last && last.method === f.method && last.path === f.path && last.status === f.status && last.error === f.error) return void Object.assign(last, { at: now, count: last.count + 1 });
+  list.push({ at: now, count: 1, ...f });
+  if (list.length > FAILURES) list.shift();
+  failures.set(username, list);
+}
+
+/** Mounted after the account gate (boot.ts): each signed-in request answered 400 or more, with its error line. */
+export const noteFailures: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
+  await next();
+  const u = c.get("user");
+  const { status } = c.res;
+  if (status < 400 || !u || u.role === VISITOR.role || /^\/api\/(bug-report|telemetry)/.test(c.req.path)) return;
+  const type = c.res.headers.get("content-type") ?? "";
+  const note = (error?: string) => noteFailure(u.username, c.req.method, c.req.path, status, error);
+  if (!/json|text\/plain/.test(type)) return note();
+  // read off a copy, so the answer is not held up
+  void c.res
+    .clone()
+    .text()
+    .then((t) => {
+      const e = type.includes("json") ? (JSON.parse(t) as { error?: unknown }).error : t;
+      note(typeof e === "string" ? e : e === undefined ? undefined : JSON.stringify(e));
+    })
+    .catch(() => note());
+};
+
+/** The failed library jobs and computer tasks, alike ones counted together: an owner's whole server's, else the person's own. */
+export function failedJobsOf(username: string, owner: boolean, now = Date.now()) {
+  const who = owner ? "" : " AND actor = ?";
+  type Row = { kind: string; error: string | null; n: number; at: number | null };
+  const read = (sql: string): Row[] => {
+    try {
+      return libraryDb().prepare(sql).all(...(owner ? [] : [username])) as Row[];
+    } catch {
+      return []; // computer_tasks is made on its first use
+    }
+  };
+  const group = `GROUP BY kind, error ORDER BY at DESC LIMIT 10`;
+  return [
+    ...read(`SELECT kind, error, COUNT(*) AS n, MAX(COALESCE(done_at, started_at)) AS at FROM jobs WHERE state = 'failed'${who} ${group}`).map((r) => ({ where: "library", ...r })),
+    ...read(`SELECT kind, error, COUNT(*) AS n, MAX(created_at) AS at FROM computer_tasks WHERE state = 'failed'${who} ${group}`).map((r) => ({ where: "computer", ...r })),
+  ].map((r) => ({ where: r.where, kind: r.kind, ...(r.error ? { error: scrub(r.error).slice(0, 300) } : {}), count: r.n, ...(r.at ? { minutesAgo: Math.round((now - r.at) / 60_000) } : {}) }));
+}
+
+/** Everything a report carries besides the person's words: the dialog shows all of it under "What is sent". */
+async function detailsFor(u: SessionUser) {
+  const owner = ownsServer(u);
+  return { ...base(), system: release(), server: serverKind(), role: u.role, ...diagnosticsOf(await viewFor(u), u.username, owner), failedJobs: failedJobsOf(u.username, owner) };
 }
 
 type Body = { kind?: unknown; title?: unknown; what?: unknown; steps?: unknown; expected?: unknown; context?: unknown; page?: unknown; chat?: unknown; send?: unknown };
 
 /** The report as it would be sent, or the sentence that says what is missing or too long. */
-export function reportOf(b: Body, user: SessionUser, diagnostics: ReturnType<typeof diagnosticsOf>, ref: string) {
+export function reportOf(b: Body, details: object, ref: string) {
   const kind = KINDS.includes(b.kind as (typeof KINDS)[number]) ? (b.kind as (typeof KINDS)[number]) : b.kind === undefined ? "bug" : null;
   if (!kind) return "kind is bug, feature or other";
   const text: Partial<Record<keyof typeof LIMITS, string>> = {};
@@ -104,20 +167,14 @@ export function reportOf(b: Body, user: SessionUser, diagnostics: ReturnType<typ
     title: text.title || text.what.split("\n")[0]!.slice(0, 120),
     ...text,
     ...(chat.length ? { chat } : {}),
-    ...base(),
-    system: release(),
-    server: serverKind(),
-    role: user.role,
-    ...diagnostics,
+    ...details,
   };
 }
 
 export const bugReportApp = new Hono<{ Variables: AuthVars }>();
 
-// what a report would carry besides the person's words: the dialog shows it under "What is sent"
 bugReportApp.get("/", async (c) => {
-  const u = c.get("user");
-  return c.json(diagnosticsOf(await viewFor(u), u.username, ownsServer(u)));
+  return c.json(await detailsFor(c.get("user")));
 });
 
 /** `send: true` sends it and answers its ref; without, answers the report as it would go, for the person to read first. */
@@ -125,8 +182,7 @@ bugReportApp.post("/", async (c) => {
   if (Number(c.req.header("content-length") ?? 0) > MAX_BYTES) return c.json({ error: "Too large" }, 413);
   const b = (await c.req.json().catch(() => null)) as Body | null;
   if (!b || typeof b !== "object") return c.json({ error: "Send the report as JSON" }, 400);
-  const user = c.get("user");
-  const report = reportOf(b, user, diagnosticsOf(await viewFor(user), user.username, ownsServer(user)), randomBytes(4).toString("hex"));
+  const report = reportOf(b, await detailsFor(c.get("user")), randomBytes(4).toString("hex"));
   if (typeof report === "string") return c.json({ error: report }, 400);
   const body = JSON.stringify(report);
   if (Buffer.byteLength(body) > MAX_BYTES) return c.json({ error: "The report is too long: shorten the text" }, 413);

@@ -351,7 +351,7 @@ const ASSISTANT_DEFS = [
   {
     name: "report_bug",
     description:
-      "Report a problem to the Creator Toolset team: something that doesn't work (kind bug), a feature the user wants (feature), or anything else (other). Call it when the user says something is broken, stuck or missing in the app, or asks for a feature. First look into it with the tools you have (setup_status, the page they are on) so the report says what you found. The app adds this chat and its own details (version, system, AI providers and their last test errors, computers and their AI programs, the last sign-ins and errors). It puts a Send report card under your reply and sends only when the user presses it: say in two lines what the report says and end your reply. what = the user's own words; steps = what they did, in order; expected = what they expected instead; context = everything else you know that helps fix it (what you checked and found, error text, what they already tried); page = the page they were on.",
+      "Report a problem to the Creator Toolset team: something that doesn't work (kind bug), a feature the user wants (feature), or anything else (other). Call it when the user says something is broken, stuck or missing in the app, or asks for a feature. First look into it with the tools you have (setup_status, the page they are on) so the report says what you found. The app adds this chat and its own details (version, system, AI providers and their last test errors, computers and their AI programs, the user's last failed requests with their error, failed jobs, the last sign-ins and errors with their stack). It puts a Send report card under your reply and sends only when the user presses it: say in two lines what the report says and end your reply. what = the user's own words; steps = what they did, in order; expected = what they expected instead; context = everything else you know that helps fix it (what you checked and found, error text, what they already tried); page = the page they were on.",
     inputSchema: {
       type: "object",
       properties: { kind: { type: "string", enum: ["bug", "feature", "other"] }, title: str, what: str, steps: str, expected: str, context: str, page: str },
@@ -1262,7 +1262,7 @@ function tools(call: Call, auth: Headers, origin: string, user: SessionUser, sur
       const body = pick(a, ["kind", "title", "what", "steps", "expected", "context", "page", "chat"]);
       await json("/api/bug-report", "POST", body); // a report that can't go fails here, before the card
       const what = a.kind === "feature" ? "feature request" : a.kind === "other" ? "report" : "bug report";
-      await sure(`Send this ${what} to the Creator Toolset team? It includes your session details from the app (version, AI providers and their tests, computers, recent errors and this chat) so the team can look into it and fix it.`, { yes: "Send report", no: "Not now" });
+      await sure(`Send this ${what} to the Creator Toolset team? It includes your session details from the app (version, AI providers and their tests, computers, recent errors and failed jobs, and this chat) so the team can look into it and fix it.`, { yes: "Send report", no: "Not now" });
       return json("/api/bug-report", "POST", { ...body, send: true });
     },
     ask_folder: async (a) => {

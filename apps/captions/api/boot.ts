@@ -52,7 +52,7 @@ import { designsApp } from "./designs";
 import { storiesApp } from "./stories";
 import { accountProfileApp } from "./account-profile";
 import { reportCrash, startTelemetry, telemetryApp } from "./lib/telemetry";
-import { bugReportApp } from "./bug-report";
+import { bugReportApp, noteFailures } from "./bug-report";
 import { transcribeApp } from "./transcribe";
 import { authApp, getApiKeyUser, innerCall, inviteApp, jobTokenUser, ruleFor, sessionOf, viaTunnel, type AuthVars } from "./auth";
 import { adminApp } from "./admin";
@@ -446,6 +446,8 @@ app.use("/api/*", async (c, next) => {
   if (!viewed) touchActive(user.username);
   return next();
 });
+// each failed request, for the account's next Report a problem (bug-report.ts)
+app.use("/api/*", noteFailures);
 // the workspace the window is in (X-CT-Workspace): every tool keeps its things to it (lib/workspace-scope.ts)
 app.use("/api/*", inRequestWorkspace);
 // live change notices (api/lib/sync.ts): every write below announces its topic to the writer's open tabs
