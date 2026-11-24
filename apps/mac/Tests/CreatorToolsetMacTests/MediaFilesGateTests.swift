@@ -98,9 +98,9 @@ final class MediaFilesGateTests: XCTestCase {
         let card = root.appendingPathComponent("Card").path, loose = root.appendingPathComponent("Downloads/b.mov").path
         MediaFiles.grantDropped([["path": card, "folder": true]])
         MediaFiles.grantPicked([URL(fileURLWithPath: loose)])
-        // a dropped folder's file: that folder; a picked file alone: its own folder; anything else: nothing
-        XCTAssertEqual(MediaFiles.allowReadGiven([card + "/sub/a.mov", loose, file, "/etc/x.mov"], server: "s", signedIn: none), [card, root.appendingPathComponent("Downloads").path])
-        XCTAssertEqual(MediaFiles.reads.sorted(), [card, root.appendingPathComponent("Downloads").path])
+        // a dropped folder's file: that folder; a picked file alone never widens to its folder; anything else: nothing
+        XCTAssertEqual(MediaFiles.allowReadGiven([card + "/sub/a.mov", loose, file, "/etc/x.mov"], server: "s", signedIn: none), [card])
+        XCTAssertEqual(MediaFiles.reads, [card])
         XCTAssertNil(MediaFiles.readFolder(for: card + "/../x.mov"))
         // a whole home folder is never read from one file picked in it
         MediaFiles.grantPicked([URL(fileURLWithPath: NSHomeDirectory() + "/c.mov")])

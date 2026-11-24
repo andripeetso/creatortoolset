@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, exportsOf, folderIn, underFolder, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
+import { EVERY_WORKSPACE, LEAVE_OUT_MAX, THIS_COMPUTER, connectFor, exportsOf, folderIn, type AddFolderBody, type Disk, type MoveFolderBody, type StorageFolder, type StorageState, type StorageView } from "@contracts/storage";
 import type { ProvidersView } from "@contracts/providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -264,12 +264,13 @@ export function Storage({ devices, storage, onChanged, w }: { devices: Computer[
 type ReadList = { folders: string[]; reads: string[] };
 
 /**
- * In the Mac app: the folders this Mac reads media from besides `rows` (this Mac's own rows above), from its open panel
- * (Allow folder), a drop or a pick (apps/mac MediaFiles.readList). Files in an allowed one are added where they are; a
+ * Settings → You → Computers, Folder access (Mac app): the folders this Mac reads media from, the same in every workspace
+ * and tool, from its open panel (Allow folder), a drop or a pick (apps/mac MediaFiles.readList). Files in an allowed one are added where they are; a
  * drop's or a pick's are copied on import (Import.tsx readFoldersHere), and Allow makes one allowed. Remove takes the
- * folder off this Mac's list. The page never grants a folder itself: Add folder and Allow open the Mac's own panel.
+ * folder off this Mac's list. The page never grants a folder itself: Add folder and Allow open the Mac's own panel. No
+ * section until the Mac app sends its list (an older app sends none).
  */
-export function AllowedFolders({ rows }: { rows: string[] }) {
+export function AllowedFolders() {
   const [list, setList] = useState<ReadList | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -288,14 +289,19 @@ export function AllowedFolders({ rows }: { rows: string[] }) {
       setBusy(false);
     }
   };
-  return <AllowedRows list={list} rows={rows} busy={busy} onAsk={ask} onRemove={async (f) => setList((await macReadFolders(f)) ?? list)} />;
+  return (
+    <Section title="Folder access">
+      <Card>
+        <AllowedRows list={list} busy={busy} onAsk={ask} onRemove={async (f) => setList((await macReadFolders(f)) ?? list)} />
+      </Card>
+    </Section>
+  );
 }
 
 /** The rows of AllowedFolders, drawn from its list (the tests draw them alone). */
-export function AllowedRows({ list, rows, busy, onAsk, onRemove }: {
-  list: ReadList; rows: string[]; busy: boolean; onAsk: (start: string) => () => Promise<void>; onRemove: (folder: string) => Promise<void>;
+export function AllowedRows({ list, busy, onAsk, onRemove }: {
+  list: ReadList; busy: boolean; onAsk: (start: string) => () => Promise<void>; onRemove: (folder: string) => Promise<void>;
 }) {
-  const shown = list.folders.filter((f) => !rows.some((r) => underFolder(f, r)));
   return (
     <>
       <Row
@@ -308,7 +314,7 @@ export function AllowedRows({ list, rows, busy, onAsk, onRemove }: {
           </Button>
         }
       />
-      {shown.map((f) => {
+      {list.folders.map((f) => {
         const name = f.split("/").filter(Boolean).pop() ?? f;
         const allowed = list.reads.includes(f);
         return (

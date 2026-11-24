@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibrarySummary } from "@contracts/library";
 import type { PlacesReport } from "@contracts/places";
 import { EmptyDrop } from "./EmptyDrop";
-import { CantRead, chatAddInPlace, chatWhereTheyAre, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
+import { askWhereTheyAre, CantRead, chatAddInPlace, chatWhereTheyAre, copyAvailable, copyInto, importPlace, lookedLine, lookForNew, sourceRowsHere, useImportQuestion, useWaitingFolders, waitingFolders } from "./Import";
 
 const m = vi.hoisted(() => ({ importScan: vi.fn(), importPrint: vi.fn(), importCopy: vi.fn(), pathOnMac: vi.fn(), checkUpload: vi.fn(), versionPlaces: vi.fn(), reportPlaces: vi.fn(), indexOnMac: vi.fn(), listMediaFolders: vi.fn(), folderGrant: vi.fn(), macReadFolders: vi.fn(async () => null as { folders: string[]; reads: string[]; readGiven?: boolean } | null), readWhereTheyAre: vi.fn(), chooseDialog: vi.fn(), listLibraries: vi.fn(), getWatch: vi.fn(), devices: [{ id: "mac_1", name: "Studio Mac" }] }));
 vi.mock("@/lib/thisMac", async (orig) => ({ ...(await orig<typeof import("@/lib/thisMac")>()), importScan: m.importScan, importPrint: m.importPrint, importCopy: m.importCopy, pathOnMac: m.pathOnMac }));
@@ -227,6 +227,15 @@ describe("Folders this Mac may not read yet", () => {
     await act(async () => root!.render(<Bar />));
     expect(host.textContent).toBe("Creator Toolset can't read Media yet; open the Mac app on Studio Mac and press Allow on this Mac to add its files to the Media Library.");
     expect(host.querySelector("button")).toBeNull();
+  });
+});
+
+describe("Use where they are", () => {
+  it("copies each file whose folder the Mac app did not add (a file picked alone never adds its folder)", async () => {
+    m.chooseDialog.mockResolvedValueOnce("ok");
+    m.readWhereTheyAre.mockResolvedValueOnce(["/Volumes/Card"]);
+    expect(await askWhereTheyAre(["/Volumes/Card/a.mov", "/Users/tiny/Downloads/b.mov"], true)).toEqual(["/Users/tiny/Downloads/b.mov"]);
+    vi.clearAllMocks();
   });
 });
 

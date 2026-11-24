@@ -274,14 +274,13 @@ enum MediaFiles {
     }
 
     /// The folder "Use where they are" (an import's question, the page's {read: paths}) puts on the reading list for one
-    /// path the page names: the deepest granted folder holding it (a dropped or picked folder, a loose file's folder), or
-    /// for a file granted alone (picked) its own folder. Nil for a path this Mac was never given, a whole disk or the home
-    /// folder: the page never reads a folder it wasn't given.
+    /// path the page names: the deepest granted folder (a dropped or picked folder, never a media file) holding it. A file
+    /// granted alone gives nothing: it never widens to the folder it is in (grantPicked). Nil for a path this Mac was never
+    /// given, a whole disk or the home folder: the page never reads a folder it wasn't given.
     static func readFolder(for path: String) -> String? {
         guard isPlain(path) else { return nil }
         let p = path.precomposedStringWithCanonicalMapping
         let folder = granted.filter { !isMedia($0) && underByName(p, [$0]) }.max { $0.count < $1.count }
-            ?? (granted.contains { $0.precomposedStringWithCanonicalMapping == p } ? (path as NSString).deletingLastPathComponent : nil)
         guard let folder, !["/", "/Users", "/Volumes", NSHomeDirectory()].contains(folder) else { return nil }
         return folder
     }

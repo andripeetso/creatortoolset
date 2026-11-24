@@ -20,7 +20,7 @@ import { groupComputers, kindOf, type ComputerGroup, type Listed, type ThisMacNa
 import { hasThisMac, SharedDrivesRow, tell, useThisMac, type ThisMacState } from "./ThisMacSection";
 import { HelperSetup, readyLine } from "@/components/setup/HelperStep";
 import { useCachedLoad } from "@/lib/local-cache";
-import { call } from "./StorageRows";
+import { AllowedFolders, call } from "./StorageRows";
 import { unreachedShares, type StorageView } from "@contracts/storage";
 import type { Balance, Device, DeviceWaits } from "@contracts/providers";
 import { listLibraries } from "@/lib/library";
@@ -29,7 +29,6 @@ import type { LibrarySummary } from "@contracts/library";
 const STORAGE_ALL = "/api/devices/storage?all=1";
 const DEVICES = "/api/devices";
 import { LoadBalancing } from "./ServerWorkSection";
-import { FolderAccessSection } from "./FolderAccessSection";
 
 /** The Mac's hardware, as the subtitle's tail for an admin: "Apple M2 Max · 12 cores · 32 GB". */
 const hardware = (d: Listed): string | null => {
@@ -142,7 +141,7 @@ export function ComputersSection() {
       </Section>
 
       {/* what this Mac may read: one computer's own list, so it sits with the computers, not in the sidebar */}
-      {inMac && <FolderAccessSection />}
+      {inMac && <AllowedFolders />}
 
       {phones}
 
