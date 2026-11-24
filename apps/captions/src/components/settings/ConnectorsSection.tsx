@@ -182,6 +182,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
     const fresh = signedInSince(view.accounts, waiting.current);
     if (!fresh.length) return;
     waiting.current = null;
+    setAdding(null);
     toast(`${fresh.map((a) => at(a.handle)).join(", ")} connected`);
   }, [view]);
   // a sign-in from the Mac app finishes in the computer's browser: coming back to the window shows the new account
