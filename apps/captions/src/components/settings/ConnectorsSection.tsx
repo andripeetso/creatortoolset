@@ -177,15 +177,17 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
   // A sign-in started with Add finishes somewhere else: the Mac app sends it to the computer's browser. The server tells
   // this window when the account is saved (it announces "connectors") and the list reads itself again. `waiting`: the
-  // newest sign-in there was when Add was pressed.
-  const waiting = useRef<number | null>(null);
+  // newest sign-in there was when Add was pressed, and the platform it was for.
+  const waiting = useRef<{ since: number; platform: SocialPlatform } | null>(null);
   useEffect(() => {
     if (!view || waiting.current === null) return;
-    const fresh = signedInSince(view.accounts, waiting.current);
+    const fresh = signedInSince(view.accounts, waiting.current.since);
     if (!fresh.length) return;
+    // accounts added before also get the new sign-in: only the platform asked for is named
+    const named = fresh.filter((a) => a.platform === waiting.current!.platform);
     waiting.current = null;
     setAdding(null);
-    toast(`${fresh.map((a) => at(a.handle)).join(", ")} connected`);
+    if (named.length) toast(`${named.map((a) => at(a.handle)).join(", ")} connected`);
   }, [view]);
   // a sign-in that returned several accounts asks which one: the Add dialog gives way to that choice
   useEffect(() => {
@@ -267,7 +269,7 @@ export function ConnectorsSection({ back = "/settings/connectors", compact, proj
   const choose = async (platform: SocialPlatform) => {
     const login = loginOf(platform);
     if (!login || !(await offered(login, view))) return;
-    waiting.current = newestSignIn(view.accounts);
+    waiting.current = { since: newestSignIn(view.accounts), platform };
     window.location.assign(loginHref(login, { back, projectId: projectId(), platform }));
   };
 

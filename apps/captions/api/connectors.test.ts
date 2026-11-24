@@ -82,6 +82,28 @@ describe("connectors", () => {
     expect(((await (await app.request("/api/connectors")).json()) as { choose?: unknown }).choose).toBeUndefined();
   });
 
+  it("Add Facebook with one new Page adds it straight away, without its Instagram; Add Instagram with none says so", async () => {
+    const start = async (platform: string) => new URL((await app.request(`/api/connectors/login/meta?platform=${platform}`)).headers.get("location")!).searchParams.get("state");
+    const pages = (data: unknown[]) =>
+      vi.stubGlobal("fetch", async (url: string | URL) => {
+        const u = String(url);
+        if (u.includes("/oauth/access_token")) return Response.json({ access_token: "long" });
+        if (u.includes("/me/accounts")) return Response.json({ data });
+        return Response.json({ data: [] });
+      });
+    pages([{ id: "p1", name: "Tiny Acrobatics", access_token: "t1", instagram_business_account: { id: "ig1", username: "tinyacrobatics" } }, { id: "p5", name: "New page", access_token: "t5", instagram_business_account: { id: "ig5", username: "newpage" } }]);
+    const done = await app.request(`/api/connectors/callback/meta?state=${await start("facebook")}&code=abc`);
+    expect(done.headers.get("location")).toBe("/settings/connectors?connected=1");
+    const keys = readConnectors("ana").accounts.map((a) => a.key);
+    expect(keys).toContain("facebook:p5");
+    expect(keys).not.toContain("instagram:ig5");
+
+    pages([{ id: "p6", name: "No Instagram", access_token: "t6" }]);
+    const none = await app.request(`/api/connectors/callback/meta?state=${await start("instagram")}&code=abc`);
+    expect(decodeURIComponent(none.headers.get("location")!)).toContain("Instagram account not found");
+    expect(readConnectors("ana").accounts.map((a) => a.key)).not.toContain("facebook:p6");
+  });
+
   it("a handle is read on the user's own Apify and its posts reach its project's Workshop folder", async () => {
     expect(apifyPost("tiktok", { id: "7", webVideoUrl: "https://t/7", createTimeISO: "2026-11-01T00:00:00Z", text: "crawl", playCount: 1200, diggCount: 80 })).toMatchObject({ views: 1200, likes: 80 });
     const r = await app.request("/api/connectors/handles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: "tiktok", handle: "https://www.tiktok.com/@TinyAcrobatics", projectId: "proj-1" }) });

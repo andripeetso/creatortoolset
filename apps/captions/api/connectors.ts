@@ -49,6 +49,7 @@ function redirectFor(c: Context, kind: LoginKind): string {
 async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView> {
   const user = c.get("user");
   const apify = publicApifyStatus(await readApify(user.username));
+  const pick = pickOf(user.username);
   return {
     // known without asking the sign-in service: it is asked when the person presses Add (/apps/:kind), never for a list
     logins: loginsHere(),
@@ -57,7 +58,7 @@ async function view(c: Context<{ Variables: AuthVars }>): Promise<ConnectorsView
     apify: { configured: apify.configured, valid: apify.valid },
     youtubeKey: !!keyFor(user, "YOUTUBE_API_KEY").key,
     accounts: readConnectors(user.username).accounts.map(publicAccount),
-    ...(pickOf(user.username) ? { choose: { platform: pickOf(user.username)!.platform, options: pickOf(user.username)!.options.map(({ platform, platformId, handle, name, avatar, stats }) => ({ platform, platformId, handle, name, avatar, followers: stats?.followers })) } } : {}),
+    ...(pick ? { choose: { platform: pick.platform, options: pick.options.map(({ platform, platformId, handle, name, avatar, stats }) => ({ platform, platformId, handle, name, avatar, followers: stats?.followers })) } } : {}),
     extras: { sessions: sessionSources() },
   };
 }
@@ -157,7 +158,8 @@ connectorsCallbackApp.get("/callback/:kind", async (c) => {
     // told to the person's open windows now, since this way back is no write of theirs (no session, a GET)
     announce(user, "connectors");
     for (const a of saved) void pullOne(user, a.key);
-    return back(ask ? "pick=1" : `connected=${saved.length}`);
+    // the new accounts, else the ones signed in again; of the platform asked for (Add Facebook never counts an Instagram added before)
+    return back(ask ? "pick=1" : `connected=${offered.length || saved.filter((a) => !st.want || a.platform === st.want).length}`);
   } catch (e) {
     return back(`error=${encodeURIComponent(e instanceof Error ? e.message : String(e))}`);
   }

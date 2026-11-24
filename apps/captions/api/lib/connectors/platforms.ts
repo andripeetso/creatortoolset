@@ -143,7 +143,7 @@ export async function accountsFromGrant(kind: LoginKind, t: Grant): Promise<NewA
     const fields = "id,name,username,access_token,followers_count,picture{url},instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}";
     const pages = await getJson(`${META}/me/accounts?${new URLSearchParams({ fields, limit: "100", access_token: str(long.access_token) })}`);
     // a Page a person reaches through a business portfolio (not a role on the Page itself) is missing from /me/accounts
-    const biz = await getJson(`${META}/me/businesses?${new URLSearchParams({ fields: `owned_pages.limit(100){${fields}},client_pages.limit(100){${fields}}`, limit: "50", access_token: str(long.access_token) })}`).catch(() => ({}));
+    const biz = await getJson(`${META}/me/businesses?${new URLSearchParams({ fields: `owned_pages.limit(100){${fields}},client_pages.limit(100){${fields}}`, limit: "50", access_token: str(long.access_token) })}`).catch((e) => (console.warn("meta businesses:", e instanceof Error ? e.message : e), {}));
     const listed = (x: unknown) => (isRec(x) && Array.isArray(x.data) ? x.data.filter(isRec) : []);
     const all = [...listed(pages), ...listed(biz).flatMap((b) => [...listed(b.owned_pages), ...listed(b.client_pages)])];
     const out: NewAccount[] = [];
