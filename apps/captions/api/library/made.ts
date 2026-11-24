@@ -43,6 +43,8 @@ function open(job?: string): string {
 }
 /** SQL: the version's `job` failed (Retry queues it again, routes.ts). */
 const failedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = '${job}' AND j.state = 'failed')` : "0");
+/** SQL: the version's `job` was stopped (Retry queues it again): neither failed nor missing. */
+const stoppedJob = (job?: string) => (job ? `EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = '${job}' AND j.state = 'stopped')` : "0");
 /** A file in the library when Make for the missing was pressed for `kind` (search by picture, timelines: their catch-ups make them). */
 const pressed = (kind: "pictures" | "timeline") => `v.created_at <= IFNULL(json_extract(l.settings, '$.${kind}Asked'), -1)`;
 
@@ -99,7 +101,8 @@ function specOf(kind: MadeKind, username: string) {
   const model = kind === "embed" ? modelFor(username) : null;
   // a timeline's job is its look's: a failed look is that kind's to retry, not this one's
   const failed = kind === "timeline" ? "0" : failedJob(s.job);
-  return { ...s, have: model ? has("embeddings", ` AND x.model = '${model.replace(/'/g, "''")}'`) : s.have, open: s.open ?? open(s.job), failed };
+  const stopped = kind === "timeline" ? "0" : stoppedJob(s.job);
+  return { ...s, have: model ? has("embeddings", ` AND x.model = '${model.replace(/'/g, "''")}'`) : s.have, open: s.open ?? open(s.job), failed, stopped };
 }
 
 interface Missing {
@@ -112,7 +115,7 @@ function missingOf(libraryId: string, kind: MadeKind, username: string): Missing
   const s = specOf(kind, username);
   const rows = libraryDb()
     .prepare(
-      `SELECT v.id, v.probe, v.source_key, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of} AND NOT ${s.have} AND NOT ${s.open} AND NOT ${s.failed}${s.can ? ` AND ${s.can}` : ""}`,
+      `SELECT v.id, v.probe, v.source_key, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of} AND NOT ${s.have} AND NOT ${s.open} AND NOT ${s.failed} AND NOT ${s.stopped}${s.can ? ` AND ${s.can}` : ""}`,
     )
     .all(libraryId) as { id: string; probe: string; source_key: string; seconds: number }[];
   if (kind !== "proxy") return rows;
@@ -129,11 +132,12 @@ export async function libraryMade(libraryId: string, username: string): Promise<
     const r = db
       .prepare(
         `SELECT IFNULL(SUM(have), 0) AS have, IFNULL(SUM(NOT have AND open), 0) AS queued, IFNULL(SUM(NOT have AND NOT open AND failed), 0) AS failed,
-           IFNULL(SUM(NOT have AND NOT open AND NOT failed AND can), 0) AS missing,
-           IFNULL(AVG(CASE WHEN NOT have AND NOT open AND NOT failed AND can THEN seconds END), 0) AS seconds
-         FROM (SELECT ${s.have} AS have, ${s.open} AS open, ${s.failed} AS failed, ${s.can ?? "1"} AS can, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of})`,
+           IFNULL(SUM(NOT have AND NOT open AND NOT failed AND stopped), 0) AS stopped,
+           IFNULL(SUM(NOT have AND NOT open AND NOT failed AND NOT stopped AND can), 0) AS missing,
+           IFNULL(AVG(CASE WHEN NOT have AND NOT open AND NOT failed AND NOT stopped AND can THEN seconds END), 0) AS seconds
+         FROM (SELECT ${s.have} AS have, ${s.open} AS open, ${s.failed} AS failed, ${s.stopped} AS stopped, ${s.can ?? "1"} AS can, IFNULL(json_extract(v.probe, '$.duration'), 0) AS seconds ${LIVE} AND ${s.of})`,
       )
-      .get(libraryId) as { have: number; queued: number; failed: number; missing: number; seconds: number };
+      .get(libraryId) as { have: number; queued: number; failed: number; stopped: number; missing: number; seconds: number };
     const skip = SKIP[kind];
     const skipped = skip ? (db.prepare(`SELECT COUNT(*) AS n ${LIVE} AND ${skip.of} AND NOT (${s.of})`).get(libraryId) as { n: number }).n : 0;
     // a proxy is missing only where one is wanted: the rows read once more, filtered as the worker would
@@ -146,6 +150,7 @@ export async function libraryMade(libraryId: string, username: string): Promise<
       missing: n,
       queued: r.queued,
       ...(r.failed ? { failed: r.failed } : {}),
+      ...(r.stopped ? { stopped: r.stopped } : {}),
       ...(r.queued && s.job ? waitOf(libraryId, kind, username) : {}),
       ...(await makeCost(libraryId, username, kind, n, seconds)),
       ...engineOf(libraryId, kind, username),
@@ -230,7 +235,7 @@ export function engineOf(libraryId: string, kind: MadeKind, username: string): P
 }
 
 /**
- * Cancel: `kind`'s jobs still queued in the library end as failed "Stopped" (one running finishes; Retry queues them); a press of Make for
+ * Cancel: `kind`'s jobs still queued in the library end as stopped (one running finishes; Retry queues them); a press of Make for
  * the missing timelines or pictures is taken back. Never a kind a file needs to be ready (it would stay processing).
  * Returns how many files.
  */
@@ -245,8 +250,8 @@ export function stopQueued(libraryId: string, kind: MadeKind, username: string):
   }
   const job = SPEC[kind].job;
   if (!job) return 0;
-  // failed, not deleted: a file with no job row is new to the sweeps (shots.ts sweepLook) and queued again; Retry starts it
-  return Number(db.prepare(`UPDATE jobs SET state = 'failed', error = 'Stopped' WHERE library_id = ? AND kind = ? AND state = 'queued'`).run(libraryId, job).changes);
+  // kept as stopped, not deleted: a file with no job row is new to the sweeps (shots.ts sweepLook) and queued again
+  return Number(db.prepare(`UPDATE jobs SET state = 'stopped', error = NULL WHERE library_id = ? AND kind = ? AND state = 'queued'`).run(libraryId, job).changes);
 }
 
 /**
@@ -305,7 +310,7 @@ export function makeMissing(libraryId: string, kind: MadeKind, username: string,
   return files.length;
 }
 
-/** Retry: the failed jobs of `kind` in the library queued again as whoever queued them (a file that has it is marked done, jobs.ts). */
+/** Retry: the failed and stopped jobs of `kind` in the library queued again as whoever queued them (a failed file that has it is marked done, jobs.ts). */
 export function retryFailed(libraryId: string, kind: string): number {
   const db = libraryDb();
   const rows = db
@@ -315,12 +320,20 @@ export function retryFailed(libraryId: string, kind: string): number {
     )
     .all(libraryId, kind) as { version_id: string; actor: string | null }[];
   for (const r of rows) enqueueJob(db, libraryId, r.version_id, kind, r.actor);
-  return rows.length;
+  // and the stopped ones (stopQueued): queued again as they were, its actor kept
+  const stopped = db
+    .prepare(
+      `UPDATE jobs SET state = 'queued', attempts = 0, run_after = 0, lease_until = NULL, error = NULL
+       WHERE library_id = ? AND kind = ? AND state = 'stopped' AND version_id IN (SELECT current_version_id FROM assets WHERE trashed_at IS NULL AND left_hidden_at IS NULL)`,
+    )
+    .run(libraryId, kind).changes;
+  return rows.length + Number(stopped);
 }
 
 /**
- * At start: the jobs that failed only because a photo's card picture came out empty (media/thumb.ts seeked into a
+ * The jobs that failed only because a photo's card picture came out empty (media/thumb.ts seeked into a
  * one-frame file, so ffmpeg wrote nothing and the rename failed) are queued again; once they land the clip is ready.
+ * Asked by a computer that reads photos with no seek (work/routes.ts): an older one would fail them again.
  */
 export function retryEmptyPictures(): number {
   const db = libraryDb();

@@ -48,6 +48,7 @@ type Tone = "done" | "waiting" | "failed" | "off";
 export function stateOf(m: LibraryMade, on: boolean, auto = false): { tone: Tone; text: string } {
   if (!on) return { tone: "off", text: m.missing ? `Off for new files · ${n(m.missing)} missing` : "Off for new files" };
   if (m.failed) return { tone: "failed", text: `${files(m.failed)} failed` };
+  if (m.stopped) return { tone: "waiting", text: `${files(m.stopped)} stopped` };
   if (m.queued) return { tone: "waiting", text: m.by ? `${files(m.queued)} queued for ${m.by}` : m.why ? `${files(m.queued)} waiting: ${m.why}` : `${files(m.queued)} queued` };
   if (m.needs && m.missing) return { tone: "waiting", text: m.needs };
   if (m.missing) return { tone: "waiting", text: auto ? `${files(m.missing)} not sorted yet` : `Not made for ${files(m.missing)}` };
@@ -144,7 +145,7 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
           if (!k) return null;
           const on = onFor(k, library);
           const state = stateOf(m, on, k.auto);
-          const total = m.have + m.missing + m.queued + (m.failed ?? 0);
+          const total = m.have + m.missing + m.queued + (m.failed ?? 0) + (m.stopped ?? 0);
           const rest = [total ? `${n(m.have)} of ${n(total)}` : "", MADE_COST_LABEL[m.cost]].filter(Boolean).join(" · ");
           const runs = engineLine(m);
           const why = missingWhy(m);
@@ -162,7 +163,7 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
               }
               control={
                 <span className="flex flex-wrap items-center justify-end gap-2">
-                  {!!m.failed && (
+                  {!!(m.failed || m.stopped) && (
                     <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(`retry-${m.kind}`, "retry", () => retryFailed(library.id, m.kind))}>
                       {busy === `retry-${m.kind}` ? "Queueing" : "Retry"}
                     </Button>

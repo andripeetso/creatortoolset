@@ -140,7 +140,7 @@ export function unproxied(libraryId: string, versionId?: string, hosted = false)
       `SELECT v.id, v.created_by, v.probe, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        WHERE a.library_id = ? AND (? IS NULL OR v.id = ?) AND v.probe IS NOT NULL AND v.state != 'missing' AND a.kind != 'image'
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'proxy')
-         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed'))`,
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed', 'stopped'))`,
     )
     .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string; source_key: string }[];
   // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there
@@ -1252,7 +1252,7 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const proxy = hosted ? true : b?.settings?.proxy;
   if (typeof proxy === "boolean") put("proxy", proxy);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
-  if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
+  if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')").run(libraryId);
   // only Hosted proxies backfill (a proxy is all the server keeps then); the switch alone makes them for new files (made.ts)
   if (hosted) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);

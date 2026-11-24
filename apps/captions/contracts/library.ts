@@ -86,7 +86,7 @@ export interface AssetDetail extends AssetCard {
   /** the file on this computer (read in place, kept on the Mac app's own server on this Mac, or where it was sent from): the admin only (search.ts sourcePathFor) */
   sourcePath?: string;
   /** the current version's background jobs: a transcribe that `needs_key` says why in `error`; one running on this computer says what it is doing there */
-  jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key"; error?: string }[];
+  jobs: { kind: string; state: "queued" | "running" | "done" | "failed" | "needs_key" | "stopped"; error?: string }[];
   /** its shot descriptions, in order (a person's own line wins): a video's moments, each with its start and end second */
   /** flaws: what the shot is named for, measured ("blurry", "too dark", "shaky") */
   shots?: { seg: number; a: number; b: number; text: string; source: "ai" | "user"; flaws?: string[] }[];
@@ -480,6 +480,8 @@ export interface LibraryMade {
   needs?: string;
   /** files whose job for it failed (Retry); not counted in `missing` */
   failed?: number;
+  /** files whose job for it was stopped (Stop, Cancel; Retry queues them); not counted in `missing` */
+  stopped?: number;
   /** why the queued ones wait, when the person can change it or a computer is offline; `href`: where to change it */
   why?: string;
   href?: string;

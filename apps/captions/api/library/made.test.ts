@@ -205,7 +205,12 @@ describe("what's made", () => {
     expect(job(v, "sprite")?.state).toBe("queued");
     expect(stopQueued("lib_m", "sprite", "local")).toBeGreaterThanOrEqual(1);
     // ended, not deleted: a sweep queues a file with no job row again
-    expect(job(v, "sprite")).toMatchObject({ state: "failed", error: "Stopped" });
+    expect(job(v, "sprite")).toMatchObject({ state: "stopped", error: null });
+    // stopped is its own count: not failed, not missing (Make for the missing leaves it), and Retry takes it
+    const sprite = (await libraryMade("lib_m", "local")).find((m) => m.kind === "sprite")!;
+    expect(sprite.stopped).toBeGreaterThanOrEqual(1);
+    expect(makeMissing("lib_m", "sprite", "local")).toBe(sprite.missing);
+    expect(job(v, "sprite")?.state).toBe("stopped");
     expect(retryFailed("lib_m", "sprite")).toBeGreaterThanOrEqual(1);
     expect(job(v, "sprite")?.state).toBe("queued");
     // stopping pressed timelines leaves shot descriptions queued

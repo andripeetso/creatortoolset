@@ -50,6 +50,34 @@ describe("library schema", () => {
     db.close();
   });
 
+  it("the stopped step rebuilds jobs: every row and column kept, Stop's old failed rows stopped, the numbering carried on", () => {
+    const file = path.join(dir, "before-stopped.db");
+    const at = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE jobs_new"));
+    expect(at).toBeGreaterThan(0);
+    const old = new DatabaseSync(file);
+    old.exec("PRAGMA foreign_keys = OFF;");
+    for (let i = 0; i < at; i++) old.exec(MIGRATIONS[i]!);
+    old.exec(`PRAGMA user_version = ${at}`);
+    const add = old.prepare("INSERT INTO jobs (id, library_id, version_id, kind, state, error, held_by, done_at) VALUES (?, 'lib', ?, 'describe', ?, ?, ?, ?)");
+    add.run(1, "v1", "failed", "Stopped", null, null);
+    add.run(2, "v2", "failed", "Could not read the file", null, null);
+    add.run(3, "v3", "done", null, "mac-1", 9);
+    add.run(9, "v9", "queued", null, null, null);
+    old.exec("DELETE FROM jobs WHERE id = 9"); // the highest id gone: it is never given again
+    expect(() => add.run(4, "v4", "stopped", null, null, null)).toThrow();
+    old.close();
+
+    const db = openLibraryDb(file);
+    expect(db.prepare("SELECT id, state, error, held_by, done_at FROM jobs ORDER BY id").all()).toEqual([
+      { id: 1, state: "stopped", error: null, held_by: null, done_at: null },
+      { id: 2, state: "failed", error: "Could not read the file", held_by: null, done_at: null },
+      { id: 3, state: "done", error: null, held_by: "mac-1", done_at: 9 },
+    ]);
+    db.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib', 'v5', 'describe', 'stopped')").run();
+    expect(db.prepare("SELECT MAX(id) AS id FROM jobs").get()).toEqual({ id: 10 });
+    db.close();
+  });
+
   it("migration 5 allows bunny storage, and still refuses unknown kinds", () => {
     const db = openLibraryDb(path.join(dir, "bunny.db"));
     const insert = db.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, created_at) VALUES (?, ?, ?, ?, ?)");

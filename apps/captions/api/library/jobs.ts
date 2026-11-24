@@ -24,15 +24,16 @@ const BACKOFF_MS = 60_000;
 /** The tables these functions run on: interpolated into SQL, so never a free string. */
 export type JobTable = "jobs" | "edit_jobs";
 
-export type JobState = "queued" | "running" | "done" | "failed" | "needs_key";
+export type JobState = "queued" | "running" | "done" | "failed" | "needs_key" | "stopped";
 
 /** The moves between job states, for both tables. Each UPDATE names the state it expects in its WHERE, and a JS-chosen state is checked here. */
 export const JOB_MOVES: Moves<JobState> = {
-  queued: ["running", "failed"], // claimed; stopped (stopEdit, failUnseen)
+  queued: ["running", "failed", "stopped"], // claimed; failed (stopEdit, failUnseen); the library's Stop (made.ts stopQueued)
   running: ["done", "queued", "failed", "needs_key"], // finished, tried again, lease ran out, parked, failed for good
   done: ["queued"], // queued again (enqueueJob's `again`)
   failed: ["queued", "done"], // Retry; done when the output is there already (enqueueJob)
   needs_key: ["queued", "done", "failed", "running"], // queued again, taken by the Mac (mac-look), failed once unseen
+  stopped: ["queued", "done"], // Retry or asked by name (enqueueJob's `again`); done when the output is there already
 };
 
 export interface JobRow {
@@ -71,7 +72,7 @@ export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: strin
   if (have && db.prepare(have).get(versionId)) {
     db.prepare(
       `INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES (?, ?, ?, 'done', ?, ?)
-       ON CONFLICT (version_id, kind) DO UPDATE SET state = 'done', lease_until = NULL, error = NULL WHERE jobs.state IN ('failed', 'needs_key')`,
+       ON CONFLICT (version_id, kind) DO UPDATE SET state = 'done', lease_until = NULL, error = NULL WHERE jobs.state IN ('failed', 'needs_key', 'stopped')`,
     ).run(libraryId, versionId, kind, actor, Date.now());
     return;
   }
@@ -79,7 +80,7 @@ export function enqueueJob(db: DatabaseSync, libraryId: string, versionId: strin
     `INSERT INTO ${table} (library_id, version_id, kind, state, actor) VALUES (?, ?, ?, 'queued', ?)
      ON CONFLICT (version_id, kind) DO UPDATE SET state = 'queued', attempts = 0, run_after = 0,
        lease_until = NULL, error = NULL, actor = excluded.actor
-     WHERE ${table}.state IN ('failed', 'needs_key'${again ? ", 'done'" : ""})`,
+     WHERE ${table}.state IN ('failed', 'needs_key'${again ? ", 'done', 'stopped'" : ""})`,
   ).run(libraryId, versionId, kind, actor);
 }
 

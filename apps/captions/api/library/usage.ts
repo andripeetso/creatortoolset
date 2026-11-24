@@ -230,7 +230,7 @@ export async function moveProxies(libraryId: string, next: ProxyPlace | null): P
   if (where(proxyPlace(libraryId)) !== where(next)) {
     await clearProxies(libraryId, true);
     // the ones still to make were wanted by the old rule (every video, or only what the window can't play)
-    db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed')").run(libraryId);
+    db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')").run(libraryId);
   }
   db().prepare("UPDATE libraries SET storage_config = ? WHERE id = ?").run(next ? JSON.stringify({ proxies: next }) : null, libraryId);
   for (const v of unproxied(libraryId, undefined, hostsProxies(libraryUpload(libraryId)))) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by);

@@ -720,4 +720,31 @@ export const MIGRATIONS: string[] = [
   // a piece merged into another waits in the Finals trash with what Restore needs (collections.ts unmerge): { into,
   // items: [{ id, position, winner }] }. The trash purge removes it
   `ALTER TABLE pieces ADD COLUMN merged TEXT;`,
+  // a job the library's Stop took off the queue is 'stopped' (made.ts stopQueued): neither failed nor missing, so no sweep
+  // queues it again and Retry does. SQLite keeps a CHECK in the table, so jobs is rebuilt; Stop's old 'failed' rows move over
+  `CREATE TABLE jobs_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id TEXT NOT NULL,
+    version_id TEXT,
+    kind TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('queued','running','done','failed','needs_key','stopped')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    run_after INTEGER NOT NULL DEFAULT 0,
+    lease_until INTEGER,
+    actor TEXT,
+    error TEXT,
+    started_at INTEGER,
+    done_at INTEGER,
+    held_by TEXT,
+    claim_id TEXT,
+    UNIQUE (version_id, kind)
+  );
+  INSERT INTO jobs_new (id, library_id, version_id, kind, state, attempts, run_after, lease_until, actor, error, started_at, done_at, held_by, claim_id)
+    SELECT id, library_id, version_id, kind, CASE WHEN state = 'failed' AND error = 'Stopped' THEN 'stopped' ELSE state END, attempts, run_after, lease_until,
+      actor, CASE WHEN state = 'failed' AND error = 'Stopped' THEN NULL ELSE error END, started_at, done_at, held_by, claim_id FROM jobs;
+  -- the numbering carries on where it was, so a deleted job's id (one a computer may still report on) is never given again
+  DELETE FROM sqlite_sequence WHERE name = 'jobs_new';
+  INSERT INTO sqlite_sequence (name, seq) SELECT 'jobs_new', seq FROM sqlite_sequence WHERE name = 'jobs';
+  DROP TABLE jobs;
+  ALTER TABLE jobs_new RENAME TO jobs;`,
 ];
