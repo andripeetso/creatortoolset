@@ -117,8 +117,8 @@ export function InstagramAdd({ open, onOpenChange }: { open: boolean; onOpenChan
       )}
       {login?.signedIn && (
         <label className="block space-y-1 text-sm">
-          <span>Link</span>
-          <input className={inputCls} type="url" required value={link} onChange={(e) => setLink(e.target.value)} autoFocus />
+          <span className="block">Link</span>
+          <input className={`${inputCls} w-full`} type="url" required value={link} onChange={(e) => setLink(e.target.value)} autoFocus />
         </label>
       )}
     </FormDialog>
