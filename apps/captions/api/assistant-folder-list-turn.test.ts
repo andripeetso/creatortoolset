@@ -11,7 +11,7 @@ process.env.APP_SECRET = "folder-list-turn-secret";
 process.env.LIBRARY_WATCH_FOLDERS = "1";
 afterAll(() => {
   delete process.env.LIBRARY_WATCH_FOLDERS;
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); // background writes may still land in it
 });
 
 const { createUser } = await import("./users");
