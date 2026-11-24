@@ -81,3 +81,13 @@ export function mergeCatalog(prev: CatalogItem[], next: CatalogItem[]): CatalogI
   for (const row of next) map.set(row.shortcode, keepMarks(map.get(row.shortcode), row));
   return [...map.values()].sort((a, b) => b.takenAt - a.takenAt);
 }
+
+/**
+ * An Update's paid read (the newest N, N = rows listed) kept to the listed posts and the ones newer than all of them: the
+ * list also holds older saved posts and Instagram's pinned ones, so taking the whole read grew the list on every Update.
+ */
+export function updateRows(existing: CatalogItem[], items: CatalogItem[]): CatalogItem[] {
+  const known = new Set(existing.map((r) => r.shortcode));
+  const newest = catalogNewestAt(existing) ?? 0;
+  return items.filter((r) => known.has(r.shortcode) || r.takenAt > newest);
+}

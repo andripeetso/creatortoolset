@@ -100,7 +100,7 @@ import { accountOwnsPost, nextMineFlags, postInProject } from "./lib/instagram/m
 import { accountProjects, inProject, resolveProjectId, unlinkAccount } from "./lib/workshop/workspace";
 import { workspaceContext, workspaceOf } from "./lib/workshop/context";
 import { instagramLogin } from "./lib/connectors/store";
-import { catalogNewestAt, insightIdsToRead, mergeCatalog, parseCatalogCount } from "./lib/instagram/catalog";
+import { catalogNewestAt, insightIdsToRead, mergeCatalog, parseCatalogCount, updateRows } from "./lib/instagram/catalog";
 import { publicGridReader } from "./lib/connectors/provider";
 import { IG_ROOT, InstagramError, igCredsDir, igUserFile } from "./lib/instagram/base";
 import type {
@@ -2811,7 +2811,8 @@ async function processAccountWith(id: string, meta: NonNullable<ReturnType<typeo
             );
             const library = (await allMetas()).filter((m) => listedFor(m, user) && accountOwnsPost(meta, m));
             let merged = mergeLibraryIntoCatalog(
-              mergeCatalog(existing, page.items),
+              // the Meta sign-in lists every post; a paid read only refreshes the listed ones and adds newer ones
+              mergeCatalog(existing, mode === "graph" ? page.items : updateRows(existing, page.items)),
               library,
             );
             if (mode === "graph") {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeCatalog, parseCatalogCount, catalogNewestAt, catalogCrossedSince, insightIdsToRead, INSIGHT_REREAD_MS } from "./catalog";
+import { mergeCatalog, parseCatalogCount, updateRows, catalogNewestAt, catalogCrossedSince, insightIdsToRead, INSIGHT_REREAD_MS } from "./catalog";
 import type { CatalogItem } from "./types";
 
 const row = (shortcode: string, extra: Partial<CatalogItem> = {}): CatalogItem => ({
@@ -54,6 +54,14 @@ describe("mergeCatalog", () => {
       counts: { plays: 99, likes: 4 },
       prevCounts: { plays: 1 },
     });
+  });
+});
+
+describe("updateRows", () => {
+  it("an Update keeps the listed posts and the newer ones, never an older saved or pinned post", () => {
+    const existing = [row("listed", { takenAt: 100 }), row("saved", { takenAt: 10 })];
+    const read = [row("new", { takenAt: 200 }), row("pinned", { takenAt: 5 }), row("listed", { takenAt: 100 }), row("between", { takenAt: 50 })];
+    expect(updateRows(existing, read).map((r) => r.shortcode)).toEqual(["new", "listed"]);
   });
 });
 
