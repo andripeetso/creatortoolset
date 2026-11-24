@@ -59,6 +59,13 @@ export function shortcodeToMediaId(code: string): string {
   return n.toString();
 }
 
+const POST_URL_CODE = /\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]{5,})/;
+
+/** The post's code in a link to a post, reel or video, or null. */
+export function shortcodeFromUrl(url: string): string | null {
+  return POST_URL_CODE.exec(url)?.[1] ?? null;
+}
+
 export function canonicalPostUrl(shortcode: string, reel: boolean): string {
   return reel
     ? `https://www.instagram.com/reel/${shortcode}/`

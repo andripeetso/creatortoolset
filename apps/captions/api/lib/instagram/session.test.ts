@@ -5,25 +5,20 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "ig-session-"));
 process.env.DATA_DIR = dir;
-const { filesOf, loginState, mediaIdOf, PACE, readAccount, readComments, readPost, readPostInfo, saveCookies, shortcodeOf } = await import("./session");
+const { filesOf, loginState, PACE, postOf, readAccount, readComments, readPost, readPostInfo, saveCookies } = await import("./session");
 const { ingestGate } = await import("./apify");
 PACE.ms = 0;
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("a post by its link", () => {
-  it("takes the code from post, reel and tv links, with or without a handle", () => {
-    expect(shortcodeOf("https://www.instagram.com/reel/C0dE_x-1/?igsh=abc")).toBe("C0dE_x-1");
-    expect(shortcodeOf("instagram.com/tinyacrobatics/p/ABC123/")).toBe("ABC123");
-    expect(shortcodeOf("https://instagram.com/reels/XYZ")).toBe("XYZ");
-    expect(shortcodeOf("https://www.instagram.com/tinyacrobatics/")).toBeNull();
-  });
-
-  it("turns a code into the media id Instagram's API takes", () => {
-    expect(mediaIdOf("B")).toBe("1");
-    expect(mediaIdOf("BA")).toBe("64");
+  it("takes the code and media id from post, reel and tv links, with or without a handle", () => {
+    expect(postOf("https://www.instagram.com/reel/C0dE_x-1/?igsh=abc").code).toBe("C0dE_x-1");
+    expect(postOf("instagram.com/tinyacrobatics/p/BAAAA/")).toEqual({ code: "BAAAA", id: String(64 ** 4) });
+    expect(postOf("https://instagram.com/reels/XYZAB").code).toBe("XYZAB");
     // a private post's code carries 28 characters more: they are not part of the id
-    expect(mediaIdOf(`BA${"x".repeat(28)}`)).toBe("64");
+    expect(postOf(`https://www.instagram.com/p/BAAAA${"x".repeat(28)}/`).id).toBe(String(64 ** 4));
+    expect(() => postOf("https://www.instagram.com/tinyacrobatics/")).toThrow("Needs a link");
   });
 
   it("takes the widest video, else the widest photo, of each carousel item", () => {
@@ -47,15 +42,15 @@ describe("a post by its link", () => {
       asked.push(`${url} ${(init.headers as Record<string, string>).cookie}`);
       return new Response(JSON.stringify({ message: "login_required" }), { status: 400 });
     });
-    await expect(readPost("owner", "https://www.instagram.com/reel/BA/")).rejects.toThrow("Sign in again");
-    expect(asked).toEqual(["https://www.instagram.com/api/v1/media/64/info/ sessionid=s; csrftoken=c; ds_user_id=1"]);
+    await expect(readPost("owner", "https://www.instagram.com/reel/BAAAA/")).rejects.toThrow("Sign in again");
+    expect(asked).toEqual([`https://www.instagram.com/api/v1/media/${64 ** 4}/info/ sessionid=s; csrftoken=c; ds_user_id=1`]);
     expect(loginState("owner").signedIn).toBe(false);
   });
 
   it("reads a post's files and whose it is", async () => {
     saveCookies("owner", { sessionid: "s", csrftoken: "c", ds_user_id: "1" });
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ items: [{ code: "BA", user: { username: "tinyacrobatics" }, video_versions: [{ url: "v", width: 720 }] }] })));
-    expect(await readPost("owner", "https://www.instagram.com/p/BA/")).toEqual({ username: "tinyacrobatics", code: "BA", files: [{ url: "v", kind: "video" }] });
+    expect(await readPost("owner", "https://www.instagram.com/p/BAAAA/")).toEqual({ username: "tinyacrobatics", code: "BA", files: [{ url: "v", kind: "video" }] });
   });
 
   it("reads an account's grid and its Reels tab, a reel kept off the grid included, newest first", async () => {
@@ -96,7 +91,7 @@ describe("a post by its link", () => {
         }],
       }),
     );
-    const { info } = await readPostInfo("owner", "https://www.instagram.com/p/BA/");
+    const { info } = await readPostInfo("owner", "https://www.instagram.com/p/BAAAA/");
     expect(info).toMatchObject({ shortcode: "BA", mediaId: "64", kind: "carousel", takenAt: 50_000, caption: "two slides", creator: { username: "tinyacrobatics", id: "9" }, counts: { likes: 3, comments: 2 } });
     expect(info.slides).toEqual([
       { index: 0, kind: "video", url: "v", width: 720, height: 1280, durationS: 12.5, coverUrl: "poster" },
@@ -108,11 +103,11 @@ describe("a post by its link", () => {
     saveCookies("owner", { sessionid: "s", csrftoken: "c", ds_user_id: "1" });
     const asked: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
-      asked.push(url.replace("https://www.instagram.com/api/v1/media/64/comments/?can_support_threading=true&permalink_enabled=false", ""));
+      asked.push(url.replace(`https://www.instagram.com/api/v1/media/${64 ** 4}/comments/?can_support_threading=true&permalink_enabled=false`, ""));
       const n = asked.length;
       return Response.json({ comments: [{ pk: n, text: `c${n}`, created_at: n, user: { pk: 1, username: "fan" }, child_comment_count: 1 }], next_min_id: `cur${n}`, has_more_comments: true });
     });
-    const r = await readComments("owner", "https://www.instagram.com/p/BA/", 2);
+    const r = await readComments("owner", "https://www.instagram.com/p/BAAAA/", 2);
     expect(r.status).toBe("capped");
     expect(r.cursor).toBe("cur2");
     expect(r.comments.map((c) => [c.text, c.createdAt, c.replyCount])).toEqual([["c1", 1000, 1], ["c2", 2000, 1]]);

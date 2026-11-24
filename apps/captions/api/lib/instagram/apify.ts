@@ -2,7 +2,8 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { recordService } from "../service-usage";
 import path from "node:path";
 import { env } from "../env";
-import { canonicalPostUrl, shortcodeToMediaId } from "./url";
+import { canonicalPostUrl, shortcodeFromUrl, shortcodeToMediaId } from "./url";
+export { shortcodeFromUrl };
 import { igUserFile, InstagramError } from "./base";
 import type {
   CatalogItem,
@@ -639,11 +640,6 @@ export async function fetchPostViaApify(
   return { raw, info: normalizeApifyPost(raw, url) };
 }
 
-const POST_URL_CODE = /\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]{5,})/;
-
-export function shortcodeFromUrl(url: string): string | null {
-  return POST_URL_CODE.exec(url)?.[1] ?? null;
-}
 
 /**
  * One actor run for many post URLs. Returns what came back keyed by the

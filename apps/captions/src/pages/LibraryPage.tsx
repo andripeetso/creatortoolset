@@ -48,7 +48,7 @@ import {
 import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacBridge } from "@/lib/thisMac";
 import { addRefused, scanWatchNow } from "@/lib/library";
-import { canChange, useMe } from "@/lib/auth";
+import { canChange, useAuth, useMe } from "@/lib/auth";
 import { faceBlurOn, keptAsFilmed, rememberKeepAsFilmed } from "./library/face-blur";
 import { useWorkspace } from "@/lib/workspace";
 import { confirmDialog } from "@/lib/dialogs";
@@ -1010,7 +1010,10 @@ export default function LibraryPage() {
   // the Upload button's handler: the page's button, its right-click menu and the first screen's second way all call it
   const chooseFiles = () => picker.current?.click();
   const [instagramOpen, setInstagramOpen] = useState(false);
+  const serverKind = useAuth((s) => s.kind);
   const mayAdd = !!library && (!readOnly || (!!library.canAdd && (!me || canChange(me, "media")))) && !trash;
+  // the Instagram sign-in opens a Chrome window on the server's own screen: its owner, never on Creator Toolset Cloud
+  const instagramAdd = mayAdd && me?.role === "admin" && serverKind !== "cloud";
   // the Blur faces checkbox beside Upload: only where the library blurs and this person may keep files as filmed
   const blurChoice = mayAdd && faceBlur && !!library.settings.blurFaces && library.mayKeepAsFilmed;
   const keepsAsFilmed = blurChoice && asFilmed.includes(library.id);
@@ -1207,7 +1210,7 @@ export default function LibraryPage() {
                             </DropdownMenuItem>
                           )}
                           {!trash && <SourceMediaItems canLook={canLook} onLook={() => void lookNow()} onError={setError} />}
-                          {mayAdd && !trash && <DropdownMenuItem onSelect={() => setInstagramOpen(true)}><Instagram /> Add from Instagram</DropdownMenuItem>}
+                          {instagramAdd && !trash && <DropdownMenuItem onSelect={() => setInstagramOpen(true)}><Instagram /> Add from Instagram</DropdownMenuItem>}
                           {watch && !readOnly && !trash && library && redoKinds(library.settings).length > 0 && (
                             <>
                               <DropdownMenuSeparator />
@@ -1278,7 +1281,7 @@ export default function LibraryPage() {
               </BrowseBar>
               )}
 
-              {mayAdd && <InstagramAdd open={instagramOpen} onOpenChange={setInstagramOpen} />}
+              {instagramAdd && <InstagramAdd open={instagramOpen} onOpenChange={setInstagramOpen} />}
               <SpaceMenu
                 className="flex flex-1 flex-col gap-4"
                 items={
@@ -1286,7 +1289,7 @@ export default function LibraryPage() {
                     <>
                       {changing && (!smart || !!nestHere) && <ContextMenuItem onSelect={() => void newFolder()}>New folder</ContextMenuItem>}
                       <ContextMenuItem onSelect={chooseFiles}>Upload…</ContextMenuItem>
-                      <ContextMenuItem onSelect={() => setInstagramOpen(true)}>Add from Instagram…</ContextMenuItem>
+                      {instagramAdd && <ContextMenuItem onSelect={() => setInstagramOpen(true)}>Add from Instagram…</ContextMenuItem>}
                       {(pickable.length > 0 || canLook) && <ContextMenuSeparator />}
                       {pickable.length > 0 && <ContextMenuItem onSelect={() => void pickAll()}>Select all</ContextMenuItem>}
                       {canLook && <ContextMenuItem onSelect={() => void lookNow()}>Look for new files</ContextMenuItem>}

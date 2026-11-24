@@ -1753,6 +1753,8 @@ async function loadProfile(
   if (mode === "discovery") {
     const bd = await discovered(username, user, signal);
     if (bd) return bd.profile;
+    // an account Meta can't read (a personal one), with no working Apify key: the Instagram sign-in
+    if ((await ingestGate(user)).mode === "session") return readSessionProfile(user, username, signal);
   }
   return fetchProfileViaApify(url, { username: user, signal });
 }
@@ -1776,6 +1778,7 @@ async function fetchAccountFeed(
   if (mode === "discovery") {
     const bd = await discovered(acc.username, user, signal);
     if (bd) return withApifyReels(bd.items, url, user, cap, signal);
+    if ((await ingestGate(user)).mode === "session") return { items: await readSessionAccount(user, acc.username, cap, signal), more: false };
   }
   return fetchCatalogViaApify(url, { username: user, cap, signal });
 }

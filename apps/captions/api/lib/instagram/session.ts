@@ -4,7 +4,7 @@ import path from "node:path";
 import { env, isCloud } from "../env";
 import type { SessionUser } from "../../users";
 import type { CatalogItem, Comment, CommentsStatus, PostInfo, PostInfoSlide, ProfileInfo } from "./types";
-import { canonicalPostUrl } from "./url";
+import { canonicalPostUrl, shortcodeFromUrl, shortcodeToMediaId } from "./url";
 
 // The person's own Instagram account, signed in once in a Chrome window on their Mac (they type, never this code), so
 // the Media Library can add a post or reel by its link. Only its cookies are kept (0600); each read is one call to
@@ -87,6 +87,8 @@ export function startSignIn(u: string): void {
     let open = true;
     ctx.on("close", () => (open = false));
     try {
+      // a session Instagram ended may still sit in the profile: never take it back, always a fresh sign-in
+      await ctx.clearCookies();
       const page = ctx.pages()[0] ?? (await ctx.newPage());
       await page.goto("https://www.instagram.com/accounts/login/").catch(() => {});
       for (const end = Date.now() + IG.loginMs; open && Date.now() < end; ) {
@@ -117,19 +119,11 @@ export function signOut(u: string): void {
 
 export class InstagramRefused extends Error {}
 
-const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-/** The post's code in a link to a post, reel or video ("instagram.com/reel/C0dE…"), or null. */
-export function shortcodeOf(link: string): string | null {
-  return /instagram\.com\/(?:[\w.]+\/)?(?:p|reels?|tv)\/([\w-]+)/i.exec(link)?.[1] ?? null;
-}
-
-/** The media id Instagram's API takes, from a post's code (a private post's code carries 28 more characters). */
-export function mediaIdOf(code: string): string {
-  const c = code.length > 28 ? code.slice(0, -28) : code;
-  let n = 0n;
-  for (const ch of c) n = n * 64n + BigInt(ALPHABET.indexOf(ch));
-  return n.toString();
+/** A link's post code and the media id Instagram's API takes (a private post's code carries 28 more characters). */
+export function postOf(link: string): { code: string; id: string } {
+  const code = shortcodeFromUrl(link);
+  if (!code) throw new InstagramRefused("Needs a link to an Instagram post or reel");
+  return { code, id: shortcodeToMediaId(code.length > 28 ? code.slice(0, -28) : code) };
 }
 
 export interface PostFile {
@@ -150,14 +144,14 @@ interface Item {
   carousel_media?: Item[];
 }
 
-const widest = (v?: Version[]) => v?.reduce<Version | undefined>((a, b) => (!a || (b.width ?? 0) > (a.width ?? 0) ? b : a), undefined)?.url;
+const largest = (v?: Version[]) => v?.reduce<Version | undefined>((a, b) => (!a || (b.width ?? 0) > (a.width ?? 0) ? b : a), undefined);
 
 /** Each video or picture of a post (a carousel's in order), the largest Instagram gives. */
 export function filesOf(item: Item): PostFile[] {
   const one = (i: Item): PostFile | null => {
-    const video = widest(i.video_versions);
+    const video = largest(i.video_versions)?.url;
     if (video) return { url: video, kind: "video" };
-    const pic = widest(i.image_versions2?.candidates);
+    const pic = largest(i.image_versions2?.candidates)?.url;
     return pic ? { url: pic, kind: "picture" } : null;
   };
   return (item.carousel_media?.length ? item.carousel_media.map(one) : [one(item)]).filter((f): f is PostFile => !!f);
@@ -216,9 +210,8 @@ async function callNow<T>(u: string, url: string, { form, signal, what = "the po
 
 /** A post's files and whose it is, read with the person's own sign-in. */
 export async function readPost(u: string, link: string): Promise<{ username: string; code: string; files: PostFile[] }> {
-  const code = shortcodeOf(link);
-  if (!code) throw new InstagramRefused("Needs a link to an Instagram post or reel");
-  const body = await igCall<{ items?: Item[] }>(u, `/api/v1/media/${mediaIdOf(code)}/info/`);
+  const { code, id } = postOf(link);
+  const body = await igCall<{ items?: Item[] }>(u, `/api/v1/media/${id}/info/`);
   const item = body.items?.[0];
   if (!item) throw new InstagramRefused("Post not found");
   const files = filesOf(item);
@@ -258,7 +251,7 @@ export function catalogItemOf(i: FeedItem): CatalogItem | null {
     url: canonicalPostUrl(i.code, reel),
     kind: i.media_type === 8 || i.carousel_media?.length ? "carousel" : reel ? "reel" : "post",
     takenAt: (i.taken_at ?? 0) * 1000,
-    thumbnailUrl: widest(i.image_versions2?.candidates ?? i.carousel_media?.[0]?.image_versions2?.candidates),
+    thumbnailUrl: largest(i.image_versions2?.candidates ?? i.carousel_media?.[0]?.image_versions2?.candidates)?.url,
     captionPreview: caption ? caption.slice(0, 180) : undefined,
     counts: { likes: i.like_count, comments: i.comment_count, plays: i.play_count ?? i.view_count },
   };
@@ -327,13 +320,11 @@ interface WebUser {
 
 /* ---- one post in full, and its comments (the Content Analyzer's own reads, when there is no Apify key) ---- */
 
-const largest = (v?: Version[]) => v?.reduce<Version | undefined>((a, b) => (!a || (b.width ?? 0) > (a.width ?? 0) ? b : a), undefined);
 
 /** A post as the Content Analyzer's pipeline takes it: its slides (videos with their poster), caption and counts. */
 export async function readPostInfo(u: string, url: string, signal?: AbortSignal): Promise<{ raw: unknown; info: PostInfo }> {
-  const code = shortcodeOf(url);
-  if (!code) throw new InstagramRefused("Needs a link to an Instagram post or reel");
-  const body = await igCall<{ items?: FeedItem[] }>(u, `/api/v1/media/${mediaIdOf(code)}/info/`, { signal });
+  const { code, id } = postOf(url);
+  const body = await igCall<{ items?: FeedItem[] }>(u, `/api/v1/media/${id}/info/`, { signal });
   const raw = body.items?.[0];
   if (!raw) throw new InstagramRefused("Post not found");
   const card = catalogItemOf(raw);
@@ -358,7 +349,7 @@ export async function readPostInfo(u: string, url: string, signal?: AbortSignal)
     raw,
     info: {
       shortcode: raw.code ?? code,
-      mediaId: String(raw.pk ?? mediaIdOf(code)).split("_")[0]!,
+      mediaId: String(raw.pk ?? id).split("_")[0]!,
       kind: card?.kind ?? "post",
       url: card?.url ?? url,
       creator: { username: raw.user?.username ?? "", ...(raw.user?.full_name ? { fullName: raw.user.full_name } : {}), id: String(raw.user?.pk ?? "") },
@@ -381,14 +372,13 @@ interface WebComment {
 
 /** A post's comments, newest pages first, up to `cap` (their replies are counted, not read). */
 export async function readComments(u: string, url: string, cap: number, signal?: AbortSignal): Promise<{ comments: Comment[]; status: CommentsStatus; cursor?: string }> {
-  const code = shortcodeOf(url);
-  if (!code) throw new InstagramRefused("Needs a link to an Instagram post or reel");
+  const { id } = postOf(url);
   const comments: Comment[] = [];
   let cursor = "";
   for (;;) {
     const page = await igCall<{ comments?: WebComment[]; next_min_id?: string; has_more_comments?: boolean; has_more_headload_comments?: boolean }>(
       u,
-      `/api/v1/media/${mediaIdOf(code)}/comments/?can_support_threading=true&permalink_enabled=false${cursor ? `&min_id=${encodeURIComponent(cursor)}` : ""}`,
+      `/api/v1/media/${id}/comments/?can_support_threading=true&permalink_enabled=false${cursor ? `&min_id=${encodeURIComponent(cursor)}` : ""}`,
       { signal },
     );
     for (const c of page.comments ?? [])
