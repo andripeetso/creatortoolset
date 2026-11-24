@@ -789,7 +789,7 @@ export function packFor(r: Req, keepsBlobs: boolean) {
  * which the Mac's JSONSerialization refuses for the whole request: one cut post in a Workshop folder made every turn
  * a claimed request the Mac dropped ("The Mac stopped answering").
  */
-export const wellFormed = (s: string): string => s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
+export const wellFormed = (s: string): string => s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
 
 // `model` (another Claude, e.g. Fable) only ever goes to a Claude provider: a Codex or Gemini run keeps its own model.
 const pack = (r: Req) => ({

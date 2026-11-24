@@ -317,9 +317,12 @@ final class RelayRunner {
                 DispatchQueue.global(qos: .utility).async { [self] in job(req) }   // job() releases the slot
                 continue
             }
-            // a request this Mac can't read is claimed on the site and dropped here: say so, the site only sees silence
+            // a request this Mac can't read is already claimed on the site: fail it now, or the site waits 60 s for silence
             if reply.status == 200, (try? JSONSerialization.jsonObject(with: reply.data)) == nil {
                 AppLog.write("relay \(api.base.host ?? ""): could not read a request (\(reply.data.count) bytes)")
+                if let id = RelayRequest.id(unreadable: reply.data) {
+                    _ = try? api.call("POST", "/api/devices/relay/\(id)/fail", ["error": "This Mac could not read the request"], tries: 2)
+                }
             }
             // a computer step waits: the worker claims it itself. Already running (or held for an update), the hint
             // is not news, and a server that repeats it at once is asked again a little later, never in a loop

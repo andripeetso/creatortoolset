@@ -122,6 +122,15 @@ struct RelayRequest {
         }
         asks = mcp != nil && obj["asks"] as? Bool == true
     }
+
+    /// The id of a request this Mac can't read as JSON, from its first characters (the site writes `{"id":"…"` first),
+    /// so it can be failed at once instead of after the site's 60 s of silence. Nil when there is none.
+    static func id(unreadable data: Data) -> String? {
+        let head = String(decoding: data.prefix(160), as: UTF8.self)
+        guard head.hasPrefix(#"{"id":""#) else { return nil }
+        let id = head.dropFirst(7).prefix { $0 != "\"" }
+        return !id.isEmpty && id.count <= 100 && id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) ? String(id) : nil
+    }
 }
 
 /// The --mcp-config file for the app's own MCP server: its tools then show up as mcp__creator-toolset__*.

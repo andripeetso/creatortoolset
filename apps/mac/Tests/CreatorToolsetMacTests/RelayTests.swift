@@ -31,6 +31,14 @@ final class RelayTests: XCTestCase {
         XCTAssertNil(RelayRequest(json: Data(#"{"system":"S"}"#.utf8)))   // no id: nothing to answer
     }
 
+    func testARequestItCannotReadIsFailedByTheIdAtItsStart() {
+        let cut = Data(#"{"id":"0b6c-4f1e_9","files":{"a.md":"Tere \ud83d"}}"#.utf8)
+        XCTAssertNil(try? JSONSerialization.jsonObject(with: cut))   // the reason: half an emoji
+        XCTAssertEqual(RelayRequest.id(unreadable: cut), "0b6c-4f1e_9")
+        XCTAssertNil(RelayRequest.id(unreadable: Data(#"{"system":"S","id":"x"}"#.utf8)))   // not first: not guessed
+        XCTAssertNil(RelayRequest.id(unreadable: Data(#"{"id":"../x","system":"S"}"#.utf8)))   // never a path
+    }
+
     func testClaudeGeminiCodexAndTheAcpKindsRunHereAndOthersFailWithTheSameWords() throws {
         let root = temp()
         for driver in ["muse", "wat"] {
