@@ -57,7 +57,7 @@ function Box({ ask, close }: { ask: Ask; close: (v: boolean | string | null) => 
   return (
     <AlertDialog open onOpenChange={(o) => !o && finish(ask.kind === "prompt" ? null : false)}>
       <AlertDialogContent
-        className="border-zinc-800 bg-zinc-950 text-zinc-200 sm:max-w-md"
+        className={cn("border-zinc-800 bg-zinc-950 text-zinc-200", ask.other ? "sm:max-w-lg" : "sm:max-w-md")}
         onOpenAutoFocus={(e) => {
           if (ask.kind !== "prompt") return;
           e.preventDefault();
@@ -84,7 +84,8 @@ function Box({ ask, close }: { ask: Ask; close: (v: boolean | string | null) => 
             className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-violet-500"
           />
         )}
-        <AlertDialogFooter>
+        {/* three buttons with long labels (chooseDialog) wrap inside the box, never past its edge */}
+        <AlertDialogFooter className="sm:flex-wrap">
           {ask.kind !== "alert" && (
             <AlertDialogCancel className="border-zinc-800 bg-transparent text-zinc-200 hover:bg-zinc-900 hover:text-zinc-100">
               Cancel
