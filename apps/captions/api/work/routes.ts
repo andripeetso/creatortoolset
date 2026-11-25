@@ -24,6 +24,7 @@ import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
 import { serveAi, serveCall } from "./serve";
 import { retryEmptyPictures, retryFailedPictures } from "../library/made";
+import { draining } from "../server-update";
 
 /** The most one result file may weigh (a preview, a generated clip, a cache file). */
 const FILE_MAX = 8 * 1024 ** 3;
@@ -165,7 +166,9 @@ workApp.post("/claim", async (c) => {
   const end = Date.now() + CLAIM_POLL.holdMs;
   let gone = false; // a reload (lib/sync.ts leave): the poll answers "nothing" now, and the computer asks the next process
   for (;;) {
-    const got = libraryOnly ? null : await claimForComputer(deviceOf(d.id)!);
+    // an update waits for running work (server-update.ts draining): no new work goes out, so the count reaches 0
+    const hold = draining();
+    const got = hold || libraryOnly ? null : await claimForComputer(deviceOf(d.id)!);
     if (got) {
       try {
         const pkg = await buildPackage(got.job, d);
@@ -177,11 +180,11 @@ workApp.post("/claim", async (c) => {
         continue;
       }
     }
-    const lib = library ? await claimLibraryForComputer(deviceOf(d.id)!) : null;
+    const lib = !hold && library ? await claimLibraryForComputer(deviceOf(d.id)!) : null;
     if (lib) return answer({ pkg: null, lib });
-    const pics = libraryOnly ? null : await claimPictures(deviceOf(d.id)!);
+    const pics = hold || libraryOnly ? null : await claimPictures(deviceOf(d.id)!);
     if (pics) return answer({ pkg: null, pics });
-    const task = libraryOnly ? null : claimTask(deviceOf(d.id)!);
+    const task = hold || libraryOnly ? null : claimTask(deviceOf(d.id)!);
     if (task) return answer({ pkg: null, task });
     if (Date.now() >= end || gone || c.req.raw.signal.aborted || deviceOf(d.id)?.work?.empty) return answer({ pkg: null });
     let off = () => {};

@@ -6,6 +6,7 @@ import type { DeviceJob } from "../../contracts/devices";
 import type { AuthVars } from "../../api/auth";
 import { anyVisionConfigured, completeVisionWithFallback } from "../../api/ai-vision";
 import { env } from "../../api/lib/env";
+import { draining } from "../../api/server-update";
 import { chosenIn, FACE_PICK_SYSTEM } from "../../api/lib/face-pick";
 import { limitResetAt } from "../../contracts/plans";
 import { isOnline, listDevices } from "../../api/lib/devices";
@@ -370,7 +371,8 @@ const back = (j: AutoJob, extra: Partial<AutoJob> = {}) => {
 const versionGone = (versionId: string) =>
   !libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL").get(versionId);
 /** Ready to hand out to its Mac now: an AI provider to choose the faces, Which faces said, not paused. */
-const ready = (owner: string) => !pausedUntil(owner) && !isHeld(owner) && anyVisionConfigured(owner);
+// draining: an update waits for running work (api/server-update.ts), so no new file goes to a Mac meanwhile
+const ready = (owner: string) => !draining() && !pausedUntil(owner) && !isHeld(owner) && anyVisionConfigured(owner);
 const offered = (j: AutoJob, device: string, now: number) => j.state === "queued" && j.mac === device && !(j.awayUntil && j.awayUntil > now);
 
 /** No face to cover, or none the AI chose: the file is kept as filmed (its blur answer no), as the person asked. */

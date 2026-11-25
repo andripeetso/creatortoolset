@@ -100,6 +100,17 @@ describe.skipIf(rootReplaced)("a step that reads video goes to one of the asker'
     expect(row(e, "v1")).toMatchObject({ state: "running", device: laptop.device.id });
   });
 
+  it("while a server update waits for running work, no computer is handed a step; it goes once the update is done", async () => {
+    const e = await newEdit("maker", ["ver_lap"]);
+    queue("maker", e, "v1");
+    const drain = path.join(dir, "server-update", "drain");
+    mkdirSync(path.dirname(drain), { recursive: true });
+    writeFileSync(drain, "");
+    expect((await claim(laptop.token)).pkg).toBeNull();
+    rmSync(drain);
+    expect((await claim(laptop.token)).pkg?.job.id).toBe(row(e, "v1").id);
+  });
+
   it("files on neither: balancing picks the stronger one", async () => {
     settle();
     const e = await newEdit("maker", ["ver_up"]);

@@ -108,6 +108,18 @@ describe("what comes into the Media Library", () => {
 });
 
 describe("the Mac that has the file", () => {
+  it("is handed no file while a server update waits for running work, and gets it once the update is done", async () => {
+    await settings({});
+    const v = await added("mp4");
+    await queueVersion(event(v));
+    const drain = path.join(dir!, "server-update", "drain");
+    mkdirSync(path.dirname(drain), { recursive: true });
+    writeFileSync(drain, "");
+    expect(autoJobs.claim(mac)).toBeNull();
+    rmSync(drain);
+    expect(autoJobs.claim(mac)).not.toBeNull();
+  });
+
   it("writes the copy at the resolution and bitrate set, into the folder the location says", async () => {
     await settings({ resolution: "original", bitrate: 80, location: "beside" });
     const v = await added("mp4");
