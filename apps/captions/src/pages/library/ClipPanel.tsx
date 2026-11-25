@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Check, Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
+import { ChevronDown, Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -281,13 +281,17 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
     </DropdownMenu>
   );
   const inFolders = detail?.collections ?? [];
-  const copyPath = () =>
-    path &&
-    void navigator.clipboard?.writeText(path).then(() => {
+  // the files on this computer the Location menu shows or copies: the blurred copy and its original when both are here
+  const here: { name: string; path: string; id?: string }[] =
+    filmed?.path && detail?.sourcePath ? [{ name: "blurred", path: detail.sourcePath }, { name: "original", path: filmed.path, id: filmed.id }] : path ? [{ name: "", path }] : [];
+  const revealable = a.state !== "missing" && revealsHere(placeWord);
+  const copyPath = (p: string) =>
+    void navigator.clipboard?.writeText(p).then(() => {
       setCopiedPath(true);
       window.setTimeout(() => setCopiedPath(false), 1500);
     });
-  const reveal = () => path && void revealClip(libraryId, a.id, path, showOriginal ? filmed.id : undefined).then((problem) => problem && onError(problem));
+  const revealFile = (p: string, id?: string) => void revealClip(libraryId, a.id, p, id).then((problem) => problem && onError(problem));
+  const reveal = () => path && revealFile(path, showOriginal ? filmed.id : undefined);
   const open = (id: string, at?: number) => navigate(`/library?library=${encodeURIComponent(libraryId)}&asset=${encodeURIComponent(id)}${at ? `&at=${at}` : ""}`);
 
   const title = <SheetTitle className={cn("min-w-0 flex-1 break-words text-base", win && "pr-8")}>{a.title}</SheetTitle>;
@@ -339,13 +343,35 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
           {(placeWord || path) && (
             <div className="contents">
               <dt className="text-zinc-500">Location</dt>
-              <dd className="flex min-w-0 items-center gap-1">
-                <span className="truncate">{placeWord ? placeLine(placeWord) : path}</span>
-                {path && (
-                  // the file on this computer (the admin, on a server that has it): its path (Show in Finder is the main button)
-                  <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0 text-zinc-500" title={copiedPath ? "Copied" : `Copy path: ${path}`} aria-label={copiedPath ? "Copied" : "Copy path"} onClick={copyPath}>
-                    {copiedPath ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  </Button>
+              <dd className="min-w-0">
+                {here.length ? (
+                  // the files on this computer (the admin, on a server that has it): show each in Finder, copy each path
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" variant="ghost" className="-ml-2 h-6 max-w-full gap-1 px-2 text-xs font-normal">
+                        <span className="truncate">{copiedPath ? "Path copied" : placeWord ? placeLine(placeWord) : here[0]!.path}</span>
+                        <ChevronDown className="h-3 w-3 shrink-0 text-zinc-500" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      {revealable &&
+                        here.map((f) => (
+                          <DropdownMenuItem key={`show-${f.name}`} onSelect={() => revealFile(f.path, f.id)}>
+                            <FolderOpen className="h-4 w-4" />
+                            {f.name ? `Show ${f.name} in Finder` : "Show in Finder"}
+                          </DropdownMenuItem>
+                        ))}
+                      {revealable && <DropdownMenuSeparator />}
+                      {here.map((f) => (
+                        <DropdownMenuItem key={`copy-${f.name}`} title={f.path} onSelect={() => copyPath(f.path)}>
+                          <Copy className="h-4 w-4" />
+                          {f.name ? `Copy ${f.name} path` : "Copy path"}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  placeWord && <span className="block truncate">{placeLine(placeWord)}</span>
                 )}
               </dd>
             </div>
