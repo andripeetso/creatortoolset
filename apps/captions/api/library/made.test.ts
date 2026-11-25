@@ -24,7 +24,7 @@ process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET; // the solo install: "local" is the admin
 const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
-const { engineOf, libraryMade, makeMissing, retryEmptyPictures, retryFailed, STILLS_FIXED_AT, stopQueued } = await import("./made");
+const { engineOf, libraryMade, makeMissing, PICTURE_RETRY_DAYS, retryEmptyPictures, retryFailed, retryFailedPictures, STILLS_FIXED_AT, stopQueued } = await import("./made");
 const { queueLook, sweepLook } = await import("./shots");
 const { libraryApp } = await import("./routes");
 const { leaveToComputers } = await import("./worker");
@@ -101,6 +101,19 @@ describe("what's made", () => {
     // one that failed again on a fixed computer is a failure of its own: never sent again at each start
     d.prepare("UPDATE jobs SET state = 'failed', error = ?, started_at = ? WHERE version_id = ? AND kind = 'send'").run(empty, STILLS_FIXED_AT + 1, bare);
     expect(retryEmptyPictures()).toBe(0);
+  });
+
+  it("a card picture or strip that failed this week goes again by itself; one from before then stays failed", () => {
+    const recent = clip("ast-pic-recent"), old = clip("ast-pic-old");
+    const now = Date.now();
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error, started_at) VALUES ('lib_m', ?, 'thumb', 'failed', 'local', 'x', ?)").run(recent, now - 3600_000);
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error, started_at) VALUES ('lib_m', ?, 'sprite', 'failed', 'local', 'x', ?)").run(old, now - (PICTURE_RETRY_DAYS + 1) * 86_400_000);
+    expect(retryFailedPictures(now)).toBe(1);
+    expect(job(recent, "thumb")?.state).toBe("queued");
+    expect(job(old, "sprite")?.state).toBe("failed");
+    d.prepare("DELETE FROM jobs WHERE version_id IN (?, ?)").run(recent, old);
+    d.prepare("DELETE FROM asset_versions WHERE id IN (?, ?)").run(recent, old);
+    d.prepare("DELETE FROM assets WHERE id IN ('ast-pic-recent', 'ast-pic-old')").run();
   });
 
   it("Library status lists each unreadable file with the step that failed, and Retry queues it again", async () => {

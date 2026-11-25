@@ -41,7 +41,7 @@ const settings = (s: Record<string, unknown>) => call("PUT", "/settings", { mode
 const SHA = "a".repeat(64);
 const FACES = { faces: [{ id: "F1", picture: "/9j/AAAA", note: "middle left of the frame; 12% of its width; seen for 4.2 s" }], sha256: SHA };
 const answerOf = (v: string) => (libraryDb().prepare("SELECT a.blur FROM assets a JOIN asset_versions v ON v.asset_id = a.id WHERE v.id = ?").get(v) as { blur: string | null }).blur;
-const auto = async () => (await (await call("GET", "/auto")).json()) as { can: boolean; why?: string; pausedUntil?: number; running: string[]; failed: { versionId: string; error: string }[] };
+const auto = async () => (await (await call("GET", "/auto")).json()) as { can: boolean; why?: string; pausedUntil?: number; held?: boolean; running: string[]; failed: { versionId: string; error: string }[] };
 
 let n = 0;
 /** A file added to Ana's library the way an upload adds one, with its blur answer (marked Blur faces by default); its version id. */
@@ -190,7 +190,15 @@ describe("the Mac that has the file", () => {
     expect(libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ?").get(blurred!)).toBeUndefined();
     expect(await queueVersion(event(v))).toBe(true); // queued again, but held
     expect(autoJobs.claim(mac)).toBeNull();
-    await call("POST", "/auto/resume");
+    expect((await auto()).held).toBe(true);
+    await call("PUT", "/auto", { on: true });
+    expect((await auto()).held).toBe(false);
+
+    // the library's Stop holds it as well, until the switch turns it on again
+    plugin.start?.();
+    (await import("../../api/lib/events")).emitEvent("library.stopped", { libraryId: "lib_a", by: "ana" });
+    await vi.waitFor(async () => expect((await auto()).held).toBe(true));
+    await call("PUT", "/auto", { on: true });
     expect(autoJobs.claim(mac)).toBeTruthy();
   });
 

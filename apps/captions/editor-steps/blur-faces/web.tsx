@@ -43,7 +43,7 @@ type Settings = {
   folder: string;
 };
 /** plugin.ts GET /auto */
-type Auto = { can: boolean; why?: string; pausedUntil?: number; running: string[]; failed: { versionId: string; title: string; error: string }[] };
+type Auto = { can: boolean; why?: string; pausedUntil?: number; held?: boolean; running: string[]; failed: { versionId: string; title: string; error: string }[] };
 type Style = Pick<Settings, "look" | "strength" | "softness" | "size" | "color">;
 const styleOf = ({ look, strength, softness, size, color }: Settings): Style => ({ look, strength, softness, size, color });
 
@@ -366,12 +366,21 @@ function useAuto() {
   return { auto, load };
 }
 
-/** What stops new Media Library files from being covered, as the first row of Output; nothing while it works. */
-function AutoStatus({ auto }: { auto: Auto | null }) {
+/**
+ * New Media Library files covered on the Mac that has them, as the first row of Output: a switch (off holds them, as the
+ * library's Stop does), and under it what stops them (Needs…, a pause at the usage limit).
+ */
+function AutoStatus({ auto, load }: ReturnType<typeof useAuto>) {
   if (!auto) return null;
-  if (!auto.can) return <Row title="New Media Library files" description={auto.why} />;
-  if (!auto.pausedUntil) return null;
-  return <Row title="New Media Library files" description={`Paused until ${new Date(auto.pausedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`} />;
+  const turn = (on: boolean) => markSave(call(`${API}/auto`, "PUT", { on })).then(load, (e: Error) => saveFailed(e.message));
+  const why = !auto.can ? auto.why : auto.pausedUntil ? `Paused until ${new Date(auto.pausedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : undefined;
+  return (
+    <Row
+      title="New Media Library files"
+      description={auto.held ? undefined : why}
+      control={<Switch aria-label="New Media Library files" checked={!auto.held} onCheckedChange={(on) => void turn(on)} />}
+    />
+  );
 }
 
 const FAILED_SHOWN = 5;
@@ -418,7 +427,7 @@ const WHERE: Record<Settings["location"], string> = {
 };
 
 /** How the automatic blurred copies of Media Library files are written, and where on the Mac (plugin.ts outOf). */
-function OutputCard({ settings, save, auto }: ReturnType<typeof useSettings> & { auto: Auto | null }) {
+function OutputCard({ settings, save, auto }: ReturnType<typeof useSettings> & { auto: ReturnType<typeof useAuto> }) {
   if (!settings) return null;
   const choose = async () => {
     const folder = await chooseFolderOnMac();
@@ -426,7 +435,7 @@ function OutputCard({ settings, save, auto }: ReturnType<typeof useSettings> & {
   };
   return (
     <Card>
-      <AutoStatus auto={auto} />
+      <AutoStatus {...auto} />
       <Row
         title="Resolution"
         control={
@@ -490,7 +499,7 @@ function FaceBlurSettings() {
         <BlurCard {...s} />
       </Section>
       <Section title="Output">
-        <OutputCard {...s} auto={a.auto} />
+        <OutputCard {...s} auto={a} />
       </Section>
       <FailedFiles {...a} />
     </div>

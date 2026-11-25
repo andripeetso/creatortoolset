@@ -77,6 +77,16 @@ const fileOf = (user: string) => path.join(env.dataDir, "plugins", "blur-faces",
 /** Held (undo, until the owner resumes): files still queue, none is handed to a Mac. Kept on disk so a restart keeps it. */
 const heldFile = (user: string) => path.join(env.dataDir, "plugins", "blur-faces", `${user}.held`);
 const isHeld = (user: string) => existsSync(heldFile(user));
+/** Hold or resume `user`'s automatic covers: Settings → Face Blur's switch, the library's Stop (off) and an undo (off). */
+async function setHeld(user: string, held: boolean): Promise<void> {
+  if (!held) {
+    await rm(heldFile(user), { force: true });
+    void wakeEditorPolls();
+    return;
+  }
+  await mkdir(path.dirname(heldFile(user)), { recursive: true });
+  await writeFile(heldFile(user), String(Date.now()));
+}
 /** The file: the account's settings from before they were per workspace (each workspace starts from them), and each workspace's own. */
 type Saved = Partial<Settings> & { workspaces?: Record<string, Partial<Settings>> };
 const readSaved = (user: string): Saved => {
@@ -503,6 +513,7 @@ routes.get("/auto", async (c) => {
   return c.json({
     ...(await autoCan(user, await currentWorkspaceId(c.get("user")))),
     ...(until ? { pausedUntil: until } : {}),
+    held: isHeld(user),
     running: mine.filter((j) => j.state === "running").map((j) => j.versionId),
     failed: mine.filter((j) => j.state === "failed").map((j) => ({ versionId: j.versionId, title: j.title, error: j.error ?? "" })),
   });
@@ -522,11 +533,10 @@ routes.post("/auto/retry", async (c) => {
 /**
  * Undo the automatic blur: every clip of the account's own libraries whose current version is a blurred copy made since
  * `since` (ms) goes back to its original, and the copy's version is deleted (the file on the Mac stays: the caller removes
- * it). The intake is held until /auto/resume, so the originals are not blurred again meanwhile.
+ * it). The intake is held until it is turned on again (PUT /auto), so the originals are not blurred again meanwhile.
  */
 export async function undoAuto(owner: string, since: number): Promise<{ versionId: string; macPath: string | null }[]> {
-  await mkdir(path.dirname(heldFile(owner)), { recursive: true });
-  await writeFile(heldFile(owner), String(Date.now()));
+  await setHeld(owner, true);
   const d = libraryDb();
   const rows = (
     d
@@ -545,16 +555,17 @@ export async function undoAuto(owner: string, since: number): Promise<{ versionI
   return rows.map((r) => ({ versionId: r.blurred, macPath: r.macPath }));
 }
 
-// POST /auto/undo { since } → { reverted: [{ versionId, macPath }] }; POST /auto/resume → the held intake hands files out again
+// POST /auto/undo { since } → { reverted: [{ versionId, macPath }] }; PUT /auto { on } → new files covered, or held
 routes.post("/auto/undo", async (c) => {
   const since = ((await c.req.json().catch(() => null)) as { since?: unknown } | null)?.since;
   if (typeof since !== "number" || !Number.isFinite(since)) return c.json({ error: "since is a time in ms" }, 400);
   return c.json({ reverted: await undoAuto(c.get("user").username, since) });
 });
-routes.post("/auto/resume", async (c) => {
-  await rm(heldFile(c.get("user").username), { force: true });
-  void wakeEditorPolls();
-  return c.json({ ok: true });
+routes.put("/auto", async (c) => {
+  const on = ((await c.req.json().catch(() => null)) as { on?: unknown } | null)?.on;
+  if (typeof on !== "boolean") return c.json({ error: "on is true or false" }, 400);
+  await setHeld(c.get("user").username, !on);
+  return c.json({ on });
 });
 
 // blurred copies made before this, added as their clips' blurred versions (reconnect.ts)
@@ -573,6 +584,8 @@ const faceBlur = definePlugin({
     const queue = (e: { libraryId: string; versionId: string; owner: string }) => void queueVersion(e).catch((err: unknown) => console.warn(`[blur-faces] ${(err as Error).message}`));
     onEvent("library.version.probed", queue);
     onEvent("library.version.blur", queue);
+    // the library's Stop holds the automatic covers too, until the switch in Settings → Face Blur turns them on again
+    onEvent("library.stopped", ({ libraryId, by }) => setHeld(libraryAccount(libraryId) ?? by, true));
     // after start-up, so a long list never holds the server's first requests
     setTimeout(() => void sweep().catch((err: unknown) => console.warn(`[blur-faces] sweep: ${(err as Error).message}`)), 5_000).unref();
   },

@@ -347,6 +347,25 @@ export function retryEmptyPictures(): number {
   return rows.length;
 }
 
+/**
+ * A card picture or strip that failed in the last week, queued once more when a computer that does library work connects
+ * (work/routes.ts, once per computer per server start): one read while its disk was away, or by an older app, gets its
+ * picture with no Retry. A file that still fails after a week is left failed, so it never comes back at every start.
+ */
+export const PICTURE_RETRY_DAYS = 7;
+export function retryFailedPictures(now = Date.now()): number {
+  const db = libraryDb();
+  const rows = db
+    .prepare(
+      `SELECT j.library_id, j.version_id, j.kind, j.actor FROM jobs j JOIN assets a ON a.current_version_id = j.version_id
+       WHERE j.kind IN ('thumb', 'sprite') AND j.state = 'failed' AND (j.started_at IS NULL OR j.started_at > ?)
+         AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
+    )
+    .all(now - PICTURE_RETRY_DAYS * 86_400_000) as { library_id: string; version_id: string; kind: string; actor: string | null }[];
+  for (const r of rows) enqueueJob(db, r.library_id, r.version_id, r.kind, r.actor);
+  return rows.length;
+}
+
 // the files Library status counts as unreadable (estimate.ts libraryStatus): a live clip whose current version failed
 const UNREADABLE = `FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
   WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'failed'`;

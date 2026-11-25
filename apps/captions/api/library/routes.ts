@@ -1237,7 +1237,9 @@ libraryApp.post("/:id/stop", (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  return c.json({ files: MADE_KINDS.filter((k) => !k.auto && !k.ready).reduce((n, k) => n + stopQueued(libraryId, k.kind, user.username), 0) });
+  const files = MADE_KINDS.filter((k) => !k.auto && !k.ready).reduce((n, k) => n + stopQueued(libraryId, k.kind, user.username), 0);
+  emitEvent("library.stopped", { libraryId, by: user.username });
+  return c.json({ files });
 });
 
 // GET /api/library/:id/unreadable → { items }: Library status's Unreadable files, each with why; POST …/retry queues them again

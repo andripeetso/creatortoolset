@@ -23,7 +23,7 @@ import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
 import { serveAi, serveCall } from "./serve";
-import { retryEmptyPictures } from "../library/made";
+import { retryEmptyPictures, retryFailedPictures } from "../library/made";
 
 /** The most one result file may weigh (a preview, a generated clip, a cache file). */
 const FILE_MAX = 8 * 1024 ** 3;
@@ -71,6 +71,8 @@ workApp.route("/task", taskWorkApp);
 
 // once a process: photos failed on an empty card picture go again when a computer that reads them with no seek asks
 let stillsRetried = false;
+/** The computers whose first library claim since this server started has queued last week's failed pictures again. */
+const picturesRetried = new Set<string>();
 
 workApp.post("/claim", async (c) => {
   const d = caller(c);
@@ -147,6 +149,12 @@ workApp.post("/claim", async (c) => {
     ...(tooOld !== undefined ? { tooOld } : {}),
     at: now,
   });
+  // a computer that does library work, first time since this server started: last week's failed pictures go again
+  if (library && !picturesRetried.has(d.id)) {
+    picturesRetried.add(d.id);
+    const n = retryFailedPictures();
+    if (n) console.log(`[library] ${n} failed card pictures and strips queued again`);
+  }
   if (library && b?.stills === true && !stillsRetried) {
     stillsRetried = true;
     const n = retryEmptyPictures();
