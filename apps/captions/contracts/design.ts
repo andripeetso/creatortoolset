@@ -536,6 +536,36 @@ export const DESIGN_SAFE = [
 ] as const;
 export type DesignSafe = (typeof DESIGN_SAFE)[number]["id"];
 
+/** The part of a reel its buttons and caption leave clear, as fractions of the frame. */
+export const REEL_BAND = DESIGN_SAFE[2].inset;
+
+/** A video is vertical (a reel, a story) at 9:16-ish; `w` and `h` as shown, after the clip's turn. 4:5 and square are not. */
+export const isVertical = (w: number, h: number) => w > 0 && h / w >= 1.7;
+
+type Box = { boxX: number; boxY: number; boxW: number; boxH: number };
+
+/** One side of a box (centre `c`, size `size`, in %) moved the least distance into `lo`..`hi`; centred when it is too big. */
+const fit = (c: number, size: number, lo: number, hi: number) =>
+  size >= hi - lo ? (lo + hi) / 2 : Math.min(Math.max(c, lo + size / 2), hi - size / 2);
+
+const pct = (f: number) => Math.round(f * 1000) / 10;
+
+/**
+ * A caption box (centre and size in % of the frame) moved up or down into the reel band on a vertical video; else as
+ * it is. Only vertically: centred captions stay centred (a short line rarely reaches the buttons on the right).
+ */
+export function intoBand<T extends Box>(s: T, w: number, h: number): T {
+  if (!isVertical(w, h)) return s;
+  const boxY = fit(s.boxY, s.boxH, pct(REEL_BAND.top), 100 - pct(REEL_BAND.bottom));
+  return boxY === s.boxY ? s : { ...s, boxY };
+}
+
+/** A style placed by its edge (no box): its margin raised to the reel band on a vertical video. */
+export function intoBandMargin(position: "top" | "center" | "bottom", marginVPct: number, w: number, h: number): number {
+  if (!isVertical(w, h) || position === "center") return marginVPct;
+  return Math.max(marginVPct, pct(position === "top" ? REEL_BAND.top : REEL_BAND.bottom));
+}
+
 /**
  * A frame: one picture of the design, with a place and a size of its own on the design's canvas, so a carousel's
  * slides, a cover and a thumbnail can lie side by side in one design. (Called a page where it is a carousel's.)
