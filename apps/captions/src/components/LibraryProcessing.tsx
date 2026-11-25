@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ChevronDown } from "lucide-react";
-import { NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
+import { failedWords, NEEDS, waitingLine, type AssetCard, type LibraryProgress, type LibraryStage, type LibraryStepEstimate, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { getProgress, getWatch, stopLibrary } from "@/lib/library";
@@ -261,12 +261,6 @@ const STEP_WORDS: Record<NonNullable<AssetCard["preparing"]>["step"], string> = 
   timeline: "Making its timeline",
   embed: "Adding to search",
 };
-const FAILED_WORDS: Record<NonNullable<AssetCard["failed"]>["step"], string> = {
-  probe: "Could not read the file as video or sound",
-  thumb: "Could not make the picture",
-  wave: "Could not read the sound",
-  proxy: "Could not make the proxy",
-};
 
 /**
  * A clip card's line while it is prepared: the step running on it now (a soft pulse), or, before it has a picture,
@@ -278,7 +272,7 @@ export function ClipStage({ card, className }: { card: Pick<AssetCard, "preparin
     return (
       <span title={card.failed.error} className={cn("flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400", className)}>
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
-        {FAILED_WORDS[card.failed.step]}
+        {failedWords(card.failed.step, card.failed.error)}
       </span>
     );
   }

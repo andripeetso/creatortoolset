@@ -574,3 +574,17 @@ describe("G4: a lease follows a transfer's progress, and a box short of disk or 
     expect(mine?.job.kind).toBe("wave");
   });
 });
+
+describe("a photo goes only to a computer that reads its card picture with no seek", () => {
+  it("an older worker (no stills) is never handed it; one with the fix is", async () => {
+    d.exec("UPDATE jobs SET state = 'done' WHERE state IN ('queued', 'running')"); // what the tests above left
+    const r = await send("lib_p", camera("tiny-still.mp4", "320x240"));
+    expect(jobs(r.versionId)).toEqual(["send:queued"]);
+    // a photo on this Mac, as a folder listing files it (a proxies library takes no upload of one)
+    d.prepare("UPDATE assets SET kind = 'image' WHERE current_version_id = ?").run(r.versionId);
+    expect((await claim()).lib).toBeUndefined();
+    const { lib } = await claimAs(mac.token, { machine: MAC, stills: true });
+    expect(lib?.job.versionId).toBe(r.versionId);
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ?").run(r.versionId);
+  });
+});

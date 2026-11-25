@@ -14,7 +14,7 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { libraryMade, makeMissing, stopQueued, retryFailed } from "./made";
+import { libraryMade, makeMissing, retryFailed, retryUnreadable, stopQueued, unreadableOf } from "./made";
 import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
@@ -1237,6 +1237,16 @@ libraryApp.post("/:id/stop", (c) => {
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
   return c.json({ files: MADE_KINDS.filter((k) => !k.auto && !k.ready).reduce((n, k) => n + stopQueued(libraryId, k.kind, user.username), 0) });
+});
+
+// GET /api/library/:id/unreadable → { items }: Library status's Unreadable files, each with why; POST …/retry queues them again
+libraryApp.get("/:id/unreadable", (c) => {
+  if (!libraryRole(c.get("user").username, c.req.param("id"))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json({ items: unreadableOf(c.req.param("id")) });
+});
+libraryApp.post("/:id/unreadable/retry", (c) => {
+  if (!libraryRole(c.get("user").username, c.req.param("id"))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  return c.json({ files: retryUnreadable(c.req.param("id")) });
 });
 
 // POST /api/library/:id/retry/:kind → { files }: the step's failed jobs queued again (the Status view's Retry)

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity } from "lucide-react";
-import type { LibraryMade, LibraryStatus, LibrarySummary, WatchStatus } from "@contracts/library";
+import { failedWords, type LibraryMade, type LibraryStatus, type LibrarySummary, type LibraryUnreadable, type WatchStatus } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Card, ErrorRow, LoadingRow, Row, Section, Status } from "@/components/settings/ui";
 import { hiddenLine, leftOutLine } from "@/components/LibraryProcessing";
-import { getMade, getStatus } from "@/lib/library";
+import { getMade, getStatus, getUnreadable, retryUnreadable } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { healthOf, Made } from "./settings/Made";
 
@@ -50,19 +50,19 @@ export function LibraryHealthButton({ library, open, onOpen }: { library: Librar
  * and which computer makes it, Retry and Make for the missing (the same list as Settings → Media Library, whose
  * switches `onSettings` opens). ✕, Esc and a click outside close it; the library stays as it was underneath.
  */
-export function LibraryStatusDialog({ library, watch, onClose, onSettings }: { library: LibrarySummary; watch: WatchStatus | null; onClose: () => void; onSettings?: () => void }) {
+export function LibraryStatusDialog({ library, watch, onClose, onSettings, onOpenClip }: { library: LibrarySummary; watch: WatchStatus | null; onClose: () => void; onSettings?: () => void; onOpenClip?: (id: string) => void }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogTitle>Library status</DialogTitle>
         <DialogDescription className="sr-only">What the library has made for its files, and what waits</DialogDescription>
-        <LibraryHealth library={library} watch={watch} onSettings={onSettings} />
+        <LibraryHealth library={library} watch={watch} onSettings={onSettings} onOpenClip={onOpenClip} />
       </DialogContent>
     </Dialog>
   );
 }
 
-function LibraryHealth({ library, watch, onSettings }: { library: LibrarySummary; watch: WatchStatus | null; onSettings?: () => void }) {
+function LibraryHealth({ library, watch, onSettings, onOpenClip }: { library: LibrarySummary; watch: WatchStatus | null; onSettings?: () => void; onOpenClip?: (id: string) => void }) {
   const [s, setS] = useState<LibraryStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
@@ -92,7 +92,7 @@ function LibraryHealth({ library, watch, onSettings }: { library: LibrarySummary
               <Row title="Indexed" description={watch?.folders.length ? `${files(s.clips)} · ${n(found)} found in folders` : files(s.clips)} />
               {adding > 0 && <Row title="Still to add" description={files(adding)} />}
               {!!watch?.missing && <Row title="Missing here" status={<Status tone="attention">{`${files(watch.missing)} not found in their folders`}</Status>} />}
-              {s.unreadable > 0 && <Row title="Unreadable" status={<Status tone="broken">{`${files(s.unreadable)} could not be read as video or sound`}</Status>} />}
+              {s.unreadable > 0 && <Unreadable library={library} count={s.unreadable} onRetried={() => void load()} onOpenClip={onOpenClip} />}
               {s.leftOut?.map((x) => <Row key={x.computer} title="Trash" description={leftOutLine(x)} />)}
               {s.hidden?.map((x) => <Row key={`h-${x.computer}`} title="Hidden" description={hiddenLine(x)} />)}
             </>
@@ -101,5 +101,69 @@ function LibraryHealth({ library, watch, onSettings }: { library: LibrarySummary
       </Section>
       {!library.readOnly && <Made library={library} onSettings={onSettings} />}
     </div>
+  );
+}
+
+/**
+ * The files that failed, opened from their row: each by name with what failed (the tool's own error on hover), a click
+ * opens its clip, and Retry queues every failed step of them again (after an update, or with the disk connected).
+ */
+function Unreadable({ library, count, onRetried, onOpenClip }: { library: LibrarySummary; count: number; onRetried: () => void; onOpenClip?: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<LibraryUnreadable[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const load = useCallback(() => {
+    setError(null);
+    getUnreadable(library.id).then(setItems, () => setError("Could not load the files"));
+  }, [library.id]);
+  useEffect(() => {
+    if (open && !items) load();
+  }, [open, items, load]);
+  const retry = () => {
+    setRetrying(true);
+    retryUnreadable(library.id).then(
+      () => {
+        setItems(null);
+        setOpen(false);
+        onRetried();
+      },
+      () => setError("Could not retry the files"),
+    ).finally(() => setRetrying(false));
+  };
+  return (
+    <Row
+      title="Unreadable"
+      status={<Status tone="broken">{`${files(count)} could not be prepared`}</Status>}
+      control={
+        <div className="flex gap-2">
+          {!library.readOnly && (
+            <Button size="sm" variant="outline" disabled={retrying} onClick={retry}>
+              Retry
+            </Button>
+          )}
+          <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+            {open ? "Hide" : "Show"}
+          </Button>
+        </div>
+      }
+    >
+      {open && (
+        <div className="mt-2 max-h-72 overflow-y-auto rounded-md border border-border">
+          {error && <ErrorRow title={error} retry={load} />}
+          {!items && !error && <LoadingRow />}
+          {items?.map((f) => (
+            <div key={f.id} className="flex items-baseline justify-between gap-3 border-b border-border px-3 py-1.5 text-sm last:border-b-0">
+              <button type="button" className="min-w-0 truncate text-left hover:underline disabled:no-underline" disabled={!onOpenClip} onClick={() => onOpenClip?.(f.id)}>
+                {f.title}
+              </button>
+              <span title={f.error || undefined} className="shrink-0 text-xs text-red-600 dark:text-red-400">
+                {failedWords(f.step, f.error)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Row>
   );
 }

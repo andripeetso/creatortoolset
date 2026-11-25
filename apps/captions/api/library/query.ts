@@ -139,7 +139,7 @@ export const CARD = `a.id AS id, a.library_id AS library_id, a.kind AS kind, a.t
   (SELECT j.kind || char(31) || j.state FROM jobs j WHERE j.version_id = v.id AND j.state IN ('queued', 'running')
     ORDER BY j.state = 'running' DESC, instr('probe thumb wave proxy sprite fingerprint transcribe describe look embed', j.kind) LIMIT 1) AS preparing,
   CASE WHEN v.state = 'failed' THEN (SELECT j.kind || char(31) || IFNULL(j.error, '') FROM jobs j WHERE j.version_id = v.id AND j.state = 'failed'
-    AND j.kind IN ('probe', 'thumb', 'wave', 'proxy') LIMIT 1) END AS failed`;
+    AND j.kind IN ('probe', 'thumb', 'wave', 'proxy', 'send') ORDER BY j.id DESC LIMIT 1) END AS failed`;
 
 export interface CardRow {
   id: string;

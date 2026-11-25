@@ -136,6 +136,8 @@ workApp.post("/claim", async (c) => {
     ...(libraryKinds.length ? { libraryKinds } : {}),
     ...(pictures && !libraryOnly ? { pictures: true as const } : {}),
     ...(libraryOnly ? { libraryOnly: true as const } : {}),
+    // it reads a photo's card picture with no seek (media/thumb.ts): one without it is never handed a photo (library-package.ts)
+    ...(library && b?.stills === true ? { stills: true as const } : {}),
     ...(tasks.length && !libraryOnly ? { tasks } : {}),
     // it declares each proxy's SHA-256 before sending it (library/upload-gate.ts provesProxies)
     ...(library && b?.proof === true ? { proof: true as const } : {}),

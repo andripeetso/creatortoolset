@@ -17,6 +17,7 @@ import type {
   LibraryStorage,
   LibraryStorageInput,
   LibrarySummary,
+  LibraryUnreadable,
   LibraryUpload,
   Piece,
   SearchHit,
@@ -99,6 +100,8 @@ export const getEstimate = (libraryId: string, d: Drop) =>
 
 /** The processing still to do in the library. */
 export const getStatus = (libraryId: string) => fetch(`/api/library/${libraryId}/status`).then((r) => json<LibraryStatus>(r));
+export const getUnreadable = (libraryId: string) => fetch(`/api/library/${libraryId}/unreadable`).then((r) => json<{ items: LibraryUnreadable[] }>(r)).then((r) => r.items);
+export const retryUnreadable = (libraryId: string) => fetch(`/api/library/${libraryId}/unreadable/retry`, { method: "POST" }).then((r) => json<{ files: number }>(r));
 export const getProgress = (libraryId: string) => fetch(`/api/library/${libraryId}/progress`).then((r) => json<LibraryProgress>(r));
 
 export const createLibrary = (name: string) =>

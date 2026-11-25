@@ -103,6 +103,19 @@ describe("what's made", () => {
     expect(retryEmptyPictures()).toBe(0);
   });
 
+  it("Library status lists each unreadable file with the step that failed, and Retry queues it again", async () => {
+    const broken = clip("ast-broken", { kind: "image" });
+    d.prepare("UPDATE asset_versions SET state = 'failed' WHERE id = ?").run(broken);
+    const empty = "ENOENT: no such file or directory, rename '/x/thumb.jpg.part.jpg' -> '/x/thumb.jpg'";
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error) VALUES ('lib_m', ?, 'send', 'failed', 'local', ?)").run(broken, empty);
+    const list = (await (await app.request("/api/library/lib_m/unreadable")).json()) as { items: { id: string; step: string; error: string }[] };
+    expect(list.items).toEqual([{ id: "ast-broken", title: "ast-broken", step: "send", error: empty }]);
+    expect(await (await app.request("/api/library/lib_m/unreadable/retry", { method: "POST" })).json()).toEqual({ files: 1 });
+    expect(job(broken, "send")?.state).toBe("queued");
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ?").run(broken);
+    d.prepare("UPDATE asset_versions SET state = 'ready' WHERE id = ?").run(broken);
+  });
+
   it("turning a switch on makes for new files only, never the ones already here", async () => {
     const patch = (settings: Record<string, unknown>) =>
       app.request("/api/library/lib_m", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings }) });

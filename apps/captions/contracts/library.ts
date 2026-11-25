@@ -45,7 +45,7 @@ export interface AssetCard {
   /** while the clip is being prepared: the step it is on (running) or waits for next (LibraryProcessing.tsx ClipStage draws it) */
   preparing?: { step: LibraryStage["kind"] | "probe" | "wave" | "sprite"; running: boolean };
   /** a `failed` clip: the step that failed and the tool's own error (ClipStage says it in words) */
-  failed?: { step: "probe" | "thumb" | "wave" | "proxy"; error: string };
+  failed?: { step: "probe" | "thumb" | "wave" | "proxy" | "send"; error: string };
   /** A-roll (someone talks to the camera) or B-roll (the rest), as the library sorted it (api/library/roll.ts); videos only, once sorted */
   roll?: "a" | "b";
   /** finished work (a Review video, a version of a Finals piece, a saved export): it never has a roll */
@@ -1078,3 +1078,24 @@ export function actionCard(a: ActionAsk): ActionNeeded {
 }
 export const ACTION_NEEDED = "action_needed";
 export const LIBRARY_SETUP_DONE = "library-setup-done";
+
+/** A file Library status lists as unreadable (GET /api/library/:id/unreadable): its clip, the step that failed and why. */
+export type LibraryUnreadable = { id: string; title: string; step: string; error: string };
+
+/**
+ * What a failed step says to a person, from the step and the tool's own error (kept for hover): the cause where the error
+ * names one, else what the step could not do.
+ */
+export function failedWords(step: string, error: string): string {
+  if (/\.part\.jpg/.test(error)) return "Could not make the picture";
+  const refused = /refused the (\w+) \((\d+)\)/.exec(error);
+  if (refused?.[2] === "413") return `${refused[1] === "proxy" ? "Proxy" : "File"} too large for the server`;
+  if (refused) return `Could not send the ${refused[1]}`;
+  if (/^Could not download/.test(error)) return "Could not download the file";
+  if (/not a media file/.test(error)) return "Not a video, sound or photo";
+  if (step === "probe") return "Could not read the file as video or sound";
+  if (step === "thumb") return "Could not make the picture";
+  if (step === "wave") return "Could not read the sound";
+  if (step === "proxy") return "Could not make the proxy";
+  return "Could not prepare the file";
+}

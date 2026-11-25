@@ -1,4 +1,4 @@
-import { MADE_KINDS, SOUNDS, WATCH_MODELS, type LibraryMade, type MadeKind } from "../../contracts/library";
+import { MADE_KINDS, SOUNDS, WATCH_MODELS, type LibraryMade, type LibraryUnreadable, type MadeKind } from "../../contracts/library";
 import { DRIVERS } from "../../contracts/providers";
 import { aiFor, anthropicParams, onApiKey } from "../ai-complete";
 import { PICTURE_MODEL } from "../lib/device-picture";
@@ -345,4 +345,28 @@ export function retryEmptyPictures(): number {
     .all(STILLS_FIXED_AT) as { library_id: string; version_id: string; kind: string; actor: string | null }[];
   for (const r of rows) enqueueJob(db, r.library_id, r.version_id, r.kind, r.actor);
   return rows.length;
+}
+
+// the files Library status counts as unreadable (estimate.ts libraryStatus): a live clip whose current version failed
+const UNREADABLE = `FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+  WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.state = 'failed'`;
+
+/** Library status's Unreadable list: each file with the step that failed last and its error, by title. */
+export function unreadableOf(libraryId: string, limit = 500): LibraryUnreadable[] {
+  return libraryDb()
+    .prepare(
+      `SELECT a.id, a.title, IFNULL(j.kind, 'probe') AS step, IFNULL(j.error, '') AS error ${UNREADABLE.replace("WHERE", `LEFT JOIN jobs j ON j.id = (SELECT id FROM jobs WHERE version_id = v.id AND state = 'failed' ORDER BY id DESC LIMIT 1) WHERE`)}
+       ORDER BY a.title LIMIT ?`,
+    )
+    .all(libraryId, limit) as LibraryUnreadable[];
+}
+
+/** Retry on Library status's Unreadable: every failed step of those files queued again; the file is ready once they land. */
+export function retryUnreadable(libraryId: string): number {
+  const db = libraryDb();
+  const rows = db
+    .prepare(`SELECT j.version_id, j.kind, j.actor FROM jobs j WHERE j.state = 'failed' AND j.version_id IN (SELECT v.id ${UNREADABLE})`)
+    .all(libraryId) as { version_id: string; kind: string; actor: string | null }[];
+  for (const r of rows) enqueueJob(db, libraryId, r.version_id, r.kind, r.actor);
+  return new Set(rows.map((r) => r.version_id)).size;
 }

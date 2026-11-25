@@ -291,6 +291,8 @@ export async function claimLibraryForComputer(d: Device, now = Date.now()): Prom
   for (const job of queued) {
     const r = waitsForWords(job) ? undefined : rowOf(job.version_id);
     if (!r) continue;
+    // a worker from before the photo fix seeks into a one-frame file, writes no card picture and fails the photo three times
+    if (r.kind === "image" && !d.work?.stills) continue;
     if (!("take" in decide(d, job, r, peers, folders, balance, now))) continue;
     if (!(await stillSees(job, r))) {
       failUnseen(job);

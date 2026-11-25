@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ANALYSIS_LEVELS, applyS3Preset, flagsOf, hostsOriginals, hostsProxies, levelOf, organizeOf, S3_PRESETS, uploadFrom, type LibraryUpload } from "./library";
+import { ANALYSIS_LEVELS, applyS3Preset, failedWords, flagsOf, hostsOriginals, hostsProxies, levelOf, organizeOf, S3_PRESETS, uploadFrom, type LibraryUpload } from "./library";
 
 describe("S3 presets", () => {
   const form = { endpoint: "", region: "", bucket: "tiny-acrobatics-footage", pathStyle: false, accessKey: "k", secretKey: "s" };
@@ -57,5 +57,15 @@ describe("Hosted media and Organization helpers", () => {
   it('organizeOf reads a stored "default" as own', () => {
     expect(organizeOf("default")).toBe("own");
     expect([organizeOf("ai"), organizeOf("own"), organizeOf(undefined)]).toEqual(["ai", "own", undefined]);
+  });
+});
+
+describe("failedWords", () => {
+  it("names the cause the tool's error gives, else what the step could not do", () => {
+    expect(failedWords("send", "ENOENT: no such file or directory, rename '/w/thumb.jpg.part.jpg' -> '/w/thumb.jpg'")).toBe("Could not make the picture");
+    expect(failedWords("send", "The server refused the proxy (413)")).toBe("Proxy too large for the server");
+    expect(failedWords("send", "The server refused the wave (500)")).toBe("Could not send the wave");
+    expect(failedWords("probe", "moov atom not found")).toBe("Could not read the file as video or sound");
+    expect(failedWords("send", "")).toBe("Could not prepare the file");
   });
 });
