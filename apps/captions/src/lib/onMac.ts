@@ -298,7 +298,10 @@ export async function repairPictures(libraryId: string, signal?: AbortSignal): P
     if (!r?.ok) break;
     const { versions } = (await r.json()) as { versions: { versionId: string; path: string }[] };
     if (!versions.length) break;
-    after = versions[versions.length - 1].versionId;
+    // a server that ignores `after` (older than this page) hands back the same page: stop, never loop on it
+    const next = versions[versions.length - 1].versionId;
+    if (next === after) break;
+    after = next;
     let landed = 0;
     for (const v of versions) {
       signal?.throwIfAborted();
@@ -331,7 +334,10 @@ export async function repairStrips(libraryId: string, signal?: AbortSignal): Pro
     if (!r?.ok) break;
     const { versions } = (await r.json()) as { versions: { versionId: string; path: string; thumb?: true }[] };
     if (!versions.length) break;
-    after = versions[versions.length - 1].versionId;
+    // a server that ignores `after` (older than this page) hands back the same page: stop, never loop on it
+    const next = versions[versions.length - 1].versionId;
+    if (next === after) break;
+    after = next;
     let landed = 0;
     for (const v of versions) {
       signal?.throwIfAborted();
