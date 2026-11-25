@@ -42,14 +42,13 @@ export function overlapOf(query: string[], theirs: string[]): number {
 export interface SimilarResult {
   matches: SimilarMatch[];
   checked: number; // versions compared
-  pending: number; // versions still without a fingerprint
 }
 
 /** `phashes` (one per second) against every fingerprinted current version in the caller's libraries (`libraries`: only those). */
 export function similarTo(username: string, phashes: string[], exclude?: string, libraries?: string[]): SimilarResult {
   const account = findUser(username);
   // as libraryRole: the Media Library switched off for the account means nothing of it, here too
-  if (!phashes.length || (account && !mayUse(account, "media"))) return { matches: [], checked: 0, pending: 0 };
+  if (!phashes.length || (account && !mayUse(account, "media"))) return { matches: [], checked: 0 };
   const d = libraryDb();
   const rows = (
     d
@@ -62,16 +61,12 @@ export function similarTo(username: string, phashes: string[], exclude?: string,
     .all(homeOf(username)) as { asset_id: string; library_id: string; title: string; version_id: string; inline: string | null }[]
   ).filter((r) => !libraries || libraries.includes(r.library_id));
   const matches: SimilarMatch[] = [];
-  let pending = 0;
   let checked = 0;
   // ponytail: every second against every second, O(clip × library); a BK-tree or LSH index when libraries reach thousands of hours
   for (const r of rows) {
     if (r.version_id === exclude) continue;
-    if (!r.inline) {
-      // counted, never queued: a search must not start work on the whole library (What's made → Make does that)
-      pending++;
-      continue;
-    }
+    // never queued here: a search must not start work on the whole library (What's made → Make does that)
+    if (!r.inline) continue;
     const theirs = (JSON.parse(r.inline) as Fingerprint).phash;
     if (!theirs.length) continue;
     checked++;
@@ -81,7 +76,7 @@ export function similarTo(username: string, phashes: string[], exclude?: string,
     }
   }
   matches.sort((a, b) => b.overlap - a.overlap);
-  return { matches: matches.slice(0, TOP), checked, pending };
+  return { matches: matches.slice(0, TOP), checked };
 }
 
 const plain = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");

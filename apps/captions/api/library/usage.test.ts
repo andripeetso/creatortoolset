@@ -293,6 +293,10 @@ describe("library storage choice", () => {
     // the Make proxies switch off does not drop them
     await call("owner-a", "PATCH", "/api/library/lib_p", { settings: { proxy: false } });
     expect(d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy' AND state = 'queued'").get()).toEqual({ n: 3 });
+    // saving the same place again queues nothing, even with every video still without a proxy (it queued them all before)
+    d.prepare("DELETE FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy'").run();
+    expect((await call("owner-a", "PUT", "/api/library/lib_p/storage", { ...own, proxies: true })).status).toBe(200);
+    expect(d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE library_id = 'lib_p' AND kind = 'proxy'").get()).toEqual({ n: 0 });
 
     // the worker's proxies land in the bucket and are metered; the originals stay on this disk
     for (const v of ["v_4k", "v_hd"]) {

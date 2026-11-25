@@ -49,8 +49,7 @@ describe("similar", () => {
     expect(r.matches.map((m) => m.assetId)).toEqual(["copy"]);
     expect(r.matches[0]!.overlap).toBe(1);
     expect(r.checked).toBe(2); // copy and other; not the clip itself
-    // one without a fingerprint is counted and never queued: a search starts no work
-    expect(r.pending).toBe(1);
+    // one without a fingerprint is skipped and never queued: a search starts no work
     expect(libraryDb().prepare("SELECT state FROM jobs WHERE version_id = 'v-fresh' AND kind = 'fingerprint'").get()).toBeUndefined();
   });
 
