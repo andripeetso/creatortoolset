@@ -167,13 +167,12 @@ describe("Settings → Media Library, the owner's page", () => {
         expect(host!.querySelector('input[name="proxy-quality"]')).toBeNull();
   });
 
-  it("while Hosted media hosts proxies, Generate proxies is on and disabled with its status", async () => {
+  it("while Hosted media hosts proxies, Generate proxies is its own switch: off stays off and can be turned on (owner, 2026-11-25)", async () => {
     const hosted: LibrarySummary = { ...library, settings: { ...SETTINGS, proxy: false, upload: "proxies" } };
     await render(<LibrarySettingsBody library={hosted} watch={watch} onChange={() => {}} onError={() => {}} />);
     const gen = toggle(LIBRARY_WORDS.generateProxies.label);
-    expect(gen.getAttribute("aria-checked")).toBe("true");
-    expect(gen.disabled).toBe(true);
-    expect(bodyText()).toContain("On while proxies are hosted");
+    expect(gen.getAttribute("aria-checked")).toBe("false");
+    expect(gen.disabled).toBe(false);
   });
 
   // replaced (Andri 11-19): Upload to server is one pick-one, as in setup; on This Mac it is a row saying there is no server

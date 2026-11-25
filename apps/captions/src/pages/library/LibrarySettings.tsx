@@ -1,4 +1,4 @@
-import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, hostsProxies, levelOf, makesProxies, organizeOf, proxyQualityOf, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, levelOf, makesProxies, organizeOf, proxyQualityOf, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
@@ -120,11 +120,10 @@ function Organization({ settings, save }: { settings: Settings; save: (s: Partia
 /**
  * Blur faces (with Face Blur on in this workspace, or to turn an old one off): the blurred copies are the proxies, so
  * while it is on there is no Generate proxies or quality, and turning it on turns plain proxies off. Else Generate
- * proxies (forced on while Hosted media hosts proxies) and the quality while on.
+ * proxies, its own switch (hosting proxies uploads the ones made, never forces them), and the quality while on.
  */
 function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (s: Partial<Settings> & { blurExisting?: boolean }) => Promise<unknown>; faceBlur: boolean }) {
   const s = library.settings;
-  const hosted = hostsProxies(s.upload);
   const on = makesProxies(s);
   const gen = LIBRARY_WORDS.generateProxies;
   const blur = LIBRARY_WORDS.blurFaces;
@@ -151,8 +150,7 @@ function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (
         <Row
           title={gen.label}
           tip={gen.tip}
-          status={hosted ? <Status>{LIBRARY_WORDS.proxiesHostedOn}</Status> : undefined}
-          control={<Switch aria-label={gen.label} checked={on} disabled={hosted} onCheckedChange={(v) => void save({ proxy: v })} />}
+          control={<Switch aria-label={gen.label} checked={on} onCheckedChange={(v) => void save({ proxy: v })} />}
         />
       )}
       {on && (

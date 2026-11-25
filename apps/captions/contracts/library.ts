@@ -262,8 +262,8 @@ export type LibraryUpload = "none" | "originals" | "proxies" | "all";
 export const LIBRARY_UPLOADS: readonly LibraryUpload[] = ["none", "originals", "proxies", "all"];
 export const hostsOriginals = (u: LibraryUpload | null | undefined): boolean => u === "originals" || u === "all";
 export const hostsProxies = (u: LibraryUpload | null | undefined): boolean => u === "proxies" || u === "all";
-/** Plain proxies are made: Generate proxies, or forced on while the server hosts proxies; never under Blur faces (the blurred render is the proxy). */
-export const makesProxies = (s: Pick<LibrarySettings, "proxy" | "upload" | "blurFaces">): boolean => !s.blurFaces && (s.proxy || hostsProxies(s.upload));
+/** Plain proxies are made: Generate proxies on, never under Blur faces (the blurred render is the proxy). Hosting proxies never forces them. */
+export const makesProxies = (s: Pick<LibrarySettings, "proxy" | "blurFaces">): boolean => !s.blurFaces && s.proxy;
 /** Under Blur faces Upload is Off or Blurred, stored as "none" and "proxies" (the blurred render is the proxy). */
 export const BLURRED_UPLOADS: readonly LibraryUpload[] = ["none", "proxies"];
 /** What a new file sends: under Blur faces nothing, since a file is not blurred when it is added. */
@@ -954,7 +954,6 @@ export const LIBRARY_WORDS = {
   dropMedia: "Drop media here",
   chooseFiles: "Choose files",
   noClipsYet: "No clips yet",
-  proxiesHostedOn: "On while proxies are hosted",
   proxiesBlurred: "Blurred copies used as proxies",
   blurExisting: { title: "Blur the files already in the library?", yes: "Blur all files", no: "New files only" },
   recommended: "Recommended",

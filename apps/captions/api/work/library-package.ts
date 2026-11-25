@@ -419,10 +419,15 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
       ? {
           // older workers read only "proxies" | "all": Originals only is sent as "all" with no proxy (UNIFIED-PRD §4.2, E9)
           upload: hostsProxies(upload) && !hostsOriginals(upload) ? "proxies" : "all",
-          // a video sent to a library that keeps only proxies gets one whatever the proxy switch says (worker.ts afterProbe)
-          // Hosted proxies: every video is made here and sent, and the switch reads on (UNIFIED-PRD §4.1, §4.2)
-          // the add's own answer (db.ts fileProxy): Skip processing makes none, Generate proxies one
-          proxy: fileProxy(r.id) === "no" ? { cloud: false, on: false, quality: libraryProxyQuality(r.library_id) } : { cloud: hostsProxies(upload), on: hostsProxies(upload) || fileProxy(r.id) === "yes" || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")), quality: libraryProxyQuality(r.library_id) },
+          // the add's own answer (db.ts fileProxy): Skip processing makes none, Generate proxies one; else the switch.
+          // Hosted proxies with it on: every video is made here and sent (UNIFIED-PRD §4.1, §4.2); hosting alone makes
+          // none (owner, 2026-11-25), and with no proxy nothing is sent (upload-gate.ts refuses the original)
+          proxy: (() => {
+            const quality = libraryProxyQuality(r.library_id);
+            if (fileProxy(r.id) === "no") return { cloud: false, on: false, quality };
+            const on = fileProxy(r.id) === "yes" || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy"));
+            return { cloud: hostsProxies(upload) && on, on, quality };
+          })(),
           music: !!libraryDb()
             .prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map(() => "?").join(", ")})`)
             .get(r.id, ...Object.values(SOUNDS).map((s) => s.tag)),

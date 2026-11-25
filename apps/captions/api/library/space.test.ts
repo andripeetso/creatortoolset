@@ -83,11 +83,13 @@ describe("the library's space", () => {
     expect((d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE version_id = 'v1' AND kind = 'proxy'").get() as { n: number }).n).toBe(1);
   });
 
-  it("Hosted proxies: the switch stays on whatever it is set to, and the clips without a proxy get one", async () => {
+  it("Hosted proxies: off makes none (hosting never forces them), on makes one for each clip without a proxy", async () => {
     d.prepare("DELETE FROM jobs").run();
     const set = (proxy: boolean) =>
       app.request("/api/library/lib_s", { method: "PATCH", headers: { "x-user": "owner-s", "content-type": "application/json" }, body: JSON.stringify({ settings: { proxy } }) });
-    expect(((await (await set(false)).json()) as { settings: { proxy: boolean } }).settings.proxy).toBe(true); // UNIFIED-PRD §3.1
+    expect(((await (await set(false)).json()) as { settings: { proxy: boolean } }).settings.proxy).toBe(false);
+    expect(d.prepare("SELECT version_id FROM jobs WHERE kind = 'proxy'").all()).toEqual([]);
+    expect(((await (await set(true)).json()) as { settings: { proxy: boolean } }).settings.proxy).toBe(true);
     expect(d.prepare("SELECT version_id, state FROM jobs WHERE kind = 'proxy'").all()).toEqual([{ version_id: "v1", state: "queued" }]); // v2 has its proxy
   });
 

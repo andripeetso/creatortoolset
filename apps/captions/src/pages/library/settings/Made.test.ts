@@ -34,10 +34,10 @@ describe("What's made: a kind's state at a glance", () => {
 describe("What's made: proxies count only while plain proxies are made", () => {
   const lib = (settings: Partial<LibrarySummary["settings"]>) => ({ settings: { proxy: true, upload: "none", ...settings } }) as unknown as LibrarySummary;
   const stopped = [m({ kind: "proxy", have: 747, stopped: 904 })];
-  it("off under Blur faces (the blurred render is the proxy), even with proxies hosted; on while hosted or switched on", () => {
+  it("count only with Generate proxies on: never under Blur faces (the blurred render is the proxy), and hosting never turns them on", () => {
     expect(healthOf(stopped, lib({ blurFaces: true, upload: "proxies", proxy: false }))).toBe("done");
     expect(healthOf(stopped, lib({ proxy: false }))).toBe("done");
-    expect(healthOf(stopped, lib({ proxy: false, upload: "all" }))).toBe("waiting");
+    expect(healthOf(stopped, lib({ proxy: false, upload: "all" }))).toBe("done");
     expect(healthOf(stopped, lib({}))).toBe("waiting");
   });
 });

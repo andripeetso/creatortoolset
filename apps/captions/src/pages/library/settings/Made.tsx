@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { AlertCircle, Check, CircleOff, Clock } from "lucide-react";
-import { hostsProxies, LIBRARY_WORDS, MADE_KINDS, makesProxies, type LibraryMade, type LibrarySettings, type LibrarySummary } from "@contracts/library";
+import { LIBRARY_WORDS, MADE_KINDS, makesProxies, type LibraryMade, type LibrarySettings, type LibrarySummary } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Card, ErrorRow, LoadingRow, Row, Section } from "@/components/settings/ui";
@@ -145,9 +145,11 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
           const k = MADE_KINDS.find((x) => x.kind === m.kind);
           if (!k) return null;
           const on = onFor(k, library);
-          const state = stateOf(m, on, k.auto);
+          // under Blur faces the blurred copies are the proxies (their own step in Preparing), so the row says that, not Off
+          const blurred = k.kind === "proxy" && !!library.settings.blurFaces;
+          const state = blurred ? { tone: "off" as const, text: LIBRARY_WORDS.proxiesBlurred } : stateOf(m, on, k.auto);
           const total = m.have + m.missing + m.queued + (m.failed ?? 0) + (m.stopped ?? 0);
-          const rest = total && state.tone !== "done" ? `${n(m.have)} of ${n(total)} made` : "";
+          const rest = total && state.tone !== "done" && !blurred ? `${n(m.have)} of ${n(total)} made` : "";
           const runs = engineLine(m);
           const why = missingWhy(m);
           // off: stopped or failed jobs are not wanted (no Retry); proxies off are not made at all (no Make)
@@ -173,8 +175,6 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
                     <Switch
                       aria-label={`${k.label} for new files`}
                       checked={on}
-                      // Hosted proxies keep the proxy switch on (the Proxy workflow section says why)
-                      disabled={k.setting === "proxy" && hostsProxies(library.settings.upload)}
                       onCheckedChange={(v) => void save({ [k.setting!]: v })}
                     />
                   </label>

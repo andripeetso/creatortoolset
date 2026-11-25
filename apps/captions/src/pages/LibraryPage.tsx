@@ -456,7 +456,7 @@ export default function LibraryPage() {
     const libraryBlurs = !!library?.settings.blurFaces;
     const blurs = libraryBlurs && openFolder?.blur !== "no";
     const blurOption = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
-    const proxies = !!library?.settings.proxy || hostsProxies(upload.current);
+    const proxies = !!library?.settings.proxy;
     const process: Processing = blurs ? "blur" : proxies ? "proxies" : "skip";
     // blurred with no way out of it: the blurred version is the proxy, nothing else to choose
     const processes: Processing[] = blurs && !blurOption ? [] : blurOption ? ["proxies", "blur", "skip"] : ["proxies", "skip"];

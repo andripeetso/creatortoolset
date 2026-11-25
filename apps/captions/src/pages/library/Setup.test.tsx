@@ -468,21 +468,21 @@ describe("Media Library setup: the scratch folder is made before its row", () =>
 });
 
 describe("Media Library setup: proxies, analysis and organization details", () => {
-  it("Hosted media's Proxies holds the proxy switch on and disabled, and a Back trip cannot switch it off", async () => {
+  it("Hosted media's Proxies never holds Generate proxies on: a Back trip switches it off and it saves off (owner, 2026-11-25)", async () => {
     h.mac = false;
     await mount("server");
     for (let i = 0; i < 4; i++) await next(); // to Hosted media
     await toggle("Proxies");
     await press(button("Back"));
     await press(button("Back")); // proxy workflow
-    const proxy = document.querySelector<HTMLButtonElement>('button[aria-label="Generate proxies for imported media"]')!;
-    expect(proxy.getAttribute("aria-checked")).toBe("true");
-    expect(proxy.disabled).toBe(true);
-    expect(document.body.textContent).toContain("On while proxies are hosted");
+    const proxy = () => document.querySelector<HTMLButtonElement>('button[aria-label="Generate proxies for imported media"]')!;
+    expect(proxy().disabled).toBe(false);
+    await press(proxy());
+    expect(proxy().getAttribute("aria-checked")).toBe("false");
     await press(button("Continue"));
     await press(button("Continue")); // to hosted, where Done is
     await press(button("Done"));
-    expect(h.updates[0]!.settings).toMatchObject({ upload: "proxies", proxy: true });
+    expect(h.updates[0]!.settings).toMatchObject({ upload: "proxies", proxy: false });
   });
 
   // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)

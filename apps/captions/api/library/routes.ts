@@ -128,12 +128,14 @@ const EXT: Record<string, string> = { "video/mp4": ".mp4", "video/quicktime": ".
 
 /**
  * The library's read videos (or `versionId` alone) that want a proxy (media/proxy.ts wantsProxy) and have none, nor one
- * on its way. `hosted`: the switch was just turned on under Hosted proxies, so every video wants one (UNIFIED-PRD §4.1).
+ * on its way. `hosted`: the server hosts proxies, so with Generate proxies on every video wants one (UNIFIED-PRD §4.1);
+ * hosting never makes proxies with the switch off (owner, 2026-11-25).
  */
 export function unproxied(libraryId: string, versionId?: string, hosted = false): { id: string; created_by: string }[] {
   // a library that keeps only originals gets none (UNIFIED-PRD §4.2)
   const keeps = keepsOnlyOriginals(libraryId);
-  const want = { cloud: !keeps && (proxiesInCloud(libraryId) || hosted), on: librarySetting(libraryId, "proxy") && !keeps };
+  const on = librarySetting(libraryId, "proxy") && !keeps;
+  const want = { cloud: !keeps && (proxiesInCloud(libraryId) || (hosted && on)), on };
   if (!want.cloud && !want.on) return [];
   const rows = db()
     .prepare(
@@ -1222,7 +1224,7 @@ libraryApp.get("/:id/status", (c) => {
 });
 
 // PATCH /api/library/:id { name?, settings?: { describe?, embed?, pictures?, proxy?, upload?, finalsUpload?, organize?, … } } → LibrarySummary;
-// the owner only. Proxies off: the ones still queued are dropped; under Hosted proxies every clip with none gets one.
+// the owner only. Proxies off: the ones still queued are dropped; on under Hosted proxies, every clip with none gets one.
 // A switch turned on makes for new files only (made.ts). organize "ai" files what is in no folder yet (UNIFIED-PRD §4.9); it does not force describe.
 // copyTo and places are read only by the one-time migration (§4.6), so nothing writes them.
 libraryApp.patch("/:id", async (c) => patchLibrary(c, c.req.param("id"), (await c.req.json().catch(() => null)) as { name?: unknown; settings?: Record<string, unknown> } | null));
@@ -1279,16 +1281,16 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     libraryChanged(libraryId);
   }
   if (LIBRARY_UPLOADS.includes(s.finalsUpload as LibraryUpload)) put("finalsUpload", s.finalsUpload);
-  // Hosted proxies: the switch stays on and every video gets a proxy (UNIFIED-PRD §3.1, §4.1), whatever the request says
+  // Generate proxies is its own switch: hosting proxies uploads the ones made and never forces it on (owner, 2026-11-25)
   const hosted = hostsProxies(libraryUpload(libraryId));
-  const proxy = hosted ? true : b?.settings?.proxy;
+  const proxy = b?.settings?.proxy;
   if (typeof proxy === "boolean") put("proxy", proxy);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
   if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')").run(libraryId);
-  // only Hosted proxies backfill (a proxy is all the server keeps then), and only on a save about proxies: one that
-  // turns hosting on or sets the proxy switch. Any other save (Effort, Blur faces, a folder) queues nothing; the switch
-  // alone makes them for new files (made.ts)
-  if (hosted && (!wasHosted || typeof b?.settings?.proxy === "boolean")) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
+  // only Hosted proxies with the switch on backfill (a proxy is all the server keeps then), and only on a save about
+  // proxies: one that turns hosting on or sets the proxy switch. Any other save (Effort, Blur faces, a folder) queues
+  // nothing; the switch alone makes them for new files (made.ts)
+  if (hosted && librarySetting(libraryId, "proxy") && (!wasHosted || typeof proxy === "boolean")) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {

@@ -120,8 +120,6 @@ const MAC_DOWNLOAD = "https://creatortoolset.com/download";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Hosted media's Proxies forces the proxy switch on (SCREENS-COPY §1). */
-const proxiesHosted = (a: Answers): boolean => a.hosted.proxies;
 /** No folder set by its own Change…: the default folders (all three in the Library folder, or beside Source media). */
 const defaultsOf = (a: Answers): boolean => !a.projects && !a.exports && (a.start === "existing" || !a.sources[0]);
 
@@ -354,7 +352,7 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
       doing = "Saving the setup";
       const settings: Partial<LibrarySettings> = {
         organize: a.organize,
-        proxy: a.proxy || proxiesHosted(a),
+        proxy: a.proxy,
         proxyQuality: a.proxyQuality,
         ...flagsOf(a.effort),
         timelineModel: a.watchModel,
@@ -492,16 +490,14 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
     }
 
     if (step === "proxy") {
-      const hosted = proxiesHosted(a);
       return (
         <Card>
           <Row
             title={LIBRARY_WORDS.generateProxies.label}
             tip={LIBRARY_WORDS.generateProxies.tip}
-            status={hosted ? LIBRARY_WORDS.proxiesHostedOn : undefined}
-            control={<Switch aria-label={LIBRARY_WORDS.generateProxies.label} checked={a.proxy || hosted} disabled={hosted} onCheckedChange={(v) => set({ proxy: v })} />}
+            control={<Switch aria-label={LIBRARY_WORDS.generateProxies.label} checked={a.proxy} onCheckedChange={(v) => set({ proxy: v })} />}
           />
-          {(a.proxy || hosted) && (
+          {a.proxy && (
             <Row title={LIBRARY_WORDS.proxyQuality.label} tip={LIBRARY_WORDS.proxyQuality.tip}>
               <div role="radiogroup" aria-label={LIBRARY_WORDS.proxyQuality.label} className="space-y-2">
                 {PROXY_QUALITIES.map((q) => (

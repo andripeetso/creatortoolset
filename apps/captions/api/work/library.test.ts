@@ -48,7 +48,7 @@ app.route("/api/library", libraryApp);
 app.route("/api/devices/relay/work", workApp);
 
 const d = libraryDb();
-for (const [id, upload, proxy] of [["lib_p", "proxies", false], ["lib_all", "all", true], ["lib_phone", "proxies", true], ["lib_none", "none", true]] as const) {
+for (const [id, upload, proxy] of [["lib_p", "proxies", true], ["lib_all", "all", true], ["lib_phone", "proxies", true], ["lib_none", "none", true]] as const) {
   d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'tiny', 'Tiny Acrobatics', 'local', ?, 0)").run(
     id,
     JSON.stringify({ upload, proxy, describe: false, embed: false }),

@@ -122,9 +122,9 @@ describe("the library settings PATCH", () => {
     expect(proxyJobs(hosted)).toBe(1); // Hosted proxies: every video gets one
   });
 
-  it("under Hosted proxies the switch stays on, whatever the request says", async () => {
+  it("under Hosted proxies Generate proxies still turns off: hosting never forces it (owner, 2026-11-25)", async () => {
     await patch("lib_set", { upload: "all", proxy: false });
-    expect(stored("lib_set")).toMatchObject({ upload: "all", proxy: true });
+    expect(stored("lib_set")).toMatchObject({ upload: "all", proxy: false });
   });
 
   it("a proxy place does not backfill an originals-only library", async () => {

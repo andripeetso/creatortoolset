@@ -117,13 +117,17 @@ describe("Analysis effort Off", () => {
 
 describe("a settings save under Hosted proxies", () => {
   const patch = (settings: object) => app.request("/api/library/lib_off", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings }) });
-  it("changing Effort queues no proxy for the clips without one; turning hosting on does", async () => {
+  it("changing Effort queues no proxy for the clips without one; turning hosting on does only with Generate proxies on", async () => {
     const id = await upload("lib_off", "old.mp4");
     await drain(["probe"]);
     d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'proxy'").run(id); // a clip from before, never given a proxy
     await patch(flagsOf("medium"));
     expect(jobs(id)).not.toContain("proxy");
     await patch({ upload: "none" });
+    await patch({ upload: "all" }); // the switch is off: hosting alone makes none (owner, 2026-11-25)
+    expect(jobs(id)).not.toContain("proxy");
+    await patch({ upload: "none", proxy: true });
+    d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'proxy'").run(id);
     await patch({ upload: "all" });
     expect(jobs(id)).toContain("proxy");
   });
