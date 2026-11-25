@@ -127,6 +127,19 @@ final class FaceBlurAskTests: XCTestCase {
 }
 
 final class FaceBlurEngineTests: XCTestCase {
+    /// A cover fades in over its lead hold and out over its tail hold, and is whole while the face is tracked.
+    func testCoverFadesInAndOut() {
+        let r = NormRect(cx: 0.5, cy: 0.5, w: 0.1, h: 0.1)
+        let cover = Cover(path: [PathSample(time: 1, rect: r), PathSample(time: 2, rect: r)], start: 0.75, end: 2.25)
+        XCTAssertEqual(cover.opacity(at: 0.75), 0, accuracy: 1e-9)
+        XCTAssertEqual(cover.opacity(at: 0.875), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(cover.opacity(at: 1.5), 1, accuracy: 1e-9)
+        XCTAssertEqual(cover.opacity(at: 2.125), 0.5, accuracy: 1e-9)
+        // a cover that starts with the clip is whole from its first frame, and a longer hold stays whole
+        XCTAssertEqual(Cover(path: [PathSample(time: 1, rect: r)], start: 1, end: 1.7).opacity(at: 1.6), 1, accuracy: 1e-9)
+        XCTAssertEqual(Cover(path: [PathSample(time: 0, rect: r)], start: 0, end: 0.25).opacity(at: 0), 1, accuracy: 1e-9)
+    }
+
     /// One face moving slowly across a second, plus a one-frame flicker elsewhere: one track, start to end.
     func testTracksFromDetections() {
         let frame = CGSize(width: 640, height: 480)
@@ -147,7 +160,7 @@ final class FaceBlurEngineTests: XCTestCase {
             XCTAssertNotNil(at)
             XCTAssertEqual(at!.rect.cx, 0.3 + Double(min(f, 29)) / 300, accuracy: 0.02)
         }
-        XCTAssertEqual(CoverPipeline.note(covers[0], kind: .video), "middle centre of the frame; 12% of its width; seen for 1.0 s")
+        XCTAssertEqual(CoverPipeline.note(covers[0], kind: .video), "middle centre of the frame; 10% of its width; seen for 1.0 s")
         XCTAssertEqual(CoverPipeline.moments(covers[0]).count, 3)
     }
 

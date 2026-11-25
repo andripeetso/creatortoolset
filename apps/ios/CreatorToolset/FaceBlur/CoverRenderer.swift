@@ -3,7 +3,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 
 /// Paints covers onto an upright frame; photo and video export both call this. Every cover is a circle of radius
-/// r = max(w·W, h·H)/2, the interior out to r+1 is always fully covered, and softness only feathers outward.
+/// r = max(w·W, h·H)/2, the interior out to r − feather/2 is always fully covered, and the soft edge is centred on r.
 final class CoverRenderer: @unchecked Sendable {
     static let shared = CoverRenderer()
 
@@ -18,7 +18,9 @@ final class CoverRenderer: @unchecked Sendable {
         let bounds = CGRect(origin: .zero, size: frame.size)
         for cover in covers {
             guard let placement = cover.placement(at: time) else { continue }
-            image = paint(cover, rect: placement.rect, on: image, bounds: bounds)
+            let opacity = cover.opacity(at: time)
+            guard opacity > 0.001 else { continue }
+            image = paint(cover, rect: placement.rect, opacity: opacity, on: image, bounds: bounds)
         }
         return image.cropped(to: bounds)
             .transformed(by: CGAffineTransform(translationX: frame.minX, y: frame.minY))
@@ -39,29 +41,29 @@ final class CoverRenderer: @unchecked Sendable {
     }
 
     /// How far the soft edge reaches past the circle at full softness, as a fraction of the radius.
-    static let maxFeather: CGFloat = 1
+    static let maxFeather: CGFloat = 0.7
 
-    private func paint(_ cover: Cover, rect: NormRect, on image: CIImage, bounds: CGRect) -> CIImage {
+    private func paint(_ cover: Cover, rect: NormRect, opacity: Double = 1, on image: CIImage, bounds: CGRect) -> CIImage {
         let circle = Self.circle(for: rect, in: bounds.size)
         let r = circle.radius
         let softness = min(1, max(0, cover.softness))
         let strength = min(1, max(0, cover.strength))
-        // squared: the default (0.45) is a light feather, full softness clearly soft
-        let feather = r * Self.maxFeather * CGFloat(softness * softness)
+        // the default (0.45) fades over about a third of the radius, centred on the cover's edge, so it grows the cover little
+        let feather = r * Self.maxFeather * CGFloat(softness)
 
         switch cover.look {
         case .solid:
             let color = Self.color(hex: cover.colorHex) ?? CIColor(red: 0.2, green: 0.2, blue: 0.2)
             let fill = CIImage(color: color).cropped(to: bounds)
-            return blend(fill, over: image, circle: circle, feather: feather, bounds: bounds)
+            return blend(fill, over: image, circle: circle, feather: feather, opacity: opacity, bounds: bounds)
 
         case .blur:
             let effect = blurred(image, circle: circle, strength: strength, feather: feather, bounds: bounds)
-            return blend(effect, over: image, circle: circle, feather: feather, bounds: bounds)
+            return blend(effect, over: image, circle: circle, feather: feather, opacity: opacity, bounds: bounds)
 
         case .mosaic:
             let effect = mosaic(image, circle: circle, strength: strength, feather: feather, bounds: bounds)
-            return blend(effect, over: image, circle: circle, feather: feather, bounds: bounds)
+            return blend(effect, over: image, circle: circle, feather: feather, opacity: opacity, bounds: bounds)
         }
     }
 
@@ -89,11 +91,12 @@ final class CoverRenderer: @unchecked Sendable {
             .cropped(to: region)
     }
 
-    /// Mosaic with blocks = 6 − 4·strength across the diameter, each filled with its average colour. The grid starts at
+    /// Mosaic with blocks = 14 − 8·strength across the diameter (10 at 0.5: about 9 across the face, as the AI Editor's
+    /// step drew it), each filled with its average colour. The grid starts at
     /// the circle's top-left, so the pattern stays put while a cover sits still.
     private func mosaic(_ image: CIImage, circle: Circle, strength: Double, feather: CGFloat, bounds: CGRect) -> CIImage {
         let r = circle.radius
-        let blocks = 6 - 4 * CGFloat(strength)
+        let blocks = 14 - 8 * CGFloat(strength)
         let cell = max(1, (2 * r / blocks).rounded())
         let region = workRegion(circle, pad: ceil(feather + 2), bounds: bounds)
         guard !region.isEmpty else { return image }
@@ -138,22 +141,30 @@ final class CoverRenderer: @unchecked Sendable {
     }
 
     /// Composites `effect` over `image` inside the circle: fully opaque out to
-    /// r+1, then a linear fade over `feather` pixels (or a 1px anti-aliased
-    /// edge when there's no feather).
-    private func blend(_ effect: CIImage, over image: CIImage, circle: Circle, feather: CGFloat, bounds: CGRect) -> CIImage {
-        let inner = circle.radius + 1
-        let outer = inner + max(1, feather)
+    /// r − feather/2, then a smoothstep fade to r + feather/2 (or a 1px
+    /// anti-aliased edge when there's no feather).
+    private func blend(_ effect: CIImage, over image: CIImage, circle: Circle, feather: CGFloat, opacity: Double, bounds: CGRect) -> CIImage {
+        let inner = max(1, circle.radius - feather / 2)
+        let outer = circle.radius + max(1, feather / 2)
         let gradient = CIFilter.radialGradient()
         gradient.center = circle.center
         gradient.radius0 = Float(inner)
         gradient.radius1 = Float(outer)
-        gradient.color0 = CIColor(red: 1, green: 1, blue: 1, alpha: 1)
+        gradient.color0 = CIColor(red: CGFloat(opacity), green: CGFloat(opacity), blue: CGFloat(opacity), alpha: 1)
         gradient.color1 = CIColor(red: 0, green: 0, blue: 0, alpha: 1)
         let maskRect = CGRect(
             x: circle.center.x - outer, y: circle.center.y - outer,
             width: outer * 2, height: outer * 2
         ).intersection(bounds)
-        guard let mask = gradient.outputImage?.cropped(to: maskRect), !maskRect.isEmpty else { return image }
+        // smoothstep, not a straight ramp: a linear fade over the squares reads as a hard edge
+        let curve = CIFilter.toneCurve()
+        curve.inputImage = gradient.outputImage
+        curve.point0 = CGPoint(x: 0, y: 0)
+        curve.point1 = CGPoint(x: 0.25, y: 0.156)
+        curve.point2 = CGPoint(x: 0.5, y: 0.5)
+        curve.point3 = CGPoint(x: 0.75, y: 0.844)
+        curve.point4 = CGPoint(x: 1, y: 1)
+        guard let mask = curve.outputImage?.cropped(to: maskRect), !maskRect.isEmpty else { return image }
         let blend = CIFilter.blendWithMask()
         blend.inputImage = effect.cropped(to: maskRect)
         blend.backgroundImage = image

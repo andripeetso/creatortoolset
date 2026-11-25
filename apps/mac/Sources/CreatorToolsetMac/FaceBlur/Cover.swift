@@ -88,8 +88,21 @@ struct Cover: Codable, Hashable, Sendable {
     /// The cover's size against the face's own cover (1 = as found; the style's Size).
     var scale: Double = 1
 
-    static let leadHold = 1.0
-    static let tailHold = 1.0
+    static let leadHold = 0.25
+    static let tailHold = 0.25
+
+    /// 0…1 at `time`: the cover fades in over the hold the engine adds before its first sample (`leadHold`) and out over
+    /// the one after its last (`tailHold`), so it never snaps on or off. While the face is tracked (first…last sample) it
+    /// is always whole, and so is a longer hold (a face at the clip's edge, a span set by hand).
+    func opacity(at time: Double) -> Double {
+        guard let first = path.first?.time, let last = path.last?.time else { return 1 }
+        let fadeIn = first - start, fadeOut = end - last
+        var a = 1.0
+        if fadeIn > 0.01, fadeIn <= Self.leadHold + 1e-6, time < first { a = min(a, (time - start) / fadeIn) }
+        if fadeOut > 0.01, fadeOut <= Self.tailHold + 1e-6, time > last { a = min(a, (end - time) / fadeOut) }
+        let t = min(1, max(0, a))
+        return t * t * (3 - 2 * t)
+    }
     /// Path gaps longer than this are covered by a circle spanning both ends instead of being interpolated.
     static let interpolateMax = 0.9
 

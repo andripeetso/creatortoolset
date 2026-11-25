@@ -23,7 +23,7 @@ struct AnalysisResult: Sendable {
 final class VideoAnalyzer {
     static let analysisLongSide: CGFloat = 1280
     /// Follow a newly found face back this far.
-    static let backfill = 1.0
+    static let backfill = 0.3
     static let followConfidence: Float = 0.45
 
     private let asset: AVAsset

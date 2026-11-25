@@ -76,8 +76,8 @@ enum FaceDetector {
         case 0.07...: factor = 1.28
         default: factor = 1.45
         }
-        // Vision's box stops at the brow; pad a little more so hairlines and ears stay covered.
-        return .circle(cx: face.cx, cy: face.cy, diameter: size * factor * 1.12, in: frame)
+        // the face only: hair, ears and background stay as filmed (the Size setting draws bigger)
+        return .circle(cx: face.cx, cy: face.cy, diameter: size * factor, in: frame)
     }
 
     /// Plausible face size: 1.5%–90% of the frame's short side.
