@@ -23,7 +23,7 @@ import { buildPackage, ownFile } from "./package";
 import { noteProgress, parseBeat } from "./place";
 import { acceptUpload, applyResult } from "./result";
 import { serveAi, serveCall } from "./serve";
-import { retryEmptyPictures } from "../library/made";
+import { remakePictures, retryEmptyPictures } from "../library/made";
 
 /** The most one result file may weigh (a preview, a generated clip, a cache file). */
 const FILE_MAX = 8 * 1024 ** 3;
@@ -71,6 +71,7 @@ workApp.route("/task", taskWorkApp);
 
 // once a process: photos failed on an empty card picture go again when a computer that reads them with no seek asks
 let stillsRetried = false;
+let picturesRemade = false;
 
 workApp.post("/claim", async (c) => {
   const d = caller(c);
@@ -149,6 +150,11 @@ workApp.post("/claim", async (c) => {
     stillsRetried = true;
     const n = retryEmptyPictures();
     if (n) console.log(`[library] ${n} jobs with an empty card picture queued again`);
+  }
+  if (library && !picturesRemade) {
+    picturesRemade = true;
+    const n = remakePictures();
+    if (n) console.log(`[library] ${n} clips with no card picture queued for one`);
   }
   // the cache it reported is its proxy places (version_places kind 'proxy'): what "On this computer" and Locate read
   if (cache?.versions || empty) noteProxyCache(d.id, empty ? [] : (cache?.versions ?? []));

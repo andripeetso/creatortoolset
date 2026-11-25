@@ -14,7 +14,7 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { libraryMade, makeMissing, stopQueued, retryFailed } from "./made";
+import { libraryMade, makeMissing, remakePictures, stopQueued, retryFailed } from "./made";
 import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
@@ -1205,7 +1205,10 @@ libraryApp.post("/:id/already-blurred", async (c) => {
     d.exec("ROLLBACK");
     throw e;
   }
-  if (hit.length) libraryChanged(libraryId);
+  if (hit.length) {
+    remakePictures(libraryId); // their pictures were never kept while they waited for a blur
+    libraryChanged(libraryId);
+  }
   return c.json({ files: hit.length });
 });
 
@@ -1273,6 +1276,7 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     db().prepare("UPDATE assets SET blur = 'no' WHERE library_id = ? AND blur IS NULL").run(libraryId);
   }
   if (typeof s.blurFaces === "boolean") put("blurFaces", s.blurFaces);
+  if (s.blurFaces === false) remakePictures(libraryId);
   if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
   if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
@@ -1679,6 +1683,7 @@ libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
   db().prepare("UPDATE assets SET blur = ? WHERE id = ?").run(blur, assetId);
   // every version of it that is not a blurred render: what the server cut from each goes (an older one too)
   if (blur === "yes") for (const v of db().prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL").all(assetId) as { id: string }[]) await dropUnblurred(v.id);
+  else remakePictures(libraryId);
   if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });
   return c.json({ blur });
 });

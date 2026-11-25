@@ -24,7 +24,7 @@ process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET; // the solo install: "local" is the admin
 const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
-const { engineOf, libraryMade, makeMissing, retryEmptyPictures, retryFailed, STILLS_FIXED_AT, stopQueued } = await import("./made");
+const { engineOf, libraryMade, makeMissing, remakePictures, retryEmptyPictures, retryFailed, STILLS_FIXED_AT, stopQueued } = await import("./made");
 const { queueLook, sweepLook } = await import("./shots");
 const { libraryApp } = await import("./routes");
 const { leaveToComputers } = await import("./worker");
@@ -221,5 +221,21 @@ describe("what's made", () => {
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor) VALUES ('lib_m', ?, 'look', 'queued', 'local')").run(look);
     stopQueued("lib_m", "timeline", "local");
     expect(job(look, "look")?.state).toBe("queued");
+  });
+});
+
+describe("pictures made again", () => {
+  it("a clip whose picture was never kept while it waited for its blur gets one once it may show it", () => {
+    clip("ast-waited");
+    const v = "ver-ast-waited";
+    d.prepare("UPDATE assets SET blur = 'yes' WHERE id = 'ast-waited'").run();
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_m', ?, 'thumb', 'done')").run(v);
+    remakePictures("lib_m");
+    expect(job(v, "thumb")?.state).toBe("done"); // still waiting for its blur: no picture
+    d.prepare("UPDATE asset_versions SET blurred_of = 'sha-ast-waited' WHERE id = ?").run(v); // marked Already blurred
+    expect(remakePictures("lib_m")).toBeGreaterThan(0);
+    expect(job(v, "thumb")?.state).toBe("queued");
+    expect(job(v, "sprite")?.state).toBe("queued");
+    expect(remakePictures()).toBe(0); // queued once, never again
   });
 });
