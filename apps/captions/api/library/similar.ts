@@ -6,7 +6,6 @@ import { findUser, mayUse } from "../users";
 import { homeOf, libraryRole } from "./access";
 import { libraryDb } from "./db";
 import type { Fingerprint } from "./fingerprint";
-import { enqueueJob } from "./jobs";
 import type { TimedWord } from "./transcribe";
 
 /**
@@ -43,7 +42,7 @@ export function overlapOf(query: string[], theirs: string[]): number {
 export interface SimilarResult {
   matches: SimilarMatch[];
   checked: number; // versions compared
-  pending: number; // versions still without a fingerprint (queued now)
+  pending: number; // versions still without a fingerprint
 }
 
 /** `phashes` (one per second) against every fingerprinted current version in the caller's libraries (`libraries`: only those). */
@@ -69,8 +68,7 @@ export function similarTo(username: string, phashes: string[], exclude?: string,
   for (const r of rows) {
     if (r.version_id === exclude) continue;
     if (!r.inline) {
-      // computed once, then stored: the worker fingerprints it as the uploader
-      enqueueJob(d, r.library_id, r.version_id, "fingerprint", (d.prepare("SELECT created_by FROM asset_versions WHERE id = ?").get(r.version_id) as { created_by: string }).created_by);
+      // counted, never queued: a search must not start work on the whole library (What's made → Make does that)
       pending++;
       continue;
     }
