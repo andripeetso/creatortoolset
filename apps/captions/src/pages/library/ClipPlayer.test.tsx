@@ -75,6 +75,15 @@ describe("with it", () => {
     expect(badge()).toBe("Original");
   });
 
+  it("a blurred copy playing from this computer says Blurred; its original, opened from the switch, says Original", async () => {
+    await openWith({ ...card, versions: [{ id: "v1", n: 2, blurred: true }, { id: "v0", n: 1 }] });
+    expect(badge()).toBe("Blurred");
+    await act(async () => r.unmount());
+    r = createRoot(host);
+    await act(async () => r.render(<ClipPlayer asset={{ ...card, versionId: "v0" }} detail={{ ...card, versions: [{ id: "v1", n: 2, blurred: true }, { id: "v0", n: 1 }] } as unknown as AssetDetail} media={createRef()} startAt={0} actions={slot} />));
+    expect(post.mock.calls.at(-1)?.[0]).toBe('places:check:{"library":"lib","versions":["v0"]}');
+  });
+
   // local-first decision 5: the card's flags are not the test; a folder or place row on this computer may hold the clip
   it("asks this computer for a clip the card does not flag, and plays its file, never the server's", async () => {
     await open({ ...card, onMac: undefined });

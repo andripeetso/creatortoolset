@@ -19,6 +19,7 @@ import { placeLine } from "@/lib/wording";
 import type { PlaceWord } from "@contracts/places";
 import { clock, day, factsOf, original, revealClip, revealsHere, revealsVersion, shotsByMoment, tagSuggestions, useClipView } from "./clip";
 import { ClipImage, ClipPlayer } from "./ClipPlayer";
+import { useHere } from "@/lib/here";
 import { ClipShare } from "./ClipShare";
 import { Locate } from "./Locate";
 
@@ -74,8 +75,10 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   // More like this: from the whole clip, or from the shot it was asked on (`at`)
   const [alike, setAlike] = useState<{ at?: number; hits: SearchHit[] }>({ hits: [] });
   const [copiedPath, setCopiedPath] = useState(false);
-  // Blur faces: which file Copy path and Show in Finder name, the blurred copy or its original
+  // Blur faces: which file plays and Copy path and Show in Finder name, the blurred copy or its original. Only for
+  // this window: the next time the clip opens it is the blurred copy again. `swapAt`: where the player was on a swap
   const [fileOf, setFileOf] = useState<"blurred" | "original">("blurred");
+  const [swapAt, setSwapAt] = useState<number>();
   const navigate = useNavigate();
   const me = useMe();
   const a = detail ?? asset;
@@ -211,8 +214,12 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   const file = original(a, detail);
   // the blurred copy is the clip's current version; its original is the newest version not blurred, when it is on this computer
   const blurredNow = !!detail?.versions?.find((v) => v.id === a.versionId)?.blurred;
-  const filmed = blurredNow && revealsVersion() ? detail?.versions?.find((v) => !v.blurred && v.path) : undefined;
-  const path = filmed && fileOf === "original" ? filmed.path : detail?.sourcePath;
+  const maybeFilmed = blurredNow && revealsVersion() ? detail?.versions?.find((v) => !v.blurred && v.path) : undefined;
+  // only where this computer reads the original now (the Mac app's places check): the computer that made the blur
+  const [originalHere] = useHere(maybeFilmed ? libraryId : null, maybeFilmed ? [maybeFilmed.id] : []);
+  const filmed = maybeFilmed && originalHere?.[maybeFilmed.id]?.state === "here" ? maybeFilmed : undefined;
+  const showOriginal = !!filmed && fileOf === "original";
+  const path = showOriginal ? filmed.path : detail?.sourcePath;
   // the file is on this Mac and Finder can show it: that is the clip's main button, and Download goes in the menu
   const inFinder = a.state !== "missing" && !!path && revealsHere(placeWord);
   const more = !inTrash && (
@@ -280,7 +287,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
       setCopiedPath(true);
       window.setTimeout(() => setCopiedPath(false), 1500);
     });
-  const reveal = () => path && void revealClip(libraryId, a.id, path, filmed && fileOf === "original" ? filmed.id : undefined).then((problem) => problem && onError(problem));
+  const reveal = () => path && void revealClip(libraryId, a.id, path, showOriginal ? filmed.id : undefined).then((problem) => problem && onError(problem));
   const open = (id: string, at?: number) => navigate(`/library?library=${encodeURIComponent(libraryId)}&asset=${encodeURIComponent(id)}${at ? `&at=${at}` : ""}`);
 
   const title = <SheetTitle className={cn("min-w-0 flex-1 break-words text-base", win && "pr-8")}>{a.title}</SheetTitle>;
@@ -315,7 +322,11 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
         // the file on this computer (the admin, on a server that has it): its path (Show in Finder is the main button)
         <div className="-ml-2 -mt-2 flex flex-wrap items-center gap-2">
           {filmed && detail?.sourcePath && (
-            <ToggleGroup type="single" variant="outline" size="sm" className="ml-2" value={fileOf} onValueChange={(v) => v && setFileOf(v as typeof fileOf)} aria-label="File">
+            <ToggleGroup type="single" variant="outline" size="sm" className="ml-2" value={fileOf} onValueChange={(v) => {
+                if (!v) return;
+                setSwapAt(media.current?.currentTime);
+                setFileOf(v as typeof fileOf);
+              }} aria-label="File">
               <ToggleGroupItem value="blurred" className="h-7 px-2.5 text-xs">
                 Blurred
               </ToggleGroupItem>
@@ -528,7 +539,12 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
     ));
 
   const picture = playable ? (
-    <ClipPlayer asset={a} detail={detail} media={media} startAt={startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={serverPlays} actions={playerButtons} />
+    <ClipPlayer
+      key={showOriginal ? filmed.id : a.versionId}
+      asset={showOriginal ? { ...a, versionId: filmed.id } : a}
+      detail={detail}
+      media={media}
+      startAt={swapAt ?? startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={serverPlays} actions={playerButtons} />
   ) : a.kind === "image" ? (
     <ClipImage asset={a} fill={win} />
   ) : (
