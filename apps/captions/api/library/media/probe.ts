@@ -114,7 +114,7 @@ export const hasSound = (file: string): Promise<boolean> =>
     () => true,
   );
 
-function ffprobe(file: string, args: string[]): Promise<{ format?: Json; streams?: Json[]; stream_groups?: Json[] }> {
+export function ffprobe(file: string, args: string[]): Promise<{ format?: Json; streams?: Json[]; stream_groups?: Json[] }> {
   return new Promise((resolve, reject) => {
     const p = spawnKillable("ffprobe", ["-v", "error", ...args, "-of", "json", file]);
     let out = "";

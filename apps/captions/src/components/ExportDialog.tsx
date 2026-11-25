@@ -36,6 +36,7 @@ import {
   exportCaptionedVideoLocal,
 } from "@/lib/local-video-export";
 import type { ExportFormat } from "@/lib/types";
+import { intoBand, intoBandMargin, isVertical } from "../../contracts/design";
 import { FpsSelect } from "./FpsSelect";
 
 type Tab = "video" | "captions" | "recent";
@@ -172,7 +173,7 @@ function RecentExports({ jobs }: { jobs: ExportJob[] }) {
                       {timeAgo(j.finishedAt ?? j.createdAt)}
                     </>
                   )}
-                  {j.status === "error" && ` — ${j.error || "failed"}`}
+                  {j.status === "error" && " · Could not export video"}
                 </span>
               </span>
               {j.status === "done" && (
@@ -256,6 +257,16 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   const renderLocationManual = useRef(false);
   const [attaching, setAttaching] = useState(false);
   const [renderWhenReady, setRenderWhenReady] = useState(false);
+  // the first-frame cover (burn-in on the server only): starts on the frame the player is on
+  const [cover, setCover] = useState(false);
+  const [coverAt, setCoverAt] = useState(() => useStudio.getState().currentTime);
+  const videoUrl = useStudio((s) => s.videoUrl);
+  const coverPreview = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (cover && coverPreview.current) coverPreview.current.currentTime = coverAt;
+  }, [cover, coverAt]);
+  const style = useStudio((s) => s.style);
+  const setStyle = useStudio((s) => s.setStyle);
 
   useEffect(() => {
     if (!activeLocalFile && renderLocation === "local") {
@@ -304,6 +315,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
     height: useStudio((s) => s.sourceHeight || s.videoHeight),
     duration: useStudio((s) => s.duration),
   };
+  // source sizes are stored as shown (after a quarter turn), so they are the frame a viewer sees
+  const banded = style.fitBox
+    ? { boxY: intoBand(style, activeDims.width, activeDims.height).boxY }
+    : { marginVPct: intoBandMargin(style.position, style.marginVPct, activeDims.width, activeDims.height) };
+  const underButtons =
+    isVertical(activeDims.width, activeDims.height) &&
+    ("boxY" in banded ? banded.boxY !== style.boxY : banded.marginVPct !== style.marginVPct);
+  const coverOn = cover && !!selected.burn && !useLocalRender && !batch;
 
   useEffect(() => {
     let current = true;
@@ -460,6 +479,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
         width: d.width,
         height: d.height,
         fps,
+        ...(coverOn && clipId === activeClipId ? { coverAt: Math.min(coverAt, Math.max(0, d.duration - 1 / fps)) } : {}),
         ...render,
       });
       return job.id;
@@ -910,6 +930,60 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
               {Math.round(activeDims.duration)}s ProRes 4444 export is about{" "}
               {Math.round(activeDims.duration * 2)} MB; WebM is the small transparent format.
             </p>
+          )}
+
+          {underButtons && !batch && (
+            <div className="mb-3 flex items-center justify-between gap-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+              <span>Captions under the reel's buttons</span>
+              <button
+                onClick={() => setStyle(banded)}
+                className="shrink-0 rounded-md bg-zinc-800 px-2.5 py-1 font-medium text-zinc-100 hover:bg-zinc-700"
+              >
+                Move up
+              </button>
+            </div>
+          )}
+
+          {selected.burn && !useLocalRender && !batch && (
+            <div className="mb-4">
+              <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={cover}
+                  onChange={(e) => setCover(e.target.checked)}
+                  className="accent-violet-500"
+                />
+                Cover as first frame
+              </label>
+              {cover && (
+                <div className="mt-2 flex items-center gap-3">
+                  {videoUrl && (
+                    <video
+                      ref={coverPreview}
+                      src={videoUrl}
+                      muted
+                      playsInline
+                      preload="auto"
+                      onLoadedMetadata={(e) => (e.currentTarget.currentTime = coverAt)}
+                      className="h-20 w-20 shrink-0 rounded-md bg-black object-contain"
+                    />
+                  )}
+                  <input
+                    type="range"
+                    aria-label="Cover frame"
+                    min={0}
+                    max={Math.max(0, activeDims.duration - 1 / fps)}
+                    step={1 / fps}
+                    value={coverAt}
+                    onChange={(e) => setCoverAt(Number(e.target.value))}
+                    className="min-w-0 flex-1 accent-violet-500"
+                  />
+                  <span className="w-12 shrink-0 text-right font-mono text-xs text-zinc-400">
+                    {Math.floor(coverAt / 60)}:{(coverAt % 60).toFixed(1).padStart(4, "0")}
+                  </span>
+                </div>
+              )}
+            </div>
           )}
 
           {error && (

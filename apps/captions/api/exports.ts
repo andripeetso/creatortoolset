@@ -71,6 +71,8 @@ interface JobParams {
   fps?: number;
   duration: number;
   crf?: number;
+  /** burn only: the second of the source whose frame becomes frame 0 (the cover a platform shows) */
+  coverAt?: number;
   /** burn only: send the render to the owner's Finals when it is done */
   finals?: boolean;
   finalsLabel?: string;
@@ -300,6 +302,7 @@ const inputOf = (job: Job): ExportInput => ({
   fps: job.params.fps,
   duration: job.params.duration,
   crf: job.params.crf,
+  ...(job.params.coverAt !== undefined ? { coverAt: job.params.coverAt } : {}),
 });
 
 /**
@@ -455,6 +458,8 @@ interface CreateBody {
   width?: number;
   height?: number;
   fps?: number;
+  /** burn only: the second of the source whose frame becomes frame 0 */
+  coverAt?: number;
   /** burn only: send the render to the owner's Finals when it is done */
   finals?: boolean;
   /** burn only: the assistant's tool started it, so the chat is told how it ended */
@@ -551,6 +556,8 @@ exportsApp.post("/", async (c) => {
     );
   }
   const base = sanitizeName(body.name);
+  const coverAt = body.coverAt === undefined || body.coverAt === null ? undefined : Number(body.coverAt);
+  if (coverAt !== undefined && !(coverAt >= 0 && coverAt < duration)) return c.json({ error: "Invalid cover frame" }, 400);
   // Finals is 1080p or more, checked here and again on the file's size when it is in
   if (body.finals && kind === "burn" && belowHd(W, H)) return c.json({ error: belowHd(W, H) }, 409);
 
@@ -598,6 +605,7 @@ exportsApp.post("/", async (c) => {
         fps: FPS,
         duration,
         crf: body.crf,
+        ...(coverAt !== undefined ? { coverAt } : {}),
         ...(body.finals ? { finals: true, finalsLabel: base } : {}),
         ...(body.chat ? { chat: true } : {}),
         // the project's workspace, not the window's: a render belongs where its project is

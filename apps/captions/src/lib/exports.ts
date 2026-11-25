@@ -179,6 +179,8 @@ export async function startExport(payload: {
   height?: number;
   fps?: number;
   renderSpec?: CaptionRenderSpec;
+  /** burn only: the second whose frame becomes the video's first frame (its cover) */
+  coverAt?: number;
   /** burn only: the server sends the render to the owner's Finals when it is done */
   finals?: boolean;
 }): Promise<ExportJob> {

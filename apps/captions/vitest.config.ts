@@ -22,6 +22,7 @@ const ffmpegFiles = [
   "api/editor/sync.test.ts",
   "api/enhance.test.ts",
   "api/lib/folder-plugins.test.ts",
+  "api/lib/render-check.test.ts",
   "api/library/describe.test.ts",
   "api/library/fingerprint.test.ts",
   "api/library/library-ui.e2e.test.ts",

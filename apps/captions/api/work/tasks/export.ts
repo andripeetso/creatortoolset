@@ -7,6 +7,8 @@ import { createCaptionFrameRenderer } from "../../caption-frames";
 import { filterEscape, requireFontsDir } from "../../export";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 import { env } from "../../lib/env";
+import { checkRender } from "../../lib/render-check";
+import { hasSound } from "../../library/media/probe";
 import { keepIn } from "../files";
 import { taskKind } from "../tasks";
 
@@ -33,6 +35,8 @@ export interface ExportInput {
   fps?: number;
   duration: number;
   crf?: number;
+  /** burn only: the second of the source whose frame becomes frame 0, the cover a platform shows */
+  coverAt?: number;
   /** where this machine has an input itself (tasks.ts): else `source`, `captions` or `render` come from the server */
   paths?: Record<string, string>;
 }
@@ -154,6 +158,9 @@ const codecOf = (input: ExportInput) =>
     : ["-c:v", "libx264", "-preset", "medium", "-crf", String(input.crf ?? 19)];
 const PRORES = ["-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-alpha_bits", "16", "-tag:v", "ap4h", "-an", "-vendor", "apl0", "-movflags", "+faststart"];
 const VP9 = ["-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", "-crf", "24", "-b:v", "2M", "-cpu-used", "5", "-row-mt", "1", "-deadline", "good", "-an"];
+/** Burn-in with a cover: the frame at `coverAt` (input `n`) laid over frame 0 only, so length and sound stay (§4.4). */
+const coverInput = (input: ExportInput, source: string) => (input.coverAt !== undefined ? ["-ss", input.coverAt.toFixed(3), "-i", source] : []);
+const withCover = (n: number) => `[${n}:v]trim=end_frame=1,setpts=PTS-STARTPTS[cover];[0:v][cover]overlay=0:0:enable='eq(n,0)'`;
 const BURN_OUT = ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"];
 
 taskKind<ExportInput, null>(EXPORT_TASK, {
@@ -180,7 +187,8 @@ taskKind<ExportInput, null>(EXPORT_TASK, {
     const framesDir = path.join(ctx.dir, "frames");
     const zipFrames = async () => {
       const frames = await readdir(framesDir);
-      if (frames.length === 0) throw new Error("No frames rendered");
+      const need = Math.ceil(input.duration * fps);
+      if (frames.length !== need) throw new Error(`Export has ${frames.length} frames, not ${need}`);
       await run("zip", ["-j", "-q", "-X", out, ...frames.map((f) => path.join(framesDir, f))]);
       await rm(framesDir, { recursive: true, force: true }).catch(() => {});
     };
@@ -189,7 +197,10 @@ taskKind<ExportInput, null>(EXPORT_TASK, {
     if (input.engine === "native") {
       const vf = `ass='${filterEscape(await ctx.file("captions"))}':fontsdir='${filterEscape(requireFontsDir())}'`;
       if (input.kind === "burn") {
-        await native(input, ["-i", source, "-vf", vf, ...codecOf(input), ...BURN_OUT, out], signal, progress);
+        const look = input.coverAt !== undefined
+          ? [...coverInput(input, source), "-filter_complex", `${withCover(1)},${vf},sidedata=mode=delete:type=DISPLAYMATRIX[v]`, "-map", "[v]", "-map", "0:a?"]
+          : ["-vf", vf];
+        await native(input, ["-i", source, ...look, ...codecOf(input), ...BURN_OUT, out], signal, progress);
       } else {
         // transparent base; libass draws text + pill with real alpha (alpha=1: the ass filter drops it by default)
         const base = ["-f", "lavfi", "-i", `color=c=black@0.0:size=${W}x${H}:rate=${fps}:d=${input.duration},format=rgba`];
@@ -207,23 +218,28 @@ taskKind<ExportInput, null>(EXPORT_TASK, {
       const frameInput = ["-f", "image2pipe", "-framerate", String(fps), "-i", "pipe:0"];
       if (input.kind === "burn") {
         await rendered(input, spec, [
-          "-i", source, ...frameInput,
+          "-i", source, ...frameInput, ...coverInput(input, source),
           "-filter_complex",
           // sidedata: a clip filmed upright is turned as it is read, and FFmpeg 7.1 still hands its quarter turn on
           // to the file after a filter graph like this one, so every player turned the finished video a second time
-          "[0:v][1:v]overlay=0:0:format=auto:eof_action=pass,sidedata=mode=delete:type=DISPLAYMATRIX[v]",
+          `[1:v]format=rgba[c];${input.coverAt !== undefined ? `${withCover(2)}[b];[b]` : "[0:v]"}[c]overlay=0:0:format=auto:eof_action=pass,sidedata=mode=delete:type=DISPLAYMATRIX[v]`,
           "-map", "[v]", "-map", "0:a?", "-t", String(input.duration), ...codecOf(input), ...BURN_OUT, out,
         ], signal, progress);
-      } else if (input.format === "mov") await rendered(input, spec, [...frameInput, "-vf", "format=yuva444p10le", ...PRORES, out], signal, progress);
-      else if (input.format === "webm") await rendered(input, spec, [...frameInput, ...VP9, out], signal, progress);
+      } else if (input.format === "mov") await rendered(input, spec, [...frameInput, "-vf", "format=rgba,format=yuva444p10le", ...PRORES, out], signal, progress);
+      else if (input.format === "webm") await rendered(input, spec, [...frameInput, "-vf", "format=rgba", ...VP9, out], signal, progress);
       else {
         await mkdir(framesDir, { recursive: true });
-        await rendered(input, spec, [...frameInput, "-c:v", "png", "-pix_fmt", "rgba", "-start_number", "0", path.join(framesDir, "%05d.png")], signal, progress);
+        await rendered(input, spec, [...frameInput, "-vf", "format=rgba", "-c:v", "png", "-pix_fmt", "rgba", "-start_number", "0", path.join(framesDir, "%05d.png")], signal, progress);
         await zipFrames();
       }
     }
     if (signal.aborted) throw new Error("Export cancelled");
     if (input.kind === "overlay" && input.format === "mov") await assertMovHasTransparency(out, signal);
+    // the file as a viewer gets it, before it is sent (§4.2): a burn-in keeps the source's frame rate, so no frame count (D8)
+    if (input.kind === "burn" || input.ext !== "zip") {
+      const checked = await checkRender(out, input.kind === "burn" ? { duration: input.duration, sound: await hasSound(source) } : { duration: input.duration, sound: false, fps });
+      if (!checked.ok) throw new Error(checked.why);
+    }
     if (ctx.where === "computer") {
       // its copy on this computer is a convenience: the server's copy (apply) is what the page downloads
       const folder = (await ctx.call("folder", null).catch(() => null)) as string | null;

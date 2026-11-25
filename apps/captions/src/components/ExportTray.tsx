@@ -56,8 +56,8 @@ function JobCard({ job, library }: { job: ExportJob; library: boolean }) {
             )}
           </p>
           {job.status === "error" && (
-            <p className="mt-1 break-words text-[11px] leading-4 text-red-400">
-              {job.error || "Export failed"}
+            <p className="mt-1 break-words text-[11px] leading-4 text-red-400" title={job.error}>
+              Could not export video
             </p>
           )}
           {active && (

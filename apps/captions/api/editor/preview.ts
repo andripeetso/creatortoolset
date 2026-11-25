@@ -18,6 +18,7 @@ import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
 import { ask, onComputer, pathOf } from "../work/on-computer";
 import { env } from "../lib/env";
+import { checkRender } from "../lib/render-check";
 import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";
@@ -418,8 +419,20 @@ export async function previewStep({ edit, job, variant, signal }: StepContext): 
   // a voice the person picked plays as the sound step mixed it (voice-mix.ts; mix.m4a comes to a computer with the package)
   const stems = await stemsFor(edit, variant, d.timeline);
   if (stems && stems.set.voice !== "off" && !signal.aborted) await withMix(out, stems.dir);
-  if (signal.aborted || d.due) return;
+  if (signal.aborted) return;
+  // the joined file as Review will play it (docs/video-output-checks-prd.md §4.2): a short or silent one fails the render
+  const checked = await checkRender(out, { duration: previewSeconds(d.timeline), sound: true });
+  if (!checked.ok) throw new Error(checked.why);
+  if (d.due) return;
   await fileInReview(edit, variant, d.timeline, saidOf(d), job.actor);
+}
+
+/** How long the joined preview is: a plan's shots one after another (plan-render.ts), else up to the last shot switched on, gaps black. */
+export function previewSeconds(tl: Timeline): number {
+  const [num, den] = frameDuration(tl.fps);
+  const v1 = tl.tracks.V1.items;
+  const frames = tl.plan ? v1.reduce((n, i) => n + i.len, 0) : Math.max(0, ...v1.filter((i) => i.enabled !== false).map((i) => i.rec + i.len));
+  return (frames * num) / den;
 }
 
 /** The rendered preview's sound replaced by the voice's mix (the picture copied as it is). */

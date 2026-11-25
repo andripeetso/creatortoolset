@@ -197,7 +197,7 @@ export function MobileExport() {
         <>
           <TriangleAlert className="h-10 w-10 text-red-400" />
           <div className="text-center">
-            <p className="text-base font-medium text-zinc-100">Export failed</p>
+            <p className="text-base font-medium text-zinc-100">Could not export video</p>
             <p className="mt-1.5 max-w-xs text-sm leading-6 text-zinc-500">
               {job.error || "The video could not be exported"}
             </p>

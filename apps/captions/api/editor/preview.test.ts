@@ -25,7 +25,8 @@ const { readMeta, setApproval } = await import("../review");
 const { emptyTracks } = await import("./timeline");
 const { clipsOf, createEdit, readDraft, readEdit, readFiled, readStep, saveDraft, saveEdit } = await import("./store");
 const { applyEdits } = await import("./edits");
-const { piecesOf, previewSize, previewStep, renderPreview, shotFilter } = await import("./preview");
+const { piecesOf, previewSeconds, previewSize, previewStep, renderPreview, shotFilter } = await import("./preview");
+const { checkRender } = await import("../lib/render-check");
 const { tick } = await import("./worker");
 
 const fixture = path.join(dir, "Tiny Acrobatics take.mp4");
@@ -103,6 +104,10 @@ describe("AI Editor preview", () => {
     const audioS = Number(ffprobe(out, "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0"));
     expect(Math.abs(audioS - 1)).toBeLessThanOrEqual(1 / 30 + 0.025); // an AAC frame of padding at most
     expect(frame(out, 5).equals(frame(out, 20))).toBe(false);
+    // the check previewStep runs on the joined file passes it, and fails one asked to be longer
+    expect(previewSeconds(timeline())).toBe(1);
+    expect(await checkRender(out, { duration: previewSeconds(timeline()), sound: true })).toEqual({ ok: true });
+    expect(await checkRender(out, { duration: 2, sound: true })).toEqual({ ok: false, why: "Video is 1.0 s short" });
   }, 60_000);
 
   it("a take with no picture renders black under its voice, and a cutaway over it shows", async () => {
