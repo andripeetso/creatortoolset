@@ -542,7 +542,7 @@ export const REEL_BAND = DESIGN_SAFE[2].inset;
 /** A video is vertical (a reel, a story) at 9:16-ish; `w` and `h` as shown, after the clip's turn. 4:5 and square are not. */
 export const isVertical = (w: number, h: number) => w > 0 && h / w >= 1.7;
 
-type Box = { boxX: number; boxY: number; boxW: number; boxH: number };
+type CaptionBox = { boxX: number; boxY: number; boxW: number; boxH: number };
 
 /** One side of a box (centre `c`, size `size`, in %) moved the least distance into `lo`..`hi`; centred when it is too big. */
 const fit = (c: number, size: number, lo: number, hi: number) =>
@@ -554,7 +554,7 @@ const pct = (f: number) => Math.round(f * 1000) / 10;
  * A caption box (centre and size in % of the frame) moved up or down into the reel band on a vertical video; else as
  * it is. Only vertically: centred captions stay centred (a short line rarely reaches the buttons on the right).
  */
-export function intoBand<T extends Box>(s: T, w: number, h: number): T {
+export function intoBand<T extends CaptionBox>(s: T, w: number, h: number): T {
   if (!isVertical(w, h)) return s;
   const boxY = fit(s.boxY, s.boxH, pct(REEL_BAND.top), 100 - pct(REEL_BAND.bottom));
   return boxY === s.boxY ? s : { ...s, boxY };
