@@ -114,7 +114,7 @@ export const makeMissing = (libraryId: string, kind: MadeKind) => send<{ files: 
 export const stopMade = (libraryId: string, kind: MadeKind) => send<{ files: number }>(`/api/library/${libraryId}/made/${kind}/stop`, "POST");
 /** Stop: every kind's queued work taken off the queue. */
 /** Files blurred before they came in, marked blurred: every file here (`all`) or the ones with these SHA-256s. */
-export const markBlurred = (libraryId: string, which: { all: true } | { sha256: string[] }) => send<{ files: number }>(`/api/library/${libraryId}/already-blurred`, "POST", which);
+export const markBlurred = (libraryId: string, which: { all: true } | { sha256: string[] } | { unmark: string[] }) => send<{ files: number; versions: string[] }>(`/api/library/${libraryId}/already-blurred`, "POST", which);
 export const stopLibrary = (libraryId: string) => send<{ files: number }>(`/api/library/${libraryId}/stop`, "POST");
 /** A step's failed jobs queued again. */
 export const retryFailed = (libraryId: string, kind: string) => send<{ files: number }>(`/api/library/${libraryId}/retry/${kind}`, "POST");

@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
 import { chooseDialog } from "@/lib/dialogs";
 import { markBlurred, updateLibrary } from "@/lib/library";
+import { undoable } from "@/lib/undo";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
@@ -130,11 +131,16 @@ function Proxies({ library, save, faceBlur, onError }: { library: LibrarySummary
   const blur = LIBRARY_WORDS.blurFaces;
   // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one
   const setBlur = async (v: boolean) => {
-    // on: the files already here are either blurred already (marked so) or kept as filmed (the server's answer for them)
+    // on: the files already here are either blurred already (marked so, before the switch keeps the rest as filmed; a
+    // failed mark stops here, so clicking again retries) or kept as filmed (the server's answer for them)
     const already = v ? await chooseDialog({ title: LIBRARY_WORDS.alreadyHere.title, body: LIBRARY_WORDS.alreadyHere.body, ok: LIBRARY_WORDS.alreadyHere.blurred, other: LIBRARY_WORDS.alreadyHere.asFilmed }) : "other";
     if (!already) return;
+    if (already === "ok") {
+      const marked = await markSave(markBlurred(library.id, { all: true })).catch(() => null);
+      if (!marked) return onError(LIBRARY_WORDS.alreadyHere.failed);
+      if (marked.files) undoable("marked blurred", () => markBlurred(library.id, { unmark: marked.versions }), marked.files);
+    }
     await save({ blurFaces: v, ...(v ? { proxy: false } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
-    if (already === "ok") await markSave(markBlurred(library.id, { all: true })).catch(() => onError(LIBRARY_WORDS.alreadyHere.failed));
   };
   return (
     <Card>
