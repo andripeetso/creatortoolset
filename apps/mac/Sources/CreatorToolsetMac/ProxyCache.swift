@@ -8,14 +8,22 @@ import Foundation
 // Remembered per server while the app runs, so it still plays when the server doesn't answer.
 
 /// The Download location (UNIFIED-PRD M15): the folder workers keep their download cache in, one folder in it per server
-/// (ProxyCache.root), passed as CT_PROXY_DIR (api/work/cache.ts). Nil = each server's default folder under its data, also
-/// while the picked folder's disk is not connected (nothing is written under /Volumes on the internal disk).
+/// (ProxyCache.root), passed as CT_PROXY_DIR (api/work/cache.ts). None picked: each server's default folder under its
+/// data. One picked whose disk is not connected is not "none picked": the worker is still told it (`chosen`) and keeps
+/// and makes nothing until the disk is back, so nothing goes to the internal disk because another disk is missing.
 enum DownloadLocation {
     static let key = "downloadLocation"
     static let defaultName = "Creator Toolset Downloads"
 
-    static func path(_ defaults: UserDefaults = .standard, mounted: [String]? = nil) -> String? {
+    /// The folder the person picked, also while its disk is not connected; nil when none was picked.
+    static func chosen(_ defaults: UserDefaults = .standard) -> String? {
         guard let p = defaults.string(forKey: key), !p.isEmpty else { return nil }
+        return p
+    }
+
+    /// The picked folder while this Mac can read it: nil when none was picked, and while its disk is not connected.
+    static func path(_ defaults: UserDefaults = .standard, mounted: [String]? = nil) -> String? {
+        guard let p = chosen(defaults) else { return nil }
         guard p.hasPrefix("/Volumes/") else { return p }
         return CacheFolder.connected(p, mounted ?? mountPaths()) ? p : nil
     }
@@ -28,8 +36,8 @@ enum DownloadLocation {
 
     /// Brings the caches to the Download location: with none picked yet, it becomes "Creator Toolset Downloads" on the
     /// Cache folder's default disk once every server's cache fits there; then, while it is connected, each server's cache
-    /// in its default folder (every relay folder's work/proxies: all of them before, or downloaded while its disk was
-    /// away) moves to its folder there. A move that fails is tried again the next time (a launch, a disk coming back), so
+    /// in its default folder (every relay folder's work/proxies: all of them before, or kept there by an older app
+    /// while its disk was away) moves to its folder there. A move that fails is tried again the next time (a launch, a disk coming back), so
     /// a cache is never left where nothing reads it. Whether anything changed.
     @discardableResult
     static func settle(defaults: UserDefaults = .standard, volumes: () -> [CacheFolder.Volume] = CacheFolder.volumes,
@@ -227,11 +235,15 @@ enum ProxyCache {
         (try? FileManager.default.contentsOfDirectory(at: appSupport.appendingPathComponent("relay"), includingPropertiesForKeys: nil)) ?? []
     }
 
+    /// The worker's CT_PROXY_DIR for `server`: its folder in the picked Download location, also while that disk is not
+    /// connected (the worker tells a missing disk from no pick by it, api/work/cache.ts cacheAway); nil when none was
+    /// picked: its default (DATA_DIR/proxies).
+    static func workerDir(server: URL, defaults: UserDefaults = .standard) -> String? {
+        DownloadLocation.chosen(defaults).map { root(server: server, location: $0).path }
+    }
+
     /// Where a server's worker keeps its cache (CT_PROXY_DIR) and the page plays it from: its folder in the Download
     /// location, named as its relay folder (two servers' accounts of one name never share one), else its default folder.
-    /// The worker's CT_PROXY_DIR for `server`: its folder in the Download location; nil for its default (DATA_DIR/proxies).
-    static func workerDir(server: URL) -> String? { DownloadLocation.path().map { root(server: server, location: $0).path } }
-
     static func root(server: URL, location: String? = DownloadLocation.path()) -> URL {
         guard let location else { return relay(server).appendingPathComponent("work/proxies", isDirectory: true) }
         return URL(fileURLWithPath: location).appendingPathComponent(relay(server).lastPathComponent, isDirectory: true)

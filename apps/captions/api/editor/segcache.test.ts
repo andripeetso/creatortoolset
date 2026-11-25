@@ -14,6 +14,7 @@ process.env.DATA_DIR = dir;
 const { cachedSegment, segDir, segKey, trimSegments } = await import("./segcache");
 const { cacheReport, emptyCache, segmentsDir, setCacheAccount } = await import("../work/cache");
 const { renderPreview } = await import("./preview");
+const { onComputer } = await import("../work/on-computer");
 const { emptyTracks } = await import("./timeline");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -63,6 +64,20 @@ describe("preview segment cache", () => {
     expect(cacheReport()!.bytes).toBe(1000);
     emptyCache();
     expect(cacheReport()!.bytes).toBe(0);
+  });
+
+  it("on a computer whose Download location's disk is not connected none are kept, on the internal disk or anywhere", () => {
+    setCacheAccount("tiny");
+    onComputer.on = true;
+    process.env.CT_PROXY_DIR = "/Volumes/ct-test-no-such-disk/Creator Toolset Downloads/studio";
+    try {
+      expect(segDir()).toBeNull();
+      delete process.env.CT_PROXY_DIR;
+      expect(segDir()).toBe(segmentsDir());
+    } finally {
+      delete process.env.CT_PROXY_DIR;
+      onComputer.on = false;
+    }
   });
 
   it("past its limit the segments used longest ago go, never one used in the last hour", async () => {

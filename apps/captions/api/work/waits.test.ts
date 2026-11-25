@@ -288,6 +288,31 @@ describe("G3 classes: waits.ts (CT-3a)", () => {
     expect(snap.waitingIds).toEqual([]);
   });
 
+  it("10c. the Download location's disk is away: a proxy the computer would keep is not handed out and says so, and goes out once the disk is back", async () => {
+    const linux = pairDevice("tiny", "Linux box", undefined, "hw-linux-10c");
+    await report(linux.token, LINUX_MACHINE, "node");
+    writeFolders("tiny", [{ id: "fld_10c", name: "Share10c", role: "footage", origin: { host: linux.device.id, path: "/mnt/footage/Share10c" }, reach: {} }]);
+    const v = addVersion({ sourcePath: "/mnt/footage/Share10c/clip.mov" });
+    const job = enqueue("lib_tiny", v, "proxy");
+    // the worker's claim says its Download location's disk is not connected (work/cache.ts cacheReport)
+    expect((await claimWork(linux.token, { libraryOnly: true, cache: { bytes: 0, away: true } })).lib).toBeUndefined();
+    expect(status("lib_tiny").byJob.get(job.id)).toEqual({ wait: "set", reason: "Needs the Download location's disk", actor: "tiny" });
+    expect((libraryDb().prepare("SELECT state, attempts FROM jobs WHERE id = ?").get(job.id) as { state: string; attempts: number })).toEqual({ state: "queued", attempts: 0 });
+    // any other job of the file it holds still goes to it
+    const wave = enqueue("lib_tiny", v, "wave");
+    expect((await claimWork(linux.token, { libraryOnly: true, cache: { bytes: 0, away: true } })).lib?.job.id).toBe(wave.id);
+    libraryDb().prepare("UPDATE jobs SET state = 'done', held_by = NULL WHERE id = ?").run(wave.id);
+    // a file it does not hold, whose proxy it would download there, waits the same way
+    const far = enqueue("lib_tiny", addVersion({ proxy: true }), "wave");
+    expect((await claimWork(linux.token, { libraryOnly: true, cache: { bytes: 0, away: true } })).lib).toBeUndefined();
+    vi.advanceTimersByTime(FRESH_MS + 1);
+    expect(status("lib_tiny").byJob.get(far.id)).toEqual({ wait: "set", reason: "Needs the Download location's disk", actor: "tiny" });
+    libraryDb().prepare("DELETE FROM jobs WHERE id = ?").run(far.id);
+    // the disk is back: the next claim's report no longer says away, and the proxy is made and kept there
+    const back = await claimWork(linux.token, { libraryOnly: true, cache: { bytes: 0, versions: [] } });
+    expect(back.lib).toMatchObject({ job: { id: job.id, kind: "proxy" }, keepProxy: true });
+  });
+
   it("10b. a clip in the trash or hidden waits for nothing: no computer row for its job until it comes back", async () => {
     const linux = pairDevice("tiny", "Linux box", undefined, "hw-linux-10b");
     await report(linux.token, LINUX_MACHINE, "node");

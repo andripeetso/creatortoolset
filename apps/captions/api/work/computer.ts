@@ -13,7 +13,7 @@ import { pluginEditorSteps } from "../lib/plugin";
 import { libraryDb } from "../library/db";
 import type { JobRow } from "../library/jobs";
 import { NeedsKey } from "../library/transcribe";
-import { cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, madeProxies, moveFile, noteMade, proxiesDir, proxyBytes, proxyPath, roomFor, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
+import { cacheAway, cacheReport, dropProxies, setCacheAccount, emptyCache, keptPath, madeProxies, moveFile, noteMade, proxiesDir, proxyBytes, proxyPath, roomFor, setKeptOffline, sizeOf, touchProxy, trimCache, trimOnFirstClaim } from "./cache";
 import { makeProxy, needsProxy } from "../library/media/proxy";
 import { probe } from "../library/media/probe";
 import { proxySize } from "../../contracts/library";
@@ -278,6 +278,7 @@ async function claimLoop(o: WorkerOptions): Promise<"idle" | "update" | "refused
  * item's `under`, with no "..", is read. True when it did one.
  */
 export async function makeKept(list: ComputerProxy[]): Promise<boolean> {
+  if (cacheAway()) return false; // the Download location's disk is not connected: none is made, and none on the internal disk
   const made = madeProxies();
   // one the size limit trimmed is made again when asked; a skip stands
   const m = list.find((x) => okId(x.id) && !tried.has(x.id) && !(made[x.id] && "skip" in made[x.id]!) && sizeOf(proxyPath(x.id)) === null);
@@ -330,6 +331,7 @@ const okId = (id: string) => /^[\w-]{1,100}$/.test(id);
  * so a step never waits for more than one. Cancel (the menu) stops it and keeps the `.part`. True when it downloaded one.
  */
 export async function keepOffline(list: WorkOffline[], o: WorkerOptions): Promise<boolean> {
+  if (cacheAway()) return false; // nothing is downloaded while the Download location's disk is not connected
   const f = list.find((x) => x.bytes > 0 && sizeOf(keptPath(x)) !== x.bytes);
   if (!f) return false;
   const c = client(o);

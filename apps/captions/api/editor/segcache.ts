@@ -3,7 +3,7 @@ import { open, readdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { env, serverKind } from "../lib/env";
-import { segmentsDir } from "../work/cache";
+import { cacheAway, segmentsDir } from "../work/cache";
 import { onComputer } from "../work/on-computer";
 
 /**
@@ -25,7 +25,8 @@ const IN_USE_MS = 3600_000;
 
 /** Where segments are kept here, or null for none. */
 export function segDir(): string | null {
-  if (onComputer.on) return segmentsDir();
+  // a computer whose Download location's disk is away keeps none (work/cache.ts cacheAway): the preview is drawn whole
+  if (onComputer.on) return cacheAway() ? null : segmentsDir();
   return serverKind() === "mac" ? path.join(env.dataDir, "render-cache") : null;
 }
 

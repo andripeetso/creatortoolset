@@ -16,9 +16,29 @@ import { env } from "../lib/env";
 
 let account: string | null = null;
 let firstClaim = false;
-// the Mac's Download location (Settings → Storage › This computer) comes in as CT_PROXY_DIR (apps/mac Worker.swift)
+// the Mac's Download location (Settings → Storage › This computer) comes in as CT_PROXY_DIR (apps/mac Worker.swift), also
+// while its disk is not connected: only with none ever chosen is the cache the default folder under the data folder
 const legacy = () => path.join(env.dataDir, "proxies");
 const root = () => process.env.CT_PROXY_DIR || legacy();
+
+/** What a job says while the Download location's disk is not connected (docs/media-library-proxies-prd.md R9). */
+export const NEEDS_DISK = "Needs the Download location's disk";
+
+/**
+ * A Download location was chosen and its disk is not connected: a folder under /Volumes whose volume is not mounted (as
+ * apps/mac CacheFolder.connected). The cache is then not there: nothing is read from it, nothing is kept, and nothing
+ * goes to the internal disk in its place. Asked at each use, as a disk comes and goes while a worker runs.
+ */
+export function cacheAway(): boolean {
+  const volume = /^\/Volumes\/[^/]+/.exec(process.env.CT_PROXY_DIR ?? "")?.[0];
+  if (!volume) return false;
+  try {
+    // a mounted volume is a disk of its own; a folder a disk left behind is on the disk /Volumes is on
+    return statSync(volume).dev === statSync("/Volumes").dev;
+  } catch {
+    return true;
+  }
+}
 
 /**
  * A cache file: the version it is, `<version>.mp4` (a proxy) or `<version>.original`, and whether it is still a `.part`.
@@ -55,9 +75,10 @@ export function trimOnFirstClaim(): string[] {
   return trimCache();
 }
 
-/** This account's cache folder; known once a claim answered. */
+/** This account's cache folder; known once a claim answered, and not there while the Download location's disk is away. */
 export const proxiesDir = () => {
   if (!account) throw new Error("The proxy cache is known once the server names the account");
+  if (cacheAway()) throw new Error(NEEDS_DISK);
   return path.join(root(), encodeURIComponent(account).replace(/^\./, "%2E"));
 };
 
@@ -172,6 +193,7 @@ const readIds = (file: () => string): string[] => {
 const offlineFile = () => path.join(proxiesDir(), "offline.json");
 export const keptOffline = (): string[] => readIds(offlineFile);
 export const setKeptOffline = (ids: string[]) => {
+  if (cacheAway()) return; // the list of the cache that is there stands
   mkdirSync(proxiesDir(), { recursive: true });
   writeFileSync(offlineFile(), JSON.stringify(ids));
 };
@@ -224,7 +246,7 @@ function entries(): { file: string; id: string; ext: string; size: number; used:
 
 /** A step used this proxy now: it is the last the limit removes. */
 export function touchProxy(file: string): void {
-  if (path.dirname(file) !== proxiesDir()) return;
+  if (cacheAway() || path.dirname(file) !== proxiesDir()) return;
   const now = new Date();
   try {
     utimesSync(file, now, now);
@@ -250,6 +272,7 @@ export function trimCache(limit = cacheLimit(), keep = protectedIds()): string[]
 
 /** Settings → Storage → Empty: every file and unfinished download goes, except the ones kept offline or here. */
 export function emptyCache(keep = protectedIds()): void {
+  if (cacheAway()) return;
   for (const e of entries()) if (!keep.has(e.id)) rmSync(e.file, { force: true });
   rmSync(segmentsDir(), { recursive: true, force: true });
 }
@@ -259,6 +282,7 @@ export function emptyCache(keep = protectedIds()): void {
  * goes with its unfinished download, kept offline or not; the next claim's offline list no longer names it.
  */
 export function dropProxies(ids: string[]): void {
+  if (cacheAway()) return;
   for (const v of ids) {
     if (!safeName(v)) continue;
     for (const f of [proxyPath(v), partPath(v), originalPath(v), `${originalPath(v)}.part`]) rmSync(f, { force: true });
@@ -268,8 +292,13 @@ export function dropProxies(ids: string[]): void {
   if (left.length !== kept.length) writeFileSync(keptFile(), JSON.stringify(left));
 }
 
-/** What a claim reports of the cache (WorkClaimBody.cache); nothing before the server named the account. */
+/**
+ * What a claim reports of the cache (WorkClaimBody.cache); nothing before the server named the account. With the Download
+ * location's disk away it says only that (first claim too), so the server hands this computer no job that needs the
+ * cache and what it last listed stands.
+ */
 export function cacheReport(): WorkClaimBody["cache"] {
+  if (cacheAway()) return { bytes: 0, away: true };
   if (!account) return undefined;
   const all = entries();
   const limit = cacheLimit();

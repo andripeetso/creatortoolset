@@ -193,6 +193,18 @@ export function libraryRank(d: Device, job: Pick<JobRow, "kind" | "actor">, r: L
   return PROXY_FIRST.includes(job.kind) && proxyComing(r.id) ? 0 : 1;
 }
 
+/**
+ * Computer `d` said its Download location's disk is not connected (work/cache.ts cacheAway) and `job` needs that disk: to
+ * keep the proxy it makes, or to download the server's proxy it reads. Such a job waits for the disk (waits.ts says so)
+ * or goes to another computer; nothing is written to the internal disk in its place.
+ */
+export function needsDisk(d: Device, job: Pick<JobRow, "kind">, r: LibRow, folders: ReturnType<typeof foldersOf>): boolean {
+  if (!d.work?.cache?.away || !LIBRARY_ON_COMPUTER.includes(job.kind)) return false;
+  if (job.kind === "proxy") return keepsProxy(versionUpload(r.id));
+  const at = fileFor(where(r), d.id, folders, isThisMachine);
+  return job.kind !== "probe" && !!r.proxy && !(at && "path" in at);
+}
+
 /** The computers of `owner` that may take a library job now: `me`, and the others online, free, holding none, asking for work lately and not Off. */
 export function peersOf(owner: string, me: Device, now: number): Device[] {
   const off = offOf(owner);
@@ -249,7 +261,7 @@ export function decide(
   balance: Balance,
   now = Date.now(),
 ): LibraryDecision {
-  const ranked = peers.map((x) => ({ x, r: libraryRank(x, job, r, folders, balance) }));
+  const ranked = peers.map((x) => ({ x, r: needsDisk(x, job, r, folders) ? 0 : libraryRank(x, job, r, folders, balance) }));
   const mine = ranked.find((p) => p.x.id === d.id)?.r ?? 0;
   const top = Math.max(0, ...ranked.map((p) => p.r));
   const workers: WorkerSeen[] = ranked

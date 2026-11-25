@@ -18,7 +18,7 @@ import { soundArgs } from "../library/transcribe";
 import { cutStills } from "../library/describe";
 import { cardVector, CARD_SEG, sheetVectors } from "../library/pictures";
 import { SHEET_FORMAT, type LookSheet } from "../library/shots";
-import { keepProxy, proxiesDir, proxyBytes, roomFor, sizeOf } from "./cache";
+import { cacheAway, keepProxy, NEEDS_DISK, proxiesDir, proxyBytes, roomFor, sizeOf } from "./cache";
 import { machineDisks } from "./disks";
 import { client, type WorkerOptions } from "./computer";
 import { copyHere, quickPrint, resolveFiles, type Progress } from "./files";
@@ -245,6 +245,9 @@ async function runLibrary(lib: LibraryPackage, o: WorkerOptions): Promise<"done"
     beat.line = TURN_LINE;
     release = await takeTurn({ signal: ctl.signal });
     beat.line = LINE[lib.job.kind];
+    // a proxy kept on this computer goes to the Download location: with its disk away none is made, here or anywhere
+    // else, and nothing is downloaded for it (the server hands the job out again once the disk is back, waits.ts)
+    if (lib.keepProxy && cacheAway()) throw new Error(NEEDS_DISK);
     await mkdir(dir, { recursive: true });
     // where the file is on this computer first; a download only when it is not here
     // its job folder, and the proxy cache once the server has named the account

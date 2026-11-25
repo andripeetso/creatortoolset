@@ -38,6 +38,7 @@ import {
   LIBRARY_ON_COMPUTER,
   libraryRank,
   lift,
+  needsDisk,
   oldApp,
   peersOf,
   POLL_FRESH_MS,
@@ -50,6 +51,7 @@ import {
   where,
   type LibRow,
 } from "./library-package";
+import { NEEDS_DISK } from "./cache";
 import { picturesHeldOn } from "./pictures";
 
 export type { WaitClass, WaitSnapshot };
@@ -402,7 +404,7 @@ function liftedFolderLine(ctx: Ctx, owner: string, r: LibRow, C: Device[]): stri
     : `No computer can read ${name}: add its folder to a computer in Settings → Folders`;
 }
 
-type HeldKind = "offInBalancing" | "notThisLibrary" | "noOriginals" | "updateOn" | "lowDiskOn" | "noLooksOn";
+type HeldKind = "offInBalancing" | "notThisLibrary" | "noOriginals" | "updateOn" | "needsDisk" | "lowDiskOn" | "noLooksOn";
 
 function heldReason(ctx: Ctx, x: Device, job: JobRow, r: LibRow): { kind: HeldKind; line: string } | null {
   const c = x.name;
@@ -426,6 +428,8 @@ function heldReason(ctx: Ctx, x: Device, job: JobRow, r: LibRow): { kind: HeldKi
   if (tooOldSet || pollBelowMin || claimWithoutLib || oldApp(x, ctx.now)) {
     return { kind: "updateOn", line: updateOn(c) };
   }
+  // its Download location's disk is not connected: a job that keeps or downloads a proxy there waits for it
+  if (needsDisk(x, job, r, ctx.folders(x.owner))) return { kind: "needsDisk", line: NEEDS_DISK };
   if (x.work?.lowDisk && x.work.lowDiskAt !== undefined && ctx.now - x.work.lowDiskAt < LOW_DISK_FRESH_MS) {
     return { kind: "lowDiskOn", line: lowDiskOn(c) };
   }

@@ -41,6 +41,24 @@ final class ProxyCacheTests: XCTestCase {
         XCTAssertNotEqual(ProxyCache.workerDir(server: URL(string: "http://10.0.0.5:3000")!), worker)
     }
 
+    /// A picked Download location whose disk is not connected still goes to the worker, which tells it from no pick and
+    /// keeps and makes nothing meanwhile (api/work/cache.ts cacheAway); with none picked the worker gets no folder.
+    func testTheWorkerIsToldThePickedLocationWhileItsDiskIsAway() {
+        let name = "ct-proxy-cache-test-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: name)!
+        defer { d.removePersistentDomain(forName: name) }
+        let server = URL(string: "https://studio.example.com")!
+        XCTAssertNil(ProxyCache.workerDir(server: server, defaults: d))
+        d.set("/Volumes/SSD/Downloads", forKey: DownloadLocation.key)
+        XCTAssertNil(DownloadLocation.path(d, mounted: ["/", "/Volumes/Other"]))
+        let folder = "/Volumes/SSD/Downloads/\(ProxyCache.relay(server).lastPathComponent)"
+        XCTAssertEqual(ProxyCache.workerDir(server: server, defaults: d), folder)
+        // and its environment carries it, connected or not
+        let env = workerEnvironment(server: server, token: "ctd_abc", data: URL(fileURLWithPath: "/x/work"), folder: URL(fileURLWithPath: "/x/server"),
+                                    inherited: [:], plugins: [:], proxyDir: ProxyCache.workerDir(server: server, defaults: d))
+        XCTAssertEqual(env["CT_PROXY_DIR"], folder)
+    }
+
     /// A proxy in an account's cache for a server, as the worker leaves it.
     @discardableResult
     private func proxy(_ server: URL, _ account: String, _ version: String) throws -> String {

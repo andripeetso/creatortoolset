@@ -388,6 +388,36 @@ async function phoneUpload(lib: string, file: string): Promise<string> {
   return ((await (await post(`/api/library/uploads/${start.id}/finish`, {})).json()) as { versionId: string }).versionId;
 }
 
+describe("a proxy kept on this computer while its Download location's disk is not connected (docs/media-library-proxies-prd.md R9)", () => {
+  it("none is made: nothing is downloaded or sent, and the job says what it needs", async () => {
+    const calls: { path: string; body: unknown }[] = [];
+    const lib = {
+      v: WORK_V,
+      job: { id: 7, kind: "proxy", versionId: "v1", libraryId: "lib", actor: "tiny" },
+      file: { id: "v1", title: "clip.mov", bytes: 10 },
+      folders: [],
+      original: { bytes: 10 },
+      keepProxy: true,
+    } as LibraryPackage;
+    process.env.CT_PROXY_DIR = "/Volumes/ct-test-no-such-disk/Creator Toolset Downloads/studio";
+    try {
+      const out = await runLibraryJob(lib, {
+        server: "http://server.test",
+        token: "ctd_test",
+        beatMs: 60_000,
+        fetch: (u: string, i?: RequestInit) => {
+          calls.push({ path: new URL(u).pathname.replace(/^.*\/work\//, ""), body: typeof i?.body === "string" ? JSON.parse(i.body) : undefined });
+          return Promise.resolve(Response.json({ ok: true }));
+        },
+      });
+      expect(out).toBe("failed");
+      expect(calls).toEqual([{ path: "lib/7/fail", body: { error: "Needs the Download location's disk" } }]);
+    } finally {
+      delete process.env.CT_PROXY_DIR;
+    }
+  });
+});
+
 describe("local-first P3f: a probe, a card picture and a description's stills with the server's video work off", () => {
   it("they wait for a computer with the wait line, nothing runs here, and the computer makes what the server made", async () => {
     const file = camera("tiny-p3f.mp4", "1280x720");

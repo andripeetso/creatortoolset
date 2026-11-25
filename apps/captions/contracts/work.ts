@@ -88,8 +88,9 @@ export interface WorkClaimBody {
   /** plug-in steps installed on this computer */
   steps: string[];
   /** the proxy cache: bytes kept, its size limit, the versions kept offline, and every version whose proxy it holds.
-   * Absent on a worker's first claim, before the answer named its account: the device's last report stands */
-  cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; parts?: string[]; dir?: string; made?: Record<string, MadeProxy> };
+   * Absent on a worker's first claim, before the answer named its account: the device's last report stands.
+   * `away`: its Download location's disk is not connected (work/cache.ts cacheAway), and nothing else is said */
+  cache?: { bytes: number; limit?: number; offline?: string[]; versions?: string[]; parts?: string[]; dir?: string; made?: Record<string, MadeProxy>; away?: true };
   /** this worker runs library jobs too (LibraryPackage): a computer that doesn't say so is never handed one */
   library?: true;
   /** this worker runs the picture model (PicturePackage): a computer that doesn't say so is never handed picture work */

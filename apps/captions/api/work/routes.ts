@@ -92,6 +92,7 @@ workApp.post("/claim", async (c) => {
         // where its cache is on that computer: a plug-in's proxy plays from there (lib/plugin.ts computerProxies)
         ...(typeof raw.dir === "string" && raw.dir.startsWith("/") && raw.dir.length <= 1024 ? { dir: raw.dir } : {}),
         ...(madeOf(raw.made) ? { made: madeOf(raw.made)! } : {}),
+        ...(raw.away === true ? { away: true as const } : {}),
       }
     : undefined;
   // its unfinished downloads: asked about with the versions, never counted as held
@@ -129,7 +130,8 @@ workApp.post("/claim", async (c) => {
   // kept apart from the runner's kinds. An Empty not told yet stays, and the cache it will empty counts as emptied
   const empty = prev?.empty;
   // no report (a worker's first claim, before it knows whose cache it is): the device's last one stands, the same account's
-  const kept = cache ?? prev?.cache;
+  // its Download location's disk is away (work/cache.ts cacheAway): what it last listed stands, marked away
+  const kept = cache?.away ? { ...(prev?.cache ?? cache), away: true as const } : (cache ?? prev?.cache);
   setDeviceWork(d.id, {
     v,
     steps,
