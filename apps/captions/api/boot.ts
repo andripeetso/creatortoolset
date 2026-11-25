@@ -164,6 +164,7 @@ app.use(async (c, next) => {
 
 // 50 MB body cap, except video uploads and transcription audio
 const MAX_BODY = 50 * 1024 * 1024;
+export const LIBRARY_FILE = /^\/api\/devices\/relay\/work\/lib\/[^/]+\/file$/;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 app.use(async (c, next) => {
   if (
@@ -179,6 +180,8 @@ app.use(async (c, next) => {
     (c.req.method === "POST" && /^\/api\/devices\/relay\/job\/[^/]+\/\d+\/file$/.test(c.req.path)) ||
     // a computer task's made file (capped at the route) and a call carrying its sound (work/tasks.ts): the device token is checked first
     /^\/api\/devices\/relay\/work\/task\/\d+\/(?:file|call\/[\w-]+)$/.test(c.req.path) ||
+    // a library job's made file (a proxy can pass 50 MB; work/library-package.ts caps each kind): the device token is checked first
+    (c.req.method === "PUT" && LIBRARY_FILE.test(c.req.path)) ||
     (c.req.method === "POST" && /^\/api\/workshop-share\/[^/]+\/deliveries$/.test(c.req.path)) ||
     replacedLargeBody(c.req.path) ||
     // a plug-in route that takes a large upload (plugin.ts bodyLimitExempt); the route checks its own access first

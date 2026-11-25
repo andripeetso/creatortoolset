@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PUBLIC_REVIEW, REVIEW_UPLOAD, UPLOAD_RELAY } from "./boot";
+import { LIBRARY_FILE, PUBLIC_REVIEW, REVIEW_UPLOAD, UPLOAD_RELAY } from "./boot";
 
 // Golden: which Review paths skip the login. Changing these regexes must change this list on purpose.
 const U = "3f2b9c1e-8a7d-4c6b-9e10-2d4f5a6b7c8d";
@@ -44,5 +44,13 @@ describe("Review login exemptions", () => {
       expect(UPLOAD_RELAY.test(p), p).toBe(REVIEW_UPLOAD.test(review));
       expect(PUBLIC_REVIEW.test(p), p).toBe(false);
     }
+  });
+});
+
+describe("Body limit exemptions", () => {
+  it("a library job's made file (a proxy over 50 MB) skips the 50 MB cap; its other calls do not", () => {
+    expect(LIBRARY_FILE.test("/api/devices/relay/work/lib/42/file")).toBe(true);
+    expect(LIBRARY_FILE.test("/api/devices/relay/work/lib/42/done")).toBe(false);
+    expect(LIBRARY_FILE.test("/api/devices/relay/work/lib/42/file/x")).toBe(false);
   });
 });
