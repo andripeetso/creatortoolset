@@ -43,6 +43,8 @@ struct ToolsView: View {
                 } label: {
                     Label("Version", systemImage: "info.circle")
                 }
+                Link(destination: Account.site.appendingPathComponent("privacy")) { Label("Privacy Policy", systemImage: "hand.raised") }
+                Link(destination: Account.site.appendingPathComponent("terms")) { Label("Terms", systemImage: "doc.text") }
             }
         }
         .listStyle(.insetGrouped)
@@ -71,10 +73,13 @@ struct ToolsView: View {
     }
 }
 
-/// The account the phone signed in with, and Sign out.
+/// The account the phone signed in with, Sign out and Delete account.
 private struct AccountSettings: View {
     @ObservedObject private var account = Account.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var confirming = false
+    @State private var deleting = false
+    @State private var problem: String?
 
     var body: some View {
         Form {
@@ -89,10 +94,40 @@ private struct AccountSettings: View {
                         dismiss()
                     }
                 }
+                Section {
+                    Button(role: .destructive) { confirming = true } label: {
+                        HStack {
+                            Text("Delete account")
+                            if deleting { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(deleting)
+                } footer: {
+                    if let problem { Text(problem).foregroundStyle(.red) }
+                }
             }
+        }
+        .confirmationDialog("Delete account", isPresented: $confirming, titleVisibility: .visible) {
+            Button("Delete account", role: .destructive) { Task { await delete() } }
+        } message: {
+            Text("The account and its sign-ins are deleted from creatortoolset.com; your servers and their files are kept.")
         }
         .navigationTitle("Account")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func delete() async {
+        problem = nil
+        deleting = true
+        defer { deleting = false }
+        do {
+            try await account.deleteAccount()
+            dismiss()
+        } catch APIError.server(403, let message) {
+            problem = message // a token from before binding: "Sign in again to delete the account"
+        } catch {
+            problem = "Could not delete account"
+        }
     }
 }
 

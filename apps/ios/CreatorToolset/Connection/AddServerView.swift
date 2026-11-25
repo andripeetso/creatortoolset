@@ -250,6 +250,9 @@ struct AccountSignInButtons: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             if let problem { Problem(text: problem) }
+            Text("[Terms](https://creatortoolset.com/terms) · [Privacy Policy](https://creatortoolset.com/privacy)")
+                .font(.footnote)
+                .tint(.secondary)
         }
         .padding(.vertical, compact ? 6 : 0)
     }

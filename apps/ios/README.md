@@ -99,3 +99,18 @@ starts calling it.
 Open `CreatorToolset.xcodeproj`, pick your team under Signing & Capabilities and run. To upload a build to App Store
 Connect: `DEVELOPMENT_TEAM=<team id> pnpm --filter @creator-toolset/ios ios:archive` (the bundle id needs an App
 Store Connect record under that team; a fork changes `PRODUCT_BUNDLE_IDENTIFIER` first).
+
+### App Review
+
+The app does nothing without a server, so each submission gives the reviewer a username and password for a test
+account on a server with content in it (Tools → Computers → Add a computer → type its address, then the password
+sign-in), in App Store Connect's sign-in fields, never in this repository. The notes to paste with it:
+
+- Creator Toolset connects to the person's own Creator Toolset server: on their computer, on their home network
+  (`http://` addresses, hence `NSAllowsArbitraryLoads`) or on a server they run. Nothing is hosted for them.
+- Native screens: Chats, Upload (Photos to the server, in the background), Finals, Scripts with a prompter camera,
+  Face Blur, Story Splitter, Caption Studio. Tools with no screen of their own open the server's web pages.
+- Background modes: `audio` keeps a video playing in Picture in Picture and the read-aloud of a reply going with the
+  phone locked; `fetch` resumes a waiting upload and looks for what is waiting on the person.
+- Account: Sign in with Apple, Google or GitHub makes a creatortoolset.com account. Tools → Account → Delete account
+  deletes it; Tools → Settings links the Privacy Policy and Terms.

@@ -80,6 +80,18 @@ final class Account: ObservableObject {
             let url = API(server: Self.site, cookie: nil).url("/api/account/sign-out")
             _ = try? await Self.send(Self.site, "/api/account/sign-out", method: "POST", json: [:], headers: credential.headers(method: "POST", url: url))
         }
+        forgetHere()
+    }
+
+    /// Deletes the account on its site (its sign-ins and its list of servers; App Store rule 5.1.1(v)), then forgets it
+    /// here as Sign out does. The connect service stops pushing to this phone first, while the account can still ask.
+    func deleteAccount() async throws {
+        await AccountPush.signingOut()
+        _ = try await ask("/api/account/me", method: "DELETE")
+        forgetHere()
+    }
+
+    private func forgetHere() {
         Keychain.set(key, nil)
         UserDefaults.standard.removeObject(forKey: key)
         UserDefaults.standard.removeObject(forKey: boundKey)
