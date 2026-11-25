@@ -17,14 +17,17 @@ import Foundation
 
 func isRevealAsk(_ ask: String) -> Bool { ask.hasPrefix("reveal:") }
 
-/// The library and clip ids in a reveal ask; nil when it is not one.
-func revealAsk(_ ask: String) -> (library: String, asset: String)? {
+/// The library and clip ids in a reveal ask, and the version when it names one (a clip's original beside its blurred
+/// copy); nil when it is not one.
+func revealAsk(_ ask: String) -> (library: String, asset: String, version: String?)? {
     guard isRevealAsk(ask),
           let json = (try? JSONSerialization.jsonObject(with: Data(ask.dropFirst("reveal:".count).utf8))) as? [String: Any],
-          let library = json["library"] as? String, let asset = json["asset"] as? String,
-          [library, asset].allSatisfy({ id in !id.isEmpty && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") } })
+          let library = json["library"] as? String, let asset = json["asset"] as? String
     else { return nil }
-    return (library, asset)
+    let version = json["version"] as? String
+    guard ([library, asset] + (version.map { [$0] } ?? [])).allSatisfy({ id in !id.isEmpty && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") } })
+    else { return nil }
+    return (library, asset, version)
 }
 
 /// The Review video and version in a reveal ask for a Review version's own file (`reveal:{"review","v"}`); nil else.
@@ -157,7 +160,12 @@ enum Reveal {
     }
 }
 
-private struct ClipFile: Decodable { let sourcePath: String?; let versionId: String? }
+private struct ClipFile: Decodable {
+    struct Version: Decodable { let id: String; let path: String? }
+    let sourcePath: String?
+    let versionId: String?
+    let versions: [Version]?
+}
 private struct FolderList: Decodable { let folders: [ListedFolder] }
 private struct ReviewFile: Decodable {
     struct Asset: Decodable { let versions: [Version] }
@@ -169,10 +177,13 @@ extension Site {
     /// The clip's file on the server's computer, as the server tells its admin (nil for anyone else, or none). With
     /// `device` (this Mac's id there) a clip whose original this Mac has gives its path here, to a member too (api/library/search.ts sourcePathFor).
     /// When the server names none yet (it hasn't taken this Mac's report), the path this Mac's own places check
-    /// confirmed for the clip's current version on this server.
-    func clipPath(library: String, asset: String, device: String? = nil, places: Places = .shared) async -> String? {
+    /// confirmed for the clip's current version on this server. `version`: that version's file instead (its `path`).
+    func clipPath(library: String, asset: String, version: String? = nil, device: String? = nil, places: Places = .shared) async -> String? {
         let asker = device?.addingPercentEncoding(withAllowedCharacters: .alphanumerics).map { "?device=\($0)" } ?? ""
         let clip = (try? await get("/api/library/\(library)/assets/\(asset)\(asker)")) as ClipFile?
+        if let version, version != clip?.versionId {
+            return clip?.versions?.first { $0.id == version }?.path ?? places.confirmed(server: base, library: library, version: version)
+        }
         return clip?.sourcePath ?? clip?.versionId.flatMap { places.confirmed(server: base, library: library, version: $0) }
     }
 

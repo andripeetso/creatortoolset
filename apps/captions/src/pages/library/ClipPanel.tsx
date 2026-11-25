@@ -6,6 +6,7 @@ import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMa
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { confirmDialog } from "@/lib/dialogs";
 import { SheetTitle } from "@/components/ui/sheet";
 import { canUse, useMe } from "@/lib/auth";
@@ -17,7 +18,7 @@ import { undoable } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { placeLine } from "@/lib/wording";
 import type { PlaceWord } from "@contracts/places";
-import { clock, day, factsOf, original, revealClip, revealsHere, shotsByMoment, tagSuggestions, useClipView } from "./clip";
+import { clock, day, factsOf, original, revealClip, revealsHere, revealsVersion, shotsByMoment, tagSuggestions, useClipView } from "./clip";
 import { ClipImage, ClipPlayer } from "./ClipPlayer";
 import { ClipShare } from "./ClipShare";
 import { Locate } from "./Locate";
@@ -74,6 +75,8 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   // More like this: from the whole clip, or from the shot it was asked on (`at`)
   const [alike, setAlike] = useState<{ at?: number; hits: SearchHit[] }>({ hits: [] });
   const [copiedPath, setCopiedPath] = useState(false);
+  // Blur faces: which file Copy path and Show in Finder name, the blurred copy or its original
+  const [fileOf, setFileOf] = useState<"blurred" | "original">("blurred");
   const navigate = useNavigate();
   const me = useMe();
   const a = detail ?? asset;
@@ -207,7 +210,10 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   const fixed = inTrash || !!readOnly;
   // the clip's rarer tools in one menu: sharing, a new edit, editing, turning, the trash. It stays open on a turn, so upside down is two presses
   const file = original(a, detail);
-  const path = detail?.sourcePath;
+  // the blurred copy is the clip's current version; its original is the newest version not blurred, when it is on this computer
+  const blurredNow = !!detail?.versions?.find((v) => v.id === a.versionId)?.blurred;
+  const filmed = blurredNow && revealsVersion() ? detail?.versions?.find((v) => !v.blurred && v.path) : undefined;
+  const path = filmed && fileOf === "original" ? filmed.path : detail?.sourcePath;
   // the file is on this Mac and Finder can show it: that is the clip's main button, and Download goes in the menu
   const inFinder = a.state !== "missing" && !!path && revealsHere(placeWord);
   const more = !inTrash && (
@@ -269,7 +275,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
       setCopiedPath(true);
       window.setTimeout(() => setCopiedPath(false), 1500);
     });
-  const reveal = () => path && void revealClip(libraryId, a.id, path).then((problem) => problem && onError(problem));
+  const reveal = () => path && void revealClip(libraryId, a.id, path, filmed && fileOf === "original" ? filmed.id : undefined).then((problem) => problem && onError(problem));
   const open = (id: string, at?: number) => navigate(`/library?library=${encodeURIComponent(libraryId)}&asset=${encodeURIComponent(id)}${at ? `&at=${at}` : ""}`);
 
   const title = <SheetTitle className={cn("min-w-0 flex-1 break-words text-base", win && "pr-8")}>{a.title}</SheetTitle>;
@@ -302,7 +308,17 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
       )}
       {path && (
         // the file on this computer (the admin, on a server that has it): its path (Show in Finder is the main button)
-        <div className="-ml-2 -mt-2 flex flex-wrap items-center">
+        <div className="-ml-2 -mt-2 flex flex-wrap items-center gap-2">
+          {filmed && detail?.sourcePath && (
+            <ToggleGroup type="single" variant="outline" size="sm" className="ml-2" value={fileOf} onValueChange={(v) => v && setFileOf(v as typeof fileOf)} aria-label="File">
+              <ToggleGroupItem value="blurred" className="h-7 px-2.5 text-xs">
+                Blurred
+              </ToggleGroupItem>
+              <ToggleGroupItem value="original" className="h-7 px-2.5 text-xs">
+                Original
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )}
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" title={path} onClick={copyPath}>
             <Copy className="h-3.5 w-3.5" />
             {copiedPath ? "Copied" : "Copy path"}
@@ -470,7 +486,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
             <span className="w-5 shrink-0 tabular-nums text-zinc-500">{v.n}</span>
             <span className="min-w-0 flex-1 truncate tabular-nums">
               {day(v.createdAt)}
-              <span className="text-zinc-500">{` · ${fmtBytes(v.bytes)} · ${v.createdBy}`}</span>
+              <span className="text-zinc-500">{` · ${fmtBytes(v.bytes)} · ${v.createdBy}${detail.versions.some((x) => x.blurred) ? (v.blurred ? " · Blurred" : " · Original") : ""}`}</span>
             </span>
             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" asChild>
               <a href={`/api/library/media/${v.id}/source`} download={`${a.title} v${v.n}`} aria-label={`Download version ${v.n}`} title={`Download version ${v.n}`}>

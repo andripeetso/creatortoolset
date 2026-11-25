@@ -148,8 +148,11 @@ export const canReveal = () => macPageMarked();
 
 const revealMark = () => (typeof document === "undefined" ? undefined : document.documentElement.dataset.macReveal);
 
+/** From '3' the Mac app shows a version the ask names (a clip's original beside its blurred copy), not only the current one. */
+export const revealsVersion = () => Number(revealMark() ?? 0) >= 3;
+
 /** From '2' the Mac app shows a video, sound or picture file in Finder with no folder granted first. */
-export const revealsAnywhere = () => revealMark() === "2";
+export const revealsAnywhere = () => Number(revealMark() ?? 0) >= 2;
 
 /** Show in Finder only where this Mac has the file: the server on this Mac, or a card's "here" on this Mac (never another computer's path). */
 export const revealsHere = (placeWord: AssetCard["placeWord"]) => canReveal() && (servedHere() || (placeWord?.word === "here" && !!thisMacDevice()));
@@ -162,12 +165,12 @@ async function granted(local: string): Promise<boolean> {
 
 /** Shows the clip's file in Finder: null when it did, "" when no folder was granted, else what went wrong. The Mac app
  *  asks the server for the file itself; `path` (the detail's sourcePath, else asked here) only picks the folder to grant. */
-export async function revealClip(libraryId: string, assetId: string, path?: string): Promise<string | null> {
+export async function revealClip(libraryId: string, assetId: string, path?: string, version?: string): Promise<string | null> {
   const bridge = thisMacBridge();
   if (!bridge) return "Needs the Mac app";
   const local = servedHere() ? undefined : (path ?? (await getAsset(libraryId, assetId).catch(() => null))?.sourcePath);
   if (local && !(await granted(local))) return "";
-  const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ library: libraryId, asset: assetId })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+  const r = ((await bridge.postMessage(`reveal:${JSON.stringify({ library: libraryId, asset: assetId, ...(version ? { version } : {}) })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
   return r.ok ? null : (r.problem ?? "File not found on this Mac");
 }
 

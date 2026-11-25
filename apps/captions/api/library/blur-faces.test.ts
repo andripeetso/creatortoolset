@@ -201,6 +201,10 @@ describe("the blurred master: a version of its original's clip, linked on the fu
     expect(vOf(orig.assetId)).toBe(b.versionId);
     expect(mayLeave("lib_kids", { versionId: b.versionId! }).ok).toBe(true);
     expect(mayLeave("lib_kids", { versionId: orig.versionId }).ok).toBe(false);
+    // the clip window tells the blurred copy from its original (Blurred | Original, ClipPanel.tsx)
+    const { assetDetail } = await import("./search");
+    const versions = assetDetail("lib_kids", orig.assetId, { role: "admin" })!.versions;
+    expect(versions.map((v) => [v.id, !!v.blurred])).toEqual([[b.versionId, true], [orig.versionId, false]]);
   });
 
   it("an original indexed after its blurred render files into the render's clip, and the render stays current", async () => {

@@ -11,7 +11,7 @@ vi.mock("@/lib/library", () => ({ getAsset: vi.fn(async () => ({ sourcePath: "/U
 
 import { askMediaFolder, listMediaFolders } from "@/lib/local-files";
 import { getAsset } from "@/lib/library";
-import { revealClip } from "./clip";
+import { revealClip, revealsVersion } from "./clip";
 
 // A Tiny Acrobatics clip sent from the Desktop to a server elsewhere: Show in Finder grants its folder first.
 describe("Show in Finder for a clip on a server elsewhere", () => {
@@ -44,6 +44,13 @@ describe("Show in Finder for a clip on a server elsewhere", () => {
     expect(await revealClip("l1", "a1", "/Users/tiny/Desktop/jump.mp4")).toBeNull();
     expect(askMediaFolder).not.toHaveBeenCalled();
     expect(posted).toEqual(['reveal:{"library":"l1","asset":"a1"}']);
+  });
+
+  it("names the version only when asked for one (a clip's original beside its blurred copy)", async () => {
+    vi.stubGlobal("document", { documentElement: { dataset: { macReveal: "3" } } });
+    expect(revealsVersion()).toBe(true);
+    expect(await revealClip("l1", "a1", "/Users/tiny/Desktop/jump.mp4", "v1")).toBeNull();
+    expect(posted.at(-1)).toBe('reveal:{"library":"l1","asset":"a1","version":"v1"}');
   });
 
   it("on the server on this Mac asks nothing first", async () => {

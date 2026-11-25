@@ -223,7 +223,7 @@ final class Shell: NSObject, ObservableObject {
                 let device = DeviceVault.deviceID(for: self.base.host ?? "")
                 Task {
                     let path = if let review { await self.client().reviewPath(asset: review.asset, n: review.n) }
-                               else { await self.client().clipPath(library: clip!.library, asset: clip!.asset, device: device) }
+                               else { await self.client().clipPath(library: clip!.library, asset: clip!.asset, version: clip!.version, device: device) }
                     done(await Reveal.answer(path, anyFile: here))
                 }
                 return

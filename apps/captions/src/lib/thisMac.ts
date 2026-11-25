@@ -15,7 +15,7 @@ type Bridge = { postMessage: (m: string) => Promise<ThisMacState> };
  */
 export const macPageMarked = (): boolean => {
   const mark = typeof document === "undefined" ? undefined : document.documentElement.dataset.macReveal;
-  return (mark === "1" || mark === "2") && !!thisMacBridge();
+  return Number(mark ?? 0) >= 1 && !!thisMacBridge();
 };
 
 /** The Mac app's bridge, or undefined in a browser (no window at all in a test). */

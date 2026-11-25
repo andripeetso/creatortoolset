@@ -222,7 +222,7 @@ export function ClipPlayer({
       title={pin.badge === "Proxy" ? (awayLine(check) ?? undefined) : undefined}
       className="rounded bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white"
     >
-      {pin.badge}
+      {pin.badge === "Original" && detail?.versions?.find((v) => v.id === a.versionId)?.blurred ? "Blurred" : pin.badge}
     </span>
   );
   const picture = a.thumbUrl;

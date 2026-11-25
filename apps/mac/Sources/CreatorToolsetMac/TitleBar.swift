@@ -378,8 +378,9 @@ final class AppWebView: WKWebView, WKScriptMessageHandler, WKScriptMessageHandle
         // '2': Review's thumbs too
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macLocalThumbs = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // a library clip's Show in Finder (the "reveal:" ask, Reveal.swift): src/pages/library/clip.ts canReveal. '2': on a
-        // server elsewhere it needs no granted folder (the page asks for none first)
-        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '2';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // server elsewhere it needs no granted folder (the page asks for none first). '3': the ask may name a version (a
+        // clip's original beside its blurred copy)
+        scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macReveal = '3';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // a library copy's Show in Finder (the "reveal:" ask with copy and path, Reveal.swift): Settings → Media Library → Copies
         scripts.addUserScript(WKUserScript(source: "document.documentElement.dataset.macCopyReveal = '1';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // a Settings → Folders folder's Show in Finder (the "reveal:" ask with folder, Reveal.swift): StorageRows.tsx canRevealFolder

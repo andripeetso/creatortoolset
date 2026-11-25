@@ -149,9 +149,14 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
     .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ? AND a.left_hidden_at IS NULL`)
     .get(assetId, libraryId) as CardRow | undefined;
   if (!row) return null;
-  const versions = db()
-    .prepare("SELECT id, n, bytes, created_at AS createdAt, created_by AS createdBy, state FROM asset_versions WHERE asset_id = ? ORDER BY n DESC")
-    .all(assetId) as unknown as AssetDetail["versions"];
+  const versions = (
+    db()
+      .prepare("SELECT id, n, bytes, created_at AS createdAt, created_by AS createdBy, state, blurred_of FROM asset_versions WHERE asset_id = ? ORDER BY n DESC")
+      .all(assetId) as unknown as (AssetDetail["versions"][number] & { blurred_of: string | null })[]
+  ).map(({ blurred_of, ...v }) => {
+    const path = sourcePathFor(libraryId, v.id, user, device);
+    return { ...v, ...(blurred_of ? { blurred: true as const } : {}), ...(path ? { path } : {}) };
+  });
   const collections = db()
     .prepare("SELECT c.id, c.name FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = ? ORDER BY c.name")
     .all(assetId) as { id: string; name: string }[];
