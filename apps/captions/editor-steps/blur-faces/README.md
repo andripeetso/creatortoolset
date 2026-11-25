@@ -74,8 +74,8 @@ the original. The whole design: `docs/face-blur-intake-prd.md`.
 ## Blurred copies made before
 
 Copies blurred before Face Blur (by hand or another tool) are added to the clips they belong to, so nothing is blurred
-again (`reconnect.ts`). One time, by the library's owner or an admin, with an access key from Headless access. Keep Blur
-faces off in that library until it is done: switched on first, every file without a blurred version is queued.
+again (`reconnect.ts`). One time, by the library's owner or an admin, with an access key from Headless access. Turning
+Blur faces on keeps the files already in the library as filmed (nothing is queued for them), so this can run before or after.
 
 `POST /api/x/blur-faces/reconnect` `{ libraryId, dry?: true, rows }`, at most 500 rows a call → `{ rows: [{ i,
 versionId, result, copyVersionId?, error? }] }`. Each row finds its clip by `versionId` or by `path` (the original's
