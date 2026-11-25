@@ -44,7 +44,6 @@ const DECODERS: Record<string, string> = {
   "api/editor/plan-render.ts": "mayRunHere (placeOf)",
   "api/editor/plan.ts": "mayRunHere (placeOf)",
   "api/editor/preview.ts": "mayRunHere (placeOf: preview on a computer)",
-  "api/lib/render-check.ts": "DECODES the file it is handed: called only by the export task and the preview step, each placed by its own gate",
   "api/editor/speakers.ts": "mayRunHere (placeOf)",
   "api/editor/subject-engine.ts": "mayRunHere (placeOf); unverified",
   "api/editor/subject.ts": "mayRunHere (placeOf); unverified",
@@ -79,7 +78,7 @@ const DECODERS: Record<string, string> = {
   "api/boot.ts": "names the runtime; unverified",
 };
 /** The count at the start (local-first plan P0): it may only go down. */
-const DECODERS_AT_START = 58; // 68 at P0; P3 moved twelve to computers; +1 the Instagram sign-in's Chrome window (lib/instagram/session.ts); +1 the finished-file check (lib/render-check.ts)
+const DECODERS_AT_START = 57; // 68 at P0; P3 moved twelve to computers; +1 the Instagram sign-in's Chrome window (lib/instagram/session.ts)
 const DECODE = /spawn\(|spawnSync|spawnKillable|execFile\(|execFileSync|execSync|ffmpeg|ffprobe|chromium|playwright|onnx/;
 
 /** T8: every remaining deletion by age under api/, with why it stays. Library and export files have none (decision 8). */

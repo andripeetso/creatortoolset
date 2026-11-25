@@ -26,7 +26,7 @@ const { emptyTracks } = await import("./timeline");
 const { clipsOf, createEdit, readDraft, readEdit, readFiled, readStep, saveDraft, saveEdit } = await import("./store");
 const { applyEdits } = await import("./edits");
 const { piecesOf, previewSeconds, previewSize, previewStep, renderPreview, shotFilter } = await import("./preview");
-const { checkRender } = await import("../lib/render-check");
+const { checkRender } = await import("../library/media/probe");
 const { tick } = await import("./worker");
 
 const fixture = path.join(dir, "Tiny Acrobatics take.mp4");

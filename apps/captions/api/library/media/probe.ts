@@ -1,6 +1,6 @@
 import { open } from "node:fs/promises";
 import { blobs, libraryDb } from "../db";
-import { spawnKillable } from "./run";
+import { ffmpeg, spawnKillable } from "./run";
 
 /**
  * What the library keeps of a file's probe (tasks/media-library-plan.md, section 5). Built field by field from
@@ -304,4 +304,58 @@ export async function placeUnplaced(db = libraryDb()): Promise<number> {
   const { libraryChanged } = await import("../access"); // the open pages' Where list refetches
   for (const id of touched) libraryChanged(id);
   return n;
+}
+
+/** What a finished file must be (docs/video-output-checks-prd.md §4.2). */
+export interface RenderWant {
+  duration: number;
+  /** a sound track must be there (its length is the source's own business: a clip's sound may end early) */
+  sound: boolean;
+  /** only where the app sets the frame rate (D8): a burn-in keeps the source's, which may vary */
+  fps?: number;
+  width?: number;
+  height?: number;
+}
+
+export type RenderCheck = { ok: true } | { ok: false; why: string };
+
+const num = (x: unknown) => (x === undefined || x === null || x === "" || Number.isNaN(Number(x)) ? undefined : Number(x));
+/** A stream's seconds; a WebM's streams carry none, so the container's. */
+const secondsOf = (s: Json | undefined, j: { format?: Json }) => num(s?.duration) ?? num(j.format?.duration) ?? 0;
+const clock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+const secs = (x: number) => `${Math.abs(x).toFixed(1)} s`;
+
+/** Seconds of `file`'s picture; Infinity when it can't be read, so a caller's own length stands. */
+export const pictureSeconds = (file: string): Promise<number> =>
+  ffprobe(file, ["-show_format", "-show_streams", "-select_streams", "v:0"]).then((j) => secondsOf(j.streams?.[0], j) || Infinity, () => Infinity);
+
+/**
+ * A finished file checked the way a viewer gets it: a picture as long as asked, a sound track where wanted, the frame
+ * count where the app set the frame rate, and one frame read in the middle. `why` is one short line for a tooltip.
+ */
+export async function checkRender(file: string, want: RenderWant): Promise<RenderCheck> {
+  const j = await ffprobe(file, ["-show_format", "-show_streams", ...(want.fps ? ["-count_packets"] : [])]).catch(() => null);
+  if (!j) return { ok: false, why: "File could not be read" };
+  const v = j.streams?.find((x) => x.codec_type === "video");
+  if (!v) return { ok: false, why: "No picture" };
+  const vDur = secondsOf(v, j);
+  const fps = want.fps ?? (rate(v.avg_frame_rate) || 30);
+  const off = vDur - want.duration;
+  if (Math.abs(off) > 1 / fps + 0.05) return { ok: false, why: `Video is ${secs(off)} ${off < 0 ? "short" : "long"}` };
+  if (want.width && want.height && (v.width !== want.width || v.height !== want.height)) {
+    return { ok: false, why: `Video is ${v.width}×${v.height}, not ${want.width}×${want.height}` };
+  }
+  if (want.fps) {
+    const need = Math.ceil(want.duration * want.fps);
+    const has = num(v.nb_read_packets) ?? 0;
+    if (Math.abs(has - need) > 1) return { ok: false, why: `Video has ${has} frames, not ${need}` };
+  }
+  if (want.sound && !j.streams?.some((x) => x.codec_type === "audio")) return { ok: false, why: "No sound" };
+  const mid = vDur / 2;
+  // -xerror: a frame that does not decode ends ffmpeg with an error instead of a warning
+  const read = await ffmpeg(["-xerror", "-ss", mid.toFixed(3), "-i", file, "-map", "0:v:0", "-frames:v", "1", "-f", "null", "-"], true).then(
+    () => true,
+    () => false,
+  );
+  return read ? { ok: true } : { ok: false, why: `Frame at ${clock(mid)} could not be read` };
 }

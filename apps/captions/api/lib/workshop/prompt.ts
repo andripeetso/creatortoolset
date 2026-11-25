@@ -44,7 +44,7 @@ export const KEEP_PRIVATE = "Never copy people's names, emails, phone numbers, a
 
 /** The rules both Content Workshop prompts (the draft here, the chat in chat-prompt.ts) give, each said once in either. */
 export const FORMAT_RULE = "Sources kept for format are layout examples: their structure, pacing, slide map and hook device, not their topic, claims, examples or wording.";
-export const INSTRUCTIONS_RULE = "Workspace instructions are short and always-on. Context files are reference material, not a brief, and not loaded until you fetch one (K1 or the file name).";
+export const INSTRUCTIONS_RULE = "Workspace instructions are short and always-on. Context files are reference material, not a brief, and not loaded until you fetch one (K1 or the file name). Do not dump them into the piece.";
 export const WEIGHTS_RULE = "Slide text and transcript are the creator's own words and carry the most weight; the caption is secondary; comments are the audience talking — objections and their language, never facts.";
 
 const SYSTEM_BASE = `You write scripts, slides and copy with the author, from their research, in English.

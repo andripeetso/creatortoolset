@@ -7,8 +7,7 @@ import { createCaptionFrameRenderer } from "../../caption-frames";
 import { filterEscape, requireFontsDir } from "../../export";
 import { ffmpegCommand } from "../../ffmpeg-runtime";
 import { env } from "../../lib/env";
-import { checkRender } from "../../lib/render-check";
-import { hasSound } from "../../library/media/probe";
+import { checkRender, hasSound, pictureSeconds } from "../../library/media/probe";
 import { keepIn } from "../files";
 import { taskKind } from "../tasks";
 
@@ -235,9 +234,13 @@ taskKind<ExportInput, null>(EXPORT_TASK, {
     }
     if (signal.aborted) throw new Error("Export cancelled");
     if (input.kind === "overlay" && input.format === "mov") await assertMovHasTransparency(out, signal);
-    // the file as a viewer gets it, before it is sent (§4.2): a burn-in keeps the source's frame rate, so no frame count (D8)
+    // the file as a viewer gets it, before it is sent (§4.2): a burn-in keeps the source's frame rate, so no frame count
+    // (D8), and its picture is the source's, which may end before the stored length (a clip whose sound runs on)
     if (input.kind === "burn" || input.ext !== "zip") {
-      const checked = await checkRender(out, input.kind === "burn" ? { duration: input.duration, sound: await hasSound(source) } : { duration: input.duration, sound: false, fps });
+      const want = input.kind === "burn"
+        ? { duration: Math.min(input.duration, await pictureSeconds(source)), sound: await hasSound(source) }
+        : { duration: input.duration, sound: false, fps };
+      const checked = await checkRender(out, want);
       if (!checked.ok) throw new Error(checked.why);
     }
     if (ctx.where === "computer") {

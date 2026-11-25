@@ -35,8 +35,7 @@ import {
   canExportCaptionedVideoLocal,
   exportCaptionedVideoLocal,
 } from "@/lib/local-video-export";
-import type { ExportFormat } from "@/lib/types";
-import { intoBand, intoBandMargin, isVertical } from "../../contracts/design";
+import { placeForReel, type ExportFormat } from "@/lib/types";
 import { FpsSelect } from "./FpsSelect";
 
 type Tab = "video" | "captions" | "recent";
@@ -316,12 +315,8 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
     duration: useStudio((s) => s.duration),
   };
   // source sizes are stored as shown (after a quarter turn), so they are the frame a viewer sees
-  const banded = style.fitBox
-    ? { boxY: intoBand(style, activeDims.width, activeDims.height).boxY }
-    : { marginVPct: intoBandMargin(style.position, style.marginVPct, activeDims.width, activeDims.height) };
-  const underButtons =
-    isVertical(activeDims.width, activeDims.height) &&
-    ("boxY" in banded ? banded.boxY !== style.boxY : banded.marginVPct !== style.marginVPct);
+  const placed = placeForReel(style, activeDims.width, activeDims.height);
+  const underButtons = placed !== style;
   const coverOn = cover && !!selected.burn && !useLocalRender && !batch;
 
   useEffect(() => {
@@ -936,7 +931,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
             <div className="mb-3 flex items-center justify-between gap-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
               <span>Captions under the reel's buttons</span>
               <button
-                onClick={() => setStyle(banded)}
+                onClick={() => setStyle(placed)}
                 className="shrink-0 rounded-md bg-zinc-800 px-2.5 py-1 font-medium text-zinc-100 hover:bg-zinc-700"
               >
                 Move up

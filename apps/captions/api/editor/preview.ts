@@ -18,7 +18,7 @@ import { makeThumb } from "../library/media/thumb";
 import { makeWave } from "../library/media/wave";
 import { ask, onComputer, pathOf } from "../work/on-computer";
 import { env } from "../lib/env";
-import { checkRender } from "../lib/render-check";
+import { checkRender } from "../library/media/probe";
 import { Waiting } from "./analyze";
 import { type Cdl, cdlFilter } from "./grade";
 import { frameDuration } from "./fcpxml";

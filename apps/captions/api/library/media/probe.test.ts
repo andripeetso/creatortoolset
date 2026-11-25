@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { ffmpegCommand } from "../ffmpeg-runtime";
-import { checkRender } from "./render-check";
+import { ffmpegCommand } from "../../ffmpeg-runtime";
+import { checkRender, pictureSeconds } from "./probe";
 
 const dir = mkdtempSync(path.join(process.env.CT_SCRATCH_DIR ?? tmpdir(), "render-check-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -32,6 +32,18 @@ describe("checkRender", () => {
 
   it("fails a silent file when sound is wanted", async () => {
     expect(await checkRender(clip("silent.mp4", 1, false), { duration: 1, sound: true })).toEqual({ ok: false, why: "No sound" });
+  });
+
+  it("passes a clip whose sound ends early, measured by its own picture", async () => {
+    const out = path.join(dir, "early.mp4");
+    execFileSync(ffmpegCommand(), [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "testsrc=size=64x64:rate=10:duration=1",
+      "-f", "lavfi", "-i", "sine=frequency=440:duration=0.6",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", out,
+    ]);
+    expect(await pictureSeconds(out)).toBeCloseTo(1, 1);
+    expect(await checkRender(out, { duration: 1, sound: true })).toEqual({ ok: true });
   });
 
   it("fails the wrong frame count", async () => {
