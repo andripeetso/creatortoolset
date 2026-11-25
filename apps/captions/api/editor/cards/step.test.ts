@@ -97,7 +97,7 @@ afterEach(() => {
 });
 
 const SCRIPT = `function kitFrame(t, card) { const s = document.getElementById("stage"); s.style.background = "#c00"; s.textContent = card.text; }`;
-const PLAN = JSON.stringify({ cards: [{ line: 2, text: "Tuck your chin" }, { line: 3, text: "Push with both hands" }] });
+const PLAN = JSON.stringify({ cards: [{ line: 2, text: "Tuck your chin" }, { line: 3, text: "Push both hands" }] });
 
 /* ---- the Mac: a stand-in that speaks the device contract ---- */
 
@@ -288,11 +288,11 @@ describe.skipIf(rootReplaced)("the card step", () => {
     // 2. the make call: no picture in the style yet, so it is asked in words alone
     expect(asked).toHaveLength(2);
     expect(asked[0]!.text).toBe(
-      "The look, in the author's own words:\nBig white words on deep red. Nothing bounces.\n\nThe lines (a line marked * can carry a card):\n1* Here is the thing about rolling.\n2* First, tuck your chin all the way.\n3* Then push with both hands.\n4 Follow for the next one.",
+      "The look, in the author's own words:\nBig white words on deep red. Nothing bounces.\n\nThe lines (a line marked * can carry a card, in the words it allows):\n1* (4 words at most) Here is the thing about rolling.\n2* (7 words at most) First, tuck your chin all the way.\n3* (3 words at most) Then push with both hands.\n4 Follow for the next one.",
     );
     expect(asked[1]!.images).toEqual([]);
     expect(asked[1]!.text).toContain('c1 (2.4 s): "Tuck your chin" over the line "First, tuck your chin all the way."');
-    expect(asked[1]!.text).toContain('c2 (1.2 s): "Push with both hands" over the line "Then push with both hands."');
+    expect(asked[1]!.text).toContain('c2 (1.2 s): "Push both hands" over the line "Then push with both hands."');
     expect(asked[1]!.text).toContain("The frame: 360 by 640 pixels, 30 frames a second.");
     expect(asked[1]!.system).toContain("kitFrame(t, card)");
 
@@ -304,7 +304,7 @@ describe.skipIf(rootReplaced)("the card step", () => {
       width: 360, height: 640, fps: 30, script: SCRIPT,
       cards: [
         { id: "c1", seconds: 2.4, content: { id: "c1", text: "Tuck your chin", line: "First, tuck your chin all the way." } },
-        { id: "c2", seconds: 1.2, content: { id: "c2", text: "Push with both hands", line: "Then push with both hands." } },
+        { id: "c2", seconds: 1.2, content: { id: "c2", text: "Push both hands", line: "Then push with both hands." } },
       ],
     });
 
@@ -335,7 +335,7 @@ describe.skipIf(rootReplaced)("the card step", () => {
     expect(tl.sources["card-c1"]).toEqual({ versionId: "card-c1", name: "Card 1", fps: 30, tc: 0, dur: 72, w: 360, h: 640, file: "cards/v1/c1.mp4" });
     expect(tl.tracks.V1.items).toEqual(timeline().tracks.V1.items); // his own track is not touched
     expect(readCards(id, "v1")).toMatchObject({ calls: 3, draws: 1, drawn: ["c1", "c2"], done: true });
-    expect((await view(id)).cards).toEqual({ v1: { cards: [{ id: "c1", text: "Tuck your chin", liked: false }, { id: "c2", text: "Push with both hands", liked: false }] } });
+    expect((await view(id)).cards).toEqual({ v1: { cards: [{ id: "c1", text: "Tuck your chin", liked: false }, { id: "c2", text: "Push both hands", liked: false }] } });
 
     // the preview shows the card there and his take everywhere else, and his voice runs on under it
     const out = path.join(dir, "with-cards.mp4");
@@ -711,7 +711,7 @@ describe.skipIf(rootReplaced)("cards never hold an edit up", () => {
     await drawOnMac({ colour: "blue" });
     await step();
     expect(asked).toHaveLength(3); // the look, once
-    expect(await ended(id)).toEqual({ cards: [{ id: "c1", text: "Tuck your chin", liked: false }, { id: "c2", text: "Push with both hands", liked: false }] });
+    expect(await ended(id)).toEqual({ cards: [{ id: "c1", text: "Tuck your chin", liked: false }, { id: "c2", text: "Push both hands", liked: false }] });
     expect(readFileSync(path.join(editDir(id), "cards", "v1", "c1.mp4")).equals(readFileSync(path.join(dir, "card-blue-2.4.mp4")))).toBe(true);
     expect(readCards(id, "v1")).toMatchObject({ calls: 3, draws: 1, done: true }); // one script was sent to be drawn
   });
@@ -958,7 +958,7 @@ describe("where a card goes", () => {
 
 describe.skipIf(rootReplaced)("the caps", () => {
   it("6 cards a version and 60 characters a card, whatever the AI answers", () => {
-    const lines = Array.from({ length: 9 }, (_, k) => ({ n: k + 1, text: `Line ${k + 1}`, ok: k !== 3 }));
+    const lines = Array.from({ length: 9 }, (_, k) => ({ n: k + 1, text: `Line ${k + 1}`, ok: k !== 3, seconds: k === 3 ? 0 : 2.4 }));
     const picked = parsePlan(JSON.stringify({ cards: [{ line: 4, text: "no room there" }, { line: 1, text: "w".repeat(80) }, { line: 1, text: "twice" }, { line: 99, text: "no such line" }, ...lines.slice(1).map((l) => ({ line: l.n, text: `Card ${l.n}` }))] }), lines);
     expect(picked).toHaveLength(MAX_CARDS);
     expect(picked.map((c) => c.line)).toEqual([1, 2, 3, 5, 6, 7]);

@@ -66,7 +66,7 @@ const picture = { jpegBase64: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("ba
 const frame = { brief: "Big white words on deep red.", width: 1080, height: 1920, fps: 30, cards: [{ id: "c1", text: "Tuck your chin", first: 2, last: 2, line: "First, tuck your chin.", seconds: 2.4 }] };
 const SCRIPT = "function kitFrame(t, card) {}";
 const CALLS = [
-  { name: "plan", prompt: planPrompt({ lines: [{ n: 1, text: "First, tuck your chin.", ok: true }], brief: frame.brief, packText: "Instructions from packs the author installed." }), images: [], parse: (t: string) => t, reply: '{"cards":[]}' },
+  { name: "plan", prompt: planPrompt({ lines: [{ n: 1, text: "First, tuck your chin.", ok: true, seconds: 2 }], brief: frame.brief, packText: "Instructions from packs the author installed." }), images: [], parse: (t: string) => t, reply: '{"cards":[]}' },
   { name: "make, in words alone (a style with no picture)", prompt: makePrompt({ ...frame, made: 0, inspirations: 0 }), images: [], parse: parseScript, reply: SCRIPT },
   { name: "make, with the style's pictures", prompt: makePrompt({ ...frame, made: 3, inspirations: 5 }), images: Array.from({ length: MAKE_PICTURES }, () => picture), parse: parseScript, reply: SCRIPT },
   { name: "look", prompt: lookPrompt({ ...frame, script: SCRIPT, columns: true, pictures: LOOK_PICTURES }), images: Array.from({ length: 1 + LOOK_PICTURES }, () => picture), parse: parseLook, reply: "OK" },
@@ -191,7 +191,7 @@ describe("what the questions are made of", () => {
   it("the plan, make and look questions are the ones origin/main asked before the fix call came, character for character", () => {
     const [plan, make, withPictures, look] = CALLS;
     const sent = [plan, make, withPictures, look].map((c) => c.prompt);
-    expect(createHash("sha256").update(JSON.stringify(sent)).digest("hex")).toBe("e86aa99ef4d37901bce25f1cf813002d00f4a8dd02909183f9cf593eba52d2da");
+    expect(createHash("sha256").update(JSON.stringify(sent)).digest("hex")).toBe("fe99b8ec95790ac59aa9878feed2ddab543eb782573f998040746f2a8233db01");
   });
 
   it("installed packs' text reaches the plan alone: the make, the look and the fix call take no text but the app's and the person's", () => {

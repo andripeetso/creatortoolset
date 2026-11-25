@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOTES_MAX, buildGeneratePrompt, matchKnowledge, renderAccountContext } from "./prompt";
+import { FORMAT_RULE, INSTRUCTIONS_RULE, KEEP_PRIVATE, NOTES_MAX, WEIGHTS_RULE, buildGeneratePrompt, matchKnowledge, renderAccountContext } from "./prompt";
 
 const base = {
   project: { name: "Tiny Acrobatics", audience: "parents", voice: "warm", cta: "save it", notes: "" },
@@ -55,14 +55,14 @@ describe("buildGeneratePrompt", () => {
   });
 
   it("tells the model a format source is layout only", () => {
-    const { user } = buildGeneratePrompt({
+    const { system, user } = buildGeneratePrompt({
       kind: "reel",
       packs: [{ handle: "coach", kind: "reel", url: "https://x/1", markdown: "body", savedFor: ["format"] }],
       notes: "",
       prompt: "x",
     });
     expect(user).toContain("Kept for format only");
-    expect(user).toContain("Do not use its topic");
+    expect(system).toContain("not their topic, claims, examples or wording");
   });
 
   it("treats unmarked sources as content", () => {
@@ -165,5 +165,30 @@ describe("pack instructions in the generate prompt", () => {
     const packed = buildGeneratePrompt({ ...input, packText: "PACK-GEN-ZQ" });
     expect(packed.system).toBe(`${plain.system}\n\nPACK-GEN-ZQ`);
     expect(packed.user).toBe(plain.user);
+  });
+});
+
+describe("rules every public-text prompt shares", () => {
+  const kinds = ["reel", "carousel", "ad", "free"] as const;
+  const docKinds = ["reel", "carousel", "ad", "free", "youtube", "newsletter", "thread", "article", "notes"] as const;
+  const once = (text: string, rule: string) => text.split(rule).length - 1;
+
+  it("the draft says KEEP_PRIVATE and each shared rule once", () => {
+    for (const kind of kinds) {
+      const { system } = buildGeneratePrompt({ kind, ...base });
+      for (const rule of [KEEP_PRIVATE, FORMAT_RULE, INSTRUCTIONS_RULE, WEIGHTS_RULE]) expect(once(system, rule), `${kind}: ${rule}`).toBe(1);
+    }
+  });
+
+  it("the chat says KEEP_PRIVATE once in both modes, the shared rules once on the API key, and set_caption's ban once where the kind has no description", async () => {
+    const { chatSystemFor } = await import("./chat-prompt");
+    for (const kind of docKinds) {
+      for (const folder of [false, true]) {
+        const system = chatSystemFor(kind, folder);
+        expect(once(system, KEEP_PRIVATE), `${kind} ${folder}`).toBe(1);
+        if (!folder) for (const rule of [FORMAT_RULE, INSTRUCTIONS_RULE, WEIGHTS_RULE]) expect(once(system, rule), `${kind}: ${rule}`).toBe(1);
+        expect(once(system, "Do not call set_caption or set_pinned."), kind).toBe(["newsletter", "thread", "article", "notes"].includes(kind) ? 1 : 0);
+      }
+    }
   });
 });

@@ -1,4 +1,7 @@
+import { isVertical, REEL_BAND } from "../../../contracts/design";
+import { wordBudget, wordCount } from "../../../contracts/reading";
 import { parseJsonObject } from "../../lib/instagram/vision";
+import { KEEP_PRIVATE } from "../../lib/workshop/prompt";
 import { CARD_TEXT_MAX, ERROR_MAX, MAX_CARDS, SCRIPT_MAX, type PlannedCard } from "./state";
 
 /**
@@ -8,16 +11,17 @@ import { CARD_TEXT_MAX, ERROR_MAX, MAX_CARDS, SCRIPT_MAX, type PlannedCard } fro
  * web (step.ts, answer-only.test.ts).
  */
 
-/** One line of the version, as spoken; `ok`: a card fits over it. */
+/** One line of the version, as spoken; `ok`: a card fits over it, for `seconds` (cardWindow; 0 when it does not). */
 export interface PlanLine {
   n: number;
   text: string;
   ok: boolean;
+  seconds: number;
 }
 
 const PLAN = `You pick the moments of a short video that get an animated card: a few words on screen, filling the frame for about two seconds while the speaker's voice goes on. You are given the video's lines as spoken, in order, and the look the author wants, in the author's own words.
 
-Pick at most ${MAX_CARDS} of the lines marked *, the ones where words on screen help a viewer most. Fewer is fine, and none is fine. For each, write the card's words: at most ${CARD_TEXT_MAX} characters, the speaker's own point in the speaker's own words.
+Pick at most ${MAX_CARDS} of the lines marked *, the ones where words on screen help a viewer most. Fewer is fine, and none is fine. For each, write the card's words: no more words than its line allows (a viewer reads them while the card holds), at most ${CARD_TEXT_MAX} characters, the speaker's own point in the speaker's own words. ${KEEP_PRIVATE}
 
 Answer with JSON only, in this shape:
 {"cards":[{"line":2,"text":"the card's words"}]}`;
@@ -26,11 +30,11 @@ const look = (brief: string) => `The look, in the author's own words:\n${brief.t
 
 /** `packText`: the installed packs' instructions for editor.cards (api/lib/packs.ts), added after the app's own text, as the script step adds its own. */
 export function planPrompt(i: { lines: PlanLine[]; brief: string; packText?: string }): { system: string; user: string } {
-  const lines = i.lines.map((l) => `${l.n}${l.ok ? "*" : ""} ${l.text}`).join("\n");
-  return { system: i.packText ? `${PLAN}\n\n${i.packText}` : PLAN, user: `${look(i.brief)}\n\nThe lines (a line marked * can carry a card):\n${lines}` };
+  const lines = i.lines.map((l) => `${l.n}${l.ok ? `* (${wordBudget(l.seconds)} words at most)` : ""} ${l.text}`).join("\n");
+  return { system: i.packText ? `${PLAN}\n\n${i.packText}` : PLAN, user: `${look(i.brief)}\n\nThe lines (a line marked * can carry a card, in the words it allows):\n${lines}` };
 }
 
-/** The plan's cards, checked: a line that can carry one, each line once, words cut to the cap, at most MAX_CARDS. */
+/** The plan's cards, checked: a line that can carry one, in no more words than its seconds can be read in, each line once, words cut to the cap, at most MAX_CARDS. */
 export function parsePlan(text: string, lines: PlanLine[]): { line: number; text: string }[] {
   let o: Record<string, unknown> = {};
   try {
@@ -42,17 +46,23 @@ export function parsePlan(text: string, lines: PlanLine[]): { line: number; text
   const out: { line: number; text: string }[] = [];
   for (const c of o.cards as { line?: unknown; text?: unknown }[]) {
     const line = Number(c?.line);
-    const words = typeof c?.text === "string" ? c.text.replace(/\s+/g, " ").trim().slice(0, CARD_TEXT_MAX).trim() : "";
-    if (!words || !lines.some((l) => l.n === line && l.ok) || out.some((x) => x.line === line)) continue;
+    const said = typeof c?.text === "string" ? c.text.replace(/\s+/g, " ").trim() : "";
+    const words = said.slice(0, CARD_TEXT_MAX).trim();
+    const l = lines.find((x) => x.n === line && x.ok);
+    if (!words || !l || wordCount(said) > wordBudget(l.seconds) || out.some((x) => x.line === line)) continue;
     if (out.push({ line, text: words }) === MAX_CARDS) break;
   }
   return out;
 }
 
+/** On a vertical video, where a card's words stay clear of the reel's buttons and caption, in the stage's CSS pixels. */
+const band = (w: number, h: number) =>
+  isVertical(w, h) ? ` Words stay between y ${Math.round(h * REEL_BAND.top)} and ${Math.round(h * (1 - REEL_BAND.bottom))} and left of x ${Math.round(w * (1 - REEL_BAND.right))}; the rest is under the reel's buttons and caption.` : "";
+
 /** What a card's script is and what it has: the drawing page of the Mac app, said once for the make, the fix and the look call. */
 const stage = (w: number, h: number) => `The script runs alone in an empty web page. It must define one function, kitFrame(t, card), which paints the whole frame for time t (seconds from the card's start) into the element with the id "stage", a <div> (not a canvas: a canvas the script wants, it makes inside the stage). A picture of the stage is taken right after each call returns, so nothing may wait: no timers, no CSS transitions or animations, nothing still loading. Work every position, size and opacity out from t.
 
-The stage is ${w} by ${h} CSS pixels, black, with white text until the script says otherwise; what the script leaves unpainted is black in the video. The script has the DOM, CSS, SVG, a 2D canvas and the system's fonts. Pictures only as data: addresses written into the script. Nothing can be loaded by address, and there is no WebGL, WebAssembly or audio. One card's frames must all draw within 20 seconds.
+The stage is ${w} by ${h} CSS pixels, black, with white text until the script says otherwise; what the script leaves unpainted is black in the video.${band(w, h)} The script has the DOM, CSS, SVG, a 2D canvas and the system's fonts. Pictures only as data: addresses written into the script. Nothing can be loaded by address, and there is no WebGL, WebAssembly or audio. One card's frames must all draw within 20 seconds.
 
 card is {"id":"c1","text":"the words on the card","line":"what the speaker says under it"}; how long each card shows is in the list of cards, by its id. A card fills the frame for that long and is cut in and out with the video: it arrives fast, holds long enough to read on a phone, and is never empty at its first, middle or last frame. The script is at most ${SCRIPT_MAX} characters.`;
 
@@ -96,9 +106,9 @@ export function parseScript(text: string): string {
   return script;
 }
 
-const LOOK = `You check the animated cards of one short video. You are given the script that drew them, one sheet with three stills of every card (its first, middle and last frame) and pictures of the look the author wants.
+const LOOK = (vertical: boolean) => `You check the animated cards of one short video. You are given the script that drew them, one sheet with three stills of every card (its first, middle and last frame) and pictures of the look the author wants.
 
-Look for what a viewer would see as broken: words cut off or outside the frame, words too small to read on a phone, an empty frame, text over text, a look far from the author's words and pictures. Taste alone is no reason to change a card.
+Look for what a viewer would see as broken: words cut off or outside the frame, words too small to read on a phone, ${vertical ? "words under the reel's buttons, " : ""}an empty frame, text over text, a look far from the author's words and pictures. Taste alone is no reason to change a card.
 
 If the cards are fine, answer with the two letters OK and nothing else. If not, answer with the whole corrected script only: plain JavaScript, no Markdown and no explanation.`;
 
@@ -106,7 +116,7 @@ If the cards are fine, answer with the two letters OK and nothing else. If not, 
 export function lookPrompt(i: FrameInput & { script: string; columns: boolean; pictures: number }): { system: string; user: string } {
   const sheet = `The first picture is the sheet: one card in each ${i.columns ? "column, in the cards' order from the left, its first, middle and last frame from the top" : "row, in the cards' order from the top, its first, middle and last frame from the left"}.`;
   const theirs = i.pictures ? ` The ${i.pictures === 1 ? "other picture is" : `other ${i.pictures} are`} the author's: the look.` : "";
-  return { system: `${LOOK}\n\n${stage(i.width, i.height)}`, user: `${look(i.brief)}\n\n${sheet}${theirs}\n\n${frame(i)}\n\nThe script:\n${i.script}` };
+  return { system: `${LOOK(isVertical(i.width, i.height))}\n\n${stage(i.width, i.height)}`, user: `${look(i.brief)}\n\n${sheet}${theirs}\n\n${frame(i)}\n\nThe script:\n${i.script}` };
 }
 
 /** Null: the cards are fine. Else the corrected script. An answer that is neither counts as fine. */

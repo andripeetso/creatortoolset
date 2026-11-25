@@ -533,7 +533,7 @@ describe("designs: an AI that designs", () => {
     ]);
     expect(got.frames[0]!.layers).toEqual(d.pages[0]!.layers);
     expect(got.fonts).toContain("DM Serif Display");
-    for (const part of ['{"type":"text"', "never add, drop or change one", '"frames": [{"id"', '"changes"', "Without an \"id\" it is a new frame"]) expect(got.how).toContain(part);
+    for (const part of ['{"type":"text"', "never add, drop or change one", '"frames": [{"id"', '"changes"', "Without an \"id\" it is a new frame", "Never copy people's names"]) expect(got.how).toContain(part);
     expect((await call("GET", `/api/designs/${d.id}/pages`, undefined, "robin")).status).toBe(404);
   });
 

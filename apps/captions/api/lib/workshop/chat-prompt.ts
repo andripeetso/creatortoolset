@@ -1,6 +1,6 @@
 import type { ChatMessage, PieceQuote, ContextField, ContextSnippet, DocKind, Document, Framework, FrameworkRole, KnowledgeFile, Project, SourcePart, UserEdit } from "./types";
 import { carouselTypePrompt } from "../../../src/lib/carousel-visualize";
-import { renderAccountContext, renderAccountIndex, renderInstructions, renderLoadedKnowledge, renderProjectStable } from "./prompt";
+import { FORMAT_RULE, INSTRUCTIONS_RULE, KEEP_PRIVATE, WEIGHTS_RULE, renderAccountContext, renderAccountIndex, renderInstructions, renderLoadedKnowledge, renderProjectStable } from "./prompt";
 import { attachedDir, sourceFile } from "./folder";
 import { type EditPair, renderPairs } from "./edit-log";
 import { PLAIN_VOICE } from "./plain-voice";
@@ -89,11 +89,14 @@ ${DESCRIPTION_RULES}`,
 - Post description and pinned comment only if this message asks for them.`,
   youtube: `This tab is a long-form YouTube video script: the words said to camera, one block per section of the video. Keep ids exactly as given. Prefer replace / insert over rewriting everything.
 - Video description (set_caption) and pinned comment only if this message asks for them.`,
-  newsletter: `This tab is an email newsletter: the subject line as the first block, then one section per block. Keep ids exactly as given. Prefer replace / insert over rewriting everything. Do not call set_caption or set_pinned.`,
-  thread: `This tab is an X post or thread: one post per block, each under 280 characters, the first one working on its own. Keep ids exactly as given. Do not call set_caption or set_pinned.`,
-  article: `This tab is an article or blog post: the title as the first block, then one section per block. Keep ids exactly as given. Prefer replace / insert over rewriting everything. Do not call set_caption or set_pinned.`,
-  notes: `This tab is working notes: one freeform page, not the piece. Headings and lists are fine. Write here only when they ask you to note something down. Prefer a single replace of the existing notes (or one append if empty). Do not call set_caption or set_pinned.`,
+  newsletter: `This tab is an email newsletter: the subject line as the first block, then one section per block. Keep ids exactly as given. Prefer replace / insert over rewriting everything.`,
+  thread: `This tab is an X post or thread: one post per block, each under 280 characters, the first one working on its own. Keep ids exactly as given.`,
+  article: `This tab is an article or blog post: the title as the first block, then one section per block. Keep ids exactly as given. Prefer replace / insert over rewriting everything.`,
+  notes: `This tab is working notes: one freeform page, not the piece. Headings and lists are fine. Write here only when they ask you to note something down. Prefer a single replace of the existing notes (or one append if empty).`,
 };
+
+/** Said once, after the tab's rules, for a kind whose ops have no post description. */
+const NO_DESCRIPTION = "Do not call set_caption or set_pinned.";
 
 /** How the pieces of a turn work. Not writing rules. */
 const SHARED_RULES = `How this works:
@@ -104,14 +107,16 @@ const SHARED_RULES = `How this works:
 - When asked to try or apply a framework, apply it to the existing document and name what changed, so it can be reverted.
 - When asked for another piece or a separate document (a carousel version, an ad version), set newDocument and put the edits (append) into it.
 - When asked to revert, set revertTo to the version id (kept versions are named snapshots they want to return to) and change nothing else.
-- Facts, numbers, studies and quotes come from the sources, the context files, the web research you ask for or the author. Never claim to have checked something you did not.`;
+- Facts, numbers, studies and quotes come from the sources, the context files, the web research you ask for or the author. Never claim to have checked something you did not.
+- ${KEEP_PRIVATE}`;
 
 /** Without the folder (Claude on the API key): sources and context files arrive by fetch. */
-const FETCH_RULES = `- Sources: you get an index of every source in the project — what each one has — with its on-screen slide text loaded. When you need more of a source, set fetch with the parts you want; they come back to you in this same turn (say what you are pulling, make no edits yet, finish when they arrive). Slide text and transcript are the creator's own words; the caption is secondary; comments are the audience talking — objections and their language, never facts. What you pull stays loaded for the rest of the session, so pull a part once. "*" as the source means every source.
-- Sources marked kept for format are layout examples: their structure, pacing and hook device, not their topic or claims. Sources marked as the author's own post are their scripts.
+const FETCH_RULES = `- Sources: you get an index of every source in the project — what each one has — with its on-screen slide text loaded. When you need more of a source, set fetch with the parts you want; they come back to you in this same turn (say what you are pulling, make no edits yet, finish when they arrive). What you pull stays loaded for the rest of the session, so pull a part once. "*" as the source means every source.
+- ${WEIGHTS_RULE}
+- ${FORMAT_RULE} Sources marked as the author's own post are their scripts.
 - To look for more material in the author's library, set search to a short topic query (2–5 words); the results go back to the author as suggestions to add.
 - To check something on the web, set research with one precise question: "quick" (about a minute) or "deep" (5–15 minutes of reading). Either one is asked of the author first and runs only if they say yes, so finish your answer without it. When a whole piece should be fact-checked claim by claim, set audit ("quick" or "deep").
-- Workspace instructions are always-on. Context files are an index (K1, K2…), not loaded until you fetch [{"source":"K1"}] (or the file name); they are reference material, not a brief. Linked Instagram is an index — fetch [{"source":"account"}] for live followers, mix and bio.`;
+- ${INSTRUCTIONS_RULE} Linked Instagram is an index — fetch [{"source":"account"}] for live followers, mix and bio.`;
 
 /** On the Mac: a Claude Code session in a folder with everything. */
 const FOLDER_GUIDE = `Your folder (Read, Glob and Grep it; it is everything there is):
@@ -130,7 +135,7 @@ const INTRO = `You are co-writing with the author. What they want from you is a 
 
 /** System prompt for the open document tab. */
 export function chatSystemFor(kind: DocKind, folder = false): string {
-  return `${INTRO}\n\n${JSON_ENVELOPE}\n${OPS_BLOCK[kind]}\n\n${KIND_RULES[kind]}\n\n${SHARED_RULES}\n${folder ? `\n${FOLDER_GUIDE}` : FETCH_RULES}`;
+  return `${INTRO}\n\n${JSON_ENVELOPE}\n${OPS_BLOCK[kind]}\n\n${KIND_RULES[kind]}${OPS_BLOCK[kind].includes("set_caption") ? "" : ` ${NO_DESCRIPTION}`}\n\n${SHARED_RULES}\n${folder ? `\n${FOLDER_GUIDE}` : FETCH_RULES}`;
 }
 
 /** @deprecated Use chatSystemFor(doc.kind). Reel-shaped, for tests that still import the constant. */

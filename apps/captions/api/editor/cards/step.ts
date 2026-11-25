@@ -118,14 +118,18 @@ export async function stylePictures(actor: string, style: AnimationStyle, max: n
 function linesOf(editId: string, variant: string, tl: Timeline): (PlanLine & { id: string; first: number; last: number })[] {
   const sentences = readStep(editId, "analysis")?.sentences ?? [];
   const lines = readStep(editId, "plan")?.plans.find((p) => p.name === variant)?.lines ?? [];
-  return lines.map((l, k) => ({
-    n: k + 1,
-    text: sentences.filter((s) => s.n >= l.take.first && s.n <= l.take.last).map((s) => s.text).join(" ").slice(0, 600),
-    ok: !!cardWindow(tl, l.line),
-    id: l.line,
-    first: l.take.first,
-    last: l.take.last,
-  }));
+  return lines.map((l, k) => {
+    const room = cardWindow(tl, l.line);
+    return {
+      n: k + 1,
+      text: sentences.filter((s) => s.n >= l.take.first && s.n <= l.take.last).map((s) => s.text).join(" ").slice(0, 600),
+      ok: !!room,
+      seconds: room ? room.len / tl.fps : 0,
+      id: l.line,
+      first: l.take.first,
+      last: l.take.last,
+    };
+  });
 }
 
 /** One sheet of the cards' stills for the look call: a card in each column when the picture is tall, else in each row. */
@@ -229,7 +233,7 @@ async function make({ edit, job, variant, signal }: StepContext, tl: Timeline, f
       const { w, h } = previewSize(tl);
       const cards = picked.map((p, k) => {
         const l = lines[p.line - 1]!;
-        return { id: `c${k + 1}`, text: p.text, first: l.first, last: l.last, line: l.text, seconds: Math.round((cardWindow(tl, l.id)!.len / tl.fps) * 1000) / 1000 };
+        return { id: `c${k + 1}`, text: p.text, first: l.first, last: l.last, line: l.text, seconds: Math.round(l.seconds * 1000) / 1000 };
       });
       await save({ ...st, cards, width: w, height: h, fps: Math.min(tl.fps, MAX_FPS) });
       if (!cards.length) return end("the AI found no line that needs one");

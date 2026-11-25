@@ -39,17 +39,26 @@ export const CONTEXT_FILE_MAX = 80_000;
 export const CONTEXT_FETCH_MAX = 160_000;
 export const CONTEXT_FETCH_FILES = 24;
 
+/** Said once in what posts are written from: the Content Workshop's draft and chat, the Designer's guide, the AI Editor's cards. */
+export const KEEP_PRIVATE = "Never copy people's names, emails, phone numbers, addresses or customer details from the files, footage or notes into what will be posted, unless the author wrote them into the piece.";
+
+/** The rules both Content Workshop prompts (the draft here, the chat in chat-prompt.ts) give, each said once in either. */
+export const FORMAT_RULE = "Sources kept for format are layout examples: their structure, pacing, slide map and hook device, not their topic, claims, examples or wording.";
+export const INSTRUCTIONS_RULE = "Workspace instructions are short and always-on. Context files are reference material, not a brief, and not loaded until you fetch one (K1 or the file name).";
+export const WEIGHTS_RULE = "Slide text and transcript are the creator's own words and carry the most weight; the caption is secondary; comments are the audience talking — objections and their language, never facts.";
+
 const SYSTEM_BASE = `You write scripts, slides and copy with the author, from their research, in English.
 Rules:
 - Return exactly one JSON object and nothing else: no prose before or after, no markdown fence.
 - When a framework is given, follow its steps in order and make that structure visible in the piece.
 - Use the sources for facts, angles, objections and the audience's own words (the comments show what people actually ask and push back on). Do not copy sentences from the sources. Do not invent numbers, studies or quotes.
-- Sources kept for format are layout examples: steal the structure, pacing, slide map and hook device. Do not use that source's topic, claims, examples or wording. Sources kept for content (or unmarked) are for facts, angles and the audience's language. A source can be both.
+- ${FORMAT_RULE} Sources kept for content (or unmarked) are for facts, angles and the audience's language. A source can be both.
 - Write in the workspace's voice, for the workspace's audience, and end on the workspace's call to action unless the brief says otherwise.
-- Workspace instructions are short and always-on. Context files are listed, not loaded — fetch K1 (or the file name) when you need one. Do not dump them into the piece.
+- ${INSTRUCTIONS_RULE}
 - Sources from the author's own Instagram handle are their scripts: remake them, keep their voice.
+- ${KEEP_PRIVATE}
 - The brief overrides everything else.
-- Weigh the sources by where the words come from: on-screen slide text and the spoken transcript are the creator's own words and carry the most weight; the caption is secondary; comments are audience reaction — use them for objections and the audience's language, never as facts.`;
+- ${WEIGHTS_RULE}`;
 
 const KIND_SPEC: Record<DraftKind, string> = {
   reel: `Deliverable: a talking-to-camera reel script.
@@ -89,7 +98,7 @@ function keptForLine(savedFor?: Array<"content" | "format">): string {
   const content = tags.includes("content");
   const format = tags.includes("format");
   if (format && content) return "Kept for content and format — use the topic and steal the layout.";
-  if (format) return "Kept for format only — steal the structure, pacing, slide map and hook device. Do not use its topic, claims, examples or wording.";
+  if (format) return "Kept for format only."; // what that means is FORMAT_RULE, in the system text
   return "Kept for content — facts, angles and the audience's language.";
 }
 

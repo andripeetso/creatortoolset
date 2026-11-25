@@ -177,7 +177,7 @@ describe("buildTurnPrompt", () => {
     expect(system).toContain("The app is tinyacrobatics.com/app");
     expect(user).not.toContain("Instructions:\nnever medical");
     expect(user).not.toContain("Context loaded this turn");
-    expect(system).toContain("Workspace instructions are always-on");
+    expect(system).toContain("Workspace instructions are short and always-on");
   });
 
   it("keeps the newest messages when the conversation outgrows its budget, and never cuts the author's words", () => {
