@@ -1302,12 +1302,14 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   if (blurs && !BLURRED_UPLOADS.includes(LIBRARY_UPLOADS.includes(upload as LibraryUpload) ? (upload as LibraryUpload) : libraryUploadStored(libraryId))) {
     return c.json({ error: BLUR_UPLOADS, code: "invalid" }, 400);
   }
-  // on from off: the files already here keep the answer they had, as filmed (no picture hidden, no blur queued); only
-  // files added from now on are blurred, and a folder's or a file's own Blur faces still blurs an old one
-  if (s.blurFaces === true && !blursFaces(libraryId) && mayKeepAsFilmed(user.username, libraryId)) {
+  // on from off, the one question the switch asks: blurExisting (a request flag, never stored) blurs the files already
+  // here too; else they keep the answer they had, as filmed, and only files added from now on are blurred
+  const turnsOn = s.blurFaces === true && !blursFaces(libraryId);
+  if (turnsOn && s.blurExisting !== true && mayKeepAsFilmed(user.username, libraryId)) {
     db().prepare("UPDATE assets SET blur = 'no' WHERE library_id = ? AND blur IS NULL").run(libraryId);
   }
   if (typeof s.blurFaces === "boolean") put("blurFaces", s.blurFaces);
+  if (turnsOn && s.blurExisting === true) await blurAll(libraryId);
   if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
   if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
@@ -1681,6 +1683,21 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
 /** A clip's card picture and strip: kept and shown for every clip, Blur faces or not (owner, 2026-11-24). */
 const CARD_PICTURES = ["thumb", "sprite"];
 /** What the server keeps cut from a version: what dropUnblurred takes away. Never its card picture or strip. */
+/** Every file here that reads Blur faces yes with no blurred render yet: the server's unblurred cuts go and Face Blur is asked for each (as PUT …/blur yes does for one). */
+async function blurAll(libraryId: string): Promise<void> {
+  const rows = db()
+    .prepare(
+      `SELECT a.id, a.created_by, a.current_version_id AS versionId FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.blurred_of IS NULL AND ${BLUR_SQL} = 'yes'
+         AND NOT EXISTS (SELECT 1 FROM asset_versions b WHERE b.asset_id = a.id AND b.blurred_of IN (v.sha256, v.full_sha256))`,
+    )
+    .all(libraryId) as { id: string; created_by: string; versionId: string }[];
+  const versions = db().prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL");
+  for (const r of rows) {
+    for (const v of versions.all(r.id) as { id: string }[]) await dropUnblurred(v.id);
+    emitEvent("library.version.blur", { libraryId, versionId: r.versionId, owner: r.created_by });
+  }
+}
 const UNBLURRED_KINDS = ["proxy", "looksheets"];
 /**
  * A file switched to Blur faces (orchestrator, 2026-11-20): what the server holds cut from its unblurred version goes, its

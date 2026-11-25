@@ -116,14 +116,12 @@ export const makeMissing = (libraryId: string, kind: MadeKind) => send<{ files: 
 /** Cancel: `kind`'s queued work taken off the queue. */
 export const stopMade = (libraryId: string, kind: MadeKind) => send<{ files: number }>(`/api/library/${libraryId}/made/${kind}/stop`, "POST");
 /** Stop: every kind's queued work taken off the queue. */
-/** Files blurred before they came in, marked blurred: every file here (`all`) or the ones with these SHA-256s. */
-export const markBlurred = (libraryId: string, which: { all: true } | { sha256: string[] } | { unmark: string[] }) => send<{ files: number; versions: string[] }>(`/api/library/${libraryId}/already-blurred`, "POST", which);
 export const stopLibrary = (libraryId: string) => send<{ files: number }>(`/api/library/${libraryId}/stop`, "POST");
 /** A step's failed jobs queued again. */
 export const retryFailed = (libraryId: string, kind: string) => send<{ files: number }>(`/api/library/${libraryId}/retry/${kind}`, "POST");
 
 /** The owner's switches for a library: AI descriptions, shot descriptions, search by meaning. */
-export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> }) =>
+export const updateLibrary = (libraryId: string, patch: { name?: string; settings?: Partial<LibrarySettings> & { blurExisting?: boolean } }) =>
   send<LibrarySummary>(`/api/library/${libraryId}`, "PATCH", patch);
 
 /** Where the library's files live and how much its bucket holds (the owner only). */

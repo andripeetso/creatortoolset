@@ -3,8 +3,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
 import { chooseDialog } from "@/lib/dialogs";
-import { markBlurred, updateLibrary } from "@/lib/library";
-import { undoable } from "@/lib/undo";
+import { updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
@@ -67,7 +66,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
   if (library.readOnly) return <MemberSettings library={library} />;
   const s = library.settings;
   const level = levelOf(s);
-  const save = (settings: Partial<Settings>) =>
+  const save = (settings: Partial<Settings> & { blurExisting?: boolean }) =>
     markSave(updateLibrary(library.id, { settings }))
       .then(onChange)
       .catch((e: unknown) => onError(message(e)));
@@ -80,7 +79,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
         <Organization settings={s} save={save} />
       </Section>
       <Section title={LIBRARY_WORDS.proxyTitle}>
-        <Proxies library={library} save={save} faceBlur={faceBlur} onError={onError} />
+        <Proxies library={library} save={save} faceBlur={faceBlur} />
       </Section>
       <Section title={LIBRARY_WORDS.hostedTitle}>
         <Hosted library={library} watch={watch} save={save} />
@@ -123,24 +122,18 @@ function Organization({ settings, save }: { settings: Settings; save: (s: Partia
  * while it is on there is no Generate proxies or quality, and turning it on turns plain proxies off. Else Generate
  * proxies (forced on while Hosted media hosts proxies) and the quality while on.
  */
-function Proxies({ library, save, faceBlur, onError }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean; onError: (m: string) => void }) {
+function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (s: Partial<Settings> & { blurExisting?: boolean }) => Promise<unknown>; faceBlur: boolean }) {
   const s = library.settings;
   const hosted = hostsProxies(s.upload);
   const on = !s.blurFaces && (hosted || s.proxy);
   const gen = LIBRARY_WORDS.generateProxies;
   const blur = LIBRARY_WORDS.blurFaces;
-  // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one
+  // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one.
+  // Turning it on asks once whether the files already here are blurred too (blurExisting) or kept as filmed.
   const setBlur = async (v: boolean) => {
-    // on: the files already here are either blurred already (marked so, before the switch keeps the rest as filmed; a
-    // failed mark stops here, so clicking again retries) or kept as filmed (the server's answer for them)
-    const already = v ? await chooseDialog({ title: LIBRARY_WORDS.alreadyHere.title, body: LIBRARY_WORDS.alreadyHere.body, ok: LIBRARY_WORDS.alreadyHere.blurred, other: LIBRARY_WORDS.alreadyHere.asFilmed }) : "other";
-    if (!already) return;
-    if (already === "ok") {
-      const marked = await markSave(markBlurred(library.id, { all: true })).catch(() => null);
-      if (!marked) return onError(LIBRARY_WORDS.alreadyHere.failed);
-      if (marked.files) undoable("marked blurred", () => markBlurred(library.id, { unmark: marked.versions }), marked.files);
-    }
-    await save({ blurFaces: v, ...(v ? { proxy: false } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
+    const existing = v ? await chooseDialog({ title: LIBRARY_WORDS.blurExisting.title, ok: LIBRARY_WORDS.blurExisting.yes, other: LIBRARY_WORDS.blurExisting.no }) : "other";
+    if (!existing) return;
+    await save({ blurFaces: v, ...(v ? { proxy: false, blurExisting: existing === "ok" } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
   };
   return (
     <Card>

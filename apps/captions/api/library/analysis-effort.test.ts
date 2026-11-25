@@ -24,6 +24,7 @@ const { libraryDb } = await import("./db");
 const { libraryApp } = await import("./routes");
 const { tick } = await import("./worker");
 const { queueLook } = await import("./shots");
+const { onEvent } = await import("../lib/events");
 
 afterAll(() => {
   delete process.env.LIBRARY_DISK_RESERVE_GB;
@@ -141,6 +142,18 @@ describe("Blur faces turned on and off", () => {
     d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'proxy'").run(old);
     await patch({ blurFaces: false });
     expect(jobs(old)).not.toContain("proxy");
+  });
+  it("on with Blur all files: the clips already here are blurred, each one handed to Face Blur", async () => {
+    await patch({ blurFaces: false, upload: "all" });
+    const old = await upload("lib_blur", "before-all.mp4");
+    await drain(["probe"]);
+    const asked: string[] = [];
+    const off = onEvent("library.version.blur", (e) => void asked.push(e.versionId));
+    await patch({ blurFaces: true, blurExisting: true, proxy: false, upload: "proxies" });
+    off();
+    expect(blurOf(old)).toBeNull(); // follows the switch: yes
+    expect(asked).toContain(old);
+    await patch({ blurFaces: false });
   });
 });
 
