@@ -8,6 +8,18 @@ cd "$(dirname "$0")/.."
 : "${DEVELOPMENT_TEAM:?set DEVELOPMENT_TEAM to your Apple team id}"
 out="${BUILD_DIR:-build}"
 build=$(git rev-list --count HEAD)
+# BUNDLE_ID=<id> (and MARKETING_VERSION=<x.y>) archives a scratch copy of the project under that id (the extension
+# becomes <id>.share), so a store record under another id can be fed without editing the project.
+if [ -n "${BUNDLE_ID:-}" ] || [ -n "${MARKETING_VERSION:-}" ]; then
+  scratch=$(cd "$out" 2>/dev/null && pwd || { mkdir -p "$out"; cd "$out" && pwd; })/project
+  rm -rf "$scratch" && mkdir -p "$scratch/apps" && cp -R . "$scratch/apps/ios" && cp -R ../swift-shared "$scratch/apps/"
+  rm -rf "$scratch/apps/ios/build"
+  pbx="$scratch/apps/ios/CreatorToolset.xcodeproj/project.pbxproj"
+  [ -z "${BUNDLE_ID:-}" ] || sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = com\.creatortoolset\.ios\.share;/PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID.share;/; s/PRODUCT_BUNDLE_IDENTIFIER = com\.creatortoolset\.ios;/PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID;/" "$pbx"
+  [ -z "${MARKETING_VERSION:-}" ] || sed -i '' "s/MARKETING_VERSION = [0-9.]*;/MARKETING_VERSION = $MARKETING_VERSION;/" "$pbx"
+  out=$(cd "$out" && pwd)
+  cd "$scratch/apps/ios"
+fi
 xcodebuild -quiet -project CreatorToolset.xcodeproj -scheme CreatorToolset -configuration Release \
   -destination generic/platform=iOS -archivePath "$out/CreatorToolset.xcarchive" -allowProvisioningUpdates \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" CURRENT_PROJECT_VERSION="$build" archive
