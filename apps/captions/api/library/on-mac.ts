@@ -372,7 +372,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50, after
           AND (s.version_id IS NULL OR s.cell_w IS NULL OR NOT EXISTS (SELECT 1 FROM derivatives t WHERE t.version_id = v.id AND t.kind = 'thumb')) ${after ? AFTER : ""})
         WHERE path IS NOT NULL ORDER BY at DESC, versionId DESC LIMIT 500`,
     )
-    .all(device, device, libraryId, ...(after ? [after] : [])) as { versionId: string; probe: string | null; path: string | null; strip: number; sized: number; pictured: number }[];
+    .all(device, device, libraryId, ...(after ? [after] : [])) as { versionId: string; probe: string | null; path: string; strip: number; sized: number; pictured: number }[];
   const out: { versionId: string; path: string; thumb?: true }[] = [];
   for (const r of rows) {
     const oldStrip = r.strip && !r.sized;
