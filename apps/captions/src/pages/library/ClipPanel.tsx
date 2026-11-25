@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
+import { Check, Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -308,43 +308,54 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
         onSaved={saved}
         onError={onError}
       />
-      {(facts.length > 0 || inFolders.length > 0) && (
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
+      {(facts.length > 0 || inFolders.length > 0 || path || placeWord) && (
+        // one list of label and value: the facts, the clip's folders, which file plays (Blurred / Original) and where it is
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
             <div key={k} className="contents">
               <dt className="text-zinc-500">{k}</dt>
               <dd className="truncate tabular-nums">{v}</dd>
             </div>
           ))}
-        </dl>
-      )}
-      {path && (
-        // the file on this computer (the admin, on a server that has it): its path (Show in Finder is the main button)
-        <div className="-ml-2 -mt-2 flex flex-wrap items-center gap-2">
           {filmed && detail?.sourcePath && (
-            <ToggleGroup type="single" variant="outline" size="sm" className="ml-2" value={fileOf} onValueChange={(v) => {
-                if (!v) return;
-                setSwapAt(media.current?.currentTime);
-                setFileOf(v as typeof fileOf);
-              }} aria-label="File">
-              <ToggleGroupItem value="blurred" className="h-7 px-2.5 text-xs">
-                Blurred
-              </ToggleGroupItem>
-              <ToggleGroupItem value="original" className="h-7 px-2.5 text-xs">
-                Original
-              </ToggleGroupItem>
-            </ToggleGroup>
+            <div className="contents">
+              <dt className="text-zinc-500">File</dt>
+              <dd>
+                <ToggleGroup type="single" variant="outline" size="sm" className="justify-start" value={fileOf} onValueChange={(v) => {
+                    if (!v) return;
+                    setSwapAt(media.current?.currentTime);
+                    setFileOf(v as typeof fileOf);
+                  }} aria-label="File">
+                  <ToggleGroupItem value="blurred" className="h-6 px-2 text-xs">
+                    Blurred
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="original" className="h-6 px-2 text-xs">
+                    Original
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </dd>
+            </div>
           )}
-          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-zinc-500" title={path} onClick={copyPath}>
-            <Copy className="h-3.5 w-3.5" />
-            {copiedPath ? "Copied" : "Copy path"}
-          </Button>
-        </div>
+          {(placeWord || path) && (
+            <div className="contents">
+              <dt className="text-zinc-500">Location</dt>
+              <dd className="flex min-w-0 items-center gap-1">
+                <span className="truncate">{placeWord ? placeLine(placeWord) : path}</span>
+                {path && (
+                  // the file on this computer (the admin, on a server that has it): its path (Show in Finder is the main button)
+                  <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0 text-zinc-500" title={copiedPath ? "Copied" : `Copy path: ${path}`} aria-label={copiedPath ? "Copied" : "Copy path"} onClick={copyPath}>
+                    {copiedPath ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  </Button>
+                )}
+              </dd>
+            </div>
+          )}
+        </dl>
       )}
       {/* kept as filmed: one press queues its blur (Keep as filmed, the way back, is in the ⋯ menu). The app can't tell
           a file blurred before it came in, so it says what it knows. Only with the Face Blur plug-in: nothing else blurs */}
       {a.blur === "no" && !fixed && faceBlur && (
-        <div className="flex items-center justify-between gap-2 text-sm text-zinc-400">
+        <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">
           Kept as filmed
           <Button size="sm" variant="outline" className="h-7" onClick={() => void changeBlur(true)}>
             <ScanFace className="h-3.5 w-3.5" />
@@ -353,7 +364,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
         </div>
       )}
       {blur && (
-        <div className="flex items-center justify-between gap-2 text-sm text-zinc-400">
+        <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">
           {BLUR_WORDS[blur.kind]}
           {blur.kind === "failed" && !fixed && (
             <Button size="sm" variant="outline" className="h-7" onClick={() => void retry(a.versionId).catch((e: unknown) => onError(message(e)))}>
@@ -363,10 +374,8 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
         </div>
       )}
       <TagEditor libraryId={libraryId} asset={a} readOnly={fixed} onSaved={saved} onError={onError} />
-      {placeWord ? (
-        <p className="text-sm text-zinc-400">{placeLine(placeWord)}</p>
-      ) : a.state === "missing" && (
-        <p className="text-sm text-zinc-400">
+      {!placeWord && a.state === "missing" && (
+        <p className="text-xs text-zinc-400">
           The file was moved or renamed, or its drive isn't connected.
         </p>
       )}
@@ -652,84 +661,83 @@ function TagEditor({
   if (readOnly && !asset.tags.length) return null;
   return (
     <section aria-label="Tags" className="flex flex-col gap-1.5">
-      {asset.tags.length > 0 && (
-        <ul className="flex flex-wrap gap-1">
-          {[...userTags, ...aiTags].map((t) => (
+      <ul className="flex flex-wrap items-center gap-1">
+        {[...userTags, ...aiTags].map((t) => (
+          <li
+            key={t}
+            title={asset.aiTags.includes(t) ? "Tagged by the AI" : undefined}
+            className={`flex items-center rounded-full border py-0.5 pl-2 pr-1 text-[11px] ${asset.aiTags.includes(t) ? "border-zinc-500/25 text-zinc-500" : "border-transparent bg-zinc-500/15 text-zinc-300"}`}
+          >
+            {t}
+            {readOnly ? (
+              <span className="w-1" />
+            ) : (
+              <button type="button" aria-label={`Remove ${t}`} title="Remove" className="ml-0.5 rounded-full p-0.5 hover:bg-zinc-500/20 hover:text-zinc-300" onClick={() => void remove(t)}>
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </li>
+        ))}
+        {!readOnly && (
+          // the box that adds one sits after the chips, as small as one
+          <li className="flex">
+            <input
+              value={typed}
+              onChange={(e) => {
+                setTyped(e.target.value);
+                setPick(-1);
+                setOpen(true);
+              }}
+              onFocus={() => {
+                setOpen(true);
+                if (!all) listTags(libraryId).then(setAll, () => setAll([]));
+              }}
+              onBlur={() => setOpen(false)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  if (!list.length) return;
+                  e.preventDefault();
+                  setPick((i) => (e.key === "ArrowDown" ? (i + 1) % list.length : i <= 0 ? list.length - 1 : i - 1));
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  add(list[pick] ?? typed);
+                } else if (e.key === "Escape" && busy) {
+                  setTyped("");
+                  setPick(-1);
+                  setOpen(false);
+                }
+              }}
+              data-own-escape={busy ? "" : undefined}
+              placeholder="Add tag"
+              aria-label="Add a tag"
+              role="combobox"
+              aria-expanded={list.length > 0}
+              aria-controls="clip-tag-suggestions"
+              aria-activedescendant={pick >= 0 ? `clip-tag-${pick}` : undefined}
+              className="h-[22px] w-20 rounded-full border border-dashed border-zinc-500/40 bg-transparent px-2 text-[11px] text-zinc-300 placeholder:text-zinc-500 transition-[width] hover:border-zinc-500/60 focus:w-40 focus:border-solid focus:border-zinc-500/60 focus:outline-none"
+            />
+          </li>
+        )}
+      </ul>
+      {list.length > 0 && (
+        <ul id="clip-tag-suggestions" role="listbox" aria-label="Suggested tags" className="flex flex-col rounded-md border border-zinc-500/25 py-1 text-xs">
+          {list.map((t, i) => (
             <li
               key={t}
-              title={asset.aiTags.includes(t) ? "Tagged by the AI" : undefined}
-              className={`flex items-center rounded-full border py-0.5 pl-2 pr-1 text-[11px] ${asset.aiTags.includes(t) ? "border-zinc-500/25 text-zinc-500" : "border-transparent bg-zinc-500/15 text-zinc-300"}`}
+              id={`clip-tag-${i}`}
+              role="option"
+              aria-selected={i === pick}
+              // pressed before the box loses the focus, so the pick lands
+              onMouseDown={(e) => {
+                e.preventDefault();
+                add(t);
+              }}
+              className={cn("cursor-pointer px-2 py-1 text-zinc-400 hover:bg-zinc-500/10", i === pick && "bg-zinc-500/15 text-zinc-200")}
             >
               {t}
-              {readOnly ? (
-                <span className="w-1" />
-              ) : (
-                <button type="button" aria-label={`Remove ${t}`} title="Remove" className="ml-0.5 rounded-full p-0.5 hover:bg-zinc-500/20 hover:text-zinc-300" onClick={() => void remove(t)}>
-                  <X className="h-3 w-3" />
-                </button>
-              )}
             </li>
           ))}
         </ul>
-      )}
-      {!readOnly && (
-        <div className="flex flex-col">
-          <input
-            value={typed}
-            onChange={(e) => {
-              setTyped(e.target.value);
-              setPick(-1);
-              setOpen(true);
-            }}
-            onFocus={() => {
-              setOpen(true);
-              if (!all) listTags(libraryId).then(setAll, () => setAll([]));
-            }}
-            onBlur={() => setOpen(false)}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                if (!list.length) return;
-                e.preventDefault();
-                setPick((i) => (e.key === "ArrowDown" ? (i + 1) % list.length : i <= 0 ? list.length - 1 : i - 1));
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                add(list[pick] ?? typed);
-              } else if (e.key === "Escape" && busy) {
-                setTyped("");
-                setPick(-1);
-                setOpen(false);
-              }
-            }}
-            data-own-escape={busy ? "" : undefined}
-            placeholder="Add a tag"
-            aria-label="Add a tag"
-            role="combobox"
-            aria-expanded={list.length > 0}
-            aria-controls="clip-tag-suggestions"
-            aria-activedescendant={pick >= 0 ? `clip-tag-${pick}` : undefined}
-            className="h-7 w-full rounded-md border border-dashed border-zinc-500/40 bg-transparent px-2 text-xs text-zinc-300 placeholder:text-zinc-500 hover:border-zinc-500/60 focus:border-solid focus:border-zinc-500/60 focus:outline-none"
-          />
-          {list.length > 0 && (
-            <ul id="clip-tag-suggestions" role="listbox" aria-label="Suggested tags" className="mt-1 flex flex-col rounded-md border border-zinc-500/25 py-1 text-xs">
-              {list.map((t, i) => (
-                <li
-                  key={t}
-                  id={`clip-tag-${i}`}
-                  role="option"
-                  aria-selected={i === pick}
-                  // pressed before the box loses the focus, so the pick lands
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    add(t);
-                  }}
-                  className={cn("cursor-pointer px-2 py-1 text-zinc-400 hover:bg-zinc-500/10", i === pick && "bg-zinc-500/15 text-zinc-200")}
-                >
-                  {t}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       )}
     </section>
   );
@@ -945,9 +953,9 @@ function Transcript({
   if (!job) return null;
   return (
     <p className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-      {waiting ? job.error || "Transcribing" : job.state === "done" ? "No speech" : job.state === "stopped" ? "Stopped" : job.error ?? "Could not transcribe the clip"}
+      {waiting ? job.error || "Transcribing" : job.state === "done" ? "No speech" : job.state === "stopped" ? "Transcript stopped" : job.error ?? "Could not transcribe the clip"}
       {(job.state === "needs_key" || job.state === "failed" || job.state === "stopped") && !inTrash && (
-        <Button size="sm" variant="outline" onClick={onRetry}>
+        <Button size="sm" variant="outline" className="h-7" onClick={onRetry}>
           Retry
         </Button>
       )}
