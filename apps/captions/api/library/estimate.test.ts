@@ -8,6 +8,10 @@ vi.mock("../ai-complete", async (real) => {
   return { ...m, aiFor: vi.fn(() => ({ only: ["mac"] })) };
 });
 
+// the versions a plug-in's computer work is still making ready (Face Blur's blurred copies)
+const preparing = vi.hoisted(() => ({ ids: [] as string[] }));
+vi.mock("../lib/plugin", async (real) => ({ ...(await real<typeof import("../lib/plugin")>()), pluginDeviceJobs: () => [{ preparing: () => preparing.ids }] }));
+
 const scratch = process.env.CT_SCRATCH_DIR ?? tmpdir();
 mkdirSync(scratch, { recursive: true });
 const dir = mkdtempSync(path.join(scratch, "library-estimate-"));
@@ -210,6 +214,29 @@ describe("one set of numbers while clips come in", () => {
       folderWalks.clear();
       watchedFolders.clear();
       d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    }
+  });
+});
+
+describe("clips being blurred", () => {
+  it("counts each clip once, and a clip still being blurred from the start", async () => {
+    d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+    // a1's blurred copy is in: its analysis runs on the original, its picture on the copy
+    d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at) VALUES ('v1b', 'a1', 2, 'k', 1, 's1b', '{}', 'ready', 'local', 1)").run();
+    enqueueJob(d, "lib_e", "v1", "transcribe", "local", true);
+    enqueueJob(d, "lib_e", "v1b", "thumb", "local");
+    preparing.ids = ["v2", "v3"];
+    try {
+      expect(await progress("lib_e", "local")).toMatchObject({ clips: 3 });
+      // nothing queued yet, only the Mac blurring: still said
+      d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+      expect(await progress("lib_e", "local")).toMatchObject({ clips: 2 });
+      preparing.ids = [];
+      expect(await progress("lib_e", "local")).toMatchObject({ left: 0, clips: 0 });
+    } finally {
+      preparing.ids = [];
+      d.prepare("DELETE FROM jobs WHERE state != 'done'").run();
+      d.prepare("DELETE FROM asset_versions WHERE id = 'v1b'").run();
     }
   });
 });

@@ -399,6 +399,9 @@ export interface DeviceJobSlot {
   file: (device: string, id: number, path: string, name: string) => Promise<{ reply: unknown } | { error: string; status: number }>;
   // the device could not do it; false when it holds no such job
   fail: (device: string, id: number, why: string) => boolean;
+  // the versions of Media Library `libraryId` this slot's jobs are still making ready, while a computer can take them
+  // (Face Blur's blurred copies): the library's progress counts their clips from the start (api/library/estimate.ts)
+  preparing?: (libraryId: string) => string[];
 }
 
 /** Every loaded plug-in's device jobs, in load order. */

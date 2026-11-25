@@ -13,6 +13,7 @@ import { NOT_TRASHED, stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "
 import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
 import { deviceOf, isThisMachine, listDevices } from "../lib/devices";
 import { ownerKeeps } from "../../src/lib/wording";
+import { pluginDeviceJobs } from "../lib/plugin";
 
 /**
  * How much processing clips will take, before they go in, and how much is left (GET /api/library/:id/estimate and
@@ -447,7 +448,14 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   const pending = rows.filter((r) => (r.state !== "needs_key" || r.ql) && !r.held && !r.away);
   // the files a watch folder has found and not handed over yet: each is a clip still to prepare, from the moment it is seen
   const toCome = stillToCome(db, libraryId);
-  const left = pending.reduce((n, r) => n + r.n, 0) + toCome;
+  // the files a computer is still making ready (Face Blur's blurred copies): their clips count from the start too, not
+  // one by one as each copy comes in
+  const coming = (
+    db
+      .prepare("SELECT v.id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id IN (SELECT value FROM json_each(?)) AND a.library_id = ? AND a.trashed_at IS NULL")
+      .all(JSON.stringify(pluginDeviceJobs().flatMap((j) => j.preparing?.(libraryId) ?? [])), libraryId) as { id: string }[]
+  ).map((r) => r.id);
+  const left = pending.reduce((n, r) => n + r.n, 0) + toCome + coming.length;
   const waiting: LibraryProgress["waiting"] = rows
     .filter((r) => r.state === "needs_key" && !r.ql && !r.cw)
     .map((r) => ({ step: STEP_OF[r.kind] ?? "files", count: r.n, missing: r.error ?? "", ...(r.mac ? { computer: true } : {}) }));
@@ -512,6 +520,11 @@ export async function progress(libraryId: string, username: string): Promise<Lib
   if (![...run].some((v) => open.some((o) => o.v === v))) run.clear();
   if (!run.size) runSince.set(libraryId, Math.max(Date.now() - 60_000, runEnded.get(libraryId) ?? 0));
   for (const { v } of open) run.add(v);
+  // a clip, not a file: its original and its blurred copy are one clip
+  const clips = (
+    db.prepare("SELECT COUNT(DISTINCT asset_id) AS n FROM asset_versions WHERE id IN (SELECT value FROM json_each(?))").get(JSON.stringify([...open.map((o) => o.v), ...coming])) as { n: number }
+  ).n;
+  const ahead = toCome + coming.filter((v) => !run.has(v)).length;
   const since = { $since: runSince.get(libraryId) ?? 0 };
   // how far: each clip of the run counts the same, by the share of its steps that are through (a held one is not counted:
   // it is not work here); a clip still to come, or not read yet, counts as not started. A clip's steps are only known once
@@ -525,7 +538,7 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     )
     .get({ ...away, ...look, ...since }, libraryId, JSON.stringify([...run]), LIMIT_LIKE) as { s: number | null; clips: number };
   // a clip of the run whose every step left is held, or that went to the trash, is through, as far as this computer goes
-  const share = ((through.s ?? 0) + run.size - through.clips) / (run.size + toCome);
+  const share = ((through.s ?? 0) + run.size - through.clips) / (run.size + ahead);
   const counts = db
     .prepare(
       // still to do counts what waits for a key or a limit too (`waiting` says why), so a line never shrinks when one parks
@@ -579,5 +592,5 @@ export async function progress(libraryId: string, username: string): Promise<Lib
     parts.push({ step, route, seconds: (p.seconds * n) / p.at });
   }
   // ponytail: a clip still to come adds no time until it is in; the time grows by its steps then
-  return { done, left, clips: open.length + toCome, share, seconds: total(parts), waiting, stages };
+  return { done, left, clips: clips + toCome, share, seconds: total(parts), waiting, stages };
 }

@@ -405,6 +405,13 @@ export const autoJobs = {
     const now = Date.now();
     return all().some((j) => j.owner === owner && offered(j, device, now));
   },
+  // a file its Mac is blurring, or will take now: not one on a Mac that is offline, paused or without an AI provider
+  preparing: (libraryId: string) => {
+    const now = Date.now();
+    return all()
+      .filter((j) => j.libraryId === libraryId && ready(j.owner) && (j.state === "running" || (offered(j, j.mac, now) && isOnline(j.mac))))
+      .map((j) => j.versionId);
+  },
   claim: (device: { id: string; owner: string }): DeviceJob | null => {
     releaseStale();
     if (!ready(device.owner)) return null;
