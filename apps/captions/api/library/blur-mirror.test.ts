@@ -31,7 +31,8 @@ describe("a blurred copy and its original", () => {
     d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at) VALUES ('v1', 'ai', 'A cartwheel on the lawn.', 'claude', 1)").run();
     enqueueJob(d, "lib_b", "v2", "transcribe", "local");
     enqueueJob(d, "lib_b", "v2", "describe", "local");
-    expect(jobOf("v2", "transcribe")).toBeUndefined();
+    // nothing runs for the copy: its job reads done with the original's result, so no sweep sees it missing
+    expect(jobOf("v2", "transcribe")?.state).toBe("done");
     expect(jobOf("v1", "transcribe")?.state).toBe("done");
     expect(d.prepare("SELECT text FROM transcripts WHERE version_id = 'v2'").get()).toEqual({ text: "Hello there" });
     expect(d.prepare("SELECT text FROM search_segments WHERE version_id = 'v2'").get()).toEqual({ text: "Hello there" });

@@ -26,6 +26,7 @@ const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
 const { engineOf, libraryMade, makeMissing, PICTURE_RETRY_DAYS, retryEmptyPictures, retryFailed, retryFailedPictures, STILLS_FIXED_AT, stopQueued } = await import("./made");
 const { queueLook, sweepLook } = await import("./shots");
+const { mirrorBlurred } = await import("./blur-mirror");
 const { libraryApp } = await import("./routes");
 const { leaveToComputers } = await import("./worker");
 
@@ -156,6 +157,38 @@ describe("what's made", () => {
     // and the old one only when asked
     expect(makeMissing("lib_m", "look", "local")).toBe(2);
     expect(job(bare, "look")?.state).toBe("queued");
+  });
+
+  it("a blurred copy's shot descriptions are its original's: queued there once, and never again by the sweep", async () => {
+    const orig = clip("ast-blur", { at: Date.now() + 3000 });
+    d.prepare("UPDATE asset_versions SET full_sha256 = 'sha-filmed' WHERE id = ?").run(orig);
+    // Face Blur's render of it, now the clip's current version
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, blurred_of, probe, state, created_by, created_at)
+       SELECT 'ver-ast-blur-2', asset_id, 2, 'libraries/lib_m/v/ver-ast-blur-2/source', bytes, 'sha-blurred', 'sha-filmed', probe, 'ready', created_by, created_at FROM asset_versions WHERE id = ?`,
+    ).run(orig);
+    d.prepare("UPDATE assets SET current_version_id = 'ver-ast-blur-2' WHERE id = 'ast-blur'").run();
+    d.prepare("UPDATE jobs SET state = 'done' WHERE state = 'queued'").run();
+    const sweep = async (at: number) => {
+      while (await sweepLook(d, at)) {
+        /* each pass queues what it may */
+      }
+    };
+    await sweep(Date.now() + 4000);
+    expect(job("ver-ast-blur-2", "look")).toBeUndefined();
+    expect(job(orig, "look")?.state).toBe("queued");
+    // it fails for good there: an hour on, the sweep leaves it (a failed look waits for Retry, as any other)
+    d.prepare("UPDATE jobs SET state = 'failed' WHERE version_id = ? AND kind = 'look'").run(orig);
+    await sweep(Date.now() + 3_600_000);
+    expect(job(orig, "look")?.state).toBe("failed");
+    // made there at last: the copy takes it and reads done, and no sweep makes it again
+    d.prepare("UPDATE jobs SET state = 'done' WHERE version_id = ? AND kind = 'look'").run(orig);
+    d.prepare("INSERT INTO stretches (version_id, seg, a, b, motion, text, source, created_at) VALUES (?, 0, 0, 2, 0.1, 'Spins', 'ai', 1)").run(orig);
+    mirrorBlurred(d);
+    expect(job("ver-ast-blur-2", "look")?.state).toBe("done");
+    await sweep(Date.now() + 7_200_000);
+    expect(job(orig, "look")?.state).toBe("done");
+    d.prepare("UPDATE assets SET trashed_at = 1 WHERE id = 'ast-blur'").run(); // out of the counts the next tests read
   });
 
   it("timelines: a press covers the files with none once; a watch that fails after it is missing again", async () => {

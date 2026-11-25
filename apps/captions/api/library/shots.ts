@@ -159,6 +159,10 @@ export async function sweepLook(db: DatabaseSync, now = Date.now()): Promise<boo
          -- never queued: only a file added since Shot descriptions went on (db.ts SINCE)
          AND (j.id IS NOT NULL OR ${LOOK_SINCE})
          AND NOT EXISTS (SELECT 1 FROM jobs p WHERE p.version_id = v.id AND p.state IN ('queued', 'running'))
+         -- a blurred copy's look is its original's (blur-mirror.ts): one there, queued, made or failed, is the copy's too;
+         -- one parked for a missing AI is queued again through the copy like any other
+         AND NOT EXISTS (SELECT 1 FROM asset_versions o JOIN jobs oj ON oj.version_id = o.id AND oj.kind = 'look' AND oj.state != 'needs_key'
+           WHERE v.blurred_of IS NOT NULL AND o.asset_id = v.asset_id AND o.id != v.id AND o.blurred_of IS NULL AND (o.full_sha256 = v.blurred_of OR o.sha256 = v.blurred_of))
        ORDER BY v.created_at DESC LIMIT 50`,
     )
     .all(LOOK_MIN_S, MAC_WAITS) as { id: string; actor: string; state: string | null }[];

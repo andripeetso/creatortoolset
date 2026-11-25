@@ -10,17 +10,13 @@ import type { DatabaseSync } from "node:sqlite";
 /** The analysis jobs a blurred copy never runs: queued on its original instead (jobs.ts enqueueJob). */
 export const ON_ORIGINAL: ReadonlySet<string> = new Set(["transcribe", "describe", "look", "embed", "fingerprint"]);
 
-/** The original a blurred copy was made from: an older version of the same clip with that SHA-256. Undefined otherwise. */
+// each blurred copy with its original: an older version of the same clip with the SHA-256 the copy was made from
+const PAIRS = `SELECT b.id AS copy, o.id AS original FROM asset_versions b JOIN asset_versions o ON o.asset_id = b.asset_id AND o.id != b.id
+  AND o.blurred_of IS NULL AND (o.full_sha256 = b.blurred_of OR o.sha256 = b.blurred_of) WHERE b.blurred_of IS NOT NULL`;
+
+/** The original a blurred copy was made from, else undefined. */
 export function originalOf(db: DatabaseSync, versionId: string): string | undefined {
-  return (
-    db
-      .prepare(
-        `SELECT o.id FROM asset_versions b JOIN asset_versions o ON o.asset_id = b.asset_id AND o.id != b.id AND o.blurred_of IS NULL
-          AND (o.full_sha256 = b.blurred_of OR o.sha256 = b.blurred_of)
-         WHERE b.id = ? AND b.blurred_of IS NOT NULL LIMIT 1`,
-      )
-      .get(versionId) as { id: string } | undefined
-  )?.id;
+  return (db.prepare(`SELECT original FROM (${PAIRS}) WHERE copy = ? LIMIT 1`).get(versionId) as { original: string } | undefined)?.original;
 }
 
 // each analysis: its rows by version, the search index filled with it, the job whose result it is. `ai`: the rows a new
@@ -33,8 +29,9 @@ const PARTS: { table: string; where?: string; ai?: string; keep?: true; fts?: { 
   { table: "stretch_notes", keep: true },
   { table: "timelines", where: "error IS NULL", fts: { table: "search_timeline", cols: ["a", "text"] } },
   { table: "pictures" },
+  // a duplicate check is kept in its row; a waveform is a file the copy makes itself (copying its key would let removing
+  // the copy delete the original's file, trash.ts deleteVersions)
   { table: "derivatives", where: "kind = 'fingerprint'", job: "fingerprint" },
-  { table: "derivatives", where: "kind = 'wave'" },
 ];
 
 const colsOf = (db: DatabaseSync, table: string) => (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
@@ -46,12 +43,23 @@ const colsOf = (db: DatabaseSync, table: string) => (db.prepare(`PRAGMA table_in
 export function mirrorTo(db: DatabaseSync, from: string, to: string, replace = false, now = Date.now()): boolean {
   let described = false;
   let shots = false;
+  const owner = db.prepare("SELECT a.library_id, v.created_by FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(to) as
+    | { library_id: string; created_by: string | null }
+    | undefined;
+  // the copy's job reads done once it holds the result: the sweeps that look for a missing job (shots.ts sweepLook,
+  // worker.ts backfillSprite, embed.ts catchUpEmbeds) see it made, not missing
+  const doneJob = db.prepare(
+    `INSERT INTO jobs (library_id, version_id, kind, state, actor, done_at) VALUES (?, ?, ?, 'done', ?, ?)
+     ON CONFLICT (version_id, kind) DO UPDATE SET state = 'done', error = NULL, lease_until = NULL, done_at = excluded.done_at
+     WHERE jobs.state IN ('queued', 'failed', 'needs_key', 'stopped')`,
+  );
   db.exec("SAVEPOINT blur_mirror");
   try {
     for (const p of PARTS) {
       const where = p.where ? ` AND ${p.where}` : "";
       if (!db.prepare(`SELECT 1 FROM ${p.table} WHERE version_id = ?${where} LIMIT 1`).get(from)) continue;
       const has = !!db.prepare(`SELECT 1 FROM ${p.table} WHERE version_id = ?${where} LIMIT 1`).get(to);
+      if (p.job && owner) doneJob.run(owner.library_id, to, p.job, owner.created_by, now);
       if (has && (!replace || p.keep)) continue;
       // a result made again replaces the copy's made rows only; the first copy takes the person's too
       const rows = `${where}${has && p.ai ? ` AND ${p.ai}` : ""}`;
@@ -62,10 +70,6 @@ export function mirrorTo(db: DatabaseSync, from: string, to: string, replace = f
       const cols = colsOf(db, p.table).filter((c) => c !== "version_id");
       db.prepare(`INSERT OR REPLACE INTO ${p.table} (version_id, ${cols.join(", ")}) SELECT ?, ${cols.join(", ")} FROM ${p.table} WHERE version_id = ?${rows}`).run(to, from);
       if (p.fts) db.prepare(`INSERT INTO ${p.fts.table} (version_id, ${p.fts.cols.join(", ")}) SELECT ?, ${p.fts.cols.join(", ")} FROM ${p.fts.table} WHERE version_id = ?`).run(to, from);
-      if (p.job)
-        db.prepare(
-          `UPDATE jobs SET state = 'done', error = NULL, lease_until = NULL, done_at = ? WHERE version_id = ? AND kind = ? AND state IN ('queued', 'failed', 'needs_key', 'stopped')`,
-        ).run(now, to, p.job);
       if (p.table === "descriptions") described = true;
       if (p.table === "stretches") shots = true;
     }
@@ -85,23 +89,13 @@ export function mirrorTo(db: DatabaseSync, from: string, to: string, replace = f
 
 /** A job done on an original: its blurred copies take the new result (jobs.ts finishJob). */
 export function mirrorFromOriginal(db: DatabaseSync, versionId: string): void {
-  const copies = db
-    .prepare(
-      `SELECT b.id FROM asset_versions o JOIN asset_versions b ON b.asset_id = o.asset_id AND b.id != o.id
-        AND b.blurred_of IS NOT NULL AND (b.blurred_of = o.full_sha256 OR b.blurred_of = o.sha256)
-       WHERE o.id = ? AND o.blurred_of IS NULL`,
-    )
-    .all(versionId) as { id: string }[];
-  for (const c of copies) mirrorTo(db, versionId, c.id, true);
+  const copies = db.prepare(`SELECT copy FROM (${PAIRS}) WHERE original = ?`).all(versionId) as { copy: string }[];
+  for (const c of copies) mirrorTo(db, versionId, c.copy, true);
 }
-
-// each blurred copy with its original (originalOf, for every copy at once)
-const PAIRS = `SELECT b.id AS copy, o.id AS original FROM asset_versions b JOIN asset_versions o ON o.asset_id = b.asset_id AND o.id != b.id
-  AND o.blurred_of IS NULL AND (o.full_sha256 = b.blurred_of OR o.sha256 = b.blurred_of) WHERE b.blurred_of IS NOT NULL`;
 
 /**
  * Every blurred copy takes what its original has and it lacks: each minute, for what lands later (a timeline). One query
- * per part finds the pairs short of it, so a library of a thousand pairs with nothing new reads nine queries, not thousands.
+ * per part finds the pairs short of it, so a library of a thousand pairs with nothing new reads eight queries, not thousands.
  */
 export function mirrorBlurred(db: DatabaseSync): number {
   const short = new Map<string, string>();
