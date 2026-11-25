@@ -9,6 +9,7 @@ import { BUDGET_WAITS, budgetPause, LOOK_KEY_CALLS, LOOK_LABEL, LOOK_MIN_S, libr
 import { SHEET_STRETCHES } from "./look";
 import { embedRoute } from "./embed";
 import { NeedsKey, transcribeRoute } from "./transcribe";
+import { ON_ORIGINAL } from "./blur-mirror";
 import { NOT_TRASHED, stillToCome, WAITS_FOR_COMPUTER, WAITS_FOR_SERVER } from "./jobs";
 import { LANES, LIMIT_LIKE, leaveToComputers, type WaitSnapshot } from "./worker";
 import { deviceOf, isThisMachine, listDevices } from "../lib/devices";
@@ -64,6 +65,10 @@ const MIN_RUNS = 3;
 
 const laneSize = (name: (typeof LANES)[number]["name"]) => LANES.find((l) => l.name === name)!.size;
 
+// a blurred copy's job for a step run on its original is marked done when the result is copied over (blur-mirror.ts),
+// keeping the started_at of an older try: hours or days that are no work (a description priced at 2.8 h, 2026-11-25)
+const RAN_HERE = `(bv.blurred_of IS NULL OR j.kind NOT IN (${[...ON_ORIGINAL].map((k) => `'${k}'`).join(", ")}))`;
+
 /**
  * The average seconds a finished `kind` job took here, by what ran it, or null under MIN_RUNS runs. `serial`: the jobs
  * run one at a time however many are claimed (this computer's transcripts), so each counts from when the one before it
@@ -75,8 +80,8 @@ function paceOf(db: DatabaseSync, kind: string, by?: { table: "transcripts" | "d
   const from = serial ? "MAX(j.started_at, IFNULL(LAG(j.done_at) OVER (ORDER BY j.done_at), 0))" : "j.started_at";
   const r = db
     .prepare(
-      `SELECT AVG(d) AS s, COUNT(*) AS n FROM (SELECT j.done_at - ${from} AS d FROM jobs j ${join}
-       WHERE j.kind = ? AND j.state = 'done' AND j.started_at IS NOT NULL AND j.done_at >= j.started_at ${where}
+      `SELECT AVG(d) AS s, COUNT(*) AS n FROM (SELECT j.done_at - ${from} AS d FROM jobs j ${join} LEFT JOIN asset_versions bv ON bv.id = j.version_id
+       WHERE j.kind = ? AND j.state = 'done' AND j.started_at IS NOT NULL AND j.done_at >= j.started_at ${where} AND ${RAN_HERE}
        ORDER BY j.done_at DESC LIMIT 200)`,
     )
     .get(kind, ...(by ? [by.provider] : [])) as { s: number | null; n: number };
@@ -243,7 +248,7 @@ function lookPace(db: DatabaseSync): number | null {
     .prepare(
       `SELECT SUM(d) AS s, SUM(len) AS len, COUNT(*) AS n FROM (SELECT j.done_at - j.started_at AS d, json_extract(v.probe, '$.duration') AS len
        FROM jobs j JOIN asset_versions v ON v.id = j.version_id
-       WHERE j.kind = 'look' AND j.state = 'done' AND j.started_at IS NOT NULL AND j.done_at >= j.started_at AND len > 0 ORDER BY j.done_at DESC LIMIT 200)`,
+       WHERE j.kind = 'look' AND j.state = 'done' AND j.started_at IS NOT NULL AND j.done_at >= j.started_at AND len > 0 AND v.blurred_of IS NULL ORDER BY j.done_at DESC LIMIT 200)`,
     )
     .get() as { s: number | null; len: number | null; n: number };
   return r.n >= MIN_RUNS && r.s !== null && r.len ? r.s / 1000 / r.len : null;

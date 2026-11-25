@@ -59,6 +59,21 @@ describe("estimate", () => {
     expect(here.steps.find((x) => x.step === "embed")).toMatchObject({ route: "device", seconds: 200 });
   });
 
+  it("leaves out a blurred copy's job that only took its original's result", async () => {
+    // done when copied over (blur-mirror.ts), its start from a try days before: no work, and no hours of pace
+    d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('ab', 'lib_e', 'video', 'c', 'vb', 'local', 1)").run();
+    d.prepare(
+      `INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, probe, state, created_by, created_at, blurred_of)
+       VALUES ('vb', 'ab', 1, 'k', 30000000, 'sb', '{"duration":60,"vcodec":"h264"}', 'ready', 'local', 1, 's1')`,
+    ).run();
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, started_at, done_at) VALUES ('lib_e', 'vb', 'describe', 'done', 'local', 0, 900000000)").run();
+    d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at) VALUES ('vb', 'ai', 'x', 'mac-instance', 1)").run();
+    const e = await estimate("lib_e", "local", { clips: 100, bytes: 100 * 30_000_000 });
+    expect(e.steps.find((x) => x.step === "describe")!.seconds).toBe(1000);
+    for (const t of ["descriptions", "jobs", "asset_versions"]) d.prepare(`DELETE FROM ${t} WHERE ${t === "asset_versions" ? "id" : "version_id"} = 'vb'`).run();
+    d.prepare("DELETE FROM assets WHERE id = 'ab'").run();
+  });
+
   it("a music folder costs nobody AI or keys; sound-only files are never described", async () => {
     const songs = await estimate("lib_e", "local", { clips: 50, bytes: 50 * 4_000_000, audio: 50, audioBytes: 50 * 4_000_000, music: true });
     expect(songs.minutes).toBeCloseTo((50 * 4_000_000) / 16_000 / 60, 5); // at a song's bitrate, not the footage's

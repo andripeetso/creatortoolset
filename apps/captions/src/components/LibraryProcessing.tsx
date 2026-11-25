@@ -143,7 +143,8 @@ const needsYou = (w: Waiting) => (!w.limit && !w.computer && !w.away && !w.wait)
  * and work no computer has taken. What waits for a computer, kind by kind, is in the Status view (pages/library/settings/Made.tsx).
  */
 export function LibraryProgressBar({ libraryId }: { libraryId: string }) {
-  const progress = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId));
+  // own: a Retry, Make or Cancel pressed in this window changes it too, so it moves at once, not at the next job
+  const progress = useCachedLoad<LibraryProgress>(`/api/library/${libraryId}/progress`, () => getProgress(libraryId), { own: true });
   const p = progress.data;
   const [stopping, setStopping] = useState<"busy" | "failed" | null>(null);
   // in the Mac app, this Mac's own switch: asked only while a wait names its computers as offline
