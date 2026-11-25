@@ -97,9 +97,9 @@ function State({ tone, text, rest }: { tone: Tone; text: string; rest: string })
  * "New files": made for each new file. Without (the library's Status view) `onSettings` opens the settings. One
  * component for both places. Blurred copies shows only with Face Blur (`faceBlur`: on in the settings' workspace; left
  * out, the window's) or in a library that blurs already; its New files switch is Blur faces (`onBlur`, which asks about
- * the files already here).
+ * the files already here). Proxies' New files switch is Generate proxies (`onProxy`, which turns Upload's Proxies off with it).
  */
-export function Made({ library, save, onSettings, faceBlur, onBlur }: { library: LibrarySummary; save?: (s: Partial<LibrarySettings>) => Promise<unknown>; onSettings?: () => void; faceBlur?: boolean; onBlur?: (on: boolean) => void }) {
+export function Made({ library, save, onSettings, faceBlur, onBlur, onProxy }: { library: LibrarySummary; save?: (s: Partial<LibrarySettings>) => Promise<unknown>; onSettings?: () => void; faceBlur?: boolean; onBlur?: (on: boolean) => void; onProxy?: (on: boolean) => void }) {
   const me = useMe();
   const blurHere = useWorkspace((st) => faceBlurOn(me, st.pluginsOff, st.currentProjectId));
   const blurs = (faceBlur ?? blurHere) || !!library.settings.blurFaces;
@@ -163,7 +163,7 @@ export function Made({ library, save, onSettings, faceBlur, onBlur }: { library:
           // off: stopped or failed jobs are not wanted (no Retry); proxies and blurred copies off are not made at all (no Make)
           const retry = on && !!(m.failed || m.stopped);
           const makes = m.missing > 0 && !k.auto && (on || (k.kind !== "proxy" && !blur));
-          const change = blur ? onBlur : k.setting && save ? (v: boolean) => void save({ [k.setting!]: v }) : undefined;
+          const change = blur ? onBlur : k.kind === "proxy" && onProxy ? onProxy : k.setting && save ? (v: boolean) => void save({ [k.setting!]: v }) : undefined;
           return (
             <Row
               key={m.kind}

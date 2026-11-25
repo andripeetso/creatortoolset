@@ -187,7 +187,7 @@ export interface LibrarySettings {
   timeline: boolean; // Gemini watches each of those videos and writes its timeline (Timelines): on a Gemini key with its sound, on Antigravity its picture only
   /** what watches (WATCH_MODELS); absent: the first */
   timelineModel?: WatchModel;
-  proxy: boolean; // Generate proxies for imported media: a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
+  proxy: boolean; // Generate proxies: a proxy for each video the window cannot play as it is (4K, 10-bit, a camera's own format)
   /** Proxy quality (PROXY_QUALITIES); absent: "standard". Changing it affects new proxies only. */
   proxyQuality?: ProxyQuality;
   /** transcripts at import (Analysis effort Low and up); absent: on */
@@ -934,7 +934,9 @@ export const LIBRARY_WORDS = {
   smartFolders: { label: "Smart folders", tip: "Clips and photos are filed into a folder for each shoot, by the day and place they were filmed, as they come in. What they show becomes tags. Files on disk never move." },
   organizeYourself: { label: "Organize yourself", tip: "Every clip goes into one library. You make and fill the folders yourself." },
   proxyTitle: "Proxy workflow",
-  generateProxies: { label: "Generate proxies for imported media", tip: "Creates smaller copies of your media files for faster uploads, playback and editing, and easier AI processing. Edits still make proxies of the clips they use." },
+  generateProxies: { label: "Generate proxies", tip: "A smaller copy is made of each new video too heavy to play smoothly, and of every new video while Upload to server sends proxies." },
+  makeProxies: "Make proxies?",
+  proxiesOff: "proxies turned off",
   proxyQuality: { label: "Proxy quality", tip: "Higher quality looks sharper while editing and takes more space. A proxy is never larger than its original." },
   hostedTitle: "Hosted media",
   uploadToServer: "Upload to server",
@@ -1023,7 +1025,7 @@ export const LIBRARY_WORDS = {
   exportsCard: (workspace: string) => `Final exports folder for ${workspace}`,
   exportsLine: (computer?: string) => `Finished videos go into this folder on ${computer || "your computer"}.`,
   quickSetupLine: (base: string, computer?: string) =>
-    `Makes Source media, Project files and Final exports in ${base} on ${computer || "your computer"}, copies imports in, with 720p proxies, High analysis and Smart folders.`,
+    `Makes Source media, Project files and Final exports in ${base} on ${computer || "your computer"}, copies imports in, with High analysis and Smart folders.`,
   quickSetupButton: "Set up",
   customiseButton: "Customise",
   redo: "Redo",
@@ -1059,8 +1061,8 @@ export type ActionNeeded = ActionAsk & { title: string; line: string; missing?: 
  *  while the workspace's Media Library is not set up (ensureUseFolder). */
 export type FolderAsk = Extract<ActionNeeded, { kind: "projects" | "exports" | "setup" }>;
 /** The setup card's defaults (Quick setup), as the card shows them; POST /api/library/:id/setup/quick stores them. */
-export type QuickSetup = { base: string; proxy: true; proxyQuality: "720p"; effort: "high"; organize: "smart"; hosted: HostedMix };
-export const quickSetup = (base: string): QuickSetup => ({ base, proxy: true, proxyQuality: "720p", effort: "high", organize: "smart", hosted: HOSTED_DEFAULT });
+export type QuickSetup = { base: string; proxy: false; proxyQuality: ProxyQuality; effort: "high"; organize: "smart"; hosted: HostedMix };
+export const quickSetup = (base: string): QuickSetup => ({ base, proxy: false, proxyQuality: "standard", effort: "high", organize: "smart", hosted: HOSTED_DEFAULT });
 /** The line of a card whose computer the server can't find (`missing: "computer"`). */
 export const cantFind = (computer?: string) => `Can't find ${computer || "your computer"} right now: open Creator Toolset on it`;
 export const RETRY = "Retry";

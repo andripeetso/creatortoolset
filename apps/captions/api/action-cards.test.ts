@@ -165,7 +165,8 @@ describe("the setup card", () => {
   it("quick_setup writes the three rows and the settings with setupAt, the card goes, and the ask goes on", async () => {
     const p = await person("eve");
     const card = (await setupNeeded("eve")) as Extract<Card, { kind: "setup" }>;
-    expect(card).toMatchObject({ kind: "setup", owner: true, device: p.mac, deviceName: "eve's Mac", defaults: { base: "~/Movies/Creator Toolset/Media Library", proxyQuality: "720p", effort: "high", organize: "smart" } });
+    expect(card).toMatchObject({ kind: "setup", owner: true, device: p.mac, deviceName: "eve's Mac", defaults: { base: "~/Movies/Creator Toolset/Media Library", proxy: false, proxyQuality: "standard", effort: "high", organize: "smart" } });
+    expect(card.line).not.toMatch(/prox/i); // the card makes none, so it promises none
     expect(card.actions.map((a) => a.id)).toEqual(["quick_setup", "customise"]);
     const m = await p.asked("import my clips", card);
     const job = p.claim();
@@ -179,7 +180,8 @@ describe("the setup card", () => {
       ["library", p.mac, "~/Movies/Creator Toolset/Media Library/Final exports", true],
     ]);
     const s = JSON.parse((libraryDb().prepare("SELECT settings FROM libraries WHERE id = ?").get(card.libraryId) as { settings: string }).settings);
-    expect(s).toMatchObject({ proxy: true, proxyQuality: "standard", organize: "ai", timeline: true, upload: "none", finalsUpload: "all" });
+    expect(s).toMatchObject({ proxyQuality: "standard", organize: "ai", timeline: true, upload: "none", finalsUpload: "all" });
+    expect(s.proxy).not.toBe(true); // the card sends no proxy answer: proxies are never turned on unasked
     expect(Date.parse(s.setupAt)).toBeGreaterThan(0);
     expect((await p.message(m.id))!.action).toBeUndefined();
     expect(told).toContain("eve:assistant");

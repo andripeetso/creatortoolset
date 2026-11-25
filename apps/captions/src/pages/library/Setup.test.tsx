@@ -155,6 +155,16 @@ const next = () => press(button("Continue"));
 /** a switch by its label, and pressing it */
 const sw = (label: string) => document.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="${label}"]`);
 const toggle = (label: string) => press(sw(label) ?? undefined);
+/** the Proxy workflow step's checkbox */
+const proxyBox = () => document.querySelector<HTMLButtonElement>('button[role="checkbox"][aria-label="Generate proxies"]');
+/** from the first step to Hosted media, ticking Generate proxies on the way when asked */
+const toHosted = async (proxies = false) => {
+  await next();
+  await next(); // proxy
+  if (proxies) await press(proxyBox() ?? undefined);
+  await next(); // analysis
+  await next(); // hosted
+};
 /** the page's text as read, without the break hints in long paths */
 const shown = () => (document.body.textContent ?? "").replace(/\u200b/g, "");
 const dots = () => document.querySelector('[aria-label="Steps"]')?.children.length ?? 0;
@@ -180,7 +190,7 @@ describe("Media Library setup: scratch, This Mac", () => {
     expect(h.calls.every((c) => c.body.host === "this-computer" && c.workspace === "ws_1")).toBe(true);
     const s = h.updates[0]!.settings;
     expect(s).not.toHaveProperty("importMode");
-    expect(s).toMatchObject({ defaultFolders: true, organize: "ai", proxy: true, proxyQuality: "standard", describe: true, timeline: true, lookBudget: null });
+    expect(s).toMatchObject({ defaultFolders: true, organize: "ai", proxy: false, proxyQuality: "standard", describe: true, timeline: true, lookBudget: null }); // proxies are asked, never on unasked
     expect(typeof s.setupAt).toBe("string");
     expect(s).not.toHaveProperty("upload"); // a Mac library has no server to upload to
     expect(h.events.map((e) => e.detail)).toEqual([{ workspace: "ws_1" }]);
@@ -321,13 +331,14 @@ describe("Media Library setup: existing folders", () => {
 
 describe("Media Library setup: own server and Cloud", () => {
   // replaced (Andri 11-19, CEO 11-19): Upload to server is the master; Final exports, Proxies and Originals under it in any mix
-  it("an own server has five steps; Final exports is on by default, and Proxies saves proxies and turns Proxies on", async () => {
+  it("an own server has five steps; Final exports is on by default, and with Generate proxies ticked Proxies saves proxies", async () => {
     h.mac = false; // a browser on the server: no folder rows here
     await mount("server");
     expect(dots()).toBe(5);
     await next(); // to Folders: the Mac app is named, not a folder picker
     expect(document.body.textContent).toContain("Folders are added in the Mac app.");
     await next(); // proxy
+    await press(proxyBox() ?? undefined);
     await next(); // analysis
     await next(); // hosted
     expect(button("Done")).toBeDefined();
@@ -364,7 +375,7 @@ describe("Media Library setup: own server and Cloud", () => {
   it("the master on again brings back the last mix; all three off is the master off; on from nothing is Final exports only", async () => {
     h.mac = false;
     await mount("server");
-    for (let i = 0; i < 4; i++) await next();
+    await toHosted(true);
     await toggle("Proxies"); // Final exports and Proxies
     await toggle("Upload to server");
     await toggle("Upload to server");
@@ -378,7 +389,7 @@ describe("Media Library setup: own server and Cloud", () => {
     await toggle("Upload to server"); // off (the default mix was on)
     act(() => root!.unmount());
     await mount("server"); // a new view: no earlier mix to bring back
-    for (let i = 0; i < 4; i++) await next();
+    await toHosted(true);
     await toggle("Final exports"); // all off
     await toggle("Upload to server");
     expect(["Final exports", "Proxies", "Originals"].map((l) => sw(l)?.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
@@ -468,21 +479,37 @@ describe("Media Library setup: the scratch folder is made before its row", () =>
 });
 
 describe("Media Library setup: proxies, analysis and organization details", () => {
-  it("Hosted media's Proxies never holds Generate proxies on: a Back trip switches it off and it saves off (owner, 2026-11-25)", async () => {
+  it("the Proxy workflow step asks, with Generate proxies a checkbox that starts unticked; Upload then offers no Proxies", async () => {
     h.mac = false;
     await mount("server");
-    for (let i = 0; i < 4; i++) await next(); // to Hosted media
+    await next();
+    await next(); // proxy
+    expect(shown()).toContain("Make proxies?");
+    expect(proxyBox()?.getAttribute("aria-checked")).toBe("false");
+    expect(sw("Generate proxies")).toBeNull(); // a form with one save: no switch
+    expect(shown()).not.toContain("Proxy quality");
+    await next();
+    await next(); // hosted
+    expect([!!sw("Final exports"), !!sw("Proxies"), !!sw("Originals")]).toEqual([true, false, true]);
+    await press(button("Done"));
+    expect(h.updates[0]!.settings).toMatchObject({ upload: "none", proxy: false });
+  });
+
+  it("unticking Generate proxies turns Upload's Proxies off with it: a Back trip saves neither", async () => {
+    h.mac = false;
+    await mount("server");
+    await toHosted(true);
     await toggle("Proxies");
     await press(button("Back"));
     await press(button("Back")); // proxy workflow
-    const proxy = () => document.querySelector<HTMLButtonElement>('button[aria-label="Generate proxies for imported media"]')!;
-    expect(proxy().disabled).toBe(false);
-    await press(proxy());
-    expect(proxy().getAttribute("aria-checked")).toBe("false");
+    expect(proxyBox()!.disabled).toBe(false); // Upload's Proxies never holds it on (owner, 2026-11-25)
+    await press(proxyBox()!);
+    expect(proxyBox()!.getAttribute("aria-checked")).toBe("false");
     await press(button("Continue"));
     await press(button("Continue")); // to hosted, where Done is
+    expect(sw("Proxies")).toBeNull();
     await press(button("Done"));
-    expect(h.updates[0]!.settings).toMatchObject({ upload: "proxies", proxy: false });
+    expect(h.updates[0]!.settings).toMatchObject({ upload: "none", finalsUpload: "all", proxy: false });
   });
 
   // replaced (Andri 13:00 sign-off: B7, Effort is six stop buttons, not a slider)

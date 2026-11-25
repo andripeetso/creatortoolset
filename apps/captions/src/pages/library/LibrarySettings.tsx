@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
 import { chooseDialog } from "@/lib/dialogs";
 import { getMade, updateLibrary } from "@/lib/library";
+import { undoable } from "@/lib/undo";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
 import { useAuth, useMe } from "@/lib/auth";
@@ -66,10 +67,19 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
   if (library.readOnly) return <MemberSettings library={library} />;
   const s = library.settings;
   const level = levelOf(s);
+  // true once the server has it
   const save = (settings: Partial<Settings> & { blurExisting?: boolean }) =>
     markSave(updateLibrary(library.id, { settings }))
-      .then(onChange)
-      .catch((e: unknown) => onError(message(e)));
+      .then((l) => (onChange(l), true))
+      .catch((e: unknown) => (onError(message(e)), false));
+  // Generate proxies, the one switch (Proxy workflow, and What's made's Proxies row). Off turns Upload's Proxies part off
+  // in the same save (its row goes with it, ./settings/Hosted.tsx); that part cannot be seen any more, so Undo puts both back.
+  const setProxy = async (v: boolean) => {
+    const was = hostedOf(s);
+    const both = !v && was.proxies;
+    if ((await save({ proxy: v, ...(both ? hostedSettings({ ...was, proxies: false }, s.finalsUpload) : {}) })) && both)
+      undoable(LIBRARY_WORDS.proxiesOff, () => save({ proxy: true, ...hostedSettings(was, s.finalsUpload) }));
+  };
   // Blur faces, the one switch (Proxy workflow, and What's made's Blurred copies row). Turning it on asks once whether
   // the files already here are blurred too (blurExisting) or left as they are; either way the Blurred part of Upload
   // (the mix's originals) starts off, and no other setting changes.
@@ -89,7 +99,7 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
         <Organization settings={s} save={save} />
       </Section>
       <Section title={LIBRARY_WORDS.proxyTitle}>
-        <Proxies library={library} save={save} faceBlur={faceBlur} setBlur={(v) => void setBlur(v)} />
+        <Proxies library={library} save={save} faceBlur={faceBlur} setBlur={(v) => void setBlur(v)} setProxy={(v) => void setProxy(v)} />
       </Section>
       <Section title={LIBRARY_WORDS.hostedTitle}>
         <Hosted library={library} save={save} />
@@ -98,7 +108,7 @@ export function LibrarySettingsBody({ library, onChange, onError, workspace }: B
       <Section title={LIBRARY_WORDS.analysisTitle}>
         <Effort library={library} save={save} />
       </Section>
-      <Made library={library} save={save} faceBlur={faceBlur} onBlur={(v) => void setBlur(v)} />
+      <Made library={library} save={save} faceBlur={faceBlur} onBlur={(v) => void setBlur(v)} onProxy={(v) => void setProxy(v)} />
       {level !== "off" && (
         <Section title={LIBRARY_WORDS.modelsTitle}>
           <Models settings={s} save={save} />
@@ -132,7 +142,7 @@ function Organization({ settings, save }: { settings: Settings; save: (s: Partia
  * workspace, or to turn an old one off) and Generate proxies are two switches, and neither changes the other: under Blur
  * faces a clip's proxy is made from its blurred copy. Proxy quality shows while proxies are made.
  */
-function Proxies({ library, save, faceBlur, setBlur }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean; setBlur: (on: boolean) => void }) {
+function Proxies({ library, save, faceBlur, setBlur, setProxy }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean; setBlur: (on: boolean) => void; setProxy: (on: boolean) => void }) {
   const s = library.settings;
   const on = makesProxies(s);
   const gen = LIBRARY_WORDS.generateProxies;
@@ -144,7 +154,7 @@ function Proxies({ library, save, faceBlur, setBlur }: { library: LibrarySummary
         title={gen.label}
         tip={gen.tip}
         status={s.blurFaces && on ? <Status>{LIBRARY_WORDS.proxiesFromBlurred}</Status> : undefined}
-        control={<Switch aria-label={gen.label} checked={on} onCheckedChange={(v) => void save({ proxy: v })} />}
+        control={<Switch aria-label={gen.label} checked={on} onCheckedChange={setProxy} />}
       />
       {on && (
         <>
@@ -162,7 +172,7 @@ function Proxies({ library, save, faceBlur, setBlur }: { library: LibrarySummary
 }
 
 /**
- * Hosted media: the Upload to server master and Final exports, Proxies and Originals under it in any mix, the same
+ * Hosted media: the Upload to server master and Final exports, Proxies (while they are made) and Originals under it in any mix, the same
  * component as setup's last step (./settings/Hosted.tsx). On This Mac, with the server on this computer, there is no
  * server to upload to: the row says so and nothing else is shown. Read from the server's kind: a Server opened in the
  * Mac app by its admin also watches folders, and hiding its switches there left hosted proxies locked on.
@@ -177,7 +187,7 @@ function Hosted({ library, save }: { library: LibrarySummary; save: (s: Partial<
         <HostedSwitches
           value={hostedOf(library.settings)}
           onChange={(m) => void save(hostedSettings(m, library.settings.finalsUpload))}
-          // its switch is in Proxy workflow: here it names the rows (Blurred, and Proxies while they are made)
+          // its switch is in Proxy workflow: here it names the rows (Blurred in place of Originals)
           blurFaces={!!library.settings.blurFaces}
           proxies={makesProxies(library.settings)}
         />

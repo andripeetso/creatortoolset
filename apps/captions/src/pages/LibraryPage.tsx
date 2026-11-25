@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Activity, FolderCog, Instagram, MoreHorizontal, Music, RefreshCw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import type { AssetCard, AssetKind, AssetPage, Collection, LibrarySort, LibrarySummary, SearchHit, WatchStatus } from "@contracts/library";
-import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS, uploadSent } from "@contracts/library";
+import { hostsOriginals, hostsProxies, levelOf, LIBRARY_WORDS, makesProxies, uploadSent } from "@contracts/library";
 import { AppBar } from "@/components/AppBar";
 import { CtMark } from "@/components/CtMark";
 import { BrowseBar, NewFolderButton } from "@/components/browse/Bar";
@@ -449,27 +449,20 @@ export default function LibraryPage() {
     if (copies) start(all, here, look.paths, copies, c);
   };
 
-  // Processing: Generate blurred versions where this Mac can blur (an owner or admin may skip it where the library
-  // blurs; a member's file is always blurred there), else Generate proxies or Skip processing, from the library's and
-  // the folder's settings. Nothing to ask: no sheet
+  // Processing: two ticks, Blur faces and Generate proxies, each from the library's and the folder's settings. Blur faces
+  // is a choice where this Mac can blur (an owner or admin may untick it where the library blurs; a member's file is
+  // always blurred there); Generate proxies always is
   const chooseImport = (count: number, outside: { count: number }): Promise<(ImportChoice & { start: Processing }) | null> => {
     const libraryBlurs = !!library?.settings.blurFaces;
-    const blurs = libraryBlurs && openFolder?.blur !== "no";
-    const blurOption = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
-    const proxies = !!library?.settings.proxy;
-    const process: Processing = blurs ? "blur" : proxies ? "proxies" : "skip";
-    // blurred with no way out of it: the blurred version is the proxy, nothing else to choose
-    const processes: Processing[] = blurs && !blurOption ? [] : blurOption ? ["proxies", "blur", "skip"] : ["proxies", "skip"];
-    if (!processes.length && !outside.count) return Promise.resolve({ process, start: process, copy: true });
-    return new Promise((done) =>
-      setImportAsk({ id: Date.now(), count, processes, process, outside: outside.count, done: (c) => (setImportAsk(null), done(c && { ...c, start: process })) }),
-    );
+    const start: Processing = { blur: libraryBlurs && openFolder?.blur !== "no", proxy: !!library && makesProxies(library.settings) };
+    const blurOffered = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
+    return new Promise((done) => setImportAsk({ id: Date.now(), count, start, blurOffered, outside: outside.count, done: (c) => (setImportAsk(null), done(c && { ...c, start })) }));
   };
 
   // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
-  const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, c: { process: Processing; start: Processing }) => {
+  const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, c: Processing & { start: Processing }) => {
     if (!libId) return;
-    const o = importOptions(c.process, { start: c.start, libraryBlurs: !!library?.settings.blurFaces, macRemote, onMac, hostsOriginals: hostsOriginals(upload.current) });
+    const o = importOptions(c, { start: c.start, libraryBlurs: !!library?.settings.blurFaces, macRemote, onMac, hostsOriginals: hostsOriginals(upload.current) });
     addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, ...o, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
   // a file of this library went in: its clips (and the folder's count) read again

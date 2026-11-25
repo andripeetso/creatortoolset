@@ -29,6 +29,10 @@ vi.mock("@/components/settings/kit-controls", async (orig) => ({
   ),
 }));
 
+// Undo's notice is not drawn here: what it would take back is kept, for a test to run
+const undos = vi.hoisted(() => [] as { what: string; back: () => unknown }[]);
+vi.mock("@/lib/undo", async (orig) => ({ ...(await orig<object>()), undoable: (what: string, back: () => unknown) => void undos.push({ what, back }) }));
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const SETTINGS: LibrarySettings = { describe: true, look: true, timeline: true, embed: true, proxy: true, upload: "none", lookLevel: "standard", lookBudget: null };
@@ -47,6 +51,7 @@ let host: HTMLDivElement | undefined;
 beforeEach(() => {
   patches.length = 0;
   asked.length = 0;
+  undos.length = 0;
   serverHere = false;
   storageFolders = [];
   made = [];
@@ -115,6 +120,11 @@ const bodyText = () => document.body.textContent ?? "";
 const radio = (label: string) => host!.querySelector<HTMLInputElement>(`input[type="radio"][aria-label="${label}"]`)!;
 const toggle = (label: string) => host!.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="${label}"]`)!;
 const tip = (label: string) => host!.querySelector<HTMLButtonElement>(`button[aria-label="About ${label}"]`);
+/** a press whose save has answered */
+const press = async (el: HTMLElement) => {
+  act(() => el.click());
+  for (let i = 0; i < 4; i++) await act(async () => new Promise<void>((done) => setTimeout(done, 0)));
+};
 
 describe("Settings → Media Library, the owner's page", () => {
   // replaced (UNIFIED-PRD Rulings 11-19): All clips left the owner page; its Redo is in the Library's ⋯ menu
@@ -274,6 +284,34 @@ describe("Settings → Media Library, the owner's page", () => {
     const row = (label: string) => host!.querySelector(`button[role="switch"][aria-label="${label}"]`);
     expect([row("Blurred")?.getAttribute("aria-checked"), !!row("Proxies")]).toEqual(["true", false]);
     expect(bodyText()).not.toContain(LIBRARY_WORDS.proxiesFromBlurred);
+  });
+
+  it("with Generate proxies off, Upload offers no Proxies row in a library that doesn't blur either", async () => {
+    const off: LibrarySummary = { ...library, settings: { ...SETTINGS, proxy: false } };
+    await render(<LibrarySettingsBody library={off} watch={watch} onChange={() => {}} onError={() => {}} />);
+    const row = (label: string) => host!.querySelector(`button[role="switch"][aria-label="${label}"]`);
+    expect([!!row("Final exports"), !!row("Proxies"), !!row("Originals")]).toEqual([true, false, true]);
+  });
+
+  it("Generate proxies off turns Upload's Proxies off in the same save, and Undo puts both back; What's made's switch is the same one", async () => {
+    made = [{ kind: "proxy", have: 3, missing: 0, queued: 0, cost: "free" }];
+    const hosts: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all", finalsUpload: "all" } };
+    await render(<LibrarySettingsBody library={hosts} watch={watch} onChange={() => {}} onError={() => {}} />);
+    await press(toggle(LIBRARY_WORDS.generateProxies.label));
+    expect(patches).toEqual([{ settings: { proxy: false, upload: "originals", finalsUpload: "all" } }]);
+    expect(undos.map((u) => u.what)).toEqual([LIBRARY_WORDS.proxiesOff]);
+    await act(async () => void (await undos[0]!.back()));
+    expect(patches.at(-1)).toEqual({ settings: { proxy: true, upload: "all", finalsUpload: "all" } });
+    await press(toggle("Proxies for new files"));
+    expect(patches.at(-1)).toEqual({ settings: { proxy: false, upload: "originals", finalsUpload: "all" } });
+    expect(undos).toHaveLength(2);
+  });
+
+  it("Generate proxies off where Upload sent no proxies saves only itself and offers no Undo: the switch shows it all", async () => {
+    await render(<LibrarySettingsBody library={library} watch={watch} onChange={() => {}} onError={() => {}} />);
+    await press(toggle(LIBRARY_WORDS.generateProxies.label));
+    expect(patches).toEqual([{ settings: { proxy: false } }]);
+    expect(undos).toEqual([]);
   });
 
   it("asks nothing about how to import: where a file is decides", async () => {

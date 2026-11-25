@@ -2,7 +2,7 @@ import { useEffect, useState, type DragEvent, type ReactNode } from "react";
 import { Cloud, FolderOpen, Gauge, ScanSearch, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Card, InfoTip, Row } from "@/components/settings/kit-rows";
@@ -84,7 +84,8 @@ const START: Answers = {
   sources: [],
   projects: "",
   exports: "",
-  proxy: true,
+  // asked, and unticked until the person answers
+  proxy: false,
   proxyQuality: "standard",
   effort: ANALYSIS_DEFAULT,
   watchModel: WATCH_MODELS[0]!.value,
@@ -495,7 +496,8 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
           <Row
             title={LIBRARY_WORDS.generateProxies.label}
             tip={LIBRARY_WORDS.generateProxies.tip}
-            control={<Switch aria-label={LIBRARY_WORDS.generateProxies.label} checked={a.proxy} onCheckedChange={(v) => set({ proxy: v })} />}
+            // setup is a form with one save: a checkbox. Unticked, Upload's Proxies part goes off with it (its row is not shown)
+            control={<Checkbox aria-label={LIBRARY_WORDS.generateProxies.label} checked={a.proxy} onCheckedChange={(v) => set(v === true ? { proxy: true } : { proxy: false, hosted: { ...a.hosted, proxies: false } })} />}
           />
           {a.proxy && (
             <Row title={LIBRARY_WORDS.proxyQuality.label} tip={LIBRARY_WORDS.proxyQuality.tip}>
@@ -601,7 +603,7 @@ export function LibrarySetup({ library, inline = false, stay, onDone, onClose }:
       : step === "folders"
         ? "Where your media and your work are kept."
         : step === "proxy"
-          ? "Smaller copies keep playback and editing fast."
+          ? LIBRARY_WORDS.makeProxies
           : step === "analysis"
             ? "Clips are described and tagged so you can search by what's in them. Higher effort looks closer and costs more."
             : `Choose what goes to ${serverName ?? "the server"}, so your team can play it.`;

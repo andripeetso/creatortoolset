@@ -35,59 +35,76 @@ const add = async () => {
   });
 };
 
+const ticked = (name: string) => option(name)?.getAttribute("aria-checked");
+
 describe("the sheet of one add", () => {
-  it("processing is one choice: a blurred version takes the proxy's place", async () => {
+  it("processing is two ticks, each from the library's setting: a file can get both", async () => {
     const done = vi.fn();
-    mount({ id: 1, count: 17, processes: ["proxies", "blur", "skip"], process: "proxies", outside: 0, done });
+    mount({ id: 1, count: 17, start: { blur: false, proxy: true }, blurOffered: true, outside: 0, done });
     expect(document.body.textContent).toContain("Add 17 files");
-    expect(document.body.textContent).not.toContain("Upload");
-    expect(option("Generate proxies")!.getAttribute("aria-checked")).toBe("true");
-    act(() => option("Generate blurred versions")!.click());
-    expect(option("Generate proxies")!.getAttribute("aria-checked")).toBe("false");
+    expect(option("Upload to server")).toBeUndefined(); // what is uploaded is never asked here
+    expect([ticked("Blur faces"), ticked("Generate proxies")]).toEqual(["false", "true"]);
+    act(() => option("Blur faces")!.click());
+    expect([ticked("Blur faces"), ticked("Generate proxies")]).toEqual(["true", "true"]);
     expect(document.querySelector('a[href="/settings/blur-faces"]')).not.toBeNull();
     expect(option("Copy to Media Library")).toBeUndefined();
     await add();
-    expect(done).toHaveBeenCalledWith({ process: "blur", copy: true });
+    expect(done).toHaveBeenCalledWith({ blur: true, proxy: true, copy: true });
   });
 
-  it("files from outside: Location in the same sheet, with Use where they are", async () => {
+  it("neither ticked is no processing; files from outside get Location in the same sheet", async () => {
     const done = vi.fn();
-    mount({ id: 2, count: 24, processes: ["proxies", "skip"], process: "proxies", outside: 3, done });
-    expect(option("Generate blurred versions")).toBeUndefined();
+    mount({ id: 2, count: 24, start: { blur: false, proxy: true }, blurOffered: false, outside: 3, done });
+    expect(option("Blur faces")).toBeUndefined();
     expect(document.body.textContent).toContain("3 of 24 files are outside Folder access.");
     expect(option("Copy to Media Library")!.getAttribute("aria-checked")).toBe("true");
-    act(() => option("Skip processing")!.click());
+    act(() => option("Generate proxies")!.click());
     act(() => option("Use where they are")!.click());
     await add();
-    expect(done).toHaveBeenCalledWith({ process: "skip", copy: false });
+    expect(done).toHaveBeenCalledWith({ blur: false, proxy: false, copy: false });
   });
 
-  it("no processing to choose: only Location", () => {
-    mount({ id: 3, count: 2, processes: [], process: "blur", outside: 2, done: vi.fn() });
-    expect(document.body.textContent).not.toContain("Processing");
-    expect(option("Use where they are")).toBeDefined();
+  it("where Blur faces is no choice (a member's file in a library that blurs), the files stay blurred and proxies are still asked", async () => {
+    const done = vi.fn();
+    mount({ id: 3, count: 2, start: { blur: true, proxy: false }, blurOffered: false, outside: 0, done });
+    expect(option("Blur faces")).toBeUndefined();
+    expect(ticked("Generate proxies")).toBe("false");
+    await add();
+    expect(done).toHaveBeenCalledWith({ blur: true, proxy: false, copy: true });
+  });
+
+  it("unticking Blur faces where the library blurs asks first, and Cancel adds nothing", async () => {
+    const done = vi.fn();
+    vi.stubGlobal("confirm", () => false);
+    mount({ id: 4, count: 1, start: { blur: true, proxy: true }, blurOffered: true, outside: 0, done });
+    act(() => option("Blur faces")!.click());
+    await add();
+    expect(done).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
 
 describe("the answer as an add's options", () => {
-  const remote = { start: "skip" as const, libraryBlurs: false, macRemote: true, onMac: false, hostsOriginals: false };
-  it("Generate proxies asks for one; what is sent is the library's Upload", () => {
-    expect(importOptions("proxies", remote)).toEqual({ mac: false, blur: false, asFilmed: false, askBlur: false, proxy: "yes" });
+  const remote = { start: { blur: false, proxy: false }, libraryBlurs: false, macRemote: true, onMac: false, hostsOriginals: false };
+  const fromProxies = { ...remote, start: { blur: false, proxy: true } };
+  it("Generate proxies ticked asks for one; what is sent is the library's Upload", () => {
+    expect(importOptions({ blur: false, proxy: true }, remote)).toEqual({ mac: false, blur: false, asFilmed: false, askBlur: false, proxy: "yes" });
   });
-  it("Skip processing: no proxy, and nothing sent where the library keeps only proxies", () => {
-    const fromProxies = { ...remote, start: "proxies" as const };
-    expect(importOptions("skip", fromProxies)).toMatchObject({ mac: true, proxy: "no" });
+  it("Generate proxies unticked: no proxy, and nothing sent where the library keeps only proxies", () => {
+    expect(importOptions({ blur: false, proxy: false }, fromProxies)).toMatchObject({ mac: true, proxy: "no" });
     // a library that keeps originals still gets the original
-    expect(importOptions("skip", { ...fromProxies, hostsOriginals: true })).toMatchObject({ mac: false, proxy: "no" });
+    expect(importOptions({ blur: false, proxy: false }, { ...fromProxies, hostsOriginals: true })).toMatchObject({ mac: false, proxy: "no" });
   });
-  it("Add as the sheet opened keeps no answer: the file follows the library, so proxies turned on later cover it", () => {
-    expect(importOptions("skip", remote)).not.toHaveProperty("proxy");
-    expect(importOptions("proxies", { ...remote, start: "proxies" })).not.toHaveProperty("proxy");
+  it("Add as the sheet opened keeps no proxy answer: the file follows the library, so proxies turned on later cover it", () => {
+    expect(importOptions({ blur: false, proxy: false }, remote)).not.toHaveProperty("proxy");
+    expect(importOptions({ blur: false, proxy: true }, fromProxies)).not.toHaveProperty("proxy");
+    // Blur faces ticked changes nothing about the proxy answer
+    expect(importOptions({ blur: true, proxy: true }, fromProxies)).not.toHaveProperty("proxy");
   });
-  it("Generate blurred versions where the library doesn't blur: indexed here and asked for, no proxy answer", () => {
-    expect(importOptions("blur", remote)).toEqual({ mac: true, blur: true, asFilmed: false, askBlur: true });
+  it("both ticked where the library does neither: indexed here, blur asked for and a proxy too", () => {
+    expect(importOptions({ blur: true, proxy: true }, remote)).toEqual({ mac: true, blur: true, asFilmed: false, askBlur: true, proxy: "yes" });
   });
-  it("not blurred where the library blurs: kept as filmed", () => {
-    expect(importOptions("proxies", { ...remote, libraryBlurs: true, onMac: true })).toMatchObject({ mac: true, asFilmed: true });
+  it("Blur faces unticked where the library blurs: kept as filmed", () => {
+    expect(importOptions({ blur: false, proxy: true }, { ...fromProxies, libraryBlurs: true, onMac: true })).toMatchObject({ mac: true, asFilmed: true });
   });
 });
