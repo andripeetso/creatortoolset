@@ -45,6 +45,13 @@ the Proxies row. An original waiting for its blur follows neither. The
 blurred copy is saved as a version (`blurred_of`), not as a proxy
 file, so exports on the owner's own Mac use it too (they read the original when the file is on that Mac).
 
+**A file from a phone or a browser** (owner, 2026-11-25; `api/library/held.ts`, the plan's R13) joins this at its top.
+The server takes it and holds it, handed to no one. The library owner's main computer (the one with the library's Source
+media folder) copies it into Imports and indexes it in place, and from there it is a file on a Mac like any other:
+queued, blurred there, its copy recorded. Once the copy is recorded the held file is deleted from the server. With no
+face found, or kept as filmed, the held file is the clip's uploaded original where Upload → Blurred is on, and is deleted
+where it is off.
+
 ## 3. Requirements
 
 ### Getting every file blurred
@@ -139,6 +146,7 @@ The Mac, in order:
 | `editor-steps/blur-faces/plugin.ts` | Kind `faceblur-intake`; claim only by the Mac that has the file; R4–R7; queue kept as a map by version (no scan per event); start-up sweep (R1) |
 | `api/library/on-mac.ts` | Queue a Blur faces file when indexed (R1); no proxy job for it (R10); record a blurred copy sent by the job (R9) |
 | `api/library/worker.ts` | No proxy for a Blur faces file without a blurred copy (R10) |
+| `api/library/held.ts`, `upload-gate.ts` | A phone's or a browser's file to blur is held for the main computer, then settled by its blur's answer |
 | `apps/mac` `FaceBlurAutoJob.swift` | Open from the place, hash while reading, write to Imports, send the record, pinned bitrate (R8) |
 | `src/pages/LibraryPage.tsx`, library settings | R11, R12, R13 |
 | `MacAppUpdateBanner.tsx` | `MIN_MAC_APP` (R3) |
@@ -150,6 +158,8 @@ The Mac, in order:
 - None matched: answer becomes no, not queued again.
 - The copy becomes the current version with `blurred_of`; under Upload None no file bytes reach the server.
 - No proxy job for a Blur faces file's original.
+- A held file: no face found keeps it as the clip's uploaded original under Upload → Blurred and deletes it otherwise;
+  its blurred copy recorded deletes it (`auto.test.ts`, `api/library/held.test.ts`).
 
 ## 6. Before the big run
 

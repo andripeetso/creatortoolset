@@ -65,12 +65,13 @@ export interface TaskKind<I = unknown, R = unknown> {
   reads?: boolean;
   /** it writes on the asker's computer: never run on the server (its video work on or not), it waits for a computer */
   onComputer?: boolean;
-  /** how long it may wait for a computer: queued longer, it fails for good with TASK_EXPIRED (its `failed` tells) */
-  ttlMs?: number;
+  /** how long it may wait for a computer: queued longer, it fails for good with TASK_EXPIRED (its `failed` tells); a
+   *  function answers for one task, undefined for one that waits as long as it takes */
+  ttlMs?: number | ((t: TaskRow & { input: I }) => number | undefined);
   /** the work itself, the same code on the server and on a computer; `files` names what it made in ctx.dir */
   run(input: I, ctx: TaskCtx): Promise<{ result: R; files?: string[] }>;
   /** server: where input file `name` is on the server, for a computer that lacks it and for the server's own run */
-  serve?(t: TaskRow, name: string): string | undefined;
+  serve?(t: TaskRow, name: string): string | undefined | Promise<string | undefined>;
   /** server: files the result (made file name → its path here, which apply may move) */
   apply(t: TaskRow & { input: I }, result: R, files: Record<string, string>): Promise<void> | void;
   /** server: it failed for good (three tries, or a refusal); the tool shows its error */
@@ -225,7 +226,7 @@ async function runOnServer(t: TaskRow): Promise<unknown> {
       where: "server",
       signal: ac.signal,
       file: async (name) => {
-        const p = def.serve?.(t, name);
+        const p = await def.serve?.(t, name);
         if (!p || !existsSync(p)) throw new Error(`The ${name} is not on the server`);
         return p;
       },
@@ -322,7 +323,8 @@ export async function taskTick(now = Date.now()): Promise<void> {
     const queued = (db().prepare("SELECT * FROM computer_tasks WHERE state = 'queued' AND run_after <= ? ORDER BY id LIMIT 50").all(now) as unknown as Raw[]).map((r) => rowOf(r)!);
     for (const t of queued) {
       if (!kinds.has(t.kind)) continue;
-      const ttl = kinds.get(t.kind)!.ttlMs;
+      const waits = kinds.get(t.kind)!.ttlMs;
+      const ttl = typeof waits === "function" ? waits(t) : waits;
       if (ttl && now - t.created_at > ttl) {
         const gone = db().prepare("UPDATE computer_tasks SET state = 'failed', error = ?, line = NULL WHERE id = ? AND state = 'queued'").run(TASK_EXPIRED, t.id).changes;
         if (gone) kinds.get(t.kind)!.failed?.(t, TASK_EXPIRED);
@@ -386,12 +388,12 @@ taskWorkApp.post("/:id/beat", async (c) => {
 });
 
 /** An input file the task names, for a computer that lacks it: only what the kind's serve gives, only while held. */
-taskWorkApp.get("/:id/file", (c) => {
+taskWorkApp.get("/:id/file", async (c) => {
   const d = caller(c);
   if (!d) return c.json({ error: "Unauthorized" }, 401);
   const t = held(c, d);
   if (!t) return GONE(c);
-  const p = kinds.get(t.kind)?.serve?.(t, c.req.query("name") ?? "");
+  const p = await kinds.get(t.kind)?.serve?.(t, c.req.query("name") ?? "");
   if (!p || !existsSync(p)) return c.json({ error: "Not found" }, 404);
   return new Response(Readable.toWeb(createReadStream(p)) as ReadableStream, {
     headers: { "content-type": "application/octet-stream", "content-length": String(statSync(p).size) },

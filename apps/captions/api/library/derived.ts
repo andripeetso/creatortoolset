@@ -210,7 +210,8 @@ export async function recordMade(versionId: string, made: Made, sent: number, th
   }
   await recordDerived(versionId, { quick: made.quick, probe: made.proxy?.probe, files: thumbFile ? { thumb: thumbFile } : {} }, actor);
   if (!made.proxy) {
-    const v = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as { library_id: string } | undefined;
+    // not a file held for its blur (held.ts): that one is read on the main computer, never here
+    const v = db.prepare("SELECT a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND v.held IS NULL").get(versionId) as { library_id: string } | undefined;
     if (v) enqueueJob(db, v.library_id, versionId, "probe", actor);
   }
 }

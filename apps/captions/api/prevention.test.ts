@@ -116,6 +116,10 @@ describe("local-first ratchets", () => {
     // the paths decision 8 closed: nothing in them goes for its age
     for (const f of ["api/exports.ts", "api/export.ts"]) expect(AGE_DELETES[f], f).toBeUndefined();
     expect(readFileSync(path.join(repo, "apps/captions/api/library/trash.ts"), "utf8")).not.toMatch(/FROM assets[^`]*trashed_at </);
+    // a file held for its blur (library/held.ts) goes when its clip is blurred, decided or deleted, never for its age:
+    // no time is compared there, and its wait for the main computer has no end (held.test.ts runs it a year on)
+    expect(readFileSync(path.join(repo, "apps/captions/api/library/held.ts"), "utf8")).not.toMatch(/created_at\s*[<>]|Date\.now\(\)\s*-|_DAYS|expires/);
+    expect(readFileSync(path.join(repo, "apps/captions/api/work/tasks/library-save.ts"), "utf8")).toMatch(/ttlMs: \(t\) => \(t\.input\.held \? undefined :/);
   });
 
   it("T7: setup never opens by itself: openSetupAt is called only from a press", () => {

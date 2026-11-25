@@ -764,5 +764,7 @@ export const MIGRATIONS: string[] = [
   // on until now, so on is stored: nothing changes for it by itself. And every library that is on gets the time its
   // switch "went on" (proxySince, db.ts SINCE), now: its proxies go to files added from here, never to one probed again
   `UPDATE libraries SET settings = json_set(settings, '$.proxy', json('true')) WHERE json_extract(settings, '$.proxy') IS NULL;
-   UPDATE libraries SET settings = json_set(settings, '$.proxySince', CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE json_extract(settings, '$.proxy') = 1;`,
+   UPDATE libraries SET settings = json_set(settings, '$.proxySince', CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE json_extract(settings, '$.proxy') = 1;`,  // a file to blur that came from a phone or a browser (held.ts): 1 while the server holds its bytes (library/held/<version
+  // id>) for the main computer and its blur; null once it is blurred or decided, and on every other version
+  `ALTER TABLE asset_versions ADD COLUMN held INTEGER;`,
 ];

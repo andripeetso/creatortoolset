@@ -434,7 +434,7 @@ describe("P2: proxies and the proxy proof", () => {
  * phase that gates it. A body-reading file missing here fails the test, and so does a row whose file no longer reads one.
  */
 const ROUTES: Record<string, string> = {
-  "apps/captions/api/library/routes.ts": "P0: startUpload, PATCH /uploads/:id and finish call mayReceive",
+  "apps/captions/api/library/routes.ts": "P0: startUpload, PATCH /uploads/:id and finish call mayReceive; a file to blur from a phone or a browser is taken under every Upload and held for the main computer (holdsOriginal, held.ts; held.test.ts)",
   "apps/captions/api/library/derived.ts": "P2: the send branch reads the gate's setting (uploadFor); a phone's made proxy (parseMade) carries its SHA-256, checked by mayReceive in routes.ts",
   "apps/captions/api/lib/uploads.ts": "PASS: the helpers (appendBody, writeBody, receivePart); gated by their callers",
   "apps/captions/api/lib/incoming.ts": "PASS: requestBodyStream, a helper; gated by its callers",

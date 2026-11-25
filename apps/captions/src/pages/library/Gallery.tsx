@@ -98,7 +98,7 @@ export function GalleryTile({ asset: a, onOpen, drag, ownShape }: { asset: Asset
       {a.notBlurred && a.state !== "missing" && a.state !== "failed" && (
         <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[11px] text-white">
           <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-          {LIBRARY_WORDS.notBlurred}
+          {a.held ? LIBRARY_WORDS.held : LIBRARY_WORDS.notBlurred}
         </span>
       )}
       {(a.state === "missing" || a.state === "failed") && (

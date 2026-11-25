@@ -25,6 +25,7 @@ import { relatedApp } from "./library/related";
 import { publicShareApp, shareApp } from "./library/shares";
 import { libraryJobsAtRisk, releaseRunningJobs, startLibraryWorker } from "./library/worker";
 import { clearHeldStills } from "./library/on-mac";
+import { resumeHeld } from "./library/held";
 import { killProcesses } from "./library/media/run";
 import { startTrashPurge } from "./library/trash";
 import { startWatchFolders, watchApp } from "./library/watch";
@@ -602,6 +603,8 @@ if (process.env.NODE_ENV !== "test" && !workerFor) {
   void migrateLibraries().catch((e) => console.error("library migration failed", e));
   // Blur faces: a description's stills written out for a call a stop cut short (on-mac.ts heldDir) never outlive it
   void clearHeldStills();
+  // files held for their blur (held.ts): each one's copy to the main computer is asked for again, and a hold that can end ends
+  void resumeHeld().catch((e) => console.warn("[library] the held files:", e instanceof Error ? e.message : e));
   startLibraryWorker();
   setInterval(() => {
     try {

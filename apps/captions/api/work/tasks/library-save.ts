@@ -15,6 +15,8 @@ import { TASK_EXPIRED, taskKind, TaskWaits, type TaskRow } from "../tasks";
  * in place. Never run on the server, its video work on or not: with no computer online it waits for one. The server holds
  * the bytes only until a computer has fetched them (`staged`), never in the library, and for WAIT_DAYS at most: then the
  * save is dropped, its bytes deleted, and the person told (in the chat whose card is about it, else the inbox).
+ * A file to blur that came from a phone or a browser takes the same road to the main computer (`held`, library/held.ts):
+ * its bytes are the server's held file, which is never dropped for its age and stays until the clip is blurred or decided.
  */
 
 const WAIT_DAYS = 7;
@@ -38,6 +40,8 @@ export interface LibrarySaveInput {
   blurredOf?: string;
   /** what runs once it is there */
   after?: SaveAfter;
+  /** the version this is the held file of (library/held.ts): `staged` is that file, kept after the computer has it */
+  held?: string;
 }
 
 interface Saved {
@@ -53,9 +57,16 @@ interface Saved {
 
 taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
   onComputer: true,
-  ttlMs: WAIT_DAYS * 86_400_000,
+  // a held file waits for the main computer as long as it takes: nothing of it goes for its age
+  ttlMs: (t) => (t.input.held ? undefined : WAIT_DAYS * 86_400_000),
   can: (d, t) => !!t.input.folders[d.id],
-  serve: (t, name) => (name === "file" ? (t.input as LibrarySaveInput).staged : undefined),
+  async serve(t, name) {
+    const input = t.input as LibrarySaveInput;
+    if (name !== "file") return undefined;
+    // a held file goes to the computer that pulls it, and only until its master is there (upload-gate.ts mayPull)
+    if (input.held && !(await import("../../library/upload-gate")).mayPull(input.held).ok) return undefined;
+    return input.staged;
+  },
   async run(input, ctx) {
     const folder = (await ctx.call("folder", null)) as { id: string; path: string; media?: string } | null;
     if (!folder) throw new Error("This computer has no folder for it");
@@ -98,6 +109,8 @@ taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
     const x = parseOnMac({ ...r, name: t.input.filename, frames: [] });
     if (typeof x === "string") throw new Error(x);
     if (!folder || r.folder !== folder.id) throw new Error("Not the folder this save was given");
+    // a held file: its version is there already and takes this place; the server's copy stays until it is blurred or decided
+    if (t.input.held) return (await import("../../library/held")).heldLanded(t.input.held, device, folder.id, x);
     const d = libraryDb();
     const collectionId = t.input.sound ? soundFolder(d, t.input.lib, t.input.sound, t.actor) : undefined;
     const done = await indexOnMac(t.input.lib, t.actor, { ...x, device, folder: folder.id, ...(collectionId ? { collectionId } : {}), ...(t.input.blur ? { blur: t.input.blur } : {}), ...(t.input.blurredOf ? { blurredOf: t.input.blurredOf } : {}) });
@@ -110,7 +123,8 @@ taskKind<LibrarySaveInput, Saved>(LIBRARY_SAVE_TASK, {
     const { workEnded } = await import("../../assistant");
     workEnded(t.actor, `library-save:${t.ref}`, { status: "done", detail: "Saved", ...(asset ? { href: `/library?library=${t.input.lib}&asset=${asset}` } : {}) });
   },
-  failed: (t, error) => void dropped(t, error).catch((e: unknown) => console.warn("[library-save] not told:", e instanceof Error ? e.message : e)),
+  // a held file is never dropped: it stays held, and its clip says why it was not copied (GET /api/library/:id/intake)
+  failed: (t, error) => (t.input.held ? undefined : void dropped(t, error).catch((e: unknown) => console.warn("[library-save] not told:", e instanceof Error ? e.message : e))),
 });
 
 /** What the save was for, once the file is there: its Finals piece, a sound effect's tags, the voice's edit. */

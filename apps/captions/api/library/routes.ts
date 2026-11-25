@@ -7,7 +7,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { isPhoneSession, type AuthVars } from "../auth";
 import { env } from "../lib/env";
 import { appendBody, freeBytes, gbSetting, sha256File, shortOfReserve } from "../lib/uploads";
-import { blurAtIntake, hasMembers, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received } from "./upload-gate";
+import { blurAtIntake, hasMembers, holdsOriginal, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_COMPUTER_OFF, REFUSED_NO_MAIN, REFUSED_NOT_BLURRED, refuse, uploadFor, type Received, type ReceiveOrigin } from "./upload-gate";
+import { dropHeld, holdFile, intakeOf, pullHeld, retryHeld, settleHeldIn, settleHeldOf } from "./held";
 import { readerOf } from "./reader";
 import { accountOf, addRole, ensureLibrary, givenLibrary, homeOf, inAskedWorkspace, librariesHere, libraryChanged, libraryRole, mayAdd, mayWrite, mediaReady } from "./access";
 import { uploadTarget } from "./upload-target";
@@ -231,6 +232,8 @@ export function recordVersion(
   enqueueJob(d, o.libraryId, o.versionId, "probe", o.by);
   // the library's copies take it as soon as the caller's transaction is in (copies.ts)
   setImmediate(() => copiesWake(o.versionId));
+  // a blurred copy joined the clip: an original the server held for it (held.ts) goes, once the transaction is in
+  if (o.blurredOf) setImmediate(() => void settleHeldOf(assetId).catch((e: unknown) => console.error("[library] a held file:", e)));
   return assetId;
 }
 
@@ -400,14 +403,13 @@ export const COMPUTER_SAVE = { ms: 30_000 };
  * Source media folder (the import rule, importTarget; a finished file: its Final exports folder) on whichever of the asker's computers takes the task (work/tasks/library-save.ts), which
  * indexes it there in place. With none online it waits for one, and the answer is the one line naming the folder.
  */
-async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter, importName?: string, blur?: Blur, blurredOf?: string): Promise<SavedTo> {
+/**
+ * Where a save into `lib` lands on each of `username`'s computers that has a folder for it (the import rule): the
+ * Imports/<importName, or the day>/ of its first Source media folder there, or for a finished file its Final exports folder.
+ */
+export async function foldersFor(username: string, lib: string, use: "media" | "exports", importName?: string): Promise<Record<string, { id: string; path: string; media?: string }>> {
   const { librariesOf, useOf } = await import("./report");
   const { storageOf } = await import("../devices-storage");
-  const { awaitTask, startTask, taskOf } = await import("../work/tasks");
-  const use = footage || sound ? "media" : "exports";
-  const label = FOLDER_LABELS[use === "media" ? "footage" : "library"];
-  // no computer at all: nothing to wait for
-  if (!listDevices((d) => d.owner === username).length) return { error: NO_COMPUTER, code: "no_computer" };
   const folders: Record<string, { id: string; path: string; media?: string }> = {};
   // the workspace's own folder before one for every workspace, then in list order
   const all = (await storageOf(username)).folders;
@@ -416,6 +418,16 @@ async function saveOnComputer(username: string, lib: string, file: string, filen
     if (!(await librariesOf(username, f, false)).some((l) => l.id === lib)) continue;
     folders[f.origin.host] = use === "media" ? { id: f.id, path: importTarget([f.origin.path], importName)!, media: f.origin.path } : { id: f.id, path: f.origin.path };
   }
+  return folders;
+}
+
+async function saveOnComputer(username: string, lib: string, file: string, filename: string, sources: string[], footage: boolean, sound?: Sound, after?: SaveAfter, importName?: string, blur?: Blur, blurredOf?: string): Promise<SavedTo> {
+  const { awaitTask, startTask, taskOf } = await import("../work/tasks");
+  const use = footage || sound ? "media" : "exports";
+  const label = FOLDER_LABELS[use === "media" ? "footage" : "library"];
+  // no computer at all: nothing to wait for
+  if (!listDevices((d) => d.owner === username).length) return { error: NO_COMPUTER, code: "no_computer" };
+  const folders = await foldersFor(username, lib, use, importName);
   const first = Object.entries(folders)[0];
   if (!first) return { error: `Upload is off for this workspace, so files stay on your computer, and none of yours has a ${label} folder for it: add one in Settings → Folders.`, code: "no_folder" };
   const size = (await stat(file)).size;
@@ -476,7 +488,7 @@ const db = () => libraryDb();
 
 const madeOf = (row: UploadRow): Made | null => (row.made ? (JSON.parse(row.made) as Made) : null);
 
-/** The library's copy of this upload's file: by its checksum, or by the original's quick fingerprint and size (a 720p copy's checksum is its own). */
+/** The library's copy of this upload's file: by its checksum (a file on a computer: the one read whole there), or by the original's quick fingerprint and size (a 720p copy's checksum is its own). */
 function duplicateOf(row: UploadRow, sha256: string): { id: string; current: string | null } | undefined {
   if (row.replaces_asset_id) return undefined;
   const made = madeOf(row);
@@ -484,9 +496,9 @@ function duplicateOf(row: UploadRow, sha256: string): { id: string; current: str
   return db()
     .prepare(
       `SELECT a.id, a.current_version_id AS current FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
+       WHERE a.library_id = ? AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND (v.sha256 = ? OR v.full_sha256 = ? OR (v.quick = ? AND v.bytes = ?)) LIMIT 1`,
     )
-    .get(row.library_id, sha256, made?.quick ?? null, made?.proxy?.size ?? row.size) as { id: string; current: string | null } | undefined;
+    .get(row.library_id, sha256, sha256, made?.quick ?? null, made?.proxy?.size ?? row.size) as { id: string; current: string | null } | undefined;
 }
 
 /**
@@ -494,7 +506,7 @@ function duplicateOf(row: UploadRow, sha256: string): { id: string; current: str
  * the quick fingerprint and, for a 720p copy, the original's probe (derived.ts recordMade). Whatever fails here, the
  * version is probed by this server as any upload is: it never waits on a picture.
  */
-async function fileMade(row: UploadRow, versionId: string): Promise<void> {
+async function fileMade(row: UploadRow, versionId: string, held = false): Promise<void> {
   const made = madeOf(row);
   if (!made) return;
   const thumb = made.thumb ? path.join(stagingDir(), `${row.id}.thumb.jpg`) : null;
@@ -506,7 +518,7 @@ async function fileMade(row: UploadRow, versionId: string): Promise<void> {
     await recordMade(versionId, made, row.size, thumb, row.created_by);
   } catch (e) {
     console.error("[library] what the phone made:", e);
-    enqueueJob(db(), row.library_id, versionId, "probe", row.created_by);
+    if (!held) enqueueJob(db(), row.library_id, versionId, "probe", row.created_by); // a held file is read on the main computer, never here
   } finally {
     if (thumb) await rm(thumb, { force: true });
     db().prepare("UPDATE uploads SET made = NULL WHERE id = ?").run(row.id);
@@ -520,7 +532,7 @@ const IN_REVIEW = { error: "This video is in Review: change it there", code: "co
  * The upload gate for an upload under way: a file a computer sends (its place named) or one a person sent; the phone's
  * 720p copy as a proxy. `got`: at the finish, what the received bytes hash to (the proxy proof).
  */
-const receives = (row: UploadRow, got?: string) => {
+const sentBy = (row: UploadRow) => {
   const made = madeOf(row)?.proxy;
   const sender = row.from_device ? deviceOf(row.from_device) : undefined;
   // a blurred render is declared only by a computer of the uploader's own (startUpload checks it too)
@@ -528,7 +540,16 @@ const receives = (row: UploadRow, got?: string) => {
   // a next version follows its clip's answer as it is now (it may have been marked Blur faces since the upload began)
   const blur = row.replaces_asset_id ? (db().prepare(`SELECT ${BLUR_SQL} AS b FROM assets a WHERE a.id = ?`).get(row.replaces_asset_id) as { b: Blur } | undefined)?.b : row.blur;
   const into = { id: row.library_id, collectionId: row.collection_id, blurredOf, ...(blur ? { blur } : {}) };
-  const origin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
+  const origin: ReceiveOrigin = row.from_path ? "computer" : row.origin === "phone" ? "phone" : "person";
+  return { made, sender, blurredOf, into, origin };
+};
+/** Whether this upload's file is held for its blur (upload-gate.ts holdsOriginal): an original to blur, from a phone or a browser. */
+const holds = (row: UploadRow): boolean => {
+  const s = sentBy(row);
+  return !s.made && holdsOriginal(s.into, s.origin);
+};
+const receives = (row: UploadRow, got?: string) => {
+  const { made, sender, blurredOf, into, origin } = sentBy(row);
   // at the finish: bytes that are the original itself, or any clip of the library not blurred, are not its blurred render
   if (blurredOf && got && (got === blurredOf || unblurredBytes(row.library_id, got))) return refuse(REFUSED_NOT_BLURRED);
   if (!made) return mayReceive("original", into, origin, { sender });
@@ -614,7 +635,8 @@ async function finishDirect(c: Context<{ Variables: AuthVars }>, row: UploadRow)
     throw new Error("The bucket's copy is not the size that was declared");
   }
   const sha256 = await sha256File(await store.localCopy(key));
-  const proof = receives(row, sha256);
+  // a file to blur is held on this server's own disk, never in the bucket (startUpload sends it there): Blur faces went on while it uploaded
+  const proof = holds(row) ? refuse("Blur faces was turned on while this file uploaded. Add it again.") : receives(row, sha256);
   if (!proof.ok) {
     await store.delete(key); // not the copy it said it was: nothing of it is kept
     db().prepare("UPDATE uploads SET state = 'failed', made = NULL WHERE id = ?").run(row.id);
@@ -711,11 +733,7 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   // with a workspace named, only that workspace's libraries (a cross-brand id is refused); with none, as before
   if (!(await mayAdd(user, libraryId)) || !(await inAskedWorkspace(user, libraryId))) return c.json({ error: "Not found", code: "not_found" }, 404);
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  // a member's add is an upload, taken only where Hosted media takes it (UNIFIED-PRD §4.3, the §3.2 line under Off)
   const collectionOf = typeof body?.collectionId === "string" ? body.collectionId : null;
-  if (!libraryRole(user.username, libraryId) && hostsNone(uploadFor({ id: libraryId, collectionId: collectionOf }))) {
-    return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
-  }
   const size = Number(body?.size);
   if (!Number.isSafeInteger(size) || size <= 0) return c.json({ error: "Invalid size", code: "invalid" }, 400);
   // the largest upload holds only where an upload is the only way in: on the person's own computer the disk is the limit.
@@ -769,15 +787,25 @@ async function startUpload(c: Context<{ Variables: AuthVars }>, libraryId: strin
   // the iPhone app's own send (UploadEngine.swift): the person's file to their computers, taken under Upload none too
   // the header only names the phone's file: the session must be the iPhone app's own (auth.ts isPhoneSession), never a browser's or a Mac's
   const phone = !from && c.req.header("x-ct-origin") === "phone" && isPhoneSession(c, user.username);
-  const origin = from ? "computer" : phone ? "phone" : "person";
+  const origin: ReceiveOrigin = from ? "computer" : phone ? "phone" : "person";
+  // a file to blur from a phone or a browser: held here for the main computer, whoever sends it (held.ts)
+  const hold = !made?.proxy && holdsOriginal(into, origin);
+  // a member's add is an upload, taken only where Hosted media takes it (UNIFIED-PRD §4.3, the §3.2 line under Off); one
+  // held goes to the owner's main computer under every Upload
+  if (!hold && !libraryRole(user.username, libraryId) && hostsNone(uploadFor({ id: libraryId, collectionId: collection }))) {
+    return c.json({ error: REFUSED_COMPUTER_OFF, code: "upload_refused", message: REFUSED_COMPUTER_OFF }, 409);
+  }
   const gate = made?.proxy
     ? mayReceive("proxy", into, origin, { sender, proof: { ...(made.proxy.sha256 ? { sha256: made.proxy.sha256 } : {}), bytes: size, original: made.proxy.size } })
     : mayReceive("original", into, origin, { sender });
   if (!gate.ok) return c.json(gate.body, gate.status);
+  // held only where a computer can blur it: one of the library's own account with its Source media folder
+  if (hold && !Object.keys(await foldersFor(libraryAccount(libraryId) ?? "", libraryId, "media")).length) return c.json(refuse(REFUSED_NO_MAIN).body, 409);
   await sweepStale();
   const staging = path.join(stagingDir(), id);
-  // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes
-  const direct = libraryStore(libraryId).direct;
+  // a bucket library takes the bytes straight from the browser (presigned part PUTs); the server only starts and finishes.
+  // A held file never goes to the bucket: it waits on this server's own disk
+  const direct = hold ? undefined : libraryStore(libraryId).direct;
   const started = direct ? await direct.start(sourceKeyOf(libraryId, id), size, { contentType: mimeOf(filename) }) : null;
   if (!started) {
     await mkdir(stagingDir(), { recursive: true });
@@ -1009,6 +1037,7 @@ libraryApp.patch("/uploads/:uploadId", async (c) => {
 });
 
 // POST /api/library/uploads/:uploadId/finish → { assetId, versionId } | { duplicateOf } | 409 { offset }
+// a file to blur from a phone or a browser: { assetId, versionId, held: true, libraryId }, held for the main computer (GET /:id/intake says how far it is)
 libraryApp.post("/uploads/:uploadId/finish", async (c) => {
   const row = await ownUpload(c);
   if (!row) return c.json({ error: "Not found", code: "not_found" }, 404);
@@ -1042,8 +1071,13 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
       return c.json({ duplicateOf: dup.id });
     }
     const versionId = randomUUID();
-    const sourceKey = `libraries/${row.library_id}/v/${versionId}/source`;
-    await blobs.put(sourceKey, row.staging_path); // same disk: a rename, the file moves into the library
+    // a file to blur is held (held.ts): recorded as on a computer, with no file in the library's store, so nothing here
+    // plays, serves or cuts it. Its bytes wait for the main computer, and nothing is made of them before it has them
+    const hold = holds(row);
+    const sourceKey = hold ? `mac:${versionId}` : `libraries/${row.library_id}/v/${versionId}/source`;
+    const quick = hold ? (madeOf(row)?.quick ?? (await quickPrint(row.staging_path))) : null;
+    if (hold) await holdFile(versionId, row.staging_path);
+    else await blobs.put(sourceKey, row.staging_path); // same disk: a rename, the file moves into the library
     const d = db();
     d.exec("BEGIN");
     let assetId: string;
@@ -1066,16 +1100,23 @@ libraryApp.post("/uploads/:uploadId/finish", async (c) => {
         proxy: proxyAsked(row.proxy),
         modifiedAt: row.modified_at,
       });
-      if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
+      if (hold) {
+        d.prepare("DELETE FROM jobs WHERE version_id = ?").run(versionId);
+        d.prepare("UPDATE asset_versions SET held = 1, state = 'ready', quick = ? WHERE id = ?").run(quick, versionId);
+      } else if (row.made) d.prepare("DELETE FROM jobs WHERE version_id = ? AND kind = 'probe'").run(versionId); // fileMade queues what it needs
       d.prepare("UPDATE uploads SET state = 'done', received = size WHERE id = ?").run(row.id);
       d.exec("COMMIT");
     } catch (e) {
       d.exec("ROLLBACK");
+      if (hold) await dropHeld([versionId]);
       throw e;
     }
-    await fileMade(row, versionId);
+    await fileMade(row, versionId, hold);
     uploadDone(row.id, versionId);
-    return c.json({ assetId, versionId });
+    if (!hold) return c.json({ assetId, versionId });
+    // the file is in and held whatever comes of asking for it now: the next start, or the clip's Retry, asks again
+    await pullHeld(versionId).catch((e: unknown) => console.error("[library] a held file:", e));
+    return c.json({ assetId, versionId, held: true, libraryId: row.library_id });
   } catch (e) {
     // only one still finishing: an upload whose file is already in the library stays done
     db().prepare("UPDATE uploads SET state = 'failed' WHERE id = ? AND state = 'finishing'").run(row.id);
@@ -1269,6 +1310,8 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   if (turnsOn && s.blurExisting === true) await blurAll(libraryId);
   if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
   else if (flips) put("upload", hostsProxies(libraryUploadStored(libraryId)) ? "proxies" : "none");
+  // off: the files held for their blur have none to wait for (held.ts)
+  if (flips && s.blurFaces === false) await settleHeldIn(libraryId);
   if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
   // the setup dialog's last answer (UNIFIED-PRD §4.8): the owner's, once; a setup done is never undone here
@@ -1397,6 +1440,29 @@ export async function visibleCards(viewer: LibraryViewer | null, libraryId: stri
 
 // GET /api/library/:id/assets?q&kind&tag&from&to&cursor&limit&f.<key> → one page of AssetCards (query.ts). A card the
 // viewer may not see is left out (the page keeps its cursor, so it can come back shorter than the limit).
+// GET /api/library/:id/intake[?assets=id,id] → { items: Intake[] } (contracts/library.ts): how far each file to blur is, held
+// on the server, on the main computer, being blurred, done, or failed with why. With `assets`: those clips, the done ones
+// too; without: the clips the server holds a file of now
+libraryApp.get("/:id/intake", async (c) => {
+  const libraryId = c.req.param("id");
+  const viewer = await readerOf(c.get("user").username, libraryId);
+  if (!viewer) return c.json({ error: "Not found", code: "not_found" }, 404);
+  const asked = c.req.query("assets")?.split(",").filter(Boolean).slice(0, 200);
+  const items = [];
+  for (const i of await intakeOf(libraryId, asked)) if (await canSee(viewer, assetRef(libraryId, i.assetId, i.versionId))) items.push(i);
+  return c.json({ items });
+});
+// POST /api/library/:id/assets/:assetId/intake/retry → { ok }: a held file whose copy to the main computer failed is asked for again
+libraryApp.post("/:id/assets/:assetId/intake/retry", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  const a = db().prepare("SELECT current_version_id AS v FROM assets WHERE id = ? AND library_id = ? AND trashed_at IS NULL").get(c.req.param("assetId"), libraryId) as { v: string } | undefined;
+  const viewer = a && (await mayAdd(user, libraryId)) ? await readerOf(user.username, libraryId) : null;
+  if (!a || !viewer || !(await canSee(viewer, assetRef(libraryId, c.req.param("assetId"), a.v)))) return c.json({ error: "Not found", code: "not_found" }, 404);
+  await retryHeld(c.req.param("assetId"));
+  return c.json({ ok: true });
+});
+
 // GET /api/library/:id/sources → the plug-in sources this viewer may see (the Source picker; the built-in library is not listed)
 libraryApp.get("/:id/sources", async (c) => {
   const user = c.get("user");
@@ -1698,6 +1764,8 @@ libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
   // every version of it that is not a blurred render: what the server cut from each goes (an older one too)
   if (blur === "yes") for (const v of db().prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL").all(assetId) as { id: string }[]) await dropUnblurred(v.id);
   if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });
+  // kept as filmed: a file the server held for its blur is settled now (held.ts), once its master is on the main computer
+  else await settleHeldOf(assetId);
   return c.json({ blur });
 });
 

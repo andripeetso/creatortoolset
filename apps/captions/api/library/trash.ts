@@ -125,6 +125,7 @@ export async function deleteVersions(versions: string[]): Promise<void> {
   }
   for (const k of keys) if (!k.startsWith("mac:")) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
   for (const k of keys) if (k.startsWith("mac:")) await dropMacFrames(k.slice(4));
+  await (await import("./held")).dropHeld(versions); // a file held for its blur goes with its clip
   await sweepPlayCopies(versions.map((v) => `library/${v}/`)).catch((e) => console.error("[library] playback copies:", e));
 }
 
@@ -166,6 +167,7 @@ export async function deleteAssets(assets: string[]): Promise<void> {
   // a file indexed on a Mac (on-mac.ts) has no blob here: "mac:<id>" names nothing to delete, and its stills go
   for (const k of keys) if (!k.startsWith("mac:")) await blobs.delete(k).catch((e) => console.error("[library] purge:", k, e));
   for (const k of keys) if (k.startsWith("mac:")) await dropMacFrames(k.slice(4));
+  await (await import("./held")).dropHeld(versions); // a file held for its blur goes with its clip
   await sweepPlayCopies(versions.map((v) => `library/${v}/`)).catch((e) => console.error("[library] playback copies:", e));
 }
 

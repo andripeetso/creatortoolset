@@ -21,6 +21,26 @@ export type Blur = "yes" | "no";
  * Absent: a person kept it as filmed.
  */
 export type BlurNote = "none" | "skipped";
+/**
+ * How far a file to blur is (GET /api/library/:id/intake, api/library/held.ts), read each time and never stored: `held` on
+ * the server until the main computer has it; `computer` its master is there, waiting for its blur; `blurring`; `done`;
+ * `failed`. One sent from a phone or a browser starts at held, one indexed on a computer at computer.
+ */
+export type IntakeStep = "held" | "computer" | "blurring" | "done" | "failed";
+export interface Intake {
+  assetId: string;
+  /** the version on its way: the held one while there is one, else the clip's current version */
+  versionId: string;
+  step: IntakeStep;
+  /** held: no computer is copying it now (the main computer is not online); computer: its blur can't start now */
+  waiting?: true;
+  /** failed: which part, the copy to the main computer (POST …/assets/:assetId/intake/retry asks again) or the blur */
+  failed?: "copy" | "blur";
+  /** failed: why */
+  error?: string;
+  /** done: its blurred copy plays, Face Blur found no face, or a person kept it as filmed */
+  result?: "blurred" | "noFaces" | "asFilmed";
+}
 
 export interface AssetCard {
   id: string;
@@ -66,6 +86,8 @@ export interface AssetCard {
   blurNote?: BlurNote;
   /** Blur faces is on and the clip has no blurred render yet: its card picture shows, nothing plays off its computer (LIBRARY_WORDS.notBlurred) */
   notBlurred?: true;
+  /** a file to blur sent from a phone or a browser, on the server until the main computer has it (LIBRARY_WORDS.held; Intake) */
+  held?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;
   /** on the computer that asked (`?device=`): its proxy in that computer's cache, or its original verified or found there (place rows) */
@@ -950,6 +972,7 @@ export const LIBRARY_WORDS = {
   blurredUpload: { tip: "The blurred copy of each clip is uploaded as it is, and a clip with no faces to blur as filmed." },
   proxiesFromBlurred: "Made from the blurred copies",
   notBlurred: "Not blurred yet",
+  held: "Waiting for the main computer",
   noFaces: "No faces found",
   keptAsFilmed: "Kept as filmed",
   noServer: "No server connected",

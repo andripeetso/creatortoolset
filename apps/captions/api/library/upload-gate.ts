@@ -6,6 +6,8 @@
  * under any setting, held until a computer has it. A proxy is taken only under proxies or all, except the iPhone app's own
  * 720p copy, which every library takes; a computer's proxy must hash to the SHA-256 it declared, and from every sender a proxy
  * no smaller than its original is refused. On This Mac the server and the computer are one, so its own files are always taken.
+ * A file to blur (Blur faces) from a phone or a browser is taken under every setting and held for the main computer, which
+ * blurs it (holdsOriginal, held.ts).
  */
 import { blursFaces, fileBlur, finalsUpload, isBlurred, isFinalsCollection, libraryDb, libraryUpload, libraryUploadStored, versionUpload } from "./db";
 import { hostsNone, hostsOriginals, hostsProxies, type LibraryUpload } from "../../contracts/library";
@@ -37,6 +39,8 @@ export const REFUSED_NO_PROXY = "This library keeps no proxies on the server.";
 export const REFUSED_PROOF = "These bytes are not the proxy your computer declared. Nothing was kept.";
 export const REFUSED_BLUR = "Blur faces is on for this workspace: only blurred videos leave your computer.";
 export const REFUSED_NOT_BLURRED = "These bytes are the original, not its blurred video. Nothing was kept.";
+export const REFUSED_NO_MAIN = "Blur faces is on for this workspace, and no computer has a Source media folder for it: add one in Settings → Folders.";
+export const REFUSED_COPY = "Blur faces is on for this workspace: the original is needed to blur it, not a smaller copy.";
 
 export type Received = { ok: true } | { ok: false; status: 409; body: { error: string; code: "upload_refused"; message: string } };
 
@@ -151,6 +155,18 @@ export async function workspaceLibrary(owner: string, workspace?: string): Promi
   return (libs.find((l) => blursFaces(l.id)) ?? libs[0])?.id ?? null;
 }
 
+/**
+ * A file to blur sent from a phone or a browser (docs/media-library-proxies-prd.md R13): taken under every Upload and held
+ * (held.ts). No one plays, shares or downloads it, and it goes only to the main computer, which keeps the master and blurs
+ * it. Never a computer's own file (that is blurred where it is), and not on This Mac (the server is the computer).
+ */
+export const holdsOriginal = (library: ReceiveInto, origin: ReceiveOrigin): boolean =>
+  serverKind() !== "mac" && origin !== "computer" && !library.versionId && (library.blur ?? (blursFaces(library.id) ? "yes" : "no")) === "yes";
+
+/** The one way a held original leaves the server: to the main computer that pulls it, and only until its master is there. */
+export const mayPull = (versionId: string): Received =>
+  libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ? AND held = 1 AND mac_path IS NULL").get(versionId) ? { ok: true } : refuse(REFUSED_BLUR);
+
 export function mayReceive(
   kind: ReceiveKind,
   library: ReceiveInto,
@@ -159,9 +175,11 @@ export function mayReceive(
 ): Received {
   // This Mac: the server is the owner's computer, so nothing leaves it
   if (kind === "data" || kind === "held" || serverKind() === "mac") return { ok: true };
+  if (kind === "original" && holdsOriginal(library, origin)) return { ok: true };
   // a blurred render is a computer's own (the job that blurred it), never a person's or a phone's declaration
   const left = mayLeave(library.id, { ...(library.versionId ? { versionId: library.versionId } : {}), blurredOf: origin === "computer" ? library.blurredOf : null, ...(library.blur ? { blur: library.blur } : {}) });
-  if (!left.ok) return left;
+  // a phone's 720p copy of a file to blur is no master: the original is what the main computer needs
+  if (!left.ok) return kind === "proxy" && origin !== "computer" ? refuse(REFUSED_COPY) : left;
   if (kind === "derivative" || kind === "serving") return { ok: true };
   const upload = uploadFor(library);
   // under Blur faces what passed is a blurred render: the copy itself under Blurred, its proxy under Proxies (db.ts

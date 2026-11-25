@@ -183,6 +183,17 @@ In this order. Each is one small change with its test.
   (`apps/ios` `UploadEngine.swift:409`). The stored value means something else under Blur faces since `9a8453275`. Read
   what a kept-as-filmed upload from the phone does under each value and pin it with a test; change the app only if a
   case is wrong.
+  **Pinned** (`api/library/held.test.ts`, "R10"), the same under none, proxies, originals and all:
+  - A file to blur, sent as its original: taken and held (R13).
+  - A file to blur, sent as the phone's 720p copy: refused at its start (409, `REFUSED_COPY`). The master is the
+    original, so a smaller copy is never what is held.
+  - Kept as filmed, sent as its original: taken and stored. A viewer gets it only where the Blurred row (stored
+    originals or all) is on; elsewhere it waits for a computer, as a phone's file under Upload none always did.
+  - Kept as filmed, sent as the 720p copy: taken, and that copy is all the server has of the clip. It plays where the
+    Proxies row (stored proxies or all) is on.
+  **One case is wrong in the app:** with Blur faces on and stored "proxies" it sends the 720p copy of a file to blur
+  and gets the refusal. `UploadEngine.swift:409` must send the original whenever the library's `blurFaces` is on and
+  the upload's own Blur faces switch is not off; kept as filmed stays as it is.
 - **R11 Blurred or Originals without Proxies.** With Generate proxies on and the server keeping no proxy, a clip that
   needs one to play still gets none (`on-mac.ts:291` asks for Upload off). New: the computer that has the file makes
   it and keeps it (`library-package.ts` `keepsProxy` says so already). The riskiest item here: the same file also has
@@ -207,6 +218,35 @@ In this order. Each is one small change with its test.
   The held file is the one case of an unblurred original with faces on the server, and it is there only until step 4.
   `api/prevention.test.ts` and `upload-gate.test.ts` get their rows (a route that takes a file). Its own change, after
   R1–R11.
+
+  **Built, the server's side** (`api/library/held.ts`, `held.test.ts`; the phone's screens and the chat are next):
+  - The gate (`upload-gate.ts` `holdsOriginal`): a file to blur from the phone's upload screen or a browser is taken
+    under every Upload, a team member's too. A computer's own file is still refused (it is blurred where it is), and so
+    is a smaller copy of a file to blur (R10). With no computer of the library's own account that has its Source media
+    folder, the start is refused and says to add one (`REFUSED_NO_MAIN`): a file nothing can blur is not held.
+  - Held: the version is recorded as on a computer (`source_key` `mac:<id>`, `asset_versions.held` 1) and the bytes
+    wait in `library/held/<version id>`, outside the library's store, on the server's own disk even where the library
+    keeps its files in a bucket. So no route that plays, shares, downloads or cuts a clip can reach them. The one way
+    out is the main computer's copy (`mayPull`), and only until its master is there. No job is queued for the file.
+  - The copy is a library save (`work/tasks/library-save.ts`, the task a save under Upload none uses, so the Mac app
+    needs no update) for the library owner's computers that have the folder; a member's file never goes to the
+    member's computer. It has no time limit, and nothing here is deleted for its age.
+  - Step 4 is `settleHeld`, asked when a blurred copy joins the clip, when Face Blur finds no face, when a person keeps
+    the clip as filmed, when Blur faces goes off, and at start. Its write names the hold it expects, so a late or a
+    second answer never touches a clip settled meanwhile. A clip deleted for good takes its held file with it.
+  - Not in this change: a file dropped in the phone's chat (still kept as filmed, and no library add); This Mac, where
+    the server is the computer and an upload is kept as before.
+
+  **Reading progress.** `GET /api/library/:id/intake` → `{ items: Intake[] }` (`contracts/library.ts`): the clips the
+  server holds a file of now. With `?assets=<asset id>,<asset id>` (up to 200): those clips, the done ones too; one
+  clip is a list of one. Each item is `{ assetId, versionId, step, waiting?, failed?, error?, result? }`:
+  `step` is `held` (on the server; `waiting: true` while no computer is copying it), `computer` (its master is on the
+  main computer; `waiting: true` while its blur can't start), `blurring`, `done` (`result`: `blurred`, `noFaces` or
+  `asFilmed`) or `failed` (`failed`: `copy` or `blur`, and `error`, the reason). A copy that failed is asked for again
+  with `POST /api/library/:id/assets/:assetId/intake/retry`; a blur that failed with Face Blur's own
+  `POST /api/x/blur-faces/auto/retry`. The upload's finish answers `{ assetId, versionId, held: true, libraryId }` for
+  a held file, so the phone has what the route needs. A clip's card carries `held: true` while its file is on the
+  server only, and says "Waiting for the main computer" where it said "Not blurred yet".
 
 ### Checked in the running app
 
@@ -242,7 +282,8 @@ send makes the proxy.
 - **Q1** A camera's slow-and-quick mode films at one rate and saves at another: the Frame rate row shows the saved
   rate. The filmed rate is in the camera's sidecar file, which the app does not read. Not planned.
 - **Q2** R13, step 2: which computer is the main one when a library's Source media folder is on a network disk two
-  computers reach. The first one online that reaches it, unless the owner wants to name one.
+  computers reach. The first one online that reaches it, unless the owner wants to name one. Built that way: every
+  computer of the owner's with a Source media folder for the library may take the file, and the first to ask does.
 
 Answered (owner, 2026-11-25): a clip with no faces goes up as filmed under Blurred (D3); setup asks about proxies and
 no library changes by itself (R6, R7); the Editor is a later conversation (§8).

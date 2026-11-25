@@ -18,6 +18,7 @@ import { projectOf } from "../../api/lib/project-of";
 import { currentWorkspaceId } from "../../api/lib/workspace-scope";
 import type { SessionUser } from "../../api/users";
 import { BLUR_SQL, fileBlur, libraryDb } from "../../api/library/db";
+import { settleHeld } from "../../api/library/held";
 import { importTarget } from "../../contracts/storage";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { libraryAccount } from "../../api/library/routes";
@@ -375,9 +376,14 @@ const versionGone = (versionId: string) =>
 const ready = (owner: string) => !draining() && !pausedUntil(owner) && !isHeld(owner) && anyVisionConfigured(owner);
 const offered = (j: AutoJob, device: string, now: number) => j.state === "queued" && j.mac === device && !(j.awayUntil && j.awayUntil > now);
 
-/** No face to cover, or none the AI chose: the file is kept as filmed (its blur answer no), marked as gone over (blur_note none). */
-function keepAsFilmed(versionId: string): void {
+/**
+ * No face to cover, or none the AI chose: the file is kept as filmed (its blur answer no), marked as gone over (blur_note
+ * none). One the server held for its blur (a phone's or a browser's, api/library/held.ts) is settled: kept as the clip's
+ * uploaded original where Upload's Originals part is on, deleted from the server where it is off.
+ */
+async function keepAsFilmed(versionId: string): Promise<void> {
   libraryDb().prepare("UPDATE assets SET blur = 'no', blur_note = 'none' WHERE id = (SELECT asset_id FROM asset_versions WHERE id = ?)").run(versionId);
+  await settleHeld(versionId);
   emitEvent("library.changed", {});
 }
 /** The original's full SHA-256 its Mac read: kept on the job, and on the version when it has none (the copy links on it). */
@@ -411,10 +417,10 @@ export const autoJobs = {
     const now = Date.now();
     const ok = new Map<string, boolean>(); // ready() reads files: once per owner, not once per file
     const isReady = (owner: string) => ok.get(owner) ?? ok.set(owner, ready(owner)).get(owner)!;
-    const out: { versionId: string; running?: true; waiting?: true; failed?: true }[] = [];
+    const out: { versionId: string; running?: true; waiting?: true; failed?: true; error?: string }[] = [];
     for (const j of all()) {
       if (j.libraryId !== libraryId) continue;
-      if (j.state === "failed") out.push({ versionId: j.versionId, failed: true });
+      if (j.state === "failed") out.push({ versionId: j.versionId, failed: true, ...(j.error ? { error: j.error } : {}) });
       else if (!(j.state === "running" ? isOnline(j.device ?? "") : offered(j, j.mac, now) && isOnline(j.mac)) || !isReady(j.owner)) out.push({ versionId: j.versionId, waiting: true });
       else out.push({ versionId: j.versionId, ...(j.state === "running" ? { running: true as const } : {}) });
     }
@@ -429,6 +435,7 @@ export const autoJobs = {
       // a file deleted since it came in, or kept as filmed since (its folder, its own answer), is not covered
       if (versionGone(j.versionId) || fileBlur(j.versionId)?.blur !== "yes") {
         done(j);
+        void settleHeld(j.versionId).catch((e: unknown) => console.warn(`[blur-faces] ${(e as Error).message}`));
         continue;
       }
       const s = settingsOf(j.owner, j.workspace);
@@ -457,7 +464,7 @@ export const autoJobs = {
     }
     if (typeof b.nothing === "string") {
       noteSha(j, b.sha256);
-      keepAsFilmed(j.versionId);
+      await keepAsFilmed(j.versionId);
       done(j);
       return { reply: { ok: true } };
     }
@@ -496,7 +503,7 @@ export const autoJobs = {
       return { error: r.error, status: 409, back: true };
     }
     if (!r.blur.length) {
-      keepAsFilmed(j.versionId);
+      await keepAsFilmed(j.versionId);
       done(j);
     }
     return { reply: r };

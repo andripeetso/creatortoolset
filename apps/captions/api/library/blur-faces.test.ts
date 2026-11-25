@@ -40,7 +40,7 @@ const { sessionCookieFor } = await import("../auth");
 const { fileBlur, keepsOnlyOriginals, libraryDb, playOf, versionUpload } = await import("./db");
 const { libraryApp, serveGate, mediaFile } = await import("./routes");
 const { shareApp, publicShareApp } = await import("./shares");
-const { blurAtIntake, mayGoPublic, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_NOT_BLURRED, workspaceLibrary } = await import("./upload-gate");
+const { blurAtIntake, mayGoPublic, mayKeepAsFilmed, mayLeave, mayReceive, mayServe, REFUSED_BLUR, REFUSED_COPY, REFUSED_NO_MAIN, REFUSED_NOT_BLURRED, workspaceLibrary } = await import("./upload-gate");
 const { macFrames, dropHeldCopy, dropMacFrames, noPicture, putSprite, putThumb, strayStrips, holdStills, HELD_STILLS_BYTES, HELD_STILLS_MS } = await import("./on-mac");
 const { versionSource } = await import("./access");
 const { lightKey } = await import("../editor/reach");
@@ -123,38 +123,41 @@ describe("settings: Blur faces is the owner's, and Originals never crosses its s
 });
 
 describe("no route takes an original, a proxy of one, or a picture cut from one", () => {
-  it("the rule: refused for every kind of a clip not blurred; a waveform and a description's held stills pass", () => {
+  it("the rule: refused for every kind of a clip not blurred, but a phone's or a browser's original, which is held (held.test.ts); a waveform and a description's held stills pass", () => {
     const into = { id: "lib_kids" };
+    expect(mayReceive("original", into, "computer")).toMatchObject({ ok: false, body: { message: REFUSED_BLUR } });
     for (const origin of ["person", "computer", "phone"] as const) {
-      expect(mayReceive("original", into, origin)).toMatchObject({ ok: false, body: { message: REFUSED_BLUR } });
+      // a file to blur from a phone or a browser is taken and held for the main computer; a smaller copy of one never
+      expect(mayReceive("original", into, origin).ok).toBe(origin !== "computer");
       expect(mayReceive("proxy", into, origin).ok).toBe(false);
       expect(mayReceive("derivative", into, origin).ok).toBe(false);
       expect(mayReceive("serving", into, origin).ok).toBe(false);
     }
     expect(mayReceive("data", into, "computer").ok).toBe(true);
     expect(mayReceive("held", into, "computer").ok).toBe(true);
-    // a blurred render: a computer's, under Blurred; never a person's or a phone's word, never under Off
+    // a blurred render: a computer's, under Blurred; never a person's or a phone's word (theirs is an original, held), never under Off
     const blurred = { id: "lib_kids", blurredOf: sha("original") };
     expect(mayReceive("original", blurred, "computer").ok).toBe(true);
-    expect(mayReceive("original", blurred, "person").ok).toBe(false);
-    expect(mayReceive("original", blurred, "phone").ok).toBe(false);
+    expect(mayReceive("proxy", blurred, "person").ok).toBe(false);
+    expect(mayReceive("proxy", blurred, "phone")).toMatchObject({ ok: false, body: { message: REFUSED_COPY } });
     expect(mayReceive("original", { ...blurred, id: "lib_kids_off" }, "computer").ok).toBe(false);
     // a library without Blur faces keeps its own rules
     expect(mayReceive("original", { id: "lib_plain" }, "person").ok).toBe(true);
     expect(mayLeave("lib_plain", {}).ok).toBe(true);
   });
 
-  it("an upload's start: a browser's, a phone's and a Mac's own file are refused; a send from the Mac never starts", async () => {
+  it("an upload's start: a Mac's own file and a smaller copy are refused, and with no main computer to blur it a browser's and a phone's too", async () => {
     const start = (body: Record<string, unknown>, headers: Record<string, string> = {}) =>
       app.request("/api/library/lib_kids/uploads", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ filename: "Handstand.mp4", size: 4, ...body }) });
-    expect(await (await start({})).json()).toMatchObject({ code: "upload_refused", message: REFUSED_BLUR });
-    expect((await start({}, { cookie: sessionCookieFor("tinyacrobatics", true)!, "x-ct-origin": "phone" })).status).toBe(409);
-    expect((await start({ fromPath: "/Volumes/Tiny Footage/Handstand.mp4", fromDevice: "mac-1" })).status).toBe(409);
-    // the phone's own 720p copy (a proxy of an original) is refused too
+    // no computer of the owner's has a Source media folder for this library: nowhere to blur it, so nothing is held
+    expect(await (await start({})).json()).toMatchObject({ code: "upload_refused", message: REFUSED_NO_MAIN });
+    expect(await (await start({}, { cookie: sessionCookieFor("tinyacrobatics", true)!, "x-ct-origin": "phone" })).json()).toMatchObject({ code: "upload_refused", message: REFUSED_NO_MAIN });
+    expect(await (await start({ fromPath: "/Volumes/Tiny Footage/Handstand.mp4", fromDevice: "mac-1" })).json()).toMatchObject({ code: "upload_refused", message: REFUSED_BLUR });
+    // the phone's own 720p copy (a proxy of an original) is refused too: the master is the original
     const probe = { duration: 3, width: 1280, height: 720, fps: 30, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" };
-    expect((await start({ quick: sha("q"), proxy: { size: 2, probe, sha256: sha("p") } }, { cookie: sessionCookieFor("tinyacrobatics", true)!, "x-ct-origin": "phone" })).status).toBe(409);
-    // a person saying it is blurred is not a computer's blurred render
-    expect((await start({ blurredOf: sha("original") })).status).toBe(409);
+    expect(await (await start({ quick: sha("q"), proxy: { size: 9, probe, sha256: sha("p") } }, { cookie: sessionCookieFor("tinyacrobatics", true)!, "x-ct-origin": "phone" })).json()).toMatchObject({ code: "upload_refused", message: REFUSED_COPY });
+    // a person saying it is blurred is not a computer's blurred render: an original like any other
+    expect(await (await start({ blurredOf: sha("original") })).json()).toMatchObject({ code: "upload_refused", message: REFUSED_NO_MAIN });
     expect(d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_kids'").get()).toEqual({ n: 0 });
   });
 
@@ -273,7 +276,7 @@ describe("a blurred render is a computer's own, and never the original's bytes",
     const OF = sha("Lunge original");
     expect(await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, "mac-made-up")).toMatchObject({ status: 409, message: REFUSED_BLUR });
     const r = await app.request("/api/library/lib_kids/uploads", json({ filename: "Lunge blurred.mp4", size: 4, blurredOf: OF }));
-    expect((await body(r)).message).toBe(REFUSED_BLUR);
+    expect((await body(r)).message).toBe(REFUSED_NO_MAIN); // an original, held where a main computer can blur it; here there is none
     // the owner's own browser (or a key) naming the real computer, without that computer's own token
     expect(await sendBlurred("lib_kids", "Lunge blurred.mp4", "lunge-blurred", OF, MAC, {})).toMatchObject({ status: 409, message: REFUSED_BLUR });
     // another computer of the account signed in, naming this one

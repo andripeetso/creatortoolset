@@ -1,7 +1,7 @@
 // Face Blur's automatic covers: what is queued when a file comes into the Media Library, the claim by the Mac that has it,
 // the AI's answer, the copy recorded as the clip's blurred version, and each way a file ends (docs/face-blur-intake-prd.md
 // §3a). Only the person's AI and the Macs are stood in.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -379,5 +379,46 @@ describe("workspaces", () => {
     const put = await api.request("/api/plugins/blur-faces/workspaces", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ only: ["ws-tiny", "ws-homes"] }) });
     expect(put.status).toBe(200);
     expect(await into("lib_homes")).toBe(true);
+  });
+});
+
+// last: its blurred copy is one more for the Undo above to take back
+describe("a file the server held for its blur", () => {
+  it("a file the server held for its blur (a phone's or a browser's): with no face it is the clip's uploaded original under Upload → Blurred and deleted otherwise; blurred, it is deleted", async () => {
+    await settings({});
+    const { heldFile } = await import("../../api/library/held");
+    /** A file held for its blur whose master is on Ana's Mac: its bytes wait outside the library's store (api/library/held.ts). */
+    const held = async () => {
+      const v = await added("mp4");
+      mkdirSync(path.dirname(heldFile(v)), { recursive: true });
+      writeFileSync(heldFile(v), `held ${v}`);
+      libraryDb().prepare("UPDATE asset_versions SET held = 1, source_key = 'mac:' || id WHERE id = ?").run(v);
+      await queueVersion(event(v));
+      return { v, job: autoJobs.claim(mac)! };
+    };
+    const row = (v: string) => libraryDb().prepare("SELECT held, source_key FROM asset_versions WHERE id = ?").get(v);
+    const upload = (u: string) => libraryDb().prepare("UPDATE libraries SET settings = json_set(settings, '$.upload', ?) WHERE id = 'lib_a'").run(u);
+    const kept = await held();
+    await autoJobs.answer("mac-1", kept.job.id, { nothing: "No face found", sha256: "b".repeat(64) });
+    expect(row(kept.v)).toEqual({ held: null, source_key: `libraries/lib_a/v/${kept.v}/source` });
+    expect(existsSync(heldFile(kept.v))).toBe(false);
+    upload("proxies"); // the Blurred row off
+    const dropped = await held();
+    await autoJobs.answer("mac-1", dropped.job.id, { faces: FACES.faces, sha256: "c".repeat(64) }); // none matched
+    expect(row(dropped.v)).toEqual({ held: null, source_key: `mac:${dropped.v}` });
+    expect(existsSync(heldFile(dropped.v))).toBe(false);
+    upload("all");
+    const covered = await held();
+    ai.answer = async () => '{"blur": ["F1"]}';
+    await autoJobs.answer("mac-1", covered.job.id, { faces: FACES.faces, sha256: "d".repeat(64) });
+    expect(existsSync(heldFile(covered.v))).toBe(true); // held until its blurred copy is in
+    expect(await autoJobs.answer("mac-1", covered.job.id, { made: { path: "/Volumes/Tiny/Footage/Blurred/held blurred.mp4", size: 987, quick: "held-copy" } })).toEqual({ reply: { ok: true } });
+    await vi.waitFor(() => expect(existsSync(heldFile(covered.v))).toBe(false));
+    expect(row(covered.v)).toEqual({ held: null, source_key: `mac:${covered.v}` });
+    // one that failed says why to whoever reads how far the file is (GET /api/library/:id/intake)
+    const stuck = await held();
+    expect(autoJobs.fail("mac-1", stuck.job.id, "The disk is full")).toBe(true);
+    expect(autoJobs.preparing("lib_a")).toContainEqual({ versionId: stuck.v, failed: true, error: "The disk is full" });
+    expect(row(stuck.v)).toEqual({ held: 1, source_key: `mac:${stuck.v}` });
   });
 });
