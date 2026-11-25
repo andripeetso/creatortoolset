@@ -27,17 +27,18 @@ export type ImportAsk = {
 /**
  * The answer as an add's options (lib/import-queue.ts AddOptions). Blurred, or a skip where the library keeps only
  * proxies, the files are indexed on this Mac and nothing is sent (a blurred version goes later, in the proxy's place).
- * `asFilmed` unticks the library's Blur faces, `askBlur` sets it where the library doesn't blur, `proxy` is the file's
- * own answer over the library's Generate proxies.
+ * `asFilmed` unticks the library's Blur faces, `askBlur` sets it where the library doesn't blur. `proxy` is the file's
+ * own answer over the library's Generate proxies, kept only when the person moved off `start` (the pick the library's
+ * settings gave): Add as it opened keeps nothing, so turning proxies on later still covers these files.
  */
-export function importOptions(process: Processing, at: { libraryBlurs: boolean; macRemote: boolean; onMac: boolean; hostsOriginals: boolean }) {
+export function importOptions(process: Processing, at: { start: Processing; libraryBlurs: boolean; macRemote: boolean; onMac: boolean; hostsOriginals: boolean }) {
   const blur = process === "blur";
   return {
     mac: at.onMac || (at.macRemote && (blur || (process === "skip" && !at.hostsOriginals))),
     blur,
     asFilmed: at.libraryBlurs && !blur,
     askBlur: !at.libraryBlurs && blur,
-    ...(blur ? {} : { proxy: process === "skip" ? ("no" as const) : ("yes" as const) }),
+    ...(blur || process === at.start ? {} : { proxy: process === "skip" ? ("no" as const) : ("yes" as const) }),
   };
 }
 

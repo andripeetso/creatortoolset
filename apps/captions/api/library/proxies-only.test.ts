@@ -312,3 +312,31 @@ describe("a Media Library whose Hosted media is originals only", () => {
     expect(unproxied("lib_p", kept)).toMatchObject([{ id: kept, created_by: "owner-a" }]);
   });
 });
+
+describe("the add sheet's processing, on an upload", () => {
+  // a person's own file sent through the routes with the add's answer (uploads.proxy → assets.proxy), probed as the worker does
+  async function sent(lib: string, name: string, proxy?: "yes" | "no"): Promise<string> {
+    const body = Buffer.from(`${lib} ${name} sheet`);
+    const post = (url: string, init: RequestInit = {}) => app.request(url, { method: "POST", ...init });
+    const init = (await (
+      await post(`/api/library/${lib}/uploads`, { headers: { "content-type": "application/json" }, body: JSON.stringify({ filename: name, size: body.length, ...(proxy ? { proxy } : {}) }) })
+    ).json()) as { id: string };
+    await app.request(`/api/library/uploads/${init.id}`, { method: "PATCH", headers: { "upload-offset": "0", "content-length": String(body.length) }, body });
+    const id = ((await (await post(`/api/library/uploads/${init.id}/finish`)).json()) as { versionId: string }).versionId;
+    const v = d.prepare("SELECT a.library_id, a.kind, a.title, v.source_path, v.from_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(id) as {
+      library_id: string;
+      kind: string;
+      title: string;
+      source_path: string | null;
+      from_path: string | null;
+    };
+    const probe = { duration: 5, width: 3840, height: 2160, fps: 30, rotation: 0, format: "mp4", vcodec: "hevc", pixFmt: "yuv420p", acodec: "" };
+    await afterProbe(d, { id, ...v }, probe, "owner-a");
+    return id;
+  }
+
+  it("Skip processing makes no proxy where the library keeps proxies; no answer follows the library", async () => {
+    expect(jobs(await sent("lib_p", "Skipped.mp4", "no"))).not.toContain("proxy");
+    expect(jobs(await sent("lib_p", "Plain.mp4"))).toContain("proxy");
+  });
+});

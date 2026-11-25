@@ -279,17 +279,16 @@ describe("videos dropped in the chat", () => {
 });
 
 describe("the import rule, with no question", () => {
-  type Answer = ReturnType<typeof useImportQuestion>["answer"];
   async function answerWith(look: { from: "mac" | "browser"; paths?: Map<File, string> }, files: File[], onError = vi.fn(), copy = true) {
-    let answer!: Answer;
+    let q!: ReturnType<typeof useImportQuestion>;
     const Host = () => {
-      answer = useImportQuestion({ serverHere: false, onError }).answer;
+      q = useImportQuestion({ serverHere: false, onError });
       return null;
     };
     host = document.createElement("div");
     root = createRoot(host);
     await act(async () => root!.render(<Host />));
-    return { result: await answer(look as never, files, copy), onError };
+    return { result: await q.answer(look as never, await q.outside(look as never, files), copy), onError };
   }
   const day = new Date().toISOString().slice(0, 10);
   const file = new File(["x"], "a.mp4");

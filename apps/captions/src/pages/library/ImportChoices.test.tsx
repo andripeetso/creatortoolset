@@ -70,14 +70,19 @@ describe("the sheet of one add", () => {
 });
 
 describe("the answer as an add's options", () => {
-  const remote = { libraryBlurs: false, macRemote: true, onMac: false, hostsOriginals: false };
+  const remote = { start: "skip" as const, libraryBlurs: false, macRemote: true, onMac: false, hostsOriginals: false };
   it("Generate proxies asks for one; what is sent is the library's Upload", () => {
     expect(importOptions("proxies", remote)).toEqual({ mac: false, blur: false, asFilmed: false, askBlur: false, proxy: "yes" });
   });
   it("Skip processing: no proxy, and nothing sent where the library keeps only proxies", () => {
-    expect(importOptions("skip", remote)).toMatchObject({ mac: true, proxy: "no" });
+    const fromProxies = { ...remote, start: "proxies" as const };
+    expect(importOptions("skip", fromProxies)).toMatchObject({ mac: true, proxy: "no" });
     // a library that keeps originals still gets the original
-    expect(importOptions("skip", { ...remote, hostsOriginals: true })).toMatchObject({ mac: false, proxy: "no" });
+    expect(importOptions("skip", { ...fromProxies, hostsOriginals: true })).toMatchObject({ mac: false, proxy: "no" });
+  });
+  it("Add as the sheet opened keeps no answer: the file follows the library, so proxies turned on later cover it", () => {
+    expect(importOptions("skip", remote)).not.toHaveProperty("proxy");
+    expect(importOptions("proxies", { ...remote, start: "proxies" })).not.toHaveProperty("proxy");
   });
   it("Generate blurred versions where the library doesn't blur: indexed here and asked for, no proxy answer", () => {
     expect(importOptions("blur", remote)).toEqual({ mac: true, blur: true, asFilmed: false, askBlur: true });

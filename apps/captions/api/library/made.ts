@@ -4,7 +4,7 @@ import { aiFor, anthropicParams, onApiKey } from "../ai-complete";
 import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
-import { fileProxy, keepsOnlyOriginals, libraryDb } from "./db";
+import { keepsOnlyOriginals, libraryDb } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { makeCost, makeMinutes } from "./estimate";
@@ -120,7 +120,7 @@ function missingOf(libraryId: string, kind: MadeKind, username: string): Missing
     .all(libraryId) as { id: string; probe: string; source_key: string; seconds: number }[];
   if (kind !== "proxy") return rows;
   if (keepsOnlyOriginals(libraryId)) return [];
-  return rows.filter((r) => fileProxy(r.id) !== "no" && wantsProxy(JSON.parse(r.probe) as ProbeSummary, { cloud: false, on: true }) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
+  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, { cloud: false, on: true }) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
 }
 
 /** Every kind's counts in `libraryId`, with its cost for `username`: one query per kind (two for proxies). */

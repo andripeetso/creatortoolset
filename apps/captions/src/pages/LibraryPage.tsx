@@ -442,16 +442,17 @@ export default function LibraryPage() {
     const here = onMac || (look.paths ? look.paths.size === all.length : false);
     // the one sheet of an add (owner, 2026-11-24): processing, and copy or use in place for files from outside, asked
     // before anything is saved ("Use where they are" adds folders to Folder access only once Add is pressed)
-    const c = await chooseImport(all.length, await importQ.outside(look, all));
+    const outside = await importQ.outside(look, all);
+    const c = await chooseImport(all.length, outside);
     if (!c) return;
-    const copies = await importQ.answer(look, all, c.copy);
-    if (copies) start(all, here, look.paths, copies, c.process);
+    const copies = await importQ.answer(look, outside, c.copy);
+    if (copies) start(all, here, look.paths, copies, c);
   };
 
   // Processing: Generate blurred versions where this Mac can blur (an owner or admin may skip it where the library
   // blurs; a member's file is always blurred there), else Generate proxies or Skip processing, from the library's and
   // the folder's settings. Nothing to ask: no sheet
-  const chooseImport = (count: number, outside: number): Promise<ImportChoice | null> => {
+  const chooseImport = (count: number, outside: { count: number }): Promise<(ImportChoice & { start: Processing }) | null> => {
     const libraryBlurs = !!library?.settings.blurFaces;
     const blurs = libraryBlurs && openFolder?.blur !== "no";
     const blurOption = faceBlur && !!thisMacBridge() && (!libraryBlurs || !!library?.mayKeepAsFilmed);
@@ -459,14 +460,16 @@ export default function LibraryPage() {
     const process: Processing = blurs ? "blur" : proxies ? "proxies" : "skip";
     // blurred with no way out of it: the blurred version is the proxy, nothing else to choose
     const processes: Processing[] = blurs && !blurOption ? [] : blurOption ? ["proxies", "blur", "skip"] : ["proxies", "skip"];
-    if (!processes.length && !outside) return Promise.resolve({ process, copy: true });
-    return new Promise((done) => setImportAsk({ id: Date.now(), count, processes, process, outside, done: (c) => (setImportAsk(null), done(c)) }));
+    if (!processes.length && !outside.count) return Promise.resolve({ process, start: process, copy: true });
+    return new Promise((done) =>
+      setImportAsk({ id: Date.now(), count, processes, process, outside: outside.count, done: (c) => (setImportAsk(null), done(c && { ...c, start: process })) }),
+    );
   };
 
   // every file starts at once and waits only where its stage is full (lib/import-queue.ts); each has its card at once
-  const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, process: Processing) => {
+  const start = (files: File[], here: boolean, paths: Map<File, string> | undefined, copies: Map<File, string> | undefined, c: { process: Processing; start: Processing }) => {
     if (!libId) return;
-    const o = importOptions(process, { libraryBlurs: !!library?.settings.blurFaces, macRemote, onMac, hostsOriginals: hostsOriginals(upload.current) });
+    const o = importOptions(c.process, { start: c.start, libraryBlurs: !!library?.settings.blurFaces, macRemote, onMac, hostsOriginals: hostsOriginals(upload.current) });
     addImports(files, { libraryId: libId, folderId: into ?? undefined, here, paths, copies, ...o, cost: levelOf(library?.settings ?? {}) !== "off" });
   };
   // a file of this library went in: its clips (and the folder's count) read again

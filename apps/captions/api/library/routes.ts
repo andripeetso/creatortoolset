@@ -15,7 +15,7 @@ import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
 import { libraryMade, makeMissing, retryFailed, retryUnreadable, stopQueued, unreadableOf } from "./made";
-import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
+import { blobs, BLUR_SQL, blursFaces, proxyAsked, type ProxyAnswer, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
@@ -140,12 +140,13 @@ export function unproxied(libraryId: string, versionId?: string, hosted = false)
       `SELECT v.id, v.created_by, v.probe, v.source_key FROM asset_versions v JOIN assets a ON a.id = v.asset_id
        WHERE a.library_id = ? AND (? IS NULL OR v.id = ?) AND v.probe IS NOT NULL AND v.state != 'missing' AND a.kind != 'image'
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'proxy')
-         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed', 'stopped'))`,
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'proxy' AND j.state IN ('queued', 'running', 'failed', 'stopped'))
+         AND IFNULL(a.proxy, '') != 'no'`,
     )
     .all(libraryId, versionId ?? null, versionId ?? null) as { id: string; created_by: string; probe: string; source_key: string }[];
-  // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there;
-  // a file added with Skip processing gets none
-  return rows.filter((r) => fileProxy(r.id) !== "no" && wantsProxy(JSON.parse(r.probe) as ProbeSummary, want) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
+  // Blur faces: the server cuts no proxy of a clip not blurred that it holds; one on a computer is made and kept there.
+  // A file added with Skip processing is left out above; Make in What's made still covers it
+  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, want) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
 }
 
 /** The name an original downloads as: the file's own name when it is read where it is, else its title with its type's extension. */

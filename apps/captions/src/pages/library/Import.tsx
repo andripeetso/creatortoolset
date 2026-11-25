@@ -361,14 +361,13 @@ export function useImportQuestion({ serverHere, onError }: { serverHere: boolean
     return { files: copyAvailable(look.from) ? outside : [], rows, readGiven };
   };
 
-  /** How many files the add sheet asks Copy to Media Library or Use where they are for; 0 asks nothing. */
-  const outside = async (look: ImportLook, files: File[]): Promise<number> => {
+  /** The files from outside, read once for the sheet and its answer; `count`: how many the sheet asks Location for (0 asks nothing). */
+  const outside = async (look: ImportLook, files: File[]) => {
     const o = await outsideOf(look, files);
-    return o.readGiven ? o.files.length : 0;
+    return { ...o, count: o.readGiven ? o.files.length : 0 };
   };
 
-  const answer = async (look: ImportLook, files: File[], copy = true): Promise<Map<File, string> | null> => {
-    const o = await outsideOf(look, files);
+  const answer = async (look: ImportLook, o: Awaited<ReturnType<typeof outside>>, copy = true): Promise<Map<File, string> | null> => {
     if (!o.files.length) return new Map();
     const left = await keepWhereTheyAre(o.files.map((f) => look.paths!.get(f)!), o.readGiven, copy);
     const want = o.files.filter((f) => left.includes(look.paths!.get(f)!));
