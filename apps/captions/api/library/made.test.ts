@@ -104,12 +104,18 @@ describe("what's made", () => {
   });
 
   it("a card picture or strip that failed this week goes again by itself; one from before then stays failed", () => {
-    const recent = clip("ast-pic-recent"), old = clip("ast-pic-old");
     const now = Date.now();
+    const weekAgo = now - (PICTURE_RETRY_DAYS + 1) * 86_400_000;
+    const recent = clip("ast-pic-recent", { at: now - 3600_000 }), old = clip("ast-pic-old", { at: weekAgo });
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error, started_at) VALUES ('lib_m', ?, 'thumb', 'failed', 'local', 'x', ?)").run(recent, now - 3600_000);
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, error, started_at) VALUES ('lib_m', ?, 'sprite', 'failed', 'local', 'x', ?)").run(old, now - (PICTURE_RETRY_DAYS + 1) * 86_400_000);
     expect(retryFailedPictures(now)).toBe(1);
     expect(job(recent, "thumb")?.state).toBe("queued");
+    expect(job(old, "sprite")?.state).toBe("failed");
+    // a file from last month that was retried (and failed) an hour ago: each try restamps started_at, so the week counts from when it came in
+    d.prepare("UPDATE jobs SET state = 'failed', started_at = ? WHERE version_id = ?").run(now - 3600_000, old);
+    d.prepare("UPDATE jobs SET state = 'failed' WHERE version_id = ?").run(recent);
+    expect(retryFailedPictures(now)).toBe(1);
     expect(job(old, "sprite")?.state).toBe("failed");
     d.prepare("DELETE FROM jobs WHERE version_id IN (?, ?)").run(recent, old);
     d.prepare("DELETE FROM asset_versions WHERE id IN (?, ?)").run(recent, old);

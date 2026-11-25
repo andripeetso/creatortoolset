@@ -350,7 +350,8 @@ export function retryEmptyPictures(): number {
 /**
  * A card picture or strip that failed in the last week, queued once more when a computer that does library work connects
  * (work/routes.ts, once per computer per server start): one read while its disk was away, or by an older app, gets its
- * picture with no Retry. A file that still fails after a week is left failed, so it never comes back at every start.
+ * picture with no Retry. The week counts from when the file came in, not from its last try (each try restamps started_at),
+ * so a file that still fails after a week is left failed and never comes back at every start.
  */
 export const PICTURE_RETRY_DAYS = 7;
 export function retryFailedPictures(now = Date.now()): number {
@@ -358,7 +359,8 @@ export function retryFailedPictures(now = Date.now()): number {
   const rows = db
     .prepare(
       `SELECT j.library_id, j.version_id, j.kind, j.actor FROM jobs j JOIN assets a ON a.current_version_id = j.version_id
-       WHERE j.kind IN ('thumb', 'sprite') AND j.state = 'failed' AND (j.started_at IS NULL OR j.started_at > ?)
+       JOIN asset_versions v ON v.id = j.version_id
+       WHERE j.kind IN ('thumb', 'sprite') AND j.state = 'failed' AND v.created_at > ?
          AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL`,
     )
     .all(now - PICTURE_RETRY_DAYS * 86_400_000) as { library_id: string; version_id: string; kind: string; actor: string | null }[];
