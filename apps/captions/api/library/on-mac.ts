@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, fileBlur, fileProxy, libraryDb, libraryUpload, libraryUploadStored, librarySetting, makesProxyOf, type ProxyAnswer } from "./db";
+import { blobs, fileBlur, fileProxy, libraryDb, librarySetting, makesProxyOf, versionUpload, type ProxyAnswer } from "./db";
 import { emitEvent } from "../lib/events";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
@@ -20,7 +20,7 @@ import { confirmPlaces, OWN } from "./places";
 import { noteStrip, strayStrip, watchedAspect, OLD_CELL } from "./media/sprite";
 import { readerOf } from "./reader";
 import { assetRef, canSee } from "./sources";
-import { hostsNone, type Blur } from "../../contracts/library";
+import { hostsProxies, type Blur } from "../../contracts/library";
 import { mayLeave } from "./upload-gate";
 import { showHidden } from "./trash";
 
@@ -284,10 +284,11 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   // shortcut: videos only (the Mac sends no sound codec, so songs and sound effects can't be told apart); hear audio once it does
   // Analysis effort: Off makes no transcript on import (UNIFIED-PRD §4.4)
   if (kind === "video" && librarySetting(libraryId, "transcribe")) enqueueJob(d, libraryId, versionId, "transcribe", by);
-  // Upload off with Generate proxies on: the computer holding the file makes its proxy and keeps it (library-package keepProxy);
-  // never of a file waiting for its blur (`pictures`). A blurred copy gets its own, as any file: the proxy is made from it
-  // (docs/face-blur-intake-prd.md §2); with Upload on, its send makes it (editor-steps/blur-faces copy.ts)
-  if (kind === "video" && mine && pictures && hostsNone(x.blurredOf ? libraryUploadStored(libraryId) : libraryUpload(libraryId)) && fileProxy(versionId) !== "no" && wantsProxy(probe as ProbeSummary, { cloud: false, on: fileProxy(versionId) === "yes" || makesProxyOf(libraryId, versionId) }))
+  // Generate proxies on and the server keeping no proxy of this file (Upload off, Originals alone, Blurred alone): the
+  // computer holding the file makes its proxy and keeps it (library-package keepProxy). Where Upload sends proxies its
+  // send makes it. Never of a file waiting for its blur (`pictures`); a blurred copy gets its own, as any file: the
+  // proxy is made from it (docs/media-library-proxies-prd.md §1)
+  if (kind === "video" && mine && pictures && !hostsProxies(versionUpload(versionId)) && fileProxy(versionId) !== "no" && wantsProxy(probe as ProbeSummary, { cloud: false, on: fileProxy(versionId) === "yes" || makesProxyOf(libraryId, versionId) }))
     enqueueJob(d, libraryId, versionId, "proxy", by);
   if (kind === "video" && x.frames.length && librarySetting(libraryId, "describe")) {
     if (!pictures) {

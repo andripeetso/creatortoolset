@@ -129,4 +129,25 @@ describe("the add sheet's processing, indexed on its Mac", () => {
     if (!("versionId" in plain)) throw new Error("not indexed");
     expect(proxyOf(plain.versionId)).toBeUndefined();
   });
+
+  it("the server keeping no proxy (Originals alone): a clip still gets its proxy, for that Mac to keep; where Upload sends proxies its send makes it", async () => {
+    const { indexOnMac } = await import("./on-mac");
+    const { pairDevice } = await import("../lib/devices");
+    const { keepsProxy } = await import("../work/library-package");
+    const { versionUpload } = await import("./db");
+    for (const [id, upload] of [["lib_keeps_none", "originals"], ["lib_sends_proxies", "proxies"]])
+      libraryDb()
+        .prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'owner-a', 'K', 'local', ?, 0)")
+        .run(id, JSON.stringify({ upload, proxy: true, describe: false, transcribe: false }));
+    const mac = pairDevice("owner-a", "Tiny Mac 2").device;
+    const proxyOf = (versionId: string) => libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'proxy'").get(versionId);
+    const at = (n: number) => ({ ...clip, name: `kept-${n}.mp4`, path: `/Volumes/Tiny Drive/CARD/kept-${n}.mp4`, quick: String(n + 2).repeat(64).slice(0, 64), device: mac.id, frames: [] });
+    const kept = await indexOnMac("lib_keeps_none", "owner-a", at(6));
+    if (!("versionId" in kept)) throw new Error("not indexed");
+    expect(proxyOf(kept.versionId)).toBeTruthy();
+    expect(keepsProxy(versionUpload(kept.versionId))).toBe(true); // made there and kept there: the server takes none
+    const sent = await indexOnMac("lib_sends_proxies", "owner-a", at(7));
+    if (!("versionId" in sent)) throw new Error("not indexed");
+    expect(proxyOf(sent.versionId)).toBeUndefined();
+  });
 });
