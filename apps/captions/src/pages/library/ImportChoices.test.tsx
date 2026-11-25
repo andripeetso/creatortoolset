@@ -40,9 +40,9 @@ describe("the choice of one add", () => {
     const done = vi.fn();
     mount({ id: 1, count: 17, blur: false, proxies: true, done });
     expect(document.body.textContent).toContain("Add 17 files");
-    expect(option("Proxies")!.getAttribute("aria-checked")).toBe("true");
-    act(() => option("Blur faces")!.click());
-    expect(option("Proxies")!.getAttribute("aria-checked")).toBe("false");
+    expect(option("Upload proxies")!.getAttribute("aria-checked")).toBe("true");
+    act(() => option("Upload blurred proxies")!.click());
+    expect(option("Upload proxies")!.getAttribute("aria-checked")).toBe("false");
     expect(document.querySelector('a[href="/settings/blur-faces"]')).not.toBeNull();
     await add();
     expect(done).toHaveBeenCalledWith({ blur: true, proxies: true });
@@ -51,8 +51,8 @@ describe("the choice of one add", () => {
   it("None sends nothing, and an option not asked for is not drawn", async () => {
     const done = vi.fn();
     mount({ id: 2, count: 1, proxies: true, done });
-    expect(option("Blur faces")).toBeUndefined();
-    act(() => option("None")!.click());
+    expect(option("Upload blurred proxies")).toBeUndefined();
+    act(() => option("Keep on this computer")!.click());
     await add();
     expect(done).toHaveBeenCalledWith({ blur: false, proxies: false });
   });
@@ -60,8 +60,8 @@ describe("the choice of one add", () => {
   it("no Proxies question: Blur faces or As filmed", () => {
     mount({ id: 3, count: 2, blur: true, done: vi.fn() });
     expect(option("Blur faces")!.getAttribute("aria-checked")).toBe("true");
-    expect(option("As filmed")).toBeDefined();
-    expect(option("None")).toBeUndefined();
+    expect(option("Keep as filmed")).toBeDefined();
+    expect(option("Keep on this computer")).toBeUndefined();
   });
 });
 

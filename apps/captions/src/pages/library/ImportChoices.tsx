@@ -8,8 +8,8 @@ import { confirmDialog } from "@/lib/dialogs";
 /**
  * What runs on the files of one add (owner, 2026-11-24: "for the Sony stuff I would like to generate proxies and blur"):
  * asked on each drop or Upload where there is a choice, starting from the library's and the folder's settings.
- * One choice (owner: blur "essentially creates a blurred proxy"): Proxies, Blur faces or None; `blur`/`proxies` absent:
- * no such option (no Proxies question: the other option is As filmed).
+ * One choice (owner: blur "essentially creates a blurred proxy"), each option the action it takes: Upload proxies, Upload
+ * blurred proxies or Keep on this computer; with no proxy question, Keep as filmed or Blur faces. `blur`/`proxies` absent: no such option.
  */
 export type ImportChoice = { blur: boolean; proxies: boolean };
 export type ImportAsk = { id: number; count: number; blur?: boolean; proxies?: boolean; done: (c: ImportChoice | null) => void };
@@ -67,18 +67,18 @@ function Sheet({ ask }: { ask: ImportAsk }) {
           {/* one choice: the blurred video is the proxy, so Blur faces and Proxies never go together */}
           <RadioGroup value={pick} onValueChange={(v) => setPick(v as Pick)} aria-label="Processing" className="gap-3">
             {proxies
-              ? option("proxy", "Proxies", "A lighter copy of each clip goes to the server, so it plays anywhere.")
-              : option("proxy", "As filmed", "Faces are not blurred.")}
+              ? option("proxy", "Upload proxies", "A smaller copy of each clip goes to the server for playback.")
+              : option("proxy", "Keep as filmed", "Faces are not blurred.")}
             {ask.blur !== undefined &&
               option(
                 "blur",
-                "Blur faces",
-                proxies ? "A blurred copy is each clip's proxy, and only it leaves this computer." : "Only the blurred video of each clip leaves this computer.",
+                proxies ? "Upload blurred proxies" : "Blur faces",
+                proxies ? "The proxy has faces blurred, and the originals stay on this computer." : "Only the blurred copy of each clip leaves this computer.",
                 <Link to="/settings/blur-faces" className="w-fit text-xs text-violet-400 hover:underline">
                   Face Blur settings
                 </Link>,
               )}
-            {proxies && option("none", "None", "Clips play on this computer only.")}
+            {proxies && option("none", "Keep on this computer", "No video is uploaded.")}
           </RadioGroup>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => ask.done(null)}>
