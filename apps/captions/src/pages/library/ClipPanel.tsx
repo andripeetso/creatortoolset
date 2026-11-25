@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { ChevronDown, Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
+import { ChevronDown, Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, Link2, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { confirmDialog } from "@/lib/dialogs";
 import { SheetTitle } from "@/components/ui/sheet";
-import { canUse, useMe } from "@/lib/auth";
+import { canUse, hasTeam, useAuth, useMe } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
 import { BLUR_WORDS, blurState, faceBlurOn, useFaceBlurAuto } from "./face-blur";
+import { clipHref } from "./folders";
 import { fmtBytes } from "@/lib/exports";
 import { alikeShots, getAsset, getWhere, listTags, relatedAssets, rerunJobs, setAssetBlur, updateAsset, updateShot, useLibraryChanges } from "@/lib/library";
 import { undoable } from "@/lib/undo";
@@ -285,7 +286,9 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   const here: { name: string; path: string; id?: string }[] =
     filmed?.path && detail?.sourcePath ? [{ name: "blurred", path: detail.sourcePath }, { name: "original", path: filmed.path, id: filmed.id }] : path ? [{ name: "", path }] : [];
   const revealable = a.state !== "missing" && revealsHere(placeWord);
-  const copyPath = (p: string) =>
+  // a server others open has a link to the clip; This Mac's own address opens on this Mac only
+  const linkable = hasTeam(useAuth((s) => s.kind));
+  const copyText = (p: string) =>
     void navigator.clipboard?.writeText(p).then(() => {
       setCopiedPath(true);
       window.setTimeout(() => setCopiedPath(false), 1500);
@@ -312,7 +315,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
         onSaved={saved}
         onError={onError}
       />
-      {(facts.length > 0 || inFolders.length > 0 || path || placeWord) && (
+      {(facts.length > 0 || inFolders.length > 0 || here.length > 0 || linkable || placeWord) && (
         // one list of label and value: the facts, the clip's folders, which file plays (Blurred / Original) and where it is
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
@@ -340,16 +343,16 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
               </dd>
             </div>
           )}
-          {(placeWord || path) && (
+          {!inTrash && (here.length > 0 || linkable || placeWord) && (
             <div className="contents">
               <dt className="text-zinc-500">Location</dt>
               <dd className="min-w-0">
-                {here.length ? (
-                  // the files on this computer (the admin, on a server that has it): show each in Finder, copy each path
+                {here.length || linkable ? (
+                  // the files on this computer (the admin, on a server that has it): show each in Finder, copy each path; on a server, its link too
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button size="sm" variant="ghost" className="-ml-2 h-6 max-w-full gap-1 px-2 text-xs font-normal">
-                        <span className="truncate">{copiedPath ? "Path copied" : placeWord ? placeLine(placeWord) : here[0]!.path}</span>
+                      <Button size="sm" variant="ghost" className="h-6 max-w-full gap-1 px-0 text-xs font-normal hover:bg-transparent hover:text-foreground">
+                        <span className="truncate">{copiedPath ? "Copied" : placeWord ? placeLine(placeWord) : (here[0]?.path ?? "Server")}</span>
                         <ChevronDown className="h-3 w-3 shrink-0 text-zinc-500" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -361,13 +364,20 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
                             {f.name ? `Show ${f.name} in Finder` : "Show in Finder"}
                           </DropdownMenuItem>
                         ))}
-                      {revealable && <DropdownMenuSeparator />}
+                      {revealable && here.length > 0 && <DropdownMenuSeparator />}
                       {here.map((f) => (
-                        <DropdownMenuItem key={`copy-${f.name}`} title={f.path} onSelect={() => copyPath(f.path)}>
+                        <DropdownMenuItem key={`copy-${f.name}`} title={f.path} onSelect={() => copyText(f.path)}>
                           <Copy className="h-4 w-4" />
                           {f.name ? `Copy ${f.name} path` : "Copy path"}
                         </DropdownMenuItem>
                       ))}
+                      {linkable && here.length > 0 && <DropdownMenuSeparator />}
+                      {linkable && (
+                        <DropdownMenuItem onSelect={() => copyText(new URL(clipHref(libraryId, a.id), window.location.origin).href)}>
+                          <Link2 className="h-4 w-4" />
+                          Copy link
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (
