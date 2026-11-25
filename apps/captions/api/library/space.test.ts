@@ -24,7 +24,7 @@ app.use(async (c, next) => {
 app.route("/api/library", libraryApp);
 
 const d = libraryDb();
-d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_s', 'owner-s', 'S', 'local', '{\"upload\":\"all\"}', 0)").run();
+d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES ('lib_s', 'owner-s', 'S', 'local', '{\"upload\":\"all\",\"proxy\":true}', 0)").run();
 // a 4K clip: its proxy and picture are made files; its original is the person's own
 const PROBE = JSON.stringify({ duration: 8, vcodec: "h264", acodec: "", width: 3840, height: 2160, pixFmt: "yuv420p10le", format: "mov,mp4" });
 const put = async (key: string, text: string) => {
@@ -83,13 +83,15 @@ describe("the library's space", () => {
     expect((d.prepare("SELECT COUNT(*) AS n FROM jobs WHERE version_id = 'v1' AND kind = 'proxy'").get() as { n: number }).n).toBe(1);
   });
 
-  it("Hosted proxies: off makes none (hosting never forces them), on makes one for each clip without a proxy", async () => {
+  it("Hosted proxies: the switch queues nothing for the clips already here either way; Make for the missing makes one for each clip without a proxy", async () => {
     d.prepare("DELETE FROM jobs").run();
     const set = (proxy: boolean) =>
       app.request("/api/library/lib_s", { method: "PATCH", headers: { "x-user": "owner-s", "content-type": "application/json" }, body: JSON.stringify({ settings: { proxy } }) });
     expect(((await (await set(false)).json()) as { settings: { proxy: boolean } }).settings.proxy).toBe(false);
     expect(d.prepare("SELECT version_id FROM jobs WHERE kind = 'proxy'").all()).toEqual([]);
     expect(((await (await set(true)).json()) as { settings: { proxy: boolean } }).settings.proxy).toBe(true);
+    expect(d.prepare("SELECT version_id FROM jobs WHERE kind = 'proxy'").all()).toEqual([]);
+    await app.request("/api/library/lib_s/made/proxy", { method: "POST", headers: { "x-user": "owner-s" } });
     expect(d.prepare("SELECT version_id, state FROM jobs WHERE kind = 'proxy'").all()).toEqual([{ version_id: "v1", state: "queued" }]); // v2 has its proxy
   });
 

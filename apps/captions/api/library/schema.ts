@@ -760,4 +760,9 @@ export const MIGRATIONS: string[] = [
   `UPDATE libraries SET settings = json_set(settings, '$.upload', 'originals')
      WHERE json_extract(settings, '$.blurFaces') = 1 AND json_extract(settings, '$.upload') IN ('proxies', 'all');
    UPDATE libraries SET settings = json_set(settings, '$.proxy', json('false')) WHERE json_extract(settings, '$.blurFaces') = 1;`,
+  // Generate proxies starts off in a new library (db.ts SETTING_DEFAULTS). A library that never stored the switch read
+  // on until now, so on is stored: nothing changes for it by itself. And every library that is on gets the time its
+  // switch "went on" (proxySince, db.ts SINCE), now: its proxies go to files added from here, never to one probed again
+  `UPDATE libraries SET settings = json_set(settings, '$.proxy', json('true')) WHERE json_extract(settings, '$.proxy') IS NULL;
+   UPDATE libraries SET settings = json_set(settings, '$.proxySince', CAST(strftime('%s', 'now') AS INTEGER) * 1000) WHERE json_extract(settings, '$.proxy') = 1;`,
 ];

@@ -58,6 +58,24 @@ describe("new libraries", () => {
   });
 });
 
+describe("Generate proxies off by default: the migration", () => {
+  it("stores on for a library that never stored the switch, leaves an off one off, and stamps when every on-library's proxies start", async () => {
+    const { MIGRATIONS } = await import("./schema");
+    const d = libraryDb();
+    const put = (id: string, settings: object) => d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'local', 'M', 'local', ?, 0)").run(id, JSON.stringify(settings));
+    put("lib_m_absent", {});
+    put("lib_m_off", { proxy: false });
+    put("lib_m_on", { proxy: true });
+    d.exec(MIGRATIONS.find((m) => m.includes("$.proxySince"))!);
+    expect(stored("lib_m_absent")).toMatchObject({ proxy: true, proxySince: expect.any(Number) });
+    expect(stored("lib_m_on")).toMatchObject({ proxy: true, proxySince: expect.any(Number) });
+    expect(stored("lib_m_off")).toEqual({ proxy: false });
+    expect(Math.abs(Number(stored("lib_m_on").proxySince) - Date.now())).toBeLessThan(60_000); // now, in milliseconds
+    // the test libraries above this one read as they were written: off unless a test turns it on
+    for (const id of ["lib_set", "lib_orig", "lib_place"]) d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.proxy', '$.proxySince') WHERE id = ?").run(id);
+  });
+});
+
 describe("the library settings PATCH", () => {
   it("saves what the setup and the settings pages write, and stops writing copyTo and places", async () => {
     const r = await patch("lib_set", {
@@ -111,15 +129,18 @@ describe("the library settings PATCH", () => {
     expect(stored("lib_set").upload).toBe("proxies");
   });
 
-  it("turning proxies on backfills only under Hosted proxies (every clip), never under Originals only", async () => {
-    const small = clip("lib_orig", "plain", 1280, 720); // the browser plays it as it is: no proxy needed
+  it("turning proxies on queues nothing for the clips already here; Make for the missing does: every video under Hosted proxies, none under Originals only", async () => {
+    const make = async (lib: string) => ((await (await app.request(`/api/library/${lib}/made/proxy`, { method: "POST" })).json()) as { files: number }).files;
     const big = clip("lib_orig", "uhd", 3840, 2160); // over 1080p: needs one
     await patch("lib_orig", { proxy: true });
-    expect(proxyJobs(small)).toBe(0);
-    expect(proxyJobs(big)).toBe(0); // Originals only keeps no proxy on the server
-    const hosted = clip("lib_set", "hosted-plain", 1280, 720);
+    expect(await make("lib_orig")).toBe(0); // Originals only keeps no proxy on the server
+    expect(proxyJobs(big)).toBe(0);
+    const hosted = clip("lib_set", "hosted-plain", 1280, 720); // plays as it is, yet the team's copy is its proxy
     await patch("lib_set", { proxy: true });
-    expect(proxyJobs(hosted)).toBe(1); // Hosted proxies: every video gets one
+    expect(proxyJobs(hosted)).toBe(0); // a switch never queues the files already in the library
+    expect(stored("lib_set").proxySince).toBeGreaterThan(1); // from here on: this clip (created_at 1) is from before
+    expect(await make("lib_set")).toBeGreaterThan(0);
+    expect(proxyJobs(hosted)).toBe(1);
   });
 
   it("under Hosted proxies Generate proxies still turns off: hosting never forces it (owner, 2026-11-25)", async () => {

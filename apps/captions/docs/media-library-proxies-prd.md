@@ -173,6 +173,10 @@ In this order. Each is one small change with its test.
   (`db.ts`, `proxySince`), check it at `worker.ts:590` and `on-mac.ts:291`, stamp it when the switch goes on, and
   migrate a stamp of now onto every library that is on. Tests: an old file probed again queues none, a new one does;
   the migration stamps an on-library only. Asked-for work (Make N missing, the add's own answer) is not gated.
+  With it goes the hidden backfill: a save that turned Upload → Proxies on, or flipped the switch while proxies were
+  hosted, queued a proxy for every old video without one (`routes.ts`, the settings save). No save queues old files
+  now. What's made → Proxies → Make N missing is the way, and where Upload sends proxies it counts every video
+  without one, since the team's copy is what a proxy is for (`made.ts` `missingOf`).
 - **R9 The Download location's disk is not connected: no proxy.** Today the worker falls back to a folder on the
   internal disk (`work/cache.ts:20-21`). New: none is made and the clip says "Needs the Download location's disk".
 - **R10 Under Blur faces, the phone.** The iPhone app sends its own 720p copy when the stored Upload is "proxies"

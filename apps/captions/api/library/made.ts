@@ -1,10 +1,10 @@
-import { MADE_KINDS, SOUNDS, WATCH_MODELS, type LibraryMade, type LibraryUnreadable, type MadeKind } from "../../contracts/library";
+import { hostsProxies, MADE_KINDS, SOUNDS, WATCH_MODELS, type LibraryMade, type LibraryUnreadable, type MadeKind } from "../../contracts/library";
 import { DRIVERS } from "../../contracts/providers";
 import { aiFor, anthropicParams, onApiKey } from "../ai-complete";
 import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
-import { BLUR_SQL, keepsOnlyOriginals, libraryDb } from "./db";
+import { BLUR_SQL, keepsOnlyOriginals, libraryDb, libraryUploadStored } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { makeCost, makeMinutes } from "./estimate";
@@ -131,7 +131,10 @@ function missingOf(libraryId: string, kind: MadeKind, username: string): Missing
     .all(libraryId) as { id: string; probe: string; source_key: string; seconds: number }[];
   if (kind !== "proxy") return rows;
   if (keepsOnlyOriginals(libraryId)) return [];
-  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, { cloud: false, on: true }) && (r.source_key.startsWith("mac:") || mayLeave(libraryId, { versionId: r.id }).ok));
+  // where Upload sends proxies every video wants one (the team's copy); else only what plays badly as it is. Never of an
+  // original waiting for its blur: its proxy is made from its blurred copy (mayLeave)
+  const hosted = hostsProxies(libraryUploadStored(libraryId));
+  return rows.filter((r) => wantsProxy(JSON.parse(r.probe) as ProbeSummary, { cloud: hosted, on: true }) && mayLeave(libraryId, { versionId: r.id }).ok);
 }
 
 /** Every kind's counts in `libraryId`, with its cost for `username`: one query per kind (two for proxies). */

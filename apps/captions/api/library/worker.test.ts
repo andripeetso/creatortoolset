@@ -16,7 +16,7 @@ const { ffmpegSlot } = await import("./media/run");
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const d = libraryDb();
-for (const lib of ["lib_a", "lib_b"]) d.prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'local', 'L', 'local', '{}', 1)`).run(lib);
+for (const lib of ["lib_a", "lib_b"]) d.prepare(`INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'local', 'L', 'local', '{"proxy":true}', 1)`).run(lib);
 const lane = (name: string) => LANES.find((l) => l.name === name)!.kinds;
 /** What a lane runs next, as "version kind", and runs it (done at once). */
 const next = (name: string, now = Date.now()) => {
@@ -320,6 +320,31 @@ describe("strips of frames", () => {
       expect(kinds("xi")).not.toContain("fingerprint");
     } finally {
       probed.value = null;
+    }
+  });
+
+  it("Generate proxies makes a proxy for a file added since it went on; a file from before, probed again, gets none", async () => {
+    // a clip the browser can't play as it is (over 1080p): the switch alone decides, no hosting
+    probed.value = { duration: 5, width: 3840, height: 2160, fps: 25, rotation: 0, format: "mov", vcodec: "h264", pixFmt: "yuv420p", acodec: "aac" };
+    const since = 1_000_000;
+    d.prepare("UPDATE libraries SET settings = json_set(settings, '$.proxySince', ?) WHERE id = 'lib_a'").run(since);
+    try {
+      for (const [id, created] of [["p_old", since - 1], ["p_new", since + 1]] as const) {
+        add(id, "video", { state: "processing", created });
+        d.prepare("UPDATE asset_versions SET created_at = ? WHERE id = ?").run(created, id); // the file's own date is what counts
+        const f = path.join(dir, `${id}.bin`);
+        writeFileSync(f, id);
+        await blobs.put(`k/${id}`, f);
+        // a disk back after being away: the file is probed again (watch.ts), which is all this is
+        enqueueJob(d, "lib_a", id, "probe", "local");
+        expect(await tick(Date.now(), ["probe"])).toBe(true);
+      }
+      const kinds = (v: string) => (d.prepare("SELECT kind FROM jobs WHERE version_id = ? ORDER BY kind").all(v) as { kind: string }[]).map((r) => r.kind);
+      expect(kinds("p_new")).toContain("proxy");
+      expect(kinds("p_old")).not.toContain("proxy");
+    } finally {
+      probed.value = null;
+      d.prepare("UPDATE libraries SET settings = json_remove(settings, '$.proxySince') WHERE id = 'lib_a'").run();
     }
   });
 

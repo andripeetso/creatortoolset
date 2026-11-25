@@ -199,12 +199,13 @@ export const blobs: Omit<BlobStore, "kind" | "caps"> = {
  * big upload says first what it will take (estimate.ts); search by meaning runs on an OpenAI key, else on this computer (embed.ts),
  * search by picture where this server makes picture vectors (pictures.ts).
  */
-export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: true, pictures: true, transcribe: true } as const;
+// proxy: off until its owner turns it on (setup asks; owner, 2026-11-25). A library from before that default stores true (schema.ts)
+export const SETTING_DEFAULTS = { describe: true, look: true, timeline: true, embed: true, proxy: false, pictures: true, transcribe: true } as const;
 /**
  * The settings key holding when each background catch-up's switch went on (ms): the catch-up fills only files added since,
  * so turning a switch on never fills the files already there (those take "Make for the missing", made.ts). Absent: every file.
  */
-export const SINCE = { look: "lookSince", lookTalking: "lookTalkingSince", timeline: "timelineSince", embed: "embedSince", pictures: "picturesSince" } as const;
+export const SINCE = { look: "lookSince", lookTalking: "lookTalkingSince", timeline: "timelineSince", embed: "embedSince", pictures: "picturesSince", proxy: "proxySince" } as const;
 /** SQL on the library `l` and the version `v`: the catch-up of `key` may fill `v`. */
 export const sinceSql = (key: keyof typeof SINCE): string => `v.created_at >= IFNULL(json_extract(l.settings, '$.${SINCE[key]}'), 0)`;
 /** SQL on the library `l`, the asset `a` and the version `v`: `v` gets shot descriptions unasked (a talking take: since Max went on too). */
@@ -311,6 +312,15 @@ export const librarySetting = (libraryId: string, key: keyof typeof SETTING_DEFA
   const on = (libraryDb().prepare(`SELECT json_extract(settings, '$.${key}') AS on_ FROM libraries WHERE id = ?`).get(libraryId) as { on_: number | null } | undefined)?.on_;
   return on === null || on === undefined ? SETTING_DEFAULTS[key] : !!on;
 };
+
+/**
+ * Generate proxies makes `versionId`'s proxy unasked: the switch is on and the file was added since it went on (SINCE).
+ * A file from before takes What's made → Make for the missing, a clip's own ask, or the add's answer; never a probe that
+ * runs again (a disk back after being away would queue every old clip's proxy).
+ */
+export const makesProxyOf = (libraryId: string, versionId: string): boolean =>
+  librarySetting(libraryId, "proxy") &&
+  !!libraryDb().prepare(`SELECT 1 FROM asset_versions v JOIN libraries l ON l.id = ? WHERE v.id = ? AND ${sinceSql("proxy")}`).get(libraryId, versionId);
 
 /** How densely the library describes shots (contracts LOOK_LEVELS). */
 export const libraryLookLevel = (libraryId: string): LookLevel =>

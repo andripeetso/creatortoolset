@@ -1254,9 +1254,6 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const s = b?.settings ?? {};
   // true/false: the upload switch's older values (db.ts uploadOf), kept so a stored boolean still maps the same way
   const upload = s.upload === true ? "all" : s.upload === false ? "none" : s.upload;
-  // the stored Upload, read before this save writes it: only a change of Upload turns hosting on, never Blur faces
-  // going off (libraryUpload reads none under it), so the proxy backfill below runs for that save alone
-  const wasHosted = hostsProxies(libraryUploadStored(libraryId));
   // Blur faces going on or off changes what Originals means (under it the Blurred row: the blurred copies, db.ts
   // libraryUploadStored), so a save that flips it and names no Upload of its own drops that part: no original starts going up because
   // Blur faces went off, and no blurred copy because it went on. Proxies stays as it was
@@ -1290,9 +1287,11 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     libraryChanged(libraryId);
   }
   if (LIBRARY_UPLOADS.includes(s.finalsUpload as LibraryUpload)) put("finalsUpload", s.finalsUpload);
-  // Generate proxies is its own switch: hosting proxies uploads the ones made and never forces it on (owner, 2026-11-25)
-  const hosted = hostsProxies(libraryUpload(libraryId));
+  // Generate proxies is its own switch: hosting proxies uploads the ones made and never forces it on (owner, 2026-11-25).
+  // Switched on: proxies for the files added from now on (db.ts SINCE, makesProxyOf); the ones already here take
+  // What's made → Make for the missing, so no save ever queues a library's worth of proxies
   const proxy = b?.settings?.proxy;
+  if (proxy === true && !settingOn(libraryId, "proxy")) put(SINCE.proxy, Date.now());
   if (typeof proxy === "boolean") put("proxy", proxy);
   // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then). Where the
   // server keeps only proxies, a file it holds itself (uploaded by hand) keeps its waiting proxy: it is all that plays
@@ -1302,10 +1301,6 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     const onComputers = hostsProxies(stored) && !hostsOriginals(stored) ? " AND version_id IN (SELECT id FROM asset_versions WHERE source_key LIKE 'mac:%')" : "";
     db().prepare(`DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')${onComputers}`).run(libraryId);
   }
-  // only Hosted proxies with the switch on backfill (a proxy is all the server keeps then), and only on a save about
-  // proxies: one that turns hosting on or sets the proxy switch. Any other save (Effort, Blur faces, a folder) queues
-  // nothing; the switch alone makes them for new files (made.ts)
-  if (hosted && librarySetting(libraryId, "proxy") && (!wasHosted || typeof proxy === "boolean")) for (const v of unproxied(libraryId, undefined, hosted)) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by, true);
   if (typeof proxy === "boolean") libraryChanged(libraryId);
   const organize = b?.settings?.organize;
   if (organize === "default" || organize === "ai" || organize === "own") {
@@ -1346,7 +1341,7 @@ libraryApp.post("/:id/setup/quick", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  const b = (await c.req.json().catch(() => null)) as { device?: unknown; base?: unknown } | null;
+  const b = (await c.req.json().catch(() => null)) as { device?: unknown; base?: unknown; proxy?: unknown; proxyQuality?: unknown } | null;
   const device = typeof b?.device === "string" ? b.device : "";
   const d = deviceOf(device);
   const here = device === THIS_COMPUTER && watchAllowed(user.username);
@@ -1361,7 +1356,8 @@ libraryApp.post("/:id/setup/quick", async (c) => {
   }
   return patchLibrary(c, libraryId, {
     settings: {
-      proxy: true, proxyQuality: "standard", ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value, lookBudget: null,
+      // proxies only when the card's own answer says so (contracts quickSetup sends none: setup asks, starting on No)
+      proxy: b?.proxy === true, proxyQuality: proxyQualityOf(b?.proxyQuality), ...flagsOf("high"), organize: "ai", timelineModel: WATCH_MODELS[0]!.value, lookBudget: null,
       defaultFolders: !b?.base, setupAt: new Date().toISOString(),
       // a library on This Mac has no server to upload to, so the hosted answers stay as they are (the page's setup)
       ...(watchAllowed(user.username) ? {} : hostedSettings(HOSTED_DEFAULT)),

@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, fileBlur, fileProxy, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, fileBlur, fileProxy, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, makesProxyOf, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -587,7 +587,7 @@ export async function afterProbe(
   // blurred copy, by the Mac that made the copy (its send, or its own proxy job: on-mac.ts); this server cuts none of one
   // the add's own answer (the add sheet): Skip processing makes none, Generate proxies one whatever the switch says
   const asked = fileProxy(v.id);
-  if (v.kind !== "image" && !isBlurred(v.id) && fileBlur(v.id)?.blur !== "yes" && asked !== "no" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && (asked === "yes" || librarySetting(v.library_id, "proxy")) })) want("proxy");
+  if (v.kind !== "image" && !isBlurred(v.id) && fileBlur(v.id)?.blur !== "yes" && asked !== "no" && wantsProxy(p, { cloud: (!originalsOnly && proxiesInCloud(v.library_id)) || onlyProxy, on: !originalsOnly && (asked === "yes" || makesProxyOf(v.library_id, v.id)) })) want("proxy");
   // Analysis effort (UNIFIED-PRD §4.4): Off makes no transcript on import, so no AI call
   if (p.acodec && !music && librarySetting(v.library_id, "transcribe")) enqueueJob(db, v.library_id, v.id, "transcribe", actor);
   // the duplicate check compares videos only (similar.ts): a photo's fingerprint would never be read
