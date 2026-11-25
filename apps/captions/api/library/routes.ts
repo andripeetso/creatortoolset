@@ -1182,56 +1182,6 @@ libraryApp.post("/:id/made/:kind/stop", (c) => {
   return c.json({ files: stopQueued(libraryId, kind, user.username) });
 });
 
-/**
- * POST /api/library/:id/already-blurred { sha256?: string[], all?: true } → { files, versions }: files whose faces were
- * blurred before they came in, marked as their own blurred copy (asset_versions.blurred_of, the link a computer's blurred
- * render keeps to its original), so every path reads them blurred: their pictures show, they may leave. `sha256`: the
- * files with these SHA-256s (a catalog's certified masters); `all`: every file here. A file kept as filmed on purpose
- * (its own answer or its folder's) is left as it is. `{ unmark: versions }` is Undo: those lose the link again, where it
- * names the file itself. The owner's or an admin's, as keeping a file as filmed is. Nothing is queued.
- */
-libraryApp.post("/:id/already-blurred", async (c) => {
-  const user = c.get("user");
-  const libraryId = c.req.param("id");
-  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
-  if (!mayKeepAsFilmed(user.username, libraryId)) return c.json({ error: "Only the workspace owner or an admin can mark files as blurred", code: "forbidden" }, 403);
-  const b = (await c.req.json().catch(() => null)) as { sha256?: unknown; all?: unknown; unmark?: unknown } | null;
-  const d = db();
-  if (Array.isArray(b?.unmark)) {
-    const back = d.prepare(
-      `UPDATE asset_versions SET blurred_of = NULL WHERE id = ? AND blurred_of IN (sha256, full_sha256, id)
-         AND asset_id IN (SELECT id FROM assets WHERE library_id = ?)`,
-    );
-    const ids = b.unmark.filter((v): v is string => typeof v === "string");
-    const files = ids.reduce((n, id) => n + Number(back.run(id, libraryId).changes), 0);
-    if (files) libraryChanged(libraryId);
-    return c.json({ files, versions: [] });
-  }
-  const want = new Set(Array.isArray(b?.sha256) ? b.sha256.filter((s): s is string => typeof s === "string" && /^[a-f0-9]{64}$/.test(s)) : []);
-  if (b?.all !== true && !want.size) return c.json({ error: "Send sha256 or all", code: "invalid" }, 400);
-  const rows = d
-    .prepare(
-      `SELECT v.id, v.sha256, v.full_sha256 FROM asset_versions v JOIN assets a ON a.id = v.asset_id
-       WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.blurred_of IS NULL AND IFNULL(a.blur, '') != 'no'
-         AND NOT EXISTS (SELECT 1 FROM collection_items fi JOIN collections fc ON fc.id = fi.collection_id WHERE fi.asset_id = a.id AND fc.blur = 'no')`,
-    )
-    .all(libraryId) as { id: string; sha256: string | null; full_sha256: string | null }[];
-  const hit = rows.filter((r) => b?.all === true || want.has(r.sha256 ?? "") || want.has(r.full_sha256 ?? ""));
-  const mark = d.prepare("UPDATE asset_versions SET blurred_of = ? WHERE id = ? AND blurred_of IS NULL");
-  d.exec("BEGIN");
-  try {
-    for (const r of hit) {
-      mark.run(r.full_sha256 ?? r.sha256 ?? r.id, r.id);
-    }
-    d.exec("COMMIT");
-  } catch (e) {
-    d.exec("ROLLBACK");
-    throw e;
-  }
-  if (hit.length) libraryChanged(libraryId);
-  return c.json({ files: hit.length, versions: hit.map((r) => r.id) });
-});
-
 // POST /api/library/:id/stop → { files }: Stop, every kind's queued work taken off the queue (each Cancel at once)
 libraryApp.post("/:id/stop", (c) => {
   const user = c.get("user");

@@ -3,7 +3,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
 import { chooseDialog } from "@/lib/dialogs";
-import { updateLibrary } from "@/lib/library";
+import { getStatus, updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
@@ -131,7 +131,9 @@ function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (
   // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one.
   // Turning it on asks once whether the files already here are blurred too (blurExisting) or kept as filmed.
   const setBlur = async (v: boolean) => {
-    const existing = v ? await chooseDialog({ title: LIBRARY_WORDS.blurExisting.title, ok: LIBRARY_WORDS.blurExisting.yes, other: LIBRARY_WORDS.blurExisting.no }) : "other";
+    // an empty library has nothing to ask about (a failed count asks anyway)
+    const clips = v ? (await getStatus(library.id).catch(() => null))?.clips : 0;
+    const existing = clips === 0 ? "other" : await chooseDialog({ title: LIBRARY_WORDS.blurExisting.title, ok: LIBRARY_WORDS.blurExisting.yes, other: LIBRARY_WORDS.blurExisting.no });
     if (!existing) return;
     await save({ blurFaces: v, ...(v ? { proxy: false, blurExisting: existing === "ok" } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
   };

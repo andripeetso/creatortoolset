@@ -145,37 +145,17 @@ describe("Blur faces turned on and off", () => {
   });
   it("on with Blur all files: the clips already here are blurred, each one handed to Face Blur", async () => {
     await patch({ blurFaces: false, upload: "all" });
-    const old = await upload("lib_blur", "before-all.mp4");
+    const [old, kept] = [await upload("lib_blur", "before-all.mp4"), await upload("lib_blur", "kept-all.mp4")];
     await drain(["probe"]);
+    d.prepare("UPDATE assets SET blur = 'no' WHERE current_version_id = ?").run(kept);
     const asked: string[] = [];
     const off = onEvent("library.version.blur", (e) => void asked.push(e.versionId));
     await patch({ blurFaces: true, blurExisting: true, proxy: false, upload: "proxies" });
     off();
     expect(blurOf(old)).toBeNull(); // follows the switch: yes
     expect(asked).toContain(old);
+    expect(asked).not.toContain(kept); // kept as filmed on purpose
     await patch({ blurFaces: false });
   });
 });
 
-describe("files already blurred when they came in", () => {
-  const mark = (body: object) => app.request("/api/library/lib_on/already-blurred", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const row = (id: string) => d.prepare("SELECT v.blurred_of, v.sha256, v.full_sha256 FROM asset_versions v WHERE v.id = ?").get(id) as { blurred_of: string | null; sha256: string; full_sha256: string | null };
-  it("a SHA-256 marks that file as its own blurred copy and no other; all marks the rest but a file kept as filmed; Undo; nothing queued", async () => {
-    const [master, other, kept] = [await upload("lib_on", "master.mp4"), await upload("lib_on", "other.mp4"), await upload("lib_on", "kept.mp4")];
-    d.prepare("UPDATE assets SET blur = 'no' WHERE current_version_id = ?").run(kept);
-    await drain(["probe"]);
-    const sha = row(master).full_sha256 ?? row(master).sha256;
-    expect((await mark({ sha256: ["not-a-sha"] })).status).toBe(400);
-    const before = (d.prepare("SELECT COUNT(*) AS n FROM jobs").get() as { n: number }).n;
-    expect(await (await mark({ sha256: [sha] })).json()).toEqual({ files: 1, versions: [master] });
-    expect(row(master).blurred_of).toBe(sha);
-    expect(row(other).blurred_of).toBeNull();
-    const all = (await (await mark({ all: true })).json()) as { files: number; versions: string[] };
-    expect(row(other).blurred_of).not.toBeNull();
-    expect(row(kept).blurred_of).toBeNull(); // kept as filmed on purpose
-    expect(((await (await mark({ unmark: all.versions })).json()) as { files: number }).files).toBe(all.files);
-    expect(row(other).blurred_of).toBeNull();
-    expect(row(master).blurred_of).toBe(sha); // not part of that Undo
-    expect((d.prepare("SELECT COUNT(*) AS n FROM jobs").get() as { n: number }).n).toBe(before);
-  });
-});
