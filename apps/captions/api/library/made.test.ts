@@ -24,7 +24,7 @@ process.env.DATA_DIR = dir;
 delete process.env.APP_SECRET; // the solo install: "local" is the admin
 const { libraryDb } = await import("./db");
 const { enqueueJob } = await import("./jobs");
-const { engineOf, libraryMade, makeMissing, retryEmptyPictures, retryFailed, stopQueued } = await import("./made");
+const { engineOf, libraryMade, makeMissing, retryEmptyPictures, retryFailed, STILLS_FIXED_AT, stopQueued } = await import("./made");
 const { queueLook, sweepLook } = await import("./shots");
 const { libraryApp } = await import("./routes");
 const { leaveToComputers } = await import("./worker");
@@ -98,6 +98,9 @@ describe("what's made", () => {
     expect(retryEmptyPictures()).toBe(1);
     expect(job(bare, "send")?.state).toBe("queued");
     expect(job(archived, "send")?.state).toBe("failed");
+    // one that failed again on a fixed computer is a failure of its own: never sent again at each start
+    d.prepare("UPDATE jobs SET state = 'failed', error = ?, started_at = ? WHERE version_id = ? AND kind = 'send'").run(empty, STILLS_FIXED_AT + 1, bare);
+    expect(retryEmptyPictures()).toBe(0);
   });
 
   it("turning a switch on makes for new files only, never the ones already here", async () => {

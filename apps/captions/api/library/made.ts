@@ -333,13 +333,16 @@ export function retryFailed(libraryId: string, kind: string): number {
 /**
  * The jobs that failed only because a photo's card picture came out empty (media/thumb.ts seeked into a
  * one-frame file, so the encoder wrote nothing and the rename failed) are queued again; once they land the clip is ready.
- * Asked by a computer that reads photos with no seek (work/routes.ts): an older one would fail them again.
+ * Asked by a computer that reads photos with no seek (work/routes.ts): an older one would fail them again. Only a try
+ * from before the fixed Mac app was out (0.26.0): one that failed after it fails for another reason, and sending it
+ * again at every server start put it back on the Preparing bar after each deploy.
  */
+export const STILLS_FIXED_AT = Date.parse("2026-11-24T22:00:00Z");
 export function retryEmptyPictures(): number {
   const db = libraryDb();
   const rows = db
-    .prepare("SELECT library_id, version_id, kind, actor FROM jobs WHERE state = 'failed' AND error LIKE '%ENOENT%.jpg.part.jpg%'")
-    .all() as { library_id: string; version_id: string; kind: string; actor: string | null }[];
+    .prepare("SELECT library_id, version_id, kind, actor FROM jobs WHERE state = 'failed' AND error LIKE '%ENOENT%.jpg.part.jpg%' AND IFNULL(started_at, 0) < ?")
+    .all(STILLS_FIXED_AT) as { library_id: string; version_id: string; kind: string; actor: string | null }[];
   for (const r of rows) enqueueJob(db, r.library_id, r.version_id, r.kind, r.actor);
   return rows.length;
 }
