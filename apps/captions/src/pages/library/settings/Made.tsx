@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { AlertCircle, Check, CircleOff, Clock } from "lucide-react";
-import { hostsProxies, LIBRARY_WORDS, MADE_KINDS, type LibraryMade, type LibrarySettings, type LibrarySummary } from "@contracts/library";
+import { hostsProxies, LIBRARY_WORDS, MADE_KINDS, makesProxies, type LibraryMade, type LibrarySettings, type LibrarySummary } from "@contracts/library";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Card, ErrorRow, LoadingRow, Row, Section } from "@/components/settings/ui";
@@ -55,8 +55,9 @@ export function stateOf(m: LibraryMade, on: boolean, auto = false): { tone: Tone
   return { tone: m.have ? "done" : "off", text: m.have ? "Done" : "No files of this kind" };
 }
 
-/** A kind's switch for new files, on unless turned off (a kind with none is always made). */
-const onFor = (k: (typeof MADE_KINDS)[number], library: LibrarySummary) => (k.setting ? library.settings[k.setting] !== false : true);
+/** A kind's switch for new files, on unless turned off (a kind with none is always made); proxies as the Proxy workflow section reads them. */
+const onFor = (k: (typeof MADE_KINDS)[number], library: LibrarySummary) =>
+  k.kind === "proxy" ? makesProxies(library.settings) : k.setting ? library.settings[k.setting] !== false : true;
 
 /**
  * The library's health at a glance (the status button): red when a kind failed, amber when one waits or is not made,
@@ -149,6 +150,9 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
           const rest = total && state.tone !== "done" ? `${n(m.have)} of ${n(total)} made` : "";
           const runs = engineLine(m);
           const why = missingWhy(m);
+          // off: stopped or failed jobs are not wanted (no Retry); proxies off are not made at all (no Make)
+          const retry = on && !!(m.failed || m.stopped);
+          const makes = m.missing > 0 && !k.auto && (on || k.kind !== "proxy");
           return (
             <Row
               key={m.kind}
@@ -177,9 +181,9 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
                 )
               }
             >
-              {(!!(m.failed || m.stopped) || (m.queued > 0 && ((m.why && m.href) || (!k.auto && !k.ready))) || (m.missing > 0 && !k.auto)) && (
+              {(retry || (m.queued > 0 && ((m.why && m.href) || (!k.auto && !k.ready))) || makes) && (
                 <span className="flex flex-wrap items-center gap-2">
-                  {!!(m.failed || m.stopped) && (
+                  {retry && (
                     <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(`retry-${m.kind}`, "retry", () => retryFailed(library.id, m.kind))}>
                       {busy === `retry-${m.kind}` ? "Queueing" : "Retry"}
                     </Button>
@@ -194,7 +198,7 @@ export function Made({ library, save, onSettings }: { library: LibrarySummary; s
                       {busy === `cancel-${m.kind}` ? "Canceling" : "Cancel"}
                     </Button>
                   )}
-                  {m.missing > 0 && !k.auto && (
+                  {makes && (
                     <Button variant="outline" size="sm" title={makeWhat(m).replace(/^./, (c) => c.toUpperCase())} disabled={busy !== null || !!m.needs} onClick={() => void make(m, k.label)}>
                       {busy === `make-${m.kind}` ? "Queueing" : `Make ${n(m.missing)} missing`}
                     </Button>

@@ -1,4 +1,4 @@
-import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, hostsProxies, levelOf, organizeOf, proxyQualityOf, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
+import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, hostsProxies, levelOf, makesProxies, organizeOf, proxyQualityOf, type LibrarySettings as Settings, type LibrarySpace, type LibraryStorage, type LibrarySummary, type WatchStatus } from "@contracts/library";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
@@ -6,7 +6,7 @@ import { chooseDialog } from "@/lib/dialogs";
 import { getStatus, updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
-import { useMe } from "@/lib/auth";
+import { useAuth, useMe } from "@/lib/auth";
 import { faceBlurOn } from "./face-blur";
 import { thisComputer, storeName } from "../LibraryStorage";
 import { LibraryCopies } from "./Copies";
@@ -59,7 +59,7 @@ export function LibrarySettings({ open, onOpenChange, ...body }: BodyProps & { o
  * The settings themselves, in the sheet and in Settings → Media Library. `workspace`: the workspace the Folders are read
  * for (Settings' selector); left out, the window's own workspace. A viewer who is not the owner gets the member page.
  */
-export function LibrarySettingsBody({ library, watch, onChange, onError, workspace }: BodyProps & { workspace?: string | null }) {
+export function LibrarySettingsBody({ library, onChange, onError, workspace }: BodyProps & { workspace?: string | null }) {
   const windowWorkspace = useWorkspace((s) => s.currentProjectId);
   const me = useMe();
   const faceBlur = useWorkspace((st) => faceBlurOn(me, st.pluginsOff, workspace ?? st.currentProjectId));
@@ -82,7 +82,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
         <Proxies library={library} save={save} faceBlur={faceBlur} />
       </Section>
       <Section title={LIBRARY_WORDS.hostedTitle}>
-        <Hosted library={library} watch={watch} save={save} />
+        <Hosted library={library} save={save} />
       </Section>
       <OwnerDownloads library={library} />
       <Section title={LIBRARY_WORDS.analysisTitle}>
@@ -125,7 +125,7 @@ function Organization({ settings, save }: { settings: Settings; save: (s: Partia
 function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (s: Partial<Settings> & { blurExisting?: boolean }) => Promise<unknown>; faceBlur: boolean }) {
   const s = library.settings;
   const hosted = hostsProxies(s.upload);
-  const on = !s.blurFaces && (hosted || s.proxy);
+  const on = makesProxies(s);
   const gen = LIBRARY_WORDS.generateProxies;
   const blur = LIBRARY_WORDS.blurFaces;
   // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one.
@@ -173,10 +173,11 @@ function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (
 /**
  * Hosted media: the Upload to server master and Final exports, Proxies and Originals under it in any mix, the same
  * component as setup's last step (./settings/Hosted.tsx). On This Mac, with the server on this computer, there is no
- * server to upload to: the row says so and nothing else is shown.
+ * server to upload to: the row says so and nothing else is shown. Read from the server's kind: a Server opened in the
+ * Mac app by its admin also watches folders, and hiding its switches there left hosted proxies locked on.
  */
-function Hosted({ library, watch, save }: { library: LibrarySummary; watch: WatchStatus; save: (s: Partial<Settings>) => Promise<unknown> }) {
-  const noServer = !!thisMacBridge() && watch.allowed;
+function Hosted({ library, save }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown> }) {
+  const noServer = useAuth((a) => a.kind) === "mac";
   return (
     <Card>
       {noServer ? (

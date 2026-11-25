@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryMade } from "@contracts/library";
-import { costWords, engineLine, makeWhat, missingWhy, stateOf } from "./Made";
+import type { LibraryMade, LibrarySummary } from "@contracts/library";
+import { costWords, engineLine, healthOf, makeWhat, missingWhy, stateOf } from "./Made";
 
 const m = (o: Partial<LibraryMade>): LibraryMade => ({ kind: "fingerprint", have: 0, missing: 0, queued: 0, cost: "free", ...o });
 
@@ -28,5 +28,16 @@ describe("What's made: a kind's state at a glance", () => {
     expect(missingWhy(m({ missing: 838, broll: 700, skipped: { n: 120, why: "no sound, or music" } }))).toBe("Mostly B-roll · 120 files skipped: no sound, or music");
     expect(missingWhy(m({ missing: 10, broll: 2 }))).toBe("");
     expect(makeWhat(m({ missing: 21, where: "Studio Mac" }))).toBe("queues 21 jobs that run on Studio Mac, and Cancel takes off the ones still waiting");
+  });
+});
+
+describe("What's made: proxies count only while plain proxies are made", () => {
+  const lib = (settings: Partial<LibrarySummary["settings"]>) => ({ settings: { proxy: true, upload: "none", ...settings } }) as unknown as LibrarySummary;
+  const stopped = [m({ kind: "proxy", have: 747, stopped: 904 })];
+  it("off under Blur faces (the blurred render is the proxy), even with proxies hosted; on while hosted or switched on", () => {
+    expect(healthOf(stopped, lib({ blurFaces: true, upload: "proxies", proxy: false }))).toBe("done");
+    expect(healthOf(stopped, lib({ proxy: false }))).toBe("done");
+    expect(healthOf(stopped, lib({ proxy: false, upload: "all" }))).toBe("waiting");
+    expect(healthOf(stopped, lib({}))).toBe("waiting");
   });
 });

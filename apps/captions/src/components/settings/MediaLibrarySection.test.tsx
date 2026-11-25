@@ -78,7 +78,7 @@ afterEach(() => {
   root = host = undefined;
   clearLocalCache();
   resetWorkspacePick();
-  useAuth.setState({ me: null });
+  useAuth.setState({ me: null, kind: "server" });
   useWorkspace.setState({ loaded: false, currentProjectId: null, projects: [] });
   vi.unstubAllGlobals();
   // between tests and after the last, no request may reach the network: one would be a page still mounted
@@ -180,9 +180,18 @@ describe("Settings → Media Library, the owner's page", () => {
   it("on This Mac with no server connected, Upload to server says so and offers no choice, whatever is stored", async () => {
     serverHere = true;
     const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all" } };
+    useAuth.setState({ kind: "mac" });
     await render(<LibrarySettingsBody library={stored} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
     expect(bodyText()).toContain("No server connected");
     expect(host!.querySelector('button[role="switch"][aria-label="Proxies"]')).toBeNull();
+  });
+
+  it("a Server opened in the Mac app by its admin keeps its Upload to server choices, so hosted proxies can be turned off", async () => {
+    serverHere = true;
+    useAuth.setState({ kind: "server" });
+    const stored: LibrarySummary = { ...library, settings: { ...SETTINGS, upload: "all" } };
+    await render(<LibrarySettingsBody library={stored} watch={{ ...watch, allowed: true }} onChange={() => {}} onError={() => {}} />);
+    expect(bodyText()).not.toContain("No server connected");
   });
 
   it("with Use default folders off, a Source media folder not chosen yet shows Set…", async () => {
