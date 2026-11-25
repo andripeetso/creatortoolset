@@ -720,7 +720,7 @@ export function watchAfter(db: DatabaseSync, versionId: string, src: () => Promi
   return run;
 }
 
-/** When the sweep may look at a version again (ms). */
+/** When the sweep last queued a version (ms): it looks again RETRY_MS later, or at once after a press of Make for the missing. */
 const swept = new Map<string, number>();
 
 /**
@@ -734,20 +734,22 @@ export function sweepWatch(db: DatabaseSync, queueLook: (versionId: string, acto
   if (watching.size >= WATCHES_AT_ONCE) return false;
   const rows = db
     .prepare(
-      `SELECT v.id, v.created_by AS actor, a.library_id AS lib FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
+      `SELECT v.id, v.created_by AS actor, a.library_id AS lib, ${PRESSED_AT} AS pressed FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          JOIN jobs j ON j.version_id = v.id AND j.kind = 'look' AND j.state = 'done'
          JOIN libraries l ON l.id = a.library_id LEFT JOIN timelines t ON t.version_id = v.id
        WHERE a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.created_by IS NOT NULL AND (${AUTO} OR ${PRESSED})
-         AND (t.version_id IS NULL OR (t.error IS NOT NULL AND t.at <= ?) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
+         AND (t.version_id IS NULL OR (t.error IS NOT NULL AND (t.at <= ? OR ${PRESSED})) OR (t.error IS NULL AND IFNULL(t.level, '') != IFNULL(json_extract(l.settings, '$.lookLevel'), 'standard'))
               OR (t.error IS NULL AND t.model = 'antigravity' AND IFNULL(json_extract(l.settings, '$.timelineModel'), '') != 'antigravity'))
        ORDER BY v.created_at DESC LIMIT 50`,
     )
-    .all(now - RETRY_MS) as { id: string; actor: string; lib: string }[];
+    .all(now - RETRY_MS) as { id: string; actor: string; lib: string; pressed: number }[];
   for (const r of rows) {
-    if ((swept.get(r.id) ?? 0) > now || watching.has(r.id)) continue;
+    const at = swept.get(r.id);
+    // a failed watch waits RETRY_MS, unless Make for the missing was pressed since (What's made counts it queued then)
+    if ((at !== undefined && at + RETRY_MS > now && r.pressed <= at) || watching.has(r.id)) continue;
     // no key or Antigravity for its uploader yet: passed over, not set aside, so a key saved later starts it on the next sweep
     if (!canWatch(db, r.lib, r.actor)) continue;
-    swept.set(r.id, now + RETRY_MS);
+    swept.set(r.id, now);
     if (queueLook(r.id, r.actor)) return true;
   }
   return false;

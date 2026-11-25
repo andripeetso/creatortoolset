@@ -405,6 +405,13 @@ describe("in the look job", () => {
     expect(wantsWatch(libraryDb(), v, "local", Date.now() + RETRY_MS + 1000)).toBe(true);
     // a real failure keeps its wait in the sweep too
     expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
+    // Make for the missing pressed since: What's made counts it queued, so the sweep takes it now, not RETRY_MS later
+    libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineAsked', ?) WHERE id = 'lib_t'`).run(Date.now() + 1);
+    try {
+      expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(true);
+    } finally {
+      libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineAsked') WHERE id = 'lib_t'`).run();
+    }
   });
 
   it("the sweep watches on the uploader's own key, never another account's", async () => {
