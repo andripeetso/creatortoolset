@@ -255,10 +255,10 @@ describe("Folder access (the Mac app's read list)", () => {
     expect(html.match(/>Allow</g)).toHaveLength(1);
   });
 
-  it("lists the first five folders and puts the rest behind Show more", () => {
+  it("lists the five newest folders first and puts the rest behind Show more", () => {
     const folders = Array.from({ length: 7 }, (_, i) => `/Volumes/NAS/F${i}`);
     const html = draw(folders, folders);
-    expect(html.match(/aria-label="Actions for F\d"/g)).toHaveLength(5);
+    expect(html.match(/aria-label="Actions for F\d"/g)).toEqual([6, 5, 4, 3, 2].map((i) => `aria-label="Actions for F${i}"`));
     expect(html).toContain("Show 2 more");
     expect(draw(folders.slice(0, 5), [])).not.toContain("more");
   });

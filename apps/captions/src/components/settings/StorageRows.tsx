@@ -304,7 +304,9 @@ export function AllowedRows({ list, busy, onAsk, onRemove }: {
   list: ReadList; busy: boolean; onAsk: (start: string) => () => Promise<void>; onRemove: (folder: string) => Promise<void>;
 }) {
   const [all, setAll] = useState(false);
-  const shown = all ? list.folders : list.folders.slice(0, FOLDERS_SHOWN);
+  // newest first: a folder just added is the top row, never behind Show more
+  const newest = [...list.folders].reverse();
+  const shown = all ? newest : newest.slice(0, FOLDERS_SHOWN);
   return (
     <>
       <Row
@@ -347,7 +349,7 @@ export function AllowedRows({ list, busy, onAsk, onRemove }: {
       })}
       {list.folders.length > FOLDERS_SHOWN && (
         <div className="px-4 py-2 pl-8 sm:pl-10">
-          <Button type="button" variant="ghost" size="xs" aria-expanded={all} onClick={() => setAll(!all)}>
+          <Button type="button" variant="ghost" size="xs" className="-ml-2" aria-expanded={all} onClick={() => setAll(!all)}>
             {all ? "Show less" : `Show ${list.folders.length - FOLDERS_SHOWN} more`}
             <ChevronDown className={cn("transition-transform", all && "rotate-180")} />
           </Button>
