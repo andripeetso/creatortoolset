@@ -584,8 +584,9 @@ const faceBlur = definePlugin({
     const queue = (e: { libraryId: string; versionId: string; owner: string }) => void queueVersion(e).catch((err: unknown) => console.warn(`[blur-faces] ${(err as Error).message}`));
     onEvent("library.version.probed", queue);
     onEvent("library.version.blur", queue);
-    // the library's Stop holds the automatic covers too, until the switch in Settings → Face Blur turns them on again
-    onEvent("library.stopped", ({ libraryId, by }) => setHeld(libraryAccount(libraryId) ?? by, true));
+    // the owner's Stop holds the automatic covers too, until the switch in Settings → Face Blur turns them on again; a
+    // member's Stop leaves them: the hold is the owner's, for every library, and only the owner's switch lifts it
+    onEvent("library.stopped", ({ libraryId, by }) => (by === (libraryAccount(libraryId) ?? by) ? setHeld(by, true) : undefined));
     // after start-up, so a long list never holds the server's first requests
     setTimeout(() => void sweep().catch((err: unknown) => console.warn(`[blur-faces] sweep: ${(err as Error).message}`)), 5_000).unref();
   },

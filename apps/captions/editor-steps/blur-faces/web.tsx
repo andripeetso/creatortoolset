@@ -361,8 +361,8 @@ function Preview({ settings, style }: { settings: Settings; style: Style }) {
 /** plugin.ts GET /auto: what stops new Media Library files (Needs…, a pause at the usage limit) and the files that failed. */
 function useAuto() {
   const [auto, setAuto] = useState<Auto | null>(null);
-  const load = () => void call<Auto>(`${API}/auto`).then(setAuto, () => setAuto(null));
-  useEffect(load, []);
+  const load = () => call<Auto>(`${API}/auto`).then(setAuto, () => setAuto(null));
+  useEffect(() => void load(), []);
   return { auto, load };
 }
 
@@ -371,14 +371,21 @@ function useAuto() {
  * library's Stop does), and under it what stops them (Needs…, a pause at the usage limit).
  */
 function AutoStatus({ auto, load }: ReturnType<typeof useAuto>) {
+  // off while a flip saves: two quick flips could land on the server in either order
+  const [busy, setBusy] = useState(false);
   if (!auto) return null;
-  const turn = (on: boolean) => markSave(call(`${API}/auto`, "PUT", { on })).then(load, (e: Error) => saveFailed(e.message));
+  const turn = (on: boolean) => {
+    setBusy(true);
+    void markSave(call(`${API}/auto`, "PUT", { on }))
+      .then(load, (e: Error) => saveFailed(e.message))
+      .finally(() => setBusy(false));
+  };
   const why = !auto.can ? auto.why : auto.pausedUntil ? `Paused until ${new Date(auto.pausedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : undefined;
   return (
     <Row
       title="New Media Library files"
       description={auto.held ? undefined : why}
-      control={<Switch aria-label="New Media Library files" checked={!auto.held} onCheckedChange={(on) => void turn(on)} />}
+      control={<Switch aria-label="New Media Library files" checked={!auto.held} disabled={busy} onCheckedChange={turn} />}
     />
   );
 }

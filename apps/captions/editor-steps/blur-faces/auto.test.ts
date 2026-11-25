@@ -196,7 +196,12 @@ describe("the Mac that has the file", () => {
 
     // the library's Stop holds it as well, until the switch turns it on again
     plugin.start?.();
-    (await import("../../api/lib/events")).emitEvent("library.stopped", { libraryId: "lib_a", by: "ana" });
+    const { emitEvent } = await import("../../api/lib/events");
+    // a member's Stop leaves the owner's covers running: the hold is the owner's to lift
+    emitEvent("library.stopped", { libraryId: "lib_a", by: "bo" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await auto()).held).toBe(false);
+    emitEvent("library.stopped", { libraryId: "lib_a", by: "ana" });
     await vi.waitFor(async () => expect((await auto()).held).toBe(true));
     await call("PUT", "/auto", { on: true });
     expect(autoJobs.claim(mac)).toBeTruthy();
