@@ -41,7 +41,8 @@ export function HostedSwitches({ value, onChange, blurFaces, onBlurFaces, proxie
       <Row title={LIBRARY_WORDS.uploadToServer} control={<Switch aria-label={LIBRARY_WORDS.uploadToServer} checked={on} onCheckedChange={master} />} />
       {on &&
         (blurFaces ? [FINALS, BLURRED, PROXIES] : [FINALS, PROXIES, ORIGINALS])
-          .filter((p) => proxies || p !== PROXIES)
+          // a Proxies part stored on from before (Generate proxies off) stays in sight, so it can be turned off
+          .filter((p) => proxies || value.proxies || p !== PROXIES)
           .map((p) => (
           <Row
             key={p.key}

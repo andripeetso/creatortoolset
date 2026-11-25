@@ -10,10 +10,10 @@ import { HostedSwitches } from "./Hosted";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ALL: HostedMix = { finals: true, proxies: true, originals: true };
-function draw(blurFaces: boolean | undefined, onBlurFaces?: (on: boolean, m: HostedMix) => void, proxies?: boolean) {
+function draw(blurFaces: boolean | undefined, onBlurFaces?: (on: boolean, m: HostedMix) => void, proxies?: boolean, value = ALL) {
   const el = document.createElement("div");
   document.body.append(el);
-  act(() => createRoot(el).render(<HostedSwitches value={ALL} onChange={() => {}} blurFaces={blurFaces} onBlurFaces={onBlurFaces} proxies={proxies} />));
+  act(() => createRoot(el).render(<HostedSwitches value={value} onChange={() => {}} blurFaces={blurFaces} onBlurFaces={onBlurFaces} proxies={proxies} />));
   return el;
 }
 const rows = (el: HTMLElement) => [...el.querySelectorAll('[role="switch"]')].map((s) => s.getAttribute("aria-label"));
@@ -31,9 +31,12 @@ describe("HostedSwitches and Blur faces", () => {
 
   it("Proxies shows only while Generate proxies is on, with Blur faces or without", () => {
     expect(rows(draw(false, undefined, true))).toEqual(["Upload to server", "Final exports", "Proxies", "Originals"]);
-    expect(rows(draw(false, undefined, false))).toEqual(["Upload to server", "Final exports", "Originals"]);
+    const noProxies = { ...ALL, proxies: false };
+    expect(rows(draw(false, undefined, false, noProxies))).toEqual(["Upload to server", "Final exports", "Originals"]);
     expect(rows(draw(true, undefined, true))).toEqual(["Upload to server", "Final exports", "Blurred", "Proxies"]);
-    expect(rows(draw(true, undefined, false))).toEqual(["Upload to server", "Final exports", "Blurred"]);
+    expect(rows(draw(true, undefined, false, noProxies))).toEqual(["Upload to server", "Final exports", "Blurred"]);
+    // a library from before, its Proxies part stored on with Generate proxies off: the row stays, so it can be turned off
+    expect(rows(draw(false, undefined, false))).toEqual(["Upload to server", "Final exports", "Proxies", "Originals"]);
   });
 
   it("the master on again brings back the mix without Proxies, where Generate proxies went off meanwhile", () => {
