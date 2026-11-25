@@ -305,18 +305,23 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
  * Mac indexed it or a place it reported (11-19: photos indexed in place came in grey when the page couldn't decode them).
  * The Mac app makes each one's thumbnail and hands it in (putThumb), with no re-import.
  */
-export function noPicture(libraryId: string, device: string, limit = 500): { versionId: string; path: string }[] {
-  const rows = libraryDb()
+export function noPicture(libraryId: string, device: string, limit = 500, after?: string): { versionId: string; path: string }[] {
+  return libraryDb()
     .prepare(
-      `SELECT v.id AS versionId, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
+      `SELECT versionId, path FROM (SELECT v.id AS versionId, a.created_at AS at, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
         WHERE a.library_id = ? AND a.kind = 'image' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
-        ORDER BY a.created_at DESC LIMIT ?`,
+          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb') ${after ? AFTER : ""})
+        WHERE path IS NOT NULL ORDER BY at DESC, versionId DESC LIMIT ?`,
     )
-    .all(device, device, libraryId, limit) as { versionId: string; path: string | null }[];
-  return rows.filter((r): r is { versionId: string; path: string } => !!r.path);
+    .all(device, device, libraryId, ...(after ? [after] : []), limit) as { versionId: string; path: string }[];
 }
+
+/**
+ * A sweep's next page: the versions after version `?` in its order (newest first), so a file that can't be read here (its
+ * disk not connected) is passed over, never listed again at the top of each page until a page of them stops the sweep.
+ */
+const AFTER = `AND (a.created_at, v.id) < (SELECT ca.created_at, cv.id FROM asset_versions cv JOIN assets ca ON ca.id = cv.asset_id WHERE cv.id = ?)`;
 
 /** A picture's thumbnail handed in for a version of `libraryId` (a JPEG under 1 MB): false when it isn't one or the version isn't the library's. */
 export async function putThumb(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
@@ -354,20 +359,20 @@ async function keepJpeg(libraryId: string, versionId: string, kind: "thumb" | "s
  * that became the clip's version on a Mac) is listed too, `thumb` when its card picture is missing.
  * shortcut: looks at the newest 500 a pass; a library with more settles them over later passes
  */
-export function strayStrips(libraryId: string, device: string, limit = 50): { versionId: string; path: string; thumb?: true }[] {
+export function strayStrips(libraryId: string, device: string, limit = 50, after?: string): { versionId: string; path: string; thumb?: true }[] {
   const d = libraryDb();
   const rows = d
     .prepare(
-      `SELECT v.id AS versionId, v.probe, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path,
+      `SELECT * FROM (SELECT v.id AS versionId, a.created_at AS at, v.probe, COALESCE(CASE WHEN v.mac_device = ? THEN v.mac_path END, ${OWN}) AS path,
               s.version_id IS NOT NULL AS strip, s.cell_w IS NOT NULL AS sized,
               EXISTS (SELECT 1 FROM derivatives t WHERE t.version_id = v.id AND t.kind = 'thumb') AS pictured
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
          LEFT JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite'
         WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
-          AND (s.version_id IS NULL OR s.cell_w IS NULL OR NOT EXISTS (SELECT 1 FROM derivatives t WHERE t.version_id = v.id AND t.kind = 'thumb'))
-        ORDER BY a.created_at DESC LIMIT 500`,
+          AND (s.version_id IS NULL OR s.cell_w IS NULL OR NOT EXISTS (SELECT 1 FROM derivatives t WHERE t.version_id = v.id AND t.kind = 'thumb')) ${after ? AFTER : ""})
+        WHERE path IS NOT NULL ORDER BY at DESC, versionId DESC LIMIT 500`,
     )
-    .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null; strip: number; sized: number; pictured: number }[];
+    .all(device, device, libraryId, ...(after ? [after] : [])) as { versionId: string; probe: string | null; path: string | null; strip: number; sized: number; pictured: number }[];
   const out: { versionId: string; path: string; thumb?: true }[] = [];
   for (const r of rows) {
     const oldStrip = r.strip && !r.sized;
@@ -376,7 +381,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
       d.prepare("UPDATE derivatives SET cell_w = ?, cell_h = ? WHERE version_id = ? AND kind = 'sprite'").run(OLD_CELL.w, OLD_CELL.h, r.versionId);
       if (r.pictured) continue;
     }
-    if (r.path && out.length < limit) out.push({ versionId: r.versionId, path: r.path, ...(r.pictured ? {} : { thumb: true as const }) });
+    if (out.length < limit) out.push({ versionId: r.versionId, path: r.path, ...(r.pictured ? {} : { thumb: true as const }) });
   }
   return out;
 }

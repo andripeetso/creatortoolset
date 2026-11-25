@@ -345,6 +345,19 @@ describe("strips of frames", () => {
     expect(d.prepare("SELECT state FROM asset_versions WHERE id = 'old'").get()).toEqual({ state: "ready" }); // an extra: the clip stays ready
   });
 
+  it("a clip on this disk whose card picture was deleted gets one once; a failure is not tried again", async () => {
+    const { backfillThumb } = await import("./worker");
+    add("lost", "video", { created: 9e12 }); // newest: picked first
+    d.prepare("INSERT INTO jobs (library_id, version_id, kind, state) VALUES ('lib_a', 'lost', 'thumb', 'done')").run(); // made, then deleted
+    expect(await backfillThumb()).toBe(true);
+    // its file is not video here: the try fails and is kept
+    expect(d.prepare("SELECT state FROM jobs WHERE version_id = 'lost' AND kind = 'thumb'").get()).toEqual({ state: "failed" });
+    while (await backfillThumb()) {
+      /* the other tests' clips with no picture */
+    }
+    expect(await backfillThumb()).toBe(false);
+  });
+
   it("an old 16:9 strip on an upright clip is made again once from this server's copy; one of the clip's shape, or a computer's clip, is never touched", async () => {
     const { backfillSprite } = await import("./worker");
     const shaped = (id: string, w: number, h: number, source = `k/${id}`) => {

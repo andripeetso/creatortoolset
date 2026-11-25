@@ -901,14 +901,14 @@ libraryApp.post("/:id/on-mac", async (c) => {
   return c.json(await indexOnMac(libraryId, user.username, x));
 });
 
-// GET /api/library/:id/no-picture?device= → { versions: [{ versionId, path }] }: this library's photos with no thumbnail
+// GET /api/library/:id/no-picture?device=&after= → { versions: [{ versionId, path }] }: this library's photos with no thumbnail
 // whose file that computer has; the Mac app makes each one's picture and PUTs it (below). The owner, for a computer of theirs.
 libraryApp.get("/:id/no-picture", async (c) => {
   const user = c.get("user");
   const libraryId = c.req.param("id");
   const device = c.req.query("device") ?? "";
   if (!libraryRole(user.username, libraryId) || deviceOf(device)?.owner !== user.username) return c.json({ error: "Not found", code: "not_found" }, 404);
-  return c.json({ versions: noPicture(libraryId, device) });
+  return c.json({ versions: noPicture(libraryId, device, 500, c.req.query("after") || undefined) });
 });
 
 // PUT /api/library/:id/versions/:versionId/thumb { thumb: base64 JPEG } → { ok }: a photo's picture made on the computer
@@ -923,7 +923,7 @@ libraryApp.put("/:id/versions/:versionId/thumb", async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /api/library/:id/stray-strips?device= → { versions: [{ versionId, path }] }: videos whose old 16:9 strip isn't their
+// GET /api/library/:id/stray-strips?device=&after= → { versions: [{ versionId, path }] }: videos whose old 16:9 strip isn't their
 // shape and whose file that computer has; it makes each strip again from the file and PUTs it (below). The owner, for a
 // computer of theirs.
 libraryApp.get("/:id/stray-strips", async (c) => {
@@ -931,7 +931,7 @@ libraryApp.get("/:id/stray-strips", async (c) => {
   const libraryId = c.req.param("id");
   const device = c.req.query("device") ?? "";
   if (!libraryRole(user.username, libraryId) || deviceOf(device)?.owner !== user.username) return c.json({ error: "Not found", code: "not_found" }, 404);
-  return c.json({ versions: strayStrips(libraryId, device) });
+  return c.json({ versions: strayStrips(libraryId, device, 50, c.req.query("after") || undefined) });
 });
 
 // PUT /api/library/:id/versions/:versionId/sprite { sprite: base64 JPEG } → { ok }: a video's strip of frames made again on
@@ -1657,7 +1657,7 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
 }
 
 /** A clip's card picture and strip: kept and shown for every clip, Blur faces or not (owner, 2026-11-24). */
-export const CARD_PICTURES = ["thumb", "sprite"];
+const CARD_PICTURES = ["thumb", "sprite"];
 /** What the server keeps cut from a version: what dropUnblurred takes away. Never its card picture or strip. */
 const UNBLURRED_KINDS = ["proxy", "looksheets"];
 /**

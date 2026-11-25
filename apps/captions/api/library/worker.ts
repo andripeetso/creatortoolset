@@ -387,7 +387,7 @@ export function startLibraryWorker(): () => void {
           // an update waits for the jobs running here: no new one starts until it is done (server-update.ts)
           if (!draining()) {
             busy = await tick(Date.now(), lane.kinds);
-            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillQuick()) || backfillRoots() || (await backfillSoundKinds());
+            if (!busy && lane.name === "files") busy = (await backfillSprite()) || (await backfillThumb()) || (await backfillQuick()) || backfillRoots() || (await backfillSoundKinds());
             // shot descriptions as a constant index: a video that has none and no look queued gets one (shots.ts sweepLook);
             // then the timelines (timeline.ts sweepWatch): a done look that wants one is queued again
             if (!busy && lane.name === "looks") busy = (await sweepLook(libraryDb())) || sweepWatch(libraryDb(), (id, actor) => queueLook(libraryDb(), id, actor, true));
@@ -438,6 +438,38 @@ export async function backfillSprite(): Promise<boolean> {
       v.id,
       e instanceof Error ? e.message : String(e),
     );
+  }
+  return true;
+}
+
+/**
+ * A clip on this server's own disk with no card picture gets one, once, the same way: before 2026-11-24 marking a clip Blur
+ * faces deleted its card picture, and a clip whose only copy is here has no computer to make it again (on-mac.ts strayStrips
+ * covers the rest). A failure is kept as a failed thumb job, so it is not tried again.
+ */
+export async function backfillThumb(): Promise<boolean> {
+  const db = libraryDb();
+  const v = db
+    .prepare(
+      `SELECT v.id, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
+       WHERE a.kind IN ('video', 'image') AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.state = 'ready'
+         AND l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%'
+         AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'thumb' AND j.state <> 'done')
+       ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
+    )
+    .get() as { id: string; library_id: string } | undefined;
+  if (!v) return false;
+  const job: JobRow = { id: 0, library_id: v.library_id, version_id: v.id, kind: "thumb", state: "running", attempts: 1, run_after: 0, lease_until: null, actor: null, error: null };
+  try {
+    await run(job);
+    // a run that made nothing (it returned early) is a failure too, else the lane picks this clip at every idle turn
+    if (!db.prepare("SELECT 1 FROM derivatives WHERE version_id = ? AND kind = 'thumb'").get(v.id)) throw new Error("No card picture made");
+  } catch (e) {
+    db.prepare(
+      `INSERT INTO jobs (library_id, version_id, kind, state, attempts, error) VALUES (?, ?, 'thumb', 'failed', 1, ?)
+       ON CONFLICT (version_id, kind) DO UPDATE SET state = 'failed', error = excluded.error`,
+    ).run(v.library_id, v.id, e instanceof Error ? e.message : String(e));
   }
   return true;
 }

@@ -292,11 +292,13 @@ export async function repairPictures(libraryId: string, signal?: AbortSignal): P
   const device = await deviceHere();
   if (!device) return 0;
   let filled = 0;
-  // pages of 500 until one lands nothing (a picture that can't be made stays listed and would come back the same)
-  for (let page = 0; page < 20; page++) {
-    const r = await fetch(`/api/library/${libraryId}/no-picture?device=${encodeURIComponent(device)}`).catch(() => null);
+  // pages of 500, each after the last one asked (a picture that can't be made here is passed over), to the end of the list
+  for (let after = ""; ; ) {
+    const r = await fetch(`/api/library/${libraryId}/no-picture?device=${encodeURIComponent(device)}&after=${encodeURIComponent(after)}`).catch(() => null);
     if (!r?.ok) break;
     const { versions } = (await r.json()) as { versions: { versionId: string; path: string }[] };
+    if (!versions.length) break;
+    after = versions[versions.length - 1].versionId;
     let landed = 0;
     for (const v of versions) {
       signal?.throwIfAborted();
@@ -307,7 +309,6 @@ export async function repairPictures(libraryId: string, signal?: AbortSignal): P
       if (put?.ok) landed++;
     }
     filled += landed;
-    if (!landed) break;
   }
   return filled;
 }
@@ -324,10 +325,13 @@ export async function repairStrips(libraryId: string, signal?: AbortSignal): Pro
   const put = (versionId: string, kind: "sprite" | "thumb", b64: string) =>
     fetch(`/api/library/${libraryId}/versions/${versionId}/${kind}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ [kind]: b64 }) }).then((r) => r.ok, () => false);
   let made = 0;
-  for (let page = 0; page < 40; page++) {
-    const r = await fetch(`/api/library/${libraryId}/stray-strips?device=${encodeURIComponent(device)}`).catch(() => null);
+  // pages of 50, each after the last one asked: a file not readable here (its disk not connected) never stops the rest
+  for (let after = ""; ; ) {
+    const r = await fetch(`/api/library/${libraryId}/stray-strips?device=${encodeURIComponent(device)}&after=${encodeURIComponent(after)}`).catch(() => null);
     if (!r?.ok) break;
     const { versions } = (await r.json()) as { versions: { versionId: string; path: string; thumb?: true }[] };
+    if (!versions.length) break;
+    after = versions[versions.length - 1].versionId;
     let landed = 0;
     for (const v of versions) {
       signal?.throwIfAborted();
@@ -338,8 +342,6 @@ export async function repairStrips(libraryId: string, signal?: AbortSignal): Pro
       if (strip && card) landed++;
     }
     made += landed;
-    // a page that landed nothing would come back the same
-    if (!landed) break;
   }
   return made;
 }

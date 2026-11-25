@@ -118,3 +118,17 @@ describe("the player's preview frames (thumbs.vtt)", () => {
     expect((await vtt(v)).status).toBe(404);
   });
 });
+
+describe("a sweep's pages", () => {
+  it("go on after the last one asked, so a clip that can't be read here never stops the rest", async () => {
+    const older = await index("Roll older.mov", 1080, 1920);
+    const newer = await index("Roll newer.mov", 1080, 1920);
+    libraryDb().prepare("UPDATE assets SET created_at = created_at + 1 WHERE current_version_id = ?").run(newer);
+    const page = async (after: string) =>
+      ((await (await Promise.resolve(app.request(`/api/library/lib_s/stray-strips?device=${mac}&after=${after}`, { headers: as() }))).json()) as { versions: { versionId: string }[] }).versions.map((v) => v.versionId);
+    expect((await list()).versions.map((v) => v.versionId).slice(0, 2)).toEqual([newer, older]);
+    // the newer one's disk is not connected: nothing handed in, and the next page starts after it
+    expect((await page(newer))[0]).toBe(older);
+    expect(await page(older)).not.toContain(newer);
+  });
+});
