@@ -212,9 +212,9 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   const fixed = inTrash || !!readOnly;
   // the clip's rarer tools in one menu: sharing, a new edit, editing, turning, the trash. It stays open on a turn, so upside down is two presses
   const file = original(a, detail);
-  // the blurred copy is the clip's current version; its original is the newest version not blurred, when it is on this computer
-  const blurredNow = !!detail?.versions?.find((v) => v.id === a.versionId)?.blurred;
-  const maybeFilmed = blurredNow && revealsVersion() ? detail?.versions?.find((v) => !v.blurred && v.path) : undefined;
+  // the blurred copy is the clip's current version; its original is the version it was made from (`of`), when it has a path here
+  const madeFrom = detail?.versions?.find((v) => v.id === a.versionId)?.of;
+  const maybeFilmed = madeFrom && revealsVersion() ? detail?.versions?.find((v) => v.id === madeFrom && v.path) : undefined;
   // only where this computer reads the original now (the Mac app's places check): the computer that made the blur
   const [originalHere] = useHere(maybeFilmed ? libraryId : null, maybeFilmed ? [maybeFilmed.id] : []);
   const filmed = maybeFilmed && originalHere?.[maybeFilmed.id]?.state === "here" ? maybeFilmed : undefined;
@@ -544,7 +544,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
       asset={showOriginal ? { ...a, versionId: filmed.id } : a}
       detail={detail}
       media={media}
-      startAt={swapAt ?? startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={serverPlays} actions={playerButtons} />
+      startAt={swapAt ?? startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={showOriginal ? false : serverPlays} actions={playerButtons} />
   ) : a.kind === "image" ? (
     <ClipImage asset={a} fill={win} />
   ) : (

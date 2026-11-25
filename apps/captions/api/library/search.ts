@@ -149,13 +149,14 @@ export function assetDetail(libraryId: string, assetId: string, user?: Pick<Sess
     .prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.library_id = ? AND a.left_hidden_at IS NULL`)
     .get(assetId, libraryId) as CardRow | undefined;
   if (!row) return null;
-  const versions = (
-    db()
-      .prepare("SELECT id, n, bytes, created_at AS createdAt, created_by AS createdBy, state, blurred_of FROM asset_versions WHERE asset_id = ? ORDER BY n DESC")
-      .all(assetId) as unknown as (AssetDetail["versions"][number] & { blurred_of: string | null })[]
-  ).map(({ blurred_of, ...v }) => {
+  const rows = db()
+    .prepare("SELECT id, n, bytes, created_at AS createdAt, created_by AS createdBy, state, blurred_of, sha256, full_sha256 FROM asset_versions WHERE asset_id = ? ORDER BY n DESC")
+    .all(assetId) as unknown as (AssetDetail["versions"][number] & { blurred_of: string | null; sha256: string; full_sha256: string | null })[];
+  const versions = rows.map(({ blurred_of, sha256: _s, full_sha256: _f, ...v }) => {
     const path = sourcePathFor(libraryId, v.id, user, device);
-    return { ...v, ...(blurred_of ? { blurred: true as const } : {}), ...(path ? { path } : {}) };
+    // a blurred render names its original by SHA-256 (the computer that made it said so): that version, when it is in this clip
+    const of = blurred_of ? rows.find((o) => !o.blurred_of && (o.full_sha256 === blurred_of || o.sha256 === blurred_of))?.id : undefined;
+    return { ...v, ...(blurred_of ? { blurred: true as const } : {}), ...(of ? { of } : {}), ...(path ? { path } : {}) };
   });
   const collections = db()
     .prepare("SELECT c.id, c.name FROM collection_items i JOIN collections c ON c.id = i.collection_id WHERE i.asset_id = ? ORDER BY c.name")

@@ -80,8 +80,8 @@ export const SPRITE_FRAMES = 20;
 export const SPRITE_SIDE = 256;
 
 export interface AssetDetail extends AssetCard {
-  /** `blurred`: a blurred render of the clip's original (Blur faces); `path`: that version's file here, by sourcePath's rules */
-  versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState; blurred?: true; path?: string }[];
+  /** `blurred`: a blurred render (Blur faces), `of`: the version it was made from; `path`: that version's file here, by sourcePath's rules */
+  versions: { id: string; n: number; bytes: number; createdAt: number; createdBy: string; state: VersionState; blurred?: true; of?: string; path?: string }[];
   transcript?: { provider: string; segments: { start: number; end: number; text: string }[] };
   collections: { id: string; name: string }[];
   /** the file on this computer (read in place, kept on the Mac app's own server on this Mac, or where it was sent from): the admin only (search.ts sourcePathFor) */
