@@ -154,6 +154,8 @@ export interface ClipMoves {
   /** a new folder, here, with the clips in it (a clip's menu only) */
   folder?: () => void;
   tag: (tag: string) => void;
+  /** queues Blur faces for the clips kept as filmed: only when one of them is */
+  blur?: () => void;
   trash: () => void;
   restore: () => void;
 }
@@ -226,6 +228,7 @@ export function ClipMenu({
           <TagChoices tags={tags} onTag={on.tag} Item={ContextMenuItem} />
         </ContextMenuSubContent>
       </ContextMenuSub>
+      {on.blur && <ContextMenuItem onSelect={on.blur}>Blur faces</ContextMenuItem>}
       <ContextMenuSeparator />
       <ContextMenuItem className="text-red-400" onSelect={on.trash}>
         <Trash2 /> Move to trash

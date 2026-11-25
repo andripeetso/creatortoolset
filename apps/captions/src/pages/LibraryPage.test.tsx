@@ -26,7 +26,7 @@ vi.mock("../plugins.gen", () => ({
   ],
 }));
 
-type Card = { id: string; title: string; kind: string; state: string; thumbUrl?: string; roll?: "a" | "b"; tags: string[]; aiTags: string[] };
+type Card = { id: string; title: string; kind: string; state: string; thumbUrl?: string; roll?: "a" | "b"; blur?: "yes" | "no"; tags: string[]; aiTags: string[] };
 const clip = (id: string, more: Partial<Card> = {}): Card => ({ id, title: `Tiny Acrobatics ${id}`, kind: "video", state: "ready", tags: [], aiTags: [], ...more });
 const server = vi.hoisted(() => ({
   retried: [] as string[],
@@ -75,6 +75,10 @@ vi.mock("@/lib/library", async (importOriginal) => ({
     server.uploaded.push(f.name);
     await server.uploading;
     return { assetId: "new" };
+  },
+  setAssetBlur: async (_: string, id: string, blur: string) => {
+    server.sent.push(`blur ${id} ${blur}`);
+    return { blur };
   },
   updateLibrary: async (_: string, patch: { settings: Record<string, unknown> }) => {
     server.patched.push(patch);
@@ -701,6 +705,21 @@ describe("Media Library picks, menu, keys, link and drop", () => {
     await act(async () => void cards(host)[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })));
     const menu = document.querySelector('[role="menu"]')?.textContent ?? "";
     for (const item of ["Open", "Share…", "Download", "Copy link", "Add tag", "Move to trash"]) expect(menu).toContain(item);
+  });
+
+  it("right-click on a clip kept as filmed offers Blur faces, which queues its blur; any other clip has none", async () => {
+    server.items = [clip("one", { blur: "no" }), clip("two")];
+    const host = await mount();
+    const menuOf = async (i: number) => {
+      await act(async () => void cards(host)[i].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })));
+      return [...document.querySelectorAll('[role="menuitem"]')].find((x) => x.textContent === "Blur faces") as HTMLElement | undefined;
+    };
+    expect(await menuOf(1)).toBeUndefined();
+    await key("Escape");
+    const item = await menuOf(0);
+    expect(item).toBeDefined();
+    await act(async () => item!.click());
+    expect(server.sent).toContain("blur one yes");
   });
 
   it("asks the server for the order picked, kept on this device", async () => {

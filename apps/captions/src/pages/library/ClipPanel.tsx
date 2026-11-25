@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, Share2, Trash2, X } from "lucide-react";
+import { Clapperboard, Clock, Copy, Download, FileText, FolderInput, FolderOpen, Images, MoreHorizontal, Pencil, RotateCcw, RotateCw, ScanFace, Share2, Trash2, X } from "lucide-react";
 import { CtMark } from "@/components/CtMark";
 import { NEEDS, type AssetCard, type AssetDetail, type SearchHit, type SimilarMatch, type TagCount } from "@contracts/library";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { confirmDialog } from "@/lib/dialogs";
 import { SheetTitle } from "@/components/ui/sheet";
@@ -243,6 +242,12 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
             New project
           </DropdownMenuItem>
         )}
+        {a.blur === "yes" && !fixed && mayKeepAsFilmed && (
+          <DropdownMenuItem onSelect={() => void changeBlur(false)}>
+            <ScanFace className="h-4 w-4" />
+            Keep as filmed
+          </DropdownMenuItem>
+        )}
         {a.kind === "video" && !a.review && !readOnly && <DropdownMenuSeparator />}
         {a.kind === "video" && !a.review && !readOnly && (
           <>
@@ -325,11 +330,15 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
           </Button>
         </div>
       )}
-      {a.blur && !fixed && (a.blur === "no" || mayKeepAsFilmed) && (
-        <label className="flex items-center justify-between gap-2 text-sm">
-          Blur faces
-          <Switch checked={a.blur === "yes"} onCheckedChange={(on) => void changeBlur(on)} />
-        </label>
+      {/* kept as filmed: one press queues its blur (Keep as filmed, the way back, is in the ⋯ menu) */}
+      {a.blur === "no" && !fixed && (
+        <div className="flex items-center justify-between gap-2 text-sm text-zinc-400">
+          Not blurred
+          <Button size="sm" variant="outline" className="h-7" onClick={() => void changeBlur(true)}>
+            <ScanFace className="h-3.5 w-3.5" />
+            Blur faces
+          </Button>
+        </div>
       )}
       {blur && (
         <div className="flex items-center justify-between gap-2 text-sm text-zinc-400">

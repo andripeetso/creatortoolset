@@ -46,7 +46,7 @@ import {
 } from "@/lib/library";
 import { useCachedLoad } from "@/lib/local-cache";
 import { thisMacBridge } from "@/lib/thisMac";
-import { addRefused, scanWatchNow } from "@/lib/library";
+import { addRefused, scanWatchNow, setAssetBlur } from "@/lib/library";
 import { canChange, useAuth, useMe } from "@/lib/auth";
 import { faceBlurOn } from "./library/face-blur";
 import { ImportChoices, importOptions, type ImportAsk, type ImportChoice } from "./library/ImportChoices";
@@ -967,6 +967,15 @@ export default function LibraryPage() {
     listTags(lib).then((t) => setTags(t.map((x) => x.tag)), () => {});
     undoable("tagged", () => Promise.all(done.map((a) => updateAsset(lib, a.id, { tags: a.tags }))).then(() => show(true)), done.length);
   };
+  // Blur faces for clips kept as filmed: each queues its blur (the server drops their unblurred pictures meanwhile)
+  const blurMany = async (cards: AssetCard[]) => {
+    if (!libId) return;
+    const lib = libId;
+    const done = (await Promise.all(cards.map((a) => setAssetBlur(lib, a.id, "yes").then(() => a.id, () => null)))).filter((id): id is string => !!id);
+    if (done.length < cards.length) setError(`Could not blur ${plural(cards.length - done.length)}`);
+    picks.clear();
+    changeCards((all) => all.map((x) => (done.includes(x.id) ? { ...x, blur: "yes" } : x)));
+  };
   // one clip downloads as its original, several as one zip of theirs
   const download = (cards: AssetCard[]) =>
     libId && saveFile(cards.length === 1 ? `/api/library/media/${cards[0]!.versionId}/source` : libraryZipUrl(libId, cards.map((a) => a.id)));
@@ -1002,7 +1011,12 @@ export default function LibraryPage() {
       <ClipMenu
         inTrash={trash}
         readOnly={readOnly}
-        offline={thisMacDevice() ? { on: offline.versions.includes(a.versionId), set: (on) => void keepOffline({ version: a.versionId }, on) } : undefined}
+        // a copy kept for when the original's disk is away: none offered while this computer reads the original itself
+        offline={
+          thisMacDevice() && (offline.versions.includes(a.versionId) || a.placeWord?.word !== "here")
+            ? { on: offline.versions.includes(a.versionId), set: (on) => void keepOffline({ version: a.versionId }, on) }
+            : undefined
+        }
         moveTo={moveOptions(collections, into)}
         tags={tags}
         count={carried(a).length}
@@ -1014,6 +1028,7 @@ export default function LibraryPage() {
           move: (to) => void move(carried(a).map((x) => x.id), to),
           folder: smart ? undefined : () => void folderWith(carried(a).map((x) => x.id)),
           tag: (t) => void tagMany(carried(a), t),
+          blur: carried(a).some((x) => x.blur === "no") ? () => void blurMany(carried(a).filter((x) => x.blur === "no")) : undefined,
           trash: () => void trashMany(carried(a)),
           restore: () => void trashMany(carried(a), false),
         }}
