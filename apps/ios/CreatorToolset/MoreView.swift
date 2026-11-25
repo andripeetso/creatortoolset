@@ -102,10 +102,10 @@ private struct AccountSettings: View {
                         }
                     }
                     .disabled(deleting)
-                } footer: {
-                    if let problem { Text(problem).foregroundStyle(.red) }
                 }
             }
+            // outside `if let profile`: a refused sign-in signs the phone out, and the error must still show
+            if let problem { Section { Text(problem).foregroundStyle(.red) } }
         }
         .confirmationDialog("Delete account", isPresented: $confirming, titleVisibility: .visible) {
             Button("Delete account", role: .destructive) { Task { await delete() } }
@@ -123,8 +123,8 @@ private struct AccountSettings: View {
         do {
             try await account.deleteAccount()
             dismiss()
-        } catch APIError.server(403, let message) {
-            problem = message // a token from before binding: "Sign in again to delete the account"
+        } catch APIError.server(let code, _) where code == 401 || code == 403 {
+            problem = "Sign in again to delete the account"
         } catch {
             problem = "Could not delete account"
         }

@@ -86,6 +86,8 @@ final class Account: ObservableObject {
     /// Deletes the account on its site (its sign-ins and its list of servers; App Store rule 5.1.1(v)), then forgets it
     /// here as Sign out does. The connect service stops pushing to this phone first, while the account can still ask.
     func deleteAccount() async throws {
+        // a token from before binding is refused (403): stop before notifications are switched off
+        guard bound else { throw APIError.server(403, "Sign in again to delete the account") }
         await AccountPush.signingOut()
         _ = try await ask("/api/account/me", method: "DELETE")
         forgetHere()
