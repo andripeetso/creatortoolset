@@ -191,7 +191,7 @@ describe("Stop in the Content Analyzer", () => {
 
   it("a Stop as the run ends Ready answers ok and leaves it Ready", async () => {
     const id = offline();
-    const held = holdWrite((file, data) => file.endsWith(path.join(id, "meta.json")) && String(data).includes('"status":"ready"'));
+    const held = holdWrite((file, data) => file.includes(path.join(id, "meta.json")) /* written as a temp file, then renamed */ && String(data).includes('"status":"ready"'));
     expect((await send(`/${id}/retry`)).status).toBe(202);
     await held.at;
     expect((await stop(`/${id}/stop`)).status).toBe(200);

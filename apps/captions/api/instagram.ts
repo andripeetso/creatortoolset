@@ -658,10 +658,14 @@ async function refreshMineGraphStats(id: string, signal?: AbortSignal): Promise<
 async function persist(meta: PostMeta): Promise<void> {
   meta.updatedAt = Date.now();
   await afterWrite(meta.id, async () => {
+    // temp file + rename: a read at the same moment (a Retry right after Stop) sees the old file or the new one, never
+    // an empty one it would answer Not found for; no mkdir, so a post deleted mid-job stays deleted
+    const tmp = `${metaPath(meta.id)}.tmp-${randomUUID()}`;
     try {
-      await writeFile(metaPath(meta.id), JSON.stringify(meta));
+      await writeFile(tmp, JSON.stringify(meta));
+      await rename(tmp, metaPath(meta.id));
     } catch {
-      /* deleted mid-job */
+      await rm(tmp, { force: true }).catch(() => {}); /* deleted mid-job */
     }
   });
   if (active.has(meta.id)) tellJob(meta.id, meta.owner, meta);
