@@ -134,6 +134,8 @@ enum CoverExporter {
             videoTracks: try await composition.loadTracks(withMediaType: .video),
             videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         )
+        // no frame rate is set, here or on the composition: the reader gives each source frame at its own time and the
+        // writer keeps it, so a copy has its source's frames whatever the rate (testTheCopyKeepsTheFrameRate)
         videoOut.videoComposition = videoComposition
         videoOut.alwaysCopiesSampleData = false
         let videoIn = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings(size: size, bitrate: bitrate))

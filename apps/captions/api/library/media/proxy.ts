@@ -48,6 +48,9 @@ export async function makeProxy(src: string, out: string, soundOnly = false, qua
       "-map", "0:v:0", "-map", "0:a?",
       // short side to the quality's cap at most, never upscaled, both sides kept even for libx264
       "-vf", `scale=w='trunc(min(iw,${q.short}*iw/min(iw,ih))/2)*2':h='trunc(min(ih,${q.short}*ih/min(iw,ih))/2)*2'`,
+      // no -r, and time counted in the source's own ticks: every frame is kept at its own time, whatever the rate (a
+      // clip of uneven frame times lost frames to the encoder's even grid without it)
+      "-enc_time_base:v", "demux",
       "-c:v", "libx264", "-preset", "veryfast", "-crf", String(q.crf), "-pix_fmt", "yuv420p",
       // a keyframe every second: the editor's cuts and scrubbing seek to one at most a second away
       "-force_key_frames", "expr:gte(t,n_forced*1)",

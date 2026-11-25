@@ -12,9 +12,9 @@ private func scratch() throws -> URL {
     return dir
 }
 
-/// A plain light-yellow video drawn here (no person in it): `frames` frames at 30 fps, 320×240, with a location in its
-/// metadata.
-private func makeVideo(_ url: URL, frames: Int = 30) async throws {
+/// A plain light-yellow video drawn here (no person in it): `frames` frames at 30 fps (or each at `at`'s time), 320×240,
+/// with a location in its metadata.
+private func makeVideo(_ url: URL, frames: Int = 30, at: (Int) -> CMTime = { CMTime(value: CMTimeValue($0), timescale: 30) }) async throws {
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
     let location = AVMutableMetadataItem()
     location.identifier = .quickTimeMetadataLocationISO6709
@@ -37,9 +37,11 @@ private func makeVideo(_ url: URL, frames: Int = 30) async throws {
         let row = CVPixelBufferGetBytesPerRow(buffer!)
         for y in 0..<240 { for x in 0..<320 { let p = base + y * row + x * 4; p[0] = 120; p[1] = 220; p[2] = 230; p[3] = 255 } }
         CVPixelBufferUnlockBaseAddress(buffer!, [])
-        XCTAssertTrue(adaptor.append(buffer!, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: 30)))
+        XCTAssertTrue(adaptor.append(buffer!, withPresentationTime: at(f)))
     }
     input.markAsFinished()
+    // the last frame lasts as long as the one before it
+    writer.endSession(atSourceTime: at(frames - 1) + (at(frames - 1) - at(frames - 2)))
     await writer.finishWriting()
     XCTAssertEqual(writer.status, .completed)
 }
@@ -202,6 +204,33 @@ final class FaceBlurEngineTests: XCTestCase {
             XCTAssertEqual(nothing.why, "No face found, nothing written")
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: other.path))
+    }
+
+    /// D1 (docs/media-library-proxies-prd.md): a blurred copy has its source's frames, each at its source's time.
+    func testTheCopyKeepsTheFrameRate() async throws {
+        let dir = try scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rates: [(name: String, frames: Int, at: (Int) -> CMTime)] = [
+            ("30", 30, { CMTime(value: CMTimeValue($0), timescale: 30) }),
+            ("60", 60, { CMTime(value: CMTimeValue($0), timescale: 60) }),
+            ("119.88", 120, { CMTime(value: CMTimeValue($0) * 1001, timescale: 120_000) }),
+            // a phone's: 30 frames a second on average, each up to 7/600 s off its even place
+            ("uneven", 45, { CMTime(value: CMTimeValue($0 * 20 + Int((7 * sin(Double($0) * 1.7)).rounded())), timescale: 600) }),
+        ]
+        for rate in rates {
+            let source = dir.appendingPathComponent("\(rate.name).mov"), out = dir.appendingPathComponent("\(rate.name) blurred.mp4")
+            try await makeVideo(source, frames: rate.frames, at: rate.at)
+            let scan = FaceScan(kind: .video, covers: [middleCover(0.1, 0.2)], faces: [ScannedFace(id: "F1", picture: "", note: "")])
+            try await CoverPipeline.write(scan, from: source, blur: ["F1"], to: out) { _ in }
+            let was = try await centres(source).map(\.time), now = try await centres(out).map(\.time)
+            XCTAssertEqual(was.count, rate.frames, rate.name)
+            XCTAssertEqual(now.count, was.count, "\(rate.name): frame count")
+            for (a, b) in zip(was, now) { XCTAssertEqual(a, b, accuracy: 0.0001, "\(rate.name): a frame's time") }
+            // the rate a player reads; an uneven clip's is its frames over its length, which its last frame's length moves
+            let fps = { (url: URL) in try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first!.load(.nominalFrameRate) }
+            let (sourceFps, copyFps) = (try await fps(source), try await fps(out))
+            XCTAssertEqual(copyFps, sourceFps, accuracy: rate.name == "uneven" ? 0.1 : 0.01, "\(rate.name): frame rate")
+        }
     }
 
     /// The state the page polls carries no face pictures; the faces ask does.
