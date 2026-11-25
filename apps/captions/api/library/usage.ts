@@ -227,13 +227,15 @@ async function bunnyZone(libraryId: string, body: Record<string, unknown>): Prom
  */
 export async function moveProxies(libraryId: string, next: ProxyPlace | null): Promise<void> {
   const where = (p: ProxyPlace | null) => (p ? placeKey(p.kind, p) : "local");
-  if (where(proxyPlace(libraryId)) !== where(next)) {
+  const moved = where(proxyPlace(libraryId)) !== where(next);
+  if (moved) {
     await clearProxies(libraryId, true);
     // the ones still to make were wanted by the old rule (every video, or only what the window can't play)
     db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')").run(libraryId);
   }
   db().prepare("UPDATE libraries SET storage_config = ? WHERE id = ?").run(next ? JSON.stringify({ proxies: next }) : null, libraryId);
-  for (const v of unproxied(libraryId, undefined, hostsProxies(libraryUpload(libraryId)))) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by);
+  // only a move remakes what it cleared: a save to the same place (a key, a zone's name) queues nothing
+  if (moved) for (const v of unproxied(libraryId, undefined, hostsProxies(libraryUpload(libraryId)))) enqueueJob(db(), libraryId, v.id, "proxy", v.created_by);
   libraryChanged(libraryId);
 }
 
