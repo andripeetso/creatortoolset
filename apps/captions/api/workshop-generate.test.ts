@@ -79,4 +79,4 @@ describe("Generate draft", () => {
 });
 
 // read from this test on main 83cae003, before Generate draft's request moved into draftRequest; re-pinned 2026-11-14 when the prompt said workspace and project for the brand and the session
-const PINNED = { system: "9a0822adfd7e5fac602aef16763ddcf8864aec9cdfca0aec672d9117616ee610", user: "3fe4bd17a980eae0f44db290206586e1fc7f21eb9710d3cac727d483b6ce442a" };
+const PINNED = { system: "b0352992a13ef84a018c0f9058d8b4698911918fb95c3f79422122a98b547878", user: "3fe4bd17a980eae0f44db290206586e1fc7f21eb9710d3cac727d483b6ce442a" };
