@@ -208,7 +208,8 @@ final class Imports: @unchecked Sendable {
             guard Places.shared.reachable(holder), FileManager.default.fileExists(atPath: holder) else {
                 failed.append(["from": f.from, "error": "\((holder as NSString).lastPathComponent) isn't connected."]); continue
             }
-            let name = Self.freeName(f.to, size: bytes) { size($0) }
+            // a name another copy is still writing (its part file there) is taken: this copy gets " 2"
+            let name = Self.freeName(f.to, size: bytes) { size($0) ?? (FileManager.default.fileExists(atPath: Self.partPath($0)) ? -1 : nil) }
             _ = with(id) { $0.file = f.from }
             if !name.copied {
                 do {
@@ -245,8 +246,7 @@ final class Imports: @unchecked Sendable {
         let input = try FileHandle(forReadingFrom: URL(fileURLWithPath: from))
         defer { try? input.close() }
         let part = Self.partPath(to)
-        // a part file left by a copy that crashed is this app's own: start again
-        unlink(part)
+        // never removed first: it may be another copy still writing (freeName skips that name); one a crash left stays hidden
         let fd = open(part, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
@@ -258,14 +258,15 @@ final class Imports: @unchecked Sendable {
                 _ = with(id) { $0.bytes += Int64(chunk.count) }
             }
             try output.close()
+            // the date first, so the file never shows under its name with today's
+            if let date = (try? FileManager.default.attributesOfItem(atPath: from))?[.modificationDate] {
+                try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: part)
+            }
             try Self.renameNew(part, to)
         } catch {
             try? output.close()
             unlink(part)
             throw error
-        }
-        if let date = (try? FileManager.default.attributesOfItem(atPath: from))?[.modificationDate] {
-            try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: to)
         }
     }
 

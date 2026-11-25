@@ -111,6 +111,21 @@ final class ImportTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: at("Lib/Footage/B 3.mov")))
     }
 
+    /// A second copy of a name another copy is still writing goes to " 2" and leaves that copy's part file alone; the
+    /// copy keeps the original's date.
+    func testCopyNeverTouchesAnotherCopyInProgress() throws {
+        let a = try write("Drop/A001.mov", Data(repeating: 1, count: 3000))
+        let filmed = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: filmed], ofItemAtPath: a)
+        let other = try write("Lib/." + "A001.mov.copying", Data("half".utf8))
+        XCTAssertEqual(other, Imports.partPath(at("Lib/A001.mov")))
+        let reply = Imports().copy(id: "t3", [ImportPair(from: a, to: at("Lib/A001.mov"))], sources: [at("Drop")], destinations: [at("Lib")]) { _ in }
+        XCTAssertEqual((reply["copied"] as? [[String: String]])?.map { $0["to"] }, [at("Lib/A001 2.mov")])
+        XCTAssertEqual(try String(contentsOfFile: other, encoding: .utf8), "half")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: at("Lib/A001.mov")))
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: at("Lib/A001 2.mov"))[.modificationDate] as? Date, filmed)
+    }
+
     /// The import rule: a listed Media folder's Imports/ takes copies; with that Media folder gone (its drive away) nothing
     /// is written, not even the folder.
     func testCopiesIntoAMediaFoldersImportsOnlyWhileItIsThere() throws {
