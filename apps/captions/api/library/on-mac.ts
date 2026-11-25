@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { env } from "../lib/env";
-import { blobs, blursFaces, fileBlur, libraryDb, libraryUpload, librarySetting } from "./db";
+import { blobs, fileBlur, libraryDb, libraryUpload, librarySetting } from "./db";
 import { emitEvent } from "../lib/events";
 import { enqueueJob } from "./jobs";
 import { FRAMES } from "./describe";
@@ -258,10 +258,10 @@ export async function indexOnMac(libraryId: string, by: string, x: OnMacIndex): 
   const base = `libraries/${libraryId}/v/${versionId}`;
   const scratch = path.join(env.dataDir, "library", "staging");
   await mkdir(scratch, { recursive: true });
-  // Blur faces: a card picture or strip cut from a clip not blurred is never kept here (P2.3); the card shows none
+  // Blur faces: a clip not blurred keeps its card picture and strip (owner, 2026-11-24); its proxy and stills wait for the blur
   const pictures = mayLeave(libraryId, { versionId }).ok;
   for (const [k, b64] of [["thumb", x.thumb], ["sprite", x.sprite]] as const) {
-    if (!b64 || !pictures) continue;
+    if (!b64) continue;
     const file = path.join(scratch, `${versionId}-${k}.jpg`);
     await writeFile(file, Buffer.from(b64, "base64"));
     const { bytes } = await blobs.put(`${base}/${k}.jpg`, file);
@@ -312,7 +312,6 @@ export function noPicture(libraryId: string, device: string, limit = 500): { ver
          FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
         WHERE a.library_id = ? AND a.kind = 'image' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
-          ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no picture of a photo not blurred is kept (putThumb) */ : ""}
         ORDER BY a.created_at DESC LIMIT ?`,
     )
     .all(device, device, libraryId, limit) as { versionId: string; path: string | null }[];
@@ -321,7 +320,7 @@ export function noPicture(libraryId: string, device: string, limit = 500): { ver
 
 /** A picture's thumbnail handed in for a version of `libraryId` (a JPEG under 1 MB): false when it isn't one or the version isn't the library's. */
 export async function putThumb(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
-  if (!jpeg(b64, MB) || !mayLeave(libraryId, { versionId }).ok) return false;
+  if (!jpeg(b64, MB)) return false;
   const d = libraryDb();
   const own = d.prepare("SELECT v.mime, v.mac_path, v.source_path FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ?").get(versionId, libraryId) as
     | { mime: string | null; mac_path: string | null; source_path: string | null }
@@ -366,7 +365,6 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
          LEFT JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite'
         WHERE a.library_id = ? AND a.kind = 'video' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL
           AND (s.version_id IS NULL OR s.cell_w IS NULL OR NOT EXISTS (SELECT 1 FROM derivatives t WHERE t.version_id = v.id AND t.kind = 'thumb'))
-          ${blursFaces(libraryId) ? "AND v.blurred_of IS NOT NULL" /* Blur faces: no strip of a clip not blurred is made again here (putSprite) */ : ""}
         ORDER BY a.created_at DESC LIMIT 500`,
     )
     .all(device, device, libraryId) as { versionId: string; probe: string | null; path: string | null; strip: number; sized: number; pictured: number }[];
@@ -385,7 +383,7 @@ export function strayStrips(libraryId: string, device: string, limit = 50): { ve
 
 /** A video's strip made on the computer that has it (a JPEG under 2 MB), for a version of `libraryId`: false when it isn't one. */
 export async function putSprite(libraryId: string, versionId: string, b64: unknown): Promise<boolean> {
-  if (!jpeg(b64, 2 * MB) || !mayLeave(libraryId, { versionId }).ok) return false;
+  if (!jpeg(b64, 2 * MB)) return false;
   const own = libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.library_id = ? AND a.kind = 'video'").get(versionId, libraryId);
   if (!own) return false;
   await keepJpeg(libraryId, versionId, "sprite", b64 as string);

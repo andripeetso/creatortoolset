@@ -4,7 +4,7 @@ import path from "node:path";
 import { env } from "../lib/env";
 import { libraryChanged } from "./access";
 import { emitEvent } from "../lib/events";
-import { blobs, fileBlur, isBlurred, keepsOnlyOriginals, LEAVES_SQL, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
+import { blobs, fileBlur, isBlurred, keepsOnlyOriginals, libraryDb, libraryProxyQuality, librarySetting, proxiesInCloud, versionUpload } from "./db";
 import { describeFromLines, describeSlot, describeVersion, workspaceIdOf } from "./describe";
 import { canEmbed, embedRoute, embedVersion, startEmbedCatchUp } from "./embed";
 import { fingerprint } from "./fingerprint";
@@ -424,7 +424,7 @@ export async function backfillSprite(): Promise<boolean> {
          AND (l.storage_kind = 'local' OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
          AND EXISTS (SELECT 1 FROM jobs f WHERE f.version_id = v.id AND f.kind = 'fingerprint')
          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite')
-         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite') AND ${LEAVES_SQL}
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'sprite')
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
     .get() as { id: string; library_id: string } | undefined;
@@ -455,7 +455,7 @@ async function backfillStrayStrip(): Promise<boolean> {
       `SELECT v.id, v.probe, a.library_id FROM assets a JOIN asset_versions v ON v.id = a.current_version_id JOIN libraries l ON l.id = a.library_id
          JOIN derivatives s ON s.version_id = v.id AND s.kind = 'sprite' AND s.cell_w IS NULL
        WHERE a.kind = 'video' AND a.trashed_at IS NULL AND a.left_hidden_at IS NULL AND v.state = 'ready'
-         AND ((l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%') OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy')) AND ${LEAVES_SQL}
+         AND ((l.storage_kind = 'local' AND v.source_key NOT LIKE 'mac:%') OR EXISTS (SELECT 1 FROM derivatives x WHERE x.version_id = v.id AND x.kind = 'proxy'))
        ORDER BY a.created_at DESC, a.id DESC LIMIT 1`,
     )
     .get() as { id: string; probe: string | null; library_id: string } | undefined;

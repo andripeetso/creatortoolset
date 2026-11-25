@@ -100,7 +100,7 @@ export const proxyTooBig = (bytes: number, original: number | undefined): boolea
  * file marked no (kept as filmed) always; a file marked yes only as a blurred render and what is cut from it, by its
  * version (asset_versions.blurred_of), or a new file declared one (`blurredOf`, a computer's; `blurred`, an editor that
  * blurred its own render). A new file with no answer (`blur`) gets its library's Blur faces. A yes-file's original, its
- * proxy, and a thumbnail, strip or still cut from it never leave the owner's computers. Asked by every route that takes
+ * proxy and the stills cut from it never leave the owner's computers; its card picture and strip do (owner, 2026-11-24). Asked by every route that takes
  * or hands out a clip's bytes or pictures, the plug-ins' too (upload-gate.test.ts).
  */
 export function mayLeave(

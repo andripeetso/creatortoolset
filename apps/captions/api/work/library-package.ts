@@ -550,8 +550,8 @@ export async function acceptLibraryFile(
   if (!NAME.test(name) || !SENDS[job.kind]?.includes(name as DerivedFile) || !job.version_id) return false;
   const r = rowOf(job.version_id);
   // a proxy of a file only a computer has (`mac:`) is that computer's upload; one of the server's own original is made from it
-  // a still is held for its description's call only, a waveform is numbers; a card picture or strip is the clip's picture (Blur faces asks)
-  const kind = name === "original" ? "original" : name === "proxy" && r?.source_key.startsWith("mac:") ? "proxy" : name.startsWith("still") ? "held" : name === "wave" ? "data" : "derivative";
+  // a still is held for its description's call only, a waveform is numbers; a card picture or strip is kept for every clip (Blur faces asks none)
+  const kind = name === "original" ? "original" : name === "proxy" && r?.source_key.startsWith("mac:") ? "proxy" : name.startsWith("still") ? "held" : name === "wave" || name === "thumb" || name === "sprite" ? "data" : "derivative";
   const sender = deviceOf(deviceId);
   const into = { id: job.library_id, versionId: job.version_id };
   const must = provesProxies(sender) && kind === "proxy";

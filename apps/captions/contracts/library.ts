@@ -54,7 +54,7 @@ export interface AssetCard {
   onComputer?: true;
   /** the file's blur answer, set when it came in (Blur): "no" plays as filmed, to the team too */
   blur?: Blur;
-  /** Blur faces is on and the clip has no blurred render yet: no picture, nothing plays off its computer (LIBRARY_WORDS.notBlurred) */
+  /** Blur faces is on and the clip has no blurred render yet: its card picture shows, nothing plays off its computer (LIBRARY_WORDS.notBlurred) */
   notBlurred?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;

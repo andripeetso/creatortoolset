@@ -308,7 +308,7 @@ export function toCard(r: CardRow): AssetCard {
   const turn = asTurn(p.turn);
   // the shape as it is watched: the file's own rotation tag (a phone filmed or recorded on its side), then the turn
   const side = (((p.rotation ?? 0) + turn) / 90) % 2 === 1;
-  // Blur faces: a clip with no blurred render shows no picture to anyone (serveGate refuses it too)
+  // Blur faces: a clip with no blurred render still shows its card picture and strip (owner, 2026-11-24); it never plays off its computer
   const notBlurred = !!r.not_blurred;
   return {
     id: r.id,
@@ -323,9 +323,9 @@ export function toCard(r: CardRow): AssetCard {
     // a turned clip's pictures were made again: a new address, so no window shows the one it kept
     ...(notBlurred ? { notBlurred: true as const } : {}),
     ...(r.blur ? { blur: r.blur } : {}),
-    ...(r.has_thumb && !notBlurred ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${query({ t: turn || undefined, v: r.thumb_v || undefined })}` } : {}),
+    ...(r.has_thumb ? { thumbUrl: `/api/library/media/${r.version_id}/thumb${query({ t: turn || undefined, v: r.thumb_v || undefined })}` } : {}),
     // a strip made again in the clip's shape has a new address too (its frame size), so no window keeps the old one
-    ...(r.has_sprite && !notBlurred ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined, v: r.sprite_v || undefined })}` } : {}),
+    ...(r.has_sprite ? { spriteUrl: `/api/library/media/${r.version_id}/sprite${query({ t: turn || undefined, s: r.sprite_cell ?? undefined, v: r.sprite_v || undefined })}` } : {}),
     tags: split(r.tags),
     aiTags: split(r.ai_tags),
     ...(r.description ? { description: describedAs(r.description) } : {}),

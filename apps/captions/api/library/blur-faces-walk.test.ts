@@ -101,11 +101,11 @@ it("leaves no picture or copy of a clip not blurred anywhere on the server, what
   await expect(addVersion(undefined, { owner: "local", name: "Cut.mp4", mime: "video/mp4", bytes: 4 }, async () => {})).rejects.toThrow(REFUSED_BLUR);
 
   const unblurred = [held, onMac.versionId];
-  expect(d.prepare(`SELECT version_id, kind FROM derivatives WHERE version_id IN (?, ?) AND kind <> 'wave' AND kind <> 'fingerprint'`).all(...unblurred)).toEqual([]);
+  expect(d.prepare(`SELECT version_id, kind FROM derivatives WHERE version_id IN (?, ?) AND kind NOT IN ('wave', 'fingerprint', 'thumb', 'sprite')`).all(...unblurred)).toEqual([]);
   const files = [...walk(dir), ...walk(HELD_TMP)];
   for (const f of files) {
     // the held original itself (kept; deleting it is the owner's call) and its waveform are the only files of these clips
-    if (f.endsWith(`${held}${path.sep}source`) || f.endsWith("wave.json")) continue;
+    if (f.endsWith(`${held}${path.sep}source`) || f.endsWith("wave.json") || /[/\\](thumb|sprite)\.jpg$/.test(f)) continue;
     for (const v of unblurred) expect(f.includes(v), f).toBe(false);
     expect(/\.(jpe?g|png|mp4|mov|webp)$/i.test(f) && !f.endsWith("fixture.mp4") && !f.endsWith("fixture-copy.mp4"), f).toBe(false);
     expect(f.endsWith(".db") || sha(readFileSync(f)) !== ORIGINAL || f.endsWith("fixture.mp4") || f.endsWith("fixture-copy.mp4") || f.endsWith("source"), f).toBe(true);

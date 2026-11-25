@@ -4,7 +4,7 @@ import { aiFor, anthropicParams, onApiKey } from "../ai-complete";
 import { PICTURE_MODEL } from "../lib/device-picture";
 import { deviceOf, isOnline, listDevices } from "../lib/devices";
 import { libraryWorkspace, serverWorks } from "../work/server-work";
-import { keepsOnlyOriginals, LEAVES_SQL, libraryDb } from "./db";
+import { keepsOnlyOriginals, libraryDb } from "./db";
 import { FINISHED } from "./query";
 import { DESCRIBE_LABEL, whoFor } from "./describe";
 import { makeCost, makeMinutes } from "./estimate";
@@ -344,30 +344,5 @@ export function retryEmptyPictures(): number {
     .prepare("SELECT library_id, version_id, kind, actor FROM jobs WHERE state = 'failed' AND error LIKE '%ENOENT%.jpg.part.jpg%' AND IFNULL(started_at, 0) < ?")
     .all(STILLS_FIXED_AT) as { library_id: string; version_id: string; kind: string; actor: string | null }[];
   for (const r of rows) enqueueJob(db, r.library_id, r.version_id, r.kind, r.actor);
-  return rows.length;
-}
-
-/**
- * Clips that may show a picture again (marked Already blurred, kept as filmed, Blur faces off) but have none: a picture
- * cut from a clip waiting for its blur is never kept (on-mac.ts, dropUnblurred), so its card stayed empty for good. Their
- * card picture and strip are made again by whoever holds the file. A failed or pending one is left as it is. All libraries
- * when none is named (once a process, work/routes.ts).
- */
-export function remakePictures(libraryId?: string): number {
-  const db = libraryDb();
-  const rows = db
-    .prepare(
-      `SELECT a.library_id AS library_id, v.id AS version_id, a.kind AS kind, a.created_by AS actor,
-              EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'sprite') AS sprite
-         FROM assets a JOIN asset_versions v ON v.id = a.current_version_id
-        WHERE ${libraryId ? "a.library_id = ? AND" : ""} a.kind IN ('video', 'image') AND a.trashed_at IS NULL AND v.state = 'ready' AND ${LEAVES_SQL}
-          AND NOT EXISTS (SELECT 1 FROM derivatives d WHERE d.version_id = v.id AND d.kind = 'thumb')
-          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id AND j.kind = 'thumb' AND j.state IN ('queued', 'running', 'failed', 'needs_key'))`,
-    )
-    .all(...(libraryId ? [libraryId] : [])) as { library_id: string; version_id: string; kind: string; actor: string | null; sprite: number }[];
-  for (const r of rows) {
-    enqueueJob(db, r.library_id, r.version_id, "thumb", r.actor, true);
-    if (r.kind === "video" && !r.sprite) enqueueJob(db, r.library_id, r.version_id, "sprite", r.actor, true);
-  }
   return rows.length;
 }

@@ -14,7 +14,7 @@ import { uploadTarget } from "./upload-target";
 import { currentWorkspaceId } from "../lib/workspace-scope";
 import { sharedHere, workspaceScope } from "../lib/workshop/workspace";
 import { expandCollection } from "./collections";
-import { libraryMade, makeMissing, remakePictures, stopQueued, retryFailed } from "./made";
+import { libraryMade, makeMissing, stopQueued, retryFailed } from "./made";
 import { blobs, BLUR_SQL, blursFaces, finalsUpload, isBlurred, keepsOnlyOriginals, libraryDb, librarySetting, libraryStore, libraryUpload, libraryUploadStored, meter, newLibrarySettings, proxiesInCloud, SETTING_DEFAULTS, SINCE, uploadOf } from "./db";
 import { estimate, libraryStatus, progress } from "./estimate";
 import { sendFile } from "../lib/send-file";
@@ -1205,10 +1205,7 @@ libraryApp.post("/:id/already-blurred", async (c) => {
     d.exec("ROLLBACK");
     throw e;
   }
-  if (hit.length) {
-    remakePictures(libraryId); // their pictures were never kept while they waited for a blur
-    libraryChanged(libraryId);
-  }
+  if (hit.length) libraryChanged(libraryId);
   return c.json({ files: hit.length });
 });
 
@@ -1276,7 +1273,6 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
     db().prepare("UPDATE assets SET blur = 'no' WHERE library_id = ? AND blur IS NULL").run(libraryId);
   }
   if (typeof s.blurFaces === "boolean") put("blurFaces", s.blurFaces);
-  if (s.blurFaces === false) remakePictures(libraryId);
   if (LIBRARY_UPLOADS.includes(upload as LibraryUpload)) put("upload", upload);
   if (typeof s.defaultFolders === "boolean") put("defaultFolders", s.defaultFolders);
   if (PROXY_QUALITIES.some((q) => q.value === s.proxyQuality)) put("proxyQuality", s.proxyQuality);
@@ -1504,8 +1500,8 @@ export async function serveGate(versionId: string, kind: string, file: { key?: s
   const v = db().prepare("SELECT a.id AS asset_id, a.library_id FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ?").get(versionId) as
     | { asset_id: string; library_id: string }
     | undefined;
-  // Blur faces: no byte or picture of a clip that is not a blurred render, to anyone (upload-gate.ts mayLeave)
-  const left = mayLeave(v?.library_id, { versionId });
+  // Blur faces: no byte of a clip that is not a blurred render, to anyone (upload-gate.ts mayLeave); its card picture and strip pass
+  const left = CARD_PICTURES.includes(kind) ? { ok: true as const } : mayLeave(v?.library_id, { versionId });
   if (!left.ok) return left;
   if (!["play", "proxy", "source"].includes(kind) || !file.key) return { ok: true };
   if (!v || inReview(v.asset_id)) return { ok: true }; // a Review video is Review's, served by it (R2)
@@ -1647,11 +1643,13 @@ async function setTrashed(c: Context<{ Variables: AuthVars }>, trash: boolean) {
   return c.json({ ok: true });
 }
 
-/** What the server keeps cut from a version: what dropUnblurred takes away. */
-const UNBLURRED_KINDS = ["proxy", "thumb", "sprite", "looksheets"];
+/** A clip's card picture and strip: kept and shown for every clip, Blur faces or not (owner, 2026-11-24). */
+export const CARD_PICTURES = ["thumb", "sprite"];
+/** What the server keeps cut from a version: what dropUnblurred takes away. Never its card picture or strip. */
+const UNBLURRED_KINDS = ["proxy", "looksheets"];
 /**
  * A file switched to Blur faces (orchestrator, 2026-11-20): what the server holds cut from its unblurred version goes, its
- * proxy, card picture, strip, look sheets and held stills. Not a copy that is the version's own source, nor the original:
+ * proxy, look sheets and held stills (its card picture and strip stay). Not a copy that is the version's own source, nor the original:
  * it may be the only copy anywhere, and mayLeave refuses it to everyone until the blurred render is in.
  */
 export async function dropUnblurred(versionId: string): Promise<void> {
@@ -1683,7 +1681,6 @@ libraryApp.put("/:id/assets/:assetId/blur", async (c) => {
   db().prepare("UPDATE assets SET blur = ? WHERE id = ?").run(blur, assetId);
   // every version of it that is not a blurred render: what the server cut from each goes (an older one too)
   if (blur === "yes") for (const v of db().prepare("SELECT id FROM asset_versions WHERE asset_id = ? AND blurred_of IS NULL").all(assetId) as { id: string }[]) await dropUnblurred(v.id);
-  else remakePictures(libraryId);
   if (blur === "yes") emitEvent("library.version.blur", { libraryId, versionId: a.current_version_id, owner: a.created_by });
   return c.json({ blur });
 });

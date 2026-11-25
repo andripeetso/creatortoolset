@@ -157,9 +157,9 @@ describe("no route takes an original, a proxy of one, or a picture cut from one"
     expect(d.prepare("SELECT COUNT(*) AS n FROM uploads WHERE library_id = 'lib_kids'").get()).toEqual({ n: 0 });
   });
 
-  it("indexed in place from the Mac: no card picture or strip is kept, the stills wait in memory only, and the card says Not blurred yet", async () => {
+  it("indexed in place from the Mac: its card picture and strip are kept (owner, 2026-11-24), the stills wait in memory only, and the card says Not blurred yet", async () => {
     const r = (await (await onMac("lib_kids", "Cartwheel.mov")).json()) as { assetId: string; versionId: string };
-    expect(pictures(r.versionId)).toEqual([]);
+    expect(pictures(r.versionId)).toEqual(["sprite", "thumb"]);
     expect(existsSync(path.join(dir, "library", "mac-frames", r.versionId))).toBe(false);
     // the description's call gets them, written out for it only, and gone after it
     const stills = await macFrames(r.versionId);
@@ -170,22 +170,22 @@ describe("no route takes an original, a proxy of one, or a picture cut from one"
     expect(await macFrames(r.versionId)).toHaveLength(4); // still held for a retry
     await dropMacFrames(r.versionId);
     expect(await macFrames(r.versionId)).toHaveLength(0);
-    // a photo's thumbnail handed in later is refused, and no Mac is asked for one
-    expect(await putThumb("lib_kids", r.versionId, JPEG)).toBe(false);
+    // a card picture handed in later is taken too
+    expect(await putThumb("lib_kids", r.versionId, JPEG)).toBe(true);
     const card = toCard(d.prepare(`SELECT ${CARD} FROM assets a JOIN asset_versions v ON v.id = a.current_version_id WHERE a.id = ?`).get(r.assetId) as never);
     expect(card).toMatchObject({ notBlurred: true });
-    expect(card.thumbUrl).toBeUndefined();
+    expect(card.thumbUrl).toBeDefined();
     expect(noPicture("lib_kids", "mac-1")).toEqual([]);
   });
 
-  it("a computer's own job files: a card picture, strip or proxy of a clip not blurred is refused; its waveform is taken", async () => {
+  it("a computer's own job files: a proxy or original of a clip not blurred is refused; its card picture, strip and waveform are taken", async () => {
     const r = (await (await onMac("lib_kids", "Roll.mov")).json()) as { versionId: string };
     const job = Number((d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, held_by) VALUES ('lib_kids', ?, 'send', 'running', 'tinyacrobatics', 'mac-1') RETURNING id").get(r.versionId) as { id: number }).id);
-    for (const name of ["thumb", "sprite", "proxy", "original"]) {
+    for (const name of ["proxy", "original"]) {
       const got = await acceptLibraryFile(job, "mac-1", name, Readable.from([Buffer.from("x")]));
       expect(got, name).toMatchObject({ ok: false, body: { message: REFUSED_BLUR } });
     }
-    expect(await acceptLibraryFile(job, "mac-1", "wave", Readable.from([Buffer.from("[1,2]")]))).toBe(true);
+    for (const name of ["wave", "thumb", "sprite"]) expect(await acceptLibraryFile(job, "mac-1", name, Readable.from([Buffer.from(name === "wave" ? "[1,2]" : "x")])), name).toBe(true);
   });
 });
 
@@ -214,12 +214,12 @@ describe("the blurred master: a version of its original's clip, linked on the fu
     const orig = (await (await onMac("lib_kids", "Handstand.mov", { sha256: ORIG })).json()) as { assetId: string; versionId: string };
     expect(orig.assetId).toBe(asset);
     expect(vOf(asset)).toBe(b.versionId);
-    expect(pictures(orig.versionId)).toEqual([]);
+    expect(pictures(orig.versionId).filter((k) => k !== "thumb" && k !== "sprite")).toEqual([]);
   });
 });
 
 describe("a member, a share link and the phone get only blurred bytes", () => {
-  it("serves the blurred render under Blurred, and nothing of a clip not blurred: not its file, not its picture", async () => {
+  it("serves the blurred render under Blurred, and of a clip not blurred only its card picture and strip", async () => {
     const ORIG = sha("Split original bytes");
     const orig = (await (await onMac("lib_kids", "Split.mov", { sha256: ORIG })).json()) as { assetId: string; versionId: string };
     const plain = (await (await onMac("lib_kids", "Bridge.mov")).json()) as { versionId: string };
@@ -227,7 +227,8 @@ describe("a member, a share link and the phone get only blurred bytes", () => {
     expect((await mayServe({ id: "lib_kids", versionId: b.versionId! }, "original")).ok).toBe(true);
     expect((await serveGate(b.versionId!, "play", mediaFile(b.versionId!, "play")!)).ok).toBe(true);
     for (const v of [orig.versionId, plain.versionId]) {
-      for (const kind of ["thumb", "sprite", "play", "source", "proxy"]) expect((await serveGate(v, kind, { key: "k" })).ok, `${v} ${kind}`).toBe(false);
+      for (const kind of ["play", "source", "proxy"]) expect((await serveGate(v, kind, { key: "k" })).ok, `${v} ${kind}`).toBe(false);
+      for (const kind of ["thumb", "sprite"]) expect((await serveGate(v, kind, { key: "k" })).ok, `${v} ${kind}`).toBe(true);
       expect((await mayServe({ id: "lib_kids", versionId: v }, "proxy", { toComputer: true })).ok).toBe(false);
     }
     // under Upload Off not even the blurred render is handed out
@@ -241,7 +242,7 @@ describe("a member, a share link and the phone get only blurred bytes", () => {
     const orig = (await (await onMac("lib_kids", "Pike.mov", { sha256: ORIG })).json()) as { assetId: string; versionId: string };
     const plain = (await (await onMac("lib_kids", "Tuck.mov")).json()) as { assetId: string; versionId: string };
     // a picture of the clip not blurred, as if it were there from before Blur faces was turned on
-    d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'thumb', 'k-old', 1)").run(plain.versionId);
+    d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, 'thumb', 'k-old', 1)").run(plain.versionId);
     const b = await sendBlurred("lib_kids", "Pike blurred.mp4", "blurred-bytes-4", ORIG);
     const link = async (assetId: string) => ((await (await app.request("/api/library/lib_kids/shares", json({ target: { kind: "asset", id: assetId }, scope: "download" }))).json()) as { token: string }).token;
     const good = await link(orig.assetId);
@@ -448,16 +449,15 @@ describe("files stored before Blur faces was turned on stay, and leave no more",
 });
 
 describe("a strip made again on the Mac (an old 16:9 strip)", () => {
-  it("is not asked for, nor kept, for a clip not blurred: its old strip stays stored and is not served", async () => {
+  it("is asked for and kept for a clip not blurred too (owner, 2026-11-24)", async () => {
     lib("lib_strips", { upload: "all" });
     d.prepare("INSERT INTO assets (id, library_id, kind, title, current_version_id, created_by, created_at) VALUES ('a_strip', 'lib_strips', 'video', 'Strip', 'v_strip', 'tinyacrobatics', 0)").run();
     d.prepare("INSERT INTO asset_versions (id, asset_id, n, source_key, bytes, sha256, state, created_by, created_at, probe, mac_path, mac_device) VALUES ('v_strip', 'a_strip', 1, 'mac:v_strip', 9, 'h', 'ready', 'tinyacrobatics', 0, ?, '/Volumes/Tiny Footage/Strip.mov', ?)").run(JSON.stringify({ duration: 3, width: 1080, height: 1920 }), MAC);
     d.prepare("INSERT INTO derivatives (version_id, kind, storage_key, bytes) VALUES ('v_strip', 'sprite', 'k-old-strip', 1)").run();
     expect(strayStrips("lib_strips", MAC).map((x) => x.versionId)).toEqual(["v_strip"]);
     d.prepare("UPDATE libraries SET settings = json_set(settings, '$.blurFaces', json('true'), '$.upload', 'proxies') WHERE id = 'lib_strips'").run();
-    expect(strayStrips("lib_strips", MAC)).toEqual([]);
-    expect(await putSprite("lib_strips", "v_strip", JPEG)).toBe(false);
-    expect(d.prepare("SELECT storage_key FROM derivatives WHERE version_id = 'v_strip' AND kind = 'sprite'").get()).toEqual({ storage_key: "k-old-strip" });
+    expect(strayStrips("lib_strips", MAC).map((x) => x.versionId)).toEqual(["v_strip"]);
+    expect(await putSprite("lib_strips", "v_strip", JPEG)).toBe(true);
   });
 
   it("asks for the strip and card picture of a blurred copy that became its clip's version with neither, and stops once it has them", () => {
@@ -587,11 +587,11 @@ describe("each file's blur answer, set once when it comes in (owner, 2026-11-20)
     expect(await body(put("no"))).toEqual({ blur: "no" });
     expect(blurOf(f.assetId)).toBe("no");
     expect(queued).toEqual([]);
-    // what the server cut from it while it was kept as filmed goes when it is marked yes
+    // its proxy goes when it is marked yes; its card picture and strip stay
     for (const kind of ["thumb", "sprite", "proxy"]) d.prepare("INSERT OR REPLACE INTO derivatives (version_id, kind, storage_key, bytes) VALUES (?, ?, ?, 1)").run(f.versionId, kind, `libraries/lib_kids/v/${f.versionId}/${kind}`);
     expect(await body(put("yes"))).toEqual({ blur: "yes" });
     expect(queued).toEqual([f.versionId]);
-    expect(pictures(f.versionId).filter((k) => ["thumb", "sprite", "proxy"].includes(k))).toEqual([]);
+    expect(pictures(f.versionId).filter((k) => ["thumb", "sprite", "proxy"].includes(k))).toEqual(["sprite", "thumb"]);
   });
 });
 
@@ -631,8 +631,9 @@ describe("after a full ingest the server's disk holds no frame of an original", 
     walk(path.join(dir, "library"));
     const ofWalk = files.filter((f) => f.includes(`${path.sep}lib_walk${path.sep}`) || ids.some((id) => f.includes(id)));
     expect(ofWalk.length).toBeGreaterThan(0); // the blurred render itself
-    for (const f of ofWalk) expect([...blurred].some((id) => f.includes(id)), f).toBe(true);
-    for (const f of files) for (const id of ids) expect(f.includes(id), f).toBe(false);
+    const card = (f: string) => /[/\\](thumb|sprite)\.jpg$/.test(f); // a card picture or strip is kept for every clip (owner, 2026-11-24)
+    for (const f of ofWalk) expect(card(f) || [...blurred].some((id) => f.includes(id)), f).toBe(true);
+    for (const f of files) for (const id of ids) expect(!card(f) && f.includes(id), f).toBe(false);
     // the whole data folder (the library, the chat's files, the AI Editor's, Review's): no refused original's bytes, and
     // no file named for a clip not blurred
     const all: string[] = [];
@@ -648,7 +649,7 @@ describe("after a full ingest the server's disk holds no frame of an original", 
     for (const f of all) {
       if (f.endsWith(".db") || f.endsWith(".db-wal") || f.endsWith(".db-shm")) continue;
       expect(refused.has(createHash("sha256").update(readFileSync(f)).digest("hex")), f).toBe(false);
-      for (const id of ids) expect(f.includes(id), f).toBe(false);
+      for (const id of ids) expect(!card(f) && f.includes(id), f).toBe(false);
     }
   });
 });
