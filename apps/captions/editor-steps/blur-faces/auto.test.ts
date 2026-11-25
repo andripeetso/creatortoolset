@@ -181,6 +181,17 @@ describe("the Mac that has the file", () => {
     expect(await queueVersion(event(v))).toBe(false);
     // the library uploads (all hosts proxies): its Mac makes the team's proxy from the copy and sends it
     expect(libraryDb().prepare("SELECT 1 FROM jobs WHERE version_id = ? AND kind = 'send'").get(blurred!)).toBeTruthy();
+
+    // Undo: the clip plays its original again, the copy's version is gone, and the intake holds until Resume
+    const before = Date.now() - 60_000;
+    const undo = (await (await call("POST", "/auto/undo", { since: before })).json()) as { reverted: { versionId: string; macPath: string }[] };
+    expect(undo.reverted).toEqual([{ versionId: blurred, macPath: made.path }]);
+    expect((libraryDb().prepare("SELECT current_version_id AS c FROM assets WHERE id = ?").get(original.asset_id) as { c: string }).c).toBe(v);
+    expect(libraryDb().prepare("SELECT 1 FROM asset_versions WHERE id = ?").get(blurred!)).toBeUndefined();
+    expect(await queueVersion(event(v))).toBe(true); // queued again, but held
+    expect(autoJobs.claim(mac)).toBeNull();
+    await call("POST", "/auto/resume");
+    expect(autoJobs.claim(mac)).toBeTruthy();
   });
 
   it("a disk that is not connected gives the file back, not offered to that Mac again for a while", async () => {

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { readFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DeviceJob } from "../../contracts/devices";
 import type { AuthVars } from "../../api/auth";
@@ -20,7 +20,8 @@ import { BLUR_SQL, fileBlur, libraryDb } from "../../api/library/db";
 import { importTarget } from "../../contracts/storage";
 import { writeJsonAtomic } from "../../api/library/media/run";
 import { libraryAccount } from "../../api/library/routes";
-import { mainSourceFor } from "../../api/library/access";
+import { libraryChanged, mainSourceFor } from "../../api/library/access";
+import { deleteVersions } from "../../api/library/trash";
 import { EXAMPLE_JPEG } from "./example";
 import { checkMade, HEX64, recordCopy } from "./copy";
 import { reconnectRoutes } from "./reconnect";
@@ -73,6 +74,9 @@ const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 const fileOf = (user: string) => path.join(env.dataDir, "plugins", "blur-faces", `${user}.json`);
+/** Held (undo, until the owner resumes): files still queue, none is handed to a Mac. Kept on disk so a restart keeps it. */
+const heldFile = (user: string) => path.join(env.dataDir, "plugins", "blur-faces", `${user}.held`);
+const isHeld = (user: string) => existsSync(heldFile(user));
 /** The file: the account's settings from before they were per workspace (each workspace starts from them), and each workspace's own. */
 type Saved = Partial<Settings> & { workspaces?: Record<string, Partial<Settings>> };
 const readSaved = (user: string): Saved => {
@@ -356,7 +360,7 @@ const back = (j: AutoJob, extra: Partial<AutoJob> = {}) => {
 const versionGone = (versionId: string) =>
   !libraryDb().prepare("SELECT 1 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE v.id = ? AND a.trashed_at IS NULL").get(versionId);
 /** Ready to hand out to its Mac now: an AI provider to choose the faces, Which faces said, not paused. */
-const ready = (owner: string) => !pausedUntil(owner) && anyVisionConfigured(owner);
+const ready = (owner: string) => !pausedUntil(owner) && !isHeld(owner) && anyVisionConfigured(owner);
 const offered = (j: AutoJob, device: string, now: number) => j.state === "queued" && j.mac === device && !(j.awayUntil && j.awayUntil > now);
 
 /** No face to cover, or none the AI chose: the file is kept as filmed (its blur answer no), as the person asked. */
@@ -511,6 +515,44 @@ routes.post("/auto/retry", async (c) => {
   if (!j || j.owner !== user || j.state !== "failed") return c.json({ error: "Not found" }, 404);
   back(j, { tries: 0 });
   delete j.error;
+  void wakeEditorPolls();
+  return c.json({ ok: true });
+});
+
+/**
+ * Undo the automatic blur: every clip of the account's own libraries whose current version is a blurred copy made since
+ * `since` (ms) goes back to its original, and the copy's version is deleted (the file on the Mac stays: the caller removes
+ * it). The intake is held until /auto/resume, so the originals are not blurred again meanwhile.
+ */
+export async function undoAuto(owner: string, since: number): Promise<{ versionId: string; macPath: string | null }[]> {
+  await mkdir(path.dirname(heldFile(owner)), { recursive: true });
+  await writeFile(heldFile(owner), String(Date.now()));
+  const d = libraryDb();
+  const rows = (
+    d
+      .prepare(
+        `SELECT a.id AS asset, a.library_id AS library, b.id AS blurred, b.mac_path AS macPath,
+           (SELECT o.id FROM asset_versions o WHERE o.asset_id = a.id AND o.blurred_of IS NULL AND b.blurred_of IN (o.sha256, o.full_sha256)
+             ORDER BY o.n DESC LIMIT 1) AS original
+         FROM assets a JOIN asset_versions b ON b.id = a.current_version_id
+         WHERE b.blurred_of IS NOT NULL AND b.created_at >= ?`,
+      )
+      .all(since) as { asset: string; library: string; blurred: string; macPath: string | null; original: string | null }[]
+  ).filter((r) => r.original && libraryAccount(r.library) === owner);
+  for (const r of rows) d.prepare("UPDATE assets SET current_version_id = ? WHERE id = ? AND current_version_id = ?").run(r.original, r.asset, r.blurred);
+  await deleteVersions(rows.map((r) => r.blurred));
+  for (const lib of new Set(rows.map((r) => r.library))) libraryChanged(lib);
+  return rows.map((r) => ({ versionId: r.blurred, macPath: r.macPath }));
+}
+
+// POST /auto/undo { since } → { reverted: [{ versionId, macPath }] }; POST /auto/resume → the held intake hands files out again
+routes.post("/auto/undo", async (c) => {
+  const since = ((await c.req.json().catch(() => null)) as { since?: unknown } | null)?.since;
+  if (typeof since !== "number" || !Number.isFinite(since)) return c.json({ error: "since is a time in ms" }, 400);
+  return c.json({ reverted: await undoAuto(c.get("user").username, since) });
+});
+routes.post("/auto/resume", async (c) => {
+  await rm(heldFile(c.get("user").username), { force: true });
   void wakeEditorPolls();
   return c.json({ ok: true });
 });
