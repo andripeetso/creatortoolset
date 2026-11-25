@@ -1011,9 +1011,9 @@ export default function LibraryPage() {
       <ClipMenu
         inTrash={trash}
         readOnly={readOnly}
-        // a copy kept for when the original's drive or share is away: none offered for a file on this Mac's own disk
+        // a copy kept on a computer without the original (owner, 2026-11-24): none offered where this computer has it
         offline={
-          thisMacDevice() && (offline.versions.includes(a.versionId) || a.placeWord?.word !== "here" || a.onDrive)
+          thisMacDevice() && (offline.versions.includes(a.versionId) || a.placeWord?.word !== "here")
             ? { on: offline.versions.includes(a.versionId), set: (on) => void keepOffline({ version: a.versionId }, on) }
             : undefined
         }

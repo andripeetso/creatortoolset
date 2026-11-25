@@ -58,8 +58,6 @@ export interface AssetCard {
   notBlurred?: true;
   /** the file is on a Mac and only its index is on this server (api/library/on-mac.ts): the drive's name, else the Mac's */
   onMac?: string;
-  /** that Mac reads it from a drive or a share (/Volumes/…), not its own disk: a copy kept on a computer plays while it is away */
-  onDrive?: true;
   /** on the computer that asked (`?device=`): its proxy in that computer's cache, or its original verified or found there (place rows) */
   here?: true;
   /** where its original is, seen from the computer that asked (`?device=`; none: any of the person's), from the place rows

@@ -339,7 +339,6 @@ export function toCard(r: CardRow): AssetCard {
     ...(r.finished || review ? { finished: true as const } : {}),
     ...(r.in_place ? { onComputer: true as const } : {}),
     ...(r.mac_path ? { onMac: macPlace(r.mac_path, r.mac_device ?? null) } : {}),
-    ...(r.mac_path?.startsWith("/Volumes/") ? { onDrive: true as const } : {}),
     ...(review ? { review: true as const } : {}), // ponytail: two stats a card; a column when pages get big
     ...(r.preparing ? { preparing: { step: r.preparing.split("\x1f")[0] as NonNullable<AssetCard["preparing"]>["step"], running: r.preparing.endsWith("running") } } : {}),
     ...(r.failed ? { failed: { step: r.failed.split("\x1f")[0] as NonNullable<AssetCard["failed"]>["step"], error: r.failed.split("\x1f")[1] ?? "" } } : {}),
