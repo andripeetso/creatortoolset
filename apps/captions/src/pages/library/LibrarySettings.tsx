@@ -2,7 +2,8 @@ import { LIBRARY_WORDS, PROXY_QUALITIES, hostedOf, hostedSettings, hostsProxies,
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Card, Row, Section, Status, markSave } from "@/components/settings/ui";
-import { updateLibrary } from "@/lib/library";
+import { chooseDialog } from "@/lib/dialogs";
+import { markBlurred, updateLibrary } from "@/lib/library";
 import { thisMacBridge } from "@/lib/thisMac";
 import { useWorkspace } from "@/lib/workspace";
 import { useMe } from "@/lib/auth";
@@ -78,7 +79,7 @@ export function LibrarySettingsBody({ library, watch, onChange, onError, workspa
         <Organization settings={s} save={save} />
       </Section>
       <Section title={LIBRARY_WORDS.proxyTitle}>
-        <Proxies library={library} save={save} faceBlur={faceBlur} />
+        <Proxies library={library} save={save} faceBlur={faceBlur} onError={onError} />
       </Section>
       <Section title={LIBRARY_WORDS.hostedTitle}>
         <Hosted library={library} watch={watch} save={save} />
@@ -121,15 +122,20 @@ function Organization({ settings, save }: { settings: Settings; save: (s: Partia
  * while it is on there is no Generate proxies or quality, and turning it on turns plain proxies off. Else Generate
  * proxies (forced on while Hosted media hosts proxies) and the quality while on.
  */
-function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean }) {
+function Proxies({ library, save, faceBlur, onError }: { library: LibrarySummary; save: (s: Partial<Settings>) => Promise<unknown>; faceBlur: boolean; onError: (m: string) => void }) {
   const s = library.settings;
   const hosted = hostsProxies(s.upload);
   const on = !s.blurFaces && (hosted || s.proxy);
   const gen = LIBRARY_WORDS.generateProxies;
   const blur = LIBRARY_WORDS.blurFaces;
   // on: Originals leave Hosted media (the server refuses them under Blur faces), and no plain proxy is made beside the blurred one
-  const setBlur = (v: boolean) =>
-    void save({ blurFaces: v, ...(v ? { proxy: false } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
+  const setBlur = async (v: boolean) => {
+    // on: the files already here are either blurred already (marked so) or kept as filmed (the server's answer for them)
+    const already = v ? await chooseDialog({ title: LIBRARY_WORDS.alreadyHere.title, body: LIBRARY_WORDS.alreadyHere.body, ok: LIBRARY_WORDS.alreadyHere.blurred, other: LIBRARY_WORDS.alreadyHere.asFilmed }) : "other";
+    if (!already) return;
+    await save({ blurFaces: v, ...(v ? { proxy: false } : {}), ...hostedSettings(v ? { ...hostedOf(s), originals: false } : hostedOf(s), s.finalsUpload) });
+    if (already === "ok") await markSave(markBlurred(library.id, { all: true })).catch(() => onError(LIBRARY_WORDS.alreadyHere.failed));
+  };
   return (
     <Card>
       {(faceBlur || s.blurFaces) && (
@@ -137,7 +143,7 @@ function Proxies({ library, save, faceBlur }: { library: LibrarySummary; save: (
           title={blur.label}
           tip={blur.tip}
           status={s.blurFaces ? <Status>{LIBRARY_WORDS.proxiesBlurred}</Status> : undefined}
-          control={<Switch aria-label={blur.label} checked={!!s.blurFaces} onCheckedChange={setBlur} />}
+          control={<Switch aria-label={blur.label} checked={!!s.blurFaces} onCheckedChange={(v) => void setBlur(v)} />}
         />
       )}
       {!s.blurFaces && (

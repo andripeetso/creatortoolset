@@ -1172,6 +1172,43 @@ libraryApp.post("/:id/made/:kind/stop", (c) => {
   return c.json({ files: stopQueued(libraryId, kind, user.username) });
 });
 
+/**
+ * POST /api/library/:id/already-blurred { sha256?: string[], all?: true } → { files }: files whose faces were blurred
+ * before they came in, marked as their own blurred copy (asset_versions.blurred_of, the link a computer's blurred render
+ * keeps to its original), so every path reads them blurred: their pictures show, they may leave. `sha256`: the files
+ * with these SHA-256s (a catalog's certified masters); `all`: every file here. The owner's or an admin's, as keeping a
+ * file as filmed is. Nothing is queued.
+ */
+libraryApp.post("/:id/already-blurred", async (c) => {
+  const user = c.get("user");
+  const libraryId = c.req.param("id");
+  if (!libraryRole(user.username, libraryId)) return c.json({ error: "Not found", code: "not_found" }, 404);
+  if (!mayKeepAsFilmed(user.username, libraryId)) return c.json({ error: "Only the workspace owner or an admin can mark files as blurred", code: "forbidden" }, 403);
+  const b = (await c.req.json().catch(() => null)) as { sha256?: unknown; all?: unknown } | null;
+  const want = new Set(Array.isArray(b?.sha256) ? b.sha256.filter((s): s is string => typeof s === "string" && /^[a-f0-9]{64}$/.test(s)) : []);
+  if (b?.all !== true && !want.size) return c.json({ error: "Send sha256 or all", code: "invalid" }, 400);
+  const d = db();
+  const rows = d
+    .prepare("SELECT v.id, v.asset_id, v.sha256, v.full_sha256 FROM asset_versions v JOIN assets a ON a.id = v.asset_id WHERE a.library_id = ? AND a.trashed_at IS NULL AND v.blurred_of IS NULL")
+    .all(libraryId) as { id: string; asset_id: string; sha256: string | null; full_sha256: string | null }[];
+  const hit = rows.filter((r) => b?.all === true || want.has(r.sha256 ?? "") || want.has(r.full_sha256 ?? ""));
+  const mark = d.prepare("UPDATE asset_versions SET blurred_of = ? WHERE id = ? AND blurred_of IS NULL");
+  const yes = d.prepare("UPDATE assets SET blur = 'yes' WHERE id = ?");
+  d.exec("BEGIN");
+  try {
+    for (const r of hit) {
+      mark.run(r.full_sha256 ?? r.sha256 ?? r.id, r.id);
+      yes.run(r.asset_id);
+    }
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+  if (hit.length) libraryChanged(libraryId);
+  return c.json({ files: hit.length });
+});
+
 // POST /api/library/:id/stop → { files }: Stop, every kind's queued work taken off the queue (each Cancel at once)
 libraryApp.post("/:id/stop", (c) => {
   const user = c.get("user");

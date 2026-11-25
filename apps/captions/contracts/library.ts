@@ -952,6 +952,7 @@ export const LIBRARY_WORDS = {
   noClipsYet: "No clips yet",
   proxiesHostedOn: "On while proxies are hosted",
   proxiesBlurred: "Blurred copies used as proxies",
+  alreadyHere: { title: "Files already in the library", body: "Mark the files already here as blurred, or keep them as filmed.", blurred: "Already blurred", asFilmed: "Keep as filmed", failed: "Could not mark the files as blurred" },
   recommended: "Recommended",
   budget: {
     label: "Monthly budget",
