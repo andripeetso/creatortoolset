@@ -131,6 +131,21 @@ describe("a settings save under Hosted proxies", () => {
     await patch({ upload: "all" });
     expect(jobs(id)).toContain("proxy");
   });
+  it("Generate proxies off, the server keeping only proxies: a file it holds keeps its waiting proxy, a computer's file loses its", async () => {
+    await patch({ upload: "all", proxy: true });
+    const [held, onMac] = [await upload("lib_off", "held.mp4"), await upload("lib_off", "on-a-mac.mp4")];
+    await drain(["probe"]);
+    d.prepare("UPDATE asset_versions SET source_key = 'mac:' || id WHERE id = ?").run(onMac);
+    await patch({ upload: "proxies" });
+    const { enqueueJob } = await import("./jobs");
+    for (const v of [held, onMac]) enqueueJob(d, "lib_off", v, "proxy", "owner-a", true);
+    for (const v of [held, onMac]) expect(jobs(v), v).toContain("proxy");
+    await patch({ proxy: false });
+    expect(jobs(held)).toContain("proxy"); // all that plays of it here: nothing would queue it again
+    expect(jobs(onMac)).not.toContain("proxy");
+    d.prepare("DELETE FROM jobs WHERE version_id IN (?, ?)").run(held, onMac);
+    await patch({ upload: "all" });
+  });
 });
 
 describe("Blur faces turned on and off", () => {

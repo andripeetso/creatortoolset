@@ -21,7 +21,7 @@ import { sendFile } from "../lib/send-file";
 import { emitEvent, notifyLibraryChanges } from "../lib/events";
 import { playCopy, pushPlayCopy } from "../lib/play-copies";
 import { isFinal } from "./finals";
-import { type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, MADE_KINDS, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
+import { type Blur, cantFind, LIBRARY_WORDS, flagsOf, HOSTED_DEFAULT, hostedSettings, type ActionNeeded, hostsNone, hostsOriginals, hostsProxies, PICTURE_FILE, RAW_FILE, RAW_FROM_COMPUTER, LIBRARY_UPLOADS, LOOK_BUDGET_DEFAULT, LOOK_LEVELS, lookLevelOf, MADE_KINDS, PROXY_QUALITIES, proxyQualityOf, SOUNDS, WATCH_MODELS, watchModelOf, type AssetCard, type LibrarySettings, type LibrarySummary, type LibraryUpload, type Sound, type WhereAnswer } from "../../contracts/library";
 import type { LibraryViewer } from "../../contracts/library-source";
 import { releaseBudget } from "./shots";
 import { enqueueJob, prepareFirst } from "./jobs";
@@ -1294,8 +1294,14 @@ async function patchLibrary(c: Context<{ Variables: AuthVars }>, libraryId: stri
   const hosted = hostsProxies(libraryUpload(libraryId));
   const proxy = b?.settings?.proxy;
   if (typeof proxy === "boolean") put("proxy", proxy);
-  // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then)
-  if (proxy === false && !proxiesInCloud(libraryId)) db().prepare("DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')").run(libraryId);
+  // proxies kept in the cloud are made for every video whatever the switch says (its row is hidden then). Where the
+  // server keeps only proxies, a file it holds itself (uploaded by hand) keeps its waiting proxy: it is all that plays
+  // of it, queued whatever the switch says (worker.ts onlyProxy), and nothing would queue it again
+  if (proxy === false && !proxiesInCloud(libraryId)) {
+    const stored = libraryUploadStored(libraryId);
+    const onComputers = hostsProxies(stored) && !hostsOriginals(stored) ? " AND version_id IN (SELECT id FROM asset_versions WHERE source_key LIKE 'mac:%')" : "";
+    db().prepare(`DELETE FROM jobs WHERE library_id = ? AND kind = 'proxy' AND state IN ('queued', 'failed', 'stopped')${onComputers}`).run(libraryId);
+  }
   // only Hosted proxies with the switch on backfill (a proxy is all the server keeps then), and only on a save about
   // proxies: one that turns hosting on or sets the proxy switch. Any other save (Effort, Blur faces, a folder) queues
   // nothing; the switch alone makes them for new files (made.ts)

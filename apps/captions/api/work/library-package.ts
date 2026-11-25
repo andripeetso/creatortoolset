@@ -404,6 +404,8 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
   };
   const upload = versionUpload(r.id);
   const send = job.kind === "send" && (hostsOriginals(upload) || hostsProxies(upload));
+  const asked = fileProxy(r.id);
+  const proxyOn = asked !== "no" && (asked === "yes" || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy")));
   return {
     v: WORK_V,
     job: { id: job.id, kind: job.kind, versionId: r.id, libraryId: r.library_id, actor: job.actor ?? d.owner, ...(job.claim_id ? { claim: job.claim_id } : {}) },
@@ -422,12 +424,7 @@ function packageOf(job: JobRow, r: LibRow, d: Device, folders: ReturnType<typeof
           // the add's own answer (db.ts fileProxy): Skip processing makes none, Generate proxies one; else the switch.
           // Hosted proxies with it on: every video is made here and sent (UNIFIED-PRD §4.1, §4.2); hosting alone makes
           // none (owner, 2026-11-25), and with no proxy nothing is sent (upload-gate.ts refuses the original)
-          proxy: (() => {
-            const quality = libraryProxyQuality(r.library_id);
-            if (fileProxy(r.id) === "no") return { cloud: false, on: false, quality };
-            const on = fileProxy(r.id) === "yes" || (!keepsOnlyOriginals(r.library_id) && librarySetting(r.library_id, "proxy"));
-            return { cloud: hostsProxies(upload) && on, on, quality };
-          })(),
+          proxy: { cloud: hostsProxies(upload) && proxyOn, on: proxyOn, quality: libraryProxyQuality(r.library_id) },
           music: !!libraryDb()
             .prepare(`SELECT 1 FROM asset_tags t JOIN asset_versions av ON av.asset_id = t.asset_id WHERE av.id = ? AND t.source = 'user' AND t.tag IN (${Object.values(SOUNDS).map(() => "?").join(", ")})`)
             .get(r.id, ...Object.values(SOUNDS).map((s) => s.tag)),

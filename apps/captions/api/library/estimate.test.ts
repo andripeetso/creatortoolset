@@ -68,10 +68,14 @@ describe("estimate", () => {
     ).run();
     d.prepare("INSERT INTO jobs (library_id, version_id, kind, state, actor, started_at, done_at) VALUES ('lib_e', 'vb', 'describe', 'done', 'local', 0, 900000000)").run();
     d.prepare("INSERT INTO descriptions (version_id, source, text, provider, created_at) VALUES ('vb', 'ai', 'x', 'mac-instance', 1)").run();
-    const e = await estimate("lib_e", "local", { clips: 100, bytes: 100 * 30_000_000 });
-    expect(e.steps.find((x) => x.step === "describe")!.seconds).toBe(1000);
-    for (const t of ["descriptions", "jobs", "asset_versions"]) d.prepare(`DELETE FROM ${t} WHERE ${t === "asset_versions" ? "id" : "version_id"} = 'vb'`).run();
-    d.prepare("DELETE FROM assets WHERE id = 'ab'").run();
+    try {
+      const e = await estimate("lib_e", "local", { clips: 100, bytes: 100 * 30_000_000 });
+      expect(e.steps.find((x) => x.step === "describe")!.seconds).toBe(1000);
+    } finally {
+      // whatever the check says: left behind, these rows fail the tests after it too
+      for (const t of ["descriptions", "jobs", "asset_versions"]) d.prepare(`DELETE FROM ${t} WHERE ${t === "asset_versions" ? "id" : "version_id"} = 'vb'`).run();
+      d.prepare("DELETE FROM assets WHERE id = 'ab'").run();
+    }
   });
 
   it("a music folder costs nobody AI or keys; sound-only files are never described", async () => {

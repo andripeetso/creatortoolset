@@ -406,9 +406,15 @@ describe("in the look job", () => {
     // a real failure keeps its wait in the sweep too
     expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(false);
     // Make for the missing pressed since: What's made counts it queued, so the sweep takes it now, not RETRY_MS later
-    libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineAsked', ?) WHERE id = 'lib_t'`).run(Date.now() + 1);
+    const press = (at: number) => libraryDb().prepare(`UPDATE libraries SET settings = json_set(settings, '$.timelineAsked', ?) WHERE id = 'lib_t'`).run(at);
+    const pressed = Date.now() + 1;
+    press(pressed);
     try {
-      expect(sweepWatch(libraryDb(), (id) => id === v)).toBe(true);
+      expect(sweepWatch(libraryDb(), (id) => id === v, pressed + 10)).toBe(true);
+      // the sweep queued it a moment ago: the same press does not queue it twice, a press since then does
+      expect(sweepWatch(libraryDb(), (id) => id === v, pressed + 20)).toBe(false);
+      press(pressed + 30);
+      expect(sweepWatch(libraryDb(), (id) => id === v, pressed + 40)).toBe(true);
     } finally {
       libraryDb().prepare(`UPDATE libraries SET settings = json_remove(settings, '$.timelineAsked') WHERE id = 'lib_t'`).run();
     }

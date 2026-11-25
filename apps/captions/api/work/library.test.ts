@@ -48,7 +48,7 @@ app.route("/api/library", libraryApp);
 app.route("/api/devices/relay/work", workApp);
 
 const d = libraryDb();
-for (const [id, upload, proxy] of [["lib_p", "proxies", true], ["lib_all", "all", true], ["lib_phone", "proxies", true], ["lib_none", "none", true]] as const) {
+for (const [id, upload, proxy] of [["lib_p", "proxies", true], ["lib_all", "all", true], ["lib_phone", "proxies", true], ["lib_none", "none", true], ["lib_hosted_off", "proxies", false]] as const) {
   d.prepare("INSERT INTO libraries (id, workspace_id, name, storage_kind, settings, created_at) VALUES (?, 'tiny', 'Tiny Acrobatics', 'local', ?, 0)").run(
     id,
     JSON.stringify({ upload, proxy, describe: false, embed: false }),
@@ -165,6 +165,18 @@ describe("library work on the computer that has the file", () => {
     // nothing it sent is made again on the server; what reads words still runs there
     expect(jobs(r.versionId).filter((j) => MADE.some((k) => j.startsWith(`${k}:`)))).toEqual([]);
     expect(jobs(r.versionId)).toContain("transcribe:queued");
+  }, 60_000);
+
+  it("hosting alone makes nothing: Upload → Proxies with Generate proxies off sends no proxy and no original", async () => {
+    puts = [];
+    const r = await send("lib_hosted_off", camera("tiny-hosted-off.mp4"));
+    const { lib } = await claim();
+    expect(lib?.job).toMatchObject({ kind: "send", versionId: r.versionId });
+    expect(lib).toMatchObject({ upload: "proxies", proxy: { on: false, cloud: false } });
+    expect(await runLibraryJob(lib!, o())).toBe("done");
+    for (const name of ["proxy", "original"]) expect(puts.map((p) => p.name), name).not.toContain(name);
+    expect(version(r.versionId).source_key).toBe(`mac:${r.versionId}`); // still the file on its Mac, nothing of it kept here
+    d.prepare("DELETE FROM jobs WHERE version_id = ?").run(r.versionId); // what its send queued next is not the next tests' to claim
   }, 60_000);
 
   it("a library that keeps originals gets the original too, and makes none of what came with it", async () => {
