@@ -20,6 +20,11 @@ final class IdentityTests: XCTestCase {
         }
     }
 
+    func testTestsNeverWriteTheAppsKeychainItems() {
+        XCTAssertEqual(Account.vault, "com.creatortoolset.mac.tests.account")
+        XCTAssertEqual(DeviceVault.service, "com.creatortoolset.mac.tests.device")
+    }
+
     func testACopyGetsItsOwnNames() {
         let id = "com.creatortoolset.mac.fresh"
         XCTAssertEqual(AppIdentity.keychain("device", id), "com.creatortoolset.mac.fresh.device")

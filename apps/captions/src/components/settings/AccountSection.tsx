@@ -188,7 +188,7 @@ function SignIns({ signins, open, unlink }: { signins: SignIn[]; open: Provider[
   const macLinked = linkedOf(mac.account);
   // a provider this server links is its button; the Mac app's own account sign-in only for one the server does not.
   // Signed in to the account: the ones it has no sign-in with yet, which link to it
-  const macOpen = mac.providers.filter((p) => !open.includes(p) && (!macIn || (p !== macIn.provider && !macLinked.some((l) => l.provider === p))));
+  const macOpen = mac.providers.filter((p) => !open.includes(p) && !signins.some((s) => s.provider === p) && (!macIn || (p !== macIn.provider && !macLinked.some((l) => l.provider === p))));
   // a sign-in from here that failed says so once (the sheet being closed is nothing to report)
   const failed =
     mac.problem ??

@@ -17,7 +17,11 @@ enum AppIdentity {
     static func tag(_ id: String = bundleID) -> String { copy(id).map { " (\($0))" } ?? "" }
 
     /// The Keychain service for one kind of secret: "server", "account", "device" or "env".
-    static func keychain(_ kind: String, _ id: String = bundleID) -> String { "\(copy(id) == nil ? released : id).\(kind)" }
+    /// `swift test` keeps its own items: an item a test writes under the app's names trusts only the test runner, so the
+    /// app then asks for the Mac's password to read it (the DPoP key, 2026-11-19).
+    static func keychain(_ kind: String, _ id: String = AppLog.underTests ? released + ".tests" : bundleID) -> String {
+        "\(copy(id) == nil ? released : id).\(kind)"
+    }
 
     /// The server's default port: 43128, or the next one for a copy.
     static func port(_ id: String = bundleID) -> Int { copy(id) == nil ? 43128 : 43129 }
