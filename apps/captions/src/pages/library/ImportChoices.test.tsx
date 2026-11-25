@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportChoices, importOptions, type ImportAsk } from "./ImportChoices";
 
@@ -16,34 +17,51 @@ const mount = (ask: ImportAsk) => {
   const host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<ImportChoices ask={ask} />));
+  act(() =>
+    root!.render(
+      <MemoryRouter>
+        <ImportChoices ask={ask} />
+      </MemoryRouter>,
+    ),
+  );
 };
-const box = (name: string) => [...document.querySelectorAll("label")].find((l) => l.textContent?.includes(name))?.querySelector<HTMLElement>("button");
+const option = (name: string) => {
+  const label = [...document.querySelectorAll("label")].find((l) => l.textContent === name);
+  return label ? document.getElementById(label.htmlFor) ?? undefined : undefined;
+};
 const add = async () => {
   await act(async () => {
     [...document.querySelectorAll("button")].find((b) => b.textContent === "Add")!.click();
   });
 };
 
-describe("the choices of one add", () => {
-  it("starts from the library's settings and answers what was ticked", async () => {
+describe("the choice of one add", () => {
+  it("Blur faces and Proxies are one choice: blurred, the blurred copy is the proxy", async () => {
     const done = vi.fn();
     mount({ id: 1, count: 17, blur: false, proxies: true, done });
     expect(document.body.textContent).toContain("Add 17 files");
-    act(() => box("Blur faces")!.click());
-    // the blurred video is the proxy: no Proxies row while Blur faces is ticked
-    expect(box("Proxies")).toBeUndefined();
+    expect(option("Proxies")!.getAttribute("aria-checked")).toBe("true");
+    act(() => option("Blur faces")!.click());
+    expect(option("Proxies")!.getAttribute("aria-checked")).toBe("false");
+    expect(document.querySelector('a[href="/settings/blur-faces"]')).not.toBeNull();
     await add();
     expect(done).toHaveBeenCalledWith({ blur: true, proxies: true });
   });
 
-  it("Proxies can be left off, and a row not asked for is not drawn", async () => {
+  it("None sends nothing, and an option not asked for is not drawn", async () => {
     const done = vi.fn();
     mount({ id: 2, count: 1, proxies: true, done });
-    expect(box("Blur faces")).toBeUndefined();
-    act(() => box("Proxies")!.click());
+    expect(option("Blur faces")).toBeUndefined();
+    act(() => option("None")!.click());
     await add();
     expect(done).toHaveBeenCalledWith({ blur: false, proxies: false });
+  });
+
+  it("no Proxies question: Blur faces or As filmed", () => {
+    mount({ id: 3, count: 2, blur: true, done: vi.fn() });
+    expect(option("Blur faces")!.getAttribute("aria-checked")).toBe("true");
+    expect(option("As filmed")).toBeDefined();
+    expect(option("None")).toBeUndefined();
   });
 });
 

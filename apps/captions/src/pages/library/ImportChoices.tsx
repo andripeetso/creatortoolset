@@ -1,13 +1,15 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { confirmDialog } from "@/lib/dialogs";
 
 /**
  * What runs on the files of one add (owner, 2026-11-24: "for the Sony stuff I would like to generate proxies and blur"):
  * asked on each drop or Upload where there is a choice, starting from the library's and the folder's settings.
- * `blur`/`proxies` absent: no such row. Proxies hides while Blur faces is ticked: the blurred video is then the proxy.
+ * One choice (owner: blur "essentially creates a blurred proxy"): Proxies, Blur faces or None; `blur`/`proxies` absent:
+ * no such option (no Proxies question: the other option is As filmed).
  */
 export type ImportChoice = { blur: boolean; proxies: boolean };
 export type ImportAsk = { id: number; count: number; blur?: boolean; proxies?: boolean; done: (c: ImportChoice | null) => void };
@@ -26,20 +28,35 @@ export function importOptions(c: ImportChoice, at: { libraryBlurs: boolean; macR
   };
 }
 
-/** A new add starts from its own ticks (keyed by the ask), never the last one's. */
+/** A new add starts from its own choice (keyed by the ask), never the last one's. */
 export function ImportChoices({ ask }: { ask: ImportAsk | null }) {
   return ask ? <Sheet key={ask.id} ask={ask} /> : null;
 }
 
+type Pick = "proxy" | "blur" | "none";
+const ROW = "flex items-start gap-2.5 text-sm";
+
 function Sheet({ ask }: { ask: ImportAsk }) {
-  const [blur, setBlur] = useState(!!ask.blur);
-  const [proxies, setProxies] = useState(ask.proxies ?? true);
+  const [pick, setPick] = useState<Pick>(ask.blur ? "blur" : "proxy");
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    // only when the person unticked it: a folder kept as filmed starts unticked
-    if (ask.blur && !blur && !(await confirmDialog({ title: "Turn off Blur faces?", body: "These files will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" }))) return;
-    ask.done({ blur, proxies });
+    // only when the person moved off it: a folder kept as filmed starts off Blur faces
+    if (ask.blur && pick !== "blur" && !(await confirmDialog({ title: "Turn off Blur faces?", body: "These files will not be blurred. Faces will show in previews and to your team.", ok: "Turn off" }))) return;
+    ask.done({ blur: pick === "blur", proxies: pick !== "none" });
   };
+  const proxies = ask.proxies !== undefined;
+  const option = (value: Pick, title: string, line: string, extra?: React.ReactNode) => (
+    <div className={ROW}>
+      <RadioGroupItem id={`import-${value}`} value={value} className="mt-0.5" />
+      <span className="flex flex-col gap-0.5">
+        <label htmlFor={`import-${value}`} className="font-medium">
+          {title}
+        </label>
+        <span className="text-xs text-zinc-500">{line}</span>
+        {extra}
+      </span>
+    </div>
+  );
   return (
     <Dialog open onOpenChange={(o) => !o && ask.done(null)}>
       <DialogContent aria-describedby={undefined} className="sm:max-w-md">
@@ -47,24 +64,22 @@ function Sheet({ ask }: { ask: ImportAsk }) {
           <DialogTitle className="text-base">
             Add {ask.count.toLocaleString()} {ask.count === 1 ? "file" : "files"}
           </DialogTitle>
-          {ask.blur !== undefined && (
-            <label className="flex items-start gap-2.5 text-sm">
-              <Checkbox className="mt-0.5" checked={blur} onCheckedChange={(v) => setBlur(v === true)} />
-              <span className="flex flex-col gap-0.5">
-                <span className="font-medium">Blur faces</span>
-                <span className="text-xs text-zinc-500">Only the blurred video of each clip leaves this computer.</span>
-              </span>
-            </label>
-          )}
-          {ask.proxies !== undefined && !blur && (
-            <label className="flex items-start gap-2.5 text-sm">
-              <Checkbox className="mt-0.5" checked={proxies} onCheckedChange={(v) => setProxies(v === true)} />
-              <span className="flex flex-col gap-0.5">
-                <span className="font-medium">Proxies</span>
-                <span className="text-xs text-zinc-500">A lighter copy of each clip goes to the server, so it plays anywhere.</span>
-              </span>
-            </label>
-          )}
+          {/* one choice: the blurred video is the proxy, so Blur faces and Proxies never go together */}
+          <RadioGroup value={pick} onValueChange={(v) => setPick(v as Pick)} aria-label="Processing" className="gap-3">
+            {proxies
+              ? option("proxy", "Proxies", "A lighter copy of each clip goes to the server, so it plays anywhere.")
+              : option("proxy", "As filmed", "Faces are not blurred.")}
+            {ask.blur !== undefined &&
+              option(
+                "blur",
+                "Blur faces",
+                proxies ? "A blurred copy is each clip's proxy, and only it leaves this computer." : "Only the blurred video of each clip leaves this computer.",
+                <Link to="/settings/blur-faces" className="w-fit text-xs text-violet-400 hover:underline">
+                  Face Blur settings
+                </Link>,
+              )}
+            {proxies && option("none", "None", "Clips play on this computer only.")}
+          </RadioGroup>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => ask.done(null)}>
               Cancel
