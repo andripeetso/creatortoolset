@@ -20,7 +20,8 @@ import { placeLine } from "@/lib/wording";
 import type { PlaceWord } from "@contracts/places";
 import { clock, day, factsOf, original, revealClip, revealsHere, revealsVersion, shotsByMoment, tagSuggestions, useClipView } from "./clip";
 import { ClipImage, ClipPlayer } from "./ClipPlayer";
-import { useHere } from "@/lib/here";
+import { editorProxy, useHere } from "@/lib/here";
+import { revealProxy } from "@/lib/thisMac";
 import { ClipShare } from "./ClipShare";
 import { Locate } from "./Locate";
 
@@ -33,6 +34,18 @@ import { Locate } from "./Locate";
  */
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** A clip's files, in the chain's order (docs/media-library-proxies-prd.md §1): each copy is made from the one before it. */
+type FileKind = "original" | "blurred" | "proxy";
+/** The File row's and the Location menu's words (the plan's D4): Original, Blurred, Proxy. */
+const WORDS = {
+  file: { original: "Original", blurred: "Blurred", proxy: "Proxy" } satisfies Record<FileKind, string>,
+  show: (f?: FileKind) => (f ? `Show ${f} in Finder` : "Show in Finder"),
+  copyPath: (f?: FileKind) => (f ? `Copy ${f} path` : "Copy path"),
+  couldNotCopy: "Could not copy",
+  server: "Server",
+};
+
 type Props = {
   libraryId: string;
   asset: AssetCard;
@@ -75,10 +88,11 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   const [near, setNear] = useState<AssetCard[]>([]);
   // More like this: from the whole clip, or from the shot it was asked on (`at`)
   const [alike, setAlike] = useState<{ at?: number; hits: SearchHit[] }>({ hits: [] });
-  const [copiedPath, setCopiedPath] = useState(false);
-  // Blur faces: which file plays and Copy path and Show in Finder name, the blurred copy or its original. Only for
-  // this window: the next time the clip opens it is the blurred copy again. `swapAt`: where the player was on a swap
-  const [fileOf, setFileOf] = useState<"blurred" | "original">("blurred");
+  const [copied, setCopied] = useState(false);
+  // the File row's pick: which of the clip's files plays and the Size and Location rows describe. Only for this window:
+  // the next time the clip opens it plays as the player picks (never the original of a blurred copy unasked). `swapAt`:
+  // where the player was on a swap
+  const [picked, setPicked] = useState<FileKind>();
   const [swapAt, setSwapAt] = useState<number>();
   const navigate = useNavigate();
   const me = useMe();
@@ -208,19 +222,33 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
   const rotate = (by: 90 | 270) => void updateAsset(libraryId, a.id, { turn: ((a.turn ?? 0) + by) % 360 }).then(saved, (e) => onError(message(e)));
 
   const playable = a.kind === "video" || a.kind === "audio";
-  const facts = factsOf(a);
   // the description, shot lines and tags are edited where they are (owner, 2026-11-17: no separate edit mode); not in the trash
   const fixed = inTrash || !!readOnly;
   // the clip's rarer tools in one menu: sharing, a new edit, editing, turning, the trash. It stays open on a turn, so upside down is two presses
   const file = original(a, detail);
   // the blurred copy is the clip's current version; its original is the version it was made from (`of`), when it has a path here
-  const madeFrom = detail?.versions?.find((v) => v.id === a.versionId)?.of;
+  const current = detail?.versions?.find((v) => v.id === a.versionId);
+  const madeFrom = current?.of;
   const maybeFilmed = madeFrom && revealsVersion() ? detail?.versions?.find((v) => v.id === madeFrom && v.path) : undefined;
-  // only where this computer reads the original now (the Mac app's places check): the computer that made the blur
-  const [originalHere] = useHere(maybeFilmed ? libraryId : null, maybeFilmed ? [maybeFilmed.id] : []);
-  const filmed = maybeFilmed && originalHere?.[maybeFilmed.id]?.state === "here" ? maybeFilmed : undefined;
-  const showOriginal = !!filmed && fileOf === "original";
+  // what this computer has of the clip now (the Mac app's places check): its file, its kept proxy, and the original of
+  // a blurred copy (only on the computer that made the blur)
+  const [here] = useHere(libraryId, [a.versionId, ...(maybeFilmed ? [maybeFilmed.id] : [])]);
+  const check = here?.[a.versionId];
+  const filmed = maybeFilmed && here?.[maybeFilmed.id]?.state === "here" ? maybeFilmed : undefined;
+  // the clip's proxy where it plays here (this computer's kept one, else the server's) and its size; null: it has none
+  const proxy = editorProxy(a, check, serverPlays);
+  // the clip's own file is on this computer (the Mac app found it; outside the allowed folders the player asks for access)
+  const currentHere = check?.state === "here";
+  const currentKind: FileKind = current?.blurred || filmed ? "blurred" : "original";
+  // the files that play on this computer, in the chain's order; the File row shows when there is a choice
+  const files: FileKind[] = [...(filmed ? (["original"] as const) : []), ...(currentHere ? [currentKind] : []), ...(proxy ? (["proxy"] as const) : [])];
+  // nothing picked: what the player takes by itself, the clip's own file when it plays here, else its proxy
+  const shown = files.length < 2 ? undefined : picked && files.includes(picked) ? picked : (currentHere && check.url) || !proxy ? currentKind : "proxy";
+  const showOriginal = !!filmed && shown === "original";
+  const showProxy = !!proxy && shown === "proxy";
   const path = showOriginal ? filmed.path : detail?.sourcePath;
+  // Frame rate is the same for every file of a clip (each copy keeps its original's); Size is the proxy's own
+  const facts = factsOf(showProxy ? { ...a, width: proxy.w, height: proxy.h } : a);
   // the file is on this Mac and Finder can show it: that is the clip's main button, and Download goes in the menu
   const inFinder = a.state !== "missing" && !!path && revealsHere(placeWord);
   const more = !inTrash && (
@@ -288,18 +316,34 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
     </DropdownMenu>
   );
   const inFolders = detail?.collections ?? [];
-  // the files on this computer the Location menu shows or copies: the blurred copy and its original when both are here
-  const here: { name: string; path: string; id?: string }[] =
-    filmed?.path && detail?.sourcePath ? [{ name: "blurred", path: detail.sourcePath }, { name: "original", path: filmed.path, id: filmed.id }] : path ? [{ name: "", path }] : [];
   const revealable = a.state !== "missing" && revealsHere(placeWord);
+  const tell = (problem: string | null) => void (problem && onError(problem));
+  const revealFile = (p: string, id?: string) => void revealClip(libraryId, a.id, p, id).then(tell);
+  // the files on this computer the Location menu shows or copies, in the chain's order: the original of a blurred copy,
+  // the clip's own file, and its kept proxy once the Mac app says where that is (an older one names no path: no items)
+  const own = detail?.sourcePath;
+  const kept = check?.proxyPath;
+  const before = filmed?.path;
+  const filesHere: { kind: FileKind; path: string; show?: () => void }[] = [
+    ...(before && own ? [{ kind: "original" as const, path: before, show: revealable ? () => revealFile(before, filmed?.id) : undefined }] : []),
+    ...(own ? [{ kind: currentKind, path: own, show: revealable ? () => revealFile(own) : undefined }] : []),
+    ...(kept ? [{ kind: "proxy" as const, path: kept, show: () => void revealProxy(a.versionId).then(tell) }] : []),
+  ];
+  // one file, the clip's own, needs no name
+  const named = filesHere.length > 1 || !own;
+  // where the shown file is: the proxy on this computer or on the server, else the original's place
+  const whereLine = showProxy ? (proxy.url.startsWith("/api/") ? WORDS.server : placeLine({ word: "here" })) : placeWord ? placeLine(placeWord) : (filesHere[0]?.path ?? WORDS.server);
   // a server others open has a link to the clip; This Mac's own address opens on this Mac only
   const linkable = hasTeam(useAuth((s) => s.kind));
+  // no clipboard (a server opened over plain http) and a write the browser refuses both say so
   const copyText = (p: string) =>
-    void navigator.clipboard?.writeText(p).then(() => {
-      setCopiedPath(true);
-      window.setTimeout(() => setCopiedPath(false), 1500);
-    });
-  const revealFile = (p: string, id?: string) => void revealClip(libraryId, a.id, p, id).then((problem) => problem && onError(problem));
+    void (navigator.clipboard?.writeText(p) ?? Promise.reject(new Error("no clipboard"))).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      },
+      () => onError(WORDS.couldNotCopy),
+    );
   const reveal = () => path && revealFile(path, showOriginal ? filmed.id : undefined);
   const open = (id: string, at?: number) => navigate(`/library?library=${encodeURIComponent(libraryId)}&asset=${encodeURIComponent(id)}${at ? `&at=${at}` : ""}`);
 
@@ -321,8 +365,8 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
         onSaved={saved}
         onError={onError}
       />
-      {(facts.length > 0 || inFolders.length > 0 || here.length > 0 || linkable || placeWord) && (
-        // one list of label and value: the facts, the clip's folders, which file plays (Blurred / Original) and where it is
+      {(facts.length > 0 || inFolders.length > 0 || filesHere.length > 0 || linkable || placeWord) && (
+        // one list of label and value: the facts, the clip's folders, which file plays (Original / Blurred / Proxy) and where it is
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-1 text-xs">
           {[...facts, ...(inFolders.length ? [[inFolders.length > 1 ? "Folders" : "Folder", inFolders.map((c) => c.name).join(", ")] as const] : [])].map(([k, v]) => (
             <div key={k} className="contents">
@@ -330,54 +374,55 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
               <dd className="truncate tabular-nums">{v}</dd>
             </div>
           ))}
-          {filmed && detail?.sourcePath && (
+          {shown && (
             <div className="contents">
               <dt className="text-zinc-500">File</dt>
               <dd>
-                <ToggleGroup type="single" variant="outline" size="sm" className="justify-start" value={fileOf} onValueChange={(v) => {
+                <ToggleGroup type="single" variant="outline" size="sm" className="justify-start" value={shown} onValueChange={(v) => {
                     if (!v) return;
                     setSwapAt(media.current?.currentTime);
-                    setFileOf(v as typeof fileOf);
+                    setPicked(v as FileKind);
                   }} aria-label="File">
-                  <ToggleGroupItem value="blurred" className="h-6 px-2 text-xs">
-                    Blurred
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="original" className="h-6 px-2 text-xs">
-                    Original
-                  </ToggleGroupItem>
+                  {files.map((f) => (
+                    <ToggleGroupItem key={f} value={f} className="h-6 px-2 text-xs">
+                      {WORDS.file[f]}
+                    </ToggleGroupItem>
+                  ))}
                 </ToggleGroup>
               </dd>
             </div>
           )}
-          {!inTrash && (here.length > 0 || linkable || placeWord) && (
+          {(filesHere.length > 0 || linkable || placeWord || showProxy) && (
             <div className="contents">
               <dt className="text-zinc-500">Location</dt>
               <dd className="min-w-0">
-                {here.length || linkable ? (
+                {filesHere.length || linkable ? (
                   // the files on this computer (the admin, on a server that has it): show each in Finder, copy each path; on a server, its link too
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button size="sm" variant="ghost" className="h-6 max-w-full gap-1 px-0 text-xs font-normal hover:bg-transparent hover:text-foreground">
-                        <span className="truncate">{copiedPath ? "Copied" : placeWord ? placeLine(placeWord) : (here[0]?.path ?? "Server")}</span>
+                        <span className="truncate">{copied ? "Copied" : whereLine}</span>
                         <ChevronDown className="h-3 w-3 shrink-0 text-zinc-500" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
-                      {revealable &&
-                        here.map((f) => (
-                          <DropdownMenuItem key={`show-${f.name}`} onSelect={() => revealFile(f.path, f.id)}>
-                            <FolderOpen className="h-4 w-4" />
-                            {f.name ? `Show ${f.name} in Finder` : "Show in Finder"}
-                          </DropdownMenuItem>
-                        ))}
-                      {revealable && here.length > 0 && <DropdownMenuSeparator />}
-                      {here.map((f) => (
-                        <DropdownMenuItem key={`copy-${f.name}`} title={f.path} onSelect={() => copyText(f.path)}>
+                      {filesHere.map(
+                        (f) =>
+                          f.show && (
+                            <DropdownMenuItem key={`show-${f.kind}`} onSelect={f.show}>
+                              <FolderOpen className="h-4 w-4" />
+                              {WORDS.show(named ? f.kind : undefined)}
+                            </DropdownMenuItem>
+                          ),
+                      )}
+                      {filesHere.some((f) => f.show) && <DropdownMenuSeparator />}
+                      {filesHere.map((f) => (
+                        <DropdownMenuItem key={`copy-${f.kind}`} title={f.path} onSelect={() => copyText(f.path)}>
                           <Copy className="h-4 w-4" />
-                          {f.name ? `Copy ${f.name} path` : "Copy path"}
+                          {WORDS.copyPath(named ? f.kind : undefined)}
                         </DropdownMenuItem>
                       ))}
-                      {linkable && here.length > 0 && <DropdownMenuSeparator />}
+                      {linkable && filesHere.length > 0 && <DropdownMenuSeparator />}
                       {linkable && (
                         <DropdownMenuItem onSelect={() => copyText(new URL(clipHref(libraryId, a.id), window.location.origin).href)}>
                           <Link2 className="h-4 w-4" />
@@ -387,7 +432,7 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (
-                  placeWord && <span className="block truncate">{placeLine(placeWord)}</span>
+                  <span className="block truncate">{whereLine}</span>
                 )}
               </dd>
             </div>
@@ -586,8 +631,10 @@ function Panel({ libraryId, asset, startAt, serverPlays, inTrash, readOnly, mayK
 
   const picture = playable ? (
     <ClipPlayer
-      key={showOriginal ? filmed.id : a.versionId}
+      // a pick remounts the player; with none it takes the proxy by itself where the clip's own file isn't here
+      key={showOriginal ? filmed.id : picked === "proxy" && showProxy ? `${a.versionId}:proxy` : a.versionId}
       asset={showOriginal ? { ...a, versionId: filmed.id } : a}
+      file={picked === "proxy" && showProxy ? "proxy" : undefined}
       detail={detail}
       media={media}
       startAt={swapAt ?? startAt} onPrev={onPrev} onNext={onNext} onTime={setNow} fill={win} serverPlays={showOriginal ? false : serverPlays} actions={playerButtons} />

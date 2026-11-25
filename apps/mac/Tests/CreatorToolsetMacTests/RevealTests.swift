@@ -97,5 +97,10 @@ final class RevealTests: XCTestCase {
         XCTAssertNil(reviewRevealAsk(#"reveal:{"review":"b94200d6","v":0}"#))
         XCTAssertNil(reviewRevealAsk(#"reveal:{"library":"lib_1","asset":"a1"}"#))
         XCTAssertNil(revealAsk(#"reveal:{"review":"b94200d6","v":2}"#))
+        // this Mac's kept proxy: the page names the version, never a path
+        XCTAssertEqual(proxyRevealAsk(#"reveal:{"proxy":"v_2"}"#), "v_2")
+        XCTAssertNil(proxyRevealAsk(#"reveal:{"proxy":"../v_2"}"#))
+        XCTAssertNil(proxyRevealAsk(#"reveal:{"proxy":"/Users/tiny/a.mp4"}"#))
+        XCTAssertNil(proxyRevealAsk(#"reveal:{"library":"lib_1","asset":"a1"}"#))
     }
 }

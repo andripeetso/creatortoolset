@@ -407,8 +407,8 @@ final class Places: @unchecked Sendable {
     /// needs access (path and folder, so the person can grant it); only its size is read. A try whose disk isn't mounted
     /// or doesn't answer makes it `away` (unless another try is here); `gone` when every try's disk answered and none had
     /// it. A version with no tries is away on its root, when the server named one. A version whose proxy is in this
-    /// Mac's cache (`cached`: its ctlocal address, ProxyCache.url) says so beside that, or is `cached` when nothing else is
-    /// known.
+    /// Mac's cache (`cached`: its path, ProxyCache.file) says so beside that with its ctlocal address, or is `cached` when
+    /// nothing else is known; either way `proxyPath` is that path (Show proxy in Finder, Copy proxy path).
     func check(_ versions: [String: VersionPlaces], granted: [String] = MediaFiles.granted, roots: [MediaFiles.RootGrant] = MediaFiles.rootGrants,
                size: @escaping (String) -> Int64? = Places.size, cached: (String) -> String? = { _ in nil }) -> Checked {
         let disks = diskList()
@@ -461,11 +461,19 @@ final class Places: @unchecked Sendable {
                 if allGranted { out.gone.append(id) }
                 out.answer[id] = ["state": "gone"]
             }
-            if let url = cached(id) {
-                if out.answer[id] == nil { out.answer[id] = ["state": "cached", "url": url] } else { out.answer[id]?["cached"] = url }
+            if let path = cached(id) {
+                if out.answer[id] == nil { out.answer[id] = Self.cachedAlone(path) } else {
+                    out.answer[id]?["cached"] = MediaFiles.url(path: path).absoluteString
+                    out.answer[id]?["proxyPath"] = path
+                }
             }
         }
         return out
+    }
+
+    /// The answer for a version this Mac knows only by its kept proxy at `path`.
+    static func cachedAlone(_ path: String) -> [String: Any] {
+        ["state": "cached", "url": MediaFiles.url(path: path).absoluteString, "proxyPath": path]
     }
 
     /// A share not connected here that only the person can connect: automatic connecting is off, this Mac never had it,
@@ -489,9 +497,9 @@ final class Places: @unchecked Sendable {
         // asked first: an answer kept for one account is never handed to the next
         let (account, offline) = cache ? await ProxyCache.account(site) : (nil, false)
         let folder = account.flatMap { ProxyCache.folder(server: site.base, account: $0) }
-        let cached = { (v: String) in folder.flatMap { ProxyCache.url(v, in: $0) } }
+        let cached = { (v: String) in folder.flatMap { ProxyCache.file(v, in: $0) } }
         let alone = { (vs: [String]) -> [String: Any] in
-            ["versions": vs.reduce(into: [String: Any]()) { out, v in if let url = cached(v) { out[v] = ["state": "cached", "url": url] } }]
+            ["versions": vs.reduce(into: [String: Any]()) { out, v in if let path = cached(v) { out[v] = Self.cachedAlone(path) } }]
         }
         if offline { return alone(versions) }
         let server = site.base.absoluteString + "|" + (account ?? "")

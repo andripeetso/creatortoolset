@@ -522,6 +522,12 @@ export const macPlaces = () => typeof document !== "undefined" && Number(documen
 /** What this computer has of each version's original; versions it has nothing to say about are left out. */
 export const placesCheck = (ask: PlacesCheckAsk) =>
   importAsk<Partial<PlacesCheckAnswer>>(`places:check:${JSON.stringify(ask)}`, macPlaces()).then((r) => r.versions ?? {});
+/** Shows this computer's kept proxy of a version in Finder (apps/mac Reveal.swift finds the file itself; only a Mac app
+ *  whose check answers `proxyPath` knows the ask): null when it did, else what went wrong. */
+export async function revealProxy(versionId: string): Promise<string | null> {
+  const r = ((await thisMacBridge()?.postMessage(`reveal:${JSON.stringify({ proxy: versionId })}`).catch(() => null)) ?? {}) as unknown as { ok?: boolean; problem?: string };
+  return r.ok ? null : (r.problem ?? "File not found on this Mac");
+}
 /** Connects a share (its root key), the login panel allowed: only from a Connect button pressed. */
 export const placesConnect = (root: string) =>
   importAsk<PlacesConnectAnswer>(`places:connect:${JSON.stringify({ root } satisfies PlacesConnectAsk)}`, macPlaces());

@@ -14,6 +14,8 @@ import Foundation
 // page names the folder, and it is shown only when it is an existing folder whose marker is that copy's.
 // A Settings → Folders folder (`reveal:{"folder"}`: Exports, Finals, a Media folder): the page names its path, and it is
 // shown only when the window's server lists it as one of this Mac's folders and it is an existing folder here.
+// This Mac's kept proxy of a clip (`reveal:{"proxy"}`, the clip panel's Show proxy in Finder): the page names the version,
+// and the file is the one this app finds in the proxy folder of the window's account (ProxyCache.swift).
 
 func isRevealAsk(_ ask: String) -> Bool { ask.hasPrefix("reveal:") }
 
@@ -57,6 +59,16 @@ func folderRevealAsk(_ ask: String) -> String? {
           let path = json["folder"] as? String, !path.isEmpty, path.count <= 1000
     else { return nil }
     return path
+}
+
+/// The version in a reveal ask for this Mac's kept proxy of it (`reveal:{"proxy"}`); nil when it is not one.
+func proxyRevealAsk(_ ask: String) -> String? {
+    guard isRevealAsk(ask),
+          let json = (try? JSONSerialization.jsonObject(with: Data(ask.dropFirst("reveal:".count).utf8))) as? [String: Any],
+          let version = json["proxy"] as? String, !version.isEmpty,
+          version.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") })
+    else { return nil }
+    return version
 }
 
 /// One folder of the server's Settings → Folders list (GET /api/devices/storage, contracts/storage.ts StorageFolder).
@@ -151,6 +163,17 @@ enum Reveal {
         guard let real else { return ["problem": problem] }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: real)])
         return ["ok": true]
+    }
+
+    /// Shows this Mac's kept proxy of `version` in Finder: the file in `folder` (the proxy folder of the window's account,
+    /// ProxyCache.allowed), found by this app; the page names the version, never a path.
+    @MainActor static func answerProxy(_ version: String, folder: String?) async -> [String: Any] {
+        let path = await withCheckedContinuation { c in
+            DispatchQueue.global(qos: .userInitiated).async {
+                c.resume(returning: folder.flatMap { ProxyCache.file(version, in: URL(fileURLWithPath: $0, isDirectory: true)) })
+            }
+        }
+        return await answer(path, anyFile: false)
     }
 
     private static func realPath(_ path: String) -> String? {

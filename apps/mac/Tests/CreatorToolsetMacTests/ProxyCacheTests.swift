@@ -36,7 +36,7 @@ final class ProxyCacheTests: XCTestCase {
         let worker = try XCTUnwrap(ProxyCache.workerDir(server: server))
         XCTAssertEqual(file, "\(worker)/tinyacrobatics/v1.mp4")
         XCTAssertTrue(file.hasPrefix(location.path + "/"))
-        XCTAssertNotNil(ProxyCache.url("v1", in: try XCTUnwrap(ProxyCache.folder(server: server, account: "tinyacrobatics"))))
+        XCTAssertNotNil(ProxyCache.file("v1", in: try XCTUnwrap(ProxyCache.folder(server: server, account: "tinyacrobatics"))))
         // another server's worker gets its own folder: two accounts of one name never share one
         XCTAssertNotEqual(ProxyCache.workerDir(server: URL(string: "http://10.0.0.5:3000")!), worker)
     }
@@ -73,8 +73,8 @@ final class ProxyCacheTests: XCTestCase {
         let link = allowed + "/v3.mp4"
         try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: bob)
         XCTAssertEqual(MediaFiles.gate(link, granted: [], roots: [], cache: allowed), .status(403))
-        XCTAssertNil(ProxyCache.url("v3", in: URL(fileURLWithPath: allowed)))
-        XCTAssertEqual(ProxyCache.url("v1", in: URL(fileURLWithPath: allowed)), MediaFiles.url(path: alice).absoluteString)
+        XCTAssertNil(ProxyCache.file("v3", in: URL(fileURLWithPath: allowed)))
+        XCTAssertEqual(ProxyCache.file("v1", in: URL(fileURLWithPath: allowed)), alice)
 
         // a page of another server gets none of this server's cache; signed out, none at all
         XCTAssertNil(ProxyCache.allowed(page: URL(string: "https://other.example.com/library")!))
@@ -223,7 +223,7 @@ final class ProxyCacheTests: XCTestCase {
         let server = URL(string: "https://studio.example.com")!
         for name in ["", "..", "../bob", "a/b", ".hidden", "tïny"] { XCTAssertNil(ProxyCache.folder(server: server, account: name), name) }
         XCTAssertEqual(ProxyCache.folder(server: server, account: "tinyacrobatics")?.lastPathComponent, "tinyacrobatics")
-        XCTAssertNil(ProxyCache.url("../v1", in: root))
+        XCTAssertNil(ProxyCache.file("../v1", in: root))
     }
 
     func testTheAccountIsTheServersAnswer() throws {
@@ -239,7 +239,9 @@ final class ProxyCacheTests: XCTestCase {
         try Data(repeating: 2, count: 10).write(to: file)
         let share = VersionPlaces.Root(key: "smb://office-nas/footage", name: "footage", server: "office-nas")
         let places = Places(diskList: { [PlaceDisk(path: "/", key: "vol:A"), PlaceDisk(path: self.root.path, key: "vol:T")] })
-        let cached = { (v: String) in ["v1", "v2", "v3", "v4"].contains(v) ? "ctlocal://media/\(v)" : nil }
+        // each kept proxy by its path: the answer carries its address and, beside it, the path (Show proxy in Finder)
+        let cached = { (v: String) in ["v1", "v2", "v3", "v4"].contains(v) ? "/cache/\(v).mp4" : nil }
+        let address = { (v: String) in MediaFiles.url(path: "/cache/\(v).mp4").absoluteString }
         let checked = places.check([
             "v1": VersionPlaces(tries: [file.path], bytes: 10),
             "v2": VersionPlaces(tries: ["/Volumes/not-mounted-here/a.mov"], bytes: 10, root: share),
@@ -249,17 +251,21 @@ final class ProxyCacheTests: XCTestCase {
         ], granted: [root.path], roots: [], cached: cached)
         // the original here still plays; the cache rides beside it for when it goes away
         XCTAssertEqual(checked.answer["v1"]?["state"] as? String, "here")
-        XCTAssertEqual(checked.answer["v1"]?["cached"] as? String, "ctlocal://media/v1")
+        XCTAssertEqual(checked.answer["v1"]?["cached"] as? String, address("v1"))
+        XCTAssertEqual(checked.answer["v1"]?["proxyPath"] as? String, "/cache/v1.mp4")
         // away and gone keep what they say (the away line, Connect, the search) and carry the cache
         XCTAssertEqual(checked.answer["v2"]?["state"] as? String, "away")
         XCTAssertEqual(checked.answer["v2"]?["needs"] as? String, "connect")
-        XCTAssertEqual(checked.answer["v2"]?["cached"] as? String, "ctlocal://media/v2")
+        XCTAssertEqual(checked.answer["v2"]?["cached"] as? String, address("v2"))
+        XCTAssertEqual(checked.answer["v2"]?["proxyPath"] as? String, "/cache/v2.mp4")
         XCTAssertEqual(checked.answer["v3"]?["state"] as? String, "gone")
         XCTAssertEqual(checked.gone, ["v3"])
-        XCTAssertEqual(checked.answer["v3"]?["cached"] as? String, "ctlocal://media/v3")
+        XCTAssertEqual(checked.answer["v3"]?["cached"] as? String, address("v3"))
+        XCTAssertEqual(checked.answer["v3"]?["proxyPath"] as? String, "/cache/v3.mp4")
         // nothing else known: cached
         XCTAssertEqual(checked.answer["v4"]?["state"] as? String, "cached")
-        XCTAssertEqual(checked.answer["v4"]?["url"] as? String, "ctlocal://media/v4")
+        XCTAssertEqual(checked.answer["v4"]?["url"] as? String, address("v4"))
+        XCTAssertEqual(checked.answer["v4"]?["proxyPath"] as? String, "/cache/v4.mp4")
         XCTAssertNil(checked.answer["v5"])
     }
 
@@ -278,6 +284,7 @@ final class ProxyCacheTests: XCTestCase {
         let online = await places.answerCheck(library: "lib1", versions: ["v1", "v2"], site: mac, device: "dev1", cache: true)
         XCTAssertEqual(state(online, "v1")?["state"] as? String, "cached")
         XCTAssertEqual(state(online, "v1")?["url"] as? String, MediaFiles.url(path: mine).absoluteString)
+        XCTAssertEqual(state(online, "v1")?["proxyPath"] as? String, mine)
         XCTAssertNil(state(online, "v2"))   // bob's proxy, in bob's folder
         XCTAssertEqual(site.requests.first?.path, "/api/auth/check")
 
@@ -289,6 +296,7 @@ final class ProxyCacheTests: XCTestCase {
         let offline = await places.answerCheck(library: "lib1", versions: ["v1", "v2", "v3"], site: away, device: "dev1", cache: true)
         XCTAssertEqual(state(offline, "v1")?["state"] as? String, "cached")
         XCTAssertEqual(state(offline, "v1")?["url"] as? String, MediaFiles.url(path: there).absoluteString)
+        XCTAssertEqual(state(offline, "v1")?["proxyPath"] as? String, there)
         XCTAssertNil(state(offline, "v2"))
         XCTAssertNil(state(offline, "v3"))
         // and its page may play it

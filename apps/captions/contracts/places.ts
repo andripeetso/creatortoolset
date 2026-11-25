@@ -186,9 +186,12 @@ export type PlaceCheck = (
   /** this computer's proxy cache has the proxy (Available offline): it plays from here (ctlocal://media/…) before the
    *  server's when the original doesn't */
   cached?: string;
+  /** that proxy's path on this computer (Show proxy in Finder, Copy proxy path); a Mac app from before it sends none,
+   *  and the page then offers neither */
+  proxyPath?: string;
 }
   /** nothing else known here (no original on a computer, or the server not answering), and the proxy cache has it */
-  | { state: "cached"; url: string; cached?: never };
+  | { state: "cached"; url: string; proxyPath?: string; cached?: never };
 export interface PlacesCheckAnswer {
   versions: Record<string, PlaceCheck>;
 }

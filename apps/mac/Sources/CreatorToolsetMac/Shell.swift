@@ -217,6 +217,12 @@ final class Shell: NSObject, ObservableObject {
                     Task { done(await Reveal.answerFolder(path, listed: Reveal.ownFolders(await self.client().listedFolders(), hosts: hosts))) }
                     return
                 }
+                // this Mac's kept proxy of a version: only the one in the proxy folder of this window's account
+                if let version = proxyRevealAsk(ask) {
+                    let folder = ProxyCache.allowed(page: self.base)
+                    Task { done(await Reveal.answerProxy(version, folder: folder)) }
+                    return
+                }
                 let clip = revealAsk(ask), review = reviewRevealAsk(ask)
                 guard clip != nil || review != nil else { return done(["problem": Reveal.problem]) }
                 let here = self.runsHere && self.server != nil

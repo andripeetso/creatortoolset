@@ -44,6 +44,7 @@ export function ClipPlayer({
   onTime,
   fill = false,
   serverPlays = true,
+  file,
   actions,
 }: {
   asset: AssetCard;
@@ -58,6 +59,8 @@ export function ClipPlayer({
   fill?: boolean;
   /** false when the server plays nothing of this clip (Upload none, not shared with members): a copy only this computer has plays */
   serverPlays?: boolean;
+  /** "proxy": the clip's proxy plays although its original is here (the clip panel's File row) */
+  file?: "proxy";
   /** where the Allow folder and Connect buttons go: the side panel, under where the clip is (never on the player) */
   actions?: HTMLElement | null;
 }) {
@@ -74,7 +77,8 @@ export function ClipPlayer({
   const check = here?.[a.versionId];
   // what plays, once this computer has answered; `at` the second it starts at when it took over from another
   const [pin, setPin] = useState<Source & { at?: number }>();
-  useEffect(() => void (places && here && !pin && setPin(pickSource(check, a.versionId, serverPlays))), [places, here, pin, check, a.versionId, serverPlays]);
+  const pick = file === "proxy" ? proxySource : pickSource;
+  useEffect(() => void (places && here && !pin && setPin(pick(check, a.versionId, serverPlays))), [places, here, pin, pick, check, a.versionId, serverPlays]);
   const onServer = !places || !!pin?.src.startsWith("/api/");
   // the original asked for again (`tries`, a new address so the window does not answer from the failed one)
   const [tries, setTries] = useState(0);
@@ -186,7 +190,7 @@ export function ClipPlayer({
     try {
       const failed = await run();
       if (failed) return setProblem(failed);
-      take(pickSource((await again())[a.versionId], a.versionId));
+      take(pick((await again())[a.versionId], a.versionId));
     } finally {
       setBusy(false);
     }
@@ -237,7 +241,7 @@ export function ClipPlayer({
     onPlay: () => {
       if (pausedOn.current !== src) return;
       pausedOn.current = "";
-      if (places && pin) take(pickSource(check, a.versionId));
+      if (places && pin) take(pick(check, a.versionId));
     },
     onPause: () => {
       clearTimeout(stall.current);
